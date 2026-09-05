@@ -8,7 +8,9 @@ import { ASSESSMENT_SCOPE } from "./neighborhoodAssessmentFixture.js";
 // below are intentionally illustrative, not a claimed projection: presentation
 // must read the exact metric EWKB, never that display geometry.
 export const PERIMETER_FIXTURE_METRIC = Object.freeze({ srid: 26914, origin: [700000, 3600000] });
-export const FROZEN_TOPOLOGY_COMPATIBILITY_COMMIT = "ba3e0e2d034dc78c2dc97af63c4a9b8b0434a50a";
+// Frozen producer digest compatibility only; this does not imply native or
+// security acceptance of the producer checkpoint.
+export const FROZEN_TOPOLOGY_COMPATIBILITY_COMMIT = "2f603b426256926096f6d90f38fd2431d9174a12";
 const digest = assessmentEvidenceDigest;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const at = "2024-07-01T00:00:00.000Z";
@@ -41,7 +43,7 @@ function ewkb(type, pointsOrRings) {
 export const perimeterFixtureEwkb = (type, coordinates) => ewkb(type, coordinates);
 export const perimeterFixtureGeometryDigest = bytesDigest;
 
-// Frozen compatibility encoding from the exact topology v2 manifest function
+// Frozen compatibility encoding from the exact topology v3 manifest function
 // at the commit above. Tests also freeze one literal expected digest checked by
 // that exact helper in scratch. No unmerged topology module is imported here.
 export function perimeterFixtureTopologyRevision(result) {
@@ -80,7 +82,7 @@ const TOPOLOGY_LIMITS = Object.freeze({ input_parts: 512, input_coordinates: 819
 const rectangle = [[0, 0], [100, 0], [100, 100], [0, 100], [0, 0]];
 const baseNames = ["South Road", "East Road", "North Road", "West Road"];
 export const PERIMETER_FIXTURE_VARIANTS = Object.freeze([
-  "rectangle", "diamond", "concave", "curved_north", "mixed_north", "duplicate_source", "conflicting_source", "alias", "hole", "two_cells",
+  "rectangle", "diamond", "concave", "curved_north", "mixed_north", "duplicate_source", "conflicting_source", "alias", "hole", "two_cells", "split_north", "split_north_distinct_sources",
 ]);
 
 export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
@@ -106,6 +108,10 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
     outer = [[0, 0], [100, 0], [100, 100], [75, 100], [50, 100], [25, 100], [0, 100], [0, 0]];
     names = ["South Road", "East Road", "North Road East", "Clear Creek", null, "North Road West", "West Road"];
   }
+  if (["split_north", "split_north_distinct_sources"].includes(variant)) {
+    outer = [[0, 0], [100, 0], [100, 100], [75, 100], [25, 100], [0, 100], [0, 0]];
+    names = ["South Road", "East Road", "North Road", "North Road", "North Road", "West Road"];
+  }
   if (variant === "hole") {
     holes = [[[40, 40], [40, 60], [60, 60], [60, 40], [40, 40]]];
     anchor = [20, 20];
@@ -118,6 +124,7 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
   const cells = [], edges = [], nodes = [], features = [], featureBindings = [], labels = [];
   const nodeByCoordinates = new Map(), edgeByEndpoints = new Map();
   const featureRefs = new Map();
+  const originalPrimitives = new Map();
   const ensureNode = point => {
     const key = point.join(",");
     if (nodeByCoordinates.has(key)) return nodeByCoordinates.get(key);
@@ -126,11 +133,12 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
       geometry_ewkb, geometry: { type: "Point", coordinates: display(point) } };
     nodes.push(node); nodeByCoordinates.set(key, node); return node;
   };
-  const addSource = (edge, rawStart, rawEnd, name, suffix, shared = false, kind = "road") => {
+  const addSource = (edge, rawStart, rawEnd, name, suffix, shared = false, kind = "road", interval = null) => {
     const identity = { source_key: "synthetic-lines", source_layer: "synthetic-layer", source_object_id: suffix };
     const feature_id = digest(identity);
     let source = features.find(row => row.feature_id === feature_id);
-    const displayGeometry = { type: "LineString", coordinates: [display(rawStart), display(rawEnd)] };
+    const primitiveStart = interval?.original_start ?? rawStart, primitiveEnd = interval?.original_end ?? rawEnd;
+    const displayGeometry = { type: "LineString", coordinates: [display(primitiveStart), display(primitiveEnd)] };
     if (!source) {
       source = { feature_id, ...identity, source_record_hash: digest({ fixture_record: suffix }), sync_run_id: runId,
         source_vintage: "synthetic-2024", name, base_name: name, road_class: "local", repair_revision: null,
@@ -142,10 +150,12 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
         record_ref: { source_id: sourceId, record_id: `synthetic-label:${suffix}`, record_sha256: digest({ name, kind }) },
         observed_at: at, valid_from: "2024-01-01", valid_to: null, historical_availability: "reconstructed" }));
     }
-    const source_segment_index = shared ? (featureRefs.get(feature_id)?.length ?? 0) + 1 : 1;
+    const source_segment_index = interval ? 1 : shared ? (featureRefs.get(feature_id)?.length ?? 0) + 1 : 1;
+    originalPrimitives.set(`${feature_id}:1:${source_segment_index}`, { feature_id, start: primitiveStart, end: primitiveEnd });
     const reversed = !same(rawStart, edge._start);
+    const fromFraction = interval?.start ?? 0, toFraction = interval?.end ?? 1;
     edge.source_parts.push({ feature_id, source_part_index: 1, source_segment_index, source_fraction_basis: "source_segment",
-      start_fraction: reversed ? 1 : 0, end_fraction: reversed ? 0 : 1 });
+      start_fraction: reversed ? toFraction : fromFraction, end_fraction: reversed ? fromFraction : toFraction });
     if (!featureRefs.has(feature_id)) featureRefs.set(feature_id, []);
     featureRefs.get(feature_id).push(edge.id);
     return source;
@@ -161,13 +171,24 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
         length_meters: Math.hypot(b[0] - a[0], b[1] - a[1]), geometry_validated: true, metric_srid: 26914,
         geometry_ewkb, geometry: { type: "LineString", coordinates: sorted.map(display) }, cell_ids: [], source_parts: [], _start: sorted[0] };
       edges.push(edge); edgeByEndpoints.set(key, edge); from.degree++; to.degree++;
-      addSource(edge, a, b, name, suffix, options.shared, options.kind);
+      addSource(edge, a, b, name, suffix, options.shared, options.kind, options.interval);
     }
     return { edge_id: edge.id, from_node_id: ensureNode(a).id, to_node_id: ensureNode(b).id, reversed: !same(a, edge._start) };
   };
   const outerSegments = outer.slice(0, -1).map((a, i) => addEdge(a, outer[i + 1], names[i],
-    variant === "curved_north" && i >= 2 && i <= 5 ? "500" : String(i + 1),
-    { shared: variant === "curved_north" && i >= 2 && i <= 5, kind: variant === "mixed_north" && i === 3 ? "watercourse" : names[i] === null ? "unknown" : "road" }));
+    (variant === "curved_north" && i >= 2 && i <= 5) || (variant === "split_north" && i >= 2 && i <= 4) ? "500" : String(i + 1),
+    { shared: variant === "curved_north" && i >= 2 && i <= 5, kind: variant === "mixed_north" && i === 3 ? "watercourse" : names[i] === null ? "unknown" : "road",
+      interval: variant === "split_north" && i >= 2 && i <= 4
+        ? { start: [0.25, 0.375, 0.625][i - 2], end: [0.375, 0.625, 0.75][i - 2], original_start: [150, 100], original_end: [-50, 100] } : null }));
+  if (variant === "split_north") {
+    // The original north primitive extends outside the selected cell. Explicit
+    // external source endpoints witness the two interior ordering positions;
+    // all chains of that original primitive remain in the full topology.
+    addEdge([150, 100], [100, 100], "North Road", "500", { interval: { start: 0, end: 0.25, original_start: [150, 100], original_end: [-50, 100] } });
+    addEdge([0, 100], [-50, 100], "North Road", "500", { interval: { start: 0.75, end: 1, original_start: [150, 100], original_end: [-50, 100] } });
+    addEdge([75, 100], [75, 120], "External Witness East", "888");
+    addEdge([25, 100], [25, 120], "External Witness West", "889");
+  }
   if (variant === "curved_north") {
     // One source part contains all four original primitives, not only the
     // first edge encountered while creating its shared descriptor.
@@ -206,27 +227,58 @@ export function neighborhoodPerimeterDescriptionFixture(variant = "rectangle") {
     addSource(north, outer[2], outer[3], variant === "conflicting_source" ? "Alternative North Road" : "North Road", "888");
   }
   for (const edge of edges) delete edge._start;
+  const primitives = [...originalPrimitives.values()];
+  const primitiveCount = primitives.length;
+  let candidatePairs = 0;
+  for (let a = 0; a < primitives.length; a++) for (let b = a + 1; b < primitives.length; b++) {
+    const one = primitives[a], two = primitives[b];
+    if ([0, 1].every(axis => Math.min(one.start[axis], one.end[axis]) <= Math.max(two.start[axis], two.end[axis])
+      && Math.min(two.start[axis], two.end[axis]) <= Math.max(one.start[axis], one.end[axis]))) candidatePairs++;
+  }
+  const primitiveNodes = new Map([...originalPrimitives.keys()].map(key => [key, new Set()]));
+  for (const edge of edges) for (const source of edge.source_parts) {
+    const key = `${source.feature_id}:${source.source_part_index}:${source.source_segment_index}`;
+    primitiveNodes.get(key).add(edge.from_node_id); primitiveNodes.get(key).add(edge.to_node_id);
+  }
+  // The producer diagnostic counts raw UNION ALL rows, before DISTINCT:
+  // two original endpoints per primitive, plus each pair-intersection witness
+  // once for each of the pair's two source occurrences. In these explicitly
+  // noded synthetic fixtures, shared node sets identify those pair witnesses.
+  // An overlapping pair contributes its two overlap endpoints even if other
+  // sources split that overlap into additional retained chains.
+  let rawPointIncidenceCount = 2 * primitiveCount;
+  const nodeSets = [...primitiveNodes.values()];
+  for (let a = 0; a < nodeSets.length; a++) for (let b = a + 1; b < nodeSets.length; b++) {
+    const shared = [...nodeSets[a]].filter(id => nodeSets[b].has(id)).length;
+    rawPointIncidenceCount += 2 * Math.min(shared, 2);
+  }
+  const sourceReferenceCount = edges.reduce((sum, edge) => sum + edge.source_parts.length, 0);
+  const originalCoordinateCount = primitiveCount + features.reduce((sum, feature) => sum + feature.source_part_count, 0);
   const topology = {
-    status: "ready", topology_validated: true, topology_revision: null, topology_version: "postgis-planar-v2",
+    status: "ready", topology_validated: true, topology_revision: null, topology_version: "postgis-planar-v3",
     metric_srid: 26914, display_srid: 4326, source_capture_sha256: digest({ synthetic_capture: variant }),
     linework_content_sha256: digest({ synthetic_linework: variant }),
     source_coverage: { query_coverage: "complete", provider_coverage: "unknown", historical_coverage: "unknown" },
     engine_versions: { postgis: "SYNTHETIC-NO-ENGINE", geos: "SYNTHETIC", proj: "SYNTHETIC", spatial_reference_sha256: digest(PERIMETER_FIXTURE_METRIC) },
-    performed_policy: { version: "postgis-planar-v2", requested_policy_version: "synthetic-source-planar-1", metric_srid: 26914,
-      snap_tolerance_meters: 0, source_attribution: "exact_normalized_EWKB_source_segment_reconstruction_v1", source_fraction_basis: "source_segment",
-      source_occurrence_coverage: "complete_fraction_interval_union_v1", ambiguous_source_policy: "require_original_primitive_positive_length_overlap_v1",
+    performed_policy: { version: "postgis-planar-v3", requested_policy_version: "synthetic-source-planar-1", metric_srid: 26914,
+      snap_tolerance_meters: 0, source_attribution: "exact_original_endpoint_and_pair_intersection_witness_chains_v1", source_fraction_basis: "source_segment",
+      source_fraction_interpretation: "dominant_axis_signed_order_coordinate_v1",
+      source_occurrence_coverage: "complete_consecutive_witness_chain_coverage_v1",
+      source_witness_budgets: "point_incidences_2S_plus_4P_chains_S_plus_4P_v1", ambiguous_source_policy: "require_original_primitive_positive_length_overlap_v1",
       supported_projection_window: [-98.5, 31, -95.5, 34.5], noding_admission_policy: "projected-primitive-bbox-v1",
       minimum_cell_area_m2: 1, geometry_repair: "none", travel_graph: "not_generated" },
     cells, edges, nodes, source_features: features, source_aliases: [],
     diagnostics: { invalid_source_count: 0, nonsimple_source_count: 0, noded_coordinate_count: edges.length * 2,
       edge_count: edges.length, cell_count: cells.length, node_count: nodes.length,
-      source_reference_count: edges.reduce((sum, edge) => sum + edge.source_parts.length, 0), invalid_cell_count: 0,
+      source_reference_count: sourceReferenceCount, source_point_incidence_count: rawPointIncidenceCount,
+      source_chain_count: sourceReferenceCount, invalid_source_witness_count: 0, ambiguous_source_order_count: 0, invalid_cell_count: 0,
       sliver_cell_count: 0, unattributed_edge_count: 0, uncovered_source_segment_count: 0, ambiguous_source_edge_count: 0,
       invalid_incidence_count: 0, unsupported_boundary_count: 0, overlapping_cell_count: 0,
-      multisource_edge_count: edges.filter(edge => edge.source_parts.length > 1).length, unused_edge_count: 0, dangle_node_count: 0 },
-    noding_admission: { policy: "projected-primitive-bbox-v1", primitive_segments: edges.length, original_coordinates: edges.length * 2,
-      candidate_pairs: edges.length, candidate_pairs_complete: true, split_pieces_upper_bound: edges.length * 5,
-      noded_coordinates_upper_bound: edges.length * 10, admitted: true },
+      multisource_edge_count: edges.filter(edge => edge.source_parts.length > 1).length,
+      unused_edge_count: edges.filter(edge => edge.cell_ids.length === 0).length, dangle_node_count: nodes.filter(node => node.degree === 1).length },
+    noding_admission: { policy: "projected-primitive-bbox-v1", primitive_segments: primitiveCount, original_coordinates: originalCoordinateCount,
+      candidate_pairs: candidatePairs, candidate_pairs_complete: true, split_pieces_upper_bound: primitiveCount + 4 * candidatePairs,
+      noded_coordinates_upper_bound: originalCoordinateCount + 8 * candidatePairs, admitted: true },
     incomplete_reasons: [], source_limitations: [{ code: "synthetic_upstream_validation_not_geometry_authority", ids: ["fixture"] }],
     travel_connectivity: "not_evaluated", limits: { ...TOPOLOGY_LIMITS },
   };

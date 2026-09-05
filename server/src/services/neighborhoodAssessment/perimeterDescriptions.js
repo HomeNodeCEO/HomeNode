@@ -23,6 +23,15 @@ const TEMPORAL_KEYS = ["observed_at", "valid_from", "valid_to", "historical_avai
 const TOPOLOGY_LIMITS = { input_parts: 512, input_coordinates: 8192, cells: 1024, edges: 8192,
   primitive_segments: 512, candidate_pairs: 4096, source_references: 16384, output_bytes: 32000000,
   row_bytes: 128000, statement_ms: 5000, duration_ms: 20000, connect_ms: 3000 };
+const TOPOLOGY_POLICY = Object.freeze({
+  version: "postgis-planar-v3",
+  source_attribution: "exact_original_endpoint_and_pair_intersection_witness_chains_v1",
+  source_fraction_basis: "source_segment",
+  source_fraction_interpretation: "dominant_axis_signed_order_coordinate_v1",
+  source_occurrence_coverage: "complete_consecutive_witness_chain_coverage_v1",
+  source_witness_budgets: "point_incidences_2S_plus_4P_chains_S_plus_4P_v1",
+  ambiguous_source_policy: "require_original_primitive_positive_length_overlap_v1",
+});
 function invalid(field) { throw new TypeError(`invalid_perimeter_description:${field}`); }
 function stop(code) { const error = new Error(code); internalReasons.set(error, code); throw error; }
 function object(value, field) { if (!value || Object.getPrototypeOf(value) !== Object.prototype) invalid(field); return value; }
@@ -159,7 +168,7 @@ function normalizedAlias(value) { return value.normalize("NFC").trim().replace(/
 function topologyOf(topology, limits, chargeRefs) {
   object(topology, "topology");
   if (topology.status !== "ready" || topology.topology_validated !== true || topology.topology_revision === null) stop("topology_incomplete");
-  if (topology.topology_version !== "postgis-planar-v2" || topology.metric_srid !== 26914 || topology.display_srid !== 4326) stop("unsupported_topology_policy");
+  if (topology.topology_version !== TOPOLOGY_POLICY.version || topology.metric_srid !== 26914 || topology.display_srid !== 4326) stop("unsupported_topology_policy");
   hash(topology.source_capture_sha256, "source_capture_sha256"); hash(topology.linework_content_sha256, "linework_content_sha256");
   const sourceLimits = keys(topology.limits, Object.keys(TOPOLOGY_LIMITS), "topology_limits");
   for (const [key, value] of Object.entries(sourceLimits)) if (!Number.isSafeInteger(value) || value < 1 || value > TOPOLOGY_LIMITS[key]) invalid("topology_limits");
@@ -192,21 +201,32 @@ function topologyOf(topology, limits, chargeRefs) {
   }
   if (`topology:${hasher.digest("hex")}` !== topology.topology_revision) invalid("topology_revision");
   const policy = object(topology.performed_policy, "topology_policy");
-  if (policy.version !== "postgis-planar-v2" || policy.metric_srid !== 26914 || policy.snap_tolerance_meters !== 0 || policy.geometry_repair !== "none" ||
-      policy.source_fraction_basis !== "source_segment" || policy.source_attribution !== "exact_normalized_EWKB_source_segment_reconstruction_v1") stop("unsupported_topology_policy");
+  if (Object.entries(TOPOLOGY_POLICY).some(([key, value]) => policy[key] !== value) ||
+      policy.metric_srid !== 26914 || policy.snap_tolerance_meters !== 0 || policy.geometry_repair !== "none") stop("unsupported_topology_policy");
   if (topology.source_coverage?.query_coverage !== "complete" || topology.noding_admission?.admitted !== true ||
       topology.noding_admission?.candidate_pairs_complete !== true || !Array.isArray(topology.incomplete_reasons) || topology.incomplete_reasons.length) stop("topology_incomplete");
   const admission = topology.noding_admission, diagnostics = object(topology.diagnostics, "topology_diagnostics");
   if (admission.policy !== "projected-primitive-bbox-v1" || !Number.isSafeInteger(admission.primitive_segments) ||
       admission.primitive_segments < 1 || admission.primitive_segments > sourceLimits.primitive_segments ||
-      !Number.isSafeInteger(admission.candidate_pairs) || admission.candidate_pairs < 0 || admission.candidate_pairs > sourceLimits.candidate_pairs) stop("topology_incomplete");
+      !Number.isSafeInteger(admission.candidate_pairs) || admission.candidate_pairs < 0 || admission.candidate_pairs > sourceLimits.candidate_pairs ||
+      admission.candidate_pairs > admission.primitive_segments * (admission.primitive_segments - 1) / 2 ||
+      !Number.isSafeInteger(admission.original_coordinates) || admission.original_coordinates < 2 ||
+      admission.original_coordinates > sourceLimits.input_coordinates) stop("topology_incomplete");
+  const pointIncidenceBudget = 2 * admission.primitive_segments + 4 * admission.candidate_pairs;
+  const chainBudget = admission.primitive_segments + 4 * admission.candidate_pairs;
+  const nodedCoordinateBudget = admission.original_coordinates + 8 * admission.candidate_pairs;
+  if (admission.split_pieces_upper_bound !== chainBudget || admission.noded_coordinates_upper_bound !== nodedCoordinateBudget ||
+      chainBudget > sourceLimits.edges || chainBudget > sourceLimits.source_references || nodedCoordinateBudget > sourceLimits.edges * 4 ||
+      !Number.isSafeInteger(diagnostics.source_point_incidence_count) || diagnostics.source_point_incidence_count < 0 ||
+      diagnostics.source_point_incidence_count > pointIncidenceBudget || !Number.isSafeInteger(diagnostics.source_chain_count) ||
+      diagnostics.source_chain_count < 0 || diagnostics.source_chain_count > chainBudget) stop("topology_incomplete");
   // A ready flag cannot override explicit producer failure evidence. This is
   // consistency admission; it neither reconstructs nor independently proves GIS.
-  // Nonsimple source lines, unused edges and dangles are allowed by v2 and are
+  // Nonsimple source lines, unused edges and dangles are allowed by v3 and are
   // deliberately not fatal here; noding can produce valid sourced cells from them.
   for (const key of ["invalid_source_count", "invalid_cell_count", "sliver_cell_count",
     "unattributed_edge_count", "uncovered_source_segment_count", "ambiguous_source_edge_count", "invalid_incidence_count",
-    "unsupported_boundary_count", "overlapping_cell_count"]) if (diagnostics[key] !== 0) stop("topology_incomplete");
+    "unsupported_boundary_count", "overlapping_cell_count", "invalid_source_witness_count", "ambiguous_source_order_count"]) if (diagnostics[key] !== 0) stop("topology_incomplete");
   for (const feature of maps.source_features.values()) {
     hash(feature.feature_id, "feature_id");
     for (const key of ["name", "base_name"]) if (feature[key] !== null) text(feature[key], "feature_name", limits.text_length);
@@ -239,7 +259,7 @@ function topologyOf(topology, limits, chargeRefs) {
     if (edgeIds.some(id => !maps.edges.get(id)?.cell_ids.includes(cell.id))) stop("topology_incidence_invalid");
   }
   for (const edge of maps.edges.values()) if (edge.cell_ids.some(id => !maps.cells.get(id).boundary_edge_ids.includes(edge.id))) stop("topology_incidence_invalid");
-  if (topology.diagnostics?.source_reference_count !== occurrences || topology.diagnostics?.edge_count !== maps.edges.size ||
+  if (topology.diagnostics?.source_chain_count !== occurrences || topology.diagnostics?.source_reference_count !== occurrences || topology.diagnostics?.edge_count !== maps.edges.size ||
       topology.diagnostics?.node_count !== maps.nodes.size || topology.diagnostics?.cell_count !== maps.cells.size) stop("topology_incidence_invalid");
   const aliases = new Map();
   for (const row of maps.source_aliases.values()) {
@@ -464,6 +484,8 @@ export function describeNeighborhoodPerimeter(rawInput, options = {}) {
     for (const row of [...relevantLabels, ...relevantDecisions]) row.source_refs.forEach(id => sourceIds.add(id));
     Object.assign(output, { topology_revision: input.topology.topology_revision, selected_boundary_revision: input.selected_boundary.revision,
       geometry_sha256: input.selected_boundary.geometry_sha256, performed_policy: { ...input.policy, orientation_check: "signed_metric_ring_area",
+        source_fraction_basis: input.topology.performed_policy.source_fraction_basis,
+        source_fraction_interpretation: input.topology.performed_policy.source_fraction_interpretation,
         metric_length_check: "decoded_EWKB_hypot", metric_length_comparison_relative_tolerance: 1e-9, geometry_operations: "none" },
       provenance: { source_refs: [...sourceIds].sort(compare), feature_ids: [...featureIds].sort(compare),
         label_record_ids: relevantLabels.map(row => row.id), alias_decision_ids: relevantDecisions.map(row => row.id) } });
@@ -504,6 +526,9 @@ export function describeNeighborhoodPerimeter(rawInput, options = {}) {
     const preparedLabels = new Map(relevantLabels.map(record => [record.id, labelFor(record)]));
     const metadata = new Map();
     for (const ring of boundary.rings) for (const row of ring.rows) {
+      // v3 fractions are source-local ordering coordinates, not a guarantee
+      // that interpolation reproduces a noded witness. Preserve stored values;
+      // reversal swaps traversal values only. Length/direction come from EWKB.
       const occurrences = [...row.edge.source_parts].sort((a, b) => compare(encoded(a), encoded(b))).map(source => ({ ...source,
         traversal_start_fraction: row.reversed ? source.end_fraction : source.start_fraction,
         traversal_end_fraction: row.reversed ? source.start_fraction : source.end_fraction }));
@@ -555,6 +580,13 @@ export function describeNeighborhoodPerimeter(rawInput, options = {}) {
       const reasons = [...new Set(pieces.flatMap(piece => piece.reasons))].sort(compare), runs = [];
       let previous;
       for (const piece of pieces) { if (!previous || !compatible(previous, piece)) runs.push(metadata.get(piece.id).text); previous = piece; }
+      const first = pieces[0], last = pieces.at(-1);
+      // A canonical ring start may split one continuous source run. Join only
+      // its presentation text at the actual cyclic seam, using the same exact
+      // lineage check; never drop physical pieces or merge disjoint names.
+      if (runs.length > 1 && first === output.exterior_pieces[0] && last === output.exterior_pieces.at(-1) &&
+          first.ring_id === last.ring_id && first.side_assignment === side && last.side_assignment === side &&
+          ![...first.labels, ...last.labels].some(label => label.disposition === "conflicting") && compatible(last, first)) runs.pop();
       const candidate = runs.length ? runs.join("; ") : null;
       if (candidate !== null && candidate.length > limits.summary_length) stop("summary_limit_exceeded");
       const status = !pieces.length ? "unavailable" : reasons.length ? "review_required" : "supported";

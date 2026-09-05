@@ -47,12 +47,210 @@ function rename(input, oldName, newName) {
   return rehashPerimeterFixture(input);
 }
 
-test("synthetic topology bytes match the independently checked frozen v2 digest", () => {
-  assert.equal(FROZEN_TOPOLOGY_COMPATIBILITY_COMMIT, "ba3e0e2d034dc78c2dc97af63c4a9b8b0434a50a");
+function admittedBudgets(input) {
+  const a=input.topology.noding_admission;
+  return {points:2*a.primitive_segments+4*a.candidate_pairs,chains:a.primitive_segments+4*a.candidate_pairs};
+}
+
+test("synthetic topology bytes match the provisionally checked frozen v3 digest", () => {
+  assert.equal(FROZEN_TOPOLOGY_COMPATIBILITY_COMMIT, "2f603b426256926096f6d90f38fd2431d9174a12");
   // Independently verified by neighborhoodTopologyRevision from that exact
   // commit in scratch; production code must not import the unmerged service.
+  // The producer checkpoint remains subject to separate security/native review.
   assert.equal(perimeterFixtureTopologyRevision(fixture().topology),
-    "topology:d9d57a3406af421b8ecb5ed00e22f6d12f057ea4211da21fd2da6564535e08a2");
+    "topology:b37e9e7aa02b39ff749ec809988fac80316ba87c4dc36daa5f11613599f16f8d");
+});
+
+test("v3 output retains the ordering-coordinate interpretation without distance authority", () => {
+  const result=run();
+  assert.equal(result.computation_status,"complete");
+  assert.equal(result.performed_policy.source_fraction_basis,"source_segment");
+  assert.equal(result.performed_policy.source_fraction_interpretation,"dominant_axis_signed_order_coordinate_v1");
+  assert.equal(result.performed_policy.geometry_operations,"none");
+  noAuthority(result);
+});
+
+for (const field of ["source_attribution","source_fraction_basis","source_fraction_interpretation","source_occurrence_coverage","source_witness_budgets"]) {
+  test(`v3 requires the exact ${field} method, even with newly bound manifest bytes`, () => {
+    for (const replacement of [undefined,"unreviewed_different_method_v1"]) {
+      const input=fixture();
+      if (replacement===undefined) delete input.topology.performed_policy[field];
+      else input.topology.performed_policy[field]=replacement;
+      rehashPerimeterFixture(input); incomplete(run(input));
+    }
+  });
+}
+
+test("a fully rehashed v2 policy cannot masquerade as the accepted v3 method", () => {
+  const input=fixture();
+  input.topology.topology_version="postgis-planar-v2";
+  input.topology.performed_policy.version="postgis-planar-v2";
+  rehashPerimeterFixture(input); incomplete(run(input));
+});
+
+test("synthetic raw point counts retain repeated pair witnesses before distinct points", () => {
+  // Rectangle: eight original endpoint rows plus four point-contact pairs,
+  // each repeated for both source occurrences. Duplicate north: ten original
+  // endpoints, six point-contact pairs and one overlap with two endpoints.
+  const rectangle=fixture().topology, duplicate=fixture("duplicate_source").topology;
+  assert.equal(rectangle.noding_admission.primitive_segments,4);
+  assert.equal(rectangle.noding_admission.candidate_pairs,4);
+  assert.equal(rectangle.diagnostics.source_point_incidence_count,16);
+  assert.equal(rectangle.diagnostics.source_chain_count,4);
+  assert.equal(duplicate.noding_admission.primitive_segments,5);
+  assert.equal(duplicate.noding_admission.candidate_pairs,7);
+  assert.equal(duplicate.diagnostics.source_point_incidence_count,26);
+  assert.equal(duplicate.diagnostics.source_chain_count,5);
+  assert.equal(run({ ...fixture(), topology:rectangle }).computation_status,"complete");
+  assert.equal(run(fixture("duplicate_source")).computation_status,"complete");
+});
+
+for (const field of ["source_point_incidence_count","source_chain_count","invalid_source_witness_count","ambiguous_source_order_count"]) {
+  test(`v3 requires an explicit ${field} diagnostic`, () => {
+    const input=fixture(); delete input.topology.diagnostics[field];
+    rehashPerimeterFixture(input); incomplete(run(input));
+  });
+}
+
+test("point witness counters stop at the actual admitted S/P budget, not a high configured cap", () => {
+  // Deliberately altered counter envelopes test scalar admission only; these
+  // changes do not claim that the fixture actually has more geometric witnesses.
+  const upper=admittedBudgets(fixture()).points;
+  for (const count of [upper-1,upper,upper+1]) {
+    const input=fixture(); input.topology.diagnostics.source_point_incidence_count=count;
+    rehashPerimeterFixture(input);
+    if (count<=upper) { assert.equal(run(input).computation_status,"complete"); noAuthority(run(input)); }
+    else incomplete(run(input));
+  }
+});
+
+test("source counter fields require safe nonnegative integral values", () => {
+  for (const field of ["source_point_incidence_count","source_chain_count"]) for (const value of [-1,0.5,"16",Number.MAX_SAFE_INTEGER+1]) {
+    const input=fixture(); input.topology.diagnostics[field]=value;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  }
+});
+
+test("source chain counts must match retained occurrence cardinality as well as the budget", () => {
+  for (const delta of [-1,1]) {
+    const input=fixture(); input.topology.diagnostics.source_chain_count+=delta;
+    rehashPerimeterFixture(input); incomplete(run(input));
+    input.topology.diagnostics.source_reference_count+=delta;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  }
+  const over=fixture(); over.topology.diagnostics.source_chain_count=admittedBudgets(over).chains+1;
+  rehashPerimeterFixture(over); incomplete(run(over));
+  assert.equal(run(fixture()).computation_status,"complete");
+});
+
+for (const field of ["invalid_source_witness_count","ambiguous_source_order_count"]) {
+  test(`ready flags cannot override a nonzero ${field}`, () => {
+    const input=fixture(); input.topology.diagnostics[field]=1;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  });
+}
+
+test("declared split budget must exactly equal S plus four P, even with roomy caps", () => {
+  for (const delta of [-1,1]) {
+    const input=fixture(); input.topology.noding_admission.split_pieces_upper_bound+=delta;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  }
+});
+
+test("full admitted chain budget must fit each declared edge and reference cap", () => {
+  const required=admittedBudgets(fixture()).chains;
+  for (const field of ["edges","source_references"]) for (const delta of [-1,0,1]) {
+    const input=fixture(); input.topology.limits[field]=required+delta;
+    rehashPerimeterFixture(input);
+    if (delta<0) incomplete(run(input));
+    else assert.equal(run(input).computation_status,"complete",`${field} at cap ${required+delta}`);
+  }
+});
+
+test("impossible pair cardinality cannot be admitted by increasing every declared upper bound", () => {
+  const input=fixture(), a=input.topology.noding_admission;
+  a.candidate_pairs=a.primitive_segments*(a.primitive_segments-1)/2+1;
+  a.split_pieces_upper_bound=a.primitive_segments+4*a.candidate_pairs;
+  a.noded_coordinates_upper_bound=a.original_coordinates+8*a.candidate_pairs;
+  rehashPerimeterFixture(input); incomplete(run(input));
+});
+
+test("original coordinate admission must be present, integral and within the source cap", () => {
+  for (const value of [undefined,-1,0.5,"8",8193]) {
+    const input=fixture(), a=input.topology.noding_admission;
+    if (value===undefined) delete a.original_coordinates; else a.original_coordinates=value;
+    if (typeof value==="number") a.noded_coordinates_upper_bound=value+8*a.candidate_pairs;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  }
+});
+
+test("noded coordinate admission cannot omit or understate its exact original-plus-eight-P bound", () => {
+  for (const delta of [undefined,-1,1]) {
+    const input=fixture();
+    if (delta===undefined) delete input.topology.noding_admission.noded_coordinates_upper_bound;
+    else input.topology.noding_admission.noded_coordinates_upper_bound+=delta;
+    rehashPerimeterFixture(input); incomplete(run(input));
+  }
+});
+
+test("an arithmetically consistent noded bound must still fit the declared coordinate capacity", () => {
+  const input=fixture(), a=input.topology.noding_admission;
+  input.topology.limits.edges=admittedBudgets(input).chains;
+  // A deliberately contradictory admission envelope: its chain budget fits,
+  // original count fits input capacity and C+8P is exact, but the resulting
+  // coordinate allocation would exceed four times the admitted edge cap.
+  a.original_coordinates=4*input.topology.limits.edges-8*a.candidate_pairs+1;
+  a.noded_coordinates_upper_bound=a.original_coordinates+8*a.candidate_pairs;
+  rehashPerimeterFixture(input); incomplete(run(input));
+});
+
+test("interior signed-order intervals preserve reversal and lengths from exact metric edges", () => {
+  const input=fixture("split_north"), result=run(input), pieces=north(result);
+  assert.equal(result.computation_status,"complete");
+  assert.equal(pieces.length,3);
+  const intervals=pieces.map(piece => {
+    assert.equal(piece.source_occurrences.length,1);
+    assert.equal(piece.reversed,true);
+    const source=piece.source_occurrences[0];
+    assert.equal(source.source_part_index,1); assert.equal(source.source_segment_index,1);
+    assert.equal(source.start_fraction,source.traversal_end_fraction);
+    assert.equal(source.end_fraction,source.traversal_start_fraction);
+    return [source.traversal_start_fraction,source.traversal_end_fraction,piece.length_m];
+  }).sort((a,b)=>a[0]-b[0]);
+  assert.deepEqual(intervals,[[0.25,0.375,25],[0.375,0.625,50],[0.625,0.75,25]]);
+  assert.equal(pieces.reduce((sum,piece)=>sum+piece.length_m,0),100);
+  assert.equal(result.coverage.perimeter_length_m,400);
+  const northFeature=input.topology.source_features.find(row=>row.name==="North Road").feature_id;
+  assert.equal(input.topology.edges.flatMap(row=>row.source_parts).filter(row=>row.feature_id===northFeature).length,5,
+    "full original source chains include the two outside intervals");
+  assert.ok(result.provenance.feature_ids.every(id=>!input.topology.source_features.find(row=>row.feature_id===id).name.startsWith("External Witness")));
+  noAuthority(result);
+});
+
+test("one continuous source run coalesces text across the stable cyclic seam without merging pieces", () => {
+  const input=fixture("split_north"), result=run(input);
+  assert.equal(result.computation_status,"complete");
+  assert.equal(result.cardinal_summaries.north,"North Road");
+  assert.equal(north(result).length,3);
+  assert.equal(result.exterior_pieces[0].side_assignment,"north");
+  assert.equal(result.exterior_pieces.at(-1).side_assignment,"north");
+  assert.equal(result.exterior_pieces.at(-1).to_node_id,result.exterior_pieces[0].from_node_id);
+  const rows=input.selected_boundary.exterior.segments;
+  rows.push(rows.shift()); rows.push(rows.shift()); rehashPerimeterFixture(input);
+  const rotated=run(input);
+  assert.deepEqual(rotated.exterior_pieces,result.exterior_pieces);
+  assert.deepEqual(rotated.cardinal_summaries,result.cardinal_summaries);
+  assert.notEqual(rotated.input_sha256,result.input_sha256);
+  assert.notEqual(rotated.description_revision,result.description_revision);
+});
+
+test("identical north literals from distinct source features remain distinct at the cyclic seam", () => {
+  const result=run(fixture("split_north_distinct_sources"));
+  assert.equal(result.computation_status,"complete");
+  assert.equal(result.cardinal_summaries.north,"North Road; North Road; North Road");
+  assert.equal(new Set(north(result).flatMap(piece=>piece.source_occurrences.map(source=>source.feature_id))).size,3);
+  assert.equal(north(result).reduce((sum,piece)=>sum+piece.length_m,0),100);
+  noAuthority(result);
 });
 
 test("four sourced metric sides produce exact candidate text and count 400m once", () => {

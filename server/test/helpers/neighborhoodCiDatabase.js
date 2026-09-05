@@ -84,9 +84,10 @@ export async function prepareNeighborhoodCiDatabase(environment = process.env) {
     // Never clone the shared database, retry with broader privileges, or DROP it.
     stage = "creation";
     await admin.query(`CREATE DATABASE "${plan.child.databaseName}" TEMPLATE template0`);
-  } catch {
+  } catch (error) {
     // Driver errors can contain connection details; expose no raw errors/URLs.
-    throw new Error(`Neighborhood isolated CI database ${stage} failed; no shared-database fallback is allowed`);
+    const sqlstate = typeof error?.code === "string" && /^[0-9A-Z]{5}$/.test(error.code) ? ` (SQLSTATE ${error.code})` : "";
+    throw new Error(`Neighborhood isolated CI database ${stage} failed${sqlstate}; no shared-database fallback is allowed`);
   } finally {
     await admin.end().catch(() => { throw new Error("Neighborhood CI bootstrap connection did not close cleanly"); });
   }

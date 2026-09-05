@@ -133,6 +133,7 @@ function errorStatus(error) {
   if (message.startsWith("uad_completion_")) return 400;
   if (message.startsWith("uad_document_") && message.endsWith("_requires_manual_entry")) return 422;
   if (message === "uad_document_candidate_confirmation_required") return 409;
+  if (message.endsWith("_asset_inapplicable")) return 409;
   if (message.startsWith("document_") || message.startsWith("assignment_document_")) return 400;
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;

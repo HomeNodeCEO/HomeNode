@@ -12,6 +12,7 @@ import { buildUadMismoXml } from "./uadXml.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
+import { assertUadAssetsApplicable } from "./assetApplicability.js";
 
 const XML_CONTENT_TYPE = "application/xml";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
@@ -114,6 +115,7 @@ async function loadDeliveryAssets(queryable, workfileId) {
       ORDER BY section_number NULLS LAST, created_at, id`,
     [workfileId],
   );
+  await assertUadAssetsApplicable(queryable, workfileId, result.rows);
   return result.rows;
 }
 

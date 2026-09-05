@@ -17,6 +17,7 @@ import { buildUadValidationInputDigest } from "./validation.js";
 import { inspectUadAssetPayload, inspectUadPdfSafety } from "./uadFileSecurity.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
+import { assertUadAssetsApplicable } from "./assetApplicability.js";
 
 const MANIFEST_CONTENT_TYPE = "application/json";
 const PACKAGE_CONTENT_TYPE = "application/zip";
@@ -64,6 +65,7 @@ async function loadDeliveryAssets(queryable, workfileId) {
       ORDER BY asset.section_number NULLS LAST, asset.created_at, asset.id`,
     [workfileId],
   );
+  await assertUadAssetsApplicable(queryable, workfileId, result.rows);
   return result.rows;
 }
 

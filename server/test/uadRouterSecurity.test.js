@@ -282,6 +282,17 @@ test("completed or unknown delivery attempts return a conflict without exposing 
   });
 });
 
+test("the tenant-owned UAD router never exposes a public account summary", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/api/uad/accounts/SYNTHETIC-ACCOUNT/subject-summary`,
+      { headers: { authorization: "Bearer synthetic-token" } },
+    );
+    assert.equal(response.status, 404);
+  });
+});
+
 test("UAD creation binds the public URL account to authenticated organization scope", async () => {
   const pool = securityPool();
   const creationCalls = [];

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import * as api from '@/lib/api';
 import type {
   GeoJsonPolygon,
@@ -1036,9 +1037,10 @@ export default function MarketConditionsAnalysis({
   onRelevancePocketToggle,
   embedded = false,
 }: Props) {
+  const { session: applicationSession } = useApplicationAuth();
   const savedDraft = useMemo(
-    () => initialDraft || readMarketConditionsDraft(subjectAccountId),
-    [initialDraft, subjectAccountId],
+    () => initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession),
+    [applicationSession, assignmentFileId, initialDraft, subjectAccountId],
   );
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
     savedDraft?.response.subject || null,
@@ -1436,6 +1438,7 @@ export default function MarketConditionsAnalysis({
       const draft: MarketConditionsDraft = {
         version: 3,
         accountId: subjectAccountId,
+        assignmentFileId,
         savedAt: new Date().toISOString(),
         asOfDate,
         periodMonths,
@@ -1451,6 +1454,7 @@ export default function MarketConditionsAnalysis({
   }, [
     analysisResult,
     activeContextOverride,
+    assignmentFileId,
     asOfDate,
     onCompletionChange,
     periodMonths,
@@ -1971,6 +1975,7 @@ export default function MarketConditionsAnalysis({
       const draft: MarketConditionsDraft = {
         version: 3,
         accountId: subjectAccountId,
+        assignmentFileId,
         savedAt: new Date().toISOString(),
         asOfDate,
         periodMonths,
@@ -1983,7 +1988,7 @@ export default function MarketConditionsAnalysis({
       setReconciliation(nextReconciliation);
       setRunSignature(signature);
       if (onCompletionChange) onCompletionChange(draft);
-      else saveMarketConditionsDraft(draft);
+      else saveMarketConditionsDraft(draft, applicationSession);
       setNotice(
         `${response.analyses.length} independent market ${
           response.analyses.length === 1 ? 'study is' : 'studies are'
@@ -2010,6 +2015,7 @@ export default function MarketConditionsAnalysis({
     const draft: MarketConditionsDraft = {
       version: 3,
       accountId: subjectAccountId,
+      assignmentFileId,
       savedAt: new Date().toISOString(),
       asOfDate,
       periodMonths,
@@ -2019,7 +2025,7 @@ export default function MarketConditionsAnalysis({
       reconciliation,
     };
     if (onCompletionChange) onCompletionChange(draft);
-    else saveMarketConditionsDraft(draft);
+    else saveMarketConditionsDraft(draft, applicationSession);
     setNotice('Market conclusion and reconciliation were saved to the appraisal workfile.');
     window.setTimeout(() => setSavingNarrative(false), 350);
   }

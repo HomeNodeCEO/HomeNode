@@ -1,5 +1,5 @@
 import { useLocation } from 'react-router-dom';
-import { lazy, Suspense, useCallback, useEffect, useMemo, useState, useRef } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
 import {
@@ -274,9 +274,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [competitiveReplacementSale, setCompetitiveReplacementSale] =
     useState<SaleRow | null>(null);
   const [marketConditionsDraft, setMarketConditionsDraft] =
-    useState<MarketConditionsDraft | null>(() =>
-      readMarketConditionsDraft(propertyId),
-    );
+    useState<MarketConditionsDraft | null>(null);
   const [editingHousingSale, setEditingHousingSale] = useState<SaleRow | null>(null);
   const [housingEditForm, setHousingEditForm] = useState<HousingEditForm>({
     housingType: '',
@@ -320,17 +318,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const workfileSaveInFlightRef = useRef(false);
   const workfileSaveTimerRef = useRef<number | null>(null);
   const flushWorkfileSaveRef = useRef<() => void>(() => {});
+  const workfileSelectionGenerationRef = useRef(0);
 
   useEffect(() => {
     let cancelled = false;
-    setActiveAssignmentFile(null);
-    setWorkfileDraftToRestore(null);
-    setWorkfileReady(false);
-    setWorkfileCanonicalName('');
-    setWorkfileLocked(false);
-    workfileSectionRevisionRef.current = 0;
-    restoredWorkfileSignatureRef.current = '';
-    pendingWorkfileSaveRef.current = null;
+    const selectionGeneration = workfileSelectionGenerationRef.current;
+    const selectionIsCurrent = () => (
+      !cancelled && workfileSelectionGenerationRef.current === selectionGeneration
+    );
     if (!propertyId) {
       setWorkfileSaveStatus('A property account is required.');
       return () => { cancelled = true; };
@@ -338,26 +333,33 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setWorkfileSaveStatus('Loading appraisal workfile...');
     void loadAssignmentFiles(propertyId)
       .then(async (response) => {
-        if (cancelled) return;
-        const selected = requestedAssignmentFileId
+        if (!selectionIsCurrent()) return;
+        const assignmentFile = requestedAssignmentFileId
           ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
           : response.latest_file;
-        const assignmentFile = selected || response.latest_file || null;
         if (!assignmentFile) {
           setWorkfileSaveStatus('Create an appraisal file on the Property Report before selecting comparables.');
           setWorkfileReady(false);
           return;
         }
-        setActiveAssignmentFile(assignmentFile);
         const result = await loadCustomAppraisalWorkfile(propertyId, assignmentFile.id);
-        if (cancelled) return;
+        if (!selectionIsCurrent()) return;
+        if (
+          result.workfile.assignment_file_id !== assignmentFile.id ||
+          result.account_id.trim().toUpperCase() !== propertyId.trim().toUpperCase()
+        ) {
+          throw new Error('assignment_workfile_identity_mismatch');
+        }
+        setActiveAssignmentFile(assignmentFile);
         const section = result.workfile.sections.sales_comparison;
         const marketSection = result.workfile.sections.market_conditions;
         const serverDraft = section?.value as AppraisalReportSalesDraft | undefined;
-        const legacyDraft = !serverDraft ? readAppraisalReportDraft(propertyId) : null;
+        const legacyDraft = !serverDraft
+          ? readAppraisalReportDraft(propertyId, assignmentFile.id, applicationSession)
+          : null;
         setMarketConditionsDraft(
           (marketSection?.value as MarketConditionsDraft | undefined) ||
-            readMarketConditionsDraft(propertyId),
+            readMarketConditionsDraft(propertyId, assignmentFile.id, applicationSession),
         );
         workfileSectionRevisionRef.current = Number(section?.revision || 0);
         setWorkfileCanonicalName(result.workfile.canonical_file_name);
@@ -372,7 +374,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         );
       })
       .catch((loadError) => {
-        if (!cancelled) {
+        if (selectionIsCurrent()) {
+          setActiveAssignmentFile(null);
+          setWorkfileDraftToRestore(null);
+          setMarketConditionsDraft(null);
+          setWorkfileReady(false);
           setWorkfileSaveStatus(
             loadError instanceof Error
               ? `Workfile could not be loaded: ${loadError.message}`
@@ -381,9 +387,26 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         }
       });
     return () => { cancelled = true; };
-  }, [propertyId, requestedAssignmentFileId]);
+  }, [applicationSession, propertyId, requestedAssignmentFileId]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    workfileSelectionGenerationRef.current += 1;
+    setActiveAssignmentFile(null);
+    setWorkfileDraftToRestore(null);
+    setWorkfileReady(false);
+    setWorkfileCanonicalName('');
+    setWorkfileLocked(false);
+    workfileSectionRevisionRef.current = 0;
+    restoredWorkfileSignatureRef.current = '';
+    pendingWorkfileSaveRef.current = null;
+    if (workfileSaveTimerRef.current !== null) window.clearTimeout(workfileSaveTimerRef.current);
+    workfileSaveTimerRef.current = null;
+    setMarketConditionsDraft(null);
+    setSummary('');
+    setSalesNotes(DEFAULT_SALES_NOTES);
+    setAdjustmentNotes(DEFAULT_ADJUSTMENT_NOTES);
+    setCtcNotes('');
+    setCostToCureItems([createCostToCureLine()]);
     setComparableSearchProfile('');
     setPropertyContextAssessment(null);
     setPropertyContextError(null);
@@ -425,7 +448,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSelectedListings(Array(LISTING_COUNT).fill(null));
     setListingError(null);
     setListingNotice(null);
-  }, [propertyId]);
+  }, [applicationSession, propertyId, requestedAssignmentFileId]);
 
   const appraiserDefinedAdjustmentArea = useMemo<AppraiserDefinedAdjustmentArea | null>(() => {
     const customStudy = marketConditionsDraft?.response.analyses.find(
@@ -498,7 +521,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     appraiserDefinedAdjustmentArea?.geometry,
   ]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const normalizedCondition = normalizeUadConditionRating(conditionCode);
     setSubjectCondition(normalizedCondition);
     setSubjectQuality('');
@@ -506,7 +529,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setDraftSubjectQuality('');
     setCompConditions(Array(COMPARABLE_COUNT).fill(''));
     setCompQualities(Array(COMPARABLE_COUNT).fill(''));
-  }, [conditionCode, propertyId]);
+  }, [conditionCode, propertyId, requestedAssignmentFileId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -2039,6 +2062,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const pending = pendingWorkfileSaveRef.current;
     pendingWorkfileSaveRef.current = null;
     if (!activeAssignmentFile || workfileLocked) return;
+    const saveGeneration = workfileSelectionGenerationRef.current;
+    const saveAssignmentFile = activeAssignmentFile;
+    const selectionIsCurrent = () => workfileSelectionGenerationRef.current === saveGeneration;
+    if (pending.draft.assignmentFileId !== saveAssignmentFile.id) return;
     const editorKey = editorCredentialForRequest();
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
@@ -2046,10 +2073,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       return;
     }
     workfileSaveInFlightRef.current = true;
-    setWorkfileSaveStatus(`Saving ${activeAssignmentFile.file_number}...`);
+    setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
     void api.saveCustomAppraisalWorkfileSection(
       propertyId,
-      activeAssignmentFile.id,
+      saveAssignmentFile.id,
       'sales_comparison',
       {
         value: pending.draft,
@@ -2059,12 +2086,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       },
       editorKey,
     ).then((response) => {
+      if (!selectionIsCurrent()) return;
       workfileSectionRevisionRef.current = response.section.revision;
-      removeAppraisalReportDraft(propertyId);
+      removeAppraisalReportDraft(propertyId, saveAssignmentFile.id, applicationSession);
       setWorkfileSaveStatus(
-        `Saved to ${workfileCanonicalName || activeAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
+        `Saved to ${workfileCanonicalName || saveAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
       );
     }).catch((saveError) => {
+      if (!selectionIsCurrent()) return;
       const message = saveError instanceof Error ? saveError.message : String(saveError);
       if (/custom_appraisal_workfile_signed/i.test(message)) {
         setWorkfileLocked(true);
@@ -2073,7 +2102,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }
       if (/custom_appraisal_section_revision_conflict/i.test(message)) {
         pendingWorkfileSaveRef.current = pending;
-        void loadCustomAppraisalWorkfile(propertyId, activeAssignmentFile.id)
+        void loadCustomAppraisalWorkfile(propertyId, saveAssignmentFile.id)
           .then((result) => {
             workfileSectionRevisionRef.current = Number(
               result.workfile.sections.sales_comparison?.revision || 0,

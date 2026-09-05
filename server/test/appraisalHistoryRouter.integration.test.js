@@ -29,16 +29,17 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options, auth = identity) {
+async function startRouter(options, auth = identity, mountAfterRouter = null) {
   const app = express();
   app.use(express.json({ limit: "1mb" }));
   if (auth) {
     app.use((req, _res, next) => {
-      req.mobileAuth = auth;
+      req.mobileAuth = typeof auth === "function" ? auth() : auth;
       next();
     });
   }
   app.use(createAppraisalHistoryRouter(options));
+  if (mountAfterRouter) mountAfterRouter(app);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
     listener.once("error", reject);
@@ -85,16 +86,19 @@ test("appraisal-history gates preserve their original validation order", async (
 
   const deniedList = await fetch(`${denied.baseUrl}/api/accounts/123/appraisal-history`);
   assert.equal(deniedList.status, 403);
+  assert.equal(deniedList.headers.get("cache-control"), "no-store");
   assert.deepEqual(await deniedList.json(), { error: "workflow_access_denied" });
 
   const invalidCompletion = await fetch(
     `${accepted.baseUrl}/api/accounts/bad%20id/appraisal-history/file-1/completion`,
   );
   assert.equal(invalidCompletion.status, 400);
+  assert.equal(invalidCompletion.headers.get("cache-control"), "no-store");
   assert.deepEqual(await invalidCompletion.json(), { error: "invalid_account_id" });
 
   const invalidReplication = await replicate(accepted.baseUrl, "bad%20id", "file-1");
   assert.equal(invalidReplication.status, 400);
+  assert.equal(invalidReplication.headers.get("cache-control"), "no-store");
   assert.deepEqual(await invalidReplication.json(), { error: "invalid_account_id" });
   assert.equal(workflowCalls, 2);
   assert.equal(editorCalls, 0);
@@ -131,6 +135,7 @@ test("enforced history listing scopes results after schema readiness", async (co
 
   const response = await fetch(`${server.baseUrl}/api/accounts/legacy_1/appraisal-history`);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), history);
   assert.deepEqual(calls.map(({ type }) => type), ["resolve", "schema", "scope", "list"]);
   assert.equal(calls[0].pool, options.pool);
@@ -160,6 +165,7 @@ test("rollout history remains scoped and fails closed when schema is unavailable
 
   const rolloutResponse = await fetch(`${rollout.baseUrl}/api/accounts/123/appraisal-history`);
   assert.equal(rolloutResponse.status, 200);
+  assert.equal(rolloutResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await rolloutResponse.json(), { files: [] });
   assert.equal(scopeCalls, 1);
 
@@ -167,6 +173,7 @@ test("rollout history remains scoped and fails closed when schema is unavailable
     `${unavailable.baseUrl}/api/accounts/123/appraisal-history`,
   );
   assert.equal(unavailableResponse.status, 503);
+  assert.equal(unavailableResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await unavailableResponse.json(), {
     error: "appraisal_history_schema_unavailable",
   });
@@ -198,6 +205,7 @@ test("completion authorization precedes immutable snapshot loading in enforced m
     `${server.baseUrl}/api/accounts/legacy_1/appraisal-history/file-1/completion`,
   );
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { ok: true, account_id: "CANONICAL_1", completion });
   assert.deepEqual(calls.map(({ type }) => type), ["authorize", "load"]);
   assert.equal(calls[0].pool, options.pool);
@@ -241,6 +249,7 @@ test("completion failures retain denial, conflict, and diagnostic-safe responses
       `${server.baseUrl}/api/accounts/123/appraisal-history/${reportFileId}/completion`,
     );
     assert.equal(response.status, status);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     const body = await response.json();
     assert.deepEqual(body, { error });
     assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
@@ -277,6 +286,7 @@ test("enforced replication binds source access, target permission, actor, and or
   };
   const response = await replicate(server.baseUrl, "legacy_1", "source-file", body);
   assert.equal(response.status, 201);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { ok: true, ...result });
   assert.deepEqual(calls.map(({ type }) => type), ["authorize", "permission", "replicate"]);
   assert.deepEqual(calls[0].input, {
@@ -315,6 +325,7 @@ test("replication denies unauthorized target workflows before creating a report"
     target_workflow_type: "custom_appraisal",
   });
   assert.equal(response.status, 403);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { error: "appraisal_replication_access_denied" });
   assert.equal(replicationCalls, 0);
 });
@@ -340,6 +351,7 @@ test("rollout replication preserves authenticated ownership and status semantics
 
   const success = await replicate(server.baseUrl, "123", "source", { mode: "new_assignment_template" });
   assert.equal(success.status, 201);
+  assert.equal(success.headers.get("cache-control"), "no-store");
   assert.deepEqual(await success.json(), { ok: true, report_file_id: "new-file" });
   assert.deepEqual(replicationCalls[0].input, {
     accountId: "123",
@@ -357,11 +369,97 @@ test("rollout replication preserves authenticated ownership and status semantics
   ]) {
     const response = await replicate(server.baseUrl, "123", reportFileId);
     assert.equal(response.status, status);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     const responseBody = await response.json();
     assert.deepEqual(responseBody, { error });
     assert.doesNotMatch(JSON.stringify(responseBody), /password|secret/);
   }
   assert.equal(errors.length, 1);
+});
+
+test("history conditional requests reauthorize GET and HEAD after access loss or logout", async (context) => {
+  let currentAuth = identity;
+  let workflowAllowed = true;
+  let reportAllowed = true;
+  let listCalls = 0;
+  let completionCalls = 0;
+  let authorizationCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireWorkflowAccess(req, res) {
+      if (!req.mobileAuth) {
+        res.status(401).json({ error: "authentication_required" });
+        return false;
+      }
+      if (!workflowAllowed) {
+        res.status(403).json({ error: "application_access_denied" });
+        return false;
+      }
+      return true;
+    },
+    listHistory: async () => {
+      listCalls += 1;
+      return { account_id: "123", files: [{ id: "file-1" }] };
+    },
+    authorizeReportFile: async () => {
+      authorizationCalls += 1;
+      if (!reportAllowed) throw new Error("appraisal_report_file_access_denied");
+      return { organization_id: "org-1" };
+    },
+    loadCompletion: async () => {
+      completionCalls += 1;
+      return { adapter_version: "1", subject: { account_id: "123" } };
+    },
+  }), () => currentAuth, (app) => {
+    app.get("/api/accounts/:id/appraisal-history-public", (_req, res) => {
+      res.json({ ok: true });
+    });
+  });
+  context.after(server.close);
+
+  const listUrl = `${server.baseUrl}/api/accounts/123/appraisal-history`;
+  const completionUrl = `${listUrl}/file-1/completion`;
+  for (const [url, deny] of [
+    [listUrl, () => { workflowAllowed = false; }],
+    [completionUrl, () => { reportAllowed = false; }],
+  ]) {
+    workflowAllowed = true;
+    reportAllowed = true;
+    currentAuth = identity;
+    const allowed = await fetch(url);
+    assert.equal(allowed.status, 200);
+    assert.equal(allowed.headers.get("cache-control"), "no-store");
+    const etag = allowed.headers.get("etag");
+    assert.ok(etag);
+    await allowed.arrayBuffer();
+
+    const head = await fetch(url, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("cache-control"), "no-store");
+    assert.equal(await head.text(), "");
+    const callsBeforeDenial = { listCalls, completionCalls };
+
+    deny();
+    for (const method of ["GET", "HEAD"]) {
+      const denied = await fetch(url, { method, headers: { "if-none-match": etag } });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("cache-control"), "no-store");
+      await denied.arrayBuffer();
+    }
+    assert.deepEqual({ listCalls, completionCalls }, callsBeforeDenial);
+
+    currentAuth = null;
+    const anonymous = await fetch(url, { headers: { "if-none-match": etag } });
+    assert.equal(anonymous.status, 401);
+    assert.equal(anonymous.headers.get("cache-control"), "no-store");
+    await anonymous.arrayBuffer();
+    assert.deepEqual({ listCalls, completionCalls }, callsBeforeDenial);
+  }
+  assert.equal(authorizationCalls, 4, "completion GET/HEAD and both denied conditional requests reauthorize");
+
+  const unrelated = await fetch(`${server.baseUrl}/api/accounts/123/appraisal-history-public`);
+  assert.equal(unrelated.status, 200);
+  assert.equal(unrelated.headers.get("cache-control"), null);
+  assert.deepEqual(await unrelated.json(), { ok: true });
 });
 
 test("appraisal-history composition and route position remain explicit", () => {

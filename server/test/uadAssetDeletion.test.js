@@ -13,6 +13,9 @@ function deletionPool() {
     async query(sql) {
       const statement = String(sql).trim();
       queries.push(statement);
+      if (statement.startsWith("SELECT id, status")) {
+        return { rows: [{ id: WORKFILE_ID, status: "draft" }] };
+      }
       if (statement.startsWith("SELECT id, object_key")) {
         return { rows: [{ id: ASSET_ID, object_key: OBJECT_KEY }] };
       }

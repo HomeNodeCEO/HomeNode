@@ -5,6 +5,7 @@ import {
   UAD_SUBJECT_AMENITY_CATEGORIES,
   UAD_SUBJECT_AMENITY_CATEGORY_LIMITS,
 } from "./subjectPropertyAmenitiesCatalog.js";
+import { assertUadWorkfileMutable } from "./workfileLifecycle.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_REPEATABLE_ENTITY_GROUPS));
@@ -47,10 +48,11 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
   const entityType = normalizeEntityType(input.entity_type);
   const id = randomUUID();
   const locked = await client.query(
-      `SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE`,
+      `SELECT id, status FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE`,
       [workfileId],
   );
   if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+  assertUadWorkfileMutable(locked.rows[0].status);
   const group = UAD_REPEATABLE_ENTITY_GROUPS[entityType];
   let entityData = { ...(input.data || {}) };
   if (["amenity", "sales_comparable_amenity"].includes(entityType)) {
@@ -195,6 +197,12 @@ export async function createUadEntity(pool, workfileIdValue, input = {}) {
 export async function deleteUadEntityWithClient(client, workfileIdValue, entityIdValue, { actorUserId = null } = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const entityId = normalizeUadWorkfileId(entityIdValue);
+  const locked = await client.query(
+    `SELECT id, status FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE`,
+    [workfileId],
+  );
+  if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+  assertUadWorkfileMutable(locked.rows[0].status);
   const selected = await client.query(
       `SELECT * FROM appraisal.uad_entities
         WHERE id = $1 AND workfile_id = $2

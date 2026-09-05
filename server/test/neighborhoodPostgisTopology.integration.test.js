@@ -1,5 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
+import { execFileSync } from 'node:child_process';
+import { readFileSync, statSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import { isProxy } from 'node:util/types';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 import { METRIC_TOPOLOGY_FIXTURES, TOPOLOGY_FIXTURE_ORIGIN, TOPOLOGY_AREA_TOLERANCE_M2,
@@ -16,6 +21,144 @@ const CROSSING_NODE_ORACLE = Object.freeze([
 ].map(Object.freeze));
 const DIAGNOSTIC_FIXTURES = new Set(['closedRing', 'bowtie', 'retraced']);
 const DIAGNOSTIC_BYTES = 10000;
+const NATIVE_REPLAY_PREFIX = 'HOMENODE_NATIVE_TOPOLOGY_REPLAY_V1 ';
+const NATIVE_REPLAY_BYTES = 128000;
+const CLOSED_RING_ASSERTION = 'closedRing: source retains exact occurrence-specific primitive segment provenance';
+const REPLAY_REPO = fileURLToPath(new URL('../../', import.meta.url));
+const REPLAY_FILES = Object.freeze([
+  'server/src/services/neighborhoodAssessment/postgisTopology.js',
+  'server/src/services/neighborhoodAssessment/graphPreparation.js',
+  'server/src/services/neighborhoodAssessment/contract.js',
+  'server/test/neighborhoodPostgisTopology.integration.test.js',
+  'server/test/fixtures/neighborhoodPostgisTopologyFixture.js',
+  'server/test/helpers/neighborhoodCiDatabase.js',
+]);
+const replayHash = bytes => createHash('sha256').update(bytes).digest('hex');
+const replayFailure = code => { throw new Error(`native_topology_replay_${code}`); };
+
+// Complete, bounded transport is separate from the intentionally truncating
+// failure diagnostic below. No result field, coordinate or source is projected
+// away. The producer manifest remains an independent integrity requirement.
+function replayJson(value) {
+  let work = 0; let nodes = 0;
+  const ancestors = new Set();
+  const visit = (item, depth) => {
+    if (++nodes > 20000 || depth > 64) replayFailure('json_work_limit');
+    if (item === null || typeof item === 'boolean') { work += 8; }
+    else if (typeof item === 'string') { work += Buffer.byteLength(item, 'utf8'); }
+    else if (typeof item === 'number') {
+      if (!Number.isFinite(item) || Object.is(item, -0)) replayFailure('unsupported_number');
+      work += 8;
+    } else if (typeof item === 'object') {
+      if (isProxy(item) || ancestors.has(item)) replayFailure('unsupported_object');
+      const array = Array.isArray(item);
+      if (Object.getPrototypeOf(item) !== (array ? Array.prototype : Object.prototype)
+        || 'toJSON' in item) replayFailure('unsupported_object');
+      const keys = Reflect.ownKeys(item);
+      if (keys.length > 20000 - nodes || (array && (item.length > 20000 || keys.length !== item.length + 1)))
+        replayFailure('json_work_limit');
+      ancestors.add(item);
+      for (const key of keys) {
+        if (array && key === 'length') continue;
+        if (typeof key !== 'string' || (array && (!/^(?:0|[1-9][0-9]*)$/.test(key)
+          || Number(key) >= item.length))) replayFailure('unsupported_key');
+        const descriptor = Object.getOwnPropertyDescriptor(item, key);
+        if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) replayFailure('unsupported_property');
+        work += Buffer.byteLength(key, 'utf8');
+        if (work > NATIVE_REPLAY_BYTES) replayFailure('byte_limit');
+        visit(descriptor.value, depth + 1);
+      }
+      ancestors.delete(item);
+    } else replayFailure('unsupported_json');
+    if (work > NATIVE_REPLAY_BYTES) replayFailure('byte_limit');
+  };
+  try {
+    // Validate descriptors before JSON.stringify can call toJSON/getters or
+    // omit symbols, hidden keys, sparse slots and extra array properties.
+    visit(value, 0);
+    const encoded = JSON.stringify(value);
+    if (typeof encoded !== 'string' || Buffer.byteLength(encoded, 'utf8') > NATIVE_REPLAY_BYTES) replayFailure('byte_limit');
+    return encoded;
+  } catch { replayFailure('invalid_or_oversized_json'); }
+}
+
+function encodeNativeReplay(payload, maximum = NATIVE_REPLAY_BYTES) {
+  if (!Number.isSafeInteger(maximum) || maximum < 1 || maximum > NATIVE_REPLAY_BYTES) replayFailure('invalid_limit');
+  const payloadJson = replayJson(payload);
+  const transport = { transport_version: 1, payload_utf8_bytes: Buffer.byteLength(payloadJson, 'utf8'),
+    payload_sha256: replayHash(Buffer.from(payloadJson, 'utf8')), payload_json: payloadJson };
+  const line = NATIVE_REPLAY_PREFIX + JSON.stringify(transport);
+  if (Buffer.byteLength(line, 'utf8') > maximum || /[\r\n]/.test(line)) replayFailure('byte_limit');
+  return line;
+}
+
+function decodeNativeReplay(line, maximum = NATIVE_REPLAY_BYTES) {
+  try {
+    if (typeof line !== 'string' || !Number.isSafeInteger(maximum) || maximum < 1 || maximum > NATIVE_REPLAY_BYTES
+      || Buffer.byteLength(line, 'utf8') > maximum || !line.startsWith(NATIVE_REPLAY_PREFIX) || /[\r\n]/.test(line)) replayFailure('invalid_transport');
+    const transport = JSON.parse(line.slice(NATIVE_REPLAY_PREFIX.length));
+    if (JSON.stringify(Object.keys(transport).sort()) !== JSON.stringify(
+      ['payload_json', 'payload_sha256', 'payload_utf8_bytes', 'transport_version']) || transport.transport_version !== 1
+      || typeof transport.payload_json !== 'string' || !Number.isSafeInteger(transport.payload_utf8_bytes)
+      || transport.payload_utf8_bytes < 1 || !/^[a-f0-9]{64}$/.test(transport.payload_sha256)
+      || Buffer.byteLength(transport.payload_json, 'utf8') !== transport.payload_utf8_bytes
+      || replayHash(Buffer.from(transport.payload_json, 'utf8')) !== transport.payload_sha256) replayFailure('transport_integrity');
+    const payload = JSON.parse(transport.payload_json);
+    if (replayJson(payload) !== transport.payload_json
+      || NATIVE_REPLAY_PREFIX + JSON.stringify(transport) !== line) replayFailure('ambiguous_transport');
+    return { payload, payload_json: transport.payload_json,
+      payload_utf8_bytes: transport.payload_utf8_bytes, payload_sha256: transport.payload_sha256 };
+  } catch { replayFailure('invalid_transport'); }
+}
+
+function replayCiMetadata(env) {
+  if (env.GITHUB_ACTIONS !== 'true' || !/^[1-9][0-9]{0,19}$/.test(env.GITHUB_RUN_ID ?? '')
+    || !/^[1-9][0-9]{0,5}$/.test(env.GITHUB_RUN_ATTEMPT ?? '')
+    || !/^[A-Za-z_][A-Za-z0-9_-]{0,99}$/.test(env.GITHUB_JOB ?? '')
+    || !/^[a-f0-9]{40}$/.test(env.GITHUB_SHA ?? '')
+    || !/^refs\/(?:heads|tags|pull)\/[A-Za-z0-9_./-]{1,180}$/.test(env.GITHUB_REF ?? '')) replayFailure('ci_identity_unavailable');
+  // GITHUB_SHA/ref are event claims, not the executing checkout or PR head.
+  // No event-file/network lookup is added merely to fill the unavailable IDs.
+  return { provider: 'github_actions', run_id: env.GITHUB_RUN_ID, run_attempt: env.GITHUB_RUN_ATTEMPT,
+    job_key: env.GITHUB_JOB, numeric_job_id: null, declared_sha: env.GITHUB_SHA, declared_ref: env.GITHUB_REF,
+    pull_request_source_sha: null, pull_request_source_status: 'unresolved_in_test' };
+}
+
+function nativeReplayIdentity() {
+  try {
+    const options = { cwd: REPLAY_REPO, timeout: 3000, windowsHide: true, stdio: ['ignore', 'pipe', 'pipe'] };
+    const checkout = execFileSync('git', ['rev-parse', '--verify', 'HEAD'], { ...options, encoding: 'utf8', maxBuffer: 2048 }).trim();
+    if (!/^[a-f0-9]{40}$/.test(checkout)) replayFailure('checkout_identity_unavailable');
+    const files = REPLAY_FILES.map(path => {
+      const url = new URL(`../../${path}`, import.meta.url);
+      const stat = statSync(url);
+      if (!stat.isFile() || stat.size < 1 || stat.size > 1000000) replayFailure('file_identity_unavailable');
+      const raw = readFileSync(url);
+      const committed = execFileSync('git', ['show', `${checkout}:${path}`], { ...options, maxBuffer: 1000001 });
+      if (raw.length !== stat.size || !raw.equals(committed)) replayFailure('dirty_checkout');
+      return { path, raw_file_bytes: raw.length, raw_file_sha256: replayHash(raw) };
+    });
+    const ci = replayCiMetadata(process.env);
+    return { executing_checkout_sha: checkout, fixed_files_match_checkout: true, files,
+      node_version: process.version, ci, checkout_matches_declared_ci_sha: checkout === ci.declared_sha };
+  } catch { replayFailure('execution_identity_unavailable_or_dirty'); }
+}
+
+function nativeReplayPayload(pairJson, identity, { poolCleanupCompleted, emittedAt }) {
+  if (pairJson === null) return null;
+  if (poolCleanupCompleted !== true || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(emittedAt)
+    || !Number.isFinite(Date.parse(emittedAt)) || new Date(emittedAt).toISOString() !== emittedAt) replayFailure('emission_not_ready');
+  const pair = JSON.parse(pairJson);
+  if (pair.input?.capture?.id !== 'synthetic-topology-closedRing' || pair.result?.status !== 'ready'
+    || pair.result.topology_validated !== true) replayFailure('fixture_not_ready');
+  return { artifact_version: 1, synthetic_only: true, fixture: 'closedRing', artifact_status: 'candidate',
+    native_fixture_assertion: CLOSED_RING_ASSERTION, chosen_fixture_assertions: 'passed', pool_cleanup: 'completed',
+    whole_ci_outcome: 'unverified_at_emission',
+    acceptance_requires: 'external_exact_run_source_and_all_required_ci_checks_success_verification',
+    source_capture_time: pair.input.capture.acquired_at, artifact_emitted_at: emittedAt,
+    execution: identity, input: pair.input, result: pair.result };
+}
+
 const boundedFixtureDiagnostic = (name, summary, rows) => {
   assert.ok(DIAGNOSTIC_FIXTURES.has(name));
   const result = { fixture: name, synthetic_only: true, summary, candidate_rows: [], truncated: false,
@@ -142,6 +285,117 @@ test('fixture-only: synthetic failure diagnostics are valid JSON and never excee
   assert.throws(() => boundedFixtureDiagnostic('arbitrary-source', {}, []));
 });
 
+test('fixture-only: native replay transport preserves complete JSON and hashes exact decoded UTF-8 bytes', () => {
+  const payload = { synthetic_only: true, labels: ['Gold 🟨', 'Purple 紫', 'quote " and newline\n'],
+    input: { aliases: [], feature: { geometry: { coordinates: [[-96.87071554936115, 32.51932766595792]] } } },
+    result: { source_parts: [{ start_fraction: 0, end_fraction: 0.5000000000090221 }],
+      geometry_ewkb: '01010000202269000004000000245d25410000000059774b41', unknown: null, count: 0 } };
+  const original = structuredClone(payload);
+  const line = encodeNativeReplay(payload); const decoded = decodeNativeReplay(line);
+  assert.deepEqual(payload, original); assert.deepEqual(decoded.payload, original);
+  assert.equal(decoded.payload_json, JSON.stringify(original));
+  assert.equal(decoded.payload_utf8_bytes, Buffer.byteLength(decoded.payload_json, 'utf8'));
+  assert.notEqual(decoded.payload_utf8_bytes, decoded.payload_json.length, 'Unicode must be measured in bytes, not characters');
+  assert.equal(decoded.payload_sha256, replayHash(Buffer.from(JSON.stringify(original), 'utf8')));
+  assert.equal(/[\r\n]/.test(line), false);
+  assert.notEqual(replayHash(Buffer.from('raw\nbytes')), replayHash(Buffer.from('raw\r\nbytes')), 'raw hashes do not normalize file endings');
+});
+
+test('fixture-only: native replay caps the entire transport and never returns a truncated prefix', () => {
+  const payload = { fixture: 'closedRing', value: 'gold-purple' };
+  const line = encodeNativeReplay(payload); const exactBytes = Buffer.byteLength(line, 'utf8');
+  assert.equal(encodeNativeReplay(payload, exactBytes), line);
+  assert.deepEqual(decodeNativeReplay(line, exactBytes).payload, payload);
+  assert.throws(() => encodeNativeReplay(payload, exactBytes - 1), /native_topology_replay_byte_limit/);
+  assert.throws(() => decodeNativeReplay(line, exactBytes - 1), /native_topology_replay_invalid_transport/);
+  assert.throws(() => encodeNativeReplay({ value: '\\'.repeat(NATIVE_REPLAY_BYTES) }), /native_topology_replay_/);
+  assert.throws(() => encodeNativeReplay({ value: 'x'.repeat(NATIVE_REPLAY_BYTES + 1) }), /native_topology_replay_/);
+  assert.throws(() => encodeNativeReplay({ missing: undefined }), /native_topology_replay_/);
+  assert.throws(() => encodeNativeReplay({ impossible: Infinity }), /native_topology_replay_/);
+});
+
+test('fixture-only: native replay refuses JSON transformations and omissions before invoking user code', () => {
+  let invoked = 0;
+  const accessor = Object.defineProperty({}, 'value', { enumerable: true, get() { invoked += 1; return 'lost'; } });
+  const hidden = Object.defineProperty({ retained: true }, 'lost', { value: 'hidden', enumerable: false });
+  const extraArray = [1]; extraArray.lost = 'extra';
+  const cycle = {}; cycle.self = cycle;
+  const custom = { toJSON() { invoked += 1; return { changed: true }; } };
+  const proxy = new Proxy({}, { ownKeys() { invoked += 1; return []; } });
+  for (const value of [new Date('2026-09-05T00:00:00.000Z'), new Map([['lost', 1]]), new Set([1]),
+    new Number(1), Object.create({ inherited: true }), Object.create(null), custom, proxy,
+    accessor, hidden, { [Symbol('lost')]: 1 }, extraArray, Array(1), cycle,
+    { value: -0 }, { value: undefined }, { value: 1n }, { value: NaN }, { value() {} }]) {
+    assert.throws(() => encodeNativeReplay(value), /native_topology_replay_invalid_or_oversized_json/);
+  }
+  assert.equal(invoked, 0, 'no toJSON, getter or proxy hook executes during validation');
+  const deep = {}; let cursor = deep;
+  for (let depth = 0; depth < 65; depth += 1) { cursor.child = {}; cursor = cursor.child; }
+  assert.throws(() => encodeNativeReplay(deep), /native_topology_replay_invalid_or_oversized_json/);
+  assert.throws(() => encodeNativeReplay(Array(20001).fill(0)), /native_topology_replay_invalid_or_oversized_json/);
+  const shared = { value: 1 };
+  assert.deepEqual(decodeNativeReplay(encodeNativeReplay({ a: shared, b: shared })).payload,
+    { a: { value: 1 }, b: { value: 1 } }, 'JSON values are preserved; shared object identity is not a JSON field');
+});
+
+test('fixture-only: native replay rejects modified, incomplete and mismatched transport bytes', () => {
+  const line = encodeNativeReplay({ fixture: 'closedRing', exact: ['all', 'rows'] });
+  const transport = JSON.parse(line.slice(NATIVE_REPLAY_PREFIX.length));
+  for (const changed of [
+    { ...transport, payload_json: transport.payload_json.replace('all', 'bad') },
+    { ...transport, payload_utf8_bytes: transport.payload_utf8_bytes + 1 },
+    { ...transport, payload_sha256: '0'.repeat(64) },
+    { ...transport, unrequested_metadata: 'not accepted' },
+  ]) assert.throws(() => decodeNativeReplay(NATIVE_REPLAY_PREFIX + JSON.stringify(changed)), /native_topology_replay_invalid_transport/);
+  assert.throws(() => decodeNativeReplay(line.slice(0, -1)), /native_topology_replay_invalid_transport/);
+  assert.throws(() => decodeNativeReplay(line + '\n'), /native_topology_replay_invalid_transport/);
+  for (const payloadJson of ['{"duplicate":1,"duplicate":2}', '{"number":1e999}', '{"number":-0}',
+    '{"number":1.0}', '{ "space": true }']) {
+    const ambiguous = { transport_version: 1, payload_utf8_bytes: Buffer.byteLength(payloadJson, 'utf8'),
+      payload_sha256: replayHash(Buffer.from(payloadJson, 'utf8')), payload_json: payloadJson };
+    assert.throws(() => decodeNativeReplay(NATIVE_REPLAY_PREFIX + JSON.stringify(ambiguous)), /native_topology_replay_invalid_transport/);
+  }
+  assert.throws(() => decodeNativeReplay(line.replace('{"transport_version":', '{ "transport_version":')),
+    /native_topology_replay_invalid_transport/);
+});
+
+test('fixture-only: native replay CI metadata is allowlisted and never identifies a PR source from an event SHA', () => {
+  const env = { GITHUB_ACTIONS: 'true', GITHUB_RUN_ID: '123456789', GITHUB_RUN_ATTEMPT: '2',
+    GITHUB_JOB: 'uad-migration', GITHUB_SHA: 'b'.repeat(40), GITHUB_REF: 'refs/pull/999/merge',
+    DATABASE_URL: 'must-not-be-exported', UNRELATED_SECRET: 'must-not-be-exported' };
+  const ci = replayCiMetadata(env);
+  assert.equal(ci.declared_sha, 'b'.repeat(40)); assert.equal(ci.declared_ref, 'refs/pull/999/merge');
+  assert.equal(ci.pull_request_source_sha, null); assert.equal(ci.pull_request_source_status, 'unresolved_in_test');
+  assert.equal(ci.numeric_job_id, null); assert.equal(Object.hasOwn(ci, 'executing_checkout_sha'), false);
+  assert.equal(JSON.stringify(ci).includes('must-not-be-exported'), false);
+  for (const key of ['GITHUB_ACTIONS', 'GITHUB_RUN_ID', 'GITHUB_RUN_ATTEMPT', 'GITHUB_JOB', 'GITHUB_SHA', 'GITHUB_REF']) {
+    const missing = { ...env }; delete missing[key];
+    assert.throws(() => replayCiMetadata(missing), /native_topology_replay_ci_identity_unavailable/);
+    assert.throws(() => replayCiMetadata({ ...env, [key]: 'malformed\nmetadata' }), /native_topology_replay_ci_identity_unavailable/);
+  }
+});
+
+test('fixture-only: native replay requires retained successful fixture and completed cleanup, without claiming whole-CI acceptance', () => {
+  const pair = { input: { capture: { id: 'synthetic-topology-closedRing', acquired_at: '2026-09-05T00:00:00.000Z' },
+    preserved_field: ['no', 'projection'] }, result: { status: 'ready', topology_validated: true, all_fields: { value: 0 } } };
+  const pairJson = replayJson(pair);
+  const identity = { executing_checkout_sha: 'a'.repeat(40), ci: { declared_sha: 'b'.repeat(40), pull_request_source_sha: null } };
+  const gate = { poolCleanupCompleted: true, emittedAt: '2026-09-06T01:02:03.000Z' };
+  assert.equal(nativeReplayPayload(null, identity, gate), null, 'a failed/unreached chosen fixture has no artifact');
+  assert.throws(() => nativeReplayPayload(pairJson, identity, { ...gate, poolCleanupCompleted: false }), /native_topology_replay_emission_not_ready/);
+  for (const emittedAt of ['2026-99-05T00:00:00.000Z', '2026-02-31T00:00:00.000Z', 'missing'])
+    assert.throws(() => nativeReplayPayload(pairJson, identity, { ...gate, emittedAt }), /native_topology_replay_emission_not_ready/);
+  assert.throws(() => nativeReplayPayload(replayJson({ ...pair, result: { status: 'incomplete' } }), identity, gate), /native_topology_replay_fixture_not_ready/);
+  const payload = nativeReplayPayload(pairJson, identity, gate);
+  assert.deepEqual(payload.input, pair.input); assert.deepEqual(payload.result, pair.result);
+  assert.equal(payload.source_capture_time, pair.input.capture.acquired_at); assert.equal(payload.artifact_emitted_at, gate.emittedAt);
+  assert.equal(payload.artifact_status, 'candidate'); assert.equal(payload.whole_ci_outcome, 'unverified_at_emission');
+  assert.equal(payload.acceptance_requires, 'external_exact_run_source_and_all_required_ci_checks_success_verification');
+  assert.equal(payload.native_fixture_assertion, CLOSED_RING_ASSERTION);
+  assert.notEqual(payload.execution.executing_checkout_sha, payload.execution.ci.declared_sha);
+  assert.equal(payload.execution.ci.pull_request_source_sha, null);
+});
+
 test('fixture-only: dense primitive intersections exceed safe noding work despite a small source capture', () => {
   const fixture = METRIC_TOPOLOGY_FIXTURES.denseCrossing;
   const horizontal = fixture.lines.filter(row => row.coordinates[0][1] === row.coordinates[1][1]);
@@ -184,6 +438,8 @@ test('fixture-only: projection output must be valid line coordinates inside the 
 test('PostGIS topology: independent source linework, real noding, exact enclosure and fail-closed limits', {
   skip: !process.env.DATABASE_URL, timeout: 360000,
 }, async t => {
+  const artifactIdentity = nativeReplayIdentity();
+  let retainedNativeReplay = null;
   // Accepted guard must create and prepare a unique ephemeral CI child before
   // importing pg or opening any direct test connection. No local/shared fallback,
   // DROP, production source tables, or provider calls are permitted here.
@@ -767,6 +1023,12 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
             return segments.includes(1) && segments.includes(5);
           }), 'both occurrences of the same source segment must survive');
         }
+        if (name === 'closedRing') {
+          assert.equal(retainedNativeReplay, null, 'capture at most the one chosen native fixture');
+          // Reached only after the existing ready/source-chain/metric assertions.
+          // Store the complete supplied input and untouched result, not summaries.
+          retainedNativeReplay = replayJson({ input, result });
+        }
       });
     }
     await t.test('planar crossings do not grant cross-level travel or geographic inclusion authority', async () => {
@@ -805,4 +1067,15 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       }
     });
   } finally { await pool.end(); }
+  // A rejected pool.end or uncaught native failure cannot reach this emission.
+  // Child tests and later workflow stages can still fail: this is a candidate,
+  // never proof that the parent test or complete CI job passed.
+  if (retainedNativeReplay !== null) {
+    if (JSON.stringify(nativeReplayIdentity()) !== JSON.stringify(artifactIdentity)) replayFailure('execution_identity_changed');
+    const payload = nativeReplayPayload(retainedNativeReplay, artifactIdentity,
+      { poolCleanupCompleted: true, emittedAt: new Date().toISOString() });
+    const line = encodeNativeReplay(payload);
+    assert.deepEqual(decodeNativeReplay(line).payload, payload, 'verify transport before its single emission');
+    t.diagnostic(line);
+  }
 });

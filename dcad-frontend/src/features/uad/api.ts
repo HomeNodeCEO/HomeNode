@@ -135,17 +135,6 @@ export interface UadWorkfile {
   updated_at: string;
 }
 
-export interface UadSubjectSummary {
-  account_id: string;
-  address: string | null;
-  city: string | null;
-  postal_code: string | null;
-  county: string | null;
-  neighborhood_code: string | null;
-  subdivision: string | null;
-  legal_description: string | null;
-}
-
 export type UadSectionKey = "assignment" | "subject" | "site" | "disaster_mitigation" | "energy_green" | "sketch" | "dwelling_exterior" | "manufactured_home" | "unit_interior" | "functional_obsolescence" | "outbuilding" | "vehicle_storage" | "subject_property_amenities" | "overall_quality_condition" | "highest_best_use" | "market" | "project_information" | "subject_listing_information" | "sales_contract" | "prior_sale_transfer_history" | "sales_comparison" | "reconciliation" | "certifications";
 export type UadMeasurement = { amount: number | null; unit: string };
 export type UadFieldValue = string | number | boolean | string[] | UadMeasurement | null;
@@ -288,13 +277,6 @@ export interface UadSketch {
 
 export async function getUadCapabilities(): Promise<UadCapabilities> {
   return uadFetchJSON<UadCapabilities>(makeUrl("/api/uad/capabilities"), { timeoutMs: 10_000 });
-}
-
-export async function getUadSubjectSummary(accountId: string): Promise<UadSubjectSummary> {
-  const response = await uadFetchJSON<{ subject: UadSubjectSummary }>(
-    makeUrl(`/api/public-cadastral/accounts/${encodeURIComponent(accountId)}/subject-summary`),
-  );
-  return response.subject;
 }
 
 export async function listUadWorkfiles(accountId: string): Promise<UadWorkfile[]> {

@@ -36,7 +36,6 @@ import { createSignupRouter } from "./modules/signup/router.js";
 import { createAppraisalRatingsRouter } from "./modules/appraisalRatings/router.js";
 import { createSaleReviewRouter } from "./modules/appraisalRatings/saleReviewRouter.js";
 import { createAccountDetailRouter } from "./modules/accounts/detailRouter.js";
-import publicCadastralRouter from "./modules/accounts/publicCadastralRouter.js";
 import { createMarketValueHistoryRouter } from "./modules/accounts/marketValueHistoryRouter.js";
 import { createPropertySearchRouter } from "./modules/accounts/propertySearchRouter.js";
 import { createRelatedParcelsRouter } from "./modules/accounts/relatedParcelsRouter.js";
@@ -320,7 +319,6 @@ app.use(createOperationalRouter({
   },
 }));
 app.use(createSignupRouter({ pool, signupRateLimiter }));
-app.use(publicCadastralRouter({ pool }));
 app.use(createAccountDetailRouter({
   pool,
   accountQualityReady,

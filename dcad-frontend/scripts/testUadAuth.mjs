@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 
 globalThis.window = {};
 
@@ -22,5 +23,14 @@ assert.equal(new Headers(explicit.headers).get("authorization"), "Bearer explici
 
 window.homenodeAuth = { getAccessToken: () => "   " };
 assert.equal(await getUadAccessToken(), null);
+
+const entrySource = await readFile(
+  new URL("../src/features/uad/pages/UadWorkspaceEntry.tsx", import.meta.url),
+  "utf8",
+);
+const apiSource = await readFile(new URL("../src/features/uad/api.ts", import.meta.url), "utf8");
+assert.match(entrySource, /getAccount\(accountId\)/);
+assert.doesNotMatch(entrySource, /getUadSubjectSummary/);
+assert.doesNotMatch(apiSource, /public-cadastral|subject-summary/);
 
 console.log(JSON.stringify({ ready: true, profile: "uad_browser_auth_bridge_v1" }));

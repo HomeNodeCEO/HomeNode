@@ -3,11 +3,11 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
+import { getAccount } from "@/lib/api";
 
 import {
   createUadWorkfile,
   getUadCapabilities,
-  getUadSubjectSummary,
   listUadWorkfiles,
   type UadCapabilities,
   type UadPropertyType,
@@ -52,10 +52,12 @@ export default function UadWorkspaceEntry() {
     let cancelled = false;
     setLoading(true);
     setError(null);
-    Promise.all([getUadSubjectSummary(accountId), getUadCapabilities()])
+    // This is public property discovery only. UAD workfile data is loaded
+    // separately through its organization- and assignment-scoped routes.
+    Promise.all([getAccount(accountId), getUadCapabilities()])
       .then(async ([subjectResponse, capabilityResponse]) => {
         if (cancelled) return;
-        setAddress(subjectResponse.address || "");
+        setAddress(subjectResponse.account.address || "");
         setCapabilities(capabilityResponse);
         if (capabilityResponse.enabled) {
           const existingWorkfiles = await listUadWorkfiles(accountId);

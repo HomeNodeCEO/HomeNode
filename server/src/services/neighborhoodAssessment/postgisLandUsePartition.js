@@ -519,7 +519,12 @@ export function createNeighborhoodPostgisLandUsePartition(pool, { limits: option
       client = await connect(pool, Math.min(limits.connect_ms, remaining()), limits.cleanup_ms);
       begun = true;
       await query("begin", "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      await query("settings", `SET LOCAL statement_timeout='${limits.statement_ms}ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'`);
+      // node-postgres returns QueryResult[] for multi-statement text. Keep this
+      // one statement so the same strict rows protocol covers native clients.
+      await query("settings", `SELECT pg_catalog.set_config('statement_timeout',$1::text,true) AS statement_timeout,
+        pg_catalog.set_config('lock_timeout',$2::text,true) AS lock_timeout,
+        pg_catalog.set_config('idle_in_transaction_session_timeout',$3::text,true) AS idle_in_transaction_session_timeout`,
+      [`${limits.statement_ms}ms`, "1000ms", "10000ms"]);
       const versions = await query("versions", VERSION_SQL);
       if (versions.length !== 1) stop("engine_version_unavailable"); output.engine_versions = versionsOf(versions[0]);
       const features = input.features.map(feature => ({ id: feature.id, semantics: feature.semantics, ewkb: feature.geometry.ewkb,

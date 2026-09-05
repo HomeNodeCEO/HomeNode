@@ -20,6 +20,8 @@ test('PostGIS land-use partition: supplied evidence conserves exclusive full-bou
   const rawPool = new pg.Pool({ connectionString: target.connectionString, max: 3,
     connectionTimeoutMillis: 3000, statement_timeout: 8000, application_name: 'neighborhood_land_use_integration' });
   const checked = new WeakSet();
+  let lastPartition = null;
+  const queryTrace = [];
   const pool = {
     async connect() {
       const client = await rawPool.connect();
@@ -29,7 +31,22 @@ test('PostGIS land-use partition: supplied evidence conserves exclusive full-bou
           verifyNeighborhoodCiConnection(identity, client.connection?.stream?.remoteAddress, target.databaseName);
           checked.add(client);
         }
-        return client;
+        return {
+          async query(input, values) {
+            const result = await client.query(input, values);
+            const sql = typeof input === 'string' ? input : input.text;
+            const stage = /neighborhood-land-use:([a-z]+)/.exec(sql)?.[1];
+            if (stage) {
+              queryTrace.push({ stage, result_shape: Array.isArray(result) ? 'multiple_results' : 'single_result',
+                row_count: result.rows?.length ?? null });
+              if (queryTrace.length > 16) queryTrace.shift();
+            }
+            if (stage === 'partition') lastPartition = { row_count: result.rows?.length ?? null,
+              payload_bytes: result.rows?.[0]?.payload_bytes ?? null, payload: result.rows?.[0]?.payload ?? null };
+            return result;
+          },
+          release(error) { return client.release(error); },
+        };
       } catch (error) { client.release(error); throw error; }
     },
     async query(text, values) {
@@ -40,6 +57,13 @@ test('PostGIS land-use partition: supplied evidence conserves exclusive full-bou
   const engine = createNeighborhoodPostgisLandUsePartition(pool);
   const expectedKeys = [...LAND_USE_KNOWN_CATEGORIES, 'unknown_uncovered', 'unknown_classification', 'unknown_conflict'];
   const verify = (result, expected) => {
+    if (result.computation_status !== 'ready') {
+      // Only this invented fixture's area/count/reference payload is eligible
+      // for diagnostics; no SQL text, connection identity or source data logs.
+      const diagnostic = JSON.stringify({ query_trace: queryTrace, partition: lastPartition });
+      t.diagnostic(Buffer.byteLength(diagnostic) <= 16000 ? diagnostic
+        : JSON.stringify({ query_trace: queryTrace, diagnostic: 'synthetic_payload_exceeds_diagnostic_limit' }));
+    }
     assert.equal(result.computation_status, 'ready', JSON.stringify(result.incomplete_reasons));
     assert.equal(result.report_eligibility, 'not_assessed');
     assert.ok(result.partition_revision); assert.ok(result.engine_versions); assert.equal(Object.isFrozen(result), true);
@@ -78,6 +102,7 @@ test('PostGIS land-use partition: supplied evidence conserves exclusive full-bou
     });
     for (const variant of LAND_USE_FIXTURE_VARIANTS) await t.test(`independent metric oracle: ${variant}`, async () => {
       const fixture = await buildNeighborhoodPostgisLandUseFixture(pool, variant);
+      lastPartition = null; queryTrace.length = 0;
       const before = JSON.stringify(fixture.input);
       const result = await engine.build(fixture.input);
       verify(result, fixture.expected);

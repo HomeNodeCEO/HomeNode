@@ -163,6 +163,37 @@ test("ready partition keeps the full geographic denominator and declared evidenc
   assert.deepEqual(mock.calls.map(row => row.tag), ["begin", "settings", "versions", "validate", "partition", "commit"]);
 });
 
+test("transaction settings use one parameterized result despite pg multi-statement array semantics", async () => {
+  const { input, expected } = await fixture();
+  const mock = fakePool(payloadFor(input, expected), { queryHook(tag, query) {
+    if (tag !== "settings") return undefined;
+    // Native node-postgres returns one QueryResult per statement for several
+    // SET commands. A double that always returns {rows:[]} would hide this bug.
+    if (query.text.includes(";")) return [{ rows: [] }, { rows: [] }, { rows: [] }];
+    assert.match(query.text, /SELECT\s/i);
+    assert.equal((query.text.match(/set_config\s*\(/gi) || []).length, 3);
+    assert.equal((query.text.match(/,\s*true\s*\)/gi) || []).length, 3, "each setting is transaction-local");
+    assert.deepEqual(query.values, [`${LAND_USE_PARTITION_LIMITS.statement_ms}ms`, "1000ms", "10000ms"]);
+    return { rows: [{ statement_timeout: query.values[0], lock_timeout: query.values[1], idle_timeout: query.values[2] }] };
+  } });
+  const result = await kernel(mock).build(input);
+  assert.equal(result.computation_status, "ready");
+  assert.ok(mock.calls.some(call => call.tag === "partition"));
+  assert.ok(mock.calls.some(call => call.tag === "commit"));
+  assert.equal(mock.releases, 1);
+});
+
+test("array-shaped partition driver response remains invalid after settings correction", async () => {
+  const { input, expected } = await fixture();
+  const payload = payloadFor(input, expected);
+  const mock = fakePool(payload, { queryHook(tag) {
+    if (tag === "partition") return [{ rows: [{ payload, payload_bytes: Buffer.byteLength(JSON.stringify(payload)) }] }];
+  } });
+  assertIncomplete(await kernel(mock).build(input));
+  assert.ok(!mock.calls.some(call => call.tag === "commit"));
+  assert.equal(mock.releases, 1);
+});
+
 test("duplicate and stacked source footprints remain auditable without inflating the surface partition", async () => {
   const { input, expected } = await fixture("duplicate_and_stacked");
   const payload = payloadFor(input, expected);

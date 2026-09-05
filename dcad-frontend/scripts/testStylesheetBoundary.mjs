@@ -31,7 +31,7 @@ test('Custom Appraisal button variants retain the HomeNode palette and hover con
   const applicationCss = await readFile(applicationCssUrl, 'utf8');
 
   assert.match(applicationCss, /\.hn-custom-report :where\(\.btn\.btn-primary, \.btn\.btn-neutral\)/);
-  assert.match(applicationCss, /background:\s*var\(--hn-action-fill\)/);
+  assert.match(applicationCss, /background:\s*var\(--hn-gold-action-fill\)/);
   assert.match(applicationCss, /\.hn-custom-report :where\(\.btn\.btn-outline\):hover:not\(:disabled\)/);
   assert.match(applicationCss, /background:\s*var\(--hn-gold-soft\)/);
   assert.match(applicationCss, /\.hn-action-secondary :where\(span, strong, small\)/);

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
+import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
 // This is a query-boundary fake, not a PostgreSQL compatibility test. The catalog
 // fixture tracks the reader's literal capabilities while missing-column tests
@@ -31,6 +32,20 @@ const transaction = (id = '10', changes = {}) => ({ source_record_id: id, sale_i
 const link = (id = '100', changes = {}) => ({ parcel_link_id: id, source_record_id: '10',
   source_position: 1, parcel_sequence: 1, parcel_role: 'primary', account_id: SUBJECT,
   is_resolved: true, match_method: 'exact', link_loaded_at: NOW, ...changes });
+const transactionIdentity = row => Object.fromEntries(['source_record_id','sale_id','primary_account_id',
+  'sale_account_id','source_record_hash'].map(key => [key,row[key]??null]));
+const linkIdentity = row => Object.fromEntries(['parcel_link_id','source_record_id','source_position',
+  'parcel_sequence','account_id','is_resolved'].map(key => [key,row[key]??null]));
+const legacyIdentity = row => ({sale_id:row.sale_id,sale_account_id:row.sale_account_id});
+function fixtureClosure(data, selected) {
+  const ids=new Set(data.transactions.filter(row => selected.includes(row.primary_account_id)
+    || selected.includes(row.sale_account_id)).map(row => row.source_record_id));
+  for (const row of data.links) if (selected.includes(row.account_id)) ids.add(row.source_record_id);
+  return {source_revision:'synthetic-transaction-identity-v1',
+    transactions:data.transactions.filter(row => ids.has(row.source_record_id)).map(transactionIdentity),
+    links:data.links.filter(row => ids.has(row.source_record_id)).map(linkIdentity),
+    legacy:data.legacy.filter(row => selected.includes(row.sale_account_id)).map(legacyIdentity)};
+}
 
 function fake(options = {}) {
   const data = { catalog: CATALOG.map(row => ({ ...row })), parcels: [parcel()],
@@ -66,26 +81,105 @@ function fake(options = {}) {
       for (const row of data.links) if (values[0].includes(row.account_id)) ids.add(row.source_record_id);
       result = [...ids].filter(id => BigInt(id) > BigInt(values[1])).sort(numeric).slice(0, values[2])
         .map(source_record_id => ({ source_record_id }));
-    } else if (tag === 'transactions') result = data.transactions.filter(row => values[0].includes(row.source_record_id)).slice(0, values[1]);
-    else if (tag === 'sale-links') result = data.links.filter(row => values[0].includes(row.source_record_id)
+    } else if (tag === 'transactions' || tag === 'transaction-identities') {
+      result = data.transactions.filter(row => values[0].includes(row.source_record_id)).slice(0, values[1]);
+      if (tag === 'transaction-identities') result=result.map(transactionIdentity);
+    } else if (tag === 'sale-links' || tag === 'link-identities') {
+      result = data.links.filter(row => values[0].includes(row.source_record_id)
       && (BigInt(row.source_record_id) > BigInt(values[1])
         || (row.source_record_id === values[1] && (row.source_position > values[2]
           || (row.source_position === values[2] && row.parcel_sequence > values[3])))))
       .sort((a, b) => numeric(a.source_record_id, b.source_record_id)
         || a.source_position - b.source_position || a.parcel_sequence - b.parcel_sequence).slice(0, values[4]);
-    else if (tag === 'legacy') result = data.legacy.filter(row => values[0].includes(row.sale_account_id)
-      && BigInt(row.sale_id) > BigInt(values[1])).sort((a, b) => numeric(a.sale_id, b.sale_id)).slice(0, values[2]);
+      if (tag === 'link-identities') result=result.map(linkIdentity);
+    } else if (tag === 'legacy' || tag === 'legacy-identities') {
+      result = data.legacy.filter(row => values[0].includes(row.sale_account_id)
+        && BigInt(row.sale_id) > BigInt(values[1])).sort((a, b) => numeric(a.sale_id, b.sale_id)).slice(0, values[2]);
+      if (tag === 'legacy-identities') result=result.map(legacyIdentity);
+    }
     else assert.fail(`Unexpected SQL tag: ${tag}`);
     return { rows: structuredClone(result).map(payload => ({ payload, row_bytes: Buffer.byteLength(JSON.stringify(payload)) })) };
   } };
   const pool = { async connect() { connects++; if (options.connect) return options.connect(client); return client; },
     async query() { poolQueries++; assert.fail('Reader must not query the pool outside its checked-out transaction'); } };
-  return { data, calls, releases, get connects() { return connects; }, get poolQueries() { return poolQueries; },
-    reader: createNeighborhoodCachedSourceReader(pool, { limits: options.limits || {} }) };
+  // Query fixtures represent independently authorized synthetic selections.
+  // The adversarial tests below call the raw reader with altered issued tokens.
+  const baseline=createTestCachedReadAccess(request(),{transactionClosure:fixtureClosure(data,[SUBJECT])});
+  createNeighborhoodCachedSourceReader(pool,{limits:options.limits||{},access:baseline.access});
+  return { data, pool, calls, releases, get connects() { return connects; }, get poolQueries() { return poolQueries; },
+    reader:{async capture(input) {
+      const granted=createTestCachedReadAccess(input,{transactionClosure:fixtureClosure(data,input.account_ids)});
+      const prepared=await granted.prepare();
+      return createNeighborhoodCachedSourceReader(pool,{limits:options.limits||{},access:granted.access})
+        .capture({...prepared.request,auth:granted.auth,selection_grant:prepared.selection_grant,market_grant:prepared.market_grant});
+    }} };
 }
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+test('missing, forged, altered and cross-organization capabilities cannot connect to the cache',async () => {
+  const db=fake();
+  assert.throws(() => createNeighborhoodCachedSourceReader(db.pool),/authority_required/);
+  for (const mutate of [
+    value => { delete value.selection_grant; },
+    value => { value.market_grant={}; },
+    value => { value.selection_grant={...value.selection_grant}; },
+    value => { value.account_ids=[...value.account_ids,'ARBITRARY-NEIGHBOR']; },
+    value => { value.scope={...value.scope,organization_id:'10000000-0000-4000-8000-000000000099'}; },
+    value => { value.auth={...value.auth,userId:'another-user'}; },
+    value => { value.auth={...value.auth,organizations:[]}; },
+  ]) {
+    const fixture=createTestCachedReadAccess(request());
+    const prepared=await fixture.prepare();
+    const reader=createNeighborhoodCachedSourceReader(db.pool,{access:fixture.access});
+    const transport={...prepared.request,auth:fixture.auth,
+      selection_grant:prepared.selection_grant,market_grant:prepared.market_grant};
+    mutate(transport);
+    await assert.rejects(reader.capture(transport),/neighborhood_cached_read_access_denied/);
+    assert.equal(db.connects,0); assert.equal(db.calls.length,0);
+  }
+});
+
+test('a catalog/assignment-readable actor without licensed market approval never reads cached sales',async () => {
+  const db=fake();
+  const fixture=createTestCachedReadAccess(request(),{authorizeMarketData:async () => ({allowed:false})});
+  await assert.rejects(fixture.prepare(),/market_data_access_denied/);
+  assert.equal(db.connects,0); assert.equal(db.calls.length,0);
+});
+
+test('changed one-hop associations fail before any full market projection is read or returned',async () => {
+  for (const change of [
+    data => {data.links[0].account_id='UNAPPROVED-CLOSURE-ACCOUNT';},
+    data => {data.transactions.push(transaction('20'));},
+    data => {data.transactions=[]; data.links=[];},
+    data => {data.legacy.push({sale_id:'44',sale_account_id:SUBJECT});},
+  ]) {
+  const db=fake({data:{transactions:[transaction()],links:[link()]}});
+  const fixture=createTestCachedReadAccess(request(),{transactionClosure:fixtureClosure(db.data,[SUBJECT])});
+  const prepared=await fixture.prepare();
+  change(db.data);
+  const result=await createNeighborhoodCachedSourceReader(db.pool,{access:fixture.access}).capture({
+    ...prepared.request,auth:fixture.auth,selection_grant:prepared.selection_grant,market_grant:prepared.market_grant});
+  assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+  assert.deepEqual(result.incomplete_reasons,['transaction_association_drift']);
+  assert.ok(!db.calls.some(call => ['transactions','sale-links','legacy'].includes(call.tag)));
+  assert.ok(db.calls.some(call => call.tag==='rollback'));
+  }
+});
+
+test('closure-only accounts do not seed second-hop transactions or enter the statistical selection',async () => {
+  const db=fake({data:{transactions:[transaction('10',{primary_account_id:'OUTSIDE',sale_account_id:'OUTSIDE'}),
+    transaction('99',{primary_account_id:'OUTSIDE',sale_account_id:'OUTSIDE'})],
+    links:[link('100',{account_id:'OUTSIDE'}),link('101',{account_id:SUBJECT,source_position:2}),
+      link('990',{source_record_id:'99',account_id:'OUTSIDE'})]}});
+  const result=await db.reader.capture(request());
+  assert.equal(result.status,'captured');
+  assert.deepEqual(records(result,'transactions').map(row => row.data.raw_projection.source_record_id),['10']);
+  assert.deepEqual(records(result,'selection').map(row => row.data.account_id),[SUBJECT]);
+  assert.deepEqual(records(result,'parcels').map(row => row.data.raw_projection.account_id),[SUBJECT]);
+  assert.ok(db.calls.filter(call => call.tag==='source-ids').every(call => call.values[0].length===1 && call.values[0][0]===SUBJECT));
+});
 
 test('one read-only repeatable snapshot binds exact authorized case, snapshot, subject and dates', async () => {
   assert.equal(new Set(CATALOG.map(row => row.relation)).size, 7);
@@ -136,7 +230,7 @@ test('secondary membership discovers sales and preserves every outside-area and 
 });
 
 test('source-only, legacy, repeated and future rows stay distinct evidence without invented canonical IDs or price eligibility', async () => {
-  const db = fake({ data: { transactions: [transaction(), transaction('11', { sale_id: null }),
+  const db = fake({ data: { transactions: [transaction(), transaction('11', { sale_id: null, sale_account_id: null }),
     transaction('12', { sale_closing_date: '2027-01-01', source_close_date: '2027-01-01' })],
     legacy: [{ sale_id: '44', sale_account_id: SUBJECT, source_record_id: null, sale_price: '300000', sale_closing_date: '2024-03-01' }] } });
   const result = await db.reader.capture(request());
@@ -370,7 +464,7 @@ test('duplicate transaction join fan-out or sync-run identities fail closed at t
     assert.equal(result.status, 'incomplete'); assert.equal(result.source_capture, null);
     assert.deepEqual(result.incomplete_reasons, ['duplicate_source_identity']);
     assert.equal(db.calls.at(-1).tag, 'rollback');
-    const call = db.calls.find(row => row.tag === (kind === 'transactions' ? kind : 'sync-runs'));
+    const call = db.calls.find(row => row.tag === (kind === 'transactions' ? 'transaction-identities' : 'sync-runs'));
     assert.equal(call.values[1], 2, 'Only one expected row plus its overflow sentinel is fetched');
   }
 });
@@ -417,7 +511,8 @@ test('invalid requests and increased resource ceilings are rejected before a con
     request({ account_ids: ['OTHER'] }), request({ effective_date: '2024-02-31' }),
     request({ observation_period: { start_date: '2024-01-01', end_date: '2025-01-01' } }),
     request({ knowledge_cutoff: '2024-02-31T00:00:00.000Z' })]) {
-    await assert.rejects(db.reader.capture(input), TypeError);
+    await assert.rejects(db.reader.capture(input), error => error instanceof TypeError
+      || error.code==='NEIGHBORHOOD_CACHED_READ_ACCESS_DENIED');
   }
   assert.equal(db.connects, 0);
   assert.throws(() => fake({ limits: { records: 100001 } }), /invalid_neighborhood_cache_reader:limits/);

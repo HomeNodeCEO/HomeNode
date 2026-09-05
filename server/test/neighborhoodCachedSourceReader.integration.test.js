@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 import test from 'node:test';
 import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
+import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
 const records=(capture,role) => capture.source_capture.sources
   .filter(source => source.payload.projection.definition.role===role).flatMap(source => source.payload.records);
@@ -49,7 +50,36 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
   const scope={ organization_id:randomUUID(),appraisal_case_id:randomUUID(),subject_snapshot_id:randomUUID(),account_id:'CACHE-SUBJECT' };
   const request={ scope,account_ids:['CACHE-SUBJECT'],effective_date:'2024-06-30',observation_period:{start_date:'2023-07-01',end_date:'2024-06-30'} };
   const run=randomUUID();
-  const reader=createNeighborhoodCachedSourceReader(pool,{limits:{page_size:1}});
+  // Explicit synthetic orchestration: license/selection fixtures are independent
+  // of the reader. Only association identities are loaded before minting grants;
+  // the reader must recheck that frozen one-hop manifest in its own read snapshot.
+  const fixtureReader=(readerPool,options={}) => ({async capture(input) {
+    const {afterPrepare,...readerOptions}=options;
+    const fixture=createTestCachedReadAccess(input,{resolveTransactionClosure:async (_auth,_context,selection) => {
+      const base={selected_account_ids:selection.account_ids,source_revision:'native-fixture-identity-v1',transactions:[],links:[],legacy:[]};
+      const available=(await pool.query("SELECT to_regclass('core.sales_source_records') IS NOT NULL AND to_regclass('core.sale_parcels') IS NOT NULL AND to_regclass('core.sales') IS NOT NULL AS ready")).rows[0].ready;
+      if (!available) return base;
+      base.transactions=(await pool.query(`WITH selected_sources AS (
+        SELECT id FROM core.sales_source_records WHERE primary_account_id=ANY($1::text[])
+        UNION SELECT source_record_id FROM core.sale_parcels WHERE account_id=ANY($1::text[])
+        UNION SELECT source_record_id FROM core.sales WHERE account_id=ANY($1::text[]) AND source_record_id IS NOT NULL
+      ) SELECT src.id::text AS source_record_id,sale.id::text AS sale_id,src.primary_account_id,
+        sale.account_id AS sale_account_id,src.source_record_hash
+        FROM core.sales_source_records src LEFT JOIN core.sales sale ON sale.source_record_id=src.id
+        WHERE src.id IN (SELECT id FROM selected_sources)`,[selection.account_ids])).rows;
+      base.links=(await pool.query(`SELECT id::text AS parcel_link_id,source_record_id::text,
+        source_position,parcel_sequence,account_id,is_resolved FROM core.sale_parcels
+        WHERE source_record_id=ANY($1::bigint[])`,[base.transactions.map(row => row.source_record_id)])).rows;
+      base.legacy=(await pool.query(`SELECT id::text AS sale_id,account_id AS sale_account_id FROM core.sales
+        WHERE account_id=ANY($1::text[]) AND source_record_id IS NULL`,[selection.account_ids])).rows;
+      return base;
+    }});
+    const prepared=await fixture.prepare();
+    if (afterPrepare) await afterPrepare();
+    return createNeighborhoodCachedSourceReader(readerPool,{...readerOptions,access:fixture.access}).capture({
+      ...prepared.request,auth:fixture.auth,selection_grant:prepared.selection_grant,market_grant:prepared.market_grant});
+  }});
+  const reader=fixtureReader(pool,{limits:{page_size:1}});
   try {
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic cache reader','Synthetic cache reader')",[scope.organization_id]);
     await pool.query("INSERT INTO core.accounts(account_id,county) VALUES('CACHE-SUBJECT','Synthetic'),('CACHE-OUTSIDE','Synthetic')");
@@ -112,10 +142,21 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
       assert.equal(raw(result,'sale_links').find(row => row.parcel_link_id==='13').account_id,null);
       for (const row of records(result,'transactions')) assert.equal(row.data.data.market_eligible,null);
     });
+    await t.test('closure-only accounts cannot seed second-hop sales or enter the selected stock',async () => {
+      await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type) VALUES(60,'CACHE-OUTSIDE','closed_sale');
+        INSERT INTO core.sales VALUES(600,60,'CACHE-OUTSIDE','2024-02-01',900000,'fixture',now());
+        INSERT INTO core.sale_parcels VALUES(600,60,1,1,'primary','P2','P2','CACHE-OUTSIDE','exact',true,now())`);
+      const result=await reader.capture(request);
+      assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
+      assert.ok(!raw(result,'transactions').some(row => row.source_record_id==='60'));
+      assert.ok(!raw(result,'sale_links').some(row => row.source_record_id==='60'));
+      assert.deepEqual(records(result,'selection').map(row => row.data.account_id),['CACHE-SUBJECT']);
+      assert.ok(raw(result,'parcels').every(row => row.account_id==='CACHE-SUBJECT'));
+    });
     await t.test('mixed-width numeric link/source cursors do not skip low IDs inside a multi-source batch',async () => {
       await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type) VALUES(2,'CACHE-SUBJECT','closed_sale');
         INSERT INTO core.sale_parcels VALUES(2,2,1,1,'primary','P1','P1','CACHE-SUBJECT','exact',true,now())`);
-      const result=await createNeighborhoodCachedSourceReader(pool,{limits:{page_size:2}}).capture(request);
+      const result=await fixtureReader(pool,{limits:{page_size:2}}).capture(request);
       assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
       assert.deepEqual(raw(result,'sale_links').map(row => row.parcel_link_id).sort(),['2','11','12','13','21','22'].sort());
     });
@@ -132,7 +173,7 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
           return result;
         }};
       }};
-      const before=await createNeighborhoodCachedSourceReader(wrapped,{limits:{page_size:1}}).capture(request);
+      const before=await fixtureReader(wrapped,{limits:{page_size:1}}).capture(request);
       assert.equal(before.status,'captured',JSON.stringify(before.incomplete_reasons));
       assert.equal(raw(before,'transactions').find(row => row.source_record_id==='10').source_current_price,'250000');
       assert.equal(raw(before,'sale_links').find(row => row.parcel_link_id==='12').account_id,'CACHE-OUTSIDE');
@@ -150,14 +191,48 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
       const old=await reader.capture({...request,knowledge_cutoff:'2024-06-30T00:00:00.000Z'});
       assert.deepEqual(old.incomplete_reasons,['historical_knowledge_capture_required']);
     });
+    await t.test('association drift after permission issuance blocks full market projections atomically',async () => {
+      const original=(await pool.query('SELECT account_id FROM core.sale_parcels WHERE id=12')).rows[0].account_id;
+      const changed=original==='CACHE-SUBJECT'?'CACHE-OUTSIDE':'CACHE-SUBJECT';
+      const calls=[];
+      const guarded={async connect() {
+        const client=await pool.connect();
+        return {release:error => client.release(error),query:config => {calls.push(config.text); return client.query(config);}};
+      }};
+      try {
+        const result=await fixtureReader(guarded,{afterPrepare:async () => {
+          await pool.query('UPDATE core.sale_parcels SET account_id=$1 WHERE id=12',[changed]);
+        }}).capture(request);
+        assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+        assert.deepEqual(result.incomplete_reasons,['transaction_association_drift']);
+        assert.ok(!calls.some(sql => /neighborhood-cache:(?:transactions|sale-links|legacy) \*\//.test(sql)));
+        assert.equal(calls.at(-1),'ROLLBACK');
+      } finally { await pool.query('UPDATE core.sale_parcels SET account_id=$1 WHERE id=12',[original]); }
+    });
     await t.test('row/aggregate limits and scope denials leave no published evidence or pool leaks',async () => {
-      const small=await createNeighborhoodCachedSourceReader(pool,{limits:{row_bytes:10}}).capture(request);
+      const small=await fixtureReader(pool,{limits:{row_bytes:10}}).capture(request);
       assert.deepEqual(small.incomplete_reasons,['row_bytes_limit']); assert.equal(small.source_capture,null);
-      const aggregate=await createNeighborhoodCachedSourceReader(pool,{limits:{records:2}}).capture(request);
+      const aggregate=await fixtureReader(pool,{limits:{records:2}}).capture(request);
       assert.deepEqual(aggregate.incomplete_reasons,['record_limit']);
       await assert.rejects(reader.capture({...request,scope:{...scope,organization_id:randomUUID()}}),/scope_mismatch/);
       assert.equal((await pool.query('SELECT count(*)::integer AS n FROM app.neighborhood_assessment_jobs')).rows[0].n,0);
       assert.equal(pool.waitingCount,0);
+    });
+    await t.test('new source and legacy identities after grant issuance cannot enter a capture',async () => {
+      for (const mutation of [
+        "INSERT INTO core.sales_source_records(id,primary_account_id,record_type) VALUES(70,'CACHE-SUBJECT','closed_sale')",
+        "INSERT INTO core.sales VALUES(700,NULL,'CACHE-SUBJECT','2024-02-01',800000,'fixture',now())",
+      ]) {
+        const calls=[];
+        const guarded={async connect() {
+          const client=await pool.connect();
+          return {release:error => client.release(error),query:config => {calls.push(config.text); return client.query(config);}};
+        }};
+        const result=await fixtureReader(guarded,{afterPrepare:async () => {await pool.query(mutation);}}).capture(request);
+        assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+        assert.deepEqual(result.incomplete_reasons,['transaction_association_drift']);
+        assert.ok(!calls.some(sql => /neighborhood-cache:(?:transactions|sale-links|legacy) \*\//.test(sql)));
+      }
     });
   } finally { await pool.end(); } // No DROP: disposable CI service teardown owns this database.
 });

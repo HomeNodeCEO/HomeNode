@@ -2,10 +2,12 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { buildCachedSourceCaptures } from './cachedSourceCaptures.js';
+import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
+import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 
-export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v1';
+export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v2';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
   records: 100_000, bytes: 30_000_000, row_bytes: 64_000, page_size: 250,
   selected_accounts: 50_000, duration_ms: 30_000, statement_ms: 5000, connect_ms: 3000,
@@ -48,6 +50,18 @@ const SQL = Object.freeze({
     UNION SELECT source_record_id FROM core.sale_parcels WHERE account_id=ANY($1::text[])
     UNION SELECT source_record_id FROM core.sales WHERE account_id=ANY($1::text[]) AND source_record_id IS NOT NULL
     ) SELECT id::text AS source_record_id FROM ids WHERE id>$2::bigint ORDER BY id LIMIT $3`,
+  transaction_identities: `SELECT src.id::text AS source_record_id,sale.id::text AS sale_id,
+    src.primary_account_id,sale.account_id AS sale_account_id,src.source_record_hash
+    FROM core.sales_source_records src LEFT JOIN core.sales sale ON sale.source_record_id=src.id
+    WHERE src.id=ANY($1::bigint[]) ORDER BY src.id,sale.id LIMIT $2`,
+  link_identities: `SELECT id::text AS parcel_link_id,source_record_id::text,source_position,
+    parcel_sequence,account_id,is_resolved FROM core.sale_parcels sp
+    WHERE source_record_id=ANY($1::bigint[])
+      AND (source_record_id,source_position,parcel_sequence)>($2::bigint,$3::smallint,$4::smallint)
+    ORDER BY sp.source_record_id,sp.source_position,sp.parcel_sequence LIMIT $5`,
+  legacy_identities: `SELECT id::text AS sale_id,account_id AS sale_account_id FROM core.sales
+    WHERE account_id=ANY($1::text[]) AND source_record_id IS NULL AND id>$2::bigint
+    ORDER BY id LIMIT $3`,
   transactions: `SELECT src.id::text AS source_record_id,src.source_name,src.source_filename,
     src.source_sha256,src.source_record_hash,src.transaction_fingerprint,
     src.listing_key,src.listing_id,src.source_system_name,src.source_modified_at::text,
@@ -83,6 +97,9 @@ const SQL = Object.freeze({
 const ORDER = Object.freeze({
   parcels:"(payload->>'object_id')::bigint", accounts:"payload->>'account_id' COLLATE \"C\"",
   'source-ids':"(payload->>'source_record_id')::bigint",
+  'transaction-identities':"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
+  'link-identities':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
+  'legacy-identities':"(payload->>'sale_id')::bigint",
   transactions:"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
   'sale-links':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
   legacy:"(payload->>'sale_id')::bigint", 'sync-state':"payload->>'source_key' COLLATE \"C\"", 'sync-runs':"payload->>'id' COLLATE \"C\"",
@@ -128,7 +145,7 @@ function requestOf(input, limits) {
   const end_date = assessmentDate(input.observation_period?.end_date);
   if (start_date>end_date || end_date>effective_date) invalid('observation_period');
   if (!Array.isArray(input.account_ids) || !input.account_ids.length || input.account_ids.length>limits.selected_accounts) invalid('account_ids');
-  const account_ids = input.account_ids.map(value => text(value,'account_id')).sort(compare);
+  const account_ids = input.account_ids.map(value => text(value,'account_id',64)).sort(compare);
   if (new Set(account_ids).size!==account_ids.length || !account_ids.includes(scope.account_id)) invalid('account_ids');
   const knowledge_cutoff = input.knowledge_cutoff ?? null;
   if (knowledge_cutoff!==null && (typeof knowledge_cutoff!=='string'
@@ -151,18 +168,23 @@ async function connectBounded(pool, timeout) {
   } finally { clearTimeout(timer); }
 }
 
-/** Background-only, injected cache reader. Caller authenticates and authorizes
- * scope before use; the relational scope check is additional integrity, not an
- * authorization policy. No schema creation, provider calls, jobs, report writes,
+/** Background-only, injected cache reader. Requires the original server-issued
+ * selection and independent licensed-market capabilities before any connection.
+ * The relational scope check is additional integrity, not authorization. The
+ * one-hop transaction closure never seeds more sales or adds stock members.
+ * No schema creation, provider calls, jobs, report writes,
  * mutation locks, current-date cohorts, enrichment views, or database pool globals.
  * A successful capture certifies this selected SQL query only, not real-world
  * transaction completeness, historical facts, housing type or provider coverage.
  */
-export function createNeighborhoodCachedSourceReader(pool, { limits: overrides = {} } = {}) {
+export function createNeighborhoodCachedSourceReader(pool, { limits: overrides = {}, access } = {}) {
   if (typeof pool?.connect!=='function') invalid('pool');
+  assertNeighborhoodCachedReadAccess(access);
   const limits=limitsOf(overrides);
   return { async capture(input) {
-    const request=requestOf(input,limits);
+    const authorized=consumeNeighborhoodCachedReadAccess(access,input?.auth,input,{
+      selection_grant:input?.selection_grant,market_grant:input?.market_grant });
+    const request=requestOf(authorized,limits);
     const started=performance.now();
     const counts={ records:0, bytes:0, queries:0 };
     let client;
@@ -286,11 +308,52 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       // capability an exhaustive primary-account-only result.
       const salesAvailable=['source_records','sales','sale_links'].map(available).every(Boolean);
       if (salesAvailable) {
+        // Check only seeded transaction/association identities first, under the
+        // separate market capability. Never discover sales using closure-only
+        // accounts. A changed/missing association makes this whole attempt
+        // incomplete before reading price/MLS projections or returning data.
+        const identityRows={transactions:[],links:[],legacy:[]};
+        const seedIds=[];
+        const retainIdentity=(group,row) => {
+          check();
+          if (++counts.records>limits.records) incomplete('record_limit');
+          counts.bytes+=Buffer.byteLength(canonicalAssessmentJson(row));
+          if (counts.bytes>limits.bytes) incomplete('byte_limit');
+          identityRows[group].push(row);
+        };
         let after='0';
         while (true) {
           const found=await rows('source-ids',SQL.source_ids,[request.account_ids,after,n]);
           const ids=found.slice(0,limits.page_size).map(row => big(row.source_record_id));
           if (ids.length) {
+            seedIds.push(...ids);
+            const identities=await rows('transaction-identities',SQL.transaction_identities,[ids,ids.length+1]);
+            if (identities.length>ids.length) incomplete('duplicate_source_identity');
+            if (identities.length<ids.length || ids.some(id => !identities.some(row => row.source_record_id===id))) incomplete('source_identity_missing');
+            for (const row of identities) retainIdentity('transactions',row);
+            let cursor=['0',0,0];
+            while (true) {
+              const links=await rows('link-identities',SQL.link_identities,[ids,...cursor,n]);
+              for (const row of links.slice(0,limits.page_size)) retainIdentity('links',row);
+              if (links.length<=limits.page_size) break;
+              const last=links[limits.page_size-1];
+              const next=[big(last.source_record_id),last.source_position,last.parcel_sequence];
+              if (next.join(':')===cursor.join(':')) incomplete('nonadvancing_cursor');
+              cursor=next;
+            }
+          }
+          if (found.length<=limits.page_size) break;
+          const next=ids.at(-1);
+          if (next===after) incomplete('nonadvancing_cursor');
+          after=next;
+        }
+        await page('legacy-identities',SQL.legacy_identities,[request.account_ids,'0',n],1,
+          row => big(row.sale_id),row => retainIdentity('legacy',row));
+        const observedClosure=validateCachedTransactionClosure({selected_account_ids:request.account_ids,
+          source_revision:authorized.transaction_closure.source_revision,...identityRows});
+        if (observedClosure.closure_sha256!==authorized.transaction_closure.closure_sha256) incomplete('transaction_association_drift');
+        for (let at=0;at<seedIds.length;at+=limits.page_size) {
+          const ids=seedIds.slice(at,at+limits.page_size);
             const transactions=await rows('transactions',SQL.transactions,[ids,ids.length+1]);
             if (transactions.length>ids.length) incomplete('duplicate_source_identity');
             const seen=new Set();
@@ -306,11 +369,6 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
               if (next.join(':')===cursor.join(':')) incomplete('nonadvancing_cursor');
               cursor=next;
             }
-          }
-          if (found.length<=limits.page_size) break;
-          const next=ids.at(-1);
-          if (next===after) incomplete('nonadvancing_cursor');
-          after=next;
         }
         await page('legacy',SQL.legacy,[request.account_ids,'0',n],1,row => big(row.sale_id),row => retain('transactions',`legacy:${big(row.sale_id)}`,row));
       }
@@ -329,6 +387,9 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
     // The database transaction is closed before hashing/chunking CPU work. These
     // exact retained bytes, not another mutable-cache query, feed publication.
     const definition={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,...request,
+      authorization:{target:authorized.target,selection:authorized.selection,selection_sha256:authorized.selection_sha256,
+        closure_sha256:authorized.transaction_closure.closure_sha256,closure_source_revision:authorized.transaction_closure.source_revision,
+        market_decision:authorized.market_decision},
       semantics:'current_mutable_query_capture_not_historical_replay',
       selection_method:'exact_selected_accounts_all_source_links_no_event_filter',
       provider_coverage:'unknown',limits,capabilities };

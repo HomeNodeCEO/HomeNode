@@ -131,6 +131,23 @@ test('desktop sketch APIs replay transient failures with their retained operatio
   assert.match(lifecycle, /sketch_operation_conflict/);
   assert.doesNotMatch(customApi, /crypto\.randomUUID/);
   assert.doesNotMatch(propertyTaxApi, /crypto\.randomUUID/);
+  assert.match(propertyTaxApi, /expectedRevision:\s*number/);
+  assert.match(propertyTaxApi, /expected_revision:\s*expectedRevision/);
+  assert.doesNotMatch(propertyTaxApi, /sketch\.revision/);
+
+  const propertyTaxReview = fs.readFileSync(
+    new URL('../src/components/PropertyTaxWorkfileReview.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(propertyTaxReview, /saveDraft=\{\(draft, expectedRevision\)/);
+  assert.match(
+    propertyTaxReview,
+    /updatePropertyTaxInspectionSketch\([\s\S]*?file\.tax_protest_file_id,[\s\S]*?expectedRevision,[\s\S]*?draft/,
+  );
+  assert.doesNotMatch(
+    propertyTaxReview,
+    /updatePropertyTaxInspectionSketch\([\s\S]*?file\.sketch!.*?[\s\S]*?draft/,
+  );
 });
 
 test('the shared sketch editor treats operation reuse conflicts as reload-required', () => {

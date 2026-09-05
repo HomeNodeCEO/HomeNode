@@ -428,10 +428,10 @@ export default function PropertyTaxWorkfileReview({
               title="Property Tax Protest measured sketch editor"
               subtitle="Changes create a new audited sketch revision for this desktop Property Tax file only."
               revisionSourceLabel="Property Tax"
-              saveDraft={(draft) => updatePropertyTaxInspectionSketch(
+              saveDraft={(draft, expectedRevision) => updatePropertyTaxInspectionSketch(
                 accountId,
                 file.tax_protest_file_id,
-                file.sketch!,
+                expectedRevision,
                 draft,
               )}
               onSaved={(savedSketch) => setFile((current) => current ? { ...current, sketch: savedSketch } : current)}

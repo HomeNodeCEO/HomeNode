@@ -376,16 +376,25 @@ function statistic(value, populations, sources, effectiveDate) {
   if (measurement === "allocated_sale_price" && population.member_unit !== "allocated_property_sale") fail("statistic.allocated_price_member_unit");
   if (value.value !== null && definition.unit !== "percent" && value.value < 0) fail("statistic.negative_measurement");
   if (measurement === "cod_percent" && value.value !== null && value.value < 0) fail("statistic.negative_dispersion");
-  if (["sale_coverage_percent", "data_coverage_percent"].includes(measurement) && status === "ready") {
-    const numerator = integer(parameters.numerator_count, "statistic.ratio_numerator");
-    if (denominator <= 0 || numerator > denominator || Math.abs(value.value - numerator / denominator * 100) > 1e-9) fail("statistic.ratio_value");
+  const isCoverage = ["sale_coverage_percent", "data_coverage_percent"].includes(measurement);
+  if (isCoverage) {
+    // A non-ready coverage record must not carry a number consumers could mistake
+    // for usable coverage. Unknown 0/0 remains null; known 0/N can be a true zero.
+    if (status !== "ready" && value.value !== null) fail("statistic.coverage_not_ready_value");
+    if (estimator === "ratio") {
+      const numerator = integer(parameters.numerator_count, "statistic.ratio_numerator");
+      if (measurement === "data_coverage_percent" && numerator !== observed) fail("statistic.coverage_observations");
+      if (numerator > denominator || (value.value !== null &&
+          (denominator <= 0 || Math.abs(value.value - numerator / denominator * 100) > 1e-9))) fail("statistic.ratio_value");
+    }
   }
   if (estimator === "modal_interval" && status === "ready") {
     const { lower_bound: lower, upper_bound: upper, bin_width: width } = parameters;
     if (parameters.method !== "fixed_width_histogram" || ![lower, upper, width].every(item => typeof item === "number" && Number.isFinite(item)) ||
         lower < 0 || upper <= lower || width !== upper - lower || value.value < lower || value.value >= upper) fail("statistic.modal_parameters");
   }
-  if (status === "ready" && observed === 0 && estimator !== "count") fail("statistic.no_observations");
+  const knownZeroDataCoverage = measurement === "data_coverage_percent" && estimator === "ratio" && denominator > 0;
+  if (status === "ready" && observed === 0 && estimator !== "count" && !knownZeroDataCoverage) fail("statistic.no_observations");
   const taxYear = value.assessment_tax_year === null ? null : integer(value.assessment_tax_year, "statistic.assessment_tax_year", 1800);
   if (value.measurement.startsWith("assessed_") && status === "ready" && taxYear === null) fail("statistic.assessment_tax_year_required");
   if (taxYear !== null && taxYear > Number(effectiveDate.slice(0, 4))) fail("statistic.future_assessment_tax_year");

@@ -38,6 +38,8 @@ Populations carry ID/revision, kind, member unit, exact member-set digest, membe
 
 The runtime `NEIGHBORHOOD_MEASUREMENTS` is the vocabulary authority. Measurement, unit, estimator and denominator basis must agree. Required ready statistics have explicit observed/missing/denominator counts and applicable source support. Available estimators distinguish exact median/quantile, mean, count, ratio and a declared modal interval; unsupported predominant or market trend estimates remain unsupported. Assessed values require tax-year identity and never masquerade as sale prices.
 
+For `data_coverage_percent`, the ratio numerator is exactly `observed_count`; one valid observation out of three members is 33.333...%, not 100%. A complete, supported population with zero valid observations out of N > 0 has known 0% data coverage. A zero denominator has no defined percentage and must remain non-ready/null; non-ready coverage is not a numeric placeholder. `sale_coverage_percent` instead measures a supported sold-property subset, so its numerator need not equal the count of observed membership statuses. These two numerators are intentionally different semantics.
+
 The statistics kernel keeps canonical transaction volume separate from distinct sold-property coverage. Verified multi-parcel price allocations are separate from unallocated package prices; package amounts are not repeated as individual dwelling prices. Tax-year coverage uses every selected stock member. Repartitioning the same transactions into display pockets does not change their exact pooled median. Low price dispersion is not proof of representativeness or appreciation.
 
 ## Coherent application — required in both consumers

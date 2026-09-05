@@ -333,6 +333,106 @@ test("published measurement vocabulary prevents unit/estimator confusion", () =>
   assert.equal(buildNeighborhoodAssessment(input).application_group.status, "ready");
 });
 
+test("R2: data coverage numerator is the observed measurement count, not an independently supplied ratio", () => {
+  const input = neighborhoodAssessmentFixture();
+  Object.assign(input.statistics[0], {
+    measurement: "data_coverage_percent", unit: "percent", estimator: "ratio", value: 100,
+    observed_count: 1, missing_count: 2, denominator_count: 3,
+    estimator_parameters: { numerator_count: 3 },
+  });
+  assert.throws(() => buildNeighborhoodAssessment(input), /statistic.coverage_observations/);
+  input.statistics[0].estimator_parameters.numerator_count = 1;
+  assert.throws(() => buildNeighborhoodAssessment(input), /statistic.ratio_value/);
+  input.statistics[0].value = 1 / 3 * 100;
+  const correct = buildNeighborhoodAssessment(input);
+  const coverage = correct.statistics.find(item => item.id === input.statistics[0].id);
+  assert.equal(correct.application_group.status, "ready");
+  assert.equal(coverage.value, 1 / 3 * 100);
+  assert.equal(coverage.observed_count, 1);
+  assert.equal(coverage.missing_count, 2);
+  assert.equal(coverage.denominator_count, 3);
+});
+
+test("R2: known zero observations over a supported nonempty population give ready zero data coverage", () => {
+  const input = neighborhoodAssessmentFixture();
+  Object.assign(input.statistics[0], {
+    measurement: "data_coverage_percent", unit: "percent", estimator: "ratio", value: 0,
+    observed_count: 0, missing_count: 3, denominator_count: 3,
+    estimator_parameters: { numerator_count: 0 },
+  });
+  const result = buildNeighborhoodAssessment(input);
+  assert.equal(result.application_group.status, "ready");
+  const coverage = result.statistics.find(item => item.id === input.statistics[0].id);
+  assert.equal(coverage.status, "ready");
+  assert.equal(coverage.value, 0);
+  assert.equal(coverage.denominator_count, 3);
+  input.statistics[0].source_refs = [];
+  assert.throws(() => buildNeighborhoodAssessment(input), /statistic.not_ready/);
+});
+
+test("R2: an empty 0/0 coverage population never becomes a ready zero", () => {
+  const input = neighborhoodAssessmentFixture();
+  Object.assign(input.populations[1], {
+    member_count: 0, unique_property_count: 0, property_link_count: 0,
+    member_set_sha256: assessmentEvidenceDigest([]),
+  });
+  for (const statistic of input.statistics) {
+    Object.assign(statistic, { observed_count: 0, missing_count: 0, denominator_count: 0 });
+  }
+  Object.assign(input.statistics[0], {
+    measurement: "data_coverage_percent", unit: "percent", estimator: "ratio", value: 0,
+    estimator_parameters: { numerator_count: 0 },
+  });
+  assert.throws(() => buildNeighborhoodAssessment(input), /statistic.ratio_value/);
+  input.statistics[0].value = null;
+  assert.throws(() => buildNeighborhoodAssessment(input), /statistic.not_ready/);
+  Object.assign(input.statistics[0], { status: "incomplete", reason: "empty_population_denominator" });
+  const incomplete = buildNeighborhoodAssessment(input);
+  assert.equal(incomplete.application_group.status, "incomplete");
+  assert.equal(incomplete.statistics.find(item => item.id === input.statistics[0].id).value, null);
+  Object.assign(input.statistics[0], { status: "unsupported", estimator: "unsupported", estimator_parameters: {} });
+  const unsupported = buildNeighborhoodAssessment(input);
+  assert.equal(unsupported.application_group.status, "incomplete");
+  assert.equal(unsupported.statistics.find(item => item.id === input.statistics[0].id).value, null);
+});
+
+test("R2: non-ready coverage cannot hide inconsistent numeric values or ratio observations", () => {
+  for (const measurement of ["data_coverage_percent", "sale_coverage_percent"]) {
+    const input = neighborhoodAssessmentFixture();
+    Object.assign(input.statistics[0], {
+      measurement, unit: "percent", estimator: "ratio", value: 100,
+      status: "incomplete", reason: "evidence_incomplete", observed_count: 1, missing_count: 2,
+      estimator_parameters: { numerator_count: 1 },
+    });
+    assert.throws(() => buildNeighborhoodAssessment(input), /statistic.coverage_not_ready_value/);
+    input.statistics[0].value = 1 / 3 * 100;
+    assert.throws(() => buildNeighborhoodAssessment(input), /statistic.coverage_not_ready_value/);
+    input.statistics[0].value = null;
+    assert.equal(buildNeighborhoodAssessment(input).application_group.status, "incomplete");
+    if (measurement === "data_coverage_percent") {
+      input.statistics[0].estimator_parameters.numerator_count = 3;
+      assert.throws(() => buildNeighborhoodAssessment(input), /statistic.coverage_observations/);
+    }
+    Object.assign(input.statistics[0], { status: "unsupported", estimator: "unsupported", value: 0 });
+    assert.throws(() => buildNeighborhoodAssessment(input), /statistic.unsupported_value/);
+  }
+});
+
+test("R2: sale coverage preserves sold-subset semantics independently of observed membership statuses", () => {
+  const input = neighborhoodAssessmentFixture();
+  Object.assign(input.statistics[0], {
+    measurement: "sale_coverage_percent", unit: "percent", estimator: "ratio", value: 1 / 3 * 100,
+    observed_count: 3, missing_count: 0, denominator_count: 3,
+    estimator_parameters: { numerator_count: 1 },
+  });
+  const result = buildNeighborhoodAssessment(input);
+  assert.equal(result.application_group.status, "ready");
+  const coverage = result.statistics.find(item => item.id === input.statistics[0].id);
+  assert.equal(coverage.observed_count, 3);
+  assert.equal(coverage.estimator_parameters.numerator_count, 1);
+  assert.equal(coverage.value, 1 / 3 * 100);
+});
+
 test("required populations are explicit validated dependencies in the input signature", () => {
   const input = neighborhoodAssessmentFixture();
   const original = buildNeighborhoodAssessment(input);

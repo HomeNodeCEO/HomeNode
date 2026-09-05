@@ -22,6 +22,14 @@
       const file = params.get('file') || '';
       const container = document.getElementById('viewerContainer');
 
+      function isTrustedParentMessage(event) {
+        return event.source === window.parent && event.origin === window.location.origin;
+      }
+
+      function postToTrustedParent(message) {
+        window.parent.postMessage(message, window.location.origin);
+      }
+
       async function tryImportPdfjs() {
         const sources = [
           {
@@ -59,8 +67,8 @@
           iframe.style.cssText = 'position:absolute;inset:0;border:0;width:100%;height:100%';
           document.body.appendChild(iframe);
           window.addEventListener('message', (e) => {
-            if ((e.data||{}).type === 'SAVE_PDF') {
-              window.parent.postMessage({ type:'PDF_DATA_ERROR', error:'PDF.js not available; cannot export filled PDF.'}, '*');
+            if (isTrustedParentMessage(e) && (e.data||{}).type === 'SAVE_PDF') {
+              postToTrustedParent({ type:'PDF_DATA_ERROR', error:'pdf_export_unavailable' });
             }
           });
           return;
@@ -99,18 +107,18 @@
         // Allow parent window to request the filled/signed PDF bytes
         window.addEventListener('message', async (ev) => {
           const data = ev.data || {};
-          if (data && data.type === 'SAVE_PDF') {
+          if (isTrustedParentMessage(ev) && data && data.type === 'SAVE_PDF') {
             try {
               if (!pdfDoc) throw new Error('PDF not loaded');
               const bytes = await pdfDoc.saveDocument();
               const blob = new Blob([bytes], { type: 'application/pdf' });
               const reader = new FileReader();
               reader.onload = () => {
-                window.parent.postMessage({ type: 'PDF_DATA', dataURL: reader.result }, '*');
+                postToTrustedParent({ type: 'PDF_DATA', dataURL: reader.result });
               };
               reader.readAsDataURL(blob);
             } catch (err) {
-              window.parent.postMessage({ type: 'PDF_DATA_ERROR', error: String(err) }, '*');
+              postToTrustedParent({ type: 'PDF_DATA_ERROR', error: 'pdf_export_failed' });
             }
           }
         });

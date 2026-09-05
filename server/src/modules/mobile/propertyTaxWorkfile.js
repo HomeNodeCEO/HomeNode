@@ -223,6 +223,39 @@ function requireUnchangedComparableAttestations(stored, proposed) {
   }
 }
 
+function canonicalHousingType(value) {
+  const normalized = typeof value === "string"
+    ? value.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ")
+    : "";
+  if (/\b(condo|minium)\b/.test(normalized)) return "condominium";
+  if (/\b(townhome|townhouse|town house)\b/.test(normalized)) return "townhouse";
+  if (/\b(duplex|triplex|fourplex|quadruplex|multi family|multifamily)\b/.test(normalized)) {
+    return "multi_family";
+  }
+  if (/\b(manufactured|mobile home)\b/.test(normalized)) return "manufactured";
+  if (/\b(detached|single family|singlefamily)\b/.test(normalized)) return "detached";
+  if (/\battached\b/.test(normalized)) return "attached_other";
+  return "unknown";
+}
+
+function requireCompatibleComparableAttestations(workfile) {
+  const protestCase = plainObject(workfile?.protest_case) ? workfile.protest_case : {};
+  const subjectHousingType = canonicalHousingType(
+    protestCase.property_use || "single_family_residential",
+  );
+  for (const row of comparableRows(workfile)) {
+    if (!carriesComparableAttestation(row)) continue;
+    const candidateHousingType = canonicalHousingType(row.propertyUse);
+    if (
+      subjectHousingType === "unknown"
+      || candidateHousingType === "unknown"
+      || subjectHousingType !== candidateHousingType
+    ) {
+      throw new Error("property_tax_comparable_housing_type_conflict");
+    }
+  }
+}
+
 function comparableMaterialFacts(row) {
   return Object.fromEntries(COMPARABLE_MATERIAL_KEYS.map((key) => [key, row?.[key]]));
 }
@@ -304,6 +337,7 @@ export function mergePropertyTaxWorkfileUpdate(
 
   if (!canAttestComparables) requireUnchangedComparableAttestations(storedValue, merged);
   requireComparableReverification(storedValue, merged);
+  requireCompatibleComparableAttestations(merged);
 
   const serialized = canonicalJson(merged);
   if (Buffer.byteLength(serialized, "utf8") > MAX_WORKFILE_BYTES) invalid();

@@ -31,6 +31,8 @@ test('recommended sales retain source identity and use the protest workflow subj
     neighborhood_code: 'NBHD-10',
     cad_building_class: '17',
     cad_living_area_sqft: 1950,
+    comparableHousingType: 'detached',
+    housingTypeCompatible: true,
     source: 'Licensed MLS feed',
   }, {
     propertyUse: 'single_family_residential',
@@ -40,6 +42,36 @@ test('recommended sales retain source identity and use the protest workflow subj
   assert.equal(row?.reviewStatus, 'needs_review');
   assert.equal(row?.armsLength, false);
   assert.equal(row?.sourceReference, 'MLS-20');
+  assert.equal(row?.propertyUse, 'detached');
+});
+
+test('housing-type-excluded sales cannot be imported into the Property Tax grid', () => {
+  const base = {
+    sale_id: 10,
+    source_record_id: 20,
+    address: '100 Main Street',
+    closing_date: '2025-06-15',
+    sale_price: '425000',
+    comparableHousingType: 'condominium',
+  };
+  assert.equal(recommendedSaleGridRow({
+    ...base,
+    housingTypeCompatible: false,
+  }, {
+    propertyUse: 'single_family_residential',
+    neighborhoodCode: 'NBHD-10',
+  }), null);
+  assert.equal(recommendedSaleGridRow({
+    ...base,
+    housingTypeCompatible: true,
+    recommendationExclusionReason: 'housing_type_mismatch',
+  }, {
+    propertyUse: 'single_family_residential',
+    neighborhoodCode: 'NBHD-10',
+  }), null);
+  assert.match(componentSource, /const recommendationOrder = response\.recommended_sales \|\| \[\]/);
+  assert.match(componentSource, /sale\.housingTypeCompatible !== false/);
+  assert.doesNotMatch(componentSource, /\[\.\.\.\(response\.recommended_sales \|\| \[\]\), \.\.\.\(response\.sales \|\| \[\]\)\]/);
 });
 
 test('district comparable candidates are staged with document provenance and review required', () => {

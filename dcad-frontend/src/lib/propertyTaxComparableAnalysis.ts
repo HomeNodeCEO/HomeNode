@@ -126,6 +126,17 @@ function normalized(value: string | null | undefined): string {
   return (value || '').trim().toLocaleLowerCase('en-US');
 }
 
+function canonicalHousingType(value: string | null | undefined): string {
+  const text = normalized(value).replace(/[^a-z0-9]+/g, ' ');
+  if (/\b(condo|minium)\b/.test(text)) return 'condominium';
+  if (/\b(townhome|townhouse|town house)\b/.test(text)) return 'townhouse';
+  if (/\b(duplex|triplex|fourplex|quadruplex|multi family|multifamily)\b/.test(text)) return 'multi_family';
+  if (/\b(manufactured|mobile home)\b/.test(text)) return 'manufactured';
+  if (/\b(detached|single family|singlefamily)\b/.test(text)) return 'detached';
+  if (/\battached\b/.test(text)) return 'attached_other';
+  return 'unknown';
+}
+
 function differenceRatio(subject: number | null | undefined, comparable: number | null | undefined): number | null {
   if (!Number.isFinite(subject) || !Number.isFinite(comparable) || Number(subject) <= 0) return null;
   return Math.abs(Number(subject) - Number(comparable)) / Number(subject);
@@ -183,7 +194,13 @@ function assessCandidate(
   if (valuationDate && saleDate && saleDate < monthsBefore(valuationDate, policy.lookbackMonths)) {
     exclusionCodes.push('sale_outside_lookback');
   }
-  if (normalized(subject.propertyUse) !== normalized(candidate.propertyUse)) {
+  const subjectHousingType = canonicalHousingType(subject.propertyUse);
+  const candidateHousingType = canonicalHousingType(candidate.propertyUse);
+  if (
+    subjectHousingType === 'unknown'
+    || candidateHousingType === 'unknown'
+    || subjectHousingType !== candidateHousingType
+  ) {
     exclusionCodes.push('different_property_use');
   }
   if (policy.requireSameNeighborhood && normalized(subject.neighborhoodCode)

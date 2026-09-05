@@ -274,6 +274,38 @@ test("non-signers can stage draft comparables but cannot create or alter attesta
   ));
 });
 
+test("attested Property Tax comparables require the subject housing type", () => {
+  const grid = (rows) => ({
+    protest_case: {
+      district_code: "tx-dallas-cad",
+      property_use: "single_family_residential",
+    },
+    analysis: {
+      comparable_grid: {
+        version: 1,
+        rows,
+        updated_at: null,
+        recommendation_policy: "policy-1",
+      },
+    },
+  });
+  assert.doesNotThrow(() => mergePropertyTaxWorkfileUpdate({}, grid([
+    comparable({ propertyUse: "detached" }),
+  ])));
+  for (const propertyUse of ["condominium", "unknown"]) {
+    assert.throws(
+      () => mergePropertyTaxWorkfileUpdate({}, grid([comparable({ propertyUse })])),
+      /property_tax_comparable_housing_type_conflict/,
+    );
+    assert.doesNotThrow(() => mergePropertyTaxWorkfileUpdate({}, grid([comparable({
+      propertyUse,
+      reviewStatus: "needs_review",
+      armsLength: false,
+      adjustmentAmount: 0,
+    })])));
+  }
+});
+
 test("desktop Property Tax saves deny revoked membership or reassignment inside the transaction", async () => {
   const baseRow = {
     report_file_id: REPORT_ID,

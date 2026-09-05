@@ -129,6 +129,13 @@ const COMPARABLE_KEYS = new Set([
   "livingAreaSqft", "siteSizeSqft", "yearBuilt", "bedroomCount", "bathCount",
   "garageSpaces", "pool", "reviewStatus", "armsLength",
 ]);
+const COMPARABLE_MATERIAL_KEYS = Object.freeze([
+  "source", "sourceLabel", "sourceReference", "documentId", "documentPage",
+  "saleId", "accountId", "address", "saleDate", "salePrice", "districtAdjustedValue",
+  "concessions", "adjustmentAmount", "propertyUse", "neighborhoodCode", "buildingClass",
+  "livingAreaSqft", "siteSizeSqft", "yearBuilt", "bedroomCount", "bathCount",
+  "garageSpaces", "pool",
+]);
 
 function optionalDate(value) {
   return value === "" ? "" : dateOnly(value);
@@ -216,6 +223,30 @@ function requireUnchangedComparableAttestations(stored, proposed) {
   }
 }
 
+function comparableMaterialFacts(row) {
+  return Object.fromEntries(COMPARABLE_MATERIAL_KEYS.map((key) => [key, row?.[key]]));
+}
+
+function requireComparableReverification(stored, proposed) {
+  const storedRows = comparableRows(stored);
+  const proposedById = new Map(comparableRows(proposed).map((row) => [row.id, row]));
+  for (const storedRow of storedRows) {
+    if (!carriesComparableAttestation(storedRow)) continue;
+    const proposedRow = proposedById.get(storedRow.id);
+    if (!proposedRow) continue;
+    const materialChanged = !sameJson(
+      comparableMaterialFacts(storedRow),
+      comparableMaterialFacts(proposedRow),
+    );
+    if (
+      materialChanged
+      && (proposedRow.reviewStatus !== "needs_review" || proposedRow.armsLength !== false)
+    ) {
+      throw new Error("property_tax_comparable_reverification_required");
+    }
+  }
+}
+
 function sameJson(left, right) {
   try {
     return canonicalJson(left) === canonicalJson(right);
@@ -272,6 +303,7 @@ export function mergePropertyTaxWorkfileUpdate(
   }
 
   if (!canAttestComparables) requireUnchangedComparableAttestations(storedValue, merged);
+  requireComparableReverification(storedValue, merged);
 
   const serialized = canonicalJson(merged);
   if (Buffer.byteLength(serialized, "utf8") > MAX_WORKFILE_BYTES) invalid();

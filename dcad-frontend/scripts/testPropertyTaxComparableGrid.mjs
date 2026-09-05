@@ -6,6 +6,7 @@ import {
   districtEvidenceGridRows,
   gridRowComparableCandidate,
   mergePropertyTaxComparableRows,
+  patchPropertyTaxComparableRow,
   readPropertyTaxComparableGrid,
   recommendedSaleGridRow,
   writePropertyTaxComparableGrid,
@@ -141,11 +142,53 @@ test('shared analysis candidates use grid-row identity so district and MLS versi
   assert.equal(candidate.manualAdjustments?.[0].amount, -5000);
 });
 
+test('material edits invalidate verified and arm\'s-length comparable attestations', () => {
+  const verified = {
+    id: 'district:44:500',
+    source: 'district_evidence',
+    sourceLabel: 'DCAD evidence',
+    sourceReference: 'document:44:candidate:500',
+    documentId: 44,
+    documentPage: 3,
+    saleId: '0001',
+    accountId: '0001',
+    address: '200 Oak Street',
+    saleDate: '2025-08-20',
+    salePrice: 450000,
+    districtAdjustedValue: 462000,
+    concessions: null,
+    adjustmentAmount: -5000,
+    propertyUse: 'single_family_residential',
+    neighborhoodCode: 'NBHD-10',
+    buildingClass: '17',
+    livingAreaSqft: 2000,
+    siteSizeSqft: 7500,
+    yearBuilt: 2000,
+    bedroomCount: 3,
+    bathCount: 2,
+    garageSpaces: 2,
+    pool: false,
+    reviewStatus: 'verified',
+    armsLength: true,
+  };
+  assert.deepEqual(
+    patchPropertyTaxComparableRow(verified, { salePrice: 475000 }),
+    { ...verified, salePrice: 475000, reviewStatus: 'needs_review', armsLength: false },
+  );
+  assert.deepEqual(
+    patchPropertyTaxComparableRow(verified, { adjustmentAmount: -7500 }),
+    { ...verified, adjustmentAmount: -7500, reviewStatus: 'needs_review', armsLength: false },
+  );
+  assert.equal(patchPropertyTaxComparableRow(verified, { address: verified.address }).reviewStatus, 'verified');
+  assert.equal(patchPropertyTaxComparableRow(verified, { armsLength: false }).reviewStatus, 'verified');
+});
+
 test('comparable attestation controls are limited to the assigned signing appraiser', () => {
   assert.match(componentSource, /!authenticationRequired \|\| Boolean/);
   assert.match(componentSource, /session\?\.user_id === file\.assigned_appraiser_user_id/);
   assert.match(componentSource, /organization\.permissions\.property_tax_protest\?\.sign/);
   assert.match(componentSource, /disabled=\{!canAttestComparables\}/);
   assert.match(componentSource, /disabled=\{rowAttestationLocked\}/);
+  assert.match(componentSource, /patchPropertyTaxComparableRow\(row, patch\)/);
   assert.match(componentSource, /Only the assigned appraiser can verify a sale/);
 });

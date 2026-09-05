@@ -21,6 +21,7 @@ import {
 import {
   gridRowComparableCandidate,
   mergePropertyTaxComparableRows,
+  patchPropertyTaxComparableRow,
   readPropertyTaxComparableGrid,
   recommendedSaleGridRow,
   writePropertyTaxComparableGrid,
@@ -203,7 +204,9 @@ export default function PropertyTaxComparableGrid({
   }, [caseData.neighborhoodCode, databaseDefaults.loaded, file.tax_protest_file_id, loadRecommendations, rows.length, subject, workspace.taxYear]);
 
   const updateRow = (id: string, patch: Partial<PropertyTaxComparableGridRow>) => {
-    setRows((current) => current.map((row) => row.id === id ? { ...row, ...patch } : row));
+    setRows((current) => current.map((row) => (
+      row.id === id ? patchPropertyTaxComparableRow(row, patch) : row
+    )));
   };
 
   const addBlankDistrictRow = () => {
@@ -267,7 +270,9 @@ export default function PropertyTaxComparableGrid({
       setMessage(`Comparable grid saved in ${current.file_number} revision ${current.revision}.`);
     } catch (error) {
       const text = error instanceof Error ? error.message : 'The comparable grid could not be saved.';
-      setMessage(text === 'property_tax_protest_revision_conflict'
+      setMessage(text === 'property_tax_comparable_reverification_required'
+        ? 'Comparable facts changed after verification. Save them as needing review, then review and attest the saved revision again.'
+        : text === 'property_tax_protest_revision_conflict'
         || text === 'property_tax_protest_save_operation_conflict'
         ? 'A newer protest revision exists. Refresh the canonical file before saving this grid.'
         : text);

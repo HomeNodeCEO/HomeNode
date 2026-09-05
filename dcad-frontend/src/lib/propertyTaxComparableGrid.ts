@@ -45,6 +45,34 @@ export interface PropertyTaxComparableGridState {
 
 const MAX_GRID_ROWS = 40;
 
+const MATERIAL_COMPARABLE_FIELDS = Object.freeze([
+  'source', 'sourceLabel', 'sourceReference', 'documentId', 'documentPage',
+  'saleId', 'accountId', 'address', 'saleDate', 'salePrice', 'districtAdjustedValue',
+  'concessions', 'adjustmentAmount', 'propertyUse', 'neighborhoodCode', 'buildingClass',
+  'livingAreaSqft', 'siteSizeSqft', 'yearBuilt', 'bedroomCount', 'bathCount',
+  'garageSpaces', 'pool',
+] satisfies (keyof PropertyTaxComparableGridRow)[]);
+
+export function propertyTaxComparableMaterialFactsEqual(
+  left: PropertyTaxComparableGridRow,
+  right: PropertyTaxComparableGridRow,
+): boolean {
+  return MATERIAL_COMPARABLE_FIELDS.every((key) => Object.is(left[key], right[key]));
+}
+
+export function patchPropertyTaxComparableRow(
+  row: PropertyTaxComparableGridRow,
+  patch: Partial<PropertyTaxComparableGridRow>,
+): PropertyTaxComparableGridRow {
+  const next = { ...row, ...patch };
+  const materialChanged = MATERIAL_COMPARABLE_FIELDS.some((key) => (
+    Object.hasOwn(patch, key) && !Object.is(row[key], next[key])
+  ));
+  return materialChanged
+    ? { ...next, reviewStatus: 'needs_review', armsLength: false }
+    : next;
+}
+
 function record(value: unknown): Record<string, unknown> {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>

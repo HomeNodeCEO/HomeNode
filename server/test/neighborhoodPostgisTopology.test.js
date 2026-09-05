@@ -38,6 +38,7 @@ function payloads(input = fixture()) {
     boundary_edge_ids: edges.map(row => row.id), interior_ring_count: 0 };
   const diagnostics = { invalid_source_count: 0, nonsimple_source_count: 0, noded_coordinate_count: 6, edge_count: 3,
     cell_count: 1, node_count: 3, source_reference_count: 3, invalid_cell_count: 0, sliver_cell_count: 0, unattributed_edge_count: 0, uncovered_source_segment_count: 0, ambiguous_source_edge_count: 0,
+    source_point_incidence_count: 12, source_chain_count: 3, invalid_source_witness_count: 0, ambiguous_source_order_count: 0,
     invalid_incidence_count: 0, unsupported_boundary_count: 0, overlapping_cell_count: 0, multisource_edge_count: 0,
     unused_edge_count: 0, dangle_node_count: 0 };
   return [{ kind: "diagnostics", id: "diagnostics", payload: diagnostics }, { kind: "cell", id: cellId, payload: cell },
@@ -81,6 +82,7 @@ const emptyGraph = output => {
 test("mocked boundary: ready requires own preparation and PostGIS query, and preserves source/projection caveats", async () => {
   const { output, calls, released } = await runMock();
   assert.equal(output.status, "ready"); assert.equal(output.topology_validated, true);
+  assert.equal(output.topology_version, 'postgis-planar-v3');
   assert.equal(output.metric_srid, 26914); assert.equal(output.display_srid, 4326);
   assert.equal(output.performed_policy.snap_tolerance_meters, 0);
   assert.equal(output.performed_policy.source_fraction_basis, "source_segment");
@@ -104,12 +106,14 @@ test("mocked boundary: ready requires own preparation and PostGIS query, and pre
   assert.doesNotMatch(admissionQuery.text, /ST_(Node|Polygonize|Snap|Buffer|MakeLine)\s*\(/i);
   assert.ok(calls.indexOf(admissionQuery) < calls.indexOf(query));
   assert.match(query.text, /ST_Node\(/); assert.match(query.text, /ST_Polygonize\(/); assert.match(query.text, /ST_DumpSegments/);
-  assert.match(query.text, /ST_AsEWKB\(ST_Normalize\(e.geom\),'NDR'\)=ST_AsEWKB\(ST_Normalize\(ST_LineSubstring/);
+  assert.match(query.text, /ST_Intersection\(/);
   assert.match(query.text, /source_segment_index/);
-  assert.doesNotMatch(query.text, /ST_CoveredBy\(e.geom,p.geom\)|ST_DWithin|ST_Distance/);
-  assert.equal(output.performed_policy.source_attribution, 'exact_normalized_EWKB_source_segment_reconstruction_v1');
-  assert.equal(output.performed_policy.source_occurrence_coverage, 'complete_fraction_interval_union_v1');
-  assert.match(query.text, /min\(lo\)=0 AND max\(hi\)=1 AND NOT bool_or/);
+  assert.doesNotMatch(query.text, /ST_CoveredBy\(e.geom,p.geom\)|ST_DWithin|ST_Distance|ST_LineLocatePoint|ST_LineSubstring/);
+  assert.equal(output.performed_policy.source_attribution, 'exact_original_endpoint_and_pair_intersection_witness_chains_v1');
+  assert.equal(output.performed_policy.source_occurrence_coverage, 'complete_consecutive_witness_chain_coverage_v1');
+  assert.equal(output.performed_policy.source_fraction_interpretation, 'dominant_axis_signed_order_coordinate_v1');
+  assert.equal(output.performed_policy.source_witness_budgets, 'point_incidences_2S_plus_4P_chains_S_plus_4P_v1');
+  assert.match(query.text, /lead\(/i);
   assert.match(query.text, /NOT ST_Relate\(a.geom,b.geom,'1\*\*\*\*\*\*\*\*'\)/);
   assert.equal(output.performed_policy.ambiguous_source_policy, 'require_original_primitive_positive_length_overlap_v1');
   assert.doesNotMatch(query.text, /ST_(Snap|Buffer|MakeLine|Envelope|MakeEnvelope|ConvexHull|MakeValid)\s*\(/i);
@@ -153,6 +157,10 @@ test("every incomplete geometry/limit diagnostic is atomic rather than exposing 
     ["unattributed_edge_count", 1, "unattributed_source_edges"], ["invalid_incidence_count", 1, "invalid_edge_incidence"],
     ["uncovered_source_segment_count", 1, "uncovered_source_segments"],
     ["ambiguous_source_edge_count", 1, "ambiguous_source_attribution"],
+    ["invalid_source_witness_count", 1, "unsupported_source_witness"],
+    ["ambiguous_source_order_count", 1, "ambiguous_source_order"],
+    ["source_point_incidence_count", 19, "topology_limit_exceeded"],
+    ["source_chain_count", 16, "topology_limit_exceeded"],
     ["unsupported_boundary_count", 1, "unsupported_cell_boundary"], ["overlapping_cell_count", 1, "overlapping_cells"],
     ["edge_count", 8193, "topology_limit_exceeded"], ["cell_count", 1025, "topology_limit_exceeded"],
     ["noded_coordinate_count", 32769, "topology_limit_exceeded"], ["source_reference_count", 16385, "topology_limit_exceeded"]]) {
@@ -167,7 +175,7 @@ test("dangling real linework remains diagnostic, not a fabricated boundary or tr
   const edge = structuredClone(rows.find(row => row.kind === "edge"));
   edge.id = id("edge", 4); Object.assign(edge.payload, { id: edge.id, to_node_id: node.id, cell_ids: [] }); rows.push(edge);
   rows.find(row => row.kind === "node" && row.id === edge.payload.from_node_id).payload.degree++;
-  Object.assign(rows[0].payload, { edge_count: 4, node_count: 4, source_reference_count: 4, unused_edge_count: 1, dangle_node_count: 1 });
+  Object.assign(rows[0].payload, { edge_count: 4, node_count: 4, source_reference_count: 4, source_chain_count: 4, unused_edge_count: 1, dangle_node_count: 1 });
   const { output } = await runMock({ rows }); assert.equal(output.status, "ready");
   assert.equal(output.edges.filter(row => !row.cell_ids.length).length, 1);
   assert.equal(output.travel_connectivity, "not_evaluated");
@@ -175,6 +183,7 @@ test("dangling real linework remains diagnostic, not a fabricated boundary or tr
 
 test("malformed diagnostic fields, duplicate IDs, missing incidence, and invented provenance fail closed", async () => {
   for (const mutate of [rows => { delete rows[0].payload.overlapping_cell_count; },
+    rows => { rows[0].payload.source_chain_count++; },
     rows => { rows[0].payload.sliver_cell_count = "0"; }, rows => { rows.push(rows[0]); },
     rows => { rows.find(row => row.kind === "edge").payload.from_node_id = id("node", 7); },
     rows => { rows.find(row => row.kind === "edge").payload.source_parts[0].feature_id = "f".repeat(64); },

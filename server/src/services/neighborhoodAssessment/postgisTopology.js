@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { canonicalAssessmentJson } from "./contract.js";
 import { prepareNeighborhoodLinework } from "./graphPreparation.js";
 
-export const POSTGIS_TOPOLOGY_VERSION = "postgis-planar-v2";
+export const POSTGIS_TOPOLOGY_VERSION = "postgis-planar-v3";
 export const POSTGIS_TOPOLOGY_LIMITS = Object.freeze({
   input_parts: 512, input_coordinates: 8192, cells: 1024, edges: 8192,
   primitive_segments: 512, candidate_pairs: 4096,
@@ -21,7 +21,8 @@ const MINIMUM_CELL_AREA_M2 = 1;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const hashPattern = /^[a-f0-9]{64}$/;
 const DIAGNOSTICS = ["invalid_source_count", "nonsimple_source_count", "noded_coordinate_count", "edge_count", "cell_count",
-  "node_count", "source_reference_count", "invalid_cell_count", "sliver_cell_count", "unattributed_edge_count", "uncovered_source_segment_count", "ambiguous_source_edge_count",
+  "node_count", "source_reference_count", "source_point_incidence_count", "source_chain_count", "invalid_source_witness_count", "ambiguous_source_order_count",
+  "invalid_cell_count", "sliver_cell_count", "unattributed_edge_count", "uncovered_source_segment_count", "ambiguous_source_edge_count",
   "invalid_incidence_count", "unsupported_boundary_count", "overlapping_cell_count", "multisource_edge_count",
   "unused_edge_count", "dangle_node_count"];
 function invalid(field) { throw new TypeError(`invalid_neighborhood_topology:${field}`); }
@@ -118,10 +119,15 @@ function nodingAdmission(primitiveCount, coordinateCount, pairs, limits) {
 }
 
 // No ST_Snap, ST_MakeLine, buffer, hull, envelope edge or repair fallback.
-// ST_Node dissolves overlapping linework but source_matches retains every exact
-// source-part attribution. ST_Polygonize yields planar faces, including inner
+// ST_Node dissolves overlapping linework but source_matches retains every
+// original primitive occurrence. Attribution compares existing edge endpoints
+// with consecutive source-local endpoint/intersection witnesses. It does not
+// interpolate or create linework, and does not claim the rounded GEOS witness
+// is exactly collinear with its original primitives. ST_Polygonize yields planar
 // faces, not a claim that holes/land uses should belong to one neighborhood.
-function topologySql(limits) {
+function topologySql(limits, admission) {
+  const pointIncidenceBudget = 2 * admission.primitive_segments + 4 * admission.candidate_pairs;
+  const chainBudget = admission.split_pieces_upper_bound;
   return `WITH source_parts AS MATERIALIZED (
     SELECT p.feature_id,p.source_part_index,
       ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(p.geometry),4326),26914) AS geom
@@ -133,6 +139,72 @@ function topologySql(limits) {
     SELECT p.feature_id,p.source_part_index,d.path[1] AS source_segment_index,d.geom
     FROM source_parts p CROSS JOIN LATERAL ST_DumpSegments(p.geom) d
     WHERE ST_Length(d.geom)>0
+  ), source_pairs AS MATERIALIZED (
+    SELECT a.feature_id AS a_feature,a.source_part_index AS a_part,a.source_segment_index AS a_segment,a.geom AS a_geom,
+      b.feature_id AS b_feature,b.source_part_index AS b_part,b.source_segment_index AS b_segment,b.geom AS b_geom
+    FROM source_segments a JOIN source_segments b
+      ON (a.feature_id,a.source_part_index,a.source_segment_index)<(b.feature_id,b.source_part_index,b.source_segment_index)
+      AND a.geom && b.geom LIMIT ${admission.candidate_pairs + 1}
+  ), source_pair_count AS (SELECT count(*)::integer AS count FROM source_pairs),
+  pair_intersections AS MATERIALIZED (
+    SELECT p.*,ST_Intersection(ST_Normalize(a_geom),ST_Normalize(b_geom)) AS geom
+    FROM source_pairs p WHERE (SELECT count FROM source_pair_count)<=${admission.candidate_pairs}
+  ), checked_intersections AS MATERIALIZED (
+    SELECT p.*,ST_IsEmpty(geom) AS empty,
+      ST_IsValid(geom) AND ST_SRID(geom)=26914 AND ST_NDims(geom)=2 AND
+      ((GeometryType(geom)='POINT' AND ST_NPoints(geom)=1) OR
+       (GeometryType(geom)='LINESTRING' AND ST_NPoints(geom)=2 AND ST_Length(geom)>0)) AS valid_witness
+    FROM pair_intersections p
+  ), invalid_witnesses AS (
+    SELECT (count(*) FILTER(WHERE empty IS DISTINCT FROM true AND valid_witness IS DISTINCT FROM true)+
+      CASE WHEN (SELECT count FROM source_pair_count)>${admission.candidate_pairs} THEN 1 ELSE 0 END)::integer AS count
+    FROM checked_intersections
+  ), pair_points AS MATERIALIZED (
+    SELECT p.a_feature,p.a_part,p.a_segment,p.b_feature,p.b_part,p.b_segment,
+      ST_AsEWKB(w.geom,'NDR') AS point_bytes
+    FROM checked_intersections p CROSS JOIN LATERAL (
+      SELECT p.geom WHERE GeometryType(p.geom)='POINT'
+      UNION ALL SELECT ST_StartPoint(p.geom) WHERE GeometryType(p.geom)='LINESTRING'
+      UNION ALL SELECT ST_EndPoint(p.geom) WHERE GeometryType(p.geom)='LINESTRING'
+    ) w(geom) WHERE NOT p.empty AND p.valid_witness
+  ), source_point_incidences AS MATERIALIZED (
+    SELECT feature_id,source_part_index,source_segment_index,ST_AsEWKB(ST_StartPoint(geom),'NDR') AS point_bytes FROM source_segments
+    UNION ALL SELECT feature_id,source_part_index,source_segment_index,ST_AsEWKB(ST_EndPoint(geom),'NDR') FROM source_segments
+    UNION ALL SELECT a_feature,a_part,a_segment,point_bytes FROM pair_points
+    UNION ALL SELECT b_feature,b_part,b_segment,point_bytes FROM pair_points
+    LIMIT ${pointIncidenceBudget + 1}
+  ), source_point_count AS (SELECT count(*)::integer AS count FROM source_point_incidences),
+  unique_source_points AS MATERIALIZED (
+    SELECT DISTINCT feature_id,source_part_index,source_segment_index,point_bytes FROM source_point_incidences
+    WHERE (SELECT count FROM source_point_count)<=${pointIncidenceBudget} AND (SELECT count FROM invalid_witnesses)=0
+  ), located_source_points AS MATERIALIZED (
+    SELECT w.*,p.start_bytes,p.end_bytes,
+      CASE WHEN w.point_bytes=p.start_bytes THEN 0::double precision
+        WHEN w.point_bytes=p.end_bytes THEN 1::double precision
+        WHEN abs(p.dx)>=abs(p.dy) THEN (ST_X(ST_GeomFromEWKB(w.point_bytes))-p.x0)/p.dx
+        ELSE (ST_Y(ST_GeomFromEWKB(w.point_bytes))-p.y0)/p.dy END AS order_fraction
+    FROM unique_source_points w JOIN (
+      SELECT s.*,ST_AsEWKB(ST_StartPoint(geom),'NDR') AS start_bytes,ST_AsEWKB(ST_EndPoint(geom),'NDR') AS end_bytes,
+        ST_X(ST_StartPoint(geom)) AS x0,ST_Y(ST_StartPoint(geom)) AS y0,
+        ST_X(ST_EndPoint(geom))-ST_X(ST_StartPoint(geom)) AS dx,
+        ST_Y(ST_EndPoint(geom))-ST_Y(ST_StartPoint(geom)) AS dy FROM source_segments s
+    ) p USING(feature_id,source_part_index,source_segment_index)
+  ), source_order AS MATERIALIZED (
+    SELECT feature_id,source_part_index,source_segment_index,
+      count(*)>=2 AND count(DISTINCT order_fraction)=count(*) AND min(order_fraction)=0 AND max(order_fraction)=1 AND
+      bool_and((point_bytes=start_bytes AND order_fraction=0) OR (point_bytes=end_bytes AND order_fraction=1) OR
+        (point_bytes<>start_bytes AND point_bytes<>end_bytes AND order_fraction>0 AND order_fraction<1)) AS valid_order
+    FROM located_source_points GROUP BY feature_id,source_part_index,source_segment_index
+  ), ordered_source_points AS (
+    SELECT p.feature_id,p.source_part_index,p.source_segment_index,p.point_bytes,p.order_fraction,
+      lead(p.point_bytes) OVER w AS next_point_bytes,lead(p.order_fraction) OVER w AS next_fraction
+    FROM located_source_points p JOIN source_order o USING(feature_id,source_part_index,source_segment_index)
+    WHERE o.valid_order WINDOW w AS (PARTITION BY p.feature_id,p.source_part_index,p.source_segment_index ORDER BY p.order_fraction)
+  ), source_chains AS MATERIALIZED (
+    SELECT * FROM ordered_source_points WHERE next_point_bytes IS NOT NULL LIMIT ${chainBudget + 1}
+  ), source_chain_count AS (SELECT count(*)::integer AS count FROM source_chains),
+  source_chain_budget AS (
+    SELECT (SELECT count FROM source_chain_count)<=${chainBudget} AS allowed
   ), noded AS MATERIALIZED (
     SELECT ST_Node(ST_Collect(ST_Normalize(geom) ORDER BY encode(ST_AsEWKB(ST_Normalize(geom)),'hex'),feature_id,source_part_index)) AS geom
     FROM source_parts WHERE (SELECT invalid_sources FROM source_checks)=0
@@ -147,7 +219,8 @@ function topologySql(limits) {
   edges AS MATERIALIZED (
     SELECT 'edge:'||encode(sha256(ST_AsEWKB(geom)),'hex') AS id,geom,
       'node:'||encode(sha256(ST_AsEWKB(ST_StartPoint(geom))),'hex') AS from_node_id,
-      'node:'||encode(sha256(ST_AsEWKB(ST_EndPoint(geom))),'hex') AS to_node_id
+      'node:'||encode(sha256(ST_AsEWKB(ST_EndPoint(geom))),'hex') AS to_node_id,
+      ST_AsEWKB(ST_StartPoint(geom),'NDR') AS start_bytes,ST_AsEWKB(ST_EndPoint(geom),'NDR') AS end_bytes
     FROM segments WHERE (SELECT count FROM edge_count)<=${limits.edges}
   ), polygonized AS (
     SELECT ST_Polygonize(geom) AS geom FROM noded
@@ -161,41 +234,31 @@ function topologySql(limits) {
     SELECT 'cell:'||encode(sha256(ST_AsEWKB(geom)),'hex') AS id,geom,
       ST_Area(geom) AS area_m2,ST_IsValid(geom) AND NOT ST_IsEmpty(geom) AS valid
     FROM face_parts WHERE (SELECT count FROM face_count)<=${limits.cells}
+  ), matched_source_chains AS MATERIALIZED (
+    SELECT c.*,e.id AS edge_id,
+      CASE WHEN e.start_bytes=c.point_bytes THEN c.order_fraction ELSE c.next_fraction END AS start_fraction,
+      CASE WHEN e.end_bytes=c.next_point_bytes THEN c.next_fraction ELSE c.order_fraction END AS end_fraction
+    FROM source_chains c LEFT JOIN edges e ON ST_NPoints(e.geom)=2 AND
+      LEAST(e.start_bytes,e.end_bytes)=LEAST(c.point_bytes,c.next_point_bytes) AND
+      GREATEST(e.start_bytes,e.end_bytes)=GREATEST(c.point_bytes,c.next_point_bytes)
+    WHERE (SELECT allowed FROM source_chain_budget)
   ), source_matches AS MATERIALIZED (
-    SELECT e.id AS edge_id,p.feature_id,p.source_part_index,p.source_segment_index,
-      located.start_fraction,located.end_fraction
-    FROM edges e JOIN source_segments p ON e.geom && p.geom
-    CROSS JOIN LATERAL (SELECT
-      ST_LineLocatePoint(p.geom,ST_StartPoint(e.geom)) AS start_fraction,
-      ST_LineLocatePoint(p.geom,ST_EndPoint(e.geom)) AS end_fraction) located
-    WHERE located.start_fraction<>located.end_fraction
-      AND ST_AsEWKB(ST_Normalize(e.geom),'NDR')=ST_AsEWKB(ST_Normalize(ST_LineSubstring(p.geom,
-        LEAST(located.start_fraction,located.end_fraction),GREATEST(located.start_fraction,located.end_fraction))),'NDR')
-    ORDER BY e.id,p.feature_id,p.source_part_index,p.source_segment_index LIMIT ${limits.source_references + 1}
+    SELECT edge_id,feature_id,source_part_index,source_segment_index,start_fraction,end_fraction
+    FROM matched_source_chains WHERE edge_id IS NOT NULL
+    ORDER BY edge_id,feature_id,source_part_index,source_segment_index LIMIT ${limits.source_references + 1}
   ), source_ref_count AS (SELECT count(*)::integer AS count FROM source_matches),
   incompatible_source_pairs AS MATERIALIZED (
-    SELECT a.feature_id AS a_feature,a.source_part_index AS a_part,a.source_segment_index AS a_segment,
-      b.feature_id AS b_feature,b.source_part_index AS b_part,b.source_segment_index AS b_segment
-    FROM source_segments a JOIN source_segments b
-      ON (a.feature_id,a.source_part_index,a.source_segment_index)<(b.feature_id,b.source_part_index,b.source_segment_index)
-      AND a.geom && b.geom
-    WHERE NOT ST_Relate(a.geom,b.geom,'1********')
+    SELECT a_feature,a_part,a_segment,b_feature,b_part,b_segment FROM source_pairs
+    WHERE NOT ST_Relate(a_geom,b_geom,'1********')
   ), ambiguous_edges AS (
     SELECT DISTINCT a.edge_id FROM incompatible_source_pairs p
     JOIN source_matches a ON (a.feature_id,a.source_part_index,a.source_segment_index)=(p.a_feature,p.a_part,p.a_segment)
     JOIN source_matches b ON b.edge_id=a.edge_id
       AND (b.feature_id,b.source_part_index,b.source_segment_index)=(p.b_feature,p.b_part,p.b_segment)
-  ),
-  source_intervals AS (
-    SELECT feature_id,source_part_index,source_segment_index,
-      LEAST(start_fraction,end_fraction) AS lo,GREATEST(start_fraction,end_fraction) AS hi,
-      max(GREATEST(start_fraction,end_fraction)) OVER(PARTITION BY feature_id,source_part_index,source_segment_index
-        ORDER BY LEAST(start_fraction,end_fraction),GREATEST(start_fraction,end_fraction),edge_id
-        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_hi FROM source_matches
   ), source_coverage AS (
     SELECT feature_id,source_part_index,source_segment_index,
-      min(lo)=0 AND max(hi)=1 AND NOT bool_or(lo>COALESCE(prior_hi,0)) AS fully_covered
-    FROM source_intervals GROUP BY feature_id,source_part_index,source_segment_index
+      min(order_fraction)=0 AND max(next_fraction)=1 AND bool_and(edge_id IS NOT NULL) AS fully_covered
+    FROM matched_source_chains GROUP BY feature_id,source_part_index,source_segment_index
   ),
   edge_faces AS MATERIALIZED (
     SELECT e.id AS edge_id,f.id AS cell_id FROM edges e JOIN faces f
@@ -225,6 +288,9 @@ function topologySql(limits) {
       (SELECT noded_coordinate_count FROM node_size) AS noded_coordinate_count,
       (SELECT count FROM edge_count) AS edge_count,(SELECT count FROM face_count) AS cell_count,
       (SELECT count(*)::integer FROM nodes) AS node_count,(SELECT count FROM source_ref_count) AS source_reference_count,
+      (SELECT count FROM source_point_count) AS source_point_incidence_count,(SELECT count FROM source_chain_count) AS source_chain_count,
+      (SELECT count FROM invalid_witnesses) AS invalid_source_witness_count,
+      (SELECT count(*)::integer FROM source_order WHERE valid_order IS DISTINCT FROM true) AS ambiguous_source_order_count,
       (SELECT count(*)::integer FROM face_data WHERE NOT valid OR NOT ST_IsValid(ST_Transform(geom,4326))) AS invalid_cell_count,
       (SELECT count(*)::integer FROM face_data WHERE area_m2<${MINIMUM_CELL_AREA_M2}) AS sliver_cell_count,
       (SELECT count(*)::integer FROM edge_data WHERE jsonb_array_length(source_parts)=0) AS unattributed_edge_count,
@@ -416,13 +482,15 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       if (!output.noding_admission.admitted) stop('pre_noding_limit_exceeded');
       output.performed_policy = { version: POSTGIS_TOPOLOGY_VERSION, requested_policy_version: prepared.policy.version,
         metric_srid: METRIC_SRID, snap_tolerance_meters: 0,
-        source_attribution: "exact_normalized_EWKB_source_segment_reconstruction_v1", source_fraction_basis: "source_segment",
-        source_occurrence_coverage: "complete_fraction_interval_union_v1",
+        source_attribution: "exact_original_endpoint_and_pair_intersection_witness_chains_v1", source_fraction_basis: "source_segment",
+        source_fraction_interpretation: "dominant_axis_signed_order_coordinate_v1",
+        source_occurrence_coverage: "complete_consecutive_witness_chain_coverage_v1",
+        source_witness_budgets: "point_incidences_2S_plus_4P_chains_S_plus_4P_v1",
         ambiguous_source_policy: "require_original_primitive_positive_length_overlap_v1",
         supported_projection_window: SUPPORTED_PROJECTION_WINDOW,
         noding_admission_policy: output.noding_admission.policy,
         minimum_cell_area_m2: MINIMUM_CELL_AREA_M2, geometry_repair: "none", travel_graph: "not_generated" };
-      const records = await query("build", topologySql(limits), [payload]);
+      const records = await query("build", topologySql(limits, output.noding_admission), [payload]);
       if (records.length > 1 + limits.cells + limits.edges * 3) stop("topology_limit_exceeded");
       let seenDiagnostics = false, receivedBytes = 0, reportedBytes;
       for (const record of records) {
@@ -447,6 +515,10 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       for (const key of DIAGNOSTICS) if (!Number.isSafeInteger(d[key]) || d[key] < 0) stop("invalid_topology_result");
       const reasons = [];
       if (d.edge_count > limits.edges || d.cell_count > limits.cells || d.source_reference_count > limits.source_references || d.noded_coordinate_count > limits.edges * 4) reasons.push("topology_limit_exceeded");
+      if (d.source_point_incidence_count > 2 * primitiveCount + 4 * output.noding_admission.candidate_pairs ||
+          d.source_chain_count > output.noding_admission.split_pieces_upper_bound) reasons.push("topology_limit_exceeded");
+      if (d.invalid_source_witness_count) reasons.push("unsupported_source_witness");
+      if (d.ambiguous_source_order_count) reasons.push("ambiguous_source_order");
       if (!d.cell_count) reasons.push("no_closed_cells");
       if (d.invalid_source_count) reasons.push("invalid_source_geometry");
       if (d.invalid_cell_count || output.cells.some(row => row.geometry_validated !== true || !Number.isFinite(row.area_m2) || row.area_m2 <= 0)) reasons.push("invalid_cell_geometry");
@@ -458,6 +530,7 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       if (d.unsupported_boundary_count) reasons.push("unsupported_cell_boundary");
       if (d.overlapping_cell_count) reasons.push("overlapping_cells");
       if (!reasons.length) {
+        if (d.source_chain_count !== d.source_reference_count) stop("invalid_topology_result");
         if (d.cell_count !== output.cells.length || d.edge_count !== output.edges.length || d.node_count !== output.nodes.length) stop("invalid_topology_result");
         const cellIds = new Set(output.cells.map(row => row.id)), edgeIds = new Set(output.edges.map(row => row.id)), nodeIds = new Set(output.nodes.map(row => row.id));
         if (cellIds.size !== output.cells.length || edgeIds.size !== output.edges.length || nodeIds.size !== output.nodes.length) stop("invalid_topology_result");

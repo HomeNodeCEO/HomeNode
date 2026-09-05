@@ -192,7 +192,7 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
   const { createNeighborhoodPostgisTopology } = await import('../src/services/neighborhoodAssessment/postgisTopology.js');
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 3,
     connectionTimeoutMillis: 3000, statement_timeout: 8000, application_name: 'neighborhood_topology_integration' });
-  const auditSourceIntervals = async (input, result) => {
+  const auditSourceWitnessChains = async (input, result) => {
     // Derive identities and primitives from the supplied capture, not from the
     // returned source descriptors, cells, nearest roads, or repaired geometry.
     const original = originalSourceParts(input);
@@ -212,7 +212,7 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       assert.ok(Number.isFinite(ref.end_fraction) && ref.end_fraction >= 0 && ref.end_fraction <= 1);
       assert.notEqual(ref.start_fraction, ref.end_fraction);
     }
-    const { rows: [audit] } = await pool.query(`/* topology-fixture:audit-exact-source-intervals */
+    const { rows: [audit] } = await pool.query(`/* topology-fixture:audit-exact-original-witness-chains */
       WITH original AS (
         SELECT feature_id,source_part_index,
           ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(geometry),4326),26914) AS geom
@@ -227,55 +227,88 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       ), refs AS (
         SELECT * FROM jsonb_to_recordset($3::jsonb) AS item(edge_id text,feature_id text,
           source_part_index integer,source_segment_index integer,start_fraction double precision,end_fraction double precision)
-      ), reconstructed AS (
-        SELECT edges.geom AS edge_geom,segments.geom AS primitive_geom,refs.start_fraction,refs.end_fraction,
-          ST_LineSubstring(segments.geom,least(refs.start_fraction,refs.end_fraction),
-            greatest(refs.start_fraction,refs.end_fraction)) AS interval_geom
-        FROM refs JOIN edges USING(edge_id)
-        JOIN segments USING(feature_id,source_part_index,source_segment_index)
-      ), all_original_candidates AS (
-        -- These small synthetic fixtures permit an independent all-pairs audit:
-        -- no implementation bounding-box join or nearest-source selection can
-        -- hide an omitted duplicate/retraced original primitive occurrence.
-        SELECT edges.edge_id,segments.feature_id,segments.source_part_index,segments.source_segment_index,
-          edges.geom AS edge_geom,segments.geom AS primitive_geom,
-          ST_LineLocatePoint(segments.geom,ST_StartPoint(edges.geom)) AS start_fraction,
-          ST_LineLocatePoint(segments.geom,ST_EndPoint(edges.geom)) AS end_fraction
-        FROM edges CROSS JOIN segments
+      ), witness_points AS (
+        -- Independent exhaustive small-fixture oracle, including self pairs:
+        -- self intersections provide original endpoints, true original-pair
+        -- intersections provide split/overlap endpoints. No production bbox
+        -- join, returned descriptor, interpolated coordinate or nearest source
+        -- can hide a missing/extra primitive occurrence in this reference set.
+        SELECT DISTINCT a.feature_id,a.source_part_index,a.source_segment_index,
+          encode(ST_AsEWKB(p.geom,'NDR'),'hex') AS point_bytes
+        FROM segments a CROSS JOIN segments b
+        CROSS JOIN LATERAL ST_DumpPoints(ST_Intersection(a.geom,b.geom)) p
+      ), measured AS (
+        SELECT w.*,ST_GeomFromEWKB(decode(point_bytes,'hex')) AS point_geom,
+          ST_StartPoint(s.geom) AS original_start,ST_EndPoint(s.geom) AS original_end
+        FROM witness_points w JOIN segments s USING(feature_id,source_part_index,source_segment_index)
+      ), positions AS (
+        SELECT *,CASE
+          WHEN point_bytes=encode(ST_AsEWKB(original_start,'NDR'),'hex') THEN 0::double precision
+          WHEN point_bytes=encode(ST_AsEWKB(original_end,'NDR'),'hex') THEN 1::double precision
+          WHEN abs(ST_X(original_end)-ST_X(original_start))>=abs(ST_Y(original_end)-ST_Y(original_start))
+            THEN (ST_X(point_geom)-ST_X(original_start))/(ST_X(original_end)-ST_X(original_start))
+          ELSE (ST_Y(point_geom)-ST_Y(original_start))/(ST_Y(original_end)-ST_Y(original_start)) END AS fraction
+        FROM measured
+      ), tied AS (
+        SELECT 1 FROM positions GROUP BY feature_id,source_part_index,source_segment_index,fraction HAVING count(*)>1
+      ), chains AS (
+        SELECT *,lead(point_bytes) OVER w AS next_bytes,lead(fraction) OVER w AS next_fraction
+        FROM positions WINDOW w AS (PARTITION BY feature_id,source_part_index,source_segment_index
+          ORDER BY fraction,point_bytes COLLATE "C")
       ), exact_occurrences AS (
-        SELECT edge_id,feature_id,source_part_index,source_segment_index
-        FROM all_original_candidates
-        WHERE start_fraction<>end_fraction
-          AND ST_Equals(edge_geom,ST_LineSubstring(primitive_geom,least(start_fraction,end_fraction),greatest(start_fraction,end_fraction)))
-          AND ST_AsEWKB(ST_Normalize(edge_geom),'NDR')=ST_AsEWKB(ST_Normalize(ST_LineSubstring(primitive_geom,
-            least(start_fraction,end_fraction),greatest(start_fraction,end_fraction))),'NDR')
+        SELECT e.edge_id,c.feature_id,c.source_part_index,c.source_segment_index,c.point_bytes,c.next_bytes,
+          CASE WHEN encode(ST_AsEWKB(ST_StartPoint(e.geom),'NDR'),'hex')=c.point_bytes THEN c.fraction ELSE c.next_fraction END AS start_fraction,
+          CASE WHEN encode(ST_AsEWKB(ST_StartPoint(e.geom),'NDR'),'hex')=c.point_bytes THEN c.next_fraction ELSE c.fraction END AS end_fraction
+        FROM edges e CROSS JOIN chains c WHERE c.next_bytes IS NOT NULL AND c.fraction<c.next_fraction
+          AND ((encode(ST_AsEWKB(ST_StartPoint(e.geom),'NDR'),'hex')=c.point_bytes
+            AND encode(ST_AsEWKB(ST_EndPoint(e.geom),'NDR'),'hex')=c.next_bytes)
+          OR (encode(ST_AsEWKB(ST_StartPoint(e.geom),'NDR'),'hex')=c.next_bytes
+            AND encode(ST_AsEWKB(ST_EndPoint(e.geom),'NDR'),'hex')=c.point_bytes))
       ), missing AS (
-        SELECT * FROM exact_occurrences EXCEPT SELECT edge_id,feature_id,source_part_index,source_segment_index FROM refs
+        SELECT edge_id,feature_id,source_part_index,source_segment_index FROM exact_occurrences
+        EXCEPT SELECT edge_id,feature_id,source_part_index,source_segment_index FROM refs
       ), unexpected AS (
-        SELECT edge_id,feature_id,source_part_index,source_segment_index FROM refs EXCEPT SELECT * FROM exact_occurrences
+        SELECT edge_id,feature_id,source_part_index,source_segment_index FROM refs
+        EXCEPT SELECT edge_id,feature_id,source_part_index,source_segment_index FROM exact_occurrences
+      ), missing_chains AS (
+        SELECT 1 FROM chains c WHERE next_bytes IS NOT NULL AND NOT EXISTS (
+          SELECT 1 FROM exact_occurrences e WHERE (e.feature_id,e.source_part_index,e.source_segment_index,e.point_bytes,e.next_bytes)
+            =(c.feature_id,c.source_part_index,c.source_segment_index,c.point_bytes,c.next_bytes))
+      ), incompatible_originals AS (
+        SELECT a.edge_id FROM refs a JOIN refs b ON a.edge_id=b.edge_id
+          AND (a.feature_id,a.source_part_index,a.source_segment_index)<(b.feature_id,b.source_part_index,b.source_segment_index)
+        JOIN segments sa ON (sa.feature_id,sa.source_part_index,sa.source_segment_index)
+          =(a.feature_id,a.source_part_index,a.source_segment_index)
+        JOIN segments sb ON (sb.feature_id,sb.source_part_index,sb.source_segment_index)
+          =(b.feature_id,b.source_part_index,b.source_segment_index)
+        WHERE NOT ST_Relate(sa.geom,sb.geom,'1********')
       ) SELECT count(*)::integer AS matched_references,
-        bool_and(ST_Equals(edge_geom,interval_geom)) AS exact_intervals,
-        bool_and(ST_AsEWKB(ST_Normalize(edge_geom),'NDR')=ST_AsEWKB(ST_Normalize(interval_geom),'NDR')) AS exact_interval_bytes,
-        bool_and(start_fraction=ST_LineLocatePoint(primitive_geom,ST_StartPoint(edge_geom))
-          AND end_fraction=ST_LineLocatePoint(primitive_geom,ST_EndPoint(edge_geom))) AS exact_endpoint_fractions,
+        bool_and(r.start_fraction=e.start_fraction AND r.end_fraction=e.end_fraction) AS exact_order_coordinates,
+        (SELECT count(*)::integer FROM tied) AS tied_source_points,
+        (SELECT count(*)::integer FROM missing_chains) AS missing_source_chains,
+        (SELECT count(*)::integer FROM incompatible_originals) AS incompatible_original_pairs,
         (SELECT count(*)::integer FROM missing) AS missing_occurrences,
         (SELECT count(*)::integer FROM unexpected) AS unexpected_occurrences
-      FROM reconstructed`, [JSON.stringify(original), JSON.stringify(edges), JSON.stringify(refs)]);
+      FROM refs r JOIN exact_occurrences e USING(edge_id,feature_id,source_part_index,source_segment_index)`,
+    [JSON.stringify(original), JSON.stringify(edges), JSON.stringify(refs)]);
     assert.equal(audit.matched_references, refs.length, 'every reference resolves to the exact original feature/part/primitive');
-    assert.equal(audit.exact_intervals, true, 'all source intervals must satisfy exact ST_Equals, without distance tolerance');
-    assert.equal(audit.exact_interval_bytes, true, 'normalized NDR EWKB must match byte for byte');
-    assert.equal(audit.exact_endpoint_fractions, true, 'reported fractions locate the actual edge endpoints on its original primitive');
+    assert.equal(audit.exact_order_coordinates, true, 'fractions describe the declared original-primitive dominant-axis ordering');
+    assert.equal(audit.tied_source_points, 0, 'different exact witness points cannot share an ordering coordinate');
+    assert.equal(audit.missing_source_chains, 0, 'every consecutive original-source witness pair must be an existing native edge');
     assert.equal(audit.missing_occurrences, 0, 'all exact matching source occurrences must be retained');
     assert.equal(audit.unexpected_occurrences, 0, 'nearby or otherwise nonidentical sources must never be attributed');
+    assert.equal(audit.incompatible_original_pairs, 0,
+      'every returned same-edge source pair must independently have positive-length original primitive interior overlap');
     assert.equal(result.diagnostics.uncovered_source_segment_count, 0, 'no original positive-length primitive may be partly lost');
     assert.equal(result.diagnostics.ambiguous_source_edge_count, 0,
-      'coincident reconstructed intervals cannot establish support between distinct non-collinear originals');
+      'coincident witness chains cannot establish support between distinct non-collinear originals');
+    assert.equal(result.diagnostics.source_chain_count, refs.length, 'every source chain matches exactly one native edge');
   };
   const buildInput = async (input, options) => {
     const original = structuredClone(input);
     const result = await createNeighborhoodPostgisTopology(pool, options).build(input);
     assert.deepEqual(input, original, 'topology must not mutate the captured source evidence');
-    if (result.status === 'ready') await auditSourceIntervals(original, result);
+    if (result.status === 'ready') await auditSourceWitnessChains(original, result);
     return result;
   };
   const build = async (name, options) => buildInput(await projectMetricTopologyFixture(pool, name), options);
@@ -430,6 +463,12 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
           SELECT a.source_id AS first_source_id,b.source_id AS second_source_id
           FROM witnesses a JOIN witnesses b ON a.source_id<b.source_id
           WHERE NOT ST_Relate(a.source_geom,b.source_geom,'1********')
+        ), original_point_witnesses AS (
+          -- Unlike the interpolation witnesses above, v3 requires an endpoint
+          -- or native intersection of the actual original source primitives.
+          SELECT DISTINCT a.source_id,ST_AsEWKB(p.geom,'NDR') AS point_bytes
+          FROM originals a CROSS JOIN originals b
+          CROSS JOIN LATERAL ST_DumpPoints(ST_Intersection(a.geom,b.geom)) p
         ) SELECT count(*)::integer AS witness_count,
           bool_and(ST_Equals(edge_geom,interval_geom)) AS exact_intervals,
           bool_and(ST_AsEWKB(ST_Normalize(edge_geom),'NDR')=ST_AsEWKB(ST_Normalize(interval_geom),'NDR')) AS exact_interval_bytes,
@@ -439,6 +478,10 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
           (SELECT ST_Relate(a.geom,b.geom,'1********') FROM originals a JOIN originals b
             ON a.source_id=1 AND b.source_id=2) AS original_positive_interior_support,
           (SELECT ST_CoveredBy(edge.geom,originals.geom) FROM edge JOIN originals ON originals.source_id=2) AS edge_covered_by_second_original,
+          EXISTS(SELECT 1 FROM original_point_witnesses w CROSS JOIN edge
+            WHERE w.source_id=2 AND w.point_bytes=ST_AsEWKB(ST_StartPoint(edge.geom),'NDR')) AS second_source_has_start_witness,
+          EXISTS(SELECT 1 FROM original_point_witnesses w CROSS JOIN edge
+            WHERE w.source_id=2 AND w.point_bytes=ST_AsEWKB(ST_EndPoint(edge.geom),'NDR')) AS second_source_has_end_witness,
           (SELECT count(*)::integer FROM incompatible_witness_pairs) AS ambiguous_pair_count,
           EXISTS(SELECT 1 FROM incompatible_witness_pairs) AS ambiguity_guard_rejects
         FROM witnesses`);
@@ -449,6 +492,9 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       assert.equal(audit.witness_count, 2, 'exact interval bytes alone are insufficient source authority');
       assert.equal(audit.exact_intervals, true);
       assert.equal(audit.exact_interval_bytes, true);
+      assert.equal(audit.second_source_has_start_witness, true);
+      assert.equal(audit.second_source_has_end_witness, false,
+        'a rounded substring endpoint cannot become an original-source endpoint/intersection witness');
       assert.equal(audit.ambiguous_pair_count, 1);
       assert.equal(audit.ambiguity_guard_rejects, true, 'every pair of matched original primitives must have exact positive-length interior support');
     });
@@ -616,6 +662,26 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
         original[key].map(row => ({ id: row.id, geometry_ewkb: row.geometry_ewkb })),
         `${key} metric geometry bytes must not change when source ordering/direction changes`);
     });
+    await t.test('source chains retain every occurrence under mixed and reversed source directions', async () => {
+      for (const name of ['crossing', 'duplicate', 'overlap', 'closedRing', 'bowtie', 'retraced']) {
+        const input = await projectMetricTopologyFixture(pool, name);
+        const baseline = await buildInput(input); assertReady(baseline, name);
+        for (const reverseEvery of [false, true]) {
+          const changed = structuredClone(input);
+          changed.features.forEach((feature, index) => {
+            if (reverseEvery || index % 2 === 0) feature.geometry.coordinates.reverse();
+          });
+          changed.features.reverse();
+          const result = await buildInput(changed); assertReady(result, name);
+          for (const kind of ['cells', 'edges', 'nodes']) assert.deepEqual(
+            result[kind].map(({ id, geometry_ewkb }) => ({ id, geometry_ewkb })),
+            baseline[kind].map(({ id, geometry_ewkb }) => ({ id, geometry_ewkb })),
+            `${name}: source direction/order cannot change existing ${kind} bytes`);
+          assert.equal(result.diagnostics.source_reference_count, baseline.diagnostics.source_reference_count,
+            `${name}: no source occurrence may disappear after direction changes`);
+        }
+      }
+    });
     await t.test('native bowtie intersection construction witnesses the noded split point without interpolation', async () => {
       const input = await projectMetricTopologyFixture(pool, 'bowtie');
       const parts = originalSourceParts(input);
@@ -656,7 +722,7 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
         'all original-pair intersection variants must produce the unchanged native ST_Node split point bytes');
       // This is a bounded construction oracle, not service acceptance: the
       // following bowtie test still requires every original source occurrence
-      // and its full interval coverage. No snap/tolerance/repair is introduced.
+      // and its full witness-chain coverage. No snap/tolerance/repair is introduced.
     });
     for (const name of ['closedRing', 'bowtie', 'retraced']) {
       await t.test(`${name}: source retains exact occurrence-specific primitive segment provenance`, async fixtureTest => {

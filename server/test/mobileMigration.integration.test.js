@@ -1039,6 +1039,16 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.ok(appraisalHistory.files.find((file) => file.id === secondCustom.reportFile.id)?.subject_snapshot_id);
     assert.ok(appraisalHistory.files.find((file) => file.id === uad.reportFile.id)?.appraisal_case_id);
 
+    const sourceDatesBeforeReplication = await pool.query(
+      `SELECT case_record.effective_date, case_record.inspection_date
+         FROM app.report_files report_file
+         JOIN app.appraisal_cases case_record ON case_record.id = report_file.appraisal_case_id
+        WHERE report_file.id = $1`,
+      [secondCustom.reportFile.id],
+    );
+    assert.equal(sourceDatesBeforeReplication.rows[0].effective_date, null);
+    assert.equal(sourceDatesBeforeReplication.rows[0].inspection_date, null);
+
     const replicationRequestId = randomUUID();
     const newAssignmentReplicationInput = {
       mode: "new_assignment_template",
@@ -1062,16 +1072,32 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       `SELECT replication.change_review_required,
               replication.attestation ->> 'mutable_subject_data_copied_to_target' AS mutable_copied,
               source.appraisal_case_id AS source_case_id,
-              target.appraisal_case_id AS target_case_id
+              target.appraisal_case_id AS target_case_id,
+              source_case.effective_date AS source_effective_date,
+              source_case.inspection_date AS source_inspection_date,
+              target_case.effective_date AS target_effective_date,
+              target_case.inspection_date AS target_inspection_date
          FROM app.appraisal_file_replications replication
          JOIN app.report_files source ON source.id = replication.source_report_file_id
          JOIN app.report_files target ON target.id = replication.target_report_file_id
+         JOIN app.appraisal_cases source_case ON source_case.id = source.appraisal_case_id
+         JOIN app.appraisal_cases target_case ON target_case.id = target.appraisal_case_id
         WHERE replication.target_report_file_id = $1`,
       [newAssignmentReplication.report_file.id],
     );
     assert.equal(newReplicationRecord.rows[0].change_review_required, true);
     assert.equal(newReplicationRecord.rows[0].mutable_copied, "false");
     assert.notEqual(newReplicationRecord.rows[0].source_case_id, newReplicationRecord.rows[0].target_case_id);
+    assert.equal(newReplicationRecord.rows[0].source_effective_date, null);
+    assert.equal(newReplicationRecord.rows[0].source_inspection_date, null);
+    assert.equal(
+      new Date(newReplicationRecord.rows[0].target_effective_date).toISOString().slice(0, 10),
+      "2026-08-19",
+    );
+    assert.equal(
+      new Date(newReplicationRecord.rows[0].target_inspection_date).toISOString().slice(0, 10),
+      "2026-08-18",
+    );
     const replayedReplication = await replicateAppraisalFile(pool, {
       accountId,
       sourceReportFileId: secondCustom.reportFile.id,
@@ -1093,6 +1119,29 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       }),
       /replication_request_conflict/,
     );
+
+    await assert.rejects(
+      () => replicateAppraisalFile(pool, {
+        accountId,
+        sourceReportFileId: uad.reportFile.id,
+        input: {
+          mode: "same_assignment_alternate",
+          target_workflow_type: "custom_appraisal",
+          same_assignment_confirmed: true,
+          effective_date: "2026-08-19",
+        },
+      }),
+      /same_assignment_effective_date_conflict/,
+    );
+    const sameAssignmentSourceDates = await pool.query(
+      `SELECT case_record.effective_date, case_record.inspection_date
+         FROM app.report_files report_file
+         JOIN app.appraisal_cases case_record ON case_record.id = report_file.appraisal_case_id
+        WHERE report_file.id = $1`,
+      [uad.reportFile.id],
+    );
+    assert.equal(sameAssignmentSourceDates.rows[0].effective_date, null);
+    assert.equal(sameAssignmentSourceDates.rows[0].inspection_date, null);
 
     const sameAssignmentReplication = await replicateAppraisalFile(pool, {
       accountId,

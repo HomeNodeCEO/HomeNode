@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { replicateAppraisalFile } from "../src/services/appraisalReplication.js";
+import {
+  assertSameAssignmentReplicationDates,
+  replicateAppraisalFile,
+} from "../src/services/appraisalReplication.js";
 
 const IDS = Object.freeze({
   source: "11111111-1111-4111-8111-111111111111",
@@ -84,6 +87,27 @@ function replicationInput(overrides = {}) {
     ...overrides,
   };
 }
+
+test("same-assignment replication dates must match existing source-case dates", () => {
+  assert.doesNotThrow(() => assertSameAssignmentReplicationDates(
+    { effective_date: "2026-09-03", inspection_date: new Date("2026-09-02T00:00:00.000Z") },
+    { effectiveDate: "2026-09-03", inspectionDate: "2026-09-02" },
+  ));
+  assert.throws(
+    () => assertSameAssignmentReplicationDates(
+      { effective_date: null, inspection_date: "2026-09-02" },
+      { effectiveDate: "2026-09-03", inspectionDate: "2026-09-02" },
+    ),
+    /same_assignment_effective_date_conflict/,
+  );
+  assert.throws(
+    () => assertSameAssignmentReplicationDates(
+      { effective_date: "2026-09-03", inspection_date: null },
+      { effectiveDate: "2026-09-03", inspectionDate: "2026-09-02" },
+    ),
+    /same_assignment_inspection_date_conflict/,
+  );
+});
 
 test("a committed replication retry returns the original file when history enrichment is unavailable", async () => {
   const pool = retryPool(existingReplicationRow());

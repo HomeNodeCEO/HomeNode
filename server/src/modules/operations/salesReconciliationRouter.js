@@ -73,6 +73,12 @@ export function createSalesReconciliationRouter({
         pool,
         req.params.sourceRecordId,
         req.body,
+        {
+          reviewer: req.mobileAuth?.displayName
+            || req.mobileAuth?.email
+            || req.mobileAuth?.userId
+            || "HomeNode platform administrator",
+        },
       );
       try {
         await locationBackfillReady;
@@ -124,6 +130,8 @@ export function createSalesReconciliationRouter({
       } else if (
         message === "ambiguous_collin_account_id"
         || message === "county_account_identifier_conflict"
+        || message === "source_record_already_verified"
+        || message === "source_record_not_reconcilable"
       ) {
         status = 409;
       } else if (

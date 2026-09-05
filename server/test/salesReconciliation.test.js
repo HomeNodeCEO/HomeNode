@@ -5,8 +5,10 @@ import {
   countyFromNativeAccountId,
   findAccountByCountyIdentifier,
   homeNodeCollinAccountIdFromPropertyId,
+  isSalesSourceRecordReconciliationEligible,
   normalizedCountyAccountKey,
   normalizeSalesReconciliationUpdate,
+  reconcileSalesSourceRecord,
   salesSourceLocationEvidence,
   validateSalesReconciliationAccountId,
 } from "../src/services/salesReconciliation.js";
@@ -16,8 +18,8 @@ test("sales reconciliation requires a valid CAD account and normalizes audit fie
     normalizeSalesReconciliationUpdate({
       account_id: " 00000416188000000 ",
       notes: " Confirmed against DCAD. ",
-      reviewer: " Jordan ",
-    }),
+      reviewer: " Forged browser identity ",
+    }, { reviewer: " Jordan " }),
     {
       accountId: "00000416188000000",
       linkedAccountId: null,
@@ -41,7 +43,7 @@ test("sales reconciliation preserves authoritative Collin CAD punctuation", () =
       accountId: "R-13743-00L-0900-1",
       linkedAccountId: "2965620",
       notes: null,
-      reviewer: "HomeNode editor",
+      reviewer: "HomeNode platform administrator",
     },
   );
   assert.equal(countyFromNativeAccountId("R-13743-00L-0900-1"), "COLLIN");
@@ -53,6 +55,63 @@ test("sales reconciliation preserves authoritative Collin CAD punctuation", () =
     normalizedCountyAccountKey("R1374300L09001", "Collin"),
     "1374300L09001",
   );
+});
+
+test("reconciliation eligibility exactly matches the unresolved queue invariant", () => {
+  const base = {
+    record_type: "closed_sale",
+    match_status: "exact",
+    primary_account_id: "ACCOUNT_1",
+    has_unresolved_parcel: false,
+  };
+  assert.equal(isSalesSourceRecordReconciliationEligible(base), false);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, primary_account_id: null }), true);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, match_status: "unmatched" }), true);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, match_status: "multiple" }), true);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, has_unresolved_parcel: true }), true);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, match_status: "manual_verified" }), false);
+  assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, record_type: "listing" }), false);
+});
+
+function lockedSalesSourcePool(source) {
+  const queries = [];
+  const client = {
+    async query(sql) {
+      const statement = String(sql).trim();
+      queries.push(statement);
+      if (statement.startsWith("SELECT *") && statement.includes("core.sales_source_records")) {
+        return { rows: [source], rowCount: 1 };
+      }
+      if (["BEGIN", "ROLLBACK"].includes(statement)) return { rows: [], rowCount: 0 };
+      assert.fail(`reconciliation state guard allowed query: ${statement}`);
+    },
+    release() { queries.push("RELEASE"); },
+  };
+  return { queries, pool: { connect: async () => client } };
+}
+
+test("the locked mutation rejects verified and otherwise resolved sales before writes", async () => {
+  const base = {
+    id: 55,
+    record_type: "closed_sale",
+    primary_account_id: "ACCOUNT_1",
+    has_unresolved_parcel: false,
+  };
+  for (const [source, code] of [
+    [{ ...base, match_status: "manual_verified" }, "source_record_already_verified"],
+    [{ ...base, match_status: "exact" }, "source_record_not_reconcilable"],
+  ]) {
+    const { pool, queries } = lockedSalesSourcePool(source);
+    await assert.rejects(
+      () => reconcileSalesSourceRecord(pool, "55", { account_id: "00000416188000000" }),
+      new RegExp(code),
+    );
+    assert.ok(queries.includes("BEGIN"));
+    assert.ok(queries.some((query) => query.includes("FOR UPDATE")));
+    assert.ok(queries.includes("ROLLBACK"));
+    assert.ok(queries.includes("RELEASE"));
+    assert.equal(queries.some((query) => /^(UPDATE|INSERT)/.test(query)), false);
+  }
 });
 
 test("Collin open-data property IDs map to the existing zero-padded HomeNode key", () => {

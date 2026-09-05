@@ -109,10 +109,17 @@ test("reconciliation queue is platform-admin-gated before database access", asyn
 
 test("successful reconciliation preserves primary input and both durable queue requests", async (context) => {
   const calls = [];
-  const requestBody = { account_id: "ACCOUNT_1", reviewer: "Reviewer" };
+  const requestBody = { account_id: "ACCOUNT_1", reviewer: "Forged reviewer" };
   const options = baseOptions({
-    reconcileSourceRecord: async (pool, sourceRecordId, body) => {
-      calls.push({ type: "reconcile", pool, sourceRecordId, body });
+    requirePlatformAdministrator(req) {
+      req.mobileAuth = {
+        userId: "10000000-0000-4000-8000-000000000001",
+        displayName: "Jordan Admin",
+      };
+      return true;
+    },
+    reconcileSourceRecord: async (pool, sourceRecordId, body, audit) => {
+      calls.push({ type: "reconcile", pool, sourceRecordId, body, audit });
       return successfulResult;
     },
     ensureLocationSchema: async (pool) => { calls.push({ type: "location-schema", pool }); },
@@ -136,6 +143,7 @@ test("successful reconciliation preserves primary input and both durable queue r
       pool: options.pool,
       sourceRecordId: "55",
       body: requestBody,
+      audit: { reviewer: "Jordan Admin" },
     },
     { type: "location-schema", pool: options.pool },
     {
@@ -203,6 +211,8 @@ test("reconciliation errors retain not-found, conflict, validation, and bounded 
     { message: "account_not_found", status: 404 },
     { message: "ambiguous_collin_account_id", status: 409 },
     { message: "county_account_identifier_conflict", status: 409 },
+    { message: "source_record_already_verified", status: 409 },
+    { message: "source_record_not_reconcilable", status: 409 },
     { message: "invalid_account_identifier", status: 400 },
     { message: "source_record_not_closed_sale", status: 400 },
     { message: "account_county_mismatch", status: 400 },

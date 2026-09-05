@@ -9,7 +9,7 @@ import { persistNeighborhoodAttachment, getNeighborhoodAttachment, getAcceptedNe
 import { assertNeighborhoodJsonbStorage } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
 import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDatabasePlan,
-  verifyNeighborhoodCiConnection, prepareNeighborhoodCiDatabase } from "./helpers/neighborhoodCiDatabase.js";
+  verifyNeighborhoodCiConnection, prepareNeighborhoodCiDatabase, NEIGHBORHOOD_CI_IDENTITY_SQL } from "./helpers/neighborhoodCiDatabase.js";
 import { devNull } from "node:os";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
@@ -56,6 +56,8 @@ test("neighborhood child database is CI-only, uniquely named, and cannot inherit
 });
 
 test("neighborhood CI bootstrap verifies actual database and loopback socket before CREATE", () => {
+  assert.match(NEIGHBORHOOD_CI_IDENTITY_SQL, /host\(inet_server_addr\(\)\)/);
+  assert.doesNotMatch(NEIGHBORHOOD_CI_IDENTITY_SQL, /inet_server_addr\(\)::text/);
   const identity = { database_name: "parent_test", server_address: "172.18.0.2" };
   for (const remote of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
     assert.doesNotThrow(() => verifyNeighborhoodCiConnection(identity, remote, "parent_test"));

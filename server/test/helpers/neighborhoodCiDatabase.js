@@ -8,6 +8,8 @@ import { promisify } from "node:util";
 const runFile = promisify(execFile);
 const serverDirectory = fileURLToPath(new URL("../../", import.meta.url));
 const scripts = ["prepareUadCiDatabase.js", "runUadMigrations.js", "prepareMobileCiDatabase.js", "runMobileMigrations.js"];
+// inet::text retains /32 or /128; host() returns the IP expected by isIP().
+export const NEIGHBORHOOD_CI_IDENTITY_SQL = "SELECT current_database() AS database_name, host(inet_server_addr()) AS server_address";
 
 export function checkedNeighborhoodDatabaseUrl(value, mode) {
   if (mode !== "test") throw new Error("Neighborhood PG tests require NODE_ENV=test");
@@ -72,16 +74,19 @@ export async function prepareNeighborhoodCiDatabase(environment = process.env) {
   const { default: pg } = await import("pg");
   const admin = new pg.Client({ connectionString: plan.parent.connectionString, connectionTimeoutMillis: 3000,
     statement_timeout: 8000, application_name: "neighborhood_ci_database_bootstrap" });
+  let stage = "connection";
   try {
     await admin.connect();
-    const identity = (await admin.query("SELECT current_database() AS database_name, inet_server_addr()::text AS server_address")).rows[0];
+    stage = "identity";
+    const identity = (await admin.query(NEIGHBORHOOD_CI_IDENTITY_SQL)).rows[0];
     verifyNeighborhoodCiConnection(identity, admin.connection?.stream?.remoteAddress, plan.parent.databaseName);
     // Name is generated from a validated UUID, ASCII-only and below 63 bytes.
     // Never clone the shared database, retry with broader privileges, or DROP it.
+    stage = "creation";
     await admin.query(`CREATE DATABASE "${plan.child.databaseName}" TEMPLATE template0`);
   } catch {
     // Driver errors can contain connection details; expose no raw errors/URLs.
-    throw new Error("Neighborhood isolated CI database creation failed; no shared-database fallback is allowed");
+    throw new Error(`Neighborhood isolated CI database ${stage} failed; no shared-database fallback is allowed`);
   } finally {
     await admin.end().catch(() => { throw new Error("Neighborhood CI bootstrap connection did not close cleanly"); });
   }

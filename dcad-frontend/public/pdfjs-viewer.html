@@ -117,7 +117,7 @@
                 postToTrustedParent({ type: 'PDF_DATA', dataURL: reader.result });
               };
               reader.readAsDataURL(blob);
-            } catch (err) {
+            } catch {
               postToTrustedParent({ type: 'PDF_DATA_ERROR', error: 'pdf_export_failed' });
             }
           }

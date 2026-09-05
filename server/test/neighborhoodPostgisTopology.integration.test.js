@@ -220,7 +220,6 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       ), segments AS (
         SELECT feature_id,source_part_index,d.path[1] AS source_segment_index,d.geom
         FROM original CROSS JOIN LATERAL ST_DumpSegments(original.geom) d
-        WHERE ST_Length(d.geom)>0
       ), edges AS (
         SELECT edge_id,ST_GeomFromEWKB(decode(edge_ewkb,'hex')) AS geom
         FROM jsonb_to_recordset($2::jsonb) AS item(edge_id text,edge_ewkb text)
@@ -556,6 +555,35 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       assert.ok(!calls.some(sql => sql.includes('neighborhood-topology:build')),
         'ST_Node/ST_Polygonize must never run for this rejected source capture');
       assert.equal(calls.at(-1), 'ROLLBACK');
+    });
+    await t.test('an otherwise closed enclosure with a repeated original vertex is rejected before native noding', async () => {
+      for (const [name, duplicateIndex] of [['square', 0], ['square', 1], ['closedRing', 2]]) {
+        const input = await projectMetricTopologyFixture(pool, name);
+        const coordinates = input.features[0].geometry.coordinates;
+        coordinates.splice(duplicateIndex + 1, 0, [...coordinates[duplicateIndex]]);
+        const expectedPrimitives = input.features.reduce((sum, feature) => sum + feature.geometry.coordinates.length - 1, 0);
+        const original = structuredClone(input), calls = [];
+        const tracedPool = { async connect() {
+          const client = await pool.connect();
+          return { release: error => client.release(error), async query(config) {
+            calls.push(config.text);
+            return client.query(config);
+          } };
+        } };
+        const result = await createNeighborhoodPostgisTopology(tracedPool).build(input);
+        assert.deepEqual(input, original, 'reject rather than sanitizing the captured source');
+        noPartial(result);
+        assert.deepEqual(result.incomplete_reasons, ['invalid_source_primitive']);
+        assert.equal(result.noding_admission.primitive_segments, expectedPrimitives, 'every original occurrence remains counted');
+        assert.equal(result.noding_admission.invalid_primitive_count, 1);
+        assert.equal(result.noding_admission.candidate_pairs, null);
+        assert.equal(result.noding_admission.candidate_pairs_complete, false);
+        assert.equal(result.noding_admission.admitted, false);
+        assert.ok(calls.some(sql => sql.includes('neighborhood-topology:admission')));
+        assert.ok(!calls.some(sql => sql.includes('neighborhood-topology:build')),
+          'ST_Node/ST_Polygonize cannot run after dropping an invalid original occurrence');
+        assert.equal(calls.at(-1), 'ROLLBACK');
+      }
     });
     await t.test('road renaming does not break a connected enclosure or join a disconnected namesake', async () => {
       const renamed = await build('renamed'); assertReady(renamed, 'renamed');

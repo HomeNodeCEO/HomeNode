@@ -60,7 +60,8 @@ function mock({ input = fixture(), rows = payloads(input), version = versions(),
     if (tag === "versions") return { rows: [version] };
     if (tag === "admission") {
       const primitives = JSON.parse(config.values[0]).reduce((sum, part) => sum + part.geometry.coordinates.length - 1, 0);
-      return { rows: [admission ?? { primitive_segments: primitives, candidate_pairs: Math.min(3, primitives * (primitives - 1) / 2) }] };
+      return { rows: [admission ?? { primitive_segments: primitives, invalid_primitive_count: 0,
+        candidate_pairs: Math.min(3, primitives * (primitives - 1) / 2) }] };
     }
     if (tag === "build") {
       const result = envelope(rows); mutateRecords?.(result); return { rows: result };
@@ -102,13 +103,16 @@ test("mocked boundary: ready requires own preparation and PostGIS query, and pre
   const query = calls.find(row => /:build/.test(row.text));
   const admissionQuery = calls.find(row => /:admission/.test(row.text));
   assert.match(admissionQuery.text, /ST_Transform/); assert.match(admissionQuery.text, /ST_DumpSegments/);
-  assert.match(admissionQuery.text, /a.geom && b.geom LIMIT 4097/);
+  assert.match(admissionQuery.text, /invalid_primitive_count/);
+  assert.match(admissionQuery.text, /a.geom && b.geom\s+WHERE \(SELECT invalid_primitive_count FROM primitive_checks\)=0 LIMIT 4097/);
   assert.doesNotMatch(admissionQuery.text, /ST_(Node|Polygonize|Snap|Buffer|MakeLine)\s*\(/i);
   assert.ok(calls.indexOf(admissionQuery) < calls.indexOf(query));
   assert.match(query.text, /ST_Node\(/); assert.match(query.text, /ST_Polygonize\(/); assert.match(query.text, /ST_DumpSegments/);
   assert.match(query.text, /ST_Intersection\(/);
   assert.match(query.text, /source_segment_index/);
   assert.doesNotMatch(query.text, /ST_CoveredBy\(e.geom,p.geom\)|ST_DWithin|ST_Distance|ST_LineLocatePoint|ST_LineSubstring/);
+  assert.doesNotMatch(query.text, /WHERE\s+ST_Length\(d\.geom\)\s*>\s*0/i,
+    'original primitive occurrences must never be silently removed');
   assert.equal(output.performed_policy.source_attribution, 'exact_original_endpoint_and_pair_intersection_witness_chains_v1');
   assert.equal(output.performed_policy.source_occurrence_coverage, 'complete_consecutive_witness_chain_coverage_v1');
   assert.equal(output.performed_policy.source_fraction_interpretation, 'dominant_axis_signed_order_coordinate_v1');
@@ -135,6 +139,23 @@ test("no DB for incomplete source, unsupported units/snap, or reduced input budg
     const output = await createNeighborhoodPostgisTopology(context.pool, { limits }).build(context.input);
     emptyGraph(output); assert.deepEqual(output.incomplete_reasons, [expected]); assert.equal(context.connections, 0);
   }
+});
+
+test("invalid projected primitive admission rejects the whole graph before any build or pair-count claim", async () => {
+  const context = mock({ rows: [], admission: { primitive_segments: 3, invalid_primitive_count: 1, candidate_pairs: 0 } });
+  const output = await createNeighborhoodPostgisTopology(context.pool).build(context.input);
+  emptyGraph(output);
+  assert.deepEqual(output.incomplete_reasons, ['invalid_source_primitive']);
+  assert.equal(output.noding_admission.primitive_segments, 3);
+  assert.equal(output.noding_admission.invalid_primitive_count, 1);
+  assert.equal(output.noding_admission.admitted, false);
+  assert.equal(output.noding_admission.candidate_pairs, null, 'an unperformed pair scan is unknown, not zero');
+  assert.equal(output.noding_admission.candidate_pairs_complete, false);
+  assert.equal(output.noding_admission.split_pieces_upper_bound, null);
+  assert.equal(output.noding_admission.noded_coordinates_upper_bound, null);
+  assert.ok(context.calls.some(call => /:admission/.test(call.text)));
+  assert.ok(!context.calls.some(call => /:build/.test(call.text)));
+  assert.equal(context.calls.at(-1).text, 'ROLLBACK');
 });
 
 test("projection evidence checks actual EPSG26914 metre metadata and required engine support", async () => {
@@ -418,7 +439,7 @@ test('projected pair admission rejects dense bounded inputs before any noding an
   const input = fixture(), seed = input.features[0];
   input.features = Array.from({ length: 128 }, (_, index) => ({ ...structuredClone(seed), source_object_id: String(index + 1) }));
   input.capture.expected_feature_count = input.features.length;
-  const context = mock({ input, rows: [], admission: { primitive_segments: 128, candidate_pairs: 4096 } });
+  const context = mock({ input, rows: [], admission: { primitive_segments: 128, invalid_primitive_count: 0, candidate_pairs: 4096 } });
   const output = await createNeighborhoodPostgisTopology(context.pool).build(input);
   emptyGraph(output); assert.deepEqual(output.incomplete_reasons, ['pre_noding_limit_exceeded']);
   assert.equal(output.noding_admission.split_pieces_upper_bound, 16512);
@@ -427,7 +448,7 @@ test('projected pair admission rejects dense bounded inputs before any noding an
   assert.equal(context.calls.some(row => /:build/.test(row.text)), false);
   assert.equal(context.calls.at(-1).text, 'ROLLBACK'); assert.equal(context.released.length, 1);
   // A stopped pair count is not a complete count or a valid upper bound.
-  const truncated = await runMock({ input, rows: [], admission: { primitive_segments: 128, candidate_pairs: 4097 } });
+  const truncated = await runMock({ input, rows: [], admission: { primitive_segments: 128, invalid_primitive_count: 0, candidate_pairs: 4097 } });
   emptyGraph(truncated.output); assert.equal(truncated.output.noding_admission.candidate_pairs_complete, false);
   assert.equal(truncated.output.noding_admission.split_pieces_upper_bound, null);
 });
@@ -437,8 +458,14 @@ test('pair/edge/source-ref lower limits and malformed admission metadata cannot 
     const { output, calls } = await runMock({}, limits); emptyGraph(output);
     assert.deepEqual(output.incomplete_reasons, ['pre_noding_limit_exceeded']); assert.equal(calls.some(row => /:build/.test(row.text)), false);
   }
-  for (const admission of [{ primitive_segments: 4, candidate_pairs: 3 }, { primitive_segments: 3, candidate_pairs: -1 },
-    { primitive_segments: 3, candidate_pairs: '3' }, { primitive_segments: 3, candidate_pairs: 4 }, { primitive_segments: 3 }]) {
+  for (const admission of [{ primitive_segments: 4, invalid_primitive_count: 0, candidate_pairs: 3 },
+    { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: -1 },
+    { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: '3' },
+    { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: 4 },
+    { primitive_segments: 3, invalid_primitive_count: 0 },
+    { primitive_segments: 3, candidate_pairs: 3 },
+    { primitive_segments: 3, invalid_primitive_count: 1, candidate_pairs: 1 },
+    ...[-1, 4, 0.5, NaN, Infinity, '0', null].map(invalid_primitive_count => ({ primitive_segments: 3, invalid_primitive_count, candidate_pairs: 3 }))]) {
     const { output, calls } = await runMock({ admission }); emptyGraph(output);
     assert.deepEqual(output.incomplete_reasons, ['invalid_topology_result']); assert.equal(calls.some(row => /:build/.test(row.text)), false);
   }
@@ -447,7 +474,7 @@ test('pair/edge/source-ref lower limits and malformed admission metadata cannot 
 test('sparse large primitive sets are not rejected using all geographic pairs', async () => {
   const input = fixture(); input.features = [input.features[0]]; input.capture.expected_feature_count = 1;
   input.features[0].geometry.coordinates = Array.from({ length: 513 }, (_, index) => [-96.9 + index / 100000, 32.6]);
-  const context = mock({ input, rows: [], admission: { primitive_segments: 512, candidate_pairs: 511 }, fail: 'build' });
+  const context = mock({ input, rows: [], admission: { primitive_segments: 512, invalid_primitive_count: 0, candidate_pairs: 511 }, fail: 'build' });
   const output = await createNeighborhoodPostgisTopology(context.pool).build(input);
   assert.equal(output.noding_admission.admitted, true); assert.equal(output.noding_admission.split_pieces_upper_bound, 2556);
   assert.equal(context.calls.some(row => /:build/.test(row.text)), true);

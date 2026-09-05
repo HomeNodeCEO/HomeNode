@@ -86,6 +86,8 @@ const VERSION_SQL = `SELECT postgis_lib_version() AS postgis_version,
 
 // ST_Transform changes the endpoint chords, so candidate boxes must be measured
 // in the same projected plane as ST_Node, never inferred from geographic boxes.
+// Every original primitive is counted, including repeated vertices and projected
+// collapses. A positive total road length cannot excuse a zero/invalid segment.
 // At most512 primitives means at most130816 unordered bbox comparisons. A LIMIT
 // bounds retained matching pairs before any noding/polygonization can run.
 function admissionSql(limits) {
@@ -94,14 +96,20 @@ function admissionSql(limits) {
       ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(p.geometry),4326),26914) AS geom
     FROM jsonb_to_recordset($1::jsonb) AS p(feature_id text,source_part_index integer,geometry jsonb)
   ), primitives AS MATERIALIZED (
-    SELECT p.feature_id,p.source_part_index,d.path[1] AS source_segment_index,d.geom
+    SELECT p.feature_id,p.source_part_index,d.path[1] AS source_segment_index,d.geom,ST_Length(d.geom) AS primitive_length
     FROM parts p CROSS JOIN LATERAL ST_DumpSegments(p.geom) d
+  ), primitive_checks AS MATERIALIZED (
+    SELECT count(*)::integer AS primitive_segments,
+      count(*) FILTER(WHERE (ST_IsValid(geom) AND NOT ST_IsEmpty(geom) AND
+        primitive_length>0 AND primitive_length<'Infinity'::double precision) IS DISTINCT FROM true)::integer AS invalid_primitive_count
+    FROM primitives
   ), candidates AS MATERIALIZED (
     SELECT 1 FROM primitives a JOIN primitives b
       ON (a.feature_id,a.source_part_index,a.source_segment_index)<(b.feature_id,b.source_part_index,b.source_segment_index)
-      AND a.geom && b.geom LIMIT ${limits.candidate_pairs + 1}
-  ) SELECT (SELECT count(*)::integer FROM primitives) AS primitive_segments,
-    (SELECT count(*)::integer FROM candidates) AS candidate_pairs`;
+      AND a.geom && b.geom
+    WHERE (SELECT invalid_primitive_count FROM primitive_checks)=0 LIMIT ${limits.candidate_pairs + 1}
+  ) SELECT primitive_segments,invalid_primitive_count,
+    (SELECT count(*)::integer FROM candidates) AS candidate_pairs FROM primitive_checks`;
 }
 
 function nodingAdmission(primitiveCount, coordinateCount, pairs, limits) {
@@ -138,7 +146,6 @@ function topologySql(limits, admission) {
   ), source_segments AS MATERIALIZED (
     SELECT p.feature_id,p.source_part_index,d.path[1] AS source_segment_index,d.geom
     FROM source_parts p CROSS JOIN LATERAL ST_DumpSegments(p.geom) d
-    WHERE ST_Length(d.geom)>0
   ), source_pairs AS MATERIALIZED (
     SELECT a.feature_id AS a_feature,a.source_part_index AS a_part,a.source_segment_index AS a_segment,a.geom AS a_geom,
       b.feature_id AS b_feature,b.source_part_index AS b_part,b.source_segment_index AS b_segment,b.geom AS b_geom
@@ -476,8 +483,18 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       output.engine_versions = versionsOf(versions[0]);
       const admissionRows = await query('admission', admissionSql(limits), [payload]);
       if (admissionRows.length !== 1 || admissionRows[0].primitive_segments !== primitiveCount ||
+          !Number.isSafeInteger(admissionRows[0].invalid_primitive_count) || admissionRows[0].invalid_primitive_count < 0 ||
+          admissionRows[0].invalid_primitive_count > primitiveCount ||
           !Number.isSafeInteger(admissionRows[0].candidate_pairs) || admissionRows[0].candidate_pairs < 0 ||
           admissionRows[0].candidate_pairs > Math.min(limits.candidate_pairs + 1, primitiveCount * (primitiveCount - 1) / 2)) stop('invalid_topology_result');
+      if (admissionRows[0].invalid_primitive_count > 0) {
+        if (admissionRows[0].candidate_pairs !== 0) stop('invalid_topology_result');
+        output.noding_admission = { policy: 'projected-primitive-bbox-v1', primitive_segments: primitiveCount,
+          original_coordinates: prepared.counts.coordinates, invalid_primitive_count: admissionRows[0].invalid_primitive_count,
+          candidate_pairs: null, candidate_pairs_complete: false,
+          split_pieces_upper_bound: null, noded_coordinates_upper_bound: null, admitted: false };
+        stop('invalid_source_primitive');
+      }
       output.noding_admission = nodingAdmission(primitiveCount, prepared.counts.coordinates, admissionRows[0].candidate_pairs, limits);
       if (!output.noding_admission.admitted) stop('pre_noding_limit_exceeded');
       output.performed_policy = { version: POSTGIS_TOPOLOGY_VERSION, requested_policy_version: prepared.policy.version,

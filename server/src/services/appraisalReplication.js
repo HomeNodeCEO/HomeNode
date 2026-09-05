@@ -58,6 +58,27 @@ function baseReplicationFileNumber(sourceFileNumber, targetWorkflow) {
   return `${base}-${suffix}`.slice(0, 100);
 }
 
+function storedIsoDate(value) {
+  if (!value) return null;
+  if (value instanceof Date && !Number.isNaN(value.valueOf())) {
+    return value.toISOString().slice(0, 10);
+  }
+  const normalized = String(value).trim();
+  return /^\d{4}-\d{2}-\d{2}/.test(normalized) ? normalized.slice(0, 10) : normalized;
+}
+
+export function assertSameAssignmentReplicationDates(sourceCase = {}, request = {}) {
+  const checks = [
+    ["effective", storedIsoDate(sourceCase.effective_date), request.effectiveDate],
+    ["inspection", storedIsoDate(sourceCase.inspection_date), request.inspectionDate],
+  ];
+  for (const [field, sourceDate, requestedDate] of checks) {
+    if (requestedDate && sourceDate !== requestedDate) {
+      throw new Error(`same_assignment_${field}_date_conflict`);
+    }
+  }
+}
+
 async function availableFileNumber(client, {
   accountId,
   organizationId,
@@ -260,24 +281,9 @@ export async function replicateAppraisalFile(pool, {
     );
     const sourceCase = caseResult.rows[0];
     if (request.mode === "same_assignment_alternate") {
-      if (
-        request.effectiveDate
-        && sourceCase.effective_date
-        && String(sourceCase.effective_date).slice(0, 10) !== request.effectiveDate
-      ) {
-        throw new Error("same_assignment_effective_date_conflict");
-      }
-      if (
-        request.inspectionDate
-        && sourceCase.inspection_date
-        && String(sourceCase.inspection_date).slice(0, 10) !== request.inspectionDate
-      ) {
-        throw new Error("same_assignment_inspection_date_conflict");
-      }
+      assertSameAssignmentReplicationDates(sourceCase, request);
     }
     const sourceSnapshot = await captureAppraisalSubjectSnapshot(client, source.id, {
-      effectiveDate: request.effectiveDate,
-      inspectionDate: request.inspectionDate,
       captureReason: "replication_source_capture",
     });
 

@@ -1,10 +1,15 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assessmentDate, assessmentEvidenceDigest, buildNeighborhoodAssessment, canonicalAssessmentJson } from './contract.js';
+import { assertNeighborhoodJsonbStorage } from './jsonbStorage.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-const copy = value => JSON.parse(canonicalAssessmentJson(value));
+const copy = value => {
+  const result = JSON.parse(canonicalAssessmentJson(value));
+  assertNeighborhoodJsonbStorage(result);
+  return result;
+};
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 function fail(code) { throw Object.assign(new Error(`neighborhood_${code}`), { code: `neighborhood_${code}` }); }
 function objectCopy(value, name) {
@@ -60,15 +65,17 @@ function normalizedMember(value) {
 }
 
 function* memberBatches(members) {
-  let encoded = [], bytes = 2;
+  let encoded = [], bytes = 2, storageBytes = 2;
   for (const member of members) {
     const row = canonicalAssessmentJson(member);
     const size = Buffer.byteLength(row);
+    const storageSize = assertNeighborhoodJsonbStorage(member);
+    if (storageSize + 2 > 2_000_000) fail('member_row_storage_bytes');
     if (size + 2 > 1_500_000) fail('member_row_bytes');
-    if (encoded.length && (encoded.length === 250 || bytes + size + 1 > 1_400_000)) {
-      yield `[${encoded.join(',')}]`; encoded = []; bytes = 2;
+    if (encoded.length && (encoded.length === 250 || bytes + size + 1 > 1_400_000 || storageBytes + storageSize + 2 > 2_000_000)) {
+      yield `[${encoded.join(',')}]`; encoded = []; bytes = 2; storageBytes = 2;
     }
-    encoded.push(row); bytes += size + 1;
+    encoded.push(row); bytes += size + 1; storageBytes += storageSize + 2;
   }
   if (encoded.length) yield `[${encoded.join(',')}]`;
 }
@@ -94,6 +101,7 @@ export function neighborhoodMemberContentDigest(members) {
 
 export function prepareNeighborhoodPublication(assessmentInput, members, sources) {
   const assessment = buildNeighborhoodAssessment(assessmentInput);
+  let storageBytes = assertNeighborhoodJsonbStorage(assessment);
   if (!Array.isArray(members) || members.length > 100_000 || !Array.isArray(sources) || sources.length > 1000) fail('publication_limit');
   const populations = new Map(assessment.populations.map(item => [item.id, { item, members: [], rows: [], accounts: new Set(), links: 0 }]));
   const sourceIds = new Set(assessment.source_snapshots.map(source => source.id));
@@ -105,6 +113,10 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     if (Buffer.byteLength(encoded) + 2 > 1_500_000) fail('member_row_bytes');
     bytes += Buffer.byteLength(encoded);
     if (bytes > 32_000_000) fail('publication_bytes');
+    const rowStorageBytes = assertNeighborhoodJsonbStorage(row);
+    if (rowStorageBytes + 2 > 2_000_000) fail('member_row_storage_bytes');
+    storageBytes += rowStorageBytes;
+    if (storageBytes > 64_000_000) fail('publication_storage_bytes');
     const population = populations.get(row.population_id);
     if (!population || row.member_unit !== population.item.member_unit) fail('member_population');
     accountLinks.count += row.account_ids.length;
@@ -131,6 +143,8 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     const payload = objectCopy(source.payload, 'source_payload');
     bytes += Buffer.byteLength(canonicalAssessmentJson(payload));
     if (bytes > 64_000_000) fail('publication_bytes');
+    storageBytes += assertNeighborhoodJsonbStorage(payload);
+    if (storageBytes > 64_000_000) fail('publication_storage_bytes');
     bySource.set(source.id, { id: source.id, payload, digest: assessmentEvidenceDigest(payload) });
   }
   const normalizedSources = assessment.source_snapshots.map(snapshot => {
@@ -190,6 +204,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
   return {
     async enqueue(scopeInput, request) {
       const scope = scopeOf(scopeInput);
+      const operationId = uuid(request?.operation_id, 'operation_id');
       const effectiveDate = assessmentDate(request?.effective_date);
       const cutoff = assessmentDate(request?.data_cutoff, 'data_cutoff');
       if (cutoff > effectiveDate) fail('data_cutoff');
@@ -204,28 +219,41 @@ export function createNeighborhoodAssessmentRepository(pool) {
           ON CONFLICT (organization_id,appraisal_case_id,subject_snapshot_id,account_id) DO NOTHING`, [randomUUID(), ...scopeValues(scope)]);
         const head = one(await client.query(`/* neighborhood:head-for-scope */ SELECT * FROM app.neighborhood_assessments
           WHERE organization_id=$1 AND appraisal_case_id=$2 AND subject_snapshot_id=$3 AND account_id=$4 FOR UPDATE`, scopeValues(scope)), 'assessment_not_found');
+        const previous = await client.query(`/* neighborhood:request-operation */ SELECT * FROM app.neighborhood_assessment_requests
+          WHERE assessment_id=$1 AND operation_id=$2`, [head.id, operationId]);
+        if (previous.rows.length) {
+          const operation = one(previous, 'request_conflict');
+          if (operation.request_digest_sha256 !== requestDigest) fail('request_conflict');
+          const job = one(await client.query(`/* neighborhood:request-job */ SELECT * FROM app.neighborhood_assessment_jobs
+            WHERE assessment_id=$1 AND id=$2`, [head.id, operation.job_id]), 'job_not_found');
+          return { job, reused: operation.job_reused, operation_id: operationId,
+            request_generation: operation.request_generation, replayed: true };
+        }
+        const generation = integer(head.request_generation + 1, 'request_generation', 1, 2_147_483_647);
+        const recordOperation = async (job, reused) => {
+          affected(await client.query(`/* neighborhood:record-request */ INSERT INTO app.neighborhood_assessment_requests
+            (assessment_id,operation_id,request_digest_sha256,job_id,request_generation,job_reused)
+            VALUES ($1,$2,$3,$4,$5,$6)`, [head.id, operationId, requestDigest, job.id, generation, reused]), 'request_not_recorded');
+          return { job, reused, operation_id: operationId, request_generation: generation, replayed: false };
+        };
         const existing = await client.query('/* neighborhood:deduplicate */ SELECT * FROM app.neighborhood_assessment_jobs WHERE assessment_id=$1 AND input_signature_sha256=$2', [head.id, inputSignature]);
         if (existing.rows.length) {
           const job = existing.rows[0];
           if (job.request_digest_sha256 !== requestDigest) fail('request_conflict');
-          if (head.requested_job_id !== job.id) {
-            const generation = integer(head.request_generation + 1, 'request_generation', 1, 2_147_483_647);
-            affected(await client.query(`/* neighborhood:reuse-intent */ UPDATE app.neighborhood_assessments
-              SET request_generation=$2,requested_job_id=$3,
-                current_revision=CASE WHEN $4::integer IS NOT NULL THEN $4 ELSE current_revision END,
-                updated_at=clock_timestamp() WHERE id=$1`,
-            [head.id, generation, job.id, job.status === 'succeeded' ? job.result_revision : null]), 'head_changed');
-          }
-          return { job, reused: true };
+          affected(await client.query(`/* neighborhood:reuse-intent */ UPDATE app.neighborhood_assessments
+            SET request_generation=$2,requested_job_id=$3,
+              current_revision=CASE WHEN $4::integer IS NOT NULL THEN $4 ELSE current_revision END,
+              updated_at=clock_timestamp() WHERE id=$1`,
+          [head.id, generation, job.id, job.status === 'succeeded' ? job.result_revision : null]), 'head_changed');
+          return recordOperation(job, true);
         }
-        const generation = integer(head.request_generation + 1, 'request_generation', 1, 2_147_483_647);
         const job = one(await client.query(`/* neighborhood:enqueue */ INSERT INTO app.neighborhood_assessment_jobs
           (id,assessment_id,input_signature_sha256,request_digest_sha256,request_payload,effective_date,data_cutoff,request_generation,max_attempts)
           VALUES ($1,$2,$3,$4,$5::jsonb,$6,$7,$8,$9) RETURNING *`,
         [randomUUID(), head.id, inputSignature, requestDigest, canonicalAssessmentJson(payload), effectiveDate, cutoff, generation, maxAttempts]), 'job_not_created');
         affected(await client.query(`/* neighborhood:request-pointer */ UPDATE app.neighborhood_assessments
           SET request_generation=$2,requested_job_id=$3,updated_at=clock_timestamp() WHERE id=$1`, [head.id, generation, job.id]), 'head_changed');
-        return { job, reused: false };
+        return recordOperation(job, false);
       });
     },
 
@@ -271,13 +299,15 @@ export function createNeighborhoodAssessmentRepository(pool) {
       });
     },
 
-    async cancel(scopeInput, jobId) {
-      const scope = scopeOf(scopeInput); uuid(jobId, 'job_id');
+    async cancel(scopeInput, jobId, { expected_request_generation: expectedGeneration } = {}) {
+      const scope = scopeOf(scopeInput); jobId = uuid(jobId, 'job_id');
+      integer(expectedGeneration, 'expected_request_generation', 1, 2_147_483_647);
       return transaction(pool, async client => {
         await verifyScope(client, scope);
         const head = one(await client.query(`/* neighborhood:head-by-job */ SELECT h.* FROM app.neighborhood_assessments h
           JOIN app.neighborhood_assessment_jobs j ON j.assessment_id=h.id WHERE j.id=$5
           AND h.organization_id=$1 AND h.appraisal_case_id=$2 AND h.subject_snapshot_id=$3 AND h.account_id=$4 FOR UPDATE OF h`, [...scopeValues(scope), jobId]), 'job_not_found');
+        if (head.request_generation !== expectedGeneration || head.requested_job_id !== jobId) fail('intent_conflict');
         const result = await client.query(`/* neighborhood:cancel */ UPDATE app.neighborhood_assessment_jobs
           SET status='cancelled',claim_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
           WHERE id=$1 AND assessment_id=$2 AND status IN ('queued','retry','running') RETURNING id`, [jobId, head.id]);

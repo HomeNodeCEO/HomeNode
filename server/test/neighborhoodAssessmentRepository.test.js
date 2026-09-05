@@ -1,9 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment, canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
 import { createNeighborhoodAssessmentRepository as repository, neighborhoodMemberSetDigest as memberDigest,
   neighborhoodMemberContentDigest as memberContentDigest, prepareNeighborhoodPublication as prepare } from "../src/services/neighborhoodAssessment/assessmentRepository.js";
 import { ASSESSMENT_SCOPE as SCOPE, neighborhoodAssessmentFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
+import { assertNeighborhoodJsonbStorage, NEIGHBORHOOD_JSONB_STORAGE_MAX_BYTES } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 
 // SQL-shape and orchestration tests only. This injected fake is not a PostgreSQL
 // parser and cannot establish real lock, constraint, isolation or rollback behavior.
@@ -38,6 +40,7 @@ function fixture() {
 }
 function fakePool(handlers = {}) {
   const calls = [];
+  const operations = new Map();
   let connects = 0, releases = 0;
   const query = async (sql, params = []) => {
     const tag = sql.match(/\/\* neighborhood:([a-z-]+) \*\//)?.[1] ?? sql.trim();
@@ -47,6 +50,12 @@ function fakePool(handlers = {}) {
       return typeof handlers[tag] === "function" ? handlers[tag](params, sql, calls) : handlers[tag];
     }
     if (tag === "scope") return result([scopeRow()]);
+    if (tag === "request-operation") return result(operations.has(params[1]) ? [operations.get(params[1])] : []);
+    if (tag === "record-request") {
+      operations.set(params[1], { assessment_id: params[0], operation_id: params[1], request_digest_sha256: params[2],
+        job_id: params[3], request_generation: params[4], job_reused: params[5] });
+      return result([], 1);
+    }
     throw new Error(`Unexpected fake SQL tag: ${tag}`);
   };
   return { calls, get connects() { return connects; }, get releases() { return releases; }, query,
@@ -74,6 +83,37 @@ function publicationPool(data, overrides = {}) {
   return { pool, head, job };
 }
 
+function intentPool() {
+  const assessment = buildNeighborhoodAssessment(fixture().assessment);
+  const head = { id: assessment.id, request_generation: 0, requested_job_id: null, current_revision: null };
+  const jobs = new Map();
+  const pool = fakePool({ "ensure-head": result([], 1), "head-for-scope": () => result([head]),
+    deduplicate: values => result(jobs.has(values[1]) ? [jobs.get(values[1])] : []),
+    "request-job": values => result([...jobs.values()].filter(job => job.id === values[1])),
+    enqueue: values => {
+      const job = { id: values[0], assessment_id: values[1], input_signature_sha256: values[2], request_digest_sha256: values[3],
+        request_generation: values[7], status: "queued", attempts: 0, result_revision: null };
+      jobs.set(values[2], job); return result([job]);
+    },
+    "request-pointer": values => { head.request_generation = values[1]; head.requested_job_id = values[2]; return result([], 1); },
+    "reuse-intent": values => {
+      head.request_generation = values[1]; head.requested_job_id = values[2];
+      if (values[3] !== null) head.current_revision = values[3];
+      return result([], 1);
+    },
+    "head-by-job": values => result([...jobs.values()].some(job => job.id === values[4]) ? [head] : []),
+    cancel: values => {
+      const job = [...jobs.values()].find(job => job.id === values[0] && job.assessment_id === values[1]);
+      if (!job || !["queued", "retry", "running"].includes(job.status)) return result();
+      Object.assign(job, { status: "cancelled", claim_token: null, lease_expires_at: null });
+      return result([{ id: job.id }]);
+    },
+  });
+  const request = { operation_id: randomUUID(), effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
+    input_signature_sha256: assessment.input_signature_sha256, payload: { selection: "A" } };
+  return { pool, head, jobs, request };
+}
+
 test("publication batches by bytes as well as row count without truncating large valid members", async () => {
   const data = fixture();
   for (const row of data.members.filter(row => row.population_id === 'stock-a')) row.member_data.note = 'x'.repeat(400_000);
@@ -88,16 +128,69 @@ test("publication batches by bytes as well as row count without truncating large
   assert.deepEqual(batches.flatMap(batch => JSON.parse(batch).map(row => row.member_id)).sort(), data.members.map(row => row.member_id).sort());
 });
 
+test("member batches split for expanded numeric jsonb size even when compact wire payload is small", async () => {
+  const data = fixture();
+  for (const row of data.members.filter(row => row.population_id === "stock-a")) row.member_data.values = Array(4000).fill(1e308);
+  const capture = data.sources.find(source => source.id === "population-members:stock-a");
+  capture.payload.member_content_sha256 = memberContentDigest(data.members.filter(row => row.population_id === "stock-a"));
+  data.assessment.source_snapshots.find(source => source.id === capture.id).content_sha256 = assessmentEvidenceDigest(capture.payload);
+  const { pool } = publicationPool(data);
+  await repository(pool).publish(CLAIM, data.assessment, data.members, data.sources);
+  const batches = pool.calls.filter(call => call.tag === "members").map(call => call.params[2]);
+  assert.ok(batches.length >= 4, "four 1.2 MB expanded stock members must not fit one SQL JSON batch");
+  assert.ok(batches.every(batch => Buffer.byteLength(batch) < 100_000), "wire bytes alone would miss the expansion");
+  assert.ok(batches.every(batch => assertNeighborhoodJsonbStorage(JSON.parse(batch)) <= NEIGHBORHOOD_JSONB_STORAGE_MAX_BYTES));
+  assert.deepEqual(batches.flatMap(batch => JSON.parse(batch).map(row => row.member_id)).sort(), data.members.map(row => row.member_id).sort());
+  assert.equal(tags(pool).at(-1), "COMMIT");
+});
+
 test("SQL object payload requirements fail before opening a transaction", async () => {
   const data = fixture();
   data.sources[0].payload = [];
   assert.throws(() => prepare(data.assessment, data.members, data.sources), /invalid_source_payload/);
   const pool = fakePool();
-  const request = { effective_date: '2024-06-30', data_cutoff: '2024-06-30',
+  const request = { operation_id: randomUUID(), effective_date: '2024-06-30', data_cutoff: '2024-06-30',
     input_signature_sha256: 'a'.repeat(64), payload: [] };
   await assert.rejects(repository(pool).enqueue(SCOPE, request), /invalid_request_payload/);
   await assert.rejects(repository(pool).heartbeat(CLAIM, { checkpoint: [] }), /invalid_checkpoint/);
   assert.equal(pool.connects, 0);
+});
+
+test("expanded numeric JSON and PostgreSQL-invalid strings fail before connecting for request or checkpoint", async () => {
+  const invalidPayloads = [
+    { values: Array(7000).fill(1e308) },
+    { text: "embedded\u0000nul" },
+    { ["key\u0000nul"]: true },
+    { text: "\ud800" },
+  ];
+  for (const payload of invalidPayloads) {
+    assert.ok(Buffer.byteLength(canonicalAssessmentJson(payload)) < 1_500_000, "canonical size alone must not mask storage incompatibility");
+    const pool = fakePool();
+    const request = { operation_id: randomUUID(), effective_date: "2024-06-30", data_cutoff: "2024-06-30",
+      input_signature_sha256: "a".repeat(64), payload };
+    await assert.rejects(repository(pool).enqueue(SCOPE, request), /neighborhood_jsonb_storage_(limit|invalid)/);
+    await assert.rejects(repository(pool).heartbeat(CLAIM, { checkpoint: payload }), /neighborhood_jsonb_storage_(limit|invalid)/);
+    assert.equal(pool.connects, 0);
+    assert.deepEqual(pool.calls, []);
+  }
+});
+
+test("a normal 1.49 MB canonical payload survives PostgreSQL separator expansion for request and checkpoint", async () => {
+  const payload = { values: Array(20_000).fill("x".repeat(71)), padding: "" };
+  payload.padding = " ".repeat(1_490_000 - Buffer.byteLength(canonicalAssessmentJson(payload)));
+  const canonical = canonicalAssessmentJson(payload);
+  assert.equal(Buffer.byteLength(canonical), 1_490_000);
+  const storageBytes = assertNeighborhoodJsonbStorage(payload);
+  assert.ok(storageBytes > 1_500_000, "ordinary jsonb separator whitespace exceeds the old SQL limit");
+  assert.ok(storageBytes <= NEIGHBORHOOD_JSONB_STORAGE_MAX_BYTES);
+  const { pool, request } = intentPool();
+  await repository(pool).enqueue(SCOPE, { ...request, payload });
+  assert.equal(pool.calls.find(call => call.tag === "enqueue").params[4], canonical);
+  assert.equal(tags(pool).at(-1), "COMMIT");
+  const heartbeatPool = fakePool({ heartbeat: result([{ id: JOB_ID }]) });
+  await repository(heartbeatPool).heartbeat(CLAIM, { checkpoint: payload });
+  assert.equal(heartbeatPool.calls.find(call => call.tag === "heartbeat").params[4], canonical);
+  assert.equal(tags(heartbeatPool).at(-1), "COMMIT");
 });
 
 test("member digest is exact, deterministic and rejects duplicate/oversized identities", () => {
@@ -208,13 +301,16 @@ test("enqueue reuses one request and refuses same-signature changed payload", as
   let stored = null;
   const pool = fakePool({ "ensure-head": result([], 1), "head-for-scope": () => result([head]),
     deduplicate: () => result(stored ? [stored] : []),
+    "request-job": () => result([stored]),
     enqueue: values => { stored = { id: values[0], assessment_id: values[1], request_digest_sha256: values[3], request_generation: values[7] }; return result([stored]); },
     "request-pointer": values => { head.request_generation = values[1]; head.requested_job_id = values[2]; return result([], 1); } });
-  const request = { effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
+  const request = { operation_id: randomUUID(), effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
     input_signature_sha256: assessment.input_signature_sha256, payload: { radius: 3 }, max_attempts: 3 };
   const first = await repository(pool).enqueue(SCOPE, request);
   const second = await repository(pool).enqueue(SCOPE, request);
-  assert.equal(first.reused, false); assert.equal(second.reused, true);
+  assert.equal(first.reused, false); assert.equal(second.reused, false);
+  assert.equal(first.replayed, false); assert.equal(second.replayed, true);
+  assert.equal(second.request_generation, first.request_generation);
   assert.equal(first.job.id, second.job.id);
   assert.equal(pool.calls.filter(call => call.tag === "enqueue").length, 1);
   assert.equal(head.request_generation, 1);
@@ -226,6 +322,55 @@ test("enqueue reuses one request and refuses same-signature changed payload", as
   assert.equal(pool.releases, 3);
 });
 
+test("enqueue requires a valid operation ID before database access", async () => {
+  for (const operation_id of [undefined, null, "", "not-a-uuid", 123, " 80000000-0000-4000-8000-000000000001"]) {
+    const pool = fakePool();
+    const request = { operation_id, effective_date: "2024-06-30", data_cutoff: "2024-06-30",
+      input_signature_sha256: "a".repeat(64), payload: {} };
+    await assert.rejects(repository(pool).enqueue(SCOPE, request), /invalid_operation_id/);
+    assert.equal(pool.connects, 0);
+    assert.deepEqual(pool.calls, []);
+  }
+});
+
+test("an accepted operation ID cannot be reused with changed request identity or policy", async () => {
+  for (const changes of [{ payload: { selection: "B" } }, { input_signature_sha256: "b".repeat(64) },
+    { data_cutoff: "2024-06-29" }, { max_attempts: 4 }]) {
+    const { pool, head, request } = intentPool();
+    const accepted = await repository(pool).enqueue(SCOPE, request);
+    const before = pool.calls.length;
+    await assert.rejects(repository(pool).enqueue(SCOPE, { ...request, ...changes }), /request_conflict/);
+    const replayCalls = pool.calls.slice(before).map(call => call.tag);
+    assert.ok(replayCalls.includes("request-operation"));
+    assert.equal(replayCalls.includes("deduplicate"), false);
+    assert.equal(replayCalls.includes("reuse-intent"), false);
+    assert.equal(replayCalls.includes("record-request"), false);
+    assert.equal(replayCalls.at(-1), "ROLLBACK");
+    assert.equal(head.request_generation, 1);
+    assert.equal(head.requested_job_id, accepted.job.id);
+  }
+});
+
+test("a fresh operation explicitly reuses even the currently selected computation; replay never advances intent", async () => {
+  const { pool, head, request } = intentPool();
+  const repo = repository(pool);
+  const first = await repo.enqueue(SCOPE, request);
+  const freshRequest = { ...request, operation_id: randomUUID() };
+  const fresh = await repo.enqueue(SCOPE, freshRequest);
+  assert.equal(fresh.job.id, first.job.id);
+  assert.equal(fresh.job.request_generation, 1);
+  assert.equal(fresh.request_generation, 2);
+  assert.equal(fresh.reused, true); assert.equal(fresh.replayed, false);
+  const replay = await repo.enqueue(SCOPE, freshRequest);
+  assert.equal(replay.replayed, true); assert.equal(replay.request_generation, 2);
+  assert.equal(head.request_generation, 2);
+  assert.equal(pool.calls.filter(call => call.tag === "enqueue").length, 1);
+  assert.equal(pool.calls.filter(call => call.tag === "reuse-intent").length, 1);
+  assert.equal(pool.calls.filter(call => call.tag === "record-request").length, 2);
+  await assert.rejects(repo.enqueue(SCOPE, { ...freshRequest, operation_id: randomUUID(), payload: { selection: "different" } }), /request_conflict/);
+  assert.equal(head.request_generation, 2, "a new operation cannot redefine cached job content under the same signature");
+});
+
 test("A to B to A reuses immutable A and records current intent without resetting terminal attempts", async () => {
   for (const status of ["queued", "running", "succeeded", "failed", "cancelled"]) {
     const assessment = buildNeighborhoodAssessment(fixture().assessment);
@@ -233,6 +378,7 @@ test("A to B to A reuses immutable A and records current intent without resettin
     const jobs = new Map();
     const pool = fakePool({ "ensure-head": result([], 1), "head-for-scope": () => result([head]),
       deduplicate: values => result(jobs.has(values[1]) ? [jobs.get(values[1])] : []),
+      "request-job": values => result([...jobs.values()].filter(job => job.id === values[1])),
       enqueue: values => {
         const job = { id: values[0], assessment_id: values[1], input_signature_sha256: values[2], request_digest_sha256: values[3],
           request_generation: values[7], status: "queued", attempts: 0, result_revision: null };
@@ -246,15 +392,19 @@ test("A to B to A reuses immutable A and records current intent without resettin
       },
     });
     const repo = repository(pool);
-    const requestA = { effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
+    const requestA = { operation_id: randomUUID(), effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
       input_signature_sha256: assessment.input_signature_sha256, payload: { selection: "A" } };
-    const requestB = { ...requestA, input_signature_sha256: assessmentEvidenceDigest({ selection: "B" }), payload: { selection: "B" } };
+    const requestB = { ...requestA, operation_id: randomUUID(), input_signature_sha256: assessmentEvidenceDigest({ selection: "B" }), payload: { selection: "B" } };
     const a = await repo.enqueue(SCOPE, requestA);
     a.job.status = status; a.job.attempts = 2; a.job.result_revision = status === "succeeded" ? 5 : null;
     const b = await repo.enqueue(SCOPE, requestB);
     assert.notEqual(a.job.id, b.job.id);
     head.current_revision = 6; // A separately published B currently remains visible.
-    const reused = await repo.enqueue(SCOPE, requestA);
+    const delayed = await repo.enqueue(SCOPE, requestA);
+    assert.equal(delayed.replayed, true); assert.equal(delayed.request_generation, 1);
+    assert.equal(head.request_generation, 2); assert.equal(head.requested_job_id, b.job.id);
+    assert.equal(head.current_revision, 6);
+    const reused = await repo.enqueue(SCOPE, { ...requestA, operation_id: randomUUID() });
     assert.equal(reused.reused, true); assert.equal(reused.job.id, a.job.id);
     assert.equal(reused.job.request_generation, 1);
     assert.equal(reused.job.status, status); assert.equal(reused.job.attempts, 2);
@@ -266,9 +416,61 @@ test("A to B to A reuses immutable A and records current intent without resettin
   }
 });
 
+test("a delayed cancel from A or B cannot cancel a fresh A intent; exact current generation can cancel", async () => {
+  const { pool, head, request } = intentPool();
+  const repo = repository(pool);
+  const a = await repo.enqueue(SCOPE, request);
+  Object.assign(a.job, { status: "running", attempts: 2, claim_token: TOKEN, lease_expires_at: "2024-07-01T00:00:00.000Z" });
+  const b = await repo.enqueue(SCOPE, { ...request, operation_id: randomUUID(), input_signature_sha256: "b".repeat(64), payload: { selection: "B" } });
+  const freshA = await repo.enqueue(SCOPE, { ...request, operation_id: randomUUID() });
+  assert.equal(freshA.request_generation, 3);
+  for (const [jobId, generation] of [[a.job.id, a.request_generation], [b.job.id, b.request_generation], [b.job.id, 3]]) {
+    const before = pool.calls.length;
+    await assert.rejects(repo.cancel(SCOPE, jobId, { expected_request_generation: generation }), /intent_conflict/);
+    const cancellationCalls = pool.calls.slice(before);
+    assert.equal(cancellationCalls.some(call => call.tag === "cancel"), false);
+    assert.equal(cancellationCalls.at(-1).tag, "ROLLBACK");
+    assert.equal(a.job.status, "running");
+    assert.equal(a.job.claim_token, TOKEN);
+  }
+  const cancelled = await repo.cancel(SCOPE, freshA.job.id, { expected_request_generation: freshA.request_generation });
+  assert.deepEqual(cancelled, { cancelled: true });
+  assert.equal(a.job.status, "cancelled");
+  assert.equal(a.job.attempts, 2, "cancel does not reset attempt ownership");
+  assert.equal(a.job.claim_token, null); assert.equal(a.job.lease_expires_at, null);
+  assert.equal(head.request_generation, 3); assert.equal(head.requested_job_id, a.job.id);
+  assert.deepEqual(pool.calls.find(call => call.tag === "head-by-job").params.slice(0, 4), scopeValues);
+  assert.match(sqlFor(pool, "head-by-job"), /FOR UPDATE OF h/);
+  assert.match(sqlFor(pool, "cancel"), /status IN \('queued','retry','running'\)/);
+  assert.equal(tags(pool).at(-1), "COMMIT");
+  assert.deepEqual(await repo.cancel(SCOPE, freshA.job.id, { expected_request_generation: 3 }), { cancelled: false });
+  const replay = await repo.enqueue(SCOPE, request);
+  assert.equal(replay.replayed, true); assert.equal(replay.request_generation, 1);
+  assert.equal(a.job.status, "cancelled"); assert.equal(head.request_generation, 3);
+});
+
+test("cancel requires a positive exact intent generation before opening a database client", async () => {
+  for (const generation of [undefined, null, 0, -1, 1.5, "1", 2_147_483_648]) {
+    const pool = fakePool();
+    await assert.rejects(repository(pool).cancel(SCOPE, JOB_ID, { expected_request_generation: generation }), /invalid_expected_request_generation/);
+    assert.equal(pool.connects, 0);
+    assert.deepEqual(pool.calls, []);
+  }
+});
+
+test("cancel normalizes UUID casing before exact current-job comparison and SQL parameters", async () => {
+  const lower = "abcdefab-cdef-4abc-8def-abcdefabcdef";
+  const head = { id: fixture().assessment.id, requested_job_id: lower, request_generation: 3 };
+  const pool = fakePool({ "head-by-job": result([head]), cancel: result([{ id: lower }]) });
+  assert.deepEqual(await repository(pool).cancel(SCOPE, lower.toUpperCase(), { expected_request_generation: 3 }), { cancelled: true });
+  assert.equal(pool.calls.find(call => call.tag === "head-by-job").params[4], lower);
+  assert.equal(pool.calls.find(call => call.tag === "cancel").params[0], lower);
+  assert.equal(tags(pool).at(-1), "COMMIT");
+});
+
 test("scope/effective-date failures stop enqueue before any data write", async () => {
   const assessment = buildNeighborhoodAssessment(fixture().assessment);
-  const request = { effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
+  const request = { operation_id: randomUUID(), effective_date: assessment.effective_date, data_cutoff: assessment.data_cutoff,
     input_signature_sha256: assessment.input_signature_sha256, payload: {} };
   for (const row of [null, { ...scopeRow(), snapshot_date: "2024-05-30" },
     { ...scopeRow(), effective_date: "2023-06-30" }, { case_date: null, snapshot_date: null, effective_date: null }]) {

@@ -2,10 +2,11 @@ import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
-import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment } from "../src/services/neighborhoodAssessment/contract.js";
+import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment, canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
 import { createNeighborhoodAssessmentRepository, neighborhoodMemberSetDigest, neighborhoodMemberContentDigest, prepareNeighborhoodPublication } from "../src/services/neighborhoodAssessment/assessmentRepository.js";
 import { neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup, buildNeighborhoodApplicationReceipt } from "../src/services/neighborhoodAssessment/applicationGroup.js";
 import { persistNeighborhoodAttachment, getNeighborhoodAttachment, getAcceptedNeighborhoodApplication, recordNeighborhoodApplicationAcceptance } from "../src/services/neighborhoodAssessment/applicationRepository.js";
+import { assertNeighborhoodJsonbStorage } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
 
 // Run only against the dedicated database prepared by test:uad-migration. Never
@@ -105,7 +106,9 @@ async function identityFixture(pool, options = {}) {
 
 async function uadFixture(pool, identity) {
   const workfileId = randomUUID(), reportFileId = randomUUID(), initialRevisionId = randomUUID();
-  const release = (await pool.query("SELECT release_key FROM uad_ref.specification_releases ORDER BY release_key LIMIT 1")).rows[0]?.release_key;
+  const release = (await pool.query(`SELECT release_key FROM uad_ref.fields
+    WHERE (uid,property_context) IN (('3000.0008','market'),('3000.0029','market_total_sales'),('3000.0051','market_price_trend_source'))
+    GROUP BY release_key HAVING count(*)=3 ORDER BY release_key LIMIT 1`)).rows[0]?.release_key;
   assert.ok(release, "Ordinary UAD migrations must provide their pinned specification release");
   const client = await pool.connect();
   try {
@@ -123,17 +126,17 @@ async function uadFixture(pool, identity) {
     await client.query("COMMIT");
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
-  return { workfileId, reportFileId, release, initialRevisionId };
+  return { workfileId, reportFileId, release, initialRevisionId, sourceEntityId: randomUUID() };
 }
 
 function applicationFixture(identity, uad, assessment) {
   const group = assessment.application_group;
   const suggestions = [
-    { id: "boundary", target_key: "synthetic:boundary", value: "North Road", dependency_ids: ["source"],
+    { id: "boundary", target_key: "root:3000.0008", value: "North Road", dependency_ids: ["source"],
       evidence_refs: ["geographic_neighborhood", "population:stock-a"], application_group_id: group.id },
-    { id: "median", target_key: "synthetic:median", value: 330000, dependency_ids: ["boundary", "source"],
+    { id: "median", target_key: "root:3000.0029", value: 330000, dependency_ids: ["boundary", "source"],
       evidence_refs: ["statistic:median-sale-price", "population:sales-a"], application_group_id: group.id },
-    { id: "source", target_key: "synthetic:source", value: group.source_refs, dependency_ids: [],
+    { id: "source", target_key: `${uad.sourceEntityId}:3000.0051`, value: "Synthetic neighborhood source", dependency_ids: [],
       evidence_refs: group.source_refs.map(id => `source:${id}`), application_group_id: group.id },
   ];
   const attachment = buildNeighborhoodAttachment(assessment, { ...neighborhoodTargetFixture(), scope: identity.scope,
@@ -156,15 +159,29 @@ function applicationFixture(identity, uad, assessment) {
 // Simulates the owning adapter's complete transaction, not product catalog
 // generation: all synthetic mapped values, UAD revision/audit and receipt use
 // one client. A failure in the final helper must roll ALL owner writes back.
-async function acceptSyntheticUad(pool, identity, uad, application, { invalidAudit = false } = {}) {
+async function acceptSyntheticUad(pool, identity, uad, application, { invalidAudit = false, afterRecord } = {}) {
   const client = await pool.connect(), operationId = randomUUID(), revisionId = randomUUID();
   try {
     await client.query("BEGIN");
-    await client.query("SELECT id FROM app.report_files WHERE id=$1 FOR UPDATE", [uad.reportFileId]);
     const current = (await client.query("SELECT current_revision,status,signed_at FROM appraisal.uad_workfiles WHERE id=$1 FOR UPDATE", [uad.workfileId])).rows[0];
+    await client.query("SELECT id FROM app.report_files WHERE id=$1 AND uad_workfile_id=$2 FOR UPDATE", [uad.reportFileId, uad.workfileId]);
     assert.equal(current.current_revision, 1); assert.equal(current.signed_at, null); assert.equal(current.status, "draft");
     const document = { synthetic: true, values: Object.fromEntries(application.plan.writes.map(item => [item.target_key, item.value])),
       neighborhood_provenance: application.plan.acceptance_manifest.provenance_digest };
+    await client.query(`INSERT INTO appraisal.uad_entities (id,workfile_id,entity_type,entity_identifier,label,data)
+      VALUES ($1,$2,'market_price_trend_source','synthetic-neighborhood-source','Synthetic neighborhood source','{"synthetic":true}')`, [uad.sourceEntityId, uad.workfileId]);
+    for (const field of [
+      { id: "boundary", uid: "3000.0008", context: "market", entity: null },
+      { id: "median", uid: "3000.0029", context: "market_total_sales", entity: null },
+      { id: "source", uid: "3000.0051", context: "market_price_trend_source", entity: uad.sourceEntityId },
+    ]) {
+      const catalog = (await client.query("SELECT report_field_id FROM uad_ref.fields WHERE release_key=$1 AND uid=$2 AND property_context=$3", [uad.release, field.uid, field.context])).rows[0];
+      assert.ok(catalog, `Missing pinned test catalog field ${field.uid}`);
+      await client.query(`INSERT INTO appraisal.uad_field_values
+        (id,workfile_id,entity_id,uad_uid,report_field_id,value,source_type,source_reference,updated_by_user_id)
+        VALUES ($1,$2,$3,$4,$5,$6,'calculated',$7,$8)`, [randomUUID(), uad.workfileId, field.entity, field.uid, catalog.report_field_id,
+        json(application.suggestions.find(item => item.id === field.id).value), `neighborhood:${application.attachment.attachment_id}`, identity.actor_user_id]);
+    }
     await client.query("UPDATE appraisal.uad_workfiles SET current_revision=2 WHERE id=$1", [uad.workfileId]);
     await client.query(`INSERT INTO appraisal.uad_revisions
       (id,workfile_id,revision_number,specification_release_key,document,created_by_user_id)
@@ -183,6 +200,7 @@ async function acceptSyntheticUad(pool, identity, uad, application, { invalidAud
     const input = { attachmentId: attachment.attachment_id, applicationIdentitySha256: attachment.application_identity_sha256,
       operationId, actorUserId: identity.actor_user_id, uadRevisionId: revisionId, uadRevisionNumber: 2, auditEventId: audit.id, receipt: application.receipt };
     const result = await recordNeighborhoodApplicationAcceptance(client, input);
+    await afterRecord?.({ result, input, document });
     await client.query("COMMIT"); return { result, input, document };
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
@@ -213,7 +231,7 @@ function publicationFixture(identity, label = "initial") {
   return { assessment: buildNeighborhoodAssessment(assessment), members, sources };
 }
 function requestFor(data) {
-  return { effective_date: date, data_cutoff: date, input_signature_sha256: data.assessment.input_signature_sha256,
+  return { operation_id: randomUUID(), effective_date: date, data_cutoff: date, input_signature_sha256: data.assessment.input_signature_sha256,
     payload: { synthetic: true, assessment_signature: data.assessment.input_signature_sha256 } };
 }
 test("PostgreSQL publication fixtures pass the exact pure content contract without a database", () => {
@@ -223,6 +241,9 @@ test("PostgreSQL publication fixtures pass the exact pure content contract witho
   const prepared = prepareNeighborhoodPublication(data.assessment, data.members, data.sources);
   assert.equal(prepared.members.length, 7); assert.equal(prepared.sources.length, 3);
   assert.notEqual(publicationFixture(identity, "B").assessment.input_signature_sha256, data.assessment.input_signature_sha256);
+  const application = applicationFixture(identity, { workfileId: randomUUID(), reportFileId: randomUUID(), sourceEntityId: randomUUID(), release: "synthetic-pinned-release" }, prepared.assessment);
+  assert.equal(application.receipt.accepted_editor_revision, 2);
+  assert.equal(application.receipt.acceptance_manifest.applied.length, 3);
 });
 async function claimOne(repository, expectedId) {
   const claims = await repository.claim();
@@ -235,6 +256,16 @@ async function revisionCounts(pool, assessmentId) {
   const tables = ["revisions", "sources", "populations", "members"];
   return Object.fromEntries(await Promise.all(tables.map(async name => [name, Number((await pool.query(
     `SELECT count(*) AS count FROM app.neighborhood_assessment_${name} WHERE assessment_id=$1`, [assessmentId])).rows[0].count)])));
+}
+
+async function insertRawAttachment(client, attachment, suggestions = []) {
+  return client.query(`INSERT INTO app.neighborhood_assessment_attachments
+    (attachment_id,attachment_revision,assessment_id,assessment_revision,report_file_id,organization_id,workflow_type,
+     custom_assignment_file_id,uad_workfile_id,application_identity_sha256,binding_digest_sha256,mapped_suggestions,attachment)
+    VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`, [attachment.attachment_id, attachment.attachment_revision,
+    attachment.assessment_id, attachment.assessment_revision, attachment.report_file_id, attachment.scope.organization_id,
+    attachment.workflow_type, attachment.custom_assignment_file_id, attachment.uad_workfile_id, attachment.application_identity_sha256,
+    attachment.binding_digest_sha256, json(suggestions), json(attachment)]);
 }
 
 async function privateAbsenceProbes(pool, sql) {
@@ -275,7 +306,7 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
   const repository = createNeighborhoodAssessmentRepository(pool);
   const enqueue = async (identity, data, extra = {}) => {
     const result = await repository.enqueue(identity.scope, { ...requestFor(data), ...extra });
-    owned.push({ scope: identity.scope, id: result.job.id }); return result;
+    owned.push({ scope: identity.scope, id: result.job.id, generation: result.request_generation }); return result;
   };
   try {
     const actual = (await pool.query("SELECT current_database() AS name")).rows[0].name;
@@ -293,6 +324,24 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
 
     await t.test("required prerequisite fails before DDL; optional GIS absent/empty/populated remains independent", () => privateAbsenceProbes(pool, sql));
 
+    await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
+      const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };
+      const canonical = canonicalAssessmentJson(payload);
+      assert.equal(Buffer.byteLength(canonical), 1_490_015);
+      const stored = Number((await pool.query("SELECT octet_length($1::jsonb::text) AS bytes", [canonical])).rows[0].bytes);
+      assert.equal(stored, 1_500_017);
+      assert.equal(assertNeighborhoodJsonbStorage(payload), stored);
+      assert.ok(stored > 1_500_000, "A valid compact document may exceed that same numeric jsonb::text budget");
+      // This is an actual PG representation oracle, not a claim that database
+      // formatting is the canonical hash/wire serialization used by the service.
+      for (const value of [1e308, 5e-324, 1e-7, -1.25e-8, 1e21, 1.2345e22,
+        { "Ω\n\t": "Unicode ☃ and controls\b\f\r\t\n", emoji: "📍", slash: "\\\"" }]) {
+        const actual = Number((await pool.query("SELECT octet_length($1::jsonb::text) AS bytes", [canonicalAssessmentJson(value)])).rows[0].bytes);
+        assert.equal(assertNeighborhoodJsonbStorage(value), actual);
+      }
+      assert.throws(() => assertNeighborhoodJsonbStorage({ values: Array(10_000).fill(1e308) }), /jsonb_storage_limit/);
+    });
+
     await t.test("scope and captured-date checks reject foreign tuples and do not leave partial heads", async () => {
       const identity = await identityFixture(pool, { case_date: null });
       const foreign = await identityFixture(pool);
@@ -302,7 +351,7 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
         await assert.rejects(repository.enqueue(scope, requestFor(data)), /scope_mismatch/);
       }
       const accepted = await enqueue(identity, data); // Explicit snapshot date with null case date is allowed.
-      await repository.cancel(identity.scope, accepted.job.id);
+      await repository.cancel(identity.scope, accepted.job.id, { expected_request_generation: accepted.request_generation });
       await rollbackFixture(pool, async client => {
         await rejectsSql(client, `INSERT INTO app.neighborhood_assessments
           (id,organization_id,appraisal_case_id,subject_snapshot_id,account_id) VALUES ($1,$2,$3,$4,$5)`,
@@ -499,10 +548,86 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       });
     }
 
+    await t.test("old operation retries cannot restore obsolete intent or cancel a newly reselected job", async () => {
+      const identity = await identityFixture(pool), a = publicationFixture(identity, "A"), b = publicationFixture(identity, "B"), operationA = randomUUID();
+      const first = await enqueue(identity, a, { operation_id: operationA }), claimA = await claimOne(repository, first.job.id);
+      const second = await enqueue(identity, b), claimB = await claimOne(repository, second.job.id);
+      const replay = await enqueue(identity, a, { operation_id: operationA });
+      assert.equal(replay.replayed, true); assert.equal(replay.reused, false); assert.equal(replay.request_generation, 1);
+      let head = (await pool.query("SELECT requested_job_id,request_generation FROM app.neighborhood_assessments WHERE id=$1", [first.job.assessment_id])).rows[0];
+      assert.deepEqual(head, { requested_job_id: second.job.id, request_generation: 2 });
+      await assert.rejects(repository.enqueue(identity.scope, { ...requestFor(a), operation_id: operationA, payload: { changed: true } }), /request_conflict/);
+      const selectedAgain = await enqueue(identity, a);
+      assert.equal(selectedAgain.replayed, false); assert.equal(selectedAgain.reused, true); assert.equal(selectedAgain.request_generation, 3);
+      await assert.rejects(repository.cancel(identity.scope, first.job.id, { expected_request_generation: 1 }), /intent_conflict/);
+      await enqueue(identity, a, { operation_id: operationA });
+      head = (await pool.query("SELECT requested_job_id,request_generation FROM app.neighborhood_assessments WHERE id=$1", [first.job.assessment_id])).rows[0];
+      assert.deepEqual(head, { requested_job_id: first.job.id, request_generation: 3 });
+      await rollbackFixture(pool, async client => {
+        await rejectsSql(client, "DELETE FROM app.neighborhood_assessment_requests WHERE assessment_id=$1", [first.job.assessment_id], /request_immutable/);
+        await rejectsSql(client, "UPDATE app.neighborhood_assessment_requests SET job_reused=true WHERE assessment_id=$1", [first.job.assessment_id], /request_immutable/);
+        await rejectsSql(client, `INSERT INTO app.neighborhood_assessment_requests
+          (assessment_id,operation_id,request_digest_sha256,job_id,request_generation,job_reused)
+          VALUES ($1,$2,$3,$4,3,true)`, [first.job.assessment_id, randomUUID(), "0".repeat(64), first.job.id], /request_intent_mismatch/);
+      });
+      assert.equal((await publish(repository, claimB, b)).promoted, false);
+      assert.equal((await publish(repository, claimA, a)).promoted, true);
+    });
+
+    await t.test("stable attachment UUID keeps one scope through evidence revisions and competing first inserts", async () => {
+      const identity = await identityFixture(pool), uad = await uadFixture(pool, identity), otherUad = await uadFixture(pool, identity);
+      const versions = [];
+      for (const label of ["A", "B"]) {
+        const data = publicationFixture(identity, label), { job } = await enqueue(identity, data);
+        versions.push((await publish(repository, await claimOne(repository, job.id), data)).assessment);
+      }
+      const stableId = randomUUID();
+      const proposal = (assessment, target, revision, id = stableId) => {
+        const value = applicationFixture(identity, target, assessment);
+        const attachment = buildNeighborhoodAttachment(assessment, { ...value.attachment, attachment_id: id, attachment_revision: revision });
+        return { assessment, attachment, mappedSuggestions: value.suggestions };
+      };
+      const first = proposal(versions[0], uad, 1), next = proposal(versions[1], uad, 2), changed = proposal(versions[1], otherUad, 3);
+      const foreignIdentity = await identityFixture(pool), foreignUad = await uadFixture(pool, foreignIdentity), foreignData = publicationFixture(foreignIdentity);
+      const foreignJob = await enqueue(foreignIdentity, foreignData);
+      const foreignAssessment = (await publish(repository, await claimOne(repository, foreignJob.job.id), foreignData)).assessment;
+      const foreignApplication = applicationFixture(foreignIdentity, foreignUad, foreignAssessment);
+      const foreignProposal = { assessment: foreignAssessment, mappedSuggestions: foreignApplication.suggestions,
+        attachment: buildNeighborhoodAttachment(foreignAssessment, { ...foreignApplication.attachment, attachment_id: stableId, attachment_revision: 4 }) };
+      await rollbackFixture(pool, async client => {
+        await persistNeighborhoodAttachment(client, first); await persistNeighborhoodAttachment(client, next);
+        assert.equal(Number((await client.query("SELECT count(*) AS count FROM app.neighborhood_assessment_attachments WHERE attachment_id=$1", [stableId])).rows[0].count), 2);
+        await client.query("SAVEPOINT wrong_target");
+        await assert.rejects(persistNeighborhoodAttachment(client, changed), /stable_identity_mismatch/);
+        await client.query("ROLLBACK TO SAVEPOINT wrong_target");
+        await assert.rejects(persistNeighborhoodAttachment(client, foreignProposal), /stable_identity_mismatch/);
+        await client.query("ROLLBACK TO SAVEPOINT wrong_target");
+        await rejectsSql(client, "UPDATE app.neighborhood_assessment_attachment_anchors SET report_file_id=$2 WHERE attachment_id=$1", [stableId, otherUad.reportFileId], /anchor_immutable/);
+        await rejectsSql(client, "DELETE FROM app.neighborhood_assessment_attachment_anchors WHERE attachment_id=$1", [stableId], /anchor_immutable/);
+      });
+      const racingId = randomUUID(), winner = proposal(versions[0], uad, 1, racingId), loser = proposal(versions[1], otherUad, 2, racingId);
+      const left = await pool.connect(), right = await pool.connect();
+      let competing;
+      try {
+        await left.query("BEGIN"); await right.query("BEGIN");
+        await insertRawAttachment(left, winner.attachment, winner.mappedSuggestions);
+        competing = insertRawAttachment(right, loser.attachment, loser.mappedSuggestions); competing.catch(() => {});
+        await left.query("COMMIT");
+        await assert.rejects(competing, /stable_identity_mismatch/);
+        await right.query("ROLLBACK");
+        const anchors = (await pool.query("SELECT report_file_id FROM app.neighborhood_assessment_attachment_anchors WHERE attachment_id=$1", [racingId])).rows;
+        assert.deepEqual(anchors, [{ report_file_id: uad.reportFileId }]);
+        assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_attachments WHERE attachment_id=$1", [racingId])).rows[0].count), 1);
+      } finally {
+        await left.query("ROLLBACK"); await right.query("ROLLBACK");
+        await Promise.allSettled([competing].filter(Boolean)); left.release(); right.release();
+      }
+    });
+
     for (const cancellationFirst of [true, false]) {
       await t.test(`cancellation/publication race is atomic when ${cancellationFirst ? "cancellation" : "publication"} locks first`, async () => {
         const identity = await identityFixture(pool), data = publicationFixture(identity);
-        const { job } = await enqueue(identity, data), claim = await claimOne(repository, job.id);
+        const { job, request_generation } = await enqueue(identity, data), claim = await claimOne(repository, job.id);
         const firstLocked = deferred(), secondAttempted = deferred(), resume = deferred();
         const winnerTag = cancellationFirst ? "head-by-job" : "lock-head";
         const loserTag = cancellationFirst ? "lock-head" : "head-by-job";
@@ -512,12 +637,12 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
         const loser = createNeighborhoodAssessmentRepository(observingPool(pool, { before: async tag => {
           if (tag === loserTag) secondAttempted.resolve();
         } }));
-        const first = cancellationFirst ? winner.cancel(identity.scope, job.id) : publish(winner, claim, data);
+        const first = cancellationFirst ? winner.cancel(identity.scope, job.id, { expected_request_generation: request_generation }) : publish(winner, claim, data);
         first.catch(() => {});
         let second;
         try {
           await within(firstLocked.promise, "first operation owns the head");
-          second = cancellationFirst ? publish(loser, claim, data) : loser.cancel(identity.scope, job.id);
+          second = cancellationFirst ? publish(loser, claim, data) : loser.cancel(identity.scope, job.id, { expected_request_generation: request_generation });
           second.catch(() => {});
           await within(secondAttempted.promise, "second operation attempts the same head");
           resume.resolve();
@@ -538,10 +663,199 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
         }
       });
     }
+
+    await t.test("full mapped UAD proposal, revision, audit and receipt are atomic and exact-target replayable", async () => {
+      const identity = await identityFixture(pool), uad = await uadFixture(pool, identity), data = publicationFixture(identity);
+      const { job } = await enqueue(identity, data), claim = await claimOne(repository, job.id);
+      const { assessment } = await publish(repository, claim, data);
+      const application = applicationFixture(identity, uad, assessment);
+      const proposalClient = await pool.connect();
+      try {
+        await proposalClient.query("BEGIN");
+        const input = { assessment, attachment: application.attachment, mappedSuggestions: application.suggestions };
+        assert.equal((await persistNeighborhoodAttachment(proposalClient, input)).reused, false);
+        assert.equal((await persistNeighborhoodAttachment(proposalClient, input)).reused, true);
+        const stored = await getNeighborhoodAttachment(proposalClient, application.lookup);
+        assert.deepEqual(stored.attachment, application.attachment);
+        assert.equal(stored.mappedSuggestions.length, application.suggestions.length);
+        assert.equal(neighborhoodMappedManifestDigest(stored.mappedSuggestions), application.attachment.mapped_manifest_sha256);
+        assert.equal(await getNeighborhoodAttachment(proposalClient, { ...application.lookup, workflowTargetId: randomUUID() }), null);
+        assert.equal(await getNeighborhoodAttachment(proposalClient, { ...application.lookup, organizationId: randomUUID() }), null);
+        assert.equal(await getNeighborhoodAttachment(proposalClient, { ...application.lookup, attachmentRevision: 2 }), null);
+        await proposalClient.query("COMMIT");
+      } catch (error) { await proposalClient.query("ROLLBACK"); throw error; }
+      finally { proposalClient.release(); }
+
+      await assert.rejects(acceptSyntheticUad(pool, identity, uad, application, { invalidAudit: true }), /uad_link_mismatch/);
+      assert.equal((await pool.query("SELECT current_revision FROM appraisal.uad_workfiles WHERE id=$1", [uad.workfileId])).rows[0].current_revision, 1);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_revisions WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 1);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_audit_events WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 0);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_applications WHERE report_file_id=$1", [uad.reportFileId])).rows[0].count), 0);
+      for (const table of ["uad_entities", "uad_field_values"]) {
+        assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM appraisal.${table} WHERE workfile_id=$1`, [uad.workfileId])).rows[0].count), 0);
+      }
+
+      const recorded = deferred(), resumeCommit = deferred(), replayStarted = deferred();
+      let staged, accepted, concurrentReplay;
+      const acceptance = acceptSyntheticUad(pool, identity, uad, application, { afterRecord: async value => {
+        staged = value; recorded.resolve(); await resumeCommit.promise;
+      } }); acceptance.catch(() => {});
+      try {
+        await within(Promise.race([recorded.promise, acceptance]), "owner staged field/entity/revision/audit/receipt");
+        concurrentReplay = (async () => {
+          const client = await pool.connect();
+          try {
+            await client.query("BEGIN");
+            const lock = client.query("SELECT id FROM appraisal.uad_workfiles WHERE id=$1 FOR UPDATE", [uad.workfileId]);
+            replayStarted.resolve(); await lock;
+            await client.query("SELECT id FROM app.report_files WHERE id=$1 AND uad_workfile_id=$2 FOR UPDATE", [uad.reportFileId, uad.workfileId]);
+            const replay = await recordNeighborhoodApplicationAcceptance(client, staged.input);
+            await client.query("COMMIT"); return replay;
+          } catch (error) { await client.query("ROLLBACK"); throw error; }
+          finally { client.release(); }
+        })(); concurrentReplay.catch(() => {});
+        await within(replayStarted.promise, "concurrent exact retry attempts owner workfile lock");
+        resumeCommit.resolve();
+        accepted = await acceptance;
+        const replay = await concurrentReplay;
+        assert.equal(replay.reused, true); assert.equal(replay.application_id, accepted.result.application_id);
+      } finally {
+        resumeCommit.resolve(); await Promise.allSettled([acceptance, concurrentReplay].filter(Boolean));
+      }
+      assert.equal(accepted.result.reused, false);
+      assert.deepEqual(accepted.result.receipt, application.receipt);
+      const persistedDocument = (await pool.query("SELECT document FROM appraisal.uad_revisions WHERE id=$1", [accepted.input.uadRevisionId])).rows[0].document;
+      assert.deepEqual(persistedDocument, accepted.document);
+      assert.equal(Object.keys(persistedDocument.values).length, 3, "One UAD revision contains the entire mapped group");
+      const fields = (await pool.query("SELECT uad_uid,value,entity_id FROM appraisal.uad_field_values WHERE workfile_id=$1 ORDER BY uad_uid", [uad.workfileId])).rows;
+      assert.deepEqual(fields, [
+        { uad_uid: "3000.0008", value: "North Road", entity_id: null },
+        { uad_uid: "3000.0029", value: 330000, entity_id: null },
+        { uad_uid: "3000.0051", value: "Synthetic neighborhood source", entity_id: uad.sourceEntityId },
+      ]);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_entities WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 1);
+      const currentAttachment = buildNeighborhoodAttachment(assessment, { ...application.attachment, attachment_revision: 2, editor_revision: 2 });
+      const replayInput = { ...application.preflight, expected_binding_digest: currentAttachment.binding_digest_sha256,
+        current_application_identity_sha256: currentAttachment.application_identity_sha256, current_editor_revision: 2,
+        existing_values: application.suggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: true,
+          value: persistedDocument.values[item.target_key], provenance_digest: persistedDocument.neighborhood_provenance })) };
+      let savedReceipt;
+      await rollbackFixture(pool, async client => {
+        const replay = await recordNeighborhoodApplicationAcceptance(client, accepted.input);
+        assert.equal(replay.reused, true); assert.equal(replay.application_id, accepted.result.application_id);
+        savedReceipt = await getAcceptedNeighborhoodApplication(client, application.lookup);
+        assert.deepEqual(savedReceipt, application.receipt);
+        assert.equal(await getAcceptedNeighborhoodApplication(client, { ...application.lookup, reportFileId: randomUUID() }), null);
+        assert.equal(await getAcceptedNeighborhoodApplication(client, { ...application.lookup, workflowTargetId: randomUUID() }), null);
+        await assert.rejects(recordNeighborhoodApplicationAcceptance(client, { ...accepted.input, operationId: randomUUID() }), /uad_link_mismatch/);
+        const altered = structuredClone(application.suggestions); altered[1].value = 1;
+        await assert.rejects(persistNeighborhoodAttachment(client, { assessment, attachment: application.attachment, mappedSuggestions: altered }), /mapped_manifest_mismatch/);
+        for (const statement of ["DELETE FROM app.neighborhood_assessment_applications WHERE id=$1",
+          "UPDATE app.neighborhood_assessment_applications SET receipt='{}' WHERE id=$1"]) {
+          await rejectsSql(client, statement, [accepted.result.application_id], /application_immutable/);
+        }
+        const otherActor = randomUUID();
+        await client.query("INSERT INTO app_auth.users (id,email,display_name) VALUES ($1,$2,'Other synthetic reviewer')", [otherActor, `${otherActor}@example.test`]);
+        await rejectsSql(client, `INSERT INTO app.neighborhood_assessment_applications
+          (id,attachment_id,attachment_revision,report_file_id,application_identity_sha256,operation_id,actor_user_id,
+           request_digest_sha256,accepted_editor_revision,uad_revision_id,uad_audit_event_id,receipt)
+          VALUES ($1,$2,1,$3,$4,$5,$6,$7,2,$8,$9,$10)`, [randomUUID(), application.attachment.attachment_id,
+          uad.reportFileId, application.attachment.application_identity_sha256, accepted.input.operationId, otherActor, "0".repeat(64),
+          accepted.input.uadRevisionId, accepted.input.auditEventId, json(application.receipt)], /uad_acceptance_identity_mismatch/);
+        const originalAudit = (await client.query("SELECT event_type,entity_type,entity_id,metadata,after_data FROM appraisal.uad_audit_events WHERE id=$1", [accepted.input.auditEventId])).rows[0];
+        const mutations = [
+          { change: audit => { audit.event_type = "synthetic.unrelated_event"; }, code: /uad_acceptance_identity_mismatch/ },
+          { change: audit => { audit.entity_type = "synthetic_unrelated_entity"; }, code: /uad_acceptance_identity_mismatch/ },
+          { change: audit => { audit.entity_id = randomUUID(); }, code: /uad_acceptance_identity_mismatch/ },
+          { change: audit => { delete audit.metadata.operation_id; }, code: /uad_acceptance_audit_metadata_mismatch/ },
+          { change: audit => { audit.metadata.uad_revision_number = "2"; }, code: /uad_acceptance_audit_metadata_mismatch/ },
+          { change: audit => { audit.metadata.mapped_manifest_sha256 = "0".repeat(64); }, code: /uad_acceptance_audit_metadata_mismatch/ },
+          { change: audit => { audit.after_data.assessment_id = randomUUID(); }, code: /uad_acceptance_audit_after_mismatch/ },
+          { change: audit => { audit.after_data.application_group_revision = "1"; }, code: /uad_acceptance_audit_after_mismatch/ },
+          { change: audit => { audit.after_data.applied_suggestion_ids.pop(); }, code: /uad_acceptance_partition_mismatch/ },
+          { change: audit => { audit.after_data.applied_suggestion_ids.push(audit.after_data.applied_suggestion_ids[0]); }, code: /uad_acceptance_partition_mismatch/ },
+          { change: audit => { audit.after_data.reused_suggestion_ids = null; }, code: /uad_acceptance_partition_mismatch/ },
+        ];
+        for (const mutation of mutations) {
+          const audit = structuredClone(originalAudit); mutation.change(audit);
+          const row = (await client.query(`INSERT INTO appraisal.uad_audit_events
+            (workfile_id,actor_user_id,event_type,entity_type,entity_id,metadata,after_data)
+            VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING id`, [uad.workfileId, identity.actor_user_id, audit.event_type,
+            audit.entity_type, audit.entity_id, json(audit.metadata), json(audit.after_data)])).rows[0];
+          await rejectsSql(client, `INSERT INTO app.neighborhood_assessment_applications
+            (id,attachment_id,attachment_revision,report_file_id,application_identity_sha256,operation_id,actor_user_id,
+             request_digest_sha256,accepted_editor_revision,uad_revision_id,uad_audit_event_id,receipt)
+            VALUES ($1,$2,1,$3,$4,$5,$6,$7,2,$8,$9,$10)`, [randomUUID(), application.attachment.attachment_id,
+            uad.reportFileId, application.attachment.application_identity_sha256, accepted.input.operationId, identity.actor_user_id,
+            "0".repeat(64), accepted.input.uadRevisionId, row.id, json(application.receipt)], mutation.code);
+        }
+
+        // A2: base1/new3 is individually plausible, but cannot claim the bound
+        // attachment whose editor base is2. Rehashing does not excuse that mismatch.
+        await insertRawAttachment(client, currentAttachment, application.suggestions);
+        const revision3 = randomUUID(), changedOperation = randomUUID();
+        await client.query(`INSERT INTO appraisal.uad_revisions
+          (id,workfile_id,revision_number,specification_release_key,document,created_by_user_id)
+          VALUES ($1,$2,3,$3,$4,$5)`, [revision3, uad.workfileId, uad.release, json(persistedDocument), identity.actor_user_id]);
+        const { receipt_digest_sha256: ignoredDigest, ...changedReceipt } = structuredClone(application.receipt);
+        changedReceipt.accepted_editor_revision = 3;
+        changedReceipt.acceptance_manifest.attachment_revision = 2;
+        changedReceipt.acceptance_manifest.binding_digest_sha256 = currentAttachment.binding_digest_sha256;
+        const forgedReceipt = { ...changedReceipt, receipt_digest_sha256: assessmentEvidenceDigest(changedReceipt) };
+        const changedAudit = (await client.query(`INSERT INTO appraisal.uad_audit_events
+          (workfile_id,actor_user_id,event_type,entity_type,entity_id,metadata,after_data)
+          SELECT workfile_id,actor_user_id,event_type,entity_type,$2,
+            metadata || jsonb_build_object('operation_id',$2::text,'uad_revision_id',$3::text,'uad_revision_number',3,'receipt_digest_sha256',$4::text),after_data
+          FROM appraisal.uad_audit_events WHERE id=$1 RETURNING id`, [accepted.input.auditEventId, changedOperation, revision3, forgedReceipt.receipt_digest_sha256])).rows[0];
+        await rejectsSql(client, `INSERT INTO app.neighborhood_assessment_applications
+          (id,attachment_id,attachment_revision,report_file_id,application_identity_sha256,operation_id,actor_user_id,
+           request_digest_sha256,accepted_editor_revision,uad_revision_id,uad_audit_event_id,receipt)
+          VALUES ($1,$2,2,$3,$4,$5,$6,$7,3,$8,$9,$10)`, [randomUUID(), currentAttachment.attachment_id, uad.reportFileId,
+          currentAttachment.application_identity_sha256, changedOperation, identity.actor_user_id, "0".repeat(64), revision3, changedAudit.id, json(forgedReceipt)], /application_receipt_mismatch/);
+
+        const custom = buildNeighborhoodAttachment(assessment, { ...neighborhoodTargetFixture("custom_appraisal"),
+          attachment_id: randomUUID(), scope: identity.scope, report_file_id: identity.customReportId,
+          custom_assignment_file_id: identity.customId, editor_revision: 0, mapped_manifest_sha256: assessmentEvidenceDigest([]) });
+        await client.query(`INSERT INTO app.neighborhood_assessment_attachments
+          (attachment_id,attachment_revision,assessment_id,assessment_revision,report_file_id,organization_id,workflow_type,
+           custom_assignment_file_id,uad_workfile_id,application_identity_sha256,binding_digest_sha256,mapped_suggestions,attachment)
+          VALUES ($1,1,$2,$3,$4,$5,'custom_appraisal',$6,NULL,$7,$8,'[]',$9)`, [custom.attachment_id, assessment.id,
+          assessment.revision, identity.customReportId, identity.scope.organization_id, identity.customId,
+          custom.application_identity_sha256, custom.binding_digest_sha256, json(custom)]);
+        await rejectsSql(client, `INSERT INTO app.neighborhood_assessment_applications
+          (id,attachment_id,attachment_revision,report_file_id,application_identity_sha256,operation_id,actor_user_id,
+           request_digest_sha256,accepted_editor_revision,receipt)
+          VALUES ($1,$2,1,$3,$4,$5,$6,$7,1,'{}')`, [randomUUID(), custom.attachment_id, identity.customReportId,
+          custom.application_identity_sha256, randomUUID(), identity.actor_user_id, "0".repeat(64)], /custom_acceptance_not_supported/);
+      });
+      const replayPlan = prepareNeighborhoodApplicationGroup({ ...replayInput, accepted_application: savedReceipt });
+      assert.equal(replayPlan.status, "already_applied"); assert.deepEqual(replayPlan.writes, []);
+      assert.equal(prepareNeighborhoodApplicationGroup({ ...replayInput, accepted_application: null }).status, "conflict");
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_applications WHERE report_file_id=$1", [uad.reportFileId])).rows[0].count), 1);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_revisions WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 2);
+      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_audit_events WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 1);
+
+      await rollbackFixture(pool, async client => {
+        await client.query("SELECT id FROM appraisal.uad_workfiles WHERE id=$1 FOR UPDATE", [uad.workfileId]);
+        await client.query("UPDATE appraisal.uad_workfiles SET current_revision=3 WHERE id=$1", [uad.workfileId]);
+        await client.query(`INSERT INTO appraisal.uad_revisions
+          (id,workfile_id,revision_number,specification_release_key,document,created_by_user_id)
+          VALUES ($1,$2,3,$3,$4,$5)`, [randomUUID(), uad.workfileId, uad.release,
+          json({ ...persistedDocument, unrelated_edit: true }), identity.actor_user_id]);
+        const historical = await getAcceptedNeighborhoodApplication(client, application.lookup);
+        assert.deepEqual(historical, savedReceipt, "Historical evidence remains readable, not newly applicable");
+        const later = buildNeighborhoodAttachment(assessment, { ...application.attachment, attachment_revision: 3, editor_revision: 3 });
+        const plan = prepareNeighborhoodApplicationGroup({ ...replayInput, expected_binding_digest: later.binding_digest_sha256,
+          current_application_identity_sha256: later.application_identity_sha256, current_editor_revision: 3, accepted_application: historical });
+        assert.equal(plan.status, "conflict"); assert.deepEqual(plan.writes, []);
+        assert.ok(plan.conflicts.some(item => item.code === "stale_accepted_application"));
+        await assert.rejects(recordNeighborhoodApplicationAcceptance(client, accepted.input), /uad_target_not_editable/);
+      });
+    });
   } finally {
     // Preserve synthetic audit/history rows; cancel only this run's unfinished
     // jobs so later dedicated test runs cannot accidentally consume them.
-    for (const job of owned) await repository.cancel(job.scope, job.id).catch(() => {});
+    for (const job of owned) await repository.cancel(job.scope, job.id, { expected_request_generation: job.generation }).catch(() => {});
     await pool.end();
   }
 });

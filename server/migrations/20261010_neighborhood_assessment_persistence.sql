@@ -3,6 +3,11 @@
 -- No optional GIS/provider schema, parent-table alteration, or live backfill.
 -- Scope checks protect this subsystem, not authorization: owning workflow guards
 -- must authorize every lookup/apply and recheck parent scope after later edits.
+-- Evidence hashes retain the 1,500,000-byte compact canonical JSON contract.
+-- jsonb::text includes separator spaces and expands exponent-form numbers, so
+-- storage has an independent 2,000,000-byte ceiling. The repository preflights
+-- this representation with assertNeighborhoodJsonbStorage before database work;
+-- arbitrary numeric expansion is rejected, not granted unbounded headroom.
 DO $$
 DECLARE dependency text;
 BEGIN
@@ -38,7 +43,7 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_revisions (
   revision integer NOT NULL CHECK (revision >= 1),
   input_signature_sha256 text NOT NULL CHECK (input_signature_sha256 ~ '^[a-f0-9]{64}$'),
   evidence_digest_sha256 text NOT NULL CHECK (evidence_digest_sha256 ~ '^[a-f0-9]{64}$'),
-  assessment jsonb NOT NULL CHECK (jsonb_typeof(assessment) = 'object' AND octet_length(assessment::text) <= 1500000),
+  assessment jsonb NOT NULL CHECK (jsonb_typeof(assessment) = 'object' AND octet_length(assessment::text) <= 2000000),
   publication_status text NOT NULL DEFAULT 'staging' CHECK (publication_status IN ('staging', 'published')),
   published_at timestamptz,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -55,17 +60,17 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_jobs (
   assessment_id uuid NOT NULL REFERENCES app.neighborhood_assessments(id) ON DELETE RESTRICT,
   input_signature_sha256 text NOT NULL CHECK (input_signature_sha256 ~ '^[a-f0-9]{64}$'),
   request_digest_sha256 text NOT NULL CHECK (request_digest_sha256 ~ '^[a-f0-9]{64}$'),
-  request_payload jsonb NOT NULL CHECK (jsonb_typeof(request_payload) = 'object' AND octet_length(request_payload::text) <= 1500000),
+  request_payload jsonb NOT NULL CHECK (jsonb_typeof(request_payload) = 'object' AND octet_length(request_payload::text) <= 2000000),
   effective_date date NOT NULL,
   data_cutoff date NOT NULL CHECK (data_cutoff <= effective_date),
   request_generation integer NOT NULL CHECK (request_generation >= 1),
   status text NOT NULL DEFAULT 'queued' CHECK (status IN ('queued', 'running', 'retry', 'succeeded', 'failed', 'cancelled')),
   attempts integer NOT NULL DEFAULT 0 CHECK (attempts >= 0),
-  max_attempts integer NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 100),
+  max_attempts integer NOT NULL DEFAULT 3 CHECK (max_attempts BETWEEN 1 AND 10),
   run_after timestamptz NOT NULL DEFAULT now(),
   claim_token uuid,
   lease_expires_at timestamptz,
-  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(checkpoint) = 'object' AND octet_length(checkpoint::text) <= 1500000),
+  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb CHECK (jsonb_typeof(checkpoint) = 'object' AND octet_length(checkpoint::text) <= 2000000),
   last_error_code text CHECK (last_error_code IS NULL OR char_length(last_error_code) <= 200),
   result_revision integer,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -79,6 +84,19 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_jobs (
   CHECK ((status = 'running' AND claim_token IS NOT NULL AND lease_expires_at IS NOT NULL AND attempts >= 1)
     OR (status <> 'running' AND claim_token IS NULL AND lease_expires_at IS NULL)),
   CHECK ((status = 'succeeded') = (result_revision IS NOT NULL))
+);
+
+CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_requests (
+  assessment_id uuid NOT NULL REFERENCES app.neighborhood_assessments(id) ON DELETE RESTRICT,
+  operation_id uuid NOT NULL,
+  request_digest_sha256 text NOT NULL CHECK (request_digest_sha256 ~ '^[a-f0-9]{64}$'),
+  job_id uuid NOT NULL,
+  request_generation integer NOT NULL CHECK (request_generation >= 1),
+  job_reused boolean NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (assessment_id, operation_id),
+  UNIQUE (assessment_id, request_generation),
+  FOREIGN KEY (assessment_id, job_id) REFERENCES app.neighborhood_assessment_jobs(assessment_id, id) ON DELETE RESTRICT
 );
 
 CREATE INDEX IF NOT EXISTS neighborhood_assessment_jobs_due_idx
@@ -151,7 +169,7 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_members (
   member_id text NOT NULL CHECK (char_length(member_id) BETWEEN 1 AND 300),
   member_unit text NOT NULL,
   account_ids text[] NOT NULL,
-  member_data jsonb NOT NULL CHECK (jsonb_typeof(member_data) = 'object' AND octet_length(member_data::text) <= 1500000),
+  member_data jsonb NOT NULL CHECK (jsonb_typeof(member_data) = 'object' AND octet_length(member_data::text) <= 2000000),
   PRIMARY KEY (assessment_id, revision, population_id, member_id),
   FOREIGN KEY (assessment_id, revision, population_id, member_unit)
     REFERENCES app.neighborhood_assessment_populations(assessment_id, revision, population_id, member_unit) ON DELETE RESTRICT,
@@ -168,7 +186,7 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_sources (
   source_revision text NOT NULL CHECK (char_length(source_revision) BETWEEN 1 AND 200),
   content_sha256 text NOT NULL CHECK (content_sha256 ~ '^[a-f0-9]{64}$'),
   source_snapshot jsonb NOT NULL CHECK (jsonb_typeof(source_snapshot) = 'object'),
-  source_payload jsonb NOT NULL CHECK (jsonb_typeof(source_payload) = 'object' AND octet_length(source_payload::text) <= 1500000),
+  source_payload jsonb NOT NULL CHECK (jsonb_typeof(source_payload) = 'object' AND octet_length(source_payload::text) <= 2000000),
   PRIMARY KEY (assessment_id, revision, source_id),
   FOREIGN KEY (assessment_id, revision) REFERENCES app.neighborhood_assessment_revisions(assessment_id, revision) ON DELETE RESTRICT,
   CHECK (source_snapshot->>'id' IS NOT DISTINCT FROM source_id),
@@ -177,8 +195,25 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_sources (
   CHECK ((source_snapshot->>'visibility' IN ('public', 'organization', 'assignment')) IS TRUE)
 );
 
+-- A stable attachment UUID never changes target/scope across evidence revisions.
+-- No assessment/revision is frozen here: later evidence for the SAME target is valid.
+CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_attachment_anchors (
+  attachment_id uuid PRIMARY KEY,
+  organization_id uuid NOT NULL REFERENCES app_auth.organizations(id) ON DELETE RESTRICT,
+  report_file_id uuid NOT NULL REFERENCES app.report_files(id) ON DELETE RESTRICT,
+  workflow_type text NOT NULL CHECK (workflow_type IN ('custom_appraisal', 'uad_3_6')),
+  custom_assignment_file_id bigint REFERENCES app.assignment_files(id) ON DELETE RESTRICT,
+  uad_workfile_id uuid REFERENCES appraisal.uad_workfiles(id) ON DELETE RESTRICT,
+  account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE RESTRICT,
+  appraisal_case_id uuid NOT NULL REFERENCES app.appraisal_cases(id) ON DELETE RESTRICT,
+  subject_snapshot_id uuid NOT NULL REFERENCES app.appraisal_subject_snapshots(id) ON DELETE RESTRICT,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  CHECK ((workflow_type = 'custom_appraisal' AND custom_assignment_file_id IS NOT NULL AND uad_workfile_id IS NULL)
+    OR (workflow_type = 'uad_3_6' AND custom_assignment_file_id IS NULL AND uad_workfile_id IS NOT NULL))
+);
+
 CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_attachments (
-  attachment_id uuid NOT NULL,
+  attachment_id uuid NOT NULL REFERENCES app.neighborhood_assessment_attachment_anchors(attachment_id) ON DELETE RESTRICT,
   attachment_revision integer NOT NULL CHECK (attachment_revision >= 1),
   assessment_id uuid NOT NULL,
   assessment_revision integer NOT NULL,
@@ -189,8 +224,8 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_attachments (
   uad_workfile_id uuid REFERENCES appraisal.uad_workfiles(id) ON DELETE RESTRICT,
   application_identity_sha256 text NOT NULL CHECK (application_identity_sha256 ~ '^[a-f0-9]{64}$'),
   binding_digest_sha256 text NOT NULL CHECK (binding_digest_sha256 ~ '^[a-f0-9]{64}$'),
-  mapped_suggestions jsonb NOT NULL CHECK (jsonb_typeof(mapped_suggestions) = 'array' AND octet_length(mapped_suggestions::text) <= 1500000),
-  attachment jsonb NOT NULL CHECK (jsonb_typeof(attachment) = 'object' AND octet_length(attachment::text) <= 1500000),
+  mapped_suggestions jsonb NOT NULL CHECK (jsonb_typeof(mapped_suggestions) = 'array' AND octet_length(mapped_suggestions::text) <= 2000000),
+  attachment jsonb NOT NULL CHECK (jsonb_typeof(attachment) = 'object' AND octet_length(attachment::text) <= 2000000),
   created_at timestamptz NOT NULL DEFAULT now(),
   PRIMARY KEY (attachment_id, attachment_revision),
   UNIQUE (attachment_id, attachment_revision, report_file_id, application_identity_sha256),
@@ -213,7 +248,7 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_applications (
   accepted_editor_revision integer NOT NULL CHECK (accepted_editor_revision >= 1),
   uad_revision_id uuid REFERENCES appraisal.uad_revisions(id) ON DELETE RESTRICT,
   uad_audit_event_id bigint REFERENCES appraisal.uad_audit_events(id) ON DELETE RESTRICT,
-  receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt) = 'object' AND octet_length(receipt::text) <= 1500000),
+  receipt jsonb NOT NULL CHECK (jsonb_typeof(receipt) = 'object' AND octet_length(receipt::text) <= 2000000),
   created_at timestamptz NOT NULL DEFAULT now(),
   FOREIGN KEY (attachment_id, attachment_revision, report_file_id, application_identity_sha256)
     REFERENCES app.neighborhood_assessment_attachments(attachment_id, attachment_revision, report_file_id, application_identity_sha256) ON DELETE RESTRICT,
@@ -251,6 +286,22 @@ BEGIN
   IF NEW.current_revision IS NOT NULL AND NOT EXISTS (SELECT 1 FROM app.neighborhood_assessment_revisions r
     WHERE r.assessment_id = NEW.id AND r.revision = NEW.current_revision AND r.publication_status = 'published') THEN
     RAISE EXCEPTION 'neighborhood_current_revision_not_published';
+  END IF;
+  RETURN NEW;
+END $$;
+
+CREATE OR REPLACE FUNCTION app.neighborhood_guard_request()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, app AS $$
+DECLARE head app.neighborhood_assessments%ROWTYPE; job_digest text;
+BEGIN
+  IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'neighborhood_request_immutable'; END IF;
+  SELECT * INTO STRICT head FROM app.neighborhood_assessments WHERE id = NEW.assessment_id FOR SHARE;
+  SELECT request_digest_sha256 INTO job_digest FROM app.neighborhood_assessment_jobs
+    WHERE assessment_id = NEW.assessment_id AND id = NEW.job_id;
+  IF NOT FOUND OR job_digest IS DISTINCT FROM NEW.request_digest_sha256
+    OR head.request_generation IS DISTINCT FROM NEW.request_generation
+    OR head.requested_job_id IS DISTINCT FROM NEW.job_id THEN
+    RAISE EXCEPTION 'neighborhood_request_intent_mismatch';
   END IF;
   RETURN NEW;
 END $$;
@@ -379,10 +430,37 @@ BEGIN
   RETURN NEW;
 END $$;
 
+CREATE OR REPLACE FUNCTION app.neighborhood_guard_attachment_anchor()
+RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, app AS $$
+DECLARE report app.report_files%ROWTYPE; target_organization uuid; target_account text;
+BEGIN
+  IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'neighborhood_attachment_anchor_immutable'; END IF;
+  PERFORM app.neighborhood_assert_scope(NEW.organization_id, NEW.appraisal_case_id, NEW.subject_snapshot_id, NEW.account_id);
+  SELECT * INTO STRICT report FROM app.report_files WHERE id = NEW.report_file_id FOR SHARE;
+  IF ROW(report.organization_id, report.workflow_type, report.custom_assignment_file_id, report.uad_workfile_id,
+      report.account_id, report.appraisal_case_id, report.subject_snapshot_id)
+    IS DISTINCT FROM ROW(NEW.organization_id, NEW.workflow_type, NEW.custom_assignment_file_id, NEW.uad_workfile_id,
+      NEW.account_id, NEW.appraisal_case_id, NEW.subject_snapshot_id) THEN
+    RAISE EXCEPTION 'neighborhood_attachment_anchor_scope_mismatch';
+  END IF;
+  IF NEW.workflow_type = 'custom_appraisal' THEN
+    SELECT organization_id, account_id INTO STRICT target_organization, target_account FROM app.assignment_files
+      WHERE id = NEW.custom_assignment_file_id FOR SHARE;
+  ELSE
+    SELECT organization_id, account_id INTO STRICT target_organization, target_account FROM appraisal.uad_workfiles
+      WHERE id = NEW.uad_workfile_id FOR SHARE;
+  END IF;
+  IF target_organization IS DISTINCT FROM NEW.organization_id OR target_account IS DISTINCT FROM NEW.account_id THEN
+    RAISE EXCEPTION 'neighborhood_attachment_anchor_scope_mismatch';
+  END IF;
+  RETURN NEW;
+END $$;
+
 CREATE OR REPLACE FUNCTION app.neighborhood_guard_attachment()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, app AS $$
 DECLARE head app.neighborhood_assessments%ROWTYPE; report app.report_files%ROWTYPE;
   revision_row app.neighborhood_assessment_revisions%ROWTYPE; target_organization uuid; target_account text;
+  anchor app.neighborhood_assessment_attachment_anchors%ROWTYPE;
 BEGIN
   IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'neighborhood_attachment_immutable'; END IF;
   SELECT * INTO STRICT head FROM app.neighborhood_assessments WHERE id = NEW.assessment_id FOR SHARE;
@@ -416,6 +494,22 @@ BEGIN
     'data_cutoff', revision_row.assessment->'data_cutoff', 'evidence_digest_sha256', revision_row.evidence_digest_sha256)) THEN
     RAISE EXCEPTION 'neighborhood_attachment_manifest_mismatch';
   END IF;
+  -- The PK serializes even concurrent first inserts for different revisions.
+  -- Under READ COMMITTED the following command sees the winning committed row;
+  -- stricter isolation may raise a serialization conflict, never split identity.
+  INSERT INTO app.neighborhood_assessment_attachment_anchors
+    (attachment_id,organization_id,report_file_id,workflow_type,custom_assignment_file_id,uad_workfile_id,
+     account_id,appraisal_case_id,subject_snapshot_id)
+    VALUES (NEW.attachment_id,NEW.organization_id,NEW.report_file_id,NEW.workflow_type,NEW.custom_assignment_file_id,NEW.uad_workfile_id,
+      head.account_id,head.appraisal_case_id,head.subject_snapshot_id)
+    ON CONFLICT (attachment_id) DO NOTHING;
+  SELECT * INTO STRICT anchor FROM app.neighborhood_assessment_attachment_anchors WHERE attachment_id = NEW.attachment_id FOR SHARE;
+  IF ROW(anchor.organization_id,anchor.report_file_id,anchor.workflow_type,anchor.custom_assignment_file_id,anchor.uad_workfile_id,
+      anchor.account_id,anchor.appraisal_case_id,anchor.subject_snapshot_id)
+    IS DISTINCT FROM ROW(NEW.organization_id,NEW.report_file_id,NEW.workflow_type,NEW.custom_assignment_file_id,NEW.uad_workfile_id,
+      head.account_id,head.appraisal_case_id,head.subject_snapshot_id) THEN
+    RAISE EXCEPTION 'neighborhood_attachment_stable_identity_mismatch';
+  END IF;
   RETURN NEW;
 END $$;
 
@@ -423,32 +517,40 @@ CREATE OR REPLACE FUNCTION app.neighborhood_guard_application()
 RETURNS trigger LANGUAGE plpgsql SET search_path = pg_catalog, app AS $$
 DECLARE attachment_row app.neighborhood_assessment_attachments%ROWTYPE; manifest jsonb; base_revision integer;
   uad_revision appraisal.uad_revisions%ROWTYPE; uad_event appraisal.uad_audit_events%ROWTYPE;
+  partition_name text; expected_ids jsonb; actual_ids jsonb;
 BEGIN
   IF TG_OP <> 'INSERT' THEN RAISE EXCEPTION 'neighborhood_application_immutable'; END IF;
   SELECT * INTO STRICT attachment_row FROM app.neighborhood_assessment_attachments
     WHERE attachment_id = NEW.attachment_id AND attachment_revision = NEW.attachment_revision FOR SHARE;
-  IF attachment_row.workflow_type = 'uad_3_6' THEN
-    IF NEW.uad_revision_id IS NULL OR NEW.uad_audit_event_id IS NULL THEN
-      RAISE EXCEPTION 'neighborhood_uad_acceptance_identity_required';
-    END IF;
-    SELECT * INTO STRICT uad_revision FROM appraisal.uad_revisions WHERE id = NEW.uad_revision_id FOR SHARE;
-    SELECT * INTO STRICT uad_event FROM appraisal.uad_audit_events WHERE id = NEW.uad_audit_event_id FOR SHARE;
-    IF uad_revision.workfile_id IS DISTINCT FROM attachment_row.uad_workfile_id
-      OR uad_revision.revision_number IS DISTINCT FROM NEW.accepted_editor_revision
-      OR uad_revision.created_by_user_id IS DISTINCT FROM NEW.actor_user_id
-      OR uad_event.workfile_id IS DISTINCT FROM attachment_row.uad_workfile_id
-      OR uad_event.actor_user_id IS DISTINCT FROM NEW.actor_user_id THEN
-      RAISE EXCEPTION 'neighborhood_uad_acceptance_identity_mismatch';
-    END IF;
-  ELSIF NEW.uad_revision_id IS NOT NULL OR NEW.uad_audit_event_id IS NOT NULL THEN
-    RAISE EXCEPTION 'neighborhood_custom_uad_identity_forbidden';
+  -- Custom proposals may be persisted, but no coherent Custom acceptance token
+  -- has been implemented. Direct SQL must not bypass the repository's refusal.
+  IF attachment_row.workflow_type IS DISTINCT FROM 'uad_3_6' THEN
+    RAISE EXCEPTION 'neighborhood_custom_acceptance_not_supported';
+  END IF;
+  IF NEW.uad_revision_id IS NULL OR NEW.uad_audit_event_id IS NULL THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_identity_required';
+  END IF;
+  SELECT * INTO STRICT uad_revision FROM appraisal.uad_revisions WHERE id = NEW.uad_revision_id FOR SHARE;
+  SELECT * INTO STRICT uad_event FROM appraisal.uad_audit_events WHERE id = NEW.uad_audit_event_id FOR SHARE;
+  IF uad_revision.workfile_id IS DISTINCT FROM attachment_row.uad_workfile_id
+    OR uad_revision.revision_number IS DISTINCT FROM NEW.accepted_editor_revision
+    OR uad_revision.created_by_user_id IS DISTINCT FROM NEW.actor_user_id
+    OR uad_revision.specification_release_key IS DISTINCT FROM attachment_row.attachment->>'specification_release'
+    OR uad_event.workfile_id IS DISTINCT FROM attachment_row.uad_workfile_id
+    OR uad_event.actor_user_id IS DISTINCT FROM NEW.actor_user_id
+    OR uad_event.event_type IS DISTINCT FROM 'uad_neighborhood_assessment.applied'
+    OR uad_event.entity_type IS DISTINCT FROM 'uad_neighborhood_application'
+    OR uad_event.entity_id IS DISTINCT FROM NEW.operation_id::text THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_identity_mismatch';
   END IF;
   manifest := NEW.receipt->'acceptance_manifest';
   base_revision := (manifest->>'base_editor_revision')::integer;
   IF NEW.receipt->'receipt_version' IS DISTINCT FROM '1'::jsonb
     OR NEW.receipt->'accepted_editor_revision' IS DISTINCT FROM to_jsonb(NEW.accepted_editor_revision)
     OR (NEW.receipt->>'receipt_digest_sha256' ~ '^[a-f0-9]{64}$') IS NOT TRUE
-    OR base_revision IS NULL OR base_revision < CASE WHEN attachment_row.workflow_type = 'uad_3_6' THEN 1 ELSE 0 END
+    OR base_revision IS NULL OR base_revision < 1
+    OR jsonb_typeof(attachment_row.attachment->'editor_revision') IS DISTINCT FROM 'number'
+    OR manifest->'base_editor_revision' IS DISTINCT FROM attachment_row.attachment->'editor_revision'
     OR NEW.accepted_editor_revision <= base_revision
     OR NOT COALESCE(manifest @> jsonb_build_object('attachment_id', NEW.attachment_id, 'attachment_revision', NEW.attachment_revision,
       'application_identity_sha256', NEW.application_identity_sha256, 'binding_digest_sha256', attachment_row.binding_digest_sha256), false)
@@ -457,6 +559,58 @@ BEGIN
       'uad_workfile_id', attachment_row.uad_workfile_id), false) THEN
     RAISE EXCEPTION 'neighborhood_application_receipt_mismatch';
   END IF;
+  IF jsonb_typeof(uad_event.metadata) IS DISTINCT FROM 'object'
+    OR (manifest->>'prepared_values_sha256' ~ '^[a-f0-9]{64}$') IS NOT TRUE
+    OR (attachment_row.attachment->>'mapped_manifest_sha256' ~ '^[a-f0-9]{64}$') IS NOT TRUE
+    OR uad_event.metadata->'operation_id' IS DISTINCT FROM to_jsonb(NEW.operation_id)
+    OR uad_event.metadata->'uad_revision_id' IS DISTINCT FROM to_jsonb(NEW.uad_revision_id)
+    OR uad_event.metadata->'uad_revision_number' IS DISTINCT FROM to_jsonb(NEW.accepted_editor_revision)
+    OR uad_event.metadata->'application_identity_sha256' IS DISTINCT FROM to_jsonb(NEW.application_identity_sha256)
+    OR uad_event.metadata->'receipt_digest_sha256' IS DISTINCT FROM NEW.receipt->'receipt_digest_sha256'
+    OR uad_event.metadata->'mapped_manifest_sha256' IS DISTINCT FROM attachment_row.attachment->'mapped_manifest_sha256'
+    OR uad_event.metadata->'prepared_values_sha256' IS DISTINCT FROM manifest->'prepared_values_sha256' THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_audit_metadata_mismatch';
+  END IF;
+  IF jsonb_typeof(uad_event.after_data) IS DISTINCT FROM 'object'
+    OR jsonb_typeof(attachment_row.attachment->'application_group_id') IS DISTINCT FROM 'string'
+    OR jsonb_typeof(attachment_row.attachment->'application_group_revision') IS DISTINCT FROM 'number'
+    OR uad_event.after_data->'attachment_id' IS DISTINCT FROM to_jsonb(NEW.attachment_id)
+    OR uad_event.after_data->'assessment_id' IS DISTINCT FROM to_jsonb(attachment_row.assessment_id)
+    OR uad_event.after_data->'assessment_revision' IS DISTINCT FROM to_jsonb(attachment_row.assessment_revision)
+    OR uad_event.after_data->'application_group_id' IS DISTINCT FROM attachment_row.attachment->'application_group_id'
+    OR uad_event.after_data->'application_group_revision' IS DISTINCT FROM attachment_row.attachment->'application_group_revision' THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_audit_after_mismatch';
+  END IF;
+  IF jsonb_typeof(manifest->'applied') IS DISTINCT FROM 'array'
+    OR jsonb_typeof(manifest->'reused') IS DISTINCT FROM 'array' THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_partition_mismatch';
+  END IF;
+  IF jsonb_array_length(manifest->'applied') < 1
+    OR jsonb_array_length(manifest->'applied') + jsonb_array_length(manifest->'reused') > 1000
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements((manifest->'applied') || (manifest->'reused')) item
+      WHERE jsonb_typeof(item->'id') IS DISTINCT FROM 'string' OR item->>'id' = '')
+    OR EXISTS (SELECT 1 FROM jsonb_array_elements((manifest->'applied') || (manifest->'reused')) item
+      GROUP BY item->>'id' HAVING count(*) > 1) THEN
+    RAISE EXCEPTION 'neighborhood_uad_acceptance_partition_mismatch';
+  END IF;
+  FOREACH partition_name IN ARRAY ARRAY['applied', 'reused'] LOOP
+    IF jsonb_typeof(uad_event.after_data->(partition_name || '_suggestion_ids')) IS DISTINCT FROM 'array' THEN
+      RAISE EXCEPTION 'neighborhood_uad_acceptance_partition_mismatch';
+    END IF;
+    IF EXISTS (SELECT 1 FROM jsonb_array_elements(uad_event.after_data->(partition_name || '_suggestion_ids')) item
+      WHERE jsonb_typeof(item) IS DISTINCT FROM 'string') THEN
+      RAISE EXCEPTION 'neighborhood_uad_acceptance_partition_mismatch';
+    END IF;
+    SELECT COALESCE(jsonb_agg(item->'id' ORDER BY item->'id'), '[]'::jsonb) INTO expected_ids
+      FROM jsonb_array_elements(manifest->partition_name) item;
+    SELECT COALESCE(jsonb_agg(item ORDER BY item), '[]'::jsonb) INTO actual_ids
+      FROM jsonb_array_elements(uad_event.after_data->(partition_name || '_suggestion_ids')) item;
+    IF actual_ids IS DISTINCT FROM expected_ids THEN
+      RAISE EXCEPTION 'neighborhood_uad_acceptance_partition_mismatch';
+    END IF;
+  END LOOP;
+  -- Scalar linkage and exact ID partitions are database integrity checks. The
+  -- repository still recomputes JS canonical receipt/mapper/evidence digests.
   -- Owner must lock/revalidate the actual content revision and signed state in
   -- the same transaction. report_files.registry_revision is NOT that counter.
   RETURN NEW;
@@ -465,6 +619,9 @@ END $$;
 DROP TRIGGER IF EXISTS neighborhood_head_guard ON app.neighborhood_assessments;
 CREATE TRIGGER neighborhood_head_guard BEFORE INSERT OR UPDATE ON app.neighborhood_assessments
   FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_head();
+DROP TRIGGER IF EXISTS neighborhood_request_guard ON app.neighborhood_assessment_requests;
+CREATE TRIGGER neighborhood_request_guard BEFORE INSERT OR UPDATE OR DELETE ON app.neighborhood_assessment_requests
+  FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_request();
 DROP TRIGGER IF EXISTS neighborhood_job_guard ON app.neighborhood_assessment_jobs;
 CREATE TRIGGER neighborhood_job_guard BEFORE INSERT OR UPDATE ON app.neighborhood_assessment_jobs
   FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_job();
@@ -480,6 +637,9 @@ CREATE TRIGGER neighborhood_member_guard BEFORE INSERT OR UPDATE OR DELETE ON ap
 DROP TRIGGER IF EXISTS neighborhood_source_guard ON app.neighborhood_assessment_sources;
 CREATE TRIGGER neighborhood_source_guard BEFORE INSERT OR UPDATE OR DELETE ON app.neighborhood_assessment_sources
   FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_revision_child();
+DROP TRIGGER IF EXISTS neighborhood_attachment_anchor_guard ON app.neighborhood_assessment_attachment_anchors;
+CREATE TRIGGER neighborhood_attachment_anchor_guard BEFORE INSERT OR UPDATE OR DELETE ON app.neighborhood_assessment_attachment_anchors
+  FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_attachment_anchor();
 DROP TRIGGER IF EXISTS neighborhood_attachment_guard ON app.neighborhood_assessment_attachments;
 CREATE TRIGGER neighborhood_attachment_guard BEFORE INSERT OR UPDATE OR DELETE ON app.neighborhood_assessment_attachments
   FOR EACH ROW EXECUTE FUNCTION app.neighborhood_guard_attachment();

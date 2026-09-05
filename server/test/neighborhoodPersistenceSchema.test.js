@@ -7,7 +7,7 @@ const sql = await fs.readFile(new URL("../migrations/20261010_neighborhood_asses
 // The released migration requires the separately isolated real-PG acceptance set.
 test("migration persists only new neighborhood tables with explicit canonical prerequisites", () => {
   const tables = [...sql.matchAll(/CREATE TABLE IF NOT EXISTS ([\w.]+)/g)].map(match => match[1]);
-  assert.equal(tables.length, 8);
+  assert.equal(tables.length, 10);
   assert.ok(tables.every(name => /^app\.neighborhood_assessment/.test(name)));
   for (const dependency of ["app_auth.organizations", "app_auth.users", "core.accounts", "app.appraisal_cases",
     "app.appraisal_subject_snapshots", "app.report_files", "app.assignment_files", "appraisal.uad_workfiles",
@@ -30,6 +30,12 @@ test("scope is immutable, parent-locked and uses explicit captured date resoluti
 });
 
 test("heads, jobs, revisions and members use same-assessment composite identities", () => {
+  assert.match(sql, /PRIMARY KEY \(assessment_id, operation_id\)/);
+  assert.match(sql, /FOREIGN KEY \(assessment_id, job_id\) REFERENCES app\.neighborhood_assessment_jobs\(assessment_id, id\)/);
+  assert.match(sql, /neighborhood_request_immutable/);
+  assert.match(sql, /job_digest IS DISTINCT FROM NEW\.request_digest_sha256/);
+  assert.match(sql, /head\.request_generation IS DISTINCT FROM NEW\.request_generation/);
+  assert.match(sql, /head\.requested_job_id IS DISTINCT FROM NEW\.job_id/);
   assert.match(sql, /UNIQUE \(assessment_id, input_signature_sha256\)/);
   assert.match(sql, /FOREIGN KEY \(id, requested_job_id\) REFERENCES app\.neighborhood_assessment_jobs\(assessment_id, id\)/);
   assert.match(sql, /FOREIGN KEY \(id, current_revision\) REFERENCES app\.neighborhood_assessment_revisions\(assessment_id, revision\)/);
@@ -60,6 +66,7 @@ test("jobs store fresh claim authority but do not pretend a worker-name shape ch
   assert.match(sql, /lease_expires_at timestamptz/);
   assert.match(sql, /request_generation integer NOT NULL CHECK/);
   assert.match(sql, /CHECK \(attempts <= max_attempts\)/);
+  assert.match(sql, /max_attempts BETWEEN 1 AND 10/);
   assert.match(sql, /status <> 'running' AND claim_token IS NULL AND lease_expires_at IS NULL/);
   assert.match(sql, /lease_expires_at IS NOT NULL AND attempts >= 1/);
   assert.match(sql, /WHERE status IN \('queued', 'retry'\)/);
@@ -71,14 +78,14 @@ test("jobs store fresh claim authority but do not pretend a worker-name shape ch
 
 test("sources are captured within revision scope and bounded independently of optional providers", () => {
   assert.match(sql, /PRIMARY KEY \(assessment_id, revision, source_id\)/);
-  assert.match(sql, /source_payload jsonb NOT NULL CHECK \(jsonb_typeof\(source_payload\) = 'object' AND octet_length\(source_payload::text\) <= 1500000\)/);
+  assert.match(sql, /source_payload jsonb NOT NULL CHECK \(jsonb_typeof\(source_payload\) = 'object' AND octet_length\(source_payload::text\) <= 2000000\)/);
   assert.match(sql, /neighborhood_private_source_scope_mismatch/);
   assert.doesNotMatch(sql, /REFERENCES\s+gis\./i);
   assert.doesNotMatch(sql, /SECURITY DEFINER|CREATE EXTENSION/i);
 });
 
 test("target attachments check both report registry and actual workflow target", () => {
-  assert.match(sql, /mapped_suggestions jsonb NOT NULL CHECK \(jsonb_typeof\(mapped_suggestions\) = 'array' AND octet_length\(mapped_suggestions::text\) <= 1500000\)/);
+  assert.match(sql, /mapped_suggestions jsonb NOT NULL CHECK \(jsonb_typeof\(mapped_suggestions\) = 'array' AND octet_length\(mapped_suggestions::text\) <= 2000000\)/);
   assert.match(sql, /report\.subject_snapshot_id IS DISTINCT FROM head\.subject_snapshot_id/);
   assert.match(sql, /report\.appraisal_case_id IS DISTINCT FROM head\.appraisal_case_id/);
   assert.match(sql, /target_organization IS DISTINCT FROM head\.organization_id/);
@@ -89,13 +96,29 @@ test("target attachments check both report registry and actual workflow target",
 });
 
 test("receipts are immutable, exact-target-bound, operation-deduplicated and revision-typed", () => {
+  assert.match(sql, /manifest->'base_editor_revision' IS DISTINCT FROM attachment_row\.attachment->'editor_revision'/);
   assert.match(sql, /FOREIGN KEY \(attachment_id, attachment_revision, report_file_id, application_identity_sha256\)/);
   assert.match(sql, /UNIQUE \(report_file_id, operation_id\)/);
   assert.match(sql, /UNIQUE \(report_file_id, application_identity_sha256\)/);
   assert.match(sql, /neighborhood_application_immutable/);
   assert.match(sql, /NEW\.accepted_editor_revision <= base_revision/);
-  assert.match(sql, /attachment_row\.workflow_type = 'uad_3_6' THEN 1 ELSE 0/);
+  assert.match(sql, /base_revision IS NULL OR base_revision < 1/);
+  assert.doesNotMatch(sql, /base_revision\s*<\s*CASE/);
   assert.doesNotMatch(sql, /registry_revision\s*(?:=|<>|>|<)/);
+});
+
+test("stable attachment IDs serialize an immutable target anchor without freezing evidence revisions", () => {
+  const start = sql.indexOf("CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_attachment_anchors");
+  const anchor = sql.slice(start, sql.indexOf("CREATE TABLE IF NOT EXISTS app.neighborhood_assessment_attachments", start));
+  assert.match(anchor, /attachment_id uuid PRIMARY KEY/);
+  for (const field of ["organization_id", "report_file_id", "workflow_type", "custom_assignment_file_id", "uad_workfile_id",
+    "account_id", "appraisal_case_id", "subject_snapshot_id"]) assert.ok(anchor.includes(field));
+  assert.doesNotMatch(anchor, /assessment_revision|assessment_id uuid/);
+  assert.match(sql, /ON CONFLICT \(attachment_id\) DO NOTHING/);
+  assert.match(sql, /FROM app\.neighborhood_assessment_attachment_anchors WHERE attachment_id = NEW\.attachment_id FOR SHARE/);
+  assert.match(sql, /neighborhood_attachment_stable_identity_mismatch/);
+  assert.match(sql, /neighborhood_attachment_anchor_immutable/);
+  assert.match(sql, /neighborhood_attachment_anchor_scope_mismatch/);
 });
 
 test("UAD receipts reference the exact accepted revision and actor audit event", () => {
@@ -107,5 +130,42 @@ test("UAD receipts reference the exact accepted revision and actor audit event",
   assert.match(sql, /uad_revision\.created_by_user_id IS DISTINCT FROM NEW\.actor_user_id/);
   assert.match(sql, /uad_event\.workfile_id IS DISTINCT FROM attachment_row\.uad_workfile_id/);
   assert.match(sql, /uad_event\.actor_user_id IS DISTINCT FROM NEW\.actor_user_id/);
-  assert.match(sql, /neighborhood_custom_uad_identity_forbidden/);
+  assert.match(sql, /attachment_row\.workflow_type IS DISTINCT FROM 'uad_3_6'/);
+  assert.match(sql, /neighborhood_custom_acceptance_not_supported/);
+});
+
+test("UAD-only acceptance confirms audit operation, specification and metadata scalar types", () => {
+  assert.match(sql, /uad_revision\.specification_release_key IS DISTINCT FROM attachment_row\.attachment->>'specification_release'/);
+  assert.match(sql, /uad_event\.event_type IS DISTINCT FROM 'uad_neighborhood_assessment\.applied'/);
+  assert.match(sql, /uad_event\.entity_type IS DISTINCT FROM 'uad_neighborhood_application'/);
+  assert.match(sql, /uad_event\.entity_id IS DISTINCT FROM NEW\.operation_id::text/);
+  for (const field of ["operation_id", "uad_revision_id", "uad_revision_number", "application_identity_sha256",
+    "receipt_digest_sha256", "mapped_manifest_sha256", "prepared_values_sha256"]) {
+    assert.ok(sql.includes(`uad_event.metadata->'${field}' IS DISTINCT FROM`), field);
+  }
+  assert.match(sql, /neighborhood_uad_acceptance_audit_metadata_mismatch/);
+});
+
+test("audit after-data identifies the exact assessment and preserves each applied/reused ID partition", () => {
+  for (const field of ["attachment_id", "assessment_id", "assessment_revision", "application_group_id", "application_group_revision"]) {
+    assert.ok(sql.includes(`uad_event.after_data->'${field}' IS DISTINCT FROM`), field);
+  }
+  assert.match(sql, /neighborhood_uad_acceptance_audit_after_mismatch/);
+  assert.match(sql, /FOREACH partition_name IN ARRAY ARRAY\['applied', 'reused'\]/);
+  assert.match(sql, /GROUP BY item->>'id' HAVING count\(\*\) > 1/);
+  assert.match(sql, /jsonb_agg\(item->'id' ORDER BY item->'id'\)/);
+  assert.match(sql, /jsonb_agg\(item ORDER BY item\)/);
+  assert.match(sql, /actual_ids IS DISTINCT FROM expected_ids/);
+  assert.match(sql, /neighborhood_uad_acceptance_partition_mismatch/);
+});
+
+test("bounded PostgreSQL storage headroom is distinct from the unchanged canonical evidence byte limit", () => {
+  assert.match(sql, /1,500,000-byte compact canonical JSON contract/);
+  assert.match(sql, /independent 2,000,000-byte ceiling/);
+  assert.match(sql, /assertNeighborhoodJsonbStorage before database work/);
+  assert.doesNotMatch(sql, /octet_length\([^)]*::text\) <= 1500000/);
+  for (const column of ["assessment", "request_payload", "checkpoint", "member_data", "source_payload",
+    "mapped_suggestions", "attachment", "receipt"]) {
+    assert.ok(sql.includes(`octet_length(${column}::text) <= 2000000`), column);
+  }
 });

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment, canonicalAssessmentJson } from "./contract.js";
 import { neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup } from "./applicationGroup.js";
+import { assertNeighborhoodJsonbStorage } from "./jsonbStorage.js";
 
 /** Caller-owned transaction helpers, NOT authorization or signing controls.
  * Supply a checked-out pg PoolClient (query + release; it may also have connect).
@@ -15,7 +16,11 @@ import { neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup }
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
-const canonical = canonicalAssessmentJson;
+const canonical = value => {
+  const encoded = canonicalAssessmentJson(value);
+  assertNeighborhoodJsonbStorage(JSON.parse(encoded));
+  return encoded;
+};
 function freeze(value) { if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); } return value; }
 const capture = value => freeze(JSON.parse(canonical(value)));
 function fail(code) { throw Object.assign(new Error(`neighborhood_application_${code}`), { code: `neighborhood_application_${code}` }); }

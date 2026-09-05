@@ -13,8 +13,8 @@ test("Custom Appraisal sections share the HomeNode purple and gold selected-stat
 
   assert.match(css, /\.hn-custom-section\s*\{/);
   assert.match(css, /\.hn-custom-section-header-active\s*\{/);
-  assert.match(css, /linear-gradient\(118deg, var\(--hn-deep-purple\), #44305e\)/);
-  assert.match(css, /\.hn-custom-section-title \{ color: var\(--hn-champagne\) !important; \}/);
+  assert.match(css, /background: var\(--hn-section-fill\)/);
+  assert.match(css, /\.hn-custom-section-title \{ color: var\(--hn-deep-purple\) !important; \}/);
   assert.match(css, /\.hn-custom-selection\s*\{/);
   assert.match(controls, /hn-custom-section-active/);
   assert.match(controls, /hn-custom-section-header-active/);
@@ -65,7 +65,7 @@ test("the Custom Appraisal editor and print output retain legible themed surface
   assert.match(css, /@media print[\s\S]*\.hn-custom-section-header-active/);
 });
 
-test("dark headers and actions keep champagne text without overriding session status colors", () => {
+test("dark mastheads retain champagne while gold actions use dark ink without overriding session colors", () => {
   const css = read("../../dcad-frontend/src/index.css");
   const report = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
   const photos = read("../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx");
@@ -74,7 +74,7 @@ test("dark headers and actions keep champagne text without overriding session st
   const uadEditor = read("../../dcad-frontend/src/features/uad/components/UadWorkfileEditor.tsx");
 
   assert.match(css, /\.hn-app-header:not\(aside\) :where\([^)]*strong[^)]*\) \{ color: inherit !important; \}/);
-  assert.match(css, /\.hn-action-primary:hover:not\(:disabled\)[\s\S]*color: #fffdf6 !important;/);
+  assert.match(css, /\.hn-action-primary:hover:not\(:disabled\)[\s\S]*color: var\(--hn-midnight\) !important;/);
   assert.match(css, /\.hn-action-primary :where\([^)]*span[^)]*\) \{ color: inherit !important; \}/);
   assert.match(css, /\.hn-custom-file-status[\s\S]*color: var\(--hn-champagne\) !important;/);
   assert.match(report, /hn-custom-file-status/);

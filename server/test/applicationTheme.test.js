@@ -39,6 +39,9 @@ test("shared theme foregrounds retain readable contrast on their light and dark 
     ["champagne", "violet"], ["champagne", "violet-hover"],
     ["champagne", "lavender-hover"], ["champagne-muted", "deep-purple"],
     ["midnight", "gold"], ["text", "surface"], ["muted", "surface-muted"],
+    ["midnight", "gold-light"], ["midnight", "gold-hover"],
+    ["deep-purple", "section-gold"], ["deep-purple", "section-lavender"],
+    ["muted", "section-gold"], ["muted", "section-lavender"],
   ]) {
     const light = luminance(token(foreground));
     const dark = luminance(token(background));

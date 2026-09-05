@@ -57,6 +57,13 @@ export function createAppraisalHistoryRouter({
 
   const router = express.Router();
 
+  // Saved snapshots remain private even when their contents are immutable.
+  // Apply before guards so routed successes, denials, and errors share the policy.
+  router.use("/api/accounts/:id/appraisal-history", (_req, res, next) => {
+    res.set("Cache-Control", "no-store");
+    next();
+  });
+
   /** List Custom and UAD appraisal history without treating prior observations as current facts. */
   router.get("/api/accounts/:id/appraisal-history", async (req, res) => {
     if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return undefined;

@@ -248,9 +248,28 @@ test("non-signers can stage draft comparables but cannot create or alter attesta
     () => mergePropertyTaxWorkfileUpdate({}, grid([verified]), { canAttestComparables: false }),
     /property_tax_comparable_attestation_required/,
   );
-  assert.doesNotThrow(() => mergePropertyTaxWorkfileUpdate(
+  assert.throws(
+    () => mergePropertyTaxWorkfileUpdate(
+      stored,
+      grid([{ ...verified, address: "Appraiser-corrected address" }]),
+      { canAttestComparables: true },
+    ),
+    /property_tax_comparable_reverification_required/,
+  );
+  const corrected = { ...verified,
+    address: "Appraiser-corrected address",
+    reviewStatus: "needs_review",
+    armsLength: false,
+  };
+  const correctedDraft = mergePropertyTaxWorkfileUpdate(
     stored,
-    grid([{ ...verified, address: "Appraiser-corrected address" }]),
+    grid([corrected]),
+    { canAttestComparables: true },
+  );
+  assert.equal(correctedDraft.analysis.comparable_grid.rows[0].reviewStatus, "needs_review");
+  assert.doesNotThrow(() => mergePropertyTaxWorkfileUpdate(
+    correctedDraft,
+    grid([{ ...corrected, reviewStatus: "verified", armsLength: true }]),
     { canAttestComparables: true },
   ));
 });

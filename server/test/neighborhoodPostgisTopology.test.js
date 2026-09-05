@@ -37,7 +37,7 @@ function payloads(input = fixture()) {
     geometry: { type: "Polygon", coordinates: [[...input.features.map(row => row.geometry.coordinates[0]), input.features[0].geometry.coordinates[0]]] },
     boundary_edge_ids: edges.map(row => row.id), interior_ring_count: 0 };
   const diagnostics = { invalid_source_count: 0, nonsimple_source_count: 0, noded_coordinate_count: 6, edge_count: 3,
-    cell_count: 1, node_count: 3, source_reference_count: 3, invalid_cell_count: 0, sliver_cell_count: 0, unattributed_edge_count: 0,
+    cell_count: 1, node_count: 3, source_reference_count: 3, invalid_cell_count: 0, sliver_cell_count: 0, unattributed_edge_count: 0, uncovered_source_segment_count: 0, ambiguous_source_edge_count: 0,
     invalid_incidence_count: 0, unsupported_boundary_count: 0, overlapping_cell_count: 0, multisource_edge_count: 0,
     unused_edge_count: 0, dangle_node_count: 0 };
   return [{ kind: "diagnostics", id: "diagnostics", payload: diagnostics }, { kind: "cell", id: cellId, payload: cell },
@@ -104,7 +104,14 @@ test("mocked boundary: ready requires own preparation and PostGIS query, and pre
   assert.doesNotMatch(admissionQuery.text, /ST_(Node|Polygonize|Snap|Buffer|MakeLine)\s*\(/i);
   assert.ok(calls.indexOf(admissionQuery) < calls.indexOf(query));
   assert.match(query.text, /ST_Node\(/); assert.match(query.text, /ST_Polygonize\(/); assert.match(query.text, /ST_DumpSegments/);
-  assert.match(query.text, /ST_CoveredBy\(e.geom,p.geom\)/); assert.match(query.text, /source_segment_index/);
+  assert.match(query.text, /ST_AsEWKB\(ST_Normalize\(e.geom\),'NDR'\)=ST_AsEWKB\(ST_Normalize\(ST_LineSubstring/);
+  assert.match(query.text, /source_segment_index/);
+  assert.doesNotMatch(query.text, /ST_CoveredBy\(e.geom,p.geom\)|ST_DWithin|ST_Distance/);
+  assert.equal(output.performed_policy.source_attribution, 'exact_normalized_EWKB_source_segment_reconstruction_v1');
+  assert.equal(output.performed_policy.source_occurrence_coverage, 'complete_fraction_interval_union_v1');
+  assert.match(query.text, /min\(lo\)=0 AND max\(hi\)=1 AND NOT bool_or/);
+  assert.match(query.text, /NOT ST_Relate\(a.geom,b.geom,'1\*\*\*\*\*\*\*\*'\)/);
+  assert.equal(output.performed_policy.ambiguous_source_policy, 'require_original_primitive_positive_length_overlap_v1');
   assert.doesNotMatch(query.text, /ST_(Snap|Buffer|MakeLine|Envelope|MakeEnvelope|ConvexHull|MakeValid)\s*\(/i);
   assert.doesNotMatch(query.text, /\b(CREATE|INSERT|UPDATE|DELETE|DROP|TRUNCATE)\b/);
   assert.equal(JSON.parse(query.values[0]).length, 3); assert.equal(released.length, 1); assert.equal(released[0], undefined);
@@ -144,6 +151,8 @@ test("every incomplete geometry/limit diagnostic is atomic rather than exposing 
   for (const [key, value, expected] of [["cell_count", 0, "no_closed_cells"], ["invalid_source_count", 1, "invalid_source_geometry"],
     ["invalid_cell_count", 1, "invalid_cell_geometry"], ["sliver_cell_count", 1, "sliver_cells"],
     ["unattributed_edge_count", 1, "unattributed_source_edges"], ["invalid_incidence_count", 1, "invalid_edge_incidence"],
+    ["uncovered_source_segment_count", 1, "uncovered_source_segments"],
+    ["ambiguous_source_edge_count", 1, "ambiguous_source_attribution"],
     ["unsupported_boundary_count", 1, "unsupported_cell_boundary"], ["overlapping_cell_count", 1, "overlapping_cells"],
     ["edge_count", 8193, "topology_limit_exceeded"], ["cell_count", 1025, "topology_limit_exceeded"],
     ["noded_coordinate_count", 32769, "topology_limit_exceeded"], ["source_reference_count", 16385, "topology_limit_exceeded"]]) {
@@ -197,6 +206,26 @@ test("row/aggregate transfer budgets refuse nulled or oversized records", async 
   emptyGraph(output); assert.deepEqual(output.incomplete_reasons, ["topology_limit_exceeded"], "retained source metadata shares the aggregate budget");
   const mismatched = await runMock({ mutateRecords: rows => { rows[0].total_bytes = String(Number(rows[0].total_bytes) + 1); } });
   emptyGraph(mismatched.output); assert.deepEqual(mismatched.output.incomplete_reasons, ["invalid_topology_result"]);
+});
+
+test('successful output budget includes the entire serialized envelope at its exact acceptance boundary', async () => {
+  let low = 1, high = 100000;
+  while (low < high) {
+    const middle = Math.floor((low + high) / 2);
+    const { output } = await runMock({}, { output_bytes: middle });
+    if (output.status === 'ready') {
+      assert.ok(Buffer.byteLength(JSON.stringify(output)) <= middle);
+      high = middle;
+    } else low = middle + 1;
+  }
+  const { output: accepted } = await runMock({}, { output_bytes: low });
+  assert.equal(accepted.status, 'ready');
+  assert.ok(Buffer.byteLength(JSON.stringify(accepted)) <= low);
+  const { output: rejected } = await runMock({}, { output_bytes: low - 1 });
+  emptyGraph(rejected);
+  assert.deepEqual(rejected.incomplete_reasons, ['topology_limit_exceeded']);
+  assert.deepEqual(rejected.source_features, []);
+  assert.ok(Buffer.byteLength(JSON.stringify(rejected)) <= POSTGIS_TOPOLOGY_ERROR_LIMIT_BYTES);
 });
 
 test("query failures and uncertain BEGIN roll back and release, without leaking SQL details", async () => {

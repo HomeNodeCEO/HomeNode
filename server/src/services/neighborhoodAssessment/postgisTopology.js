@@ -3,7 +3,7 @@ import { performance } from "node:perf_hooks";
 import { canonicalAssessmentJson } from "./contract.js";
 import { prepareNeighborhoodLinework } from "./graphPreparation.js";
 
-export const POSTGIS_TOPOLOGY_VERSION = "postgis-planar-v1";
+export const POSTGIS_TOPOLOGY_VERSION = "postgis-planar-v2";
 export const POSTGIS_TOPOLOGY_LIMITS = Object.freeze({
   input_parts: 512, input_coordinates: 8192, cells: 1024, edges: 8192,
   primitive_segments: 512, candidate_pairs: 4096,
@@ -21,7 +21,7 @@ const MINIMUM_CELL_AREA_M2 = 1;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const hashPattern = /^[a-f0-9]{64}$/;
 const DIAGNOSTICS = ["invalid_source_count", "nonsimple_source_count", "noded_coordinate_count", "edge_count", "cell_count",
-  "node_count", "source_reference_count", "invalid_cell_count", "sliver_cell_count", "unattributed_edge_count",
+  "node_count", "source_reference_count", "invalid_cell_count", "sliver_cell_count", "unattributed_edge_count", "uncovered_source_segment_count", "ambiguous_source_edge_count",
   "invalid_incidence_count", "unsupported_boundary_count", "overlapping_cell_count", "multisource_edge_count",
   "unused_edge_count", "dangle_node_count"];
 function invalid(field) { throw new TypeError(`invalid_neighborhood_topology:${field}`); }
@@ -163,11 +163,40 @@ function topologySql(limits) {
     FROM face_parts WHERE (SELECT count FROM face_count)<=${limits.cells}
   ), source_matches AS MATERIALIZED (
     SELECT e.id AS edge_id,p.feature_id,p.source_part_index,p.source_segment_index,
+      located.start_fraction,located.end_fraction
+    FROM edges e JOIN source_segments p ON e.geom && p.geom
+    CROSS JOIN LATERAL (SELECT
       ST_LineLocatePoint(p.geom,ST_StartPoint(e.geom)) AS start_fraction,
-      ST_LineLocatePoint(p.geom,ST_EndPoint(e.geom)) AS end_fraction
-    FROM edges e JOIN source_segments p ON e.geom && p.geom AND ST_CoveredBy(e.geom,p.geom)
+      ST_LineLocatePoint(p.geom,ST_EndPoint(e.geom)) AS end_fraction) located
+    WHERE located.start_fraction<>located.end_fraction
+      AND ST_AsEWKB(ST_Normalize(e.geom),'NDR')=ST_AsEWKB(ST_Normalize(ST_LineSubstring(p.geom,
+        LEAST(located.start_fraction,located.end_fraction),GREATEST(located.start_fraction,located.end_fraction))),'NDR')
     ORDER BY e.id,p.feature_id,p.source_part_index,p.source_segment_index LIMIT ${limits.source_references + 1}
   ), source_ref_count AS (SELECT count(*)::integer AS count FROM source_matches),
+  incompatible_source_pairs AS MATERIALIZED (
+    SELECT a.feature_id AS a_feature,a.source_part_index AS a_part,a.source_segment_index AS a_segment,
+      b.feature_id AS b_feature,b.source_part_index AS b_part,b.source_segment_index AS b_segment
+    FROM source_segments a JOIN source_segments b
+      ON (a.feature_id,a.source_part_index,a.source_segment_index)<(b.feature_id,b.source_part_index,b.source_segment_index)
+      AND a.geom && b.geom
+    WHERE NOT ST_Relate(a.geom,b.geom,'1********')
+  ), ambiguous_edges AS (
+    SELECT DISTINCT a.edge_id FROM incompatible_source_pairs p
+    JOIN source_matches a ON (a.feature_id,a.source_part_index,a.source_segment_index)=(p.a_feature,p.a_part,p.a_segment)
+    JOIN source_matches b ON b.edge_id=a.edge_id
+      AND (b.feature_id,b.source_part_index,b.source_segment_index)=(p.b_feature,p.b_part,p.b_segment)
+  ),
+  source_intervals AS (
+    SELECT feature_id,source_part_index,source_segment_index,
+      LEAST(start_fraction,end_fraction) AS lo,GREATEST(start_fraction,end_fraction) AS hi,
+      max(GREATEST(start_fraction,end_fraction)) OVER(PARTITION BY feature_id,source_part_index,source_segment_index
+        ORDER BY LEAST(start_fraction,end_fraction),GREATEST(start_fraction,end_fraction),edge_id
+        ROWS BETWEEN UNBOUNDED PRECEDING AND 1 PRECEDING) AS prior_hi FROM source_matches
+  ), source_coverage AS (
+    SELECT feature_id,source_part_index,source_segment_index,
+      min(lo)=0 AND max(hi)=1 AND NOT bool_or(lo>COALESCE(prior_hi,0)) AS fully_covered
+    FROM source_intervals GROUP BY feature_id,source_part_index,source_segment_index
+  ),
   edge_faces AS MATERIALIZED (
     SELECT e.id AS edge_id,f.id AS cell_id FROM edges e JOIN faces f
       ON e.geom && f.geom AND ST_CoveredBy(e.geom,ST_Boundary(f.geom))
@@ -199,6 +228,9 @@ function topologySql(limits) {
       (SELECT count(*)::integer FROM face_data WHERE NOT valid OR NOT ST_IsValid(ST_Transform(geom,4326))) AS invalid_cell_count,
       (SELECT count(*)::integer FROM face_data WHERE area_m2<${MINIMUM_CELL_AREA_M2}) AS sliver_cell_count,
       (SELECT count(*)::integer FROM edge_data WHERE jsonb_array_length(source_parts)=0) AS unattributed_edge_count,
+      (SELECT count(*)::integer FROM source_segments s LEFT JOIN source_coverage c
+        USING(feature_id,source_part_index,source_segment_index) WHERE c.fully_covered IS DISTINCT FROM true) AS uncovered_source_segment_count,
+      (SELECT count(*)::integer FROM ambiguous_edges) AS ambiguous_source_edge_count,
       (SELECT count(*)::integer FROM edge_data WHERE jsonb_array_length(cell_ids)>2 OR length_meters<=0) AS invalid_incidence_count,
       (SELECT count(*)::integer FROM face_data WHERE NOT boundary_supported) AS unsupported_boundary_count,
       (SELECT count(*)::integer FROM faces a JOIN faces b ON a.id<b.id AND a.geom && b.geom AND ST_Relate(a.geom,b.geom,'2********')) AS overlapping_cell_count,
@@ -253,8 +285,8 @@ export function neighborhoodTopologyRevision(result) {
   let bytes = 0;
   const append = value => {
     const encoded = canonicalAssessmentJson(value);
-    // One retained-output budget includes source descriptors/aliases/limitations
-    // as well as all graph collections, not merely the SQL geometry rows.
+    // Bound manifest hashing work, including provenance. The full returned JSON
+    // envelope has an additional exact byte check before it can become ready.
     bytes += Buffer.byteLength(encoded) + 1;
     if (bytes > limits.output_bytes) stop("topology_limit_exceeded");
     digest.update(encoded).update("\n");
@@ -275,6 +307,21 @@ export function neighborhoodTopologyRevision(result) {
     for (const row of rows) append(row);
   }
   return `topology:${digest.digest("hex")}`;
+}
+
+// Exact UTF-8 JSON size without allocating a second full graph string. Top-level
+// collections are already row-bounded; include keys, punctuation, metadata and
+// status/revision fields rather than confusing the digest stream with output.
+function serializedOutputBytes(output) {
+  let bytes = 2, keys = 0;
+  for (const [key, value] of Object.entries(output)) {
+    bytes += (keys++ ? 1 : 0) + Buffer.byteLength(JSON.stringify(key)) + 1;
+    if (Array.isArray(value)) {
+      bytes += 2;
+      for (let i = 0; i < value.length; i++) bytes += (i ? 1 : 0) + Buffer.byteLength(JSON.stringify(value[i]));
+    } else bytes += Buffer.byteLength(JSON.stringify(value));
+  }
+  return bytes;
 }
 
 /** Inject an already-bounded pool. Its own connectionTimeoutMillis must also be
@@ -301,6 +348,7 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       output.incomplete_reasons = [...new Set(reasons.map(reason => typeof reason === 'string' && /^[a-z_]{1,64}$/.test(reason)
         ? reason : 'source_query_unavailable'))].sort(compare).slice(0, 32);
       if (reasons.length) {
+        output.status = "incomplete";
         output.cells = []; output.edges = []; output.nodes = []; output.topology_revision = null; output.topology_validated = false;
         output.metadata_not_returned = true;
         output.source_metadata_counts = { features: output.source_features.length, aliases: output.source_aliases.length, limitations: output.source_limitations.length };
@@ -319,7 +367,10 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
         // Everything remaining is fixed-shape bounded scalar control metadata.
         if (Buffer.byteLength(JSON.stringify(output)) > POSTGIS_TOPOLOGY_ERROR_LIMIT_BYTES) invalid('failure_control_bytes');
       }
-      else { output.status = "ready"; output.topology_validated = true; }
+      else {
+        output.status = "ready"; output.topology_validated = true;
+        if (serializedOutputBytes(output) > limits.output_bytes) return finish(["topology_limit_exceeded"]);
+      }
       return freeze(output);
     };
     if (prepared.status !== "ready_for_preprocessing") {
@@ -364,7 +415,10 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       output.noding_admission = nodingAdmission(primitiveCount, prepared.counts.coordinates, admissionRows[0].candidate_pairs, limits);
       if (!output.noding_admission.admitted) stop('pre_noding_limit_exceeded');
       output.performed_policy = { version: POSTGIS_TOPOLOGY_VERSION, requested_policy_version: prepared.policy.version,
-        metric_srid: METRIC_SRID, snap_tolerance_meters: 0, source_attribution: "exact_ST_CoveredBy", source_fraction_basis: "source_segment",
+        metric_srid: METRIC_SRID, snap_tolerance_meters: 0,
+        source_attribution: "exact_normalized_EWKB_source_segment_reconstruction_v1", source_fraction_basis: "source_segment",
+        source_occurrence_coverage: "complete_fraction_interval_union_v1",
+        ambiguous_source_policy: "require_original_primitive_positive_length_overlap_v1",
         supported_projection_window: SUPPORTED_PROJECTION_WINDOW,
         noding_admission_policy: output.noding_admission.policy,
         minimum_cell_area_m2: MINIMUM_CELL_AREA_M2, geometry_repair: "none", travel_graph: "not_generated" };
@@ -398,6 +452,8 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       if (d.invalid_cell_count || output.cells.some(row => row.geometry_validated !== true || !Number.isFinite(row.area_m2) || row.area_m2 <= 0)) reasons.push("invalid_cell_geometry");
       if (d.sliver_cell_count) reasons.push("sliver_cells");
       if (d.unattributed_edge_count) reasons.push("unattributed_source_edges");
+      if (d.uncovered_source_segment_count) reasons.push("uncovered_source_segments");
+      if (d.ambiguous_source_edge_count) reasons.push("ambiguous_source_attribution");
       if (d.invalid_incidence_count) reasons.push("invalid_edge_incidence");
       if (d.unsupported_boundary_count) reasons.push("unsupported_cell_boundary");
       if (d.overlapping_cell_count) reasons.push("overlapping_cells");

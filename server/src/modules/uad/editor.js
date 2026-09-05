@@ -54,6 +54,9 @@ import { UAD_SUBJECT_LISTING_FIELD_KEYS } from "./subjectListingCatalog.js";
 import { isVerifiedUnitInteriorAsset } from "./unitInteriorCatalog.js";
 import { isVerifiedVehicleStorageAsset } from "./vehicleStorageCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
+import { normalizeUadExpectedRevision, normalizeUadSaveReason } from "./sectionSaveRequest.js";
+export { normalizeUadExpectedRevision, normalizeUadSaveReason } from "./sectionSaveRequest.js";
 
 function responseValue(row) {
   return {
@@ -5219,22 +5222,6 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
   return errors;
 }
 
-export function normalizeUadExpectedRevision(value) {
-  const revision = Number(value);
-  if (!Number.isInteger(revision) || revision < 1) {
-    throw new Error("invalid_uad_expected_revision");
-  }
-  return revision;
-}
-
-export function normalizeUadSaveReason(value) {
-  const reason = value == null ? "manual_save" : String(value).trim();
-  if (!["manual_save", "autosave"].includes(reason)) {
-    throw new Error("invalid_uad_save_reason");
-  }
-  return reason;
-}
-
 export async function saveUadSection(
   pool,
   workfileIdValue,
@@ -5249,15 +5236,16 @@ export async function saveUadSection(
   const allowIncomplete = saveReason === "autosave";
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const locked = await client.query(
-      `SELECT id, current_revision, specification_release_key
+      `SELECT id, current_revision, specification_release_key, status, signed_at
          FROM appraisal.uad_workfiles
         WHERE id = $1
         FOR UPDATE`,
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    await assertLockedUadWorkfileMutable(client, locked.rows[0]);
     const currentRevision = Number(locked.rows[0].current_revision);
     if (expectedRevision !== currentRevision) {
       const error = new Error("uad_section_stale_revision");

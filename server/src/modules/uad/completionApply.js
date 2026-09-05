@@ -9,6 +9,7 @@ import {
 } from "./fieldCatalog.js";
 import { loadUadReviewSuggestions } from "./sharedData.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
 
 const DIGEST_PATTERN = /^[a-f0-9]{64}$/;
 const MAX_SELECTED_SUGGESTIONS = 100;
@@ -286,15 +287,16 @@ export async function applyUadCompletionSuggestions(
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const locked = await client.query(
-      `SELECT id, current_revision, specification_release_key
+      `SELECT id, current_revision, specification_release_key, status, signed_at
          FROM appraisal.uad_workfiles
         WHERE id = $1
         FOR UPDATE`,
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    await assertLockedUadWorkfileMutable(client, locked.rows[0]);
     const currentRevision = Number(locked.rows[0].current_revision);
     const suggestions = await loadUadReviewSuggestions(client, workfileId);
     const [existingValues, existingEntities] = await Promise.all([

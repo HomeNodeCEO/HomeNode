@@ -564,6 +564,25 @@ test("UAD router bounds hostile identifiers, path variants, and JSON root shapes
   });
 });
 
+test("UAD completion lifecycle refusal is a bounded private 409 response", async () => {
+  const pool = securityPool();
+  let calls = 0;
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/completion-suggestions/apply`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "uad_workfile_status_locked" });
+    assert.equal(calls, 1);
+  }, {}, { async applyCompletionSuggestions() {
+    calls += 1;
+    throw new Error("uad_workfile_status_locked");
+  } });
+});
+
 test("UAD JSON parser failures return bounded JSON without reaching authentication or data access", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

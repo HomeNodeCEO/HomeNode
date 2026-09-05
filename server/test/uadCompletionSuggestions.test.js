@@ -1083,9 +1083,10 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
   const client = {
     async query(sql, params = []) {
       const normalized = String(sql).trim();
-      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(normalized)) return { rows: [] };
+      if (["BEGIN ISOLATION LEVEL READ COMMITTED", "COMMIT", "ROLLBACK"].includes(normalized)) return { rows: [] };
+      if (sql.includes("AS has_signatures")) return { rows: [{ has_signatures: false }] };
       if (sql.includes("SELECT id, current_revision, specification_release_key")) {
-        return { rows: [{ id: UAD_WORKFILE_ID, current_revision: 4, specification_release_key: "uad-3.6-2026-01-26" }] };
+        return { rows: [{ id: UAD_WORKFILE_ID, current_revision: 4, specification_release_key: "uad-3.6-2026-01-26", status: "draft", signed_at: null }] };
       }
       if (sql.includes("WHERE uad_workfile_id = $1")) {
         return { rows: [{ id: UAD_REPORT_ID, account_id: "26272500060150000" }] };

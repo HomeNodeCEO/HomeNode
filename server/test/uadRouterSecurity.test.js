@@ -37,6 +37,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
     ...(routerOverrides.createWorkfile
       ? { createWorkfile: routerOverrides.createWorkfile }
       : {}),
+    ...(routerOverrides.getCertificationReadiness
+      ? { getCertificationReadiness: routerOverrides.getCertificationReadiness }
+      : {}),
   }));
   app.use("/api/uad", uadBodyParserErrorHandler);
   const server = await new Promise((resolve) => {
@@ -175,6 +178,113 @@ test("strict UAD routes allow the assigned appraiser and keep capabilities publi
     assert.equal(response.status, 200);
     assert.equal((await response.json()).workfile.id, WORKFILE_ID);
   });
+});
+
+function signerReadinessFixture(callerRole = "appraiser") {
+  const caller = {
+    role: callerRole,
+    user_id: USER_ID,
+    display_name: "Caller Appraiser",
+    signature_policy: "electronic",
+    profile_status: "verified",
+    organization_name: "Caller Organization",
+    license: {
+      jurisdiction: "TX", license_number: "CALLER-123",
+      license_type: "CertifiedResidential", expires_on: "2099-12-31",
+    },
+    ready: true,
+    missing: [],
+  };
+  const peer = {
+    role: callerRole === "appraiser" ? "supervisory_appraiser" : "appraiser",
+    user_id: "peer-private-user",
+    display_name: "peer-private-name",
+    signature_policy: "peer-private-policy",
+    profile_status: "peer-private-status",
+    organization_name: "peer-private-organization",
+    license: {
+      jurisdiction: "peer-private-jurisdiction", license_number: "peer-private-number",
+      license_type: "peer-private-type", expires_on: "peer-private-expiry",
+    },
+    ready: false,
+    missing: ["license_expiration"],
+  };
+  return {
+    workfile_id: WORKFILE_ID,
+    revision_number: 7,
+    workfile_status: "ready",
+    ready: false,
+    artifact_readiness: { pdf_ready: true, missing: [] },
+    signers: callerRole === "appraiser" ? [caller, peer] : [peer, caller],
+    internal_future_field: "internal-private-detail",
+  };
+}
+
+test("certification readiness preserves caller credentials and peer diagnostics without peer identity", async () => {
+  for (const callerRole of ["appraiser", "supervisory_appraiser"]) {
+    const pool = securityPool();
+    const readiness = signerReadinessFixture(callerRole);
+    const original = structuredClone(readiness);
+    let calls = 0;
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/certification-readiness`, {
+        headers: { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, 200);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      const body = await response.json();
+      assert.deepEqual(body, { readiness: {
+        workfile_id: WORKFILE_ID,
+        revision_number: 7,
+        workfile_status: "ready",
+        ready: false,
+        artifact_readiness: { pdf_ready: true, missing: [] },
+        signers: readiness.signers.map(({ role, ready, missing }) => ({ role, ready, missing })),
+        current_signer: readiness.signers.find(({ user_id }) => user_id === USER_ID),
+      } });
+      assert.doesNotMatch(JSON.stringify(body), /peer-private-|internal-private-/);
+      assert.equal(calls, 1);
+    }, {}, {
+      getCertificationReadiness: async (receivedPool, workfileId) => {
+        assert.equal(receivedPool, pool);
+        assert.equal(workfileId, WORKFILE_ID);
+        calls += 1;
+        return readiness;
+      },
+    });
+    assert.deepEqual(readiness, original, "HTTP projection must not mutate internal signer snapshots");
+  }
+});
+
+test("certification readiness denies anonymous and cross-organization callers before loading credentials", async () => {
+  for (const anonymous of [true, false]) {
+    const pool = securityPool(anonymous ? {} : { membershipOrganizationId: OTHER_ORGANIZATION_ID });
+    let calls = 0;
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/certification-readiness`, {
+        headers: anonymous ? {} : { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, anonymous ? 401 : 403);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), {
+        error: anonymous ? "invalid_access_token" : "uad_workfile_access_denied",
+      });
+      assert.equal(calls, 0);
+    }, {}, { getCertificationReadiness: async () => { calls += 1; return signerReadinessFixture(); } });
+  }
+});
+
+test("certification readiness never exposes credentials to an authorized workfile reader who is not a signer", async () => {
+  for (const signers of [[], [signerReadinessFixture().signers[1]]]) {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/certification-readiness`, {
+        headers: { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, 403);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: "uad_signature_access_denied" });
+    }, {}, { getCertificationReadiness: async () => ({ ...signerReadinessFixture(), signers }) });
+  }
 });
 
 test("strict UAD routes return a bounded generic response after the configured request limit", async () => {

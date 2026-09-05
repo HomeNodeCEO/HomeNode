@@ -1036,6 +1036,8 @@ export interface UadCertificationSigner {
   missing: string[];
 }
 
+export type UadCertificationSignerReadiness = Pick<UadCertificationSigner, "role" | "ready" | "missing">;
+
 export interface UadCertificationReadiness {
   workfile_id: string;
   revision_number: number;
@@ -1045,7 +1047,7 @@ export interface UadCertificationReadiness {
     pdf_ready: boolean;
     missing: Array<"current_pdf">;
   };
-  signers: UadCertificationSigner[];
+  signers: UadCertificationSignerReadiness[];
   current_signer: UadCertificationSigner;
 }
 

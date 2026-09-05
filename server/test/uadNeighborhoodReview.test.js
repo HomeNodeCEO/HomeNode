@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment,
-  buildNeighborhoodAttachment } from "../src/services/neighborhoodAssessment/contract.js";
+  buildNeighborhoodAttachment, canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
 import { buildNeighborhoodApplicationReceipt, neighborhoodMappedManifestDigest,
   prepareNeighborhoodApplicationGroup } from "../src/services/neighborhoodAssessment/applicationGroup.js";
+import { assertNeighborhoodJsonbStorage } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 import { buildUadNeighborhoodCandidate, prepareUadNeighborhoodApply, buildUadNeighborhoodReceipt,
   projectUadNeighborhoodExport } from "../src/modules/uad/neighborhoodReview.js";
 import { uadNeighborhoodReviewFixture } from "./fixtures/uadNeighborhoodReviewFixture.js";
@@ -487,5 +488,360 @@ test("valid historical small-sample receipts retain exact current construction, 
     assert.equal(values["market_total_sales:3000.0029"], median);
     assert.equal(values["market_total_sales:3000.0027"], high);
     assert.equal(exported.receipt_digest_sha256, constructed.receipt_digest_sha256);
+  }
+});
+
+const canonicalBytes = value => Buffer.byteLength(canonicalAssessmentJson(value), "utf8");
+function capacityFixture({ sources, padding, extra, editorRevision = 5, zeroSales = false,
+  longRevisions = false } = {}) {
+  const input = uadNeighborhoodReviewFixture({ zeroSales });
+  input.target.editor_revision = editorRevision;
+  input.request.expected_revision = editorRevision;
+  rebind(input, assessment => {
+    if (sources !== undefined) {
+      // Synthetic evidence fan-out only: this is not a publication/source-authority fixture.
+      const original = assessment.source_snapshots[0];
+      assessment.source_snapshots = [original, ...Array.from({ length: sources - 1 }, (_, index) => ({
+        ...original, id: `source-${String(index).padStart(4, "0")}`,
+      }))];
+      assessment.populations.find(item => item.id === "sales-a").source_refs =
+        assessment.source_snapshots.map(item => item.id);
+    }
+    if (longRevisions) {
+      assessment.source_snapshots.forEach(item => { item.revision = "s".repeat(200); });
+      assessment.populations.forEach(item => { item.revision = "p".repeat(200); });
+    }
+    const uncertainty = assessment.statistics.find(item => item.id === (zeroSales ? "sale-count" : "median-sale-price")).uncertainty;
+    if (padding !== undefined) uncertainty.extra = "x".repeat(padding);
+    if (extra !== undefined) uncertainty.extra = extra;
+  });
+  input.market_context.population_ref.revision = input.assessment.populations.find(item => item.id === "sales-a").revision;
+  return input;
+}
+
+function reviewedCapacityCandidate(input) {
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(candidate.status, "ready", JSON.stringify(candidate.issues));
+  input.candidate = candidate;
+  Object.assign(input.request, { expected_candidate_digest_sha256: candidate.candidate_digest_sha256,
+    expected_binding_digest_sha256: candidate.attachment.binding_digest_sha256,
+    selected_suggestion_ids: candidate.suggestions.map(item => item.id) });
+  return candidate;
+}
+
+// Reconstruct pre-capacity-check historical evidence with exact current shared
+// bindings and unchanged valid seven-field values. This fixture deliberately
+// avoids the new UAD capacity gate; it does not bypass a production write path.
+function historicalCapacityFixture(options) {
+  const input = capacityFixture(options);
+  const candidate = clone(input.candidate);
+  assert.deepEqual(candidate.group, input.assessment.application_group);
+  Object.assign(candidate.evidence, { assessment_digest_sha256: input.assessment.evidence_digest_sha256,
+    market_context: clone(input.market_context),
+    populations: input.assessment.populations.filter(item => input.assessment.required_population_ids.includes(item.id)),
+    statistics: candidate.evidence.statistics.map(item => input.assessment.statistics.find(statistic => statistic.id === item.id)),
+    sources: input.assessment.source_snapshots.filter(item => candidate.group.source_refs.includes(item.id)) });
+  candidate.attachment = buildNeighborhoodAttachment(input.assessment, { ...input.target,
+    source_digest_sha256: assessmentEvidenceDigest(candidate.evidence),
+    mapped_manifest_sha256: neighborhoodMappedManifestDigest(candidate.suggestions),
+    mapper_version: candidate.mapper_version });
+  candidate.candidate_digest_sha256 = assessmentEvidenceDigest({
+    application_identity_sha256: candidate.attachment.application_identity_sha256, mapper_version: candidate.mapper_version });
+  input.candidate = candidate;
+  Object.assign(input.request, { expected_candidate_digest_sha256: candidate.candidate_digest_sha256,
+    expected_binding_digest_sha256: candidate.attachment.binding_digest_sha256 });
+  const unchangedFields = candidate.suggestions.map(({ target_key, value }) => ({ target_key, value }))
+    .sort((a, b) => a.target_key < b.target_key ? -1 : a.target_key > b.target_key ? 1 : 0);
+  const sharedInput = { attachment: candidate.attachment, group: candidate.group, suggestions: candidate.suggestions,
+    selected_ids: input.request.selected_suggestion_ids,
+    expected_binding_digest: candidate.attachment.binding_digest_sha256,
+    current_application_identity_sha256: candidate.attachment.application_identity_sha256,
+    current_editor_revision: input.target.editor_revision, existing_values: input.existing_values };
+  const validateUnchangedFields = values => {
+    assert.deepEqual(values, unchangedFields);
+    return { valid: true, issues: [] };
+  };
+  const plan = prepareNeighborhoodApplicationGroup({ ...sharedInput, validate_final_group: validateUnchangedFields });
+  assert.equal(plan.status, "ready", JSON.stringify(plan.conflicts));
+  const freshInput = clone(input);
+  const acceptedRevision = input.target.editor_revision + 1;
+  const body = { receipt_version: 1, candidate,
+    core_receipt: buildNeighborhoodApplicationReceipt(plan, acceptedRevision) };
+  input.accepted_receipt = { ...body, receipt_digest_sha256: assessmentEvidenceDigest(body) };
+  input.existing_values = candidate.suggestions.map(item => ({ target_key: item.target_key,
+    target_exists: true, populated: true, value: item.value,
+    provenance_digest: plan.acceptance_manifest.provenance_digest }));
+  input.target.editor_revision = acceptedRevision;
+  input.target.attachment_revision++;
+  let reachedFinalValidator = false;
+  const replay = prepareNeighborhoodApplicationGroup({ ...sharedInput,
+    current_editor_revision: acceptedRevision, existing_values: input.existing_values,
+    accepted_application: body.core_receipt, validate_final_group: values => {
+      reachedFinalValidator = true;
+      return validateUnchangedFields(values);
+    } });
+  assert.equal(reachedFinalValidator, true);
+  assert.equal(replay.status, "already_applied", JSON.stringify(replay.conflicts));
+  assert.deepEqual(replay.writes, []);
+  assert.deepEqual(replay.acceptance_manifest, plan.acceptance_manifest);
+  return { input, freshInput, plan, acceptedRevision };
+}
+
+test("997 sources and two populations fit exactly 1000 emitted boundary evidence references", () => {
+  const input = capacityFixture({ sources: 997 });
+  const before = clone(input);
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(candidate.status, "ready", JSON.stringify(candidate.issues));
+  assert.equal(candidate.group.source_refs.length, 997);
+  assert.equal(candidate.group.population_refs.length, 2);
+  for (const key of ["market:3000.0008", "market:3000.0010"]) {
+    assert.equal(candidate.suggestions.find(item => item.target_key === key).evidence_refs.length, 1000);
+  }
+  assert.equal(canonicalBytes(candidate), 388911);
+  assert.deepEqual(input, before);
+  reviewedCapacityCandidate(input);
+  const plan = prepareUadNeighborhoodApply(input);
+  assert.equal(plan.status, "ready", JSON.stringify(plan.conflicts));
+  assert.equal(buildUadNeighborhoodReceipt(candidate, plan, 6).core_receipt.accepted_editor_revision, 6);
+});
+
+test("998 sources and two populations fail candidate capacity without truncating required evidence", () => {
+  const input = capacityFixture({ sources: 998 });
+  const before = clone(input);
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(input.assessment.application_group.source_refs.length, 998);
+  assert.equal(candidate.status, "incomplete");
+  assert.deepEqual(candidate.suggestions, []);
+  assert.deepEqual(candidate.selected_suggestion_ids, []);
+  rejected(prepareUadNeighborhoodApply(input), "neighborhood_candidate_incomplete");
+  assert.deepEqual(input, before);
+});
+
+test("the complete all-new receipt fits at exactly 1500000 canonical bytes", () => {
+  const input = capacityFixture({ padding: 1486237 });
+  const before = clone(input);
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(candidate.status, "ready", JSON.stringify(candidate.issues));
+  assert.equal(canonicalBytes(candidate), 1496679);
+  assert.deepEqual(input, before);
+  reviewedCapacityCandidate(input);
+  const plan = prepareUadNeighborhoodApply(input);
+  assert.equal(plan.status, "ready", JSON.stringify(plan.conflicts));
+  const receipt = buildUadNeighborhoodReceipt(candidate, plan, 6);
+  assert.equal(canonicalBytes(receipt), 1500000);
+  assert.ok(assertNeighborhoodJsonbStorage(receipt) < 2000000);
+  assert.equal(receipt.core_receipt.acceptance_manifest.applied.length, 7);
+});
+
+test("one byte over the full receipt ceiling fails candidate capacity despite a bounded candidate", () => {
+  const input = capacityFixture({ padding: 1486238 });
+  const before = clone(input);
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(candidate.status, "incomplete");
+  assert.deepEqual(candidate.issues, [{ code: "invalid_neighborhood_assessment:json_bytes" }]);
+  assert.deepEqual(candidate.suggestions, []);
+  assert.deepEqual(candidate.selected_suggestion_ids, []);
+  assert.deepEqual(input, before);
+  const historical = historicalCapacityFixture({ padding: 1486238 });
+  assert.equal(canonicalBytes(historical.input.candidate), 1496680);
+  rejected(prepareUadNeighborhoodApply(historical.freshInput), "invalid_neighborhood_assessment:json_bytes");
+});
+
+test("public candidate arguments cannot disable the full-receipt capacity check", () => {
+  const input = capacityFixture({ padding: 1486238 });
+  const before = clone(input);
+  for (const args of [[{ ...input, checkCapacity: false }], [input, false],
+    [{ ...input, checkCapacity: false }, false]]) {
+    const candidate = buildUadNeighborhoodCandidate(...args);
+    assert.equal(candidate.status, "incomplete");
+    assert.deepEqual(candidate.issues, [{ code: "invalid_neighborhood_assessment:json_bytes" }]);
+    assert.deepEqual(candidate.suggestions, []);
+    assert.deepEqual(candidate.selected_suggestion_ids, []);
+  }
+  assert.deepEqual(input, before);
+});
+
+test("small canonical evidence with exponent expansion fails JSONB candidate and actual-plan capacity", () => {
+  const input = capacityFixture({ extra: Array(7000).fill(1e300) });
+  const before = clone(input);
+  assert.ok(canonicalBytes(input.assessment) < 100000);
+  const candidate = buildUadNeighborhoodCandidate(input);
+  assert.equal(candidate.status, "incomplete");
+  assert.deepEqual(candidate.issues, [{ code: "neighborhood_jsonb_storage_limit:bytes" }]);
+  assert.deepEqual(candidate.suggestions, []);
+  assert.deepEqual(input, before);
+  const historical = historicalCapacityFixture({ extra: Array(7000).fill(1e300) });
+  assert.equal(canonicalBytes(historical.input.accepted_receipt), 62762);
+  rejected(prepareUadNeighborhoodApply(historical.freshInput), "neighborhood_jsonb_storage_limit:bytes");
+});
+
+test("fully bound historical receipts over canonical or JSONB limits fail construction, replay and export", () => {
+  for (const [options, code] of [
+    [{ padding: 1486238 }, "invalid_neighborhood_assessment:json_bytes"],
+    [{ extra: Array(7000).fill(1e300) }, "neighborhood_jsonb_storage_limit:bytes"],
+  ]) {
+    const { input, plan, acceptedRevision } = historicalCapacityFixture(options);
+    const before = clone(input);
+    assert.throws(() => buildUadNeighborhoodReceipt(input.candidate, plan, acceptedRevision),
+      error => error.message === code);
+    const exported = projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+      target: input.target, existing_values: input.existing_values });
+    assert.equal(exported.status, "conflict");
+    assert.deepEqual(exported.issues, [{ code }]);
+    assert.deepEqual(exported.fields, []);
+    assert.equal(exported.provenance, null);
+    rejected(prepareUadNeighborhoodApply(input), code);
+    assert.deepEqual(input, before);
+  }
+});
+
+test("JSONB-invalid captured strings stay invalid in fully bound historical receipts", () => {
+  for (const [extra, code] of [
+    ["\u0000", "neighborhood_jsonb_storage_invalid:nul_string"],
+    ["\ud800", "neighborhood_jsonb_storage_invalid:unpaired_surrogate"],
+  ]) {
+    const { input, plan, acceptedRevision } = historicalCapacityFixture({ extra });
+    assert.doesNotThrow(() => canonicalAssessmentJson(input.accepted_receipt));
+    assert.deepEqual(buildUadNeighborhoodCandidate(input).issues, [{ code }]);
+    assert.throws(() => buildUadNeighborhoodReceipt(input.candidate, plan, acceptedRevision),
+      error => error.message === code);
+    const exported = projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+      target: input.target, existing_values: input.existing_values });
+    assert.equal(exported.status, "conflict");
+    assert.deepEqual(exported.issues, [{ code }]);
+    rejected(prepareUadNeighborhoodApply(input), code);
+  }
+});
+
+test("all 126 positive and 14 zero-sale mixed partitions fit below all-new across revision and identifier boundaries", () => {
+  let partitions = 0;
+  for (const zeroSales of [false, true]) for (const longRevisions of [false, true]) {
+    const input = capacityFixture({ zeroSales, longRevisions, editorRevision: longRevisions ? 9 : 8 });
+    reviewedCapacityCandidate(input);
+    const allNew = prepareUadNeighborhoodApply(input);
+    assert.equal(allNew.status, "ready", JSON.stringify(allNew.conflicts));
+    const acceptedRevision = input.target.editor_revision + 1;
+    const maximum = buildUadNeighborhoodReceipt(input.candidate, allNew, acceptedRevision);
+    const maximumCanonical = canonicalBytes(maximum);
+    const maximumStorage = assertNeighborhoodJsonbStorage(maximum);
+    assert.equal(input.candidate.attachment.application_identity_sha256.length, 64);
+    assert.equal(input.candidate.attachment.uad_workfile_id.length, 36);
+    if (longRevisions) {
+      assert.equal(input.candidate.evidence.sources[0].revision.length, 200);
+      assert.equal(input.candidate.evidence.market_context.population_ref.revision.length, 200);
+    }
+    const suggestions = input.candidate.suggestions;
+    const expectedPartitions = zeroSales ? 14 : 126;
+    for (let mask = 1; mask < 2 ** suggestions.length - 1; mask++) {
+      const mixed = clone(input);
+      let reused = 0;
+      suggestions.forEach((item, index) => {
+        if (!(mask & (1 << index))) return;
+        reused++;
+        Object.assign(mixed.existing_values.find(row => row.target_key === item.target_key), {
+          populated: true, value: item.value, provenance_digest: allNew.acceptance_manifest.provenance_digest,
+        });
+      });
+      const before = clone(mixed);
+      const plan = prepareUadNeighborhoodApply(mixed);
+      assert.equal(plan.status, "ready", JSON.stringify(plan.conflicts));
+      assert.equal(plan.writes.length, suggestions.length - reused);
+      assert.equal(plan.acceptance_manifest.reused.length, reused);
+      const receipt = buildUadNeighborhoodReceipt(input.candidate, plan, acceptedRevision);
+      assert.equal(canonicalBytes(receipt), maximumCanonical - 1);
+      assert.equal(assertNeighborhoodJsonbStorage(receipt), maximumStorage - 2);
+      assert.deepEqual(mixed, before);
+      partitions++;
+    }
+    assert.equal(2 ** suggestions.length - 2, expectedPartitions);
+  }
+  assert.equal(partitions, 280);
+});
+
+test("actual mixed plan can fit exactly when the conservative all-new preview exceeds capacity by one byte", () => {
+  const { freshInput: input, plan: allNew } = historicalCapacityFixture({ padding: 1486238 });
+  assert.equal(buildUadNeighborhoodCandidate(input).status, "incomplete");
+  Object.assign(input.existing_values[0], { populated: true,
+    value: byKey(input.candidate)[input.existing_values[0].target_key],
+    provenance_digest: allNew.acceptance_manifest.provenance_digest });
+  const before = clone(input);
+  const plan = prepareUadNeighborhoodApply(input);
+  assert.equal(plan.status, "ready", JSON.stringify(plan.conflicts));
+  assert.equal(plan.writes.length, 6);
+  assert.equal(plan.acceptance_manifest.reused.length, 1);
+  assert.equal(canonicalBytes(buildUadNeighborhoodReceipt(input.candidate, plan, 6)), 1500000);
+  assert.deepEqual(input, before);
+});
+
+test("exact-size accepted revisions 9 and 10 replay without rehearsing a larger synthetic next receipt", () => {
+  for (const [editorRevision, padding] of [[8, 1486237], [9, 1486236]]) {
+    const { input, freshInput, plan, acceptedRevision } = historicalCapacityFixture({ padding, editorRevision });
+    assert.equal(canonicalBytes(input.accepted_receipt), 1500000);
+    assert.equal(buildUadNeighborhoodCandidate(freshInput).status, "ready");
+    assert.equal(buildUadNeighborhoodCandidate(input).status, "incomplete");
+    const before = clone(input);
+    const replay = prepareUadNeighborhoodApply(input);
+    assert.equal(replay.status, "already_applied", JSON.stringify(replay.conflicts));
+    assert.deepEqual(replay.writes, []);
+    assert.deepEqual(replay.acceptance_manifest, plan.acceptance_manifest);
+    assert.equal(replay.acceptance_manifest.base_editor_revision, editorRevision);
+    assert.equal(input.accepted_receipt.core_receipt.accepted_editor_revision, acceptedRevision);
+    const exported = projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+      target: { ...input.target, status: "signed", editor_revision: acceptedRevision + 1 }, existing_values: input.existing_values });
+    assert.equal(exported.status, "ready", JSON.stringify(exported.issues));
+    assert.equal(exported.accepted_revision, acceptedRevision);
+    assert.equal(exported.revision, acceptedRevision + 1);
+    assert.equal(exported.receipt_digest_sha256, input.accepted_receipt.receipt_digest_sha256);
+    assert.deepEqual(input, before);
+  }
+});
+
+test("MAX_SAFE_INTEGER acceptance replays although a new next-revision receipt is impossible", () => {
+  const { input, freshInput, plan } = historicalCapacityFixture({ editorRevision: Number.MAX_SAFE_INTEGER - 1 });
+  assert.equal(input.accepted_receipt.core_receipt.accepted_editor_revision, Number.MAX_SAFE_INTEGER);
+  assert.equal(buildUadNeighborhoodCandidate(freshInput).status, "ready");
+  assert.equal(buildUadNeighborhoodCandidate(input).status, "incomplete");
+  const before = clone(input);
+  const replay = prepareUadNeighborhoodApply(input);
+  assert.equal(replay.status, "already_applied", JSON.stringify(replay.conflicts));
+  assert.deepEqual(replay.writes, []);
+  assert.deepEqual(replay.acceptance_manifest, plan.acceptance_manifest);
+  assert.equal(projectUadNeighborhoodExport({ receipt: input.accepted_receipt,
+    target: input.target, existing_values: input.existing_values }).status, "ready");
+  assert.deepEqual(input, before);
+});
+
+test("capacity checks preserve concrete manual, selection, signature and stale replay errors", () => {
+  const { freshInput } = historicalCapacityFixture({ padding: 1486238 });
+  for (const [mutate, code] of [
+    [input => { input.target.status = "signed"; }, "uad_workfile_status_locked"],
+    [input => { input.request.confirmed = false; }, "appraiser_confirmation_required"],
+    [input => { input.request.selected_suggestion_ids.pop(); }, "partial_atomic_group"],
+    [input => { Object.assign(input.existing_values[0], { populated: true,
+      value: byKey(input.candidate)[input.existing_values[0].target_key] }); }, "incompatible_existing_value"],
+  ]) {
+    const input = clone(freshInput); mutate(input);
+    const before = clone(input);
+    rejected(prepareUadNeighborhoodApply(input), code);
+    assert.deepEqual(input, before);
+  }
+  const { input } = historicalCapacityFixture({ padding: 1486236, editorRevision: 9 });
+  input.target.editor_revision = 11;
+  rejected(prepareUadNeighborhoodApply(input), "stale_accepted_application");
+});
+
+test("capacity-only candidate rehearsal exposes no write plan, receipt, occupancy or confirmation", () => {
+  for (const zeroSales of [false, true]) {
+    const input = uadNeighborhoodReviewFixture({ zeroSales });
+    input.target.status = "signed";
+    input.request.confirmed = false;
+    const before = clone(input);
+    const candidate = buildUadNeighborhoodCandidate(input);
+    assert.equal(candidate.status, "ready", JSON.stringify(candidate.issues));
+    assert.deepEqual(Object.keys(candidate).sort(), ["attachment", "candidate_digest_sha256", "candidate_version",
+      "evidence", "group", "mapper_version", "omissions", "selected_suggestion_ids", "status", "suggestions"]);
+    assert.deepEqual(candidate.selected_suggestion_ids, []);
+    rejected(prepareUadNeighborhoodApply(input), "uad_workfile_status_locked");
+    assert.deepEqual(input, before);
   }
 });

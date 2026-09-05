@@ -6,6 +6,7 @@ import {
   buildNeighborhoodApplicationReceipt, neighborhoodMappedManifestDigest,
   prepareNeighborhoodApplicationGroup,
 } from "../../services/neighborhoodAssessment/applicationGroup.js";
+import { assertNeighborhoodJsonbStorage } from "../../services/neighborhoodAssessment/jsonbStorage.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { getUadField, normalizeAndValidateUadValue } from "./fieldCatalog.js";
 import { isUadWorkfileMutable } from "./workfileLifecycle.js";
@@ -164,7 +165,9 @@ function mappedStatistics(assessment, context) {
  * The context asserts the actual analysis geography/filters; this module does
  * not infer them from a descriptive neighborhood or an arbitrary first study.
  */
-export function buildUadNeighborhoodCandidate({ assessment: input, target, market_context }) {
+export function buildUadNeighborhoodCandidate(input) { return buildCandidate(input, true); }
+
+function buildCandidate({ assessment: input, target, market_context }, checkCapacity) {
   try {
     const assessment = buildNeighborhoodAssessment(copy(input));
     requireThat(input.evidence_digest_sha256 === assessment.evidence_digest_sha256, "changed_assessment");
@@ -188,6 +191,7 @@ export function buildUadNeighborhoodCandidate({ assessment: input, target, marke
         [`statistic:${statistic.id}`, `population:${statistic.population_id}`, ...statistic.source_refs.map(id => `source:${id}`)],
         [ids.boundary, ids.criteria, ids.months])),
     ].sort((a, b) => a.id.localeCompare(b.id, "en"));
+    requireThat(suggestions.every(item => item.evidence_refs.length <= 1000), "market_evidence_reference_limit");
     requireThat(validateFinal(suggestions).valid, "invalid_market_companions");
     const evidence = { mapper_version: UAD_NEIGHBORHOOD_MAPPER_VERSION,
       assessment_digest_sha256: assessment.evidence_digest_sha256,
@@ -206,12 +210,30 @@ export function buildUadNeighborhoodCandidate({ assessment: input, target, marke
       omissions: ["active_listing_coverage_not_mapped", "pending_sales_coverage_not_mapped", "price_trend_review_required",
         "housing_trend_review_required", "land_use_has_no_verified_section17_mapping", "development_project_evidence_not_mapped"],
     };
-    return freeze(copy({ ...candidate, candidate_digest_sha256: assessmentEvidenceDigest({
+    const result = freeze(copy({ ...candidate, candidate_digest_sha256: assessmentEvidenceDigest({
       application_identity_sha256: attachment.application_identity_sha256, mapper_version: candidate.mapper_version,
     }) }));
+    if (checkCapacity) assertCandidateCapacity(result);
+    return result;
   } catch (error) {
     return freeze({ status: "incomplete", issues: [{ code: error.message }], suggestions: [], selected_suggestion_ids: [] });
   }
+}
+
+// Capacity only: these synthetic empty slots are NOT canonical occupancy or
+// permission. All-new keeps the complete member set in one manifest partition;
+// splitting identical members into new/reused cannot enlarge either JSON form.
+// Never return this rehearsal plan/receipt as an actual application result.
+function assertCandidateCapacity(candidate) {
+  const plan = prepareNeighborhoodApplicationGroup({ attachment: candidate.attachment, group: candidate.group,
+    suggestions: candidate.suggestions, selected_ids: candidate.suggestions.map(item => item.id),
+    expected_binding_digest: candidate.attachment.binding_digest_sha256,
+    current_application_identity_sha256: candidate.attachment.application_identity_sha256,
+    current_editor_revision: candidate.attachment.editor_revision,
+    existing_values: candidate.suggestions.map(item => ({ target_key: item.target_key,
+      target_exists: true, populated: false, value: null })), validate_final_group: validateFinal });
+  requireThat(plan.status === "ready", "invalid_market_application_capacity");
+  buildUadNeighborhoodReceipt(candidate, plan, candidate.attachment.editor_revision + 1);
 }
 
 function validateOccupancy(candidate, existingValues) {
@@ -237,7 +259,9 @@ export function prepareUadNeighborhoodApply({ assessment, target, market_context
     requireThat(isUadWorkfileMutable(target.status) && target.signed_at === null && target.has_signatures === false,
       "uad_workfile_status_locked");
     requireThat(request?.confirmed === true && request.preserve_existing === true, "appraiser_confirmation_required");
-    const candidate = buildUadNeighborhoodCandidate({ assessment, target, market_context });
+    // Real occupancy determines the actual envelope. A saved replay must not be
+    // rejected based on capacity for a different, hypothetical next revision.
+    const candidate = buildCandidate({ assessment, target, market_context }, false);
     requireThat(candidate.status === "ready", "neighborhood_candidate_incomplete");
     validateOccupancy(candidate, existing_values);
     requireThat(request.expected_candidate_digest_sha256 === candidate.candidate_digest_sha256, "stale_neighborhood_candidate");
@@ -253,11 +277,18 @@ export function prepareUadNeighborhoodApply({ assessment, target, market_context
       current_editor_revision: target.editor_revision, accepted_application: saved?.core_receipt ?? null,
       existing_values, validate_final_group: validateFinal,
     });
+    if (plan.status === "ready") buildUadNeighborhoodReceipt(candidate, plan, target.editor_revision + 1);
     return freeze({ ...plan, candidate_digest_sha256: candidate.candidate_digest_sha256 });
   } catch (error) { return rejected(error.message); }
 }
 
+function assertReceiptStorage(receipt) {
+  assertNeighborhoodJsonbStorage(receipt);
+  canonicalAssessmentJson(receipt); // Include the outer digest's bytes, too.
+}
+
 function checkedReceipt(input) {
+  assertReceiptStorage(input);
   const receipt = copy(input);
   const { receipt_digest_sha256, ...body } = receipt;
   requireThat(receipt.receipt_version === 1 && DIGEST.test(receipt_digest_sha256) &&
@@ -286,6 +317,7 @@ export function buildUadNeighborhoodReceipt(candidate, plan, accepted_editor_rev
   const body = { receipt_version: 1, candidate: copy(candidate),
     core_receipt: buildNeighborhoodApplicationReceipt(plan, accepted_editor_revision) };
   const receipt = { ...body, receipt_digest_sha256: assessmentEvidenceDigest(body) };
+  assertReceiptStorage(receipt);
   const acceptedValues = candidate.suggestions.map(item => ({ target_key: item.target_key, target_exists: true,
     populated: true, value: item.value, provenance_digest: plan.acceptance_manifest.provenance_digest }));
   for (const key of Object.values(KEYS)) if (!acceptedValues.some(item => item.target_key === key)) {

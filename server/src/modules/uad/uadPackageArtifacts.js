@@ -7,6 +7,7 @@ import { listUadAssets } from "./assets.js";
 import { getUadEditor } from "./editor.js";
 import { buildUadGeneratedArtifactObjectKey, sanitizeUadFileName } from "./r2Storage.js";
 import { listUadSketches } from "./sketches.js";
+import { evaluateUadSignatureQuorum } from "./signatureQuorum.js";
 import {
   buildUadDeliveryAssetEntries,
   buildUadImagesManifest,
@@ -169,6 +170,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     await client.query("BEGIN");
     const locked = await client.query(
       `SELECT id, organization_id, file_number, current_revision,
+              assigned_appraiser_user_id, supervisory_appraiser_user_id,
               specification_release_key, status, updated_at
          FROM appraisal.uad_workfiles
         WHERE id = $1 FOR UPDATE`,
@@ -190,7 +192,8 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         [workfileId],
       ),
       client.query(
-        `SELECT signer_role FROM appraisal.uad_signatures
+        `SELECT revision_number, signer_user_id, signer_role, workfile_input_digest_sha256
+           FROM appraisal.uad_signatures
           WHERE workfile_id = $1 AND revision_number = $2`,
         [workfileId, Number(workfile.current_revision)],
       ),
@@ -206,8 +209,15 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     if (!validation || validation.status !== "passed" || validation.metadata?.input_digest_sha256 !== inputDigest) {
       throw new Error("uad_package_local_validation_stale");
     }
-    if (!signaturesResult.rows.some((row) => row.signer_role === "appraiser")) {
+    const signatureQuorum = evaluateUadSignatureQuorum(workfile, signaturesResult.rows, {
+      revisionNumber: Number(workfile.current_revision),
+      inputDigest,
+    });
+    if (!signatureQuorum.appraiser_signed) {
       throw new Error("uad_package_appraiser_signature_missing");
+    }
+    if (!signatureQuorum.supervisory_appraiser_signed) {
+      throw new Error("uad_package_supervisory_signature_missing");
     }
     deliveryEntries = buildUadDeliveryAssetEntries(rawAssets, editor.entities || []);
     if (deliveryEntries.length > MAX_PACKAGE_ASSETS) throw new Error("uad_package_asset_count_exceeded");

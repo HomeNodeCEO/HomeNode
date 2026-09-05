@@ -378,7 +378,6 @@ test("document review routes preserve exact appraiser decisions", async (context
   const serviceInput = {
     documentId: "5",
     reviewer: "Appraiser One",
-    reportSubjectAddress: "123 Main St",
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
@@ -456,7 +455,6 @@ test("subject mismatch override requires signing authority and ignores a forged 
     documentId: "5",
     reviewer: "Authenticated Appraiser",
     actorUserId: "appraiser-1",
-    reportSubjectAddress: "123 Main St",
     candidateValues: undefined,
   }]);
   assert.deepEqual(accessChecks, [

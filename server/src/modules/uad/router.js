@@ -675,7 +675,6 @@ export function createUadRouter({
           ? req.mobileAuth?.displayName || req.mobileAuth?.email || req.mobileAuth?.userId
           : req.body?.reviewer,
         actorUserId: req.mobileAuth?.userId || null,
-        reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });
       return res.json({ document: await getAssignmentDocument(pool, req.params.documentId) });
@@ -710,7 +709,6 @@ export function createUadRouter({
       await confirmAssignmentDocumentCandidates(pool, {
         documentId: req.params.documentId,
         reviewer: req.body?.reviewer,
-        reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });
       const application = await synchronizeUadPurchaseContract(

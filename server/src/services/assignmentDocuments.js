@@ -96,6 +96,25 @@ function normalizedDocumentStreetAddress(value) {
     .join(" ");
 }
 
+async function canonicalDocumentSubjectAddress(client, sourceDocument) {
+  const accountId = cleanText(sourceDocument?.account_id, 200);
+  if (!accountId) throw new Error("document_canonical_subject_address_required");
+  const { rows } = await client.query(
+    `SELECT address, city, postal_code
+       FROM core.accounts
+      WHERE account_id = $1
+      FOR SHARE`,
+    [accountId],
+  );
+  const streetAddress = cleanText(rows[0]?.address, 1_000);
+  if (!streetAddress) throw new Error("document_canonical_subject_address_required");
+  return [
+    streetAddress,
+    cleanText(rows[0]?.city, 500),
+    cleanText(rows[0]?.postal_code, 100),
+  ].filter(Boolean).join(", ");
+}
+
 export function buildAssignmentDocumentObjectKey({
   organizationId = null,
   accountId,
@@ -1442,7 +1461,6 @@ async function confirmSuggestedAssignmentDocumentCandidates(client, {
 export async function confirmAssignmentDocumentCandidates(pool, {
   documentId,
   reviewer,
-  reportSubjectAddress,
   candidateValues = {},
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
@@ -1478,21 +1496,18 @@ export async function confirmAssignmentDocumentCandidates(pool, {
         candidate.field_key === "subject_property_address"
       ));
       if (subjectAddressCandidate) {
-        const reportAddress = cleanText(reportSubjectAddress, 1_000);
-        if (!reportAddress) throw new Error("report_subject_address_required");
+        const canonicalAddress = await canonicalDocumentSubjectAddress(client, sourceDocument);
         const candidateAddress = cleanText(
-          suppliedValues[String(subjectAddressCandidate.id)]
-            || subjectAddressCandidate.confirmed_value
-            || subjectAddressCandidate.normalized_value
+          subjectAddressCandidate.normalized_value
             || subjectAddressCandidate.raw_value,
           1_000,
         );
         const normalizedCandidateAddress = normalizedDocumentStreetAddress(candidateAddress);
-        const normalizedReportAddress = normalizedDocumentStreetAddress(reportAddress);
+        const normalizedCanonicalAddress = normalizedDocumentStreetAddress(canonicalAddress);
         if (
           normalizedCandidateAddress &&
-          normalizedReportAddress &&
-          normalizedCandidateAddress !== normalizedReportAddress
+          normalizedCanonicalAddress &&
+          normalizedCandidateAddress !== normalizedCanonicalAddress
         ) {
           throw new Error("document_subject_address_mismatch");
         }
@@ -1550,7 +1565,6 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   documentId,
   reviewer,
   actorUserId,
-  reportSubjectAddress,
   candidateValues = {},
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
@@ -1558,8 +1572,6 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   if (!document) throw new Error("invalid_document_id");
   const reviewerName = cleanText(reviewer, 200);
   if (!reviewerName) throw new Error("document_reviewer_required");
-  const reportAddress = cleanText(reportSubjectAddress, 1_000);
-  if (!reportAddress) throw new Error("report_subject_address_required");
   const suppliedValues = candidateValues && typeof candidateValues === "object"
     ? candidateValues
     : {};
@@ -1575,6 +1587,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
     if (sourceDocument.document_type !== "engagement_letter") {
       throw new Error("engagement_letter_required");
     }
+    const canonicalAddress = await canonicalDocumentSubjectAddress(client, sourceDocument);
     const { rows: candidateRows } = await client.query(
       `SELECT * FROM app.assignment_document_field_candidates
        WHERE document_id = $1
@@ -1618,12 +1631,12 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
         acknowledged_at: acknowledgedAt,
         reason: "Appraiser confirmed this engagement letter belongs to the open assignment despite the address comparison.",
         document_subject_address: cleanText(
-          subjectAddressCandidate.confirmed_value
-            || subjectAddressCandidate.normalized_value
+          subjectAddressCandidate.normalized_value
             || subjectAddressCandidate.raw_value,
           1_000,
         ),
-        report_subject_address: reportAddress,
+        canonical_subject_address: canonicalAddress,
+        report_subject_address: canonicalAddress,
         confirmed_candidate_ids: [...new Set(confirmedCandidateIds)],
       },
     };

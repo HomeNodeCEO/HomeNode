@@ -311,7 +311,6 @@ export function createAssignmentDocumentRouter({
         documentId: req.params.id,
         reviewer: authenticatedReviewer(req),
         actorUserId: req.mobileAuth?.userId || null,
-        reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });
       const document = await getDocument(pool, result.document_id);
@@ -326,7 +325,7 @@ export function createAssignmentDocumentRouter({
       const clientErrors = new Set([
         "invalid_document_id",
         "document_reviewer_required",
-        "report_subject_address_required",
+        "document_canonical_subject_address_required",
         "engagement_letter_required",
         "document_subject_address_candidate_required",
       ]);
@@ -345,7 +344,6 @@ export function createAssignmentDocumentRouter({
       const result = await confirmCandidates(pool, {
         documentId: req.params.id,
         reviewer: req.body?.reviewer,
-        reportSubjectAddress: req.body?.report_subject_address,
         candidateValues: req.body?.candidate_values,
       });
       const document = await getDocument(pool, result.document_id);
@@ -359,7 +357,7 @@ export function createAssignmentDocumentRouter({
       const clientErrors = new Set([
         "invalid_document_id",
         "document_reviewer_required",
-        "report_subject_address_required",
+        "document_canonical_subject_address_required",
       ]);
       if (message === "document_not_found") return res.status(404).json({ error: message });
       if (message === "document_subject_address_mismatch") {

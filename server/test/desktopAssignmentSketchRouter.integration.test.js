@@ -243,6 +243,7 @@ test("desktop sketch saves bind canonical assignment, request body, and authenti
       calls.push({ type: "access", accountId, fileId, permission });
       return true;
     },
+    getSketch: async () => null,
     saveSketch: async (pool, accountId, fileId, input, actorUserId) => {
       calls.push({ type: "save", pool, accountId, fileId, input, actorUserId });
       return result;
@@ -296,19 +297,52 @@ test("appraiser-confirmed assignment sketches require sign authority before savi
   }), identity);
   context.after(server.close);
 
+  for (const reviewStatus of ["appraiser_confirmed", " appraiser_confirmed "]) {
+    const response = await patchSketch(server.baseUrl, "123", 1, {
+      expected_revision: 1,
+      sketch: { review_status: reviewStatus },
+    });
+    assert.equal(response.status, 403);
+    assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
+  }
+  assert.deepEqual(permissions, ["sign", "sign"]);
+  assert.equal(saveCalls, 0);
+});
+
+test("reversing an appraiser-confirmed assignment sketch also requires sign authority", async (context) => {
+  const permissions = [];
+  let saveCalls = 0;
+  const server = await startRouter(baseOptions({
+    getSketch: async () => ({ sketch: { review_status: "appraiser_confirmed" } }),
+    requireAssignmentAccess: async (_req, res, _accountId, _fileId, permission) => {
+      permissions.push(permission);
+      if (permission === "sign") {
+        res.status(403).json({ error: "assignment_file_access_denied" });
+        return false;
+      }
+      return true;
+    },
+    saveSketch: async () => {
+      saveCalls += 1;
+      return { sketch: { id: "unexpected" } };
+    },
+  }), identity);
+  context.after(server.close);
+
   const response = await patchSketch(server.baseUrl, "123", 1, {
-    expected_revision: 1,
-    sketch: { review_status: "appraiser_confirmed" },
+    expected_revision: 2,
+    sketch: { review_status: "draft" },
   });
   assert.equal(response.status, 403);
   assert.deepEqual(await response.json(), { error: "assignment_file_access_denied" });
-  assert.deepEqual(permissions, ["sign"]);
+  assert.deepEqual(permissions, ["write", "sign"]);
   assert.equal(saveCalls, 0);
 });
 
 test("desktop sketch save errors retain revision, operation, validation, and bounded responses", async (context) => {
   const errors = [];
   const server = await startRouter(baseOptions({
+    getSketch: async () => null,
     saveSketch: async (_pool, _accountId, fileId) => {
       const messages = {
         1: "assignment_sketch_not_found",

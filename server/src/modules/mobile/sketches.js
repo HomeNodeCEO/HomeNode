@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { calculateManualSketch } from "./manualSketch.js";
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
 import { canonicalJson } from "./sync.js";
+import { hasApplicationPermission } from "../../security/applicationAccess.js";
 
 const MAX_AREAS = 20;
 const MAX_ROOMS = 100;
@@ -75,6 +76,24 @@ function enumValue(value, allowed, code) {
 
 export function normalizeSketchReviewStatus(value) {
   return enumValue(value || "draft", REVIEW_STATUSES, "invalid_sketch_review_status");
+}
+
+export function requireSketchConfirmationAuthority(auth, {
+  workflowType,
+  organizationId,
+  currentStatus = null,
+  nextStatus,
+} = {}) {
+  const normalizedNextStatus = normalizeSketchReviewStatus(nextStatus);
+  const protectedTransition = normalizedNextStatus === "appraiser_confirmed"
+    || String(currentStatus || "").trim() === "appraiser_confirmed";
+  if (
+    protectedTransition
+    && !hasApplicationPermission(auth, workflowType, "sign", organizationId)
+  ) {
+    throw new Error("inspection_sketch_confirmation_access_denied");
+  }
+  return normalizedNextStatus;
 }
 
 function pointInsidePolygon(point, vertices) {
@@ -469,6 +488,12 @@ export async function saveInspectionSketch(pool, auth, sessionIdValue, input = {
     if (existing && existing.client_sketch_id !== clientSketchId) throw new Error("sketch_identity_conflict");
     const currentRevision = existing ? Number(existing.revision) : 0;
     if (baseRevision !== currentRevision) throw new Error("sketch_revision_conflict");
+    requireSketchConfirmationAuthority(auth, {
+      workflowType: session.workflow_type,
+      organizationId: session.organization_id,
+      currentStatus: existing?.review_status,
+      nextStatus: document.review_status,
+    });
     const nextRevision = currentRevision + 1;
     const confirmed = document.review_status === "appraiser_confirmed";
     let sketchRow;

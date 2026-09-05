@@ -9,6 +9,33 @@ import { METRIC_TOPOLOGY_FIXTURES, TOPOLOGY_FIXTURE_ORIGIN, TOPOLOGY_AREA_TOLERA
 const near = (actual, expected, tolerance, label) => assert.ok(Number.isFinite(actual)
   && Math.abs(actual - expected) <= tolerance, `${label}: expected ${expected} ± ${tolerance}, received ${actual}`);
 const sortedIds = rows => rows.map(row => row.id).sort();
+const CROSSING_NODE_ORACLE = Object.freeze([
+  [0, 0, 2], [100, 0, 2], [100, 100, 2], [0, 100, 2],
+  [-10, 50, 1], [110, 50, 1], [50, -10, 1], [50, 110, 1],
+  [0, 50, 4], [100, 50, 4], [50, 0, 4], [50, 100, 4], [50, 50, 4],
+].map(Object.freeze));
+const DIAGNOSTIC_FIXTURES = new Set(['closedRing', 'bowtie', 'retraced']);
+const DIAGNOSTIC_BYTES = 10000;
+const boundedFixtureDiagnostic = (name, summary, rows) => {
+  assert.ok(DIAGNOSTIC_FIXTURES.has(name));
+  const result = { fixture: name, synthetic_only: true, summary, candidate_rows: [], truncated: false,
+    omitted_candidate_rows: rows.length };
+  for (const row of rows) {
+    const candidate = { ...result, candidate_rows: [...result.candidate_rows, row],
+      omitted_candidate_rows: rows.length - result.candidate_rows.length - 1 };
+    // Reserve room for the explicit truncation flag/count, not an invalid JSON
+    // string slice. These diagnostics never change a readiness assertion.
+    if (Buffer.byteLength(JSON.stringify(candidate), 'utf8') > DIAGNOSTIC_BYTES - 64) break;
+    result.candidate_rows.push(row);
+  }
+  result.omitted_candidate_rows = rows.length - result.candidate_rows.length;
+  result.truncated = result.omitted_candidate_rows > 0;
+  const encoded = JSON.stringify(result);
+  if (Buffer.byteLength(encoded, 'utf8') > DIAGNOSTIC_BYTES) {
+    return JSON.stringify({ fixture: name, synthetic_only: true, diagnostic_omitted: 'byte_limit' });
+  }
+  return encoded;
+};
 const sourceFeatureId = feature => assessmentEvidenceDigest({ source_key: feature.source_key,
   source_layer: feature.source_layer, source_object_id: feature.source_object_id });
 const originalSourceParts = input => input.features.flatMap(feature => {
@@ -87,6 +114,32 @@ test('fixture-only: source interval audit identities come from original feature 
   assert.equal(parts[1].geometry.coordinates, feature.geometry.coordinates[1]);
   assert.notEqual(sourceFeatureId({ ...feature, source_layer: 'fixture/other-layer' }), sourceFeatureId(feature));
   assert.notEqual(sourceFeatureId({ ...feature, source_key: 'other_capture' }), sourceFeatureId(feature));
+});
+
+test('fixture-only: crossing oracle includes four boundary crossings, centre, corners and dangle endpoints', () => {
+  assert.equal(CROSSING_NODE_ORACLE.length, 13);
+  assert.equal(new Set(CROSSING_NODE_ORACLE.map(([x, y]) => `${x},${y}`)).size, 13);
+  assert.equal(CROSSING_NODE_ORACLE.filter(([, , degree]) => degree === 1).length, 4);
+  assert.equal(CROSSING_NODE_ORACLE.filter(([, , degree]) => degree === 2).length, 4);
+  assert.equal(CROSSING_NODE_ORACLE.filter(([, , degree]) => degree === 4).length, 5);
+  assert.equal(CROSSING_NODE_ORACLE.reduce((sum, [, , degree]) => sum + degree, 0),
+    2 * METRIC_TOPOLOGY_FIXTURES.crossing.expected.edges);
+});
+
+test('fixture-only: synthetic failure diagnostics are valid JSON and never exceed ten kilobytes', () => {
+  const rows = Array.from({ length: 48 }, (_, index) => ({ edge_index: index % 12,
+    sample: 'synthetic'.repeat(250), variants: ['original', 'reverse', 'normalize', 'reverse_normalize'] }));
+  const encoded = boundedFixtureDiagnostic('bowtie', { unattributed_edge_count: 12 }, rows);
+  assert.ok(Buffer.byteLength(encoded, 'utf8') <= DIAGNOSTIC_BYTES);
+  const parsed = JSON.parse(encoded);
+  assert.equal(parsed.fixture, 'bowtie'); assert.equal(parsed.synthetic_only, true);
+  assert.equal(parsed.truncated, true);
+  assert.equal(parsed.omitted_candidate_rows + parsed.candidate_rows.length, rows.length);
+  assert.ok(parsed.candidate_rows.length > 0);
+  const excessive = boundedFixtureDiagnostic('closedRing', { synthetic: 'x'.repeat(20000) }, []);
+  assert.ok(Buffer.byteLength(excessive, 'utf8') <= DIAGNOSTIC_BYTES);
+  assert.equal(JSON.parse(excessive).diagnostic_omitted, 'byte_limit');
+  assert.throws(() => boundedFixtureDiagnostic('arbitrary-source', {}, []));
 });
 
 test('fixture-only: dense primitive intersections exceed safe noding work despite a small source capture', () => {
@@ -228,7 +281,7 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
   const build = async (name, options) => buildInput(await projectMetricTopologyFixture(pool, name), options);
   const assertReady = (result, name) => {
     const expected = METRIC_TOPOLOGY_FIXTURES[name].expected;
-    assert.equal(result.status, 'ready', JSON.stringify(result.incomplete_reasons));
+    assert.equal(result.status, 'ready', `${name}: ${JSON.stringify(result.incomplete_reasons)}`);
     assert.equal(result.topology_validated, true);
     assert.equal(result.cells.length, expected.cells);
     assert.ok(result.topology_revision);
@@ -258,6 +311,93 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
     assert.equal(row.min_srid, 26914); assert.equal(row.max_srid, 26914);
     near(row.summed_area, expectedArea, TOPOLOGY_AREA_TOLERANCE_M2, 'summed faces');
     near(row.union_area, expectedArea, TOPOLOGY_AREA_TOLERANCE_M2, 'nonoverlapping union');
+  };
+  const diagnoseSyntheticAttribution = async (name, input) => {
+    assert.ok(DIAGNOSTIC_FIXTURES.has(name));
+    const parts = originalSourceParts(input);
+    // Never a general source/driver logger: the only admitted inputs are the
+    // three fixed, tiny synthetic occurrence fixtures in this CI child database.
+    assert.equal(parts.length, 1);
+    assert.ok(parts[0].geometry.coordinates.length <= 6);
+    try {
+      const { rows: [row] } = await pool.query({ query_timeout: 5000,
+        text: `/* topology-fixture:bounded-synthetic-attribution-diagnostic */
+        WITH source_parts AS MATERIALIZED (
+          SELECT feature_id,source_part_index,geometry AS source_geometry_4326,
+            ST_Transform(ST_SetSRID(ST_GeomFromGeoJSON(geometry),4326),26914) AS geom
+          FROM jsonb_to_recordset($1::jsonb) AS item(feature_id text,source_part_index integer,geometry jsonb)
+        ), originals AS MATERIALIZED (
+          SELECT p.feature_id,p.source_part_index,d.path[1] AS source_segment_index,d.geom,
+            jsonb_build_array(p.source_geometry_4326->'coordinates'->(d.path[1]-1),
+              p.source_geometry_4326->'coordinates'->d.path[1]) AS source_coordinates_4326
+          FROM source_parts p CROSS JOIN LATERAL ST_DumpSegments(p.geom) d WHERE ST_Length(d.geom)>0
+        ), noded AS MATERIALIZED (
+          -- Reproduce the admitted service's unchanged noding, NOT a repaired,
+          -- snapped or differently oriented replacement for the failing result.
+          SELECT ST_Node(ST_Collect(ST_Normalize(geom)
+            ORDER BY encode(ST_AsEWKB(ST_Normalize(geom)),'hex'),feature_id,source_part_index)) AS geom
+          FROM source_parts
+        ), edges AS MATERIALIZED (
+          SELECT DISTINCT ST_Normalize(d.geom) AS geom FROM noded
+          CROSS JOIN LATERAL ST_DumpSegments(noded.geom) d
+        ), unmatched AS MATERIALIZED (
+          SELECT e.geom FROM edges e WHERE NOT EXISTS (
+            SELECT 1 FROM originals p
+            CROSS JOIN LATERAL (SELECT ST_LineLocatePoint(p.geom,ST_StartPoint(e.geom)) AS f0,
+              ST_LineLocatePoint(p.geom,ST_EndPoint(e.geom)) AS f1) located
+            WHERE e.geom && p.geom AND f0<>f1
+              AND ST_AsEWKB(ST_Normalize(e.geom),'NDR')=ST_AsEWKB(ST_Normalize(
+                ST_LineSubstring(p.geom,least(f0,f1),greatest(f0,f1))),'NDR'))
+        ), selected_edges AS MATERIALIZED (
+          SELECT geom,encode(ST_AsEWKB(geom,'NDR'),'hex') AS edge_ewkb
+          FROM unmatched ORDER BY encode(ST_AsEWKB(geom,'NDR'),'hex') COLLATE "C" LIMIT 12
+        ), variants AS (
+          SELECT e.edge_ewkb,e.geom AS edge_geom,p.feature_id,p.source_part_index,p.source_segment_index,
+            p.geom AS original_geom,p.source_coordinates_4326,v.basis,v.geom AS variant_geom,
+            ST_LineLocatePoint(v.geom,ST_StartPoint(e.geom)) AS f0,
+            ST_LineLocatePoint(v.geom,ST_EndPoint(e.geom)) AS f1
+          FROM selected_edges e JOIN originals p ON e.geom && p.geom
+          CROSS JOIN LATERAL (VALUES ('original',p.geom),('reverse',ST_Reverse(p.geom)),
+            ('normalize',ST_Normalize(p.geom)),('reverse_normalize',ST_Reverse(ST_Normalize(p.geom)))) v(basis,geom)
+        ), reconstructed AS (
+          SELECT *,ST_LineSubstring(variant_geom,least(f0,f1),greatest(f0,f1)) AS interval_geom FROM variants
+        ), compared AS (
+          SELECT *,ST_Equals(edge_geom,interval_geom) AS equal_geometry,
+            ST_CoveredBy(edge_geom,variant_geom) AS covered_by_original,
+            ST_AsEWKB(ST_Normalize(edge_geom),'NDR')=ST_AsEWKB(ST_Normalize(interval_geom),'NDR') AS equal_normalized_bytes
+          FROM reconstructed
+        ), candidate_rows AS (
+          SELECT edge_ewkb,feature_id,source_part_index,source_segment_index,
+            bool_or(equal_geometry OR covered_by_original OR equal_normalized_bytes) AS any_exact_option,
+            jsonb_build_object('edge_ewkb',edge_ewkb,'feature_id',feature_id,'source_part_index',source_part_index,
+              'source_segment_index',source_segment_index,'original_source_coordinates_4326',source_coordinates_4326,
+              'original_source_coordinates_26914',ST_AsGeoJSON(original_geom,17)::jsonb->'coordinates',
+              'original_source_ewkb',encode(ST_AsEWKB(original_geom,'NDR'),'hex'),
+              'variants',jsonb_agg(jsonb_build_object('basis',basis,'fractions',jsonb_build_array(f0,f1),
+                'reconstructed_ewkb',encode(ST_AsEWKB(interval_geom,'NDR'),'hex'),
+                'normalized_reconstructed_ewkb',encode(ST_AsEWKB(ST_Normalize(interval_geom),'NDR'),'hex'),
+                'st_equals',equal_geometry,'st_covered_by',covered_by_original,
+                'normalized_bytes_equal',equal_normalized_bytes) ORDER BY basis COLLATE "C")) AS payload
+          FROM compared GROUP BY edge_ewkb,feature_id,source_part_index,source_segment_index,source_coordinates_4326,original_geom
+        ), ranked AS (
+          SELECT *,row_number() OVER(PARTITION BY edge_ewkb ORDER BY any_exact_option DESC,
+            feature_id COLLATE "C",source_part_index,source_segment_index) AS candidate_rank FROM candidate_rows
+        ), selected_rows AS (
+          SELECT * FROM ranked ORDER BY candidate_rank,edge_ewkb COLLATE "C",feature_id COLLATE "C",
+            source_part_index,source_segment_index LIMIT 48
+        ) SELECT jsonb_build_object('postgis',left(postgis_lib_version(),128),'geos',left(postgis_geos_version(),128),
+            'proj',left(postgis_proj_version(),128),'unattributed_edge_count',(SELECT count(*) FROM unmatched),
+            'selected_edge_count',(SELECT count(*) FROM selected_edges),'candidate_row_count',(SELECT count(*) FROM candidate_rows),
+            'selected_candidate_row_count',(SELECT count(*) FROM selected_rows)) AS summary,
+          COALESCE((SELECT jsonb_agg(payload ORDER BY candidate_rank,edge_ewkb COLLATE "C",feature_id COLLATE "C",
+            source_part_index,source_segment_index) FROM selected_rows),'[]'::jsonb) AS candidate_rows`,
+        values: [JSON.stringify(parts)] });
+      return boundedFixtureDiagnostic(name, row.summary, row.candidate_rows);
+    } catch {
+      // Preserve the primary fixture readiness failure. Never echo a driver
+      // message, SQL error detail, connection setting, or arbitrary error object.
+      return boundedFixtureDiagnostic(name, { diagnostic_unavailable: 'synthetic_query_failed' }, []);
+    }
   };
   try {
     await t.test('precision oracle: two exact interval witnesses on distinct non-collinear originals require ambiguity rejection', async () => {
@@ -324,9 +464,26 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       await auditMetric(result, 11500);
       assert.ok(result.cells[0].geometry.coordinates[0].length > 5, 'not a fabricated rectangle');
     });
-    await t.test('proper crossing nodes create four2500m² faces including real degree4 intersection', async () => {
+    await t.test('proper crossing nodes create four2500m² faces and all five actual degree4 intersections', async () => {
       const result = await build('crossing'); assertReady(result, 'crossing');
-      assert.equal(result.nodes.filter(node => node.degree === 4).length, 1);
+      assert.equal(result.nodes.filter(node => node.degree === 4).length, 5);
+      assert.equal(result.nodes.filter(node => node.degree === 2).length, 4);
+      assert.equal(result.nodes.filter(node => node.degree === 1).length, 4);
+      const { rows } = await pool.query(`/* topology-fixture:audit-crossing-node-positions */
+        SELECT id,degree,ST_X(ST_GeomFromEWKB(decode(geometry_ewkb,'hex')))-700000 AS x,
+          ST_Y(ST_GeomFromEWKB(decode(geometry_ewkb,'hex')))-3600000 AS y
+        FROM jsonb_to_recordset($1::jsonb) AS item(id text,degree integer,geometry_ewkb text)`,
+      [JSON.stringify(result.nodes.map(({ id, degree, geometry_ewkb }) => ({ id, degree, geometry_ewkb })))]);
+      assert.equal(rows.length, CROSSING_NODE_ORACLE.length);
+      const matchedPositions = new Set();
+      for (const row of rows) {
+        const expected = CROSSING_NODE_ORACLE.filter(([x, y]) => Math.hypot(row.x - x, row.y - y) <= TOPOLOGY_LENGTH_TOLERANCE_M);
+        assert.equal(expected.length, 1, 'every native node must have one independently expected metric position');
+        const [x, y, degree] = expected[0];
+        assert.equal(row.degree, degree, `degree at independent metric offset(${x},${y})`);
+        matchedPositions.add(`${x},${y}`);
+      }
+      assert.equal(matchedPositions.size, CROSSING_NODE_ORACLE.length, 'no expected crossing/corner/dangle position may be omitted');
       assert.equal(result.edges.filter(edge => edge.cell_ids.length === 0).length, 4, 'four supplied dangles are retained');
       await auditMetric(result, 10000);
     });
@@ -459,10 +616,11 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
         original[key].map(row => ({ id: row.id, geometry_ewkb: row.geometry_ewkb })),
         `${key} metric geometry bytes must not change when source ordering/direction changes`);
     });
-    await t.test('closed, self-crossing and retraced sources retain occurrence-specific primitive segment provenance', async () => {
-      for (const name of ['closedRing', 'bowtie', 'retraced']) {
+    for (const name of ['closedRing', 'bowtie', 'retraced']) {
+      await t.test(`${name}: source retains exact occurrence-specific primitive segment provenance`, async fixtureTest => {
         const input = await projectMetricTopologyFixture(pool, name);
         const result = await buildInput(input);
+        if (result.status !== 'ready') fixtureTest.diagnostic(await diagnoseSyntheticAttribution(name, input));
         assertReady(result, name);
         await auditMetric(result, METRIC_TOPOLOGY_FIXTURES[name].expected.union_area_m2);
         if (name === 'retraced') {
@@ -473,8 +631,8 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
             return segments.includes(1) && segments.includes(5);
           }), 'both occurrences of the same source segment must survive');
         }
-      }
-    });
+      });
+    }
     await t.test('planar crossings do not grant cross-level travel or geographic inclusion authority', async () => {
       const result = await build('overpass'); assertReady(result, 'overpass');
       assert.equal(result.travel_connectivity, 'not_evaluated');

@@ -2,7 +2,7 @@ import { assessmentEvidenceDigest, canonicalAssessmentJson } from "./contract.js
 
 // A source-linework manifest, NOT a geometry/noding engine. No topology flag
 // supplied by a caller can promote these cached road parts into verified cells.
-export const GRAPH_PREPARATION_VERSION = 1;
+export const GRAPH_PREPARATION_VERSION = 2;
 export const GRAPH_PREPARATION_LIMITS = Object.freeze({
   features: 2000, parts: 5000, coordinates: 50000, coordinates_per_feature: 20000, aliases: 5000,
   runs: 4000, states: 64, bytes: 8_000_000, query_bytes: 16_384,
@@ -73,7 +73,9 @@ function validCoordinates(coordinates) {
 /**
  * Prepare an exact bounded EPSG:4326 cached-line capture for later PostGIS work.
  * capture: id/revision/acquired_at, exact query object (crs, bbox envelope, layers), coverage, expected_feature_count,
- * source_states [{source_key,status,last_run_id}], origin_runs [{id,source_key,mode,status}].
+ * source_inventory [{source_layer,source_key}] closes every requested layer,
+ * including verified zero-feature feeds. source_states [{source_key,status,last_run_id}],
+ * origin_runs [{id,source_key,mode,status}]. Layer names never imply source keys.
  * features: source_key/source_layer/source_object_id (exact decimal string),
  * source_record_hash (ingestion fingerprint or null), sync_run_id, source_vintage,
  * name/base_name/road_class, stored geometry, repair_revision/original_geometry_sha256.
@@ -115,17 +117,36 @@ export function prepareNeighborhoodLinework(input) {
     .map(([code, ids]) => ({ code, ids: [...ids].sort(compare) }));
   const result = { version: GRAPH_PREPARATION_VERSION, status: "incomplete", capture: context, policy,
     coordinate_crs: "EPSG:4326", geometry_validity: "not_evaluated", topology_validated: false,
-    travel_connectivity: "not_evaluated", features: [], line_parts: [], aliases: [], source_states: [], origin_runs: [],
+    travel_connectivity: "not_evaluated", features: [], line_parts: [], aliases: [], source_inventory: [], source_states: [], origin_runs: [],
     query: null, query_sha256: null, alias_revision: null, linework_content_sha256: null, capture_sha256: null,
-    incomplete_reasons: [], limitations: [], counts: { features: input.features.length, parts: 0, coordinates: 0, retained_bytes: 0 },
+    incomplete_reasons: [], limitations: [], counts: { features: input.features.length, parts: 0, coordinates: 0, normalized_bytes: 0, retained_bytes: 0 },
     required_next_steps: ["verify_metric_projection", "source_preserving_noding", "gap_overlap_sliver_checks", "polygonize_and_validate_cells", "publish_immutable_topology_revision"],
   };
   const finish = () => {
     result.incomplete_reasons = diagnostics(issues); result.limitations = diagnostics(limitations);
     // Atomic handoff: callers cannot mistake an input-order prefix for the full
     // source. Diagnostics remain, but no partial geometry/manifests are emitted.
-    if (issues.size) { result.features = []; result.line_parts = []; result.aliases = []; }
+    if (issues.size) { result.features = []; result.line_parts = []; result.aliases = []; result.capture_sha256 = null; result.linework_content_sha256 = null; }
     else result.status = "ready_for_preprocessing";
+    // Count the actual serialized handoff, including expanded parts, hashes,
+    // separators and metadata. Stream array rows rather than allocating another
+    // aggregate JSON string (which can exceed the canonical single-row budget).
+    const outputBytes = () => 2 + Object.entries(result).reduce((total, [key, value], index) => {
+      const bytes = Array.isArray(value) ? 2 + value.reduce((n, row, i) => n + (i ? 1 : 0) + Buffer.byteLength(JSON.stringify(row)), 0)
+        : Buffer.byteLength(JSON.stringify(value));
+      return total + (index ? 1 : 0) + Buffer.byteLength(JSON.stringify(key)) + 1 + bytes;
+    }, 0);
+    const countOutput = () => {
+      for (let i = 0; i < 12; i++) { const bytes = outputBytes(); if (result.counts.retained_bytes === bytes) return bytes; result.counts.retained_bytes = bytes; }
+      fail("output_byte_count");
+    };
+    if (countOutput() > GRAPH_PREPARATION_LIMITS.bytes) {
+      issue("output_limit_exceeded", "bytes"); result.incomplete_reasons = diagnostics(issues);
+      result.status = "incomplete"; result.capture_sha256 = null; result.linework_content_sha256 = null;
+      result.features = []; result.line_parts = []; result.aliases = []; result.source_states = []; result.origin_runs = []; result.source_inventory = [];
+      result.metadata_not_returned = true;
+      if (countOutput() > GRAPH_PREPARATION_LIMITS.bytes) fail("failure_metadata_limit");
+    }
     return freeze(result);
   };
   for (const [count, ceiling, field] of [[input.features.length, GRAPH_PREPARATION_LIMITS.features, "features"],
@@ -162,7 +183,7 @@ export function prepareNeighborhoodLinework(input) {
     }
     retainedBytes += Buffer.byteLength(json);
     if (retainedBytes > GRAPH_PREPARATION_LIMITS.bytes) issue("input_limit_exceeded", "bytes");
-    result.counts.retained_bytes = retainedBytes;
+    result.counts.normalized_bytes = retainedBytes;
     return json;
   };
   const prepareRows = (inputRows, normalize, order) => {
@@ -217,6 +238,22 @@ export function prepareNeighborhoodLinework(input) {
     if (state.status !== "current" || !run || run.status !== "complete" || run.source_key !== state.source_key) issue("source_state_not_complete", state.source_key);
   }
   result.source_states = states; result.origin_runs = runs;
+  const inventoryRows = capture.source_inventory;
+  if (!Array.isArray(inventoryRows) || !inventoryRows.length) issue("source_inventory_unknown");
+  else if (inventoryRows.length > GRAPH_PREPARATION_LIMITS.states) { issue("input_limit_exceeded", "source_inventory"); return finish(); }
+  const inventory = prepareRows(Array.isArray(inventoryRows) ? inventoryRows : [], row => {
+    object(row, "source_inventory");
+    return { source_layer: text(row.source_layer, "source_inventory.source_layer"), source_key: text(row.source_key, "source_inventory.source_key") };
+  }, (a, b) => compare(a.source_layer, b.source_layer) || compare(a.source_key, b.source_key));
+  if (inventory === null) return finish();
+  const inventoryKey = row => JSON.stringify([row.source_layer, row.source_key]);
+  const inventoryByKey = uniqueMap(inventory, "source_inventory", inventoryKey);
+  for (const layer of layers) if (!inventory.some(row => row.source_layer === layer)) issue("requested_layer_inventory_missing", layer);
+  for (const row of inventory) {
+    if (!layers.includes(row.source_layer)) issue("inventory_layer_not_requested", row.source_layer);
+    if (!stateByKey.has(row.source_key)) issue("requested_source_state_missing", row.source_key);
+  }
+  result.source_inventory = inventory;
   result.alias_revision = text(aliasInput.revision, "aliases.revision", true);
   const aliasCoverage = choice(aliasInput.coverage, ["complete", "truncated", "unknown"], "aliases.coverage");
   if (aliasCoverage !== "complete" || result.alias_revision === null) issue("alias_capture_incomplete");
@@ -235,6 +272,7 @@ export function prepareNeighborhoodLinework(input) {
     const identity = { source_key: text(row.source_key, "feature.source_key"), source_layer: text(row.source_layer, "feature.source_layer"), source_object_id: row.source_object_id };
     const featureId = assessmentEvidenceDigest(identity);
     if (!layers.includes(identity.source_layer)) issue("feature_outside_declared_source_layers", featureId);
+    if (!inventoryByKey.has(inventoryKey(identity))) issue("feature_source_inventory_mismatch", featureId);
     if (featureIds.has(featureId)) fail("features.duplicate");
     featureIds.add(featureId);
     const feature = { feature_id: featureId, ...identity,
@@ -261,16 +299,21 @@ export function prepareNeighborhoodLinework(input) {
     }
     if (validParts.length !== rawParts.length) continue;
     const storedInput = { type: row.geometry.type, coordinates: row.geometry.type === "LineString" ? rawParts[0] : rawParts };
-    // Charge the exact retained projection before allocating coordinate copies.
-    encode({ feature, geometry: storedInput });
-    if (issues.has("input_limit_exceeded")) return finish();
+    // Bound the single-feature hash input independently; the retained output is
+    // the expanded part rows and final feature descriptor, not this raw shape.
+    try { canonicalAssessmentJson(storedInput); } catch (error) {
+      if (!/^invalid_neighborhood_assessment:json_(limit|bytes)$/.test(error.message)) throw error;
+      issue("input_limit_exceeded", "canonical_payload"); return finish();
+    }
     const parts = [];
     for (const { index, coordinates } of validParts) {
-      const retained = coordinates.map(point => [...point]);
-      const geometry = { type: "LineString", coordinates: retained };
-      const semanticGeometry = { type: "LineString", coordinates: reverseFirst(retained) ? [...retained].reverse() : retained };
+      const geometry = { type: "LineString", coordinates };
+      const semanticGeometry = { type: "LineString", coordinates: reverseFirst(coordinates) ? [...coordinates].reverse() : coordinates };
       const part = { feature_id: featureId, source_part_index: index + 1, geometry,
         stored_geometry_sha256: assessmentEvidenceDigest(geometry), semantic_geometry_sha256: assessmentEvidenceDigest(semanticGeometry) };
+      encode(part);
+      if (issues.has("input_limit_exceeded")) return finish();
+      part.geometry = { type: "LineString", coordinates: coordinates.map(point => [...point]) };
       parts.push(part);
     }
     feature.geometry_type = row.geometry.type;
@@ -279,6 +322,8 @@ export function prepareNeighborhoodLinework(input) {
     feature.stored_geometry_sha256 = assessmentEvidenceDigest(stored);
     feature.content_sha256 = assessmentEvidenceDigest({ ...identity, name: feature.name, base_name: feature.base_name,
       road_class: feature.road_class, part_geometry_sha256: parts.map(part => part.semantic_geometry_sha256).sort(compare) });
+    encode(feature);
+    if (issues.has("input_limit_exceeded")) return finish();
     result.features.push(feature); result.line_parts.push(...parts);
   }
   if (issues.size) return finish();
@@ -291,7 +336,7 @@ export function prepareNeighborhoodLinework(input) {
   // the retained rows themselves still have one aggregate preparation byte cap.
   result.capture_sha256 = assessmentEvidenceDigest({ context, query_sha256: result.query_sha256, policy,
     alias_revision: result.alias_revision, aliases: aliases.map(assessmentEvidenceDigest),
-    states: states.map(assessmentEvidenceDigest), runs: runs.map(assessmentEvidenceDigest),
+    inventory: inventory.map(assessmentEvidenceDigest), states: states.map(assessmentEvidenceDigest), runs: runs.map(assessmentEvidenceDigest),
     features: result.features.map(assessmentEvidenceDigest) });
   return finish();
 }

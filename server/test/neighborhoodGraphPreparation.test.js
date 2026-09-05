@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { assessmentEvidenceDigest } from "../src/services/neighborhoodAssessment/contract.js";
-import { GRAPH_PREPARATION_LIMITS, prepareNeighborhoodLinework } from "../src/services/neighborhoodAssessment/graphPreparation.js";
+import { GRAPH_PREPARATION_LIMITS, GRAPH_PREPARATION_VERSION, prepareNeighborhoodLinework } from "../src/services/neighborhoodAssessment/graphPreparation.js";
 
 const runA = "00000000-0000-4000-8000-000000000001";
 const runB = "00000000-0000-4000-8000-000000000002";
@@ -13,8 +13,9 @@ function feature(id = "1", coordinates = [[-96.9, 32.6], [-96.89, 32.61]]) {
     repair_revision: null, original_geometry_sha256: null, geometry: { type: "LineString", coordinates } };
 }
 function fixture() {
-  return { version: 1, capture: { id: "roads", revision: "capture-1", acquired_at: at,
+  return { version: GRAPH_PREPARATION_VERSION, capture: { id: "roads", revision: "capture-1", acquired_at: at,
     coverage: "complete", expected_feature_count: 1, query: { crs: "EPSG:4326", envelope: [-97, 32, -96, 33], layers: ["TIGER/8"] },
+    source_inventory: [{ source_layer: "TIGER/8", source_key: "tiger_primary" }],
     source_states: [{ source_key: "tiger_primary", status: "current", last_run_id: runA }],
     origin_runs: [{ id: runA, source_key: "tiger_primary", mode: "full", status: "complete" }] },
   aliases: { revision: "aliases-1", coverage: "complete", records: [{ normalized_alias: "NORTH ROAD", corridor_key: "reviewed-road",
@@ -204,9 +205,11 @@ test("alias overflow stops reading later rows before allocating or inspecting th
   assert.equal(output.status, "incomplete");
   assert.ok(codes(output).includes("input_limit_exceeded"));
   assert.equal(laterAliasRead, false); assert.equal(laterFeatureRead, false);
-  assert.ok(output.counts.retained_bytes > GRAPH_PREPARATION_LIMITS.bytes);
-  assert.ok(output.counts.retained_bytes < GRAPH_PREPARATION_LIMITS.bytes + 4096,
+  assert.ok(output.counts.normalized_bytes > GRAPH_PREPARATION_LIMITS.bytes);
+  assert.ok(output.counts.normalized_bytes < GRAPH_PREPARATION_LIMITS.bytes + 4096,
     "At most the single bounded overflow row is encoded");
+  assert.equal(output.counts.retained_bytes, Buffer.byteLength(JSON.stringify(output)));
+  assert.ok(output.counts.retained_bytes <= GRAPH_PREPARATION_LIMITS.bytes);
   assert.deepEqual(output.aliases, []); assert.deepEqual(output.line_parts, []);
 });
 
@@ -242,4 +245,54 @@ test("complete capture requires an explicit bounded query envelope/CRS and decla
   assert.equal(output.status, "incomplete");
   assert.ok(codes(output).includes("feature_outside_declared_source_layers"));
   assert.deepEqual(output.line_parts, []);
+});
+
+test("every requested layer needs explicit source binding and complete state even when it returns zero features", () => {
+  const input = fixture(); input.capture.query.layers.push("TIGER/local");
+  let result = prepareNeighborhoodLinework(input);
+  assert.ok(codes(result).includes("requested_layer_inventory_missing"));
+  input.capture.source_inventory.push({ source_layer: "TIGER/local", source_key: "different-local-key" });
+  result = prepareNeighborhoodLinework(input);
+  assert.ok(codes(result).includes("requested_source_state_missing"));
+  input.capture.source_states.push({ source_key: "different-local-key", status: "current", last_run_id: runB });
+  result = prepareNeighborhoodLinework(input);
+  assert.ok(codes(result).includes("source_state_not_complete"));
+  input.capture.origin_runs.push({ id: runB, source_key: "different-local-key", status: "complete", mode: "full" });
+  result = prepareNeighborhoodLinework(input);
+  assert.equal(result.status, "ready_for_preprocessing", "explicit complete-empty second source is supported");
+  assert.equal(result.features.length, 1);
+  assert.equal(result.source_inventory.length, 2);
+  const digest = result.capture_sha256;
+  input.capture.source_inventory.reverse(); input.capture.source_states.reverse(); input.capture.origin_runs.reverse();
+  assert.equal(prepareNeighborhoodLinework(input).capture_sha256, digest);
+});
+
+test("inventory omission, mismatched bindings and unrequested feeds cannot certify source completeness", () => {
+  for (const change of [input => { delete input.capture.source_inventory; },
+    input => { input.capture.source_inventory = []; },
+    input => { input.capture.source_inventory[0].source_key = "TIGER/8"; },
+    input => { input.capture.source_inventory[0].source_layer = "unrequested"; }]) {
+    const input = fixture(); change(input);
+    const result = prepareNeighborhoodLinework(input);
+    assert.equal(result.status, "incomplete"); assert.deepEqual(result.line_parts, []); assert.equal(result.capture_sha256, null);
+  }
+  const duplicate = fixture(); duplicate.capture.source_inventory.push({ ...duplicate.capture.source_inventory[0] });
+  assert.throws(() => prepareNeighborhoodLinework(duplicate), /source_inventory.duplicate/);
+});
+
+test("expanded multipart hashes/rows and UTF-8 aliases cannot overflow the retained handoff budget", () => {
+  const input = fixture(), padding = "界".repeat(240);
+  input.aliases.records = Array.from({ length: 2400 }, (_, index) => ({ normalized_alias: `${index}-${padding}`,
+    corridor_key: padding, canonical_name: padding, source: padding, updated_at: at }));
+  input.features[0].geometry = { type: "MultiLineString", coordinates: Array.from({ length: 5000 }, () => [[-96.9, 32.6], [-96.89, 32.61]]) };
+  assert.ok(Buffer.byteLength(JSON.stringify(input)) < GRAPH_PREPARATION_LIMITS.bytes, "raw input alone fits; expanded output must be charged");
+  const result = prepareNeighborhoodLinework(input);
+  assert.equal(result.status, "incomplete");
+  assert.ok(codes(result).some(code => ["input_limit_exceeded", "output_limit_exceeded"].includes(code)));
+  assert.deepEqual(result.features, []); assert.deepEqual(result.line_parts, []); assert.deepEqual(result.aliases, []);
+  assert.equal(result.capture_sha256, null);
+  assert.equal(result.counts.retained_bytes, Buffer.byteLength(JSON.stringify(result)));
+  assert.ok(result.counts.retained_bytes <= GRAPH_PREPARATION_LIMITS.bytes);
+  const ready = prepareNeighborhoodLinework(fixture());
+  assert.equal(ready.counts.retained_bytes, Buffer.byteLength(JSON.stringify(ready)), "counts include keys, punctuation, metadata and themselves");
 });

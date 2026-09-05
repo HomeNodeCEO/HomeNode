@@ -6,6 +6,7 @@ import {
   getAssignmentInspectionSketch,
   saveAssignmentInspectionSketch,
 } from "./desktopSketches.js";
+import { normalizeSketchReviewStatus } from "./sketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./sketchArtifacts.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
@@ -142,7 +143,9 @@ export function createDesktopAssignmentSketchRouter({
         ensureAssignmentFilesAvailable(),
       ]);
       const canonicalId = await resolveAccountId(pool, requestedId);
-      const permission = req.body?.sketch?.review_status === "appraiser_confirmed"
+      const reviewStatus = normalizeSketchReviewStatus(req.body?.sketch?.review_status);
+      let confirmationAuthorized = reviewStatus === "appraiser_confirmed";
+      const permission = confirmationAuthorized
         ? "sign"
         : "write";
       if (!await requireAssignmentAccess(
@@ -152,12 +155,26 @@ export function createDesktopAssignmentSketchRouter({
         assignmentFileId,
         permission,
       )) return undefined;
+      if (!confirmationAuthorized) {
+        const current = await getSketch(pool, canonicalId, assignmentFileId);
+        if (current?.sketch?.review_status === "appraiser_confirmed") {
+          if (!await requireAssignmentAccess(
+            req,
+            res,
+            canonicalId,
+            assignmentFileId,
+            "sign",
+          )) return undefined;
+          confirmationAuthorized = true;
+        }
+      }
       const result = await saveSketch(
         pool,
         canonicalId,
         assignmentFileId,
         req.body,
         req.mobileAuth?.userId || null,
+        confirmationAuthorized,
       );
       return res.json({ ok: true, ...result });
     } catch (error) {
@@ -169,6 +186,9 @@ export function createDesktopAssignmentSketchRouter({
           error: error.message,
           current_revision: error.currentRevision,
         });
+      }
+      if (error?.message === "inspection_sketch_confirmation_access_denied") {
+        return res.status(403).json({ error: error.message });
       }
       if (
         String(error?.message || "").startsWith("invalid_")

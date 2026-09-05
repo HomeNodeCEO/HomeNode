@@ -335,6 +335,7 @@ export function createDesktopPropertyTaxRouter({
         req.params.fileId,
         req.body || {},
         req.mobileAuth?.userId || null,
+        decideAccess(req.mobileAuth, existingFile, "sign"),
       );
       return res.json({ ok: true, ...result });
     } catch (error) {
@@ -346,6 +347,9 @@ export function createDesktopPropertyTaxRouter({
           error: error.message,
           current_revision: error.currentRevision,
         });
+      }
+      if (error?.message === "inspection_sketch_confirmation_access_denied") {
+        return res.status(403).json({ error: error.message });
       }
       if (
         String(error?.message || "").startsWith("invalid_")

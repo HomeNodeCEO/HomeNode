@@ -33,7 +33,10 @@ import {
   normalizePhotoBatch,
 } from "../src/modules/mobile/photos.js";
 import { normalizePropertySearch } from "../src/modules/mobile/properties.js";
-import { normalizeManualSketchDocument } from "../src/modules/mobile/sketches.js";
+import {
+  normalizeManualSketchDocument,
+  requireSketchConfirmationAuthority,
+} from "../src/modules/mobile/sketches.js";
 import {
   canonicalJson,
   normalizeSyncBatch,
@@ -419,6 +422,42 @@ test("manual sketch calculator rejects self-intersecting outlines", () => {
   assert.equal(result.closed, true);
   assert.equal(result.self_intersecting, true);
   assert.equal(result.calculated_area_sqft, null);
+});
+
+test("sketch confirmation authority is exact-organization and protects confirmation reversal", () => {
+  const appraiser = {
+    userId: "appraiser-1",
+    organizations: [{ organizationId: "org-1", roles: ["appraiser"] }],
+  };
+  const officeAssistant = {
+    userId: "assistant-1",
+    organizations: [{ organizationId: "org-1", roles: ["office_assistant"] }],
+  };
+  const otherOrganizationAppraiser = {
+    userId: "appraiser-2",
+    organizations: [{ organizationId: "org-2", roles: ["appraiser"] }],
+  };
+  const scope = { workflowType: "custom_appraisal", organizationId: "org-1" };
+
+  assert.equal(requireSketchConfirmationAuthority(appraiser, {
+    ...scope,
+    nextStatus: " appraiser_confirmed ",
+  }), "appraiser_confirmed");
+  assert.equal(requireSketchConfirmationAuthority(officeAssistant, {
+    ...scope,
+    nextStatus: "draft",
+  }), "draft");
+  for (const [auth, currentStatus, nextStatus] of [
+    [officeAssistant, "draft", "appraiser_confirmed"],
+    [officeAssistant, "appraiser_confirmed", "draft"],
+    [otherOrganizationAppraiser, "draft", "appraiser_confirmed"],
+  ]) {
+    assert.throws(() => requireSketchConfirmationAuthority(auth, {
+      ...scope,
+      currentStatus,
+      nextStatus,
+    }), /inspection_sketch_confirmation_access_denied/);
+  }
 });
 
 test("normalizes ANSI review areas, classifications, and stable room references", () => {

@@ -93,6 +93,7 @@ async function saveDesktopInspectionSketch(
   requestScope,
   input = {},
   actorUserId = null,
+  confirmationAuthorized = false,
 ) {
   const expectedRevision = Number(input.expected_revision);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
@@ -130,6 +131,14 @@ async function saveDesktopInspectionSketch(
       const conflict = new Error("sketch_revision_conflict");
       conflict.currentRevision = Number(row.revision);
       throw conflict;
+    }
+
+    if (
+      (document.review_status === "appraiser_confirmed"
+        || row.review_status === "appraiser_confirmed")
+      && confirmationAuthorized !== true
+    ) {
+      throw new Error("inspection_sketch_confirmation_access_denied");
     }
 
     const nextRevision = expectedRevision + 1;
@@ -294,6 +303,7 @@ export async function saveAssignmentInspectionSketch(
   assignmentFileId,
   input = {},
   actorUserId = null,
+  confirmationAuthorized = false,
 ) {
   return saveDesktopInspectionSketch(
     pool,
@@ -306,6 +316,7 @@ export async function saveAssignmentInspectionSketch(
     },
     input,
     actorUserId,
+    confirmationAuthorized,
   );
 }
 
@@ -315,6 +326,7 @@ export async function savePropertyTaxInspectionSketch(
   fileId,
   input = {},
   actorUserId = null,
+  confirmationAuthorized = false,
 ) {
   return saveDesktopInspectionSketch(
     pool,
@@ -327,5 +339,6 @@ export async function savePropertyTaxInspectionSketch(
     },
     input,
     actorUserId,
+    confirmationAuthorized,
   );
 }

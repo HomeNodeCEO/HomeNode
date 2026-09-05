@@ -53,6 +53,46 @@ test("the document center supports compact bulk review and a full-page viewer", 
   assert.match(documents, /xl:grid-cols-\[16rem_minmax\(0,1fr\)\]/);
 });
 
+test("saved document choices, refresh, and document types use explicit readable themed states", () => {
+  const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+  const css = read("../../dcad-frontend/src/index.css");
+
+  assert.match(documents, /className="hn-document-type select/);
+  assert.match(documents, /hn-action-secondary btn btn-xs[^\n]+loadDocuments\(\)[^\n]+disabled=\{loading\}>Refresh/);
+  assert.match(documents, /onClick=\{\(\) => void loadDocument\(document.id\)\} aria-pressed=\{selectedDocument\?\.id === document.id\}/);
+  assert.match(css, /\.hn-document-choice\s*\{\s*display: block;\s*text-align: left;/);
+  assert.match(css, /\.hn-document-choice:hover\s*\{[^}]*color: var\(--hn-deep-purple\)/);
+  assert.match(css, /\.hn-document-choice\[aria-pressed="true"\]\s*\{[^}]*color: var\(--hn-champagne\)/);
+  assert.match(css, /\.hn-document-type option \{ background: var\(--hn-surface\); color: var\(--hn-deep-purple\); \}/);
+  assert.match(css, /\.hn-document-choice:focus-visible,[\s\S]*outline-offset: 3px/);
+  // Processing status retains its own semantic badge colors, independent of selection.
+  assert.match(documents, /statusStyle\(document.processing_status\)/);
+});
+
+test("reviewer borders rotate in gold and purple without white or silver stops", () => {
+  const css = read("../../dcad-frontend/src/index.css");
+  const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+  for (const name of ["frame", "input-ring"]) {
+    const rule = css.match(new RegExp(`^\\.hn-evidence-reviewer-${name}::before\\s*\\{([^}]+)\\}`, "m"))?.[1];
+    assert.ok(rule, `Missing reviewer ${name} border`);
+    assert.match(rule, /conic-gradient/);
+    assert.match(rule, /var\(--hn-gold\)/);
+    assert.match(rule, /var\(--hn-deep-purple\)/);
+    assert.match(rule, /animation: hn-evidence-reviewer-orbit 4.8s linear infinite/);
+    assert.match(rule, /pointer-events: none/);
+    assert.doesNotMatch(rule, /#fff(?:fff|9df)?\b|#94a3b8|#f8fafc/i);
+  }
+  assert.match(css, /\.hn-document-reviewer \.hn-evidence-reviewer-input\s*\{[^}]*color: var\(--hn-champagne\) !important/);
+  assert.doesNotMatch(css, /\.hn-evidence-reviewer-frame\s*\{[^}]*background: linear-gradient\(120deg, var\(--hn-deep-purple\)/);
+  assert.match(css, /@media \(prefers-reduced-motion: reduce\)[\s\S]*\.hn-evidence-reviewer-input-ring::before\s*\{\s*animation: none;\s*\}/);
+  assert.match(documents, /!window.matchMedia\('\(prefers-reduced-motion: reduce\)'\).matches/);
+  assert.match(documents, /htmlFor=\{reviewerInputId\}/);
+  assert.match(documents, /id=\{reviewerInputId\}/);
+  assert.match(documents, /aria-pressed=\{reviewerAnimationEnabled\}/);
+  assert.match(css, /\.hn-document-reviewer\[data-reviewer-animation="on"\][^{]*\{\s*animation: hn-evidence-reviewer-orbit/);
+  assert.match(css, /\.hn-document-reviewer\[data-reviewer-animation="off"\][^{]*\{\s*animation: none/);
+});
+
 test("the Custom Appraisal editor and print output retain legible themed surfaces", () => {
   const editor = read("../../dcad-frontend/src/components/ReportSectionEditor.tsx");
   const css = read("../../dcad-frontend/src/index.css");

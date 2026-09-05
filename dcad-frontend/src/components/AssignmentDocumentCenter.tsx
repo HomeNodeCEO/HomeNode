@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useState } from 'react';
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
@@ -154,6 +154,12 @@ export default function AssignmentDocumentCenter({
   const [documentTitle, setDocumentTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [reviewer, setReviewer] = useState(() => defaultReviewer.trim());
+  const reviewerInputId = useId();
+  const [reviewerAnimationEnabled, setReviewerAnimationEnabled] = useState(() => (
+    typeof window !== 'undefined' && typeof window.matchMedia === 'function'
+      ? !window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      : false
+  ));
   const [candidateValues, setCandidateValues] = useState<Record<number, string>>({});
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
@@ -648,7 +654,7 @@ export default function AssignmentDocumentCenter({
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</span>
-              <select className="select select-bordered select-sm mt-1 w-full bg-white" value={documentType} onChange={(event) => setDocumentType(event.target.value as AssignmentDocumentType)}>
+              <select className="hn-document-type select select-bordered select-sm mt-1 w-full" value={documentType} onChange={(event) => setDocumentType(event.target.value as AssignmentDocumentType)}>
                 {DOCUMENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
@@ -667,14 +673,14 @@ export default function AssignmentDocumentCenter({
 
           <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
             <div className="space-y-2">
-              <div className="flex items-center justify-between">
+              <div className="flex items-center justify-between gap-2">
                 <h4 className="text-sm font-semibold text-slate-900">{isUad ? 'UAD Workfile Documents' : 'Property File Documents'}</h4>
-                <button type="button" className="text-xs font-semibold text-blue-700 hover:underline" onClick={() => void loadDocuments()} disabled={loading}>Refresh</button>
+                <button type="button" className="hn-action-secondary btn btn-xs shrink-0 rounded-lg normal-case" onClick={() => void loadDocuments()} disabled={loading}>Refresh</button>
               </div>
               {documents.length ? documents.map((document) => (
-                <button key={document.id} type="button" onClick={() => void loadDocument(document.id)} className={`w-full rounded-lg border p-3 text-left transition ${selectedDocument?.id === document.id ? 'hn-custom-selection' : 'border-slate-200 bg-white hover:border-violet-400 hover:bg-violet-50'}`}>
-                  <span className="block truncate text-sm font-semibold text-slate-900">{document.title}</span>
-                  <span className="mt-1 block text-[11px] text-slate-500">{fileSize(document.file_size_bytes)} · {document.page_count || 'Pending'} page(s)</span>
+                <button key={document.id} type="button" onClick={() => void loadDocument(document.id)} aria-pressed={selectedDocument?.id === document.id} className="hn-document-choice w-full rounded-lg border p-3 text-left transition">
+                  <span className="hn-document-choice-title block truncate text-sm font-semibold">{document.title}</span>
+                  <span className="hn-document-choice-detail mt-1 block text-[11px]">{fileSize(document.file_size_bytes)} · {document.page_count || 'Pending'} page(s)</span>
                   <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusStyle(document.processing_status)}`}>
                     {statusLabel(document.processing_status)}
                   </span>
@@ -697,12 +703,17 @@ export default function AssignmentDocumentCenter({
             </div>
 
             <div className="min-w-0 space-y-3 xl:col-span-2">
-              <label className="hn-evidence-reviewer-frame block rounded-xl p-3">
-                <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Appraiser / Reviewer</span>
+              <div className="hn-document-reviewer hn-evidence-reviewer-frame block rounded-xl p-3" data-reviewer-animation={reviewerAnimationEnabled ? 'on' : 'off'}>
+                <div className="mb-2 flex items-center justify-between gap-2">
+                  <label htmlFor={reviewerInputId} className="hn-document-reviewer-label text-xs font-semibold uppercase tracking-wide">Appraiser / Reviewer</label>
+                  <button type="button" className="hn-action-secondary btn btn-xs rounded-lg normal-case" aria-pressed={reviewerAnimationEnabled} onClick={() => setReviewerAnimationEnabled((enabled) => !enabled)}>
+                    {reviewerAnimationEnabled ? 'Pause glow' : 'Animate glow'}
+                  </button>
+                </div>
                 <span className="hn-evidence-reviewer-input-ring">
-                  <input className="hn-evidence-reviewer-input input input-sm w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
+                  <input id={reviewerInputId} className="hn-evidence-reviewer-input input input-sm w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
                 </span>
-              </label>
+              </div>
               {selectedDocument ? (
                 <>
                   <div className={`rounded-lg p-3 text-xs leading-5 ${statusStyle(selectedDocument.processing_status)}`}>

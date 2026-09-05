@@ -1091,9 +1091,41 @@ export async function getUadCertificationReadiness(workfileId: string): Promise<
   return response.readiness;
 }
 
+export interface UadSignatureAcknowledgment {
+  acknowledgment_token: string;
+  acknowledgment_id: string;
+  acknowledged_at: string;
+  expires_at: string;
+  revision_number: number;
+}
+
+export async function acknowledgeUadSignature(
+  workfileId: string,
+  input: {
+    expected_revision: number;
+    standard_certifications_acknowledged: true;
+    scope_of_work_acknowledged: true;
+  },
+): Promise<UadSignatureAcknowledgment> {
+  const response = await uadFetchJSON<{ acknowledgment: UadSignatureAcknowledgment }>(
+    makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/signature-acknowledgments`),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(input),
+    },
+  );
+  return response.acknowledgment;
+}
+
 export async function signUadWorkfile(
   workfileId: string,
-  input: { execution_date: string; authentication_method: string; signature_asset_id?: string },
+  input: {
+    execution_date: string;
+    authentication_method: string;
+    acknowledgment_token: string;
+    signature_asset_id?: string;
+  },
 ): Promise<UadSignatureResult> {
   const result = await uadFetchJSON<UadSignatureResult>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/signatures`),

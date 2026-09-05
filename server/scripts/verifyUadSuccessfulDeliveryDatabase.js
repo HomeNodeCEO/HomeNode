@@ -5,7 +5,10 @@ import {
   APPENDIX_H1_MANIFEST,
   buildAppendixH1Coverage,
 } from "../src/modules/uad/appendixH.js";
-import { signUadWorkfile } from "../src/modules/uad/certifications.js";
+import {
+  acknowledgeUadSignature,
+  signUadWorkfile,
+} from "../src/modules/uad/certifications.js";
 import { getUadEditor } from "../src/modules/uad/editor.js";
 import { generateUadXmlArtifact } from "../src/modules/uad/uadArtifacts.js";
 import { generateUadSubmissionPackage } from "../src/modules/uad/uadPackageArtifacts.js";
@@ -502,11 +505,22 @@ try {
     const executionDate = new Date().toISOString().slice(0, 10);
     const storage = memoryStorage(objects);
     const unsignedPdf = await generateUadPdfArtifact(pool, storage, workfileId);
-    const signature = await signUadWorkfile(pool, workfileId, {
+    const authentication = {
       userId: APPRAISER_ID,
       issuer: "synthetic-test",
       subject: "synthetic-test-appraiser",
-    }, { authentication_method: "session", execution_date: executionDate });
+    };
+    const signingSecret = "synthetic-uad-delivery-signing-secret-v1";
+    const acknowledgment = await acknowledgeUadSignature(pool, workfileId, authentication, {
+      expected_revision: Number(unsignedPdf.artifact.revision_number),
+      standard_certifications_acknowledged: true,
+      scope_of_work_acknowledged: true,
+    }, { signingSecret });
+    const signature = await signUadWorkfile(pool, workfileId, authentication, {
+      authentication_method: "session",
+      execution_date: executionDate,
+      acknowledgment_token: acknowledgment.acknowledgment_token,
+    }, { signingSecret });
     const pdf = await generateUadPdfArtifact(pool, storage, workfileId);
     const xml = await generateUadXmlArtifact(pool, storage, workfileId);
     if (xml.schema_validation?.status !== "passed") {

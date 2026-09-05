@@ -6,7 +6,9 @@ import { fileURLToPath } from "node:url";
 
 import {
   buildUadCredentialSnapshot,
+  createUadSignatureAcknowledgmentToken,
   normalizeUadAppraiserLicenseType,
+  verifyUadSignatureAcknowledgmentToken,
 } from "../src/modules/uad/certifications.js";
 import {
   buildUadCertificationWarnings,
@@ -131,6 +133,98 @@ test("builds deterministic immutable credential snapshots with official license 
   assert.equal(normalizeUadAppraiserLicenseType("trainee appraiser"), "TraineeAppraiser");
 });
 
+test("binds signature acknowledgment tokens to the exact signer and workfile revision", () => {
+  const secret = "test-signing-secret-that-is-at-least-32-characters";
+  const now = new Date("2026-09-04T12:00:00.000Z");
+  const authentication = {
+    issuer: "https://identity.example",
+    subject: "workos-user-1",
+  };
+  const expected = {
+    workfileId: "00000000-0000-4000-8000-000000000010",
+    revisionNumber: 12,
+    inputDigest: "a".repeat(64),
+    signerUserId: "00000000-0000-4000-8000-000000000011",
+    signerRole: "appraiser",
+    authentication,
+  };
+  const acknowledgment = createUadSignatureAcknowledgmentToken(
+    expected,
+    secret,
+    {
+      now,
+      acknowledgmentId: "00000000-0000-4000-8000-000000000012",
+    },
+  );
+  const verified = verifyUadSignatureAcknowledgmentToken(
+    acknowledgment.token,
+    expected,
+    secret,
+    { now: new Date("2026-09-04T12:05:00.000Z") },
+  );
+  assert.deepEqual(verified, {
+    acknowledgment_id: "00000000-0000-4000-8000-000000000012",
+    acknowledged_at: "2026-09-04T12:00:00.000Z",
+    standard_certifications_acknowledged: true,
+    scope_of_work_acknowledged: true,
+    authentication_issuer: "https://identity.example",
+    authentication_subject: "workos-user-1",
+  });
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken(
+      acknowledgment.token,
+      { ...expected, revisionNumber: 13 },
+      secret,
+      { now },
+    ),
+    /uad_signature_acknowledgment_mismatch/,
+  );
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken(
+      acknowledgment.token,
+      { ...expected, signerUserId: "00000000-0000-4000-8000-000000000099" },
+      secret,
+      { now },
+    ),
+    /uad_signature_acknowledgment_mismatch/,
+  );
+});
+
+test("rejects missing, tampered, expired, or weakly signed acknowledgment tokens", () => {
+  const secret = "test-signing-secret-that-is-at-least-32-characters";
+  const now = new Date("2026-09-04T12:00:00.000Z");
+  const expected = {
+    workfileId: "00000000-0000-4000-8000-000000000020",
+    revisionNumber: 4,
+    inputDigest: "b".repeat(64),
+    signerUserId: "00000000-0000-4000-8000-000000000021",
+    signerRole: "supervisory_appraiser",
+    authentication: { issuer: "https://identity.example", subject: "workos-user-2" },
+  };
+  const { token } = createUadSignatureAcknowledgmentToken(expected, secret, { now });
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken("", expected, secret, { now }),
+    /uad_signature_acknowledgment_required/,
+  );
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken(`${token.slice(0, -1)}x`, expected, secret, { now }),
+    /uad_signature_acknowledgment_invalid/,
+  );
+  assert.throws(
+    () => verifyUadSignatureAcknowledgmentToken(
+      token,
+      expected,
+      secret,
+      { now: new Date("2026-09-04T12:15:00.000Z") },
+    ),
+    /uad_signature_acknowledgment_expired/,
+  );
+  assert.throws(
+    () => createUadSignatureAcknowledgmentToken(expected, "short", { now }),
+    /uad_signature_acknowledgment_unavailable/,
+  );
+});
+
 test("registers the additive Section 29 catalog, rules, and tamper-evident signature columns", () => {
   const sql = fs.readFileSync(path.join(TEST_DIRECTORY, "../migrations/20260922_uad_certifications.sql"), "utf8");
   assert.match(sql, /ADD COLUMN IF NOT EXISTS execution_date date/);
@@ -153,16 +247,28 @@ test("registers the additive Section 29 catalog, rules, and tamper-evident signa
 test("keeps certification readiness and signing behind the existing OIDC identity boundary", () => {
   const certifications = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/certifications.js"), "utf8");
   const client = fs.readFileSync(path.join(TEST_DIRECTORY, "../../dcad-frontend/src/features/uad/api.ts"), "utf8");
+  const panel = fs.readFileSync(path.join(TEST_DIRECTORY, "../../dcad-frontend/src/features/uad/components/UadSignaturePanel.tsx"), "utf8");
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const server = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/oldServer.js"), "utf8");
   assert.match(router, /certification-readiness", authenticateIfNeeded/);
+  assert.match(router, /signature-acknowledgments", authenticateIfNeeded/);
   assert.match(router, /signatures", authenticateIfNeeded/);
   assert.match(router, /req\.mobileAuth \? next\(\) : authenticateSigner/);
   assert.match(router, /current_signer: currentSigner/);
   assert.match(router, /signUadWorkfile/);
   assert.match(server, /verifier: mobileOidcVerifier/);
   assert.match(certifications, /uad_signature_pdf_required/);
+  assert.match(certifications, /uad_signature\.acknowledged/);
+  assert.match(certifications, /verifyUadSignatureAcknowledgmentToken\(/);
+  assert.doesNotMatch(
+    certifications,
+    /const attestation = \{\s*standard_certifications_acknowledged: true,\s*scope_of_work_acknowledged: true/,
+  );
   assert.match(certifications, /metadata\?\.input_digest_sha256 === inputDigest/);
+  assert.match(client, /signature-acknowledgments/);
+  assert.match(client, /acknowledgment_token: string/);
+  assert.match(panel, /standard_certifications_acknowledged: true/);
+  assert.match(panel, /acknowledgment_token: acknowledgment\.acknowledgment_token/);
   assert.match(client, /generateUadPdfArtifact[\s\S]*announceUadWorkfileMutation\(workfileId\)/);
   assert.match(client, /generateUadXmlArtifact[\s\S]*announceUadWorkfileMutation\(workfileId\)/);
 });

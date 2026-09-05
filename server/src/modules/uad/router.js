@@ -10,7 +10,11 @@ import {
 } from "./assets.js";
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
 import { applyUadCompletionSuggestions } from "./completionApply.js";
-import { getUadCertificationReadiness, signUadWorkfile } from "./certifications.js";
+import {
+  acknowledgeUadSignature,
+  getUadCertificationReadiness,
+  signUadWorkfile,
+} from "./certifications.js";
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import {
@@ -77,6 +81,8 @@ function errorStatus(error) {
   if (message.includes("not_found")) return 404;
   if (message === "uad_authentication_required") return 401;
   if (message === "uad_organization_required") return 400;
+  if (message === "uad_signature_acknowledgment_unavailable") return 503;
+  if (message.startsWith("uad_signature_acknowledgment")) return 409;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message.endsWith("_conflict")) return 409;
   if (message.endsWith("_status_locked")) return 409;
@@ -185,6 +191,7 @@ export function createUadRouter({
   compliance = { enabled: false, providers: {} },
   documentOcrProvider = null,
   applyCompletionSuggestions = applyUadCompletionSuggestions,
+  getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
   authenticationRequired = false,
   security = {},
@@ -406,6 +413,21 @@ export function createUadRouter({
     }
   });
 
+  router.post("/workfiles/:workfileId/signature-acknowledgments", authenticateIfNeeded, async (req, res) => {
+    try {
+      const acknowledgment = await acknowledgeUadSignature(
+        pool,
+        req.params.workfileId,
+        req.mobileAuth,
+        req.body || {},
+        { signingSecret: getSigningSecret() },
+      );
+      return res.status(201).json({ acknowledgment });
+    } catch (error) {
+      return sendError(res, error);
+    }
+  });
+
   router.post("/workfiles/:workfileId/signatures", authenticateIfNeeded, async (req, res) => {
     try {
       const result = await signUadWorkfile(
@@ -413,6 +435,7 @@ export function createUadRouter({
         req.params.workfileId,
         req.mobileAuth,
         req.body || {},
+        { signingSecret: getSigningSecret() },
       );
       return res.status(201).json(result);
     } catch (error) {

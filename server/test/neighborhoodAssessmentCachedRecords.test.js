@@ -12,7 +12,7 @@ const parcel = (account_id, options = {}) => ({ account_id, residential_year_bui
   subdivision_key: "city:plat:phase-a", current_market_value: 280_000, tax_year: 2024, ...temporal, ...options });
 const transaction = (sale_id, account_id, options = {}) => ({ sale_id, source_record_id: `source-${sale_id}`,
   primary_account_id: account_id, closing_date: "2024-03-01", sale_price: 300_000,
-  record_type: "closed_sale", market_eligible: true, ...temporal, ...options });
+  record_type: "closed_sale", market_eligible: true, parcel_links_complete: true, ...temporal, ...options });
 const link = (sale_id, account_id, options = {}) => ({ source_record_id: `source-${sale_id}`, account_id,
   is_resolved: true, match_method: "exact", gla_sqft_at_sale: 2000, ...temporal, ...options });
 function fixture() {
@@ -171,6 +171,73 @@ test("missing/truncated link enumeration does not fall back to a primary-only ho
   assert.equal(explicit.status, "incomplete", "missing required source still disclosed despite known single-parcel evidence");
 });
 
+test("explicit incomplete parcel membership overrides a complete envelope and a matching declared count", () => {
+  for (const count of [undefined, 1]) {
+    const input = fixture();
+    Object.assign(input.sources.transactions.rows[0], { parcel_links_complete: false, parcel_count: count });
+    const result = buildCachedNeighborhoodInputs(input);
+    assert.equal(result.status, "incomplete");
+    assert.ok(result.incomplete_reasons.includes("parcel_membership_incomplete"));
+    assert.equal(result.statistics_input.sales.some(row => row.canonical_transaction_id === "T1"), false);
+    assert.equal(result.transaction_evidence.find(row => row.canonical_transaction_id === "T1").disposition, "parcel_membership_incomplete");
+    assert.equal(result.diagnostics.unresolved_membership_transaction_rows, 1);
+  }
+});
+
+test("an absent membership claim cannot use a complete selected-account envelope as full transaction enumeration", () => {
+  const input = fixture();
+  delete input.sources.transactions.rows[0].parcel_links_complete;
+  const incomplete = buildCachedNeighborhoodInputs(input);
+  assert.equal(incomplete.status, "incomplete");
+  assert.equal(incomplete.statistics_input.sales.some(row => row.canonical_transaction_id === "T1"), false);
+  input.sources.transactions.rows[0].parcel_count = 2;
+  assert.equal(buildCachedNeighborhoodInputs(input).status, "incomplete", "unselected co-parcel is not present in the envelope");
+  input.sources.sale_links.rows.push(link("T1", "UNSELECTED-LOT"));
+  const fullCountEvidence = buildCachedNeighborhoodInputs(input);
+  assert.equal(fullCountEvidence.status, "ready");
+  const packageSale = fullCountEvidence.statistics_input.sales.find(row => row.canonical_transaction_id === "T1");
+  assert.equal(packageSale.parcel_count, 2);
+  assert.deepEqual(packageSale.parcels.map(row => row.account_id), ["P1", "UNSELECTED-LOT"]);
+  const summary = summarizeNeighborhoodPopulations(fullCountEvidence.statistics_input);
+  assert.equal(summary.sales.diagnostics.unresolved_allocation_transactions, 1, "membership completeness does not invent per-property price allocation");
+  assert.equal(summary.sales.property_sale_price.median, 365_000);
+});
+
+test("malformed or contradictory membership metadata cannot certify complete parcel membership", () => {
+  for (const changes of [
+    { parcel_links_complete: "true" }, { parcel_links_complete: "false", parcel_count: 1 },
+    { parcel_count: 0 }, { parcel_count: -1 }, { parcel_count: 1.5 }, { parcel_count: "" }, { parcel_count: 2 },
+  ]) {
+    const input = fixture(); Object.assign(input.sources.transactions.rows[0], changes);
+    const result = buildCachedNeighborhoodInputs(input);
+    assert.equal(result.status, "incomplete");
+    assert.equal(result.statistics_input.sales.some(row => row.canonical_transaction_id === "T1"), false);
+  }
+  const unknownLink = fixture(); unknownLink.sources.sale_links.rows.push(link("T1", null));
+  assert.equal(buildCachedNeighborhoodInputs(unknownLink).status, "incomplete");
+});
+
+test("unknown transaction kinds remain incomplete, distinct from supported non-sale exclusions", () => {
+  for (const kind of [undefined, null, "", " ", "closed_sal", "Closed_Sale", "pending", 0, false]) {
+    const input = fixture();
+    if (kind === undefined) delete input.sources.transactions.rows[0].record_type;
+    else input.sources.transactions.rows[0].record_type = kind;
+    const result = buildCachedNeighborhoodInputs(input);
+    assert.equal(result.status, "incomplete");
+    assert.ok(result.incomplete_reasons.includes("transaction_kind_unknown"));
+    assert.equal(result.diagnostics.unknown_transaction_kind_rows, 1);
+    assert.equal(result.diagnostics.nonclosed_transaction_rows, 0);
+    assert.equal(result.transaction_evidence.find(row => row.canonical_transaction_id === "T1").disposition, "transaction_kind_unknown");
+    assert.equal(result.statistics_input.sales.some(row => row.canonical_transaction_id === "T1"), false);
+  }
+  const listing = fixture(); listing.sources.transactions.rows[0].record_type = "listing";
+  const known = buildCachedNeighborhoodInputs(listing);
+  assert.equal(known.status, "ready");
+  assert.equal(known.diagnostics.unknown_transaction_kind_rows, 0);
+  assert.equal(known.diagnostics.nonclosed_transaction_rows, 1);
+  assert.deepEqual(known.incomplete_reasons, []);
+});
+
 test("future outcomes, latest listing status and unknown market eligibility stay outside historical sales", () => {
   const input = fixture();
   input.sources.transactions.rows.push(transaction("FUTURE", "P1", { closing_date: "2024-07-01" }),
@@ -212,8 +279,9 @@ test("input order does not affect captured identity but source revision/context 
   assert.notEqual(result.captured_input_sha256, buildCachedNeighborhoodInputs(input).captured_input_sha256);
 });
 
-test("conflicting canonical metadata cannot be sanitized by date or eligibility filtering", () => {
-  for (const changes of [{ closing_date: "2024-07-01" }, { market_eligible: false }, { market_eligible: undefined }, { sale_price: 900_000 }]) {
+test("conflicting canonical metadata cannot be sanitized by date, kind, membership or eligibility filtering", () => {
+  for (const changes of [{ closing_date: "2024-07-01" }, { market_eligible: false }, { market_eligible: undefined }, { sale_price: 900_000 },
+    { record_type: "listing" }, { record_type: undefined }, { parcel_links_complete: false }, { parcel_count: 2 }]) {
     const input = fixture(); input.sources.transactions.rows.push({ ...input.sources.transactions.rows[0], ...changes });
     const result = buildCachedNeighborhoodInputs(input);
     assert.equal(result.statistics_input.sales.some(row => row.canonical_transaction_id === "T1"), false);

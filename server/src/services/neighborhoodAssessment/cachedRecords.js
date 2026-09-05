@@ -5,6 +5,9 @@ import { ageAtEffectiveDate, finiteNumberOrNull, NEIGHBORHOOD_STATISTICS_LIMITS 
 const SOURCE_KEYS = ["parcels", "accounts", "transactions", "sale_links"];
 const SCOPE_KEYS = ["organization_id", "appraisal_case_id", "subject_snapshot_id", "account_id"];
 const RESOLVED_METHODS = ["exact", "punctuation_normalized", "embedded_full_id", "concatenated_full_ids", "manual_verified"];
+// Normalized adapter vocabulary, not an inferred provider enumeration. New
+// source kinds require an explicit mapping; unknown kinds cannot certify exclusion.
+const TRANSACTION_KINDS = ["closed_sale", "listing"];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const text = value => typeof value === "string" && value.trim() && value.length <= 1024 ? value.trim() : null;
 const id = value => typeof value === "number" && Number.isSafeInteger(value) ? String(value) : text(value);
@@ -96,10 +99,22 @@ function dateOrNull(value) {
   try { return assessmentDate(value); } catch { return null; }
 }
 
+function transactionKind(value) {
+  return TRANSACTION_KINDS.includes(value) ? value : "unknown";
+}
+
+function parcelCount(value) {
+  const count = number(value);
+  return Number.isSafeInteger(count) ? count : null;
+}
+
 /** Pure translation of a captured cache query, not a repository or matching
  * engine. complete describes the supplied query envelope, never inferred from
  * row counts. Accounts are optional enrichment; missing required source roles
  * keep this result incomplete. Callers must authorize scope before capture.
+ * parcel_links_complete and parcel_count are per-canonical-transaction claims
+ * about the FULL parcel set (including unselected parcels), never query-envelope
+ * or selected-account counts. Captured source evidence must support those claims.
  */
 export function buildCachedNeighborhoodInputs({ scope, population_id, effective_date, observation_period,
   selection, sources, required_sources = ["parcels", "transactions", "sale_links"] }) {
@@ -127,7 +142,8 @@ export function buildCachedNeighborhoodInputs({ scope, population_id, effective_
     unknown_housing_accounts: 0, ineligible_housing_accounts: 0, conflicting_housing_accounts: 0,
     missing_canonical_transaction_rows: 0, ambiguous_source_record_links: 0, orphan_link_rows: 0,
     invalid_date_transaction_rows: 0, future_transaction_rows: 0, outside_period_transaction_rows: 0,
-    nonclosed_transaction_rows: 0, unknown_transaction_eligibility_rows: 0, unsupported_temporal_transaction_rows: 0,
+    nonclosed_transaction_rows: 0, unknown_transaction_kind_rows: 0,
+    unknown_transaction_eligibility_rows: 0, unsupported_temporal_transaction_rows: 0,
     unresolved_membership_transaction_rows: 0, conflicting_canonical_transaction_rows: 0 };
   for (const key of ["parcels", "accounts"]) {
     const { snapshot, rows } = prepared[key];
@@ -172,12 +188,16 @@ export function buildCachedNeighborhoodInputs({ scope, population_id, effective_
     const canonical = id(row?.canonical_transaction_id ?? row?.sale_id);
     const sourceRecord = id(row?.source_record_id);
     if (canonical) {
-      const evidence = canonicalEvidence.get(canonical) || { dates: new Set(), prices: new Set(), market_states: new Set() };
+      const evidence = canonicalEvidence.get(canonical) || { dates: new Set(), prices: new Set(), market_states: new Set(),
+        record_kinds: new Set(), membership_states: new Set(), parcel_counts: new Set() };
       const date = dateOrNull(row.sale_date ?? row.closing_date);
       const price = number(row.sale_price, true);
       if (date !== null) evidence.dates.add(date);
       if (price !== null) evidence.prices.add(price);
       evidence.market_states.add(row.market_eligible === true ? "eligible" : row.market_eligible === false ? "ineligible" : "unknown");
+      evidence.record_kinds.add(transactionKind(row.record_type));
+      evidence.membership_states.add(row.parcel_links_complete === true ? "complete" : row.parcel_links_complete === false ? "incomplete" : "unknown");
+      evidence.parcel_counts.add(row.parcel_count == null ? "unknown" : parcelCount(row.parcel_count) ?? "invalid");
       canonicalEvidence.set(canonical, evidence);
     }
     if (canonical && sourceRecord) {
@@ -208,14 +228,19 @@ export function buildCachedNeighborhoodInputs({ scope, population_id, effective_
       sale_date: saleDate, source_references: [prepared.transactions.snapshot.id], disposition: "eligible" };
     transactionEvidence.push(evidence);
     const canonicalFacts = canonicalEvidence.get(canonical);
-    if (canonicalFacts.dates.size > 1 || canonicalFacts.prices.size > 1 || canonicalFacts.market_states.size > 1) {
+    if (Object.values(canonicalFacts).some(values => values.size > 1)) {
       diagnostics.conflicting_canonical_transaction_rows++; evidence.disposition = "conflicting_canonical_metadata";
       reasons.add("conflicting_canonical_transaction_metadata"); continue;
     }
     if (!saleDate) { diagnostics.invalid_date_transaction_rows++; evidence.disposition = "invalid_date"; reasons.add("invalid_transaction_date"); continue; }
     if (saleDate > effectiveDate) { diagnostics.future_transaction_rows++; evidence.disposition = "future_outcome"; continue; }
     if (saleDate < start || saleDate > end) { diagnostics.outside_period_transaction_rows++; evidence.disposition = "outside_period"; continue; }
-    if (row.record_type !== "closed_sale") { diagnostics.nonclosed_transaction_rows++; evidence.disposition = "not_closed_sale"; continue; }
+    const kind = transactionKind(row.record_type);
+    if (kind === "unknown") {
+      diagnostics.unknown_transaction_kind_rows++; evidence.disposition = "transaction_kind_unknown";
+      reasons.add("transaction_kind_unknown"); continue;
+    }
+    if (kind !== "closed_sale") { diagnostics.nonclosed_transaction_rows++; evidence.disposition = "not_closed_sale"; continue; }
     if (row.market_eligible !== true) {
       evidence.disposition = row.market_eligible === false ? "nonmarket" : "market_eligibility_unknown";
       if (row.market_eligible !== false) { diagnostics.unknown_transaction_eligibility_rows++; reasons.add("market_eligibility_unknown"); }
@@ -239,17 +264,22 @@ export function buildCachedNeighborhoodInputs({ scope, population_id, effective_
       parcels.push({ account_id: primary, verified: row.primary_account_verified === true,
         allocated_sale_price: null, allocation_verified: false, gla_sqft_at_sale: number(row.gla_sqft_at_sale) });
     }
-    const declaredCount = number(row.parcel_count);
+    const declaredCount = parcelCount(row.parcel_count);
     const knownParcelCount = new Set(parcels.map(parcel => parcel.account_id).filter(Boolean)).size;
-    const completeLinks = row.parcel_links_complete === true
-      || (prepared.sale_links.snapshot.complete === true && rawLinks.length > 0)
-      || (Number.isSafeInteger(declaredCount) && declaredCount === knownParcelCount);
+    // A complete selected-account query may still omit unselected co-parcels.
+    // Explicit incomplete membership wins over every positive envelope/count.
+    const validMembershipClaim = row.parcel_links_complete == null || row.parcel_links_complete === true;
+    const consistentCount = row.parcel_count == null || (declaredCount !== null && declaredCount === knownParcelCount);
+    const completeLinks = validMembershipClaim && consistentCount && knownParcelCount > 0
+      && parcels.every(parcel => parcel.account_id !== null)
+      && ((row.parcel_links_complete === true && rawLinks.length > 0)
+        || (declaredCount !== null && declaredCount === knownParcelCount));
     if (!completeLinks) {
       diagnostics.unresolved_membership_transaction_rows++; evidence.disposition = "parcel_membership_incomplete";
       reasons.add("parcel_membership_incomplete"); continue;
     }
     sales.push({ canonical_transaction_id: canonical, sale_date: saleDate, sale_price: number(row.sale_price, true),
-      market_eligible: true, parcel_count: Number.isSafeInteger(declaredCount) ? declaredCount : knownParcelCount,
+      market_eligible: true, parcel_count: declaredCount ?? knownParcelCount,
       parcels: parcels.toSorted((a, b) => compare(canonicalAssessmentJson(a), canonicalAssessmentJson(b))),
       source_references: [...new Set([prepared.transactions.snapshot.id,
         ...(rawLinks.length ? [prepared.sale_links.snapshot.id] : []),

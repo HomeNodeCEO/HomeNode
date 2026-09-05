@@ -199,6 +199,7 @@ export function createUadRouter({
   documentOcrProvider = null,
   applyCompletionSuggestions = applyUadCompletionSuggestions,
   createWorkfile = createPublicCatalogUadWorkfile,
+  getCertificationReadiness = getUadCertificationReadiness,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
   authenticationRequired = false,
@@ -396,12 +397,24 @@ export function createUadRouter({
 
   router.get("/workfiles/:workfileId/certification-readiness", authenticateIfNeeded, async (req, res) => {
     try {
-      const readiness = await getUadCertificationReadiness(pool, req.params.workfileId);
+      const readiness = await getCertificationReadiness(pool, req.params.workfileId);
       const currentSigner = readiness.signers.find((signer) => signer.user_id === req.mobileAuth.userId);
       if (!currentSigner) {
         return res.status(403).json({ error: "uad_signature_access_denied" });
       }
-      return res.json({ readiness: { ...readiness, current_signer: currentSigner } });
+      // Co-signers need per-role blockers, not another appraiser's credentials.
+      // Keep full signer snapshots inside the signing/artifact services.
+      return res.json({ readiness: {
+        workfile_id: readiness.workfile_id,
+        revision_number: readiness.revision_number,
+        workfile_status: readiness.workfile_status,
+        ready: readiness.ready,
+        artifact_readiness: readiness.artifact_readiness,
+        signers: readiness.signers.map(({ role, ready, missing }) => ({
+          role, ready, missing: [...missing],
+        })),
+        current_signer: currentSigner,
+      } });
     } catch (error) {
       return sendError(res, error);
     }

@@ -117,10 +117,12 @@ test("Property Tax desktop gates preserve workflow and account validation order"
 
   const deniedLoad = await fetch(`${denied.baseUrl}/api/accounts/123/property-tax-protest`);
   assert.equal(deniedLoad.status, 403);
+  assert.equal(deniedLoad.headers.get("cache-control"), "no-store");
   assert.deepEqual(await deniedLoad.json(), { error: "workflow_access_denied" });
 
   const invalidLoad = await fetch(`${accepted.baseUrl}/api/accounts/bad%20id/property-tax-protest`);
   assert.equal(invalidLoad.status, 400);
+  assert.equal(invalidLoad.headers.get("cache-control"), "no-store");
   assert.deepEqual(await invalidLoad.json(), { error: "invalid_account_id" });
 
   const invalidSave = await patchFile(accepted.baseUrl, "bad%20id", "file-1");
@@ -168,6 +170,7 @@ test("enforced Property Tax latest loads prefilter organizations and exact loads
 
   const response = await fetch(`${server.baseUrl}/api/accounts/legacy_1/property-tax-protest`);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { account_id: "CANONICAL_1", file });
   const get = calls.find((call) => call.type === "get");
   assert.equal(get.pool, options.pool);
@@ -191,6 +194,7 @@ test("enforced Property Tax latest loads prefilter organizations and exact loads
     `${server.baseUrl}/api/accounts/legacy_1/property-tax-protest?file_id=file-1`,
   );
   assert.equal(exactResponse.status, 200);
+  assert.equal(exactResponse.headers.get("cache-control"), "no-store");
   assert.deepEqual(await exactResponse.json(), { account_id: "CANONICAL_1", file });
   const gets = calls.filter((call) => call.type === "get");
   assert.deepEqual(gets[1].settings, { organizationIds: null });
@@ -301,6 +305,7 @@ test("Property Tax saves authorize the existing file before preserving revision 
 
   const response = await patchFile(server.baseUrl, "legacy_1", "file-1", body);
   assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { ok: true, file: savedFile });
   assert.deepEqual(calls.map(({ type }) => type), ["get", "access", "save"]);
   assert.deepEqual(calls[1], {
@@ -521,6 +526,7 @@ test("Property Tax read failures remain validation-aware and diagnostic-safe", a
   ]) {
     const response = await fetch(server.baseUrl + url);
     assert.equal(response.status, status);
+    assert.equal(response.headers.get("cache-control"), "no-store");
     const body = await response.json();
     assert.deepEqual(body, { error });
     assert.doesNotMatch(JSON.stringify(body), /password|secret/);
@@ -694,6 +700,74 @@ test("Property Tax document failures return bounded diagnostics", async (context
   assert.deepEqual(body, { error: "property_tax_documents_lookup_failed" });
   assert.doesNotMatch(JSON.stringify(body), /password|secret/);
   assert.equal(errors.length, 1);
+});
+
+test("Property Tax PDF bytes stay identical but HTTP storage and stale conditional access are denied", async (context) => {
+  let accessAllowed = true;
+  let authenticated = true;
+  let documentCalls = 0;
+  const content = Buffer.from("%PDF-private-tax-evidence");
+  const file = { tax_protest_file_id: "tax-file-1", report_file_id: "report-file-1" };
+  const server = await startRouter(baseOptions({
+    authenticationRequired: true,
+    requireWorkflowAccess(_req, res) {
+      if (authenticated) return true;
+      res.status(401).json({ error: "authentication_required" });
+      return false;
+    },
+    getFile: async () => file,
+    decideAccess: () => accessAllowed,
+    pool: { query: async () => ({ rows: [{ id: 41 }] }) },
+    getDocument: async (_pool, id, options) => {
+      documentCalls += 1;
+      assert.equal(id, 41);
+      assert.equal(options.includeContent, true);
+      return { id, content, checksum_sha256: "pdf-checksum", file_name: 'evidence"\r\n.pdf' };
+    },
+  }));
+  context.after(server.close);
+
+  const prefix = `${server.baseUrl}/api/accounts/123/property-tax-protest`;
+  for (const suffix of ["?file_id=tax-file-1", "/tax-file-1/documents/41/content"]) {
+    authenticated = true;
+    accessAllowed = true;
+    const response = await fetch(prefix + suffix);
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const etag = response.headers.get("etag");
+    assert.ok(etag);
+    if (suffix.endsWith("/content")) {
+      assert.equal(response.headers.get("content-type"), "application/pdf");
+      assert.equal(response.headers.get("content-disposition"), 'inline; filename="evidence___.pdf"');
+      assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+      assert.equal(etag, '"pdf-checksum"');
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), content);
+    } else {
+      assert.deepEqual(await response.json(), { account_id: "123", file });
+    }
+    const head = await fetch(prefix + suffix, { method: "HEAD" });
+    assert.equal(head.status, 200);
+    assert.equal(head.headers.get("cache-control"), "no-store");
+    assert.equal(await head.text(), "");
+    const authorizedDocumentCalls = documentCalls;
+    accessAllowed = false;
+    for (const method of ["GET", "HEAD"]) {
+      const denied = await fetch(prefix + suffix, {
+        method, headers: { "if-none-match": etag },
+      });
+      assert.equal(denied.status, 403);
+      assert.equal(denied.headers.get("cache-control"), "no-store");
+      await denied.arrayBuffer();
+    }
+    authenticated = false;
+    const anonymous = await fetch(prefix + suffix, { headers: { "if-none-match": etag } });
+    assert.equal(anonymous.status, 401);
+    assert.equal(anonymous.headers.get("cache-control"), "no-store");
+    await anonymous.arrayBuffer();
+    assert.equal(documentCalls, authorizedDocumentCalls);
+  }
+  const unrelated = await fetch(`${prefix}-public`);
+  assert.equal(unrelated.headers.get("cache-control"), null);
 });
 
 test("Property Tax desktop composition and route position remain explicit", () => {

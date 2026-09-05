@@ -8,23 +8,15 @@ import { neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup, 
 import { persistNeighborhoodAttachment, getNeighborhoodAttachment, getAcceptedNeighborhoodApplication, recordNeighborhoodApplicationAcceptance } from "../src/services/neighborhoodAssessment/applicationRepository.js";
 import { assertNeighborhoodJsonbStorage } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
+import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDatabasePlan,
+  verifyNeighborhoodCiConnection, prepareNeighborhoodCiDatabase } from "./helpers/neighborhoodCiDatabase.js";
+import { devNull } from "node:os";
 
-// Run only against the dedicated database prepared by test:uad-migration. Never
-// bootstrap canonical identity tables here, load .env, or delete fixture records.
+// Run only against a fresh GitHub CI child database prepared by the ordinary
+// UAD/mobile scripts. Never add records to the shared runner database or delete
+// fixtures; the ephemeral service teardown owns disposal of this child database.
 // Actual canonical tables exercise publication/locks. Private rollback schemas
 // below are only absence probes, not substitutes for canonical migration tests.
-function checkedDatabaseUrl(value, mode) {
-  if (mode !== "test") throw new Error("Neighborhood PG tests require NODE_ENV=test");
-  let url;
-  try { url = new URL(value); } catch { throw new Error("Invalid neighborhood test DATABASE_URL"); }
-  if (!["postgres:", "postgresql:"].includes(url.protocol) ||
-      !["localhost", "127.0.0.1", "[::1]"].includes(url.hostname) ||
-      !/^\/[a-zA-Z0-9_]+_test$/.test(url.pathname) || url.search || url.hash) {
-    throw new Error("Neighborhood PG tests require a loopback *_test URL without query overrides");
-  }
-  return { connectionString: value, databaseName: url.pathname.slice(1) };
-}
-
 test("neighborhood PG guard rejects unsafe targets before importing pg or connecting", () => {
   for (const value of ["postgres://example.com/app_test", "postgres://127.0.0.1/app", "postgres://127.0.0.1/app_test?host=remote",
     "postgres://127.0.0.1/a/b_test", "postgres://127.0.0.1/app_test#ignored", "https://127.0.0.1/app_test", "not a URL"]) {
@@ -34,6 +26,47 @@ test("neighborhood PG guard rejects unsafe targets before importing pg or connec
   for (const host of ["127.0.0.1", "localhost", "[::1]"]) {
     assert.equal(checkedDatabaseUrl(`postgres://${host}/neighborhood_test`, "test").databaseName, "neighborhood_test");
   }
+});
+
+test("neighborhood child database is CI-only, uniquely named, and cannot inherit connection overrides", () => {
+  const env = { NODE_ENV: "test", GITHUB_ACTIONS: "true", CI: "true",
+    DATABASE_URL: "postgres://user:secret@127.0.0.1:5432/parent_test", PATH: "/preserved/path",
+    PGHOST: "remote", PGDATABASE: "production", DOTENV_CONFIG_OVERRIDE: "true",
+    DOTENV_CONFIG_PATH: "/unexpected/.env", DOTENV_KEY: "secret", NODE_OPTIONS: "--require malicious", NODE_PATH: "/unexpected" };
+  const plan = neighborhoodCiDatabasePlan(env, "00000000-0000-4000-8000-000000000001");
+  assert.match(plan.child.databaseName, /^neighborhood_[a-f0-9]{32}_test$/);
+  assert.ok(Buffer.byteLength(plan.child.databaseName) < 63);
+  assert.notEqual(plan.parent.databaseName, plan.child.databaseName);
+  assert.equal(new URL(plan.child.connectionString).host, "127.0.0.1:5432");
+  assert.equal(plan.env.DATABASE_URL, plan.child.connectionString);
+  assert.equal(plan.env.PATH, env.PATH);
+  assert.equal(plan.env.DOTENV_CONFIG_PATH, devNull);
+  for (const key of ["PGHOST", "PGDATABASE", "DOTENV_CONFIG_OVERRIDE", "DOTENV_KEY", "NODE_OPTIONS", "NODE_PATH"]) {
+    assert.equal(Object.hasOwn(plan.env, key), false);
+  }
+  assert.equal(env.DATABASE_URL, "postgres://user:secret@127.0.0.1:5432/parent_test");
+  assert.deepEqual(plan.scripts, ["prepareUadCiDatabase.js", "runUadMigrations.js", "prepareMobileCiDatabase.js", "runMobileMigrations.js"]);
+  for (const key of ["NODE_ENV", "GITHUB_ACTIONS", "CI"]) for (const value of [undefined, "false", "TRUE", "production"]) {
+    assert.throws(() => neighborhoodCiDatabasePlan({ ...env, [key]: value }), error => !error.message.includes("secret"));
+  }
+  for (const nonce of ["bad", 'name";DROP DATABASE parent_test;', "a".repeat(80)]) {
+    assert.throws(() => neighborhoodCiDatabasePlan(env, nonce));
+  }
+  assert.throws(() => neighborhoodCiDatabasePlan({ ...env, DATABASE_URL: plan.child.connectionString }, "00000000-0000-4000-8000-000000000001"));
+});
+
+test("neighborhood CI bootstrap verifies actual database and loopback socket before CREATE", () => {
+  const identity = { database_name: "parent_test", server_address: "172.18.0.2" };
+  for (const remote of ["127.0.0.1", "::1", "::ffff:127.0.0.1"]) {
+    assert.doesNotThrow(() => verifyNeighborhoodCiConnection(identity, remote, "parent_test"));
+  }
+  for (const remote of [undefined, "172.18.0.2", "8.8.8.8", "127.evil"]) {
+    assert.throws(() => verifyNeighborhoodCiConnection(identity, remote, "parent_test"));
+  }
+  for (const server_address of [null, "8.8.8.8", "172.32.0.1", "unresolved"]) {
+    assert.throws(() => verifyNeighborhoodCiConnection({ ...identity, server_address }, "127.0.0.1", "parent_test"));
+  }
+  assert.throws(() => verifyNeighborhoodCiConnection(identity, "127.0.0.1", "wrong_test"));
 });
 
 const prerequisites = ["app_auth.organizations", "app_auth.users", "core.accounts", "app.appraisal_cases",
@@ -296,9 +329,9 @@ async function privateAbsenceProbes(pool, sql) {
 }
 
 test("neighborhood persistence: real PostgreSQL canonical identities, publication and lease fencing", {
-  skip: !process.env.DATABASE_URL, timeout: 120_000,
+  skip: !process.env.DATABASE_URL, timeout: 360_000,
 }, async t => {
-  const target = checkedDatabaseUrl(process.env.DATABASE_URL, process.env.NODE_ENV);
+  const target = await prepareNeighborhoodCiDatabase();
   const { default: pg } = await import("pg"); // Must remain AFTER every URL guard.
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 5, connectionTimeoutMillis: 3000,
     statement_timeout: 8000, application_name: "neighborhood_persistence_integration" });

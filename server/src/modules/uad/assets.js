@@ -114,6 +114,122 @@ const SECTION_CAPTION_TYPES = new Map([
   [29, new Set(UAD_CERTIFICATION_SIGNATURE_CAPTION_TYPES)],
 ]);
 
+const entityRelationship = (entityTypes, parentEntityTypes = [], entityRequired = true) => Object.freeze({
+  entityTypes: Object.freeze([...entityTypes]),
+  parentEntityTypes: Object.freeze([...parentEntityTypes]),
+  entityRequired,
+});
+const noEntityRelationship = entityRelationship([], [], false);
+const relationshipMap = (captionTypes, relationship) => new Map(
+  captionTypes.map((captionType) => [captionType, relationship]),
+);
+const relationshipSection = (errorCode, relationships) => Object.freeze({ errorCode, relationships });
+
+const UAD_ASSET_ENTITY_RELATIONSHIPS = new Map([
+  [4, relationshipSection("invalid_uad_site_asset_entity", new Map([
+    ...relationshipMap(UAD_SITE_CAPTION_TYPES, noEntityRelationship),
+    ["View", entityRelationship(["site_view"])],
+  ]))],
+  [5, relationshipSection("invalid_uad_disaster_mitigation_asset_entity", relationshipMap(
+    ["DisasterMitigationExhibit"], noEntityRelationship,
+  ))],
+  [6, relationshipSection("invalid_uad_energy_green_asset_entity", relationshipMap(
+    ["EnergyEfficientAndGreenFeaturesExhibit"], noEntityRelationship,
+  ))],
+  [7, relationshipSection("invalid_uad_sketch_asset_entity", relationshipMap(
+    [...UAD_SKETCH_REPORT_CAPTION_TYPES, "MeasurementSource"], noEntityRelationship,
+  ))],
+  [8, relationshipSection("invalid_uad_dwelling_exterior_asset_entity", relationshipMap(
+    UAD_DWELLING_EXTERIOR_CAPTION_TYPES, entityRelationship(["dwelling"]),
+  ))],
+  [9, relationshipSection("invalid_uad_manufactured_home_asset_entity", new Map([
+    ...relationshipMap(UAD_MANUFACTURED_HOME_CAPTION_TYPES, entityRelationship(["dwelling"])),
+    ["ManufacturedHomeHUDCertificationLabel", entityRelationship(["manufactured_home_hud_label"], ["dwelling"])],
+    ["ManufacturedHomeFinancingProgramEligibilityCertification", entityRelationship(["manufactured_home_financing_program"], ["dwelling"])],
+  ]))],
+  [10, relationshipSection("invalid_uad_unit_interior_asset_entity", new Map([
+    ...relationshipMap(UAD_UNIT_INTERIOR_CAPTION_TYPES, entityRelationship(["unit_room"], ["unit"])),
+    ["UnitInteriorExhibit", entityRelationship(["unit"], ["dwelling", "outbuilding"])],
+    ["Flooring", entityRelationship(["unit_interior_feature"], ["unit"])],
+    ["WallsAndCeiling", entityRelationship(["unit_interior_feature"], ["unit"])],
+    ["OtherInteriorFeature", entityRelationship(["unit_interior_feature"], ["unit"])],
+    ["UnitInteriorDefect", entityRelationship(["unit_interior_defect"], ["unit"])],
+  ]))],
+  [11, relationshipSection("invalid_uad_functional_obsolescence_asset_entity", relationshipMap(
+    UAD_FUNCTIONAL_OBSOLESCENCE_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [12, relationshipSection("invalid_uad_outbuilding_asset_entity", new Map([
+    ...relationshipMap(UAD_OUTBUILDING_CAPTION_TYPES, entityRelationship(["outbuilding"])),
+    ["OutbuildingDefect", entityRelationship(["outbuilding_defect"], ["outbuilding"])],
+  ]))],
+  [13, relationshipSection("invalid_uad_vehicle_storage_asset_entity", new Map([
+    ...relationshipMap(UAD_VEHICLE_STORAGE_CAPTION_TYPES, entityRelationship(["vehicle_storage"])),
+    ["VehicleStorageDefect", entityRelationship(["vehicle_storage_defect"], ["vehicle_storage"])],
+  ]))],
+  [14, relationshipSection("invalid_uad_subject_property_amenities_asset_entity", new Map([
+    ...relationshipMap(UAD_SUBJECT_PROPERTY_AMENITIES_CAPTION_TYPES, noEntityRelationship),
+    ["SubjectPropertyAmenity", entityRelationship(["amenity"])],
+    ["SubjectPropertyAmenityDefect", entityRelationship(["amenity_defect"], ["amenity"])],
+  ]))],
+  [16, relationshipSection("invalid_uad_highest_best_use_asset_entity", relationshipMap(
+    UAD_HIGHEST_BEST_USE_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [17, relationshipSection("invalid_uad_market_asset_entity", relationshipMap(
+    UAD_MARKET_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [18, relationshipSection("invalid_uad_project_information_asset_entity", new Map([
+    ...relationshipMap(UAD_PROJECT_INFORMATION_CAPTION_TYPES, noEntityRelationship),
+    ["ProjectAmenity", entityRelationship(["project_amenity"])],
+  ]))],
+  [19, relationshipSection("invalid_uad_subject_listing_asset_entity", relationshipMap(
+    UAD_SUBJECT_LISTING_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [20, relationshipSection("invalid_uad_sales_contract_asset_entity", relationshipMap(
+    UAD_SALES_CONTRACT_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [21, relationshipSection("invalid_uad_prior_transfer_asset_entity", relationshipMap(
+    UAD_PRIOR_TRANSFER_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [22, relationshipSection("invalid_uad_sales_comparison_asset_entity", new Map([
+    ...relationshipMap(UAD_SALES_COMPARISON_CAPTION_TYPES, noEntityRelationship),
+    ["PropertyPhoto", entityRelationship(["sales_comparable"], [], false)],
+  ]))],
+  [26, relationshipSection("invalid_uad_reconciliation_asset_entity", relationshipMap(
+    UAD_RECONCILIATION_CAPTION_TYPES, noEntityRelationship,
+  ))],
+  [29, relationshipSection("invalid_uad_signature_asset_entity", relationshipMap(
+    UAD_CERTIFICATION_SIGNATURE_CAPTION_TYPES, noEntityRelationship,
+  ))],
+]);
+
+export function assertUadAssetEntityRelationship(asset, entity = null) {
+  const section = UAD_ASSET_ENTITY_RELATIONSHIPS.get(asset.sectionNumber);
+  const relationship = section?.relationships.get(asset.captionType);
+  if (!relationship) return;
+
+  if (!relationship.entityTypes.length) {
+    if (asset.entityId || entity) throw new Error(section.errorCode);
+    return;
+  }
+  if (!asset.entityId) {
+    if (relationship.entityRequired) throw new Error(section.errorCode);
+    return;
+  }
+  if (!entity || !relationship.entityTypes.includes(entity.entity_type)) {
+    throw new Error(section.errorCode);
+  }
+  if (relationship.parentEntityTypes.length) {
+    if (
+      !entity.parent_entity_id
+      || !relationship.parentEntityTypes.includes(entity.parent_entity_type)
+    ) {
+      throw new Error(section.errorCode);
+    }
+  } else if (entity.parent_entity_id) {
+    throw new Error(section.errorCode);
+  }
+}
+
 function assetResponse(row) {
   return {
     id: row.id,
@@ -351,27 +467,23 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
   assertUadWorkfileMutable(workfileResult.rows[0].status);
-  let entityType = null;
+  let entity = null;
   if (normalized.entityId) {
     const entityResult = await pool.query(
-      `SELECT id, entity_type FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2`,
+      `SELECT child.id, child.entity_type, child.parent_entity_id,
+              parent.entity_type AS parent_entity_type
+         FROM appraisal.uad_entities AS child
+         LEFT JOIN appraisal.uad_entities AS parent
+           ON parent.id = child.parent_entity_id
+          AND parent.workfile_id = child.workfile_id
+        WHERE child.id = $1 AND child.workfile_id = $2`,
       [normalized.entityId, workfileId],
     );
     if (!entityResult.rows.length) throw new Error("uad_entity_not_found");
-    entityType = entityResult.rows[0].entity_type;
+    entity = entityResult.rows[0];
   }
+  assertUadAssetEntityRelationship(normalized, entity);
   if (normalized.sectionNumber === 14) {
-    const requiredEntityType = normalized.captionType === "SubjectPropertyAmenity"
-      ? "amenity"
-      : normalized.captionType === "SubjectPropertyAmenityDefect"
-        ? "amenity_defect"
-        : null;
-    if (
-      (requiredEntityType && entityType !== requiredEntityType)
-      || (!requiredEntityType && normalized.entityId)
-    ) {
-      throw new Error("invalid_uad_subject_property_amenities_asset_entity");
-    }
     const maximum = UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES[normalized.captionType];
     if (maximum) {
       const existingImages = await pool.query(
@@ -389,40 +501,6 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
       }
     }
   }
-  if (normalized.sectionNumber === 16 && normalized.entityId) {
-    throw new Error("invalid_uad_highest_best_use_asset_entity");
-  }
-  if (normalized.sectionNumber === 17 && normalized.entityId) {
-    throw new Error("invalid_uad_market_asset_entity");
-  }
-  if (normalized.sectionNumber === 18) {
-    const requiredEntityType = normalized.captionType === "ProjectAmenity" ? "project_amenity" : null;
-    if (
-      (requiredEntityType && entityType !== requiredEntityType)
-      || (!requiredEntityType && normalized.entityId)
-    ) {
-      throw new Error("invalid_uad_project_information_asset_entity");
-    }
-  }
-  if (normalized.sectionNumber === 19 && normalized.entityId) {
-    throw new Error("invalid_uad_subject_listing_asset_entity");
-  }
-  if (normalized.sectionNumber === 20 && normalized.entityId) {
-    throw new Error("invalid_uad_sales_contract_asset_entity");
-  }
-  if (normalized.sectionNumber === 21 && normalized.entityId) {
-    throw new Error("invalid_uad_prior_transfer_asset_entity");
-  }
-  if (normalized.sectionNumber === 22) {
-    const comparablePhoto = normalized.captionType === "PropertyPhoto";
-    if (
-      (comparablePhoto && entityType !== "sales_comparable")
-      || (!comparablePhoto && normalized.entityId)
-    ) {
-      throw new Error("invalid_uad_sales_comparison_asset_entity");
-    }
-  }
-
   const organizationId = workfileResult.rows[0].organization_id;
   const objectKey = buildUadObjectKey({
     organizationId,

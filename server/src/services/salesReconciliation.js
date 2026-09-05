@@ -129,7 +129,7 @@ export function salesSourceLocationEvidence(rawPayload) {
   };
 }
 
-export function normalizeSalesReconciliationUpdate(input = {}) {
+export function normalizeSalesReconciliationUpdate(input = {}, audit = {}) {
   const accountId = validateSalesReconciliationAccountId(input.account_id);
   const linkedAccountId = input.linked_account_id == null
     ? null
@@ -138,8 +138,18 @@ export function normalizeSalesReconciliationUpdate(input = {}) {
     accountId,
     linkedAccountId,
     notes: optionalText(input.notes, 2000),
-    reviewer: optionalText(input.reviewer, 200) || "HomeNode editor",
+    reviewer: optionalText(audit.reviewer, 200) || "HomeNode platform administrator",
   };
+}
+
+export function isSalesSourceRecordReconciliationEligible(source = {}) {
+  return source.record_type === "closed_sale"
+    && source.match_status !== "manual_verified"
+    && (
+      source.primary_account_id == null
+      || ["unmatched", "multiple"].includes(source.match_status)
+      || source.has_unresolved_parcel === true
+    );
 }
 
 export async function ensureSalesReconciliationSchema(pool) {
@@ -499,10 +509,11 @@ export async function reconcileSalesSourceRecord(
   pool,
   sourceRecordId,
   input,
+  audit = {},
 ) {
   const id = String(sourceRecordId ?? "").trim();
   if (!/^\d+$/.test(id)) throw new Error("invalid_source_record_id");
-  const update = normalizeSalesReconciliationUpdate(input);
+  const update = normalizeSalesReconciliationUpdate(input, audit);
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -519,6 +530,12 @@ export async function reconcileSalesSourceRecord(
     const source = sourceResult.rows[0];
     if (source.record_type !== "closed_sale") {
       throw new Error("source_record_not_closed_sale");
+    }
+    if (source.match_status === "manual_verified") {
+      throw new Error("source_record_already_verified");
+    }
+    if (!isSalesSourceRecordReconciliationEligible(source)) {
+      throw new Error("source_record_not_reconcilable");
     }
 
     const account = update.linkedAccountId

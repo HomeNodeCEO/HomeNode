@@ -20,6 +20,13 @@ const SIGNATURE_ACKNOWLEDGMENT_PURPOSE = "uad_signature_acknowledgment";
 const SIGNATURE_ACKNOWLEDGMENT_VERSION = 1;
 const SIGNATURE_ACKNOWLEDGMENT_LIFETIME_MILLISECONDS = 15 * 60 * 1000;
 const SIGNATURE_ACKNOWLEDGMENT_MAX_TOKEN_LENGTH = 8_192;
+const SESSION_AUTHENTICATION_METHOD = "session";
+
+function signaturePolicyError(policy) {
+  if (policy === SESSION_AUTHENTICATION_METHOD) return null;
+  if (policy === "reauthentication") return "uad_signature_reauthentication_unavailable";
+  return "uad_signature_policy_invalid";
+}
 
 function stableJson(value) {
   if (Array.isArray(value)) return value.map(stableJson);
@@ -440,6 +447,8 @@ export async function getUadCertificationReadiness(queryable, workfileIdValue) {
   const rows = await loadSignerRows(queryable, workfileId);
   const signers = rows.map((row) => {
     const missing = missingCredentialFields(row);
+    const policyError = signaturePolicyError(row.signature_policy);
+    if (policyError) missing.push(policyError);
     return {
       role: row.signer_role,
       user_id: row.user_id || null,
@@ -529,8 +538,14 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
       error.details = { missing };
       throw error;
     }
-    const authenticationMethod = String(input.authentication_method || "session");
-    if (authenticationMethod !== signerRow.signature_policy) throw new Error("uad_signature_authentication_method_mismatch");
+    const policyError = signaturePolicyError(signerRow.signature_policy);
+    if (policyError) throw new Error(policyError);
+    if (
+      Object.hasOwn(input, "authentication_method")
+      && input.authentication_method !== SESSION_AUTHENTICATION_METHOD
+    ) throw new Error("uad_signature_authentication_method_mismatch");
+    // Request labels and acknowledgment consent do not prove fresh login or MFA.
+    const authenticationMethod = SESSION_AUTHENTICATION_METHOD;
 
     const effectiveDateResult = await client.query(
       `SELECT value #>> '{}' AS effective_date

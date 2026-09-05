@@ -11,10 +11,10 @@ import {
 } from "./fieldCatalog.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { listUadSketches } from "./sketches.js";
+import { assertUadWorkfileMutable } from "./workfileLifecycle.js";
 
 export const UAD_LOCAL_VALIDATOR_VERSION = "homenode-uad-local-v1";
 
-const IMMUTABLE_WORKFILE_STATUSES = new Set(["signed", "exported", "submitted", "cancelled"]);
 const MAX_FINDINGS = 5_000;
 
 function stableJson(value) {
@@ -339,9 +339,7 @@ export async function runLocalUadValidation(pool, workfileIdValue) {
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
-    if (IMMUTABLE_WORKFILE_STATUSES.has(locked.rows[0].status)) {
-      throw new Error("uad_validation_status_locked");
-    }
+    assertUadWorkfileMutable(locked.rows[0].status, "uad_validation_status_locked");
 
     await client.query(
       "UPDATE appraisal.uad_workfiles SET status = 'validating', updated_at = now() WHERE id = $1",

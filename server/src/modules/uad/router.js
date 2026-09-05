@@ -79,7 +79,7 @@ function errorStatus(error) {
   if (message === "uad_organization_required") return 400;
   if (message.includes("source_changed") || message.includes("adapter_changed") || message.includes("stale_revision") || message.includes("selection_changed")) return 409;
   if (message.endsWith("_conflict")) return 409;
-  if (message === "uad_validation_status_locked") return 409;
+  if (message.endsWith("_status_locked")) return 409;
   if (message.endsWith("_access_denied")) return 403;
   if (message.startsWith("uad_signature_") && (message.endsWith("_required") || message.endsWith("_stale") || message.endsWith("_mismatch"))) return 409;
   if (message.startsWith("uad_signature_") && (message.endsWith("_incomplete") || message.endsWith("_verified") || message.endsWith("_date"))) return 400;

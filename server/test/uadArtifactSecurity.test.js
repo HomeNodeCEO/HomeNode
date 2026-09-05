@@ -102,6 +102,7 @@ function assetRow(overrides = {}) {
     uploaded_at: "2026-08-21T00:00:00.000Z",
     verified_at: "2026-08-21T00:00:00.000Z",
     created_at: "2026-08-21T00:00:00.000Z",
+    workfile_status: "draft",
     ...overrides,
   };
 }
@@ -157,7 +158,7 @@ test("asset verification copies reviewed bytes to a checksum-addressed immutable
     async query(sql, params) {
       queries.push({ sql, params });
       if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
-      if (/WITH updated_asset/.test(sql)) return { rows: [assetRow({ object_key: params[5] })] };
+      if (/updated_asset AS/.test(sql)) return { rows: [assetRow({ object_key: params[5] })] };
       throw new Error(`unexpected_query:${sql}`);
     },
   };
@@ -182,7 +183,7 @@ test("asset verification copies reviewed bytes to a checksum-addressed immutable
   };
 
   const result = await verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID);
-  const update = queries.find((query) => /WITH updated_asset/.test(query.sql));
+  const update = queries.find((query) => /updated_asset AS/.test(query.sql));
   assert.equal(result.status, "verified");
   assert.match(update.params[4], /^[a-f0-9]{64}$/);
   assert.match(update.params[5], new RegExp(`/verified-assets/${ASSET_ID}/${update.params[4]}/probe\\.png$`));
@@ -199,7 +200,7 @@ test("asset verification rejects and removes a same-size MIME-spoofed upload", a
       if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
       if (/SET status = 'rejected'/.test(sql)) {
         rejected = true;
-        return { rows: [] };
+        return { rows: [{ id: ASSET_ID }] };
       }
       throw new Error(`unexpected_query:${sql}`);
     },
@@ -235,7 +236,7 @@ test("asset verification rejects and removes structurally invalid PDF bytes", as
       if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
       if (/SET status = 'rejected'/.test(sql)) {
         rejected = true;
-        return { rows: [] };
+        return { rows: [{ id: ASSET_ID }] };
       }
       throw new Error(`unexpected_query:${sql}`);
     },

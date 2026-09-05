@@ -73,6 +73,7 @@ import {
   UAD_VEHICLE_STORAGE_CAPTION_TYPES,
   UAD_VEHICLE_STORAGE_IMAGE_CONTENT_TYPES,
 } from "./vehicleStorageCatalog.js";
+import { assertUadWorkfileMutable } from "./workfileLifecycle.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const ALLOWED_CONTENT_TYPES = new Set([
@@ -307,17 +308,49 @@ export async function listUadAssets(pool, workfileIdValue) {
   return rows.map(assetResponse);
 }
 
+async function assertCurrentUadWorkfileMutable(queryable, workfileId) {
+  const result = await queryable.query(
+    "SELECT status FROM appraisal.uad_workfiles WHERE id = $1",
+    [workfileId],
+  );
+  if (!result.rows.length) throw new Error("uad_workfile_not_found");
+  assertUadWorkfileMutable(result.rows[0].status);
+}
+
+async function rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, metadata) {
+  const rejected = await pool.query(
+    `WITH mutable_workfile AS (
+       UPDATE appraisal.uad_workfiles
+          SET status = 'draft', updated_at = now()
+        WHERE id = $2 AND status IN ('draft', 'validating', 'ready', 'revised')
+        RETURNING id
+     )
+     UPDATE appraisal.uad_assets
+        SET status = 'rejected', updated_at = now(),
+            capture_metadata = capture_metadata || $3::jsonb
+      WHERE id = $1 AND workfile_id = $2
+        AND EXISTS (SELECT 1 FROM mutable_workfile)
+      RETURNING id`,
+    [assetId, workfileId, JSON.stringify(metadata)],
+  );
+  if (!rejected.rows.length) {
+    await assertCurrentUadWorkfileMutable(pool, workfileId);
+    throw new Error("uad_asset_not_found");
+  }
+}
+
 export async function createUadAssetUpload(pool, storage, workfileIdValue, input) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const normalized = normalizeAssetInput(input);
   const assetId = randomUUID();
   const workfileResult = await pool.query(
-    `SELECT id, organization_id
+    `SELECT id, organization_id, status
        FROM appraisal.uad_workfiles
       WHERE id = $1`,
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
+  assertUadWorkfileMutable(workfileResult.rows[0].status);
   let entityType = null;
   if (normalized.entityId) {
     const entityResult = await pool.query(
@@ -400,22 +433,25 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   const upload = storage.createUploadUrl({ objectKey, contentType: normalized.contentType });
   const expiresAt = new Date(Date.now() + upload.expires_in_seconds * 1000);
 
-  await pool.query(
-    `WITH inserted_asset AS (
+  const created = await pool.query(
+    `WITH mutable_workfile AS (
+       UPDATE appraisal.uad_workfiles
+          SET status = 'draft', updated_at = now()
+        WHERE id = $2 AND status IN ('draft', 'validating', 'ready', 'revised')
+        RETURNING id
+     ), inserted_asset AS (
        INSERT INTO appraisal.uad_assets (
          id, workfile_id, entity_id, asset_kind, section_number,
          caption_type, caption, storage_provider, storage_bucket, object_key,
          original_file_name, content_type, status, capture_metadata, upload_expires_at
-       ) VALUES (
-         $1, $2, $3, $4, $5,
-         $6, $7, $8, $9, $10,
-         $11, $12, 'pending_upload', $13::jsonb, $14
        )
-       RETURNING workfile_id
+       SELECT $1, $2, $3, $4, $5,
+              $6, $7, $8, $9, $10,
+              $11, $12, 'pending_upload', $13::jsonb, $14
+         FROM mutable_workfile
+       RETURNING id
      )
-     UPDATE appraisal.uad_workfiles
-        SET status = 'draft', updated_at = now()
-      WHERE id = $2 AND EXISTS (SELECT 1 FROM inserted_asset)`,
+     SELECT id FROM inserted_asset`,
     [
       assetId,
       workfileId,
@@ -433,6 +469,10 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
       expiresAt,
     ],
   );
+  if (!created.rows.length) {
+    await assertCurrentUadWorkfileMutable(pool, workfileId);
+    throw new Error("uad_asset_not_found");
+  }
 
   return {
     asset_id: assetId,
@@ -447,7 +487,8 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   const assetId = normalizeUadWorkfileId(assetIdValue);
   const result = await pool.query(
     `SELECT asset.id, asset.object_key, asset.original_file_name, asset.content_type,
-            asset.capture_metadata, workfile.organization_id
+            asset.capture_metadata, workfile.organization_id,
+            workfile.status AS workfile_status
        FROM appraisal.uad_assets AS asset
        JOIN appraisal.uad_workfiles AS workfile ON workfile.id = asset.workfile_id
       WHERE asset.id = $1 AND asset.workfile_id = $2
@@ -456,6 +497,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   );
   if (!result.rows.length) throw new Error("uad_asset_not_found");
   const asset = result.rows[0];
+  assertUadWorkfileMutable(asset.workfile_status);
   const inspected = await storage.inspectObject({ objectKey: asset.object_key });
   const expectedSize = Number(asset.capture_metadata?.expected_byte_size || 0);
   const inspectedType = String(inspected.content_type || "").split(";", 1)[0].trim().toLowerCase();
@@ -464,13 +506,10 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     (expectedSize && inspected.byte_size !== expectedSize) ||
     (inspectedType && inspectedType !== asset.content_type)
   ) {
-    await pool.query(
-      `UPDATE appraisal.uad_assets
-          SET status = 'rejected', updated_at = now(),
-              capture_metadata = capture_metadata || $3::jsonb
-        WHERE id = $1 AND workfile_id = $2`,
-      [assetId, workfileId, JSON.stringify({ verification_error: "uploaded_object_does_not_match_request", inspected })],
-    );
+    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, {
+      verification_error: "uploaded_object_does_not_match_request",
+      inspected,
+    });
     await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
     throw new Error("invalid_uad_uploaded_asset");
   }
@@ -484,13 +523,9 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     verified = inspectUadAssetPayload(downloaded.body, asset.content_type);
     if (verified.content_type === "application/pdf") await inspectUadPdfSafety(downloaded.body);
   } catch (error) {
-    await pool.query(
-      `UPDATE appraisal.uad_assets
-          SET status = 'rejected', updated_at = now(),
-              capture_metadata = capture_metadata || $3::jsonb
-        WHERE id = $1 AND workfile_id = $2`,
-      [assetId, workfileId, JSON.stringify({ verification_error: String(error?.message || "invalid_uad_uploaded_asset").split(":")[0] })],
-    );
+    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, {
+      verification_error: String(error?.message || "invalid_uad_uploaded_asset").split(":")[0],
+    });
     await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
     throw new Error("invalid_uad_uploaded_asset");
   }
@@ -513,7 +548,12 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   let updated;
   try {
     updated = await pool.query(
-      `WITH updated_asset AS (
+      `WITH mutable_workfile AS (
+       UPDATE appraisal.uad_workfiles
+          SET status = 'draft', updated_at = now()
+        WHERE id = $2 AND status IN ('draft', 'validating', 'ready', 'revised')
+        RETURNING id
+     ), updated_asset AS (
        UPDATE appraisal.uad_assets
           SET status = 'verified',
               byte_size = $3,
@@ -528,11 +568,8 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
                 'verified_object_immutable', true
               )
         WHERE id = $1 AND workfile_id = $2
+          AND EXISTS (SELECT 1 FROM mutable_workfile)
         RETURNING *
-     ), touched_workfile AS (
-       UPDATE appraisal.uad_workfiles
-          SET status = 'draft', updated_at = now()
-        WHERE id = $2 AND EXISTS (SELECT 1 FROM updated_asset)
      )
      SELECT * FROM updated_asset`,
       [
@@ -546,6 +583,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   }
   if (!updated.rows.length) {
     await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+    await assertCurrentUadWorkfileMutable(pool, workfileId);
     throw new Error("uad_asset_not_found");
   }
   await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
@@ -559,6 +597,15 @@ export async function deleteUadAsset(pool, storage, workfileIdValue, assetIdValu
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    const locked = await client.query(
+      `SELECT id, status
+         FROM appraisal.uad_workfiles
+        WHERE id = $1
+        FOR UPDATE`,
+      [workfileId],
+    );
+    if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    assertUadWorkfileMutable(locked.rows[0].status);
     const selected = await client.query(
       `SELECT id, object_key
          FROM appraisal.uad_assets

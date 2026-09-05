@@ -9,6 +9,7 @@ import { inspectUadAssetPayload } from "./uadFileSecurity.js";
 import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
+import { assertUadAssetsApplicable } from "./assetApplicability.js";
 
 const PDF_CONTENT_TYPE = "application/pdf";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
@@ -85,6 +86,7 @@ async function loadReportAssets(queryable, workfileId) {
       ORDER BY section_number, created_at, id`,
     [workfileId],
   );
+  await assertUadAssetsApplicable(queryable, workfileId, result.rows);
   if (result.rows.length > MAX_RENDER_ASSETS) throw new Error("uad_pdf_asset_count_exceeded");
   const totalBytes = result.rows.reduce((total, row) => total + Number(row.byte_size || 0), 0);
   if (totalBytes > MAX_RENDER_TOTAL_BYTES) throw new Error("uad_pdf_asset_bytes_exceeded");

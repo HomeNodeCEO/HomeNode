@@ -75,6 +75,7 @@ import {
 } from "./vehicleStorageCatalog.js";
 import { assertUadWorkfileMutable } from "./workfileLifecycle.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { assertUadAssetApplicable } from "./assetApplicability.js";
 
 const ALLOWED_CONTENT_TYPES = new Set([
   "image/avif",
@@ -467,6 +468,7 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
   assertUadWorkfileMutable(workfileResult.rows[0].status);
+  await assertUadAssetApplicable(pool, workfileId, normalized);
   let entity = null;
   if (normalized.entityId) {
     const entityResult = await pool.query(
@@ -565,6 +567,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   const assetId = normalizeUadWorkfileId(assetIdValue);
   const result = await pool.query(
     `SELECT asset.id, asset.object_key, asset.original_file_name, asset.content_type,
+            asset.section_number,
             asset.capture_metadata, workfile.organization_id,
             workfile.status AS workfile_status
        FROM appraisal.uad_assets AS asset
@@ -576,6 +579,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   if (!result.rows.length) throw new Error("uad_asset_not_found");
   const asset = result.rows[0];
   assertUadWorkfileMutable(asset.workfile_status);
+  await assertUadAssetApplicable(pool, workfileId, asset);
   const inspected = await storage.inspectObject({ objectKey: asset.object_key });
   const expectedSize = Number(asset.capture_metadata?.expected_byte_size || 0);
   const inspectedType = String(inspected.content_type || "").split(";", 1)[0].trim().toLowerCase();

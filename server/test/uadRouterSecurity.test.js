@@ -583,6 +583,73 @@ test("UAD completion lifecycle refusal is a bounded private 409 response", async
   } });
 });
 
+test("direct UAD sketch saves enforce authentication and organization access before persistence", async () => {
+  for (const authenticated of [false, true]) {
+    const pool = securityPool({ membershipOrganizationId: OTHER_ORGANIZATION_ID });
+    let connections = 0;
+    pool.connect = async () => {
+      connections += 1;
+      throw new Error("unauthorized_sketch_must_not_connect");
+    };
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sketches`, {
+        method: "PUT",
+        headers: { "content-type": "application/json", ...(authenticated ? { authorization: "Bearer synthetic-token" } : {}) },
+        body: JSON.stringify({ geometry: {} }),
+      });
+      assert.equal(response.status, authenticated ? 403 : 401);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: authenticated ? "uad_workfile_access_denied" : "invalid_access_token" });
+      assert.equal(connections, 0);
+      assert.deepEqual(pool.accessQueries, authenticated ? [[WORKFILE_ID]] : []);
+    });
+  }
+});
+
+test("direct UAD sketch lifecycle refusals use the real service and private bounded 409 responses", async () => {
+  for (const fixture of [
+    ...["signed", "exported", "submitted", "cancelled"].map((status) => ({ status, signed_at: null })),
+    { status: "ready", signed_at: "2026-09-05T00:00:00.000Z" },
+    { status: "ready", signed_at: null, has_signatures: true },
+  ]) {
+    const pool = securityPool();
+    const trace = [];
+    let releases = 0;
+    pool.connect = async () => ({
+      async query(sql, params) {
+        const statement = String(sql).replace(/\s+/g, " ").trim();
+        trace.push(statement);
+        if (statement === "BEGIN ISOLATION LEVEL READ COMMITTED" || statement === "ROLLBACK") return { rows: [] };
+        if (statement === "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+          assert.deepEqual(params, [WORKFILE_ID]);
+          return { rows: [{ id: WORKFILE_ID, status: fixture.status, signed_at: fixture.signed_at }] };
+        }
+        if (statement.includes("FROM appraisal.uad_signatures")) {
+          assert.deepEqual(params, [WORKFILE_ID]);
+          return { rows: [{ has_signatures: fixture.has_signatures }] };
+        }
+        throw new Error("locked_sketch_must_not_reach_canonical_reads_or_writes");
+      },
+      release() { releases += 1; },
+    });
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/sketches`, {
+        method: "PUT",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ geometry: {}, expected_revision: 1 }),
+      });
+      assert.equal(response.status, 409);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: "uad_workfile_status_locked" });
+      assert.deepEqual(pool.accessQueries, [[WORKFILE_ID]]);
+      assert.equal(trace.length, fixture.has_signatures ? 4 : 3);
+      assert.equal(trace[0], "BEGIN ISOLATION LEVEL READ COMMITTED");
+      assert.equal(trace.at(-1), "ROLLBACK");
+      assert.equal(releases, 1);
+    });
+  }
+});
+
 test("UAD JSON parser failures return bounded JSON without reaching authentication or data access", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

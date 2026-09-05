@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
 
 const MAX_STRUCTURED_SKETCH_BYTES = 2 * 1024 * 1024;
 const SKETCH_SOURCES = new Set(["homenode", "mobile", "imported", "third_party"]);
@@ -73,12 +74,13 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}, actorUser
   const normalized = normalizeUadSketchInput(input);
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const workfile = await client.query(
-      "SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE",
+      "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE",
       [workfileId],
     );
     if (!workfile.rows.length) throw new Error("uad_workfile_not_found");
+    await assertLockedUadWorkfileMutable(client, workfile.rows[0]);
 
     if (normalized.entityId) {
       const entity = await client.query(
@@ -137,7 +139,7 @@ export async function saveUadSketch(pool, workfileIdValue, input = {}, actorUser
                   calculated_areas = $7::jsonb, area_overrides = $8::jsonb,
                   rendered_asset_id = $9, source = $10, updated_by_user_id = $11,
                   revision = $12, updated_at = now()
-            WHERE id = $1 AND workfile_id = $2
+            WHERE id = $1 AND workfile_id = $2 AND entity_id IS NOT DISTINCT FROM $3::uuid
             RETURNING *`,
           parameters,
         )

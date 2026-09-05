@@ -537,7 +537,7 @@ export default function AssignmentPhotoCenter({
                           key={`${photo.id}:${photo.view_url}`}
                           src={photo.view_url}
                           alt={photo.caption || photo.category}
-                          className="h-36 w-full object-cover"
+                          className="hn-assignment-photo-preview h-36 w-full object-cover"
                           onLoad={() => confirmPhotoPreview(photo.id)}
                           onError={() => recoverPhotoPreview(photo)}
                         />

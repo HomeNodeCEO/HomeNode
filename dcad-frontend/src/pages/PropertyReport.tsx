@@ -2059,7 +2059,7 @@ function AddressHero({
         <PreviousAppraisalFiles accountId={accountId} getEditorKey={editorKeyForSave} customTheme />
       ) : null}
 
-      <figure className="relative h-64 bg-slate-100 sm:h-72">
+      <figure className="hn-subject-photo-hero relative h-64 bg-slate-100 sm:h-72">
         {activeSubjectPhoto ? (
           <button
             ref={photoModalTriggerRef}
@@ -2073,7 +2073,7 @@ function AddressHero({
               key={activeSubjectPhoto.id}
               src={activeSubjectPhoto.url}
               alt={`${activeSubjectPhoto.label} at ${address}`}
-              className="h-full w-full select-none object-cover"
+              className="hn-subject-photo-image h-full w-full select-none object-cover"
               draggable={false}
             />
             <span className="absolute right-3 top-3 z-10 rounded-full border border-white/60 bg-black/55 px-3 py-1.5 text-xs font-semibold text-white opacity-90 shadow transition group-hover:bg-black/75">

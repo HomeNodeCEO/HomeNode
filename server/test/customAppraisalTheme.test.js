@@ -53,6 +53,22 @@ test("the document center supports compact bulk review and a full-page viewer", 
   assert.match(documents, /xl:grid-cols-\[16rem_minmax\(0,1fr\)\]/);
 });
 
+test("loaded subject photos stay inside fixed frames without changing full-size viewing", () => {
+  const report = read("../../dcad-frontend/src/pages/PropertyReport.tsx");
+  const photos = read("../../dcad-frontend/src/components/AssignmentPhotoCenter.tsx");
+  const css = read("../../dcad-frontend/src/index.css");
+  assert.match(report, /<figure className="hn-subject-photo-hero relative h-64 bg-slate-100 sm:h-72"/);
+  assert.match(report, /className="hn-subject-photo-image h-full w-full select-none object-cover"/);
+  assert.match(photos, /className="hn-assignment-photo-preview h-36 w-full object-cover"/);
+  assert.match(css, /\.hn-subject-photo-hero \{ overflow: hidden; \}/);
+  assert.match(css, /\.hn-subject-photo-image\s*\{[^}]*height: 100%;[^}]*object-fit: cover;/);
+  assert.match(css, /\.hn-assignment-photo-preview\s*\{[^}]*height: 9rem;[^}]*object-fit: cover;/);
+  // Keep responsive media and full-size evidence viewing unchanged elsewhere.
+  assert.match(css, /img, video, canvas, iframe \{ max-width: 100%; height: auto; \}/);
+  assert.match(report, /className="max-h-full max-w-full select-none object-contain"/);
+  assert.match(report, /onClick=\{\(\) => setPhotoModalOpen\(true\)\}/);
+});
+
 test("saved document choices, refresh, and document types use explicit readable themed states", () => {
   const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
   const css = read("../../dcad-frontend/src/index.css");

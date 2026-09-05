@@ -42,7 +42,6 @@ import { listUadSketches, saveUadSketch } from "./sketches.js";
 import { getLatestUadValidation, runLocalUadValidation } from "./validation.js";
 import {
   createPublicCatalogUadWorkfile,
-  getUadSubjectSummary,
   getUadWorkfile,
   listUadWorkfiles,
 } from "./workfiles.js";
@@ -74,7 +73,6 @@ import {
   processAssignmentDocument,
   reviewAssignmentDocumentCandidate,
 } from "../../services/assignmentDocuments.js";
-import { authorizePublicCadastralCatalogRead } from "../../security/publicCadastralCatalog.js";
 
 function authenticatedReviewer(req) {
   const userId = String(req.mobileAuth?.userId || "").trim();
@@ -327,27 +325,6 @@ export function createUadRouter({
       const accessScope = buildUadAccessScope(req.mobileAuth);
       const workfiles = await listUadWorkfiles(pool, req.params.accountId, accessScope);
       res.json({ account_id: req.params.accountId, workfiles });
-    } catch (error) {
-      sendError(res, error);
-    }
-  });
-
-  router.get("/accounts/:accountId/subject-summary", async (req, res) => {
-    try {
-      // The summary is public cadastral source data used before a first UAD
-      // workfile exists, but only identities with an authorized UAD role may
-      // enumerate it. Tenant-owned workfiles remain separately object-scoped.
-      buildUadAccessScope(req.mobileAuth);
-      const publicGrant = authorizePublicCadastralCatalogRead(
-        req.mobileAuth,
-        req.params.accountId,
-        { workflows: ["uad_3_6"] },
-      );
-      const subject = await getUadSubjectSummary(pool, publicGrant.accountId);
-      res.set("cache-control", "no-store").json({
-        subject,
-        data_scope: publicGrant.scope,
-      });
     } catch (error) {
       sendError(res, error);
     }

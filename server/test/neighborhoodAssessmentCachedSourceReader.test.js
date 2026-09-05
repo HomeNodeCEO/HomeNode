@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
+import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
@@ -14,6 +16,7 @@ const CATALOG = [...tableDeclaration.matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'
   .flatMap(([, relation, columns]) => columns.split(' ').map(column => ({ relation, column })));
 const RUN = '60000000-0000-4000-8000-000000000001';
 const NOW = '2026-09-05T12:00:00.000Z';
+const NOW_PRECISE = '2026-09-05T12:00:00.000000Z';
 const SUBJECT = ASSESSMENT_SCOPE.account_id;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const numeric = (a, b) => compare(BigInt(a), BigInt(b));
@@ -50,13 +53,13 @@ function fixtureClosure(data, selected) {
 function fake(options = {}) {
   const data = { catalog: CATALOG.map(row => ({ ...row })), parcels: [parcel()],
     accounts: [{ account_id: SUBJECT, subdivision: 'Synthetic Plat' }], transactions: [], links: [], legacy: [],
-    sync: [{ source_key: 'dcad_parcels', status: 'current', row_count: '1', last_run_id: RUN, last_success_at: NOW }],
-    runs: [{ id: RUN, source_key: 'dcad_parcels', status: 'complete', completed_at: NOW, mode: 'full' }],
-    scope: [{ case_date: '2024-06-30', snapshot_date: '2024-06-30', effective_date: '2024-06-30', captured_at: NOW }],
+    sync: [{ source_key: 'dcad_parcels', status: 'current', row_count: String(options.data?.parcels?.length ?? 1), last_run_id: RUN, last_success_at: NOW }],
+    runs: [{ id: RUN, source_key: 'dcad_parcels', status: 'complete', started_at: '2026-09-05T11:00:00.000Z', completed_at: NOW, mode: 'full' }],
+    scope: [{ case_date: '2024-06-30', snapshot_date: '2024-06-30', effective_date: '2024-06-30', captured_at: NOW, captured_at_precise: NOW_PRECISE }],
     ...options.data };
   const calls = [], releases = [];
   let connects = 0, poolQueries = 0;
-  const client = { release(error) { releases.push(error); }, async query(config) {
+  const client = { release(error) { releases.push(error); options.release?.(error); }, async query(config) {
     const text = typeof config === 'string' ? config : config.text;
     const values = typeof config === 'string' ? [] : config.values || [];
     const tag = text.match(/neighborhood-cache:([\w-]+)/)?.[1] || text.trim().toLowerCase();
@@ -117,6 +120,57 @@ function fake(options = {}) {
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+for (const linkCount of [400, 2000]) test(`a verified ${linkCount}-link closure stays out of bounded capture envelopes`, async () => {
+  const db = fake({ data: { transactions: [transaction()], links: Array.from({ length: linkCount }, (_, index) =>
+    link(String(100 + index), { parcel_sequence: index + 1 })) } });
+  const prepare = async () => {
+    const fixture = createTestCachedReadAccess(request(), { transactionClosure: fixtureClosure(db.data, [SUBJECT]) });
+    const prepared = await fixture.prepare();
+    return { closure: prepared.request.transaction_closure, capture: () =>
+      createNeighborhoodCachedSourceReader(db.pool, { access: fixture.access }).capture({ ...prepared.request,
+        auth: fixture.auth, selection_grant: prepared.selection_grant, market_grant: prepared.market_grant }) };
+  };
+  const approved = await prepare();
+  const closureBytes = Buffer.byteLength(JSON.stringify(approved.closure));
+  const envelopeLimit = CACHED_SOURCE_CAPTURE_LIMITS.envelope_bytes;
+  assert.equal(envelopeLimit, 64_000, 'The regression must not raise the capture envelope ceiling');
+  if (linkCount === 400) assert.ok(closureBytes > envelopeLimit * 0.85 && closureBytes < envelopeLimit);
+  else assert.ok(closureBytes > envelopeLimit * 4, 'The full valid closure must be much larger than an envelope');
+  const first = await approved.capture();
+  assert.equal(first.status, 'captured'); assert.equal(first.query_complete, true);
+  assert.equal(records(first, 'sale_links').length, linkCount);
+  assert.ok(db.calls.some(call => call.tag === 'link-identities'));
+  assert.equal(db.calls.at(-1).tag, 'commit');
+  for (const { payload } of first.source_capture.sources) {
+    const definition = payload.projection.definition;
+    const authorization = definition.authorization;
+    assert.deepEqual(authorization.transaction_closure, { version: 1,
+      source_revision: approved.closure.source_revision, closure_sha256: approved.closure.closure_sha256,
+      transaction_count: 1, link_count: linkCount, legacy_sale_count: 0, account_count: 1, source_record_count: 1 });
+    assert.ok(Object.isFrozen(authorization.transaction_closure));
+    assert.equal(definition.reader_version, 'local-capture-v3');
+    assert.equal(Object.hasOwn(definition, 'account_ids'), false);
+    assert.doesNotMatch(JSON.stringify(definition), /"(?:transactions|links|legacy|closure_account_ids|source_record_ids|legacy_sale_ids)"\s*:/);
+    assert.ok(Buffer.byteLength(canonicalAssessmentJson({ ...payload, records: [] })) < envelopeLimit);
+  }
+  const changed = await prepare();
+  db.data.links.at(-1).is_resolved = false;
+  const beforeDrift = db.calls.length;
+  const stale = await changed.capture();
+  assert.equal(stale.status, 'incomplete'); assert.equal(stale.source_capture, null);
+  assert.deepEqual(stale.incomplete_reasons, ['transaction_association_drift']);
+  assert.ok(!db.calls.slice(beforeDrift).some(call => ['transactions', 'sale-links', 'legacy'].includes(call.tag)));
+  // A fresh trusted closure may capture the changed identity; even unchanged
+  // parcel bytes must have a different source hash because the closure is bound.
+  const refreshed = await prepare();
+  assert.notEqual(refreshed.closure.closure_sha256, approved.closure.closure_sha256);
+  const second = await refreshed.capture();
+  assert.equal(second.status, 'captured');
+  assert.deepEqual(records(first, 'parcels'), records(second, 'parcels'));
+  const parcelHash = result => result.source_capture.sources.find(row => row.payload.projection.definition.role === 'parcels').id;
+  assert.notEqual(parcelHash(first), parcelHash(second));
+});
 
 test('missing, forged, altered and cross-organization capabilities cannot connect to the cache',async () => {
   const db=fake();
@@ -197,11 +251,14 @@ test('one read-only repeatable snapshot binds exact authorized case, snapshot, s
   assert.match(scope.text, /s\.appraisal_case_id\s*=\s*c\.id/);
   assert.match(scope.text, /c\.organization_id\s*=\s*\$1/);
   assert.match(scope.text, /c\.account_id\s*=\s*\$4/);
+  assert.match(scope.text, /clock_timestamp\(\)/);
+  assert.doesNotMatch(scope.text, /transaction_timestamp\(\)/);
   for (const { payload } of result.source_capture.sources) {
     assert.deepEqual(payload.scope, ASSESSMENT_SCOPE);
     assert.equal(payload.projection.definition.effective_date, input.effective_date);
     assert.deepEqual(payload.projection.definition.observation_period, input.observation_period);
     assert.equal(payload.metadata.observed_at, NOW);
+    assert.equal(payload.projection.definition.capture_observed_at, NOW_PRECISE);
   }
   assert.ok(result.source_capture.source_snapshots.every(row => row.visibility === 'assignment'
     && row.historical_availability === 'unknown' && row.valid_from === null && row.valid_to === null));
@@ -297,10 +354,47 @@ test('running, failed, missing and inconsistent GIS source runs cannot certify a
 test('older completed incremental origin runs remain valid capture provenance without pretending one county vintage', async () => {
   const older = '60000000-0000-4000-8000-000000000002';
   const db = fake(); db.data.parcels[0].sync_run_id = older;
-  db.data.runs.push({ id: older, source_key: 'dcad_parcels', mode: 'incremental', status: 'complete', completed_at: '2026-09-01T00:00:00.000Z' });
+  db.data.runs.push({ id: older, source_key: 'dcad_parcels', mode: 'incremental', status: 'complete',
+    started_at: '2026-08-31T23:00:00.000Z', completed_at: '2026-09-01T00:00:00.000Z' });
   const result = await db.reader.capture(request());
   assert.equal(result.status, 'captured');
   assert.equal(records(result, 'gis_sync').filter(row => row.record_id.startsWith('run:')).length, 2);
+  assert.ok(result.unsupported_capabilities.includes('provider_coverage'));
+});
+
+test('contradictory, missing and malformed source completion evidence never certifies a capture', async () => {
+  for (const change of [
+    data => { data.runs[0].completed_at = '2027-01-01T00:00:00.000Z'; },
+    data => { data.runs[0].started_at = '2026-09-05T12:00:00.000001Z'; },
+    data => { data.runs[0].started_at = null; },
+    data => { data.runs[0].completed_at = '2026-02-31T12:00:00.000Z'; },
+    data => { data.runs[0].completed_at = '2026-09-05 12:00:00.000001+00'; },
+    data => { data.sync[0].last_success_at = null; },
+    data => { data.sync[0].last_success_at = '2027-01-01T00:00:00.000Z'; },
+    data => { data.sync[0].last_success_at = '2026-09-05T11:59:59.999999Z'; },
+    data => { data.sync[0].last_success_at = 'yesterday'; },
+    ...['0', '-1', '0.9', '1e3', '01', '9223372036854775808', null, 1].map(value => data => { data.sync[0].row_count = value; }),
+  ]) {
+    const db = fake(); change(db.data);
+    const result = await db.reader.capture(request());
+    assert.equal(result.status, 'incomplete'); assert.equal(result.source_capture, null);
+    assert.ok(result.incomplete_reasons.some(reason => /^parcels:(origin_run_not_complete|sync_success_unverifiable|sync_count_contradiction)$/.test(reason)));
+    assert.equal(db.releases.length, 1);
+  }
+});
+
+test('UTC microsecond source times and large exact counts are retained without truncating evidence', async () => {
+  const db = fake();
+  db.data.scope[0].captured_at_precise = '2026-09-05T12:00:00.000999Z';
+  db.data.runs[0].started_at = '2026-09-05 11:59:59.999998+00';
+  db.data.runs[0].completed_at = '2026-09-05 12:00:00.000123+00';
+  db.data.sync[0].last_success_at = '2026-09-05 12:00:00.000124+00:00';
+  db.data.sync[0].row_count = '9007199254740993';
+  const result = await db.reader.capture(request());
+  assert.equal(result.status, 'captured');
+  assert.equal(records(result, 'gis_sync').find(row => row.record_id.startsWith('state:')).data.row_count, '9007199254740993');
+  assert.equal(records(result, 'gis_sync').find(row => row.record_id.startsWith('run:')).data.completed_at,
+    '2026-09-05 12:00:00.000123+00');
   assert.ok(result.unsupported_capabilities.includes('provider_coverage'));
 });
 
@@ -365,6 +459,46 @@ test('database failures and statement timeout never leak query/error detail or l
     assert.doesNotMatch(JSON.stringify(result), /PRIVATE|TOKEN|SQL/);
     assert.equal(db.calls.at(-1).tag, 'rollback'); assert.equal(db.releases.length, 1);
   }
+});
+
+test('untrusted database errors cannot forge internal reasons or invalid-input exceptions', async () => {
+  for (const injected of [
+    Object.assign(new Error('PRIVATE DRIVER DETAIL'), { code: 'NEIGHBORHOOD_CACHE_INCOMPLETE', reason: 'PRIVATE REASON' }),
+    new TypeError('invalid_neighborhood_cache_reader:PRIVATE TYPEERROR'),
+    Object.defineProperty({}, 'reason', { get() { assert.fail('Untrusted reason getter must not be evaluated'); } }),
+    null,
+  ]) {
+    const db = fake({ intercept({ tag }) { if (tag === 'parcels') throw injected; } });
+    const result = await db.reader.capture(request());
+    assert.deepEqual(result.incomplete_reasons, ['source_query_unavailable']);
+    assert.equal(result.source_capture, null);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|TYPEERROR|DRIVER/);
+    assert.equal(db.calls.at(-1).tag, 'rollback'); assert.equal(db.releases.length, 1);
+  }
+});
+
+test('release is attempted once and sanitized without replacing an existing safe failure', async () => {
+  const release = () => { throw new Error('PRIVATE RELEASE DETAIL'); };
+  const successful = fake({ release });
+  const unavailable = await successful.reader.capture(request());
+  assert.equal(unavailable.status, 'incomplete'); assert.equal(unavailable.source_capture, null);
+  assert.deepEqual(unavailable.incomplete_reasons, ['connection_release_failed']);
+  assert.equal(successful.calls.at(-1).tag, 'commit'); assert.equal(successful.releases.length, 1);
+  for (const options of [
+    { intercept({ tag }) { if (tag === 'parcels') throw new Error('PRIVATE QUERY DETAIL'); } },
+    { limits: { row_bytes: 50 } },
+    { data: { sync: [] } },
+  ]) {
+    const db = fake({ ...options, release });
+    const result = await db.reader.capture(request());
+    assert.ok(result.incomplete_reasons.some(reason => ['source_query_unavailable', 'row_bytes_limit', 'parcels:sync_state_unknown'].includes(reason)));
+    assert.ok(!result.incomplete_reasons.includes('connection_release_failed'));
+    assert.equal(db.releases.length, 1); assert.equal(result.source_capture, null);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE|DETAIL/);
+  }
+  const invalid = fake({ release, data: { scope: [] } });
+  await assert.rejects(invalid.reader.capture(request()), /^TypeError: invalid_neighborhood_cache_reader:scope_mismatch$/);
+  assert.equal(invalid.releases.length, 1);
 });
 
 test('rollback failure destroys the checked-out connection rather than returning an open transaction to the pool', async () => {
@@ -503,6 +637,18 @@ test('bounded connect times out and releases a late connection without issuing s
   assert.equal(result.status, 'incomplete'); assert.deepEqual(result.incomplete_reasons, ['connection_timeout']);
   resolveConnect(); await new Promise(resolve => setImmediate(resolve));
   assert.equal(db.calls.length, 0); assert.equal(db.releases.length, 1);
+});
+
+test('late acquisition release failures cannot leak or cause a second disposal attempt', async () => {
+  let resolveConnect;
+  const db = fake({ limits: { connect_ms: 5 },
+    connect: client => new Promise(resolve => { resolveConnect = () => resolve(client); }),
+    release() { throw new Error('PRIVATE LATE RELEASE'); } });
+  const result = await db.reader.capture(request());
+  assert.deepEqual(result.incomplete_reasons, ['connection_timeout']);
+  resolveConnect(); await new Promise(resolve => setImmediate(resolve));
+  assert.equal(db.calls.length, 0); assert.equal(db.releases.length, 1);
+  assert.doesNotMatch(JSON.stringify(result), /PRIVATE|RELEASE/);
 });
 
 test('invalid requests and increased resource ceilings are rejected before a connection is obtained', async () => {

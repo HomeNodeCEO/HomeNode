@@ -7,7 +7,7 @@ import { validateCachedTransactionClosure } from './cachedTransactionClosure.js'
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 
-export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v2';
+export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
   records: 100_000, bytes: 30_000_000, row_bytes: 64_000, page_size: 250,
   selected_accounts: 50_000, duration_ms: 30_000, statement_ms: 5000, connect_ms: 3000,
@@ -28,8 +28,10 @@ const TABLES = Object.freeze({
 const SQL = Object.freeze({
   scope: `SELECT c.effective_date::text AS case_date, s.effective_date::text AS snapshot_date,
     COALESCE(s.effective_date,c.effective_date)::text AS effective_date,
-    to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS captured_at
+    to_char(observation.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.MS"Z"') AS captured_at,
+    to_char(observation.observed_at AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS captured_at_precise
     FROM app.appraisal_cases c JOIN app.appraisal_subject_snapshots s ON s.appraisal_case_id=c.id
+    CROSS JOIN LATERAL (SELECT clock_timestamp() AS observed_at) observation
     WHERE c.organization_id=$1 AND c.id=$2 AND s.id=$3 AND c.account_id=$4 LIMIT 2`,
   capabilities: `SELECT n.nspname || '.' || c.relname AS relation, a.attname AS column
     FROM pg_catalog.pg_class c JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace
@@ -107,10 +109,16 @@ const ORDER = Object.freeze({
 const MAPPERS={ parcels:mapCachedParcelRow, accounts:mapCachedAccountRow,
   transactions:mapCachedSaleRow, sale_links:mapCachedSaleLinkRow };
 
-function invalid(field) { throw new TypeError(`invalid_neighborhood_cache_reader:${field}`); }
+const INTERNAL_INVALID = new WeakSet();
+const INTERNAL_INCOMPLETE = new WeakMap();
+function invalid(field) {
+  const error=new TypeError(`invalid_neighborhood_cache_reader:${field}`);
+  INTERNAL_INVALID.add(error);
+  throw error;
+}
 function incomplete(reason) {
   const error = new Error('neighborhood_cache_capture_incomplete');
-  Object.assign(error, { code: 'NEIGHBORHOOD_CACHE_INCOMPLETE', reason });
+  INTERNAL_INCOMPLETE.set(error,reason);
   throw error;
 }
 function freeze(value) {
@@ -124,6 +132,24 @@ function text(value, field, max = 100) {
 function big(value) {
   if (typeof value !== 'string' || !BIGINT.test(value) || BigInt(value)>9223372036854775807n) incomplete('invalid_source_identity');
   return value;
+}
+// SQL sets UTC; accept its explicit UTC text and canonical ISO without allowing
+// Date.parse to normalize invalid Gregorian dates, offsets or subsecond order.
+function sourceTime(value) {
+  if (typeof value!=='string') return null;
+  const match=/^(\d{4}-\d{2}-\d{2})[T ](\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(?:Z|\+00(?::00)?)$/.exec(value);
+  if (!match) return null;
+  const second=`${match[1]}T${match[2]}.000Z`;
+  const milliseconds=Date.parse(second);
+  if (!Number.isFinite(milliseconds) || new Date(milliseconds).toISOString()!==second) return null;
+  return BigInt(milliseconds)*1000n+BigInt((match[3]||'').padEnd(6,'0'));
+}
+function sourceCount(value) {
+  return typeof value==='string' && /^(?:0|[1-9][0-9]{0,18})$/.test(value)
+    && BigInt(value)<=9223372036854775807n ? BigInt(value) : null;
+}
+function releaseSafely(client,error) {
+  try { client.release(error); return true; } catch { return false; }
 }
 function limitsOf(overrides) {
   const result = { ...NEIGHBORHOOD_CACHE_READER_LIMITS };
@@ -157,13 +183,13 @@ async function connectBounded(pool, timeout) {
   let expired=false;
   let timer;
   const pending=Promise.resolve().then(() => pool.connect()).then(client => {
-    if (expired) { client.release(); incomplete('connection_timeout'); }
+    if (expired) { releaseSafely(client); incomplete('connection_timeout'); }
     return client;
   });
   try {
     return await Promise.race([pending,new Promise((_,reject) => {
       timer=setTimeout(() => { expired=true; const error=new Error('neighborhood_cache_connection_timeout');
-        Object.assign(error,{ code:'NEIGHBORHOOD_CACHE_INCOMPLETE',reason:'connection_timeout' }); reject(error); },timeout);
+        INTERNAL_INCOMPLETE.set(error,'connection_timeout'); reject(error); },timeout);
     })]);
   } finally { clearTimeout(timer); }
 }
@@ -190,11 +216,18 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
     let client;
     let began=false;
     let releaseError;
+    let primaryFailure=null;
+    let invalidFailure=null;
     let capturedAt=null;
+    let capturedAtPrecise=null;
+    let observationTime=null;
     let capabilities={};
     const groups=Object.fromEntries(['parcels','accounts','transactions','sale_links','gis_sync'].map(key => [key,[]]));
     const identities=Object.fromEntries(Object.keys(groups).map(key => [key,new Set()]));
     const missing=new Set();
+    const failedCapture=reasons => freeze({ status:'incomplete',query_complete:false,scope:request.scope,
+      reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,source_capture:null,
+      capabilities,incomplete_reasons:reasons,counts });
     const check=() => { if (performance.now()-started>limits.duration_ms) incomplete('duration_limit'); };
     const query=async (tag,sql,values=[]) => {
       check(); counts.queries++;
@@ -255,8 +288,12 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       if (!canonical.effective_date || canonical.effective_date!==request.effective_date
         || (canonical.case_date && canonical.snapshot_date && canonical.case_date!==canonical.snapshot_date)) invalid('effective_date_conflict');
       capturedAt=canonical.captured_at;
+      capturedAtPrecise=canonical.captured_at_precise;
+      observationTime=sourceTime(capturedAtPrecise);
       if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(capturedAt ?? '')
-        || !Number.isFinite(Date.parse(capturedAt)) || new Date(capturedAt).toISOString()!==capturedAt) incomplete('capture_time_unavailable');
+        || !Number.isFinite(Date.parse(capturedAt)) || new Date(capturedAt).toISOString()!==capturedAt
+        || observationTime===null || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(capturedAtPrecise ?? '')
+        || observationTime/1000n!==BigInt(Date.parse(capturedAt))) incomplete('capture_time_unavailable');
       if (request.knowledge_cutoff!==null) incomplete('historical_knowledge_capture_required');
       for (const account_id of request.account_ids) {
         if (++counts.records>limits.records) incomplete('record_limit');
@@ -289,6 +326,10 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
           if (typeof syncState.last_run_id==='string' && UUID.test(syncState.last_run_id)) originRuns.add(syncState.last_run_id);
           else missing.add('parcels:last_run_unknown');
           if (syncState.status!=='current') missing.add('parcels:sync_not_complete');
+          const success=sourceTime(syncState.last_success_at);
+          if (success===null || success>observationTime) missing.add('parcels:sync_success_unverifiable');
+          const sourceRows=sourceCount(syncState.row_count);
+          if (sourceRows===null || sourceRows<BigInt(groups.parcels.length)) missing.add('parcels:sync_count_contradiction');
         }
       }
       if (available('sync_runs')) {
@@ -299,7 +340,11 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
           const found=await rows('sync-runs',SQL.sync_runs,[batch,batch.length+1]);
           if (found.length>batch.length) incomplete('duplicate_source_identity');
           for (const run of found) { retain('gis_sync',`run:${run.id}`,run);
-            if (run.status==='complete' && run.completed_at && run.source_key==='dcad_parcels') completed.add(run.id);
+            const start=sourceTime(run.started_at),end=sourceTime(run.completed_at);
+            const success=sourceTime(syncState?.last_success_at);
+            if (run.status==='complete' && run.source_key==='dcad_parcels'
+              && start!==null && end!==null && start<=end && end<=observationTime
+              && success!==null && end<=success) completed.add(run.id);
           }
         }
         if (ids.some(id => !completed.has(id))) missing.add('parcels:origin_run_not_complete');
@@ -376,25 +421,36 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
     } catch (error) {
       if (began) { try { await client.query({ text:'ROLLBACK',query_timeout:limits.statement_ms+1000 }); }
         catch { releaseError=new Error('neighborhood_cache_rollback_failed'); } }
-      if (error instanceof TypeError && error.message.startsWith('invalid_neighborhood_cache_reader:')) throw error;
-      return freeze({ status:'incomplete',query_complete:false,scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,
-        captured_at:capturedAt,source_capture:null,capabilities,
-        incomplete_reasons:[error.code==='NEIGHBORHOOD_CACHE_INCOMPLETE'?error.reason:'source_query_unavailable'],counts });
-    } finally { if (client) client.release(releaseError); }
-    if (missing.size) return freeze({ status:'incomplete',query_complete:false,scope:request.scope,
-      reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,source_capture:null,
-      capabilities,incomplete_reasons:[...missing].sort(compare),counts });
+      if (INTERNAL_INVALID.has(error)) invalidFailure=error;
+      else primaryFailure=failedCapture([INTERNAL_INCOMPLETE.get(error)||'source_query_unavailable']);
+    } finally {
+      // Each acquired client is released exactly once; a secondary cleanup error
+      // must not expose driver details or replace an already classified failure.
+      if (client && !releaseSafely(client,releaseError) && !primaryFailure && !invalidFailure && !missing.size) {
+        primaryFailure=failedCapture(['connection_release_failed']);
+      }
+    }
+    if (invalidFailure) throw invalidFailure;
+    if (primaryFailure) return primaryFailure;
+    if (missing.size) return failedCapture([...missing].sort(compare));
     // The database transaction is closed before hashing/chunking CPU work. These
     // exact retained bytes, not another mutable-cache query, feed publication.
-    const definition={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,...request,
+    // Keep the large, verified identity closure private to authorization/drift
+    // checking. Only its immutable digest and bounded counts belong in every
+    // source envelope; never spread an authorized request into evidence metadata.
+    const closure=authorized.transaction_closure;
+    const closureManifest=freeze({ version:closure.version,source_revision:closure.source_revision,
+      closure_sha256:closure.closure_sha256,transaction_count:closure.transactions.length,
+      link_count:closure.links.length,legacy_sale_count:closure.legacy.length,
+      account_count:closure.closure_account_ids.length,source_record_count:closure.source_record_ids.length });
+    const compact={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,
+      scope:request.scope,effective_date:request.effective_date,observation_period:request.observation_period,
+      knowledge_cutoff:request.knowledge_cutoff,capture_observed_at:capturedAtPrecise,
       authorization:{target:authorized.target,selection:authorized.selection,selection_sha256:authorized.selection_sha256,
-        closure_sha256:authorized.transaction_closure.closure_sha256,closure_source_revision:authorized.transaction_closure.source_revision,
-        market_decision:authorized.market_decision},
+        transaction_closure:closureManifest,market_decision:authorized.market_decision},
       semantics:'current_mutable_query_capture_not_historical_replay',
       selection_method:'exact_selected_accounts_all_source_links_no_event_filter',
       provider_coverage:'unknown',limits,capabilities };
-    const compact={ ...definition };
-    delete compact.account_ids;
     const manifest=createHash('sha256').update(canonicalAssessmentJson(compact));
     // Stream potentially large membership rather than putting 50k IDs into the
     // per-chunk contract envelope. The members themselves remain captured below.

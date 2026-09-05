@@ -95,8 +95,8 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
       assert.equal((await pool.query("SELECT to_regclass('gis.dcad_parcels') AS rel")).rows[0].rel,null);
     });
     await pool.query(sourceSchema);
-    await pool.query("INSERT INTO gis.source_sync_runs VALUES($1,'dcad_parcels','full','complete',1,1,0,now(),now())",[run]);
-    await pool.query("INSERT INTO gis.source_sync_state VALUES('dcad_parcels','current','fixture',1,now(),now(),now(),$1,now())",[run]);
+    await pool.query("INSERT INTO gis.source_sync_runs VALUES($1,'dcad_parcels','full','complete',5,5,0,now(),now())",[run]);
+    await pool.query("INSERT INTO gis.source_sync_state VALUES('dcad_parcels','current','fixture',5,now(),now(),now(),$1,now())",[run]);
     await pool.query(`INSERT INTO gis.dcad_parcels(object_id,account_id,residential_year_built,residential_area_sqft,
       parcel_area_sqft,current_market_value,land_use_category,classification_confidence,source_record_hash,sync_run_id,synced_at,geom)
       VALUES(9007199254740993,'CACHE-SUBJECT',1980,2000,7000,250000,'one_unit','high',repeat('a',64),$1,now(),
@@ -112,6 +112,49 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
       assert.deepEqual(raw(result,'transactions'),[]);
       assert.ok(result.unsupported_capabilities.includes('provider_coverage'));
       assert.equal(records(result,'parcels')[0].data.data.housing_type,null);
+    });
+    await t.test('future or reversed runs, missing success and contradictory counts fail closed',async () => {
+      const original=(await pool.query(`SELECT r.started_at::text,r.completed_at::text,s.last_success_at::text,s.row_count::text
+        FROM gis.source_sync_runs r JOIN gis.source_sync_state s ON s.last_run_id=r.id WHERE r.id=$1`,[run])).rows[0];
+      for (const statement of [
+        "UPDATE gis.source_sync_runs SET completed_at=clock_timestamp()+interval '1 day'",
+        "UPDATE gis.source_sync_runs SET started_at=completed_at+interval '1 microsecond'",
+        'UPDATE gis.source_sync_state SET last_success_at=NULL',
+        "UPDATE gis.source_sync_state SET last_success_at=clock_timestamp()+interval '1 day'",
+        'UPDATE gis.source_sync_state SET row_count=4',
+      ]) {
+        try {
+          await pool.query(statement);
+          const result=await reader.capture(request);
+          assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+          assert.ok(result.incomplete_reasons.some(reason => /^parcels:(origin_run_not_complete|sync_success_unverifiable|sync_count_contradiction)$/.test(reason)));
+        } finally {
+          await pool.query('UPDATE gis.source_sync_runs SET started_at=$1::timestamptz,completed_at=$2::timestamptz WHERE id=$3',
+            [original.started_at,original.completed_at,run]);
+          await pool.query("UPDATE gis.source_sync_state SET last_success_at=$1::timestamptz,row_count=$2::bigint WHERE source_key='dcad_parcels'",
+            [original.last_success_at,original.row_count]);
+        }
+      }
+      assert.equal((await reader.capture(request)).status,'captured');
+    });
+    await t.test('a run completed after BEGIN but before the first read snapshot is not falsely future',async () => {
+      let completedAfterBegin=false;
+      const wrapped={async connect() {
+        const client=await pool.connect();
+        return {release:error => client.release(error),async query(config) {
+          const result=await client.query(config);
+          if (!completedAfterBegin && config.text.includes('neighborhood-cache:begin')) {
+            completedAfterBegin=true;
+            await pool.query(`WITH completion AS (UPDATE gis.source_sync_runs SET completed_at=clock_timestamp()
+              WHERE id=$1 RETURNING completed_at) UPDATE gis.source_sync_state SET last_success_at=completion.completed_at
+              FROM completion WHERE source_key='dcad_parcels'`,[run]);
+          }
+          return result;
+        }};
+      }};
+      const result=await fixtureReader(wrapped).capture(request);
+      assert.equal(completedAfterBegin,true);
+      assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
     });
     await pool.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type,close_date,current_price,
       source_record_hash,parcel_number2_raw,multi_parcel_status,loaded_at,updated_at) VALUES

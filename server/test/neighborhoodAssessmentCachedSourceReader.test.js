@@ -4,6 +4,8 @@ import test from 'node:test';
 import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
+import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
+import { cohortFixtureQueryHash } from './fixtures/neighborhoodCohortLocalQueryEvidenceFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
@@ -722,4 +724,47 @@ test('parameterized source projections avoid DDL, jobs, provider fallbacks, raw 
   assert.match(allSql, /octet_length\(payload::text\)/);
   assert.ok(db.calls.every(row => row.query_timeout > 0));
   assert.equal(db.poolQueries, 0);
+});
+
+test('original capture retains its exact query preimage and all accounts across evidence pages', async () => {
+  const accountIds = [SUBJECT, ...Array.from({ length: 1000 }, (_, i) => `Z${String(i).padStart(5, '0')}`)].sort(compare);
+  const db = fake({ data: { parcels: accountIds.map((id, i) => parcel(String(i + 1), id)),
+    accounts: accountIds.map(account_id => ({ account_id, subdivision: 'Synthetic Plat' })) } });
+  const result = await db.reader.capture(request({ account_ids: [...accountIds].reverse() }));
+  assert.equal(result.status, 'captured');
+  const checked = prepareCohortLocalQueryEvidenceV1(JSON.stringify(result.query_evidence));
+  assert.equal(checked.status, 'syntax_valid');
+  assert.equal(checked.authority, 'not_established');
+  assert.equal(result.query_evidence.captured_query_selection_sha256, result.selection_sha256);
+  const documents = new Map(result.query_evidence.blobs.map(item => [item.ref.content_sha256, JSON.parse(item.canonical_json)]));
+  const preimage = documents.get(result.query_evidence.query_preimage.content_sha256);
+  const metadata = documents.get(preimage.compact_metadata.content_sha256);
+  const directory = documents.get(preimage.ordered_account_roster.manifest.content_sha256);
+  const retained = directory.pages.flatMap(page => documents.get(page.page.content_sha256).entries.map(row => row.account_id));
+  assert.deepEqual(retained, accountIds);
+  assert.deepEqual(directory.pages.map(page => page.entry_count), ['1000', '1']);
+  assert.deepEqual(records(result, 'selection').map(row => row.data.account_id), accountIds);
+  assert.equal(cohortFixtureQueryHash(metadata, retained), result.selection_sha256);
+  assert.equal(Object.hasOwn(metadata, 'selection_sha256'), false);
+  assert.equal(Object.hasOwn(metadata, 'selected_account_count'), false);
+  for (const source of result.source_capture.sources) {
+    const { role, source_gaps, selection_sha256, selected_account_count, ...original } = source.payload.projection.definition;
+    assert.deepEqual(original, metadata);
+    assert.equal(selection_sha256, result.selection_sha256);
+    assert.equal(selected_account_count, 1001);
+    assert.deepEqual(source_gaps, []);
+    assert.ok(['selection', 'parcels', 'accounts', 'transactions', 'sale_links', 'gis_sync'].includes(role));
+  }
+  assert.ok(Object.isFrozen(result.query_evidence.blobs));
+  assert.equal(db.connects, 1);
+  assert.equal(db.calls.at(-1).tag, 'commit');
+  assert.equal(db.releases.length, 1);
+});
+
+test('incomplete source reads expose neither partial records nor partial query evidence', async () => {
+  const db = fake({ data: { parcels: [] } });
+  const result = await db.reader.capture(request());
+  assert.equal(result.status, 'incomplete');
+  assert.equal(result.source_capture, null);
+  assert.equal(Object.hasOwn(result, 'query_evidence'), false);
 });

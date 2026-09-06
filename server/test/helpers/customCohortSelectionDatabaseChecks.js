@@ -12,6 +12,8 @@ export async function checkCustomCohortSelectionDatabase(pool, identity) {
   const scopeJson = JSON.stringify(scope);
   await pool.query(`INSERT INTO app.custom_appraisal_workfiles (assignment_file_id,canonical_file_name)
     VALUES ($1,$2)`, [scope.assignment_file_id, `synthetic-selection-${randomUUID()}`]);
+  await pool.query(`UPDATE app.appraisal_subject_snapshots SET subject_data=$2::jsonb WHERE id=$1`,
+    [identity.scope.subject_snapshot_id, JSON.stringify({ custom_property_snapshot: { account: { account_id: scope.account_id } } })]);
   const client = await pool.connect();
   let subjectRef, selectionRef, query, original;
   try {

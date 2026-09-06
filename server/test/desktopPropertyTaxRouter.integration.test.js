@@ -80,7 +80,7 @@ function listDocuments(baseUrl, accountId, fileId) {
   return fetch(`${baseUrl}/api/accounts/${accountId}/property-tax-protest/${fileId}/documents`);
 }
 
-function uploadDocument(baseUrl, accountId, fileId, body = Buffer.from("%PDF-test")) {
+function uploadDocument(baseUrl, accountId, fileId, body = Buffer.from("%PDF-test"), headers = {}) {
   return fetch(`${baseUrl}/api/accounts/${accountId}/property-tax-protest/${fileId}/documents`, {
     method: "POST",
     headers: {
@@ -88,6 +88,7 @@ function uploadDocument(baseUrl, accountId, fileId, body = Buffer.from("%PDF-tes
       "x-document-type": "district_evidence",
       "x-document-title": encodeURIComponent("District evidence.pdf"),
       "x-document-file-name": encodeURIComponent("district evidence.pdf"),
+      ...headers,
     },
     body,
   });
@@ -656,7 +657,13 @@ test("Property Tax uploads bind only the canonical protest and report files", as
   }), identity);
   context.after(server.close);
 
-  const response = await uploadDocument(server.baseUrl, "legacy_1", "tax-file-1");
+  const response = await uploadDocument(
+    server.baseUrl,
+    "legacy_1",
+    "tax-file-1",
+    Buffer.from("%PDF-test"),
+    { "x-document-uploaded-by": encodeURIComponent("Forged Uploader") },
+  );
   assert.equal(response.status, 201);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), {
@@ -682,6 +689,7 @@ test("Property Tax uploads bind only the canonical protest and report files", as
     documentId: 42,
     options: { storage, ocrProvider },
   });
+  assert.equal(calls[1].options.uploadedBy, identity.userId);
 });
 
 test("Property Tax document failures return bounded diagnostics", async (context) => {

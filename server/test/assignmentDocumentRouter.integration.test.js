@@ -191,7 +191,7 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
       "x-document-type": encodeURIComponent("purchase_contract"),
       "x-document-title": encodeURIComponent("Purchase Contract"),
       "x-document-file-name": encodeURIComponent("Contract 17.pdf"),
-      "x-document-uploaded-by": encodeURIComponent("Appraiser One"),
+      "x-document-uploaded-by": encodeURIComponent("Forged Uploader"),
     },
     body: content,
   });
@@ -207,7 +207,7 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
   assert.deepEqual(calls[2], ["assignment", "canonical-42", "file-7", "write"]);
   assert.equal(calls[3][0], "create");
   assert.equal(calls[3][1], pool);
-  assert.deepEqual({ ...calls[3][2], content: undefined }, {
+  assert.deepEqual({ ...calls[3][2], content: undefined, uploadedBy: undefined }, {
     organizationId: "org-1",
     accountId: "canonical-42",
     assignmentFileId: "file-7",
@@ -216,11 +216,12 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
     fileName: "Contract 17.pdf",
     contentType: "application/pdf",
     content: undefined,
-    uploadedBy: "Appraiser One",
+    uploadedBy: undefined,
     storage: objectStorage,
   });
   assert.deepEqual([...calls[3][2].content], [...content]);
   assert.deepEqual(calls[4], ["process", pool, 17, { storage: objectStorage }]);
+  assert.equal(calls[3][2].uploadedBy, "user-1");
 });
 
 test("document access fails closed before reads in enforced mode", async (context) => {

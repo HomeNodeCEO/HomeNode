@@ -183,7 +183,7 @@ export function createAssignmentDocumentRouter({
           fileName: decodedDocumentHeader(req, "x-document-file-name", "document.pdf"),
           contentType: req.get("content-type"),
           content: req.body,
-          uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
+          uploadedBy: req.mobileAuth?.userId || null,
           storage: objectStorage,
         });
         if (document.processing_status === "uploaded") {

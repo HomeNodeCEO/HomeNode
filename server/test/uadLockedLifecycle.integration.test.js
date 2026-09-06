@@ -348,6 +348,8 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     { loadUadCompletionSuggestions },
     { saveUadSketch },
     { cleanupFailedUadSketchRender },
+    { deleteUadAsset },
+    { signUadWorkfile },
     { customAppraisalReportFixture },
   ] = await Promise.all([
     import("pg"),
@@ -356,6 +358,8 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     import("../src/modules/uad/completionSuggestions.js"),
     import("../src/modules/uad/sketches.js"),
     import("../src/modules/uad/sketchExhibitCleanup.js"),
+    import("../src/modules/uad/assets.js"),
+    import("../src/modules/uad/certifications.js"),
     import("./fixtures/customAppraisalReportFixture.js"),
   ]);
   const pool = new pg.Pool({
@@ -963,6 +967,269 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         if (writing) await within(writing.catch(() => {}), "canonical writer cleanup").catch(() => {});
         cleanupObserved.forceRelease();
         writerObserved.forceRelease();
+      }
+    });
+    // Direct deletion uses a memory-only storage stand-in. This does not test
+    // R2 behavior or make storage deletion atomic with a later database commit.
+    const deletionSupervisorId = randomUUID();
+    await pool.query("INSERT INTO app_auth.users (id, email, display_name) VALUES ($1, $2, 'Synthetic deletion supervisor')",
+      [deletionSupervisorId, `${deletionSupervisorId}@example.test`]);
+    const createDeletionFixture = async ({ status = "draft", supervised = false } = {}) => {
+      const workfile = await createWorkfileFixture(pool, identity, { status, revision: 2 });
+      await pool.query(
+        "UPDATE appraisal.uad_workfiles SET assigned_appraiser_user_id = $2, supervisory_appraiser_user_id = $3 WHERE id = $1",
+        [workfile.workfileId, identity.actorUserId, supervised ? deletionSupervisorId : null],
+      );
+      const assetId = randomUUID();
+      const objectKey = `synthetic-direct-deletion/${assetId}.png`;
+      await pool.query(
+        `INSERT INTO appraisal.uad_assets (
+           id, workfile_id, asset_kind, section_number, caption_type, storage_provider,
+           object_key, content_type, byte_size, checksum_sha256, status, verified_at,
+           capture_metadata, created_by_user_id
+         ) VALUES ($1, $2, 'sketch', 7, 'SubjectPropertyImprovementSketch', 'postgres',
+           $3, 'image/png', 16, $4, 'verified', now(), '{"synthetic":true}'::jsonb, $5)`,
+        [assetId, workfile.workfileId, objectKey, "b".repeat(64), identity.actorUserId],
+      );
+      return { ...workfile, assetId, objectKey };
+    };
+    const deletionStorage = (objectKey, { failure, onDelete } = {}) => {
+      const calls = [];
+      const objects = new Map([[objectKey, Buffer.from("synthetic object")]]);
+      return { calls, objects, storage: {
+        async deleteObject(request) {
+          assert.deepEqual(request, { objectKey });
+          calls.push({ ...request });
+          await onDelete?.();
+          if (failure) throw failure;
+          assert.equal(objects.delete(objectKey), true, "the synthetic object is deleted exactly once");
+        },
+      } };
+    };
+    const assertDirectDeletionState = (before, after, assetId) => {
+      const priorAsset = before.canonical.assets.find((row) => row.id === assetId);
+      const afterAsset = after.canonical.assets.find((row) => row.id === assetId);
+      const priorWorkfile = before.canonical.workfile[0];
+      const afterWorkfile = after.canonical.workfile[0];
+      assert.equal(afterAsset.status, "deleted");
+      assert.equal(afterWorkfile.status, "draft");
+      assert.ok(Date.parse(afterAsset.updated_at) >= Date.parse(priorAsset.updated_at));
+      assert.ok(Date.parse(afterWorkfile.updated_at) >= Date.parse(priorWorkfile.updated_at));
+      const comparable = structuredClone(after);
+      Object.assign(comparable.canonical.assets.find((row) => row.id === assetId),
+        { status: priorAsset.status, updated_at: priorAsset.updated_at });
+      Object.assign(comparable.canonical.workfile[0],
+        { status: priorWorkfile.status, updated_at: priorWorkfile.updated_at });
+      assert.deepEqual(comparable, before, "ordinary deletion only retires the asset and marks its workfile draft");
+    };
+    const assertDirectDeletionDenied = async (fixture) => {
+      const before = await cleanupState(pool, fixture.workfileId);
+      const memory = deletionStorage(fixture.objectKey);
+      const observed = fixedObservedPool(await pool.connect());
+      try {
+        await assert.rejects(() => deleteUadAsset(observed.pool, memory.storage, fixture.workfileId, fixture.assetId),
+          { message: LOCKED_ERROR });
+        assertGuardFirst(observed.trace);
+        assert.deepEqual(memory.calls, []);
+        assert.equal(memory.objects.has(fixture.objectKey), true);
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+      } finally {
+        observed.forceRelease();
+      }
+    };
+
+    for (const status of ["signed", "exported", "submitted", "cancelled"]) {
+      await t.test(`deleteUadAsset rejects ${status} before asset or storage access`, async () => {
+        await assertDirectDeletionDenied(await createDeletionFixture({ status }));
+      });
+    }
+
+    await t.test("the native workfile CHECK separately rejects unknown lifecycle status without schema weakening", async () => {
+      const fixture = await createDeletionFixture();
+      const before = await cleanupState(pool, fixture.workfileId);
+      // Unknown stored status cannot be manufactured under the ordinary schema.
+      // This is a schema assertion, not a claim to exercise the deletion guard
+      // with an impossible stored row; decoded-row negatives belong in units.
+      await assert.rejects(() => pool.query("UPDATE appraisal.uad_workfiles SET status = $2 WHERE id = $1",
+        [fixture.workfileId, "synthetic_unknown_status"]), error => error.code === "23514");
+      assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+    });
+
+    for (const status of ["draft", "validating", "ready", "revised"]) {
+      await t.test(`deleteUadAsset rejects signed_at under ${status} before asset or storage access`, async () => {
+        const fixture = await createDeletionFixture({ status });
+        await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+        await assertDirectDeletionDenied(fixture);
+      });
+      for (const [name, revision, supervised] of [
+        ["current-revision", 2, false], ["partial current-revision", 2, true], ["historical", 1, false],
+      ]) {
+        await t.test(`deleteUadAsset rejects ${name} signature under ${status} before asset or storage access`, async () => {
+          const fixture = await createDeletionFixture({ status, supervised });
+          await insertSyntheticSignature(pool, identity, fixture, revision);
+          if (supervised) {
+            const quorum = await pool.query(
+              `SELECT w.supervisory_appraiser_user_id,
+                      (SELECT count(*)::integer FROM appraisal.uad_signatures s WHERE s.workfile_id = w.id) AS signature_count
+                 FROM appraisal.uad_workfiles w WHERE w.id = $1`, [fixture.workfileId]);
+            assert.equal(quorum.rows[0].supervisory_appraiser_user_id, deletionSupervisorId);
+            assert.equal(quorum.rows[0].signature_count, 1, "one appraiser signature leaves the required supervisor unsigned");
+          }
+          await assertDirectDeletionDenied(fixture);
+        });
+      }
+
+      await t.test(`unsigned ${status} direct asset deletion preserves storage-first semantics and revisions`, async () => {
+        const fixture = await createDeletionFixture({ status });
+        const before = await cleanupState(pool, fixture.workfileId);
+        const observed = fixedObservedPool(await pool.connect());
+        const memory = deletionStorage(fixture.objectKey, { onDelete() {
+          assert.match(observed.trace.at(-1), /^SELECT id, object_key FROM appraisal\.uad_assets.*FOR UPDATE$/);
+          assert.ok(observed.trace.some((sql) => sql.includes("AS has_signatures")));
+          assert.equal(observed.trace.some((sql) => sql.startsWith("WITH deleted_asset")), false);
+        } });
+        try {
+          assert.equal(await deleteUadAsset(observed.pool, memory.storage, fixture.workfileId, fixture.assetId), undefined);
+          assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+          assert.equal(observed.trace.at(-1), "COMMIT");
+          assert.deepEqual(memory.calls, [{ objectKey: fixture.objectKey }]);
+          assert.equal(memory.objects.size, 0);
+          assertDirectDeletionState(before, await cleanupState(pool, fixture.workfileId), fixture.assetId);
+        } finally {
+          observed.forceRelease();
+        }
+      });
+
+      await t.test(`unsigned ${status} storage failure preserves all database state and the original error`, async () => {
+        const fixture = await createDeletionFixture({ status });
+        const before = await cleanupState(pool, fixture.workfileId);
+        const failure = new Error("synthetic_storage_delete_failed_before_removal");
+        const memory = deletionStorage(fixture.objectKey, { failure });
+        const observed = fixedObservedPool(await pool.connect());
+        try {
+          await assert.rejects(() => deleteUadAsset(observed.pool, memory.storage, fixture.workfileId, fixture.assetId),
+            error => error === failure);
+          assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+          assert.equal(observed.trace.at(-1), "ROLLBACK");
+          assert.equal(observed.trace.some((sql) => sql.startsWith("WITH deleted_asset")), false);
+          assert.deepEqual(memory.calls, [{ objectKey: fixture.objectKey }]);
+          assert.equal(memory.objects.has(fixture.objectKey), true);
+          assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+        } finally {
+          observed.forceRelease();
+        }
+      });
+    }
+
+    await t.test("deleteUadAsset waits for a synthetic partial-signature commit and reads fresh signature state", async () => {
+      const fixture = await createDeletionFixture({ status: "ready", supervised: true });
+      const before = await cleanupState(pool, fixture.workfileId);
+      const signer = await pool.connect();
+      let deleterClient;
+      try { deleterClient = await pool.connect(); }
+      catch (error) { signer.release(true); throw error; }
+      const lockIssued = deferred();
+      const observed = fixedObservedPool(deleterClient, { before(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) lockIssued.resolve();
+      } });
+      const memory = deletionStorage(fixture.objectKey);
+      let signerTransaction = false;
+      let deleting;
+      try {
+        await deleterClient.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+        await signer.query(READ_COMMITTED_BEGIN);
+        signerTransaction = true;
+        await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        deleting = deleteUadAsset(observed.pool, memory.storage, fixture.workfileId, fixture.assetId);
+        void deleting.catch(() => {});
+        await within(lockIssued.promise, "direct deleter issued its workfile lock");
+        await assertBlockedBy(pool, deleterClient.processID, signer.processID, "direct asset deletion");
+        assert.deepEqual(memory.calls, []);
+        // This intentionally inserts synthetic signature state under the real
+        // signing lock. It is not a successful signUadWorkfile ceremony.
+        await insertSyntheticSignature(signer, identity, fixture, 2);
+        const committedSignatures = JSON.parse(JSON.stringify((await signer.query(
+          "SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId],
+        )).rows));
+        await signer.query("COMMIT");
+        signerTransaction = false;
+        await assert.rejects(() => within(deleting, "direct deleter observed committed partial signature"), { message: LOCKED_ERROR });
+        assertGuardFirst(observed.trace);
+        assert.ok(observed.trace.some((sql) => sql.includes("AS has_signatures")));
+        assert.deepEqual(memory.calls, []);
+        assert.equal(memory.objects.has(fixture.objectKey), true);
+        const after = await cleanupState(pool, fixture.workfileId);
+        assert.deepEqual(after.canonical, before.canonical);
+        assert.deepEqual(after.validation, before.validation);
+        assert.deepEqual(after.artifacts, before.artifacts);
+        assert.deepEqual(after.signatures, committedSignatures);
+        assert.deepEqual(after.signatures.map((row) => [row.revision_number, row.signer_role]), [[2, "appraiser"]]);
+        assert.equal(after.canonical.workfile[0].status, "ready");
+        assert.equal(after.canonical.workfile[0].current_revision, 2);
+        assert.equal(after.canonical.workfile[0].signed_at, null);
+      } finally {
+        if (signerTransaction) await signer.query("ROLLBACK").catch(() => {});
+        signer.release(true);
+        if (deleting) await within(deleting.catch(() => {}), "direct deletion cleanup").catch(() => {});
+        observed.forceRelease();
+      }
+    });
+
+    await t.test("real signUadWorkfile waits for direct deletion then refuses its committed draft", async () => {
+      const fixture = await createDeletionFixture({ status: "ready" });
+      const before = await cleanupState(pool, fixture.workfileId);
+      const deleterClient = await pool.connect();
+      let signerClient;
+      try { signerClient = await pool.connect(); }
+      catch (error) { deleterClient.release(true); throw error; }
+      const deleterLocked = deferred();
+      const continueDeletion = deferred();
+      const deleterObserved = fixedObservedPool(deleterClient, { async after(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          deleterLocked.resolve();
+          await continueDeletion.promise;
+        }
+      } });
+      let signerLockedState;
+      const signerObserved = fixedObservedPool(signerClient, { after(statement, _client, result) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          signerLockedState = { status: result.rows[0]?.status, revision: result.rows[0]?.current_revision };
+        }
+      } });
+      const memory = deletionStorage(fixture.objectKey);
+      let deleting;
+      let signing;
+      try {
+        deleting = deleteUadAsset(deleterObserved.pool, memory.storage, fixture.workfileId, fixture.assetId);
+        void deleting.catch(() => {});
+        await within(deleterLocked.promise, "direct deleter owns the workfile lock");
+        // Invoke the real service, but cover only its post-lock lifecycle
+        // refusal. This does not claim provider, credential, quorum or artifact
+        // success; those checks must not run once the workfile became draft.
+        signing = signUadWorkfile(signerObserved.pool, fixture.workfileId, { userId: identity.actorUserId },
+          { execution_date: "2026-09-05" }, { now: new Date("2026-09-05T12:00:00.000Z") });
+        void signing.catch(() => {});
+        await assertBlockedBy(pool, signerClient.processID, deleterClient.processID, "real UAD signing service");
+        assert.deepEqual(memory.calls, []);
+        continueDeletion.resolve();
+        assert.equal(await within(deleting, "direct deletion committed before signing"), undefined);
+        await assert.rejects(() => within(signing, "real signer observed the post-deletion draft"),
+          { message: "uad_signature_local_validation_required" });
+        assert.deepEqual(signerLockedState, { status: "draft", revision: 2 });
+        assert.equal(signerObserved.trace.length, 3);
+        assert.equal(signerObserved.trace[0], "BEGIN");
+        assert.equal(signerObserved.trace.at(-1), "ROLLBACK");
+        assert.deepEqual(memory.calls, [{ objectKey: fixture.objectKey }]);
+        assert.equal(memory.objects.size, 0);
+        const after = await cleanupState(pool, fixture.workfileId);
+        assertDirectDeletionState(before, after, fixture.assetId);
+        assert.deepEqual(after.signatures, []);
+      } finally {
+        continueDeletion.resolve();
+        if (deleting) await within(deleting.catch(() => {}), "direct deletion cleanup").catch(() => {});
+        if (signing) await within(signing.catch(() => {}), "real signer cleanup").catch(() => {});
+        deleterObserved.forceRelease();
+        signerObserved.forceRelease();
       }
     });
   } finally {

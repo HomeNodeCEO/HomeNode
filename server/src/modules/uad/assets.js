@@ -73,7 +73,7 @@ import {
   UAD_VEHICLE_STORAGE_CAPTION_TYPES,
   UAD_VEHICLE_STORAGE_IMAGE_CONTENT_TYPES,
 } from "./vehicleStorageCatalog.js";
-import { assertUadWorkfileMutable } from "./workfileLifecycle.js";
+import { assertLockedUadWorkfileMutable, assertUadWorkfileMutable } from "./workfileLifecycle.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { assertUadAssetApplicable } from "./assetApplicability.js";
 
@@ -678,16 +678,16 @@ export async function deleteUadAsset(pool, storage, workfileIdValue, assetIdValu
   if (!storage?.deleteObject) throw new Error("uad_object_storage_not_configured");
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const locked = await client.query(
-      `SELECT id, status
+      `SELECT id, status, signed_at
          FROM appraisal.uad_workfiles
         WHERE id = $1
         FOR UPDATE`,
       [workfileId],
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
-    assertUadWorkfileMutable(locked.rows[0].status);
+    await assertLockedUadWorkfileMutable(client, locked.rows[0]);
     const selected = await client.query(
       `SELECT id, object_key
          FROM appraisal.uad_assets

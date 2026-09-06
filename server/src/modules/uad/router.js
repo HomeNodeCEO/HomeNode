@@ -903,7 +903,12 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/entities", async (req, res) => {
     try {
-      const entity = await createUadEntity(pool, req.params.workfileId, req.body || {});
+      const entity = await createUadEntity(
+        pool,
+        req.params.workfileId,
+        req.body || {},
+        req.mobileAuth?.userId || null,
+      );
       res.status(201).json({ entity });
     } catch (error) {
       sendError(res, error);
@@ -912,7 +917,12 @@ export function createUadRouter({
 
   router.delete("/workfiles/:workfileId/entities/:entityId", async (req, res) => {
     try {
-      await deleteUadEntity(pool, req.params.workfileId, req.params.entityId);
+      await deleteUadEntity(
+        pool,
+        req.params.workfileId,
+        req.params.entityId,
+        req.mobileAuth?.userId || null,
+      );
       res.status(204).end();
     } catch (error) {
       sendError(res, error);

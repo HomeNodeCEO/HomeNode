@@ -51,6 +51,7 @@ function errorStatus(error) {
   const message = String(error?.message || "");
   if (error?.statusCode) return error.statusCode;
   if (message === "custom_appraisal_workfile_signed") return 409;
+  if (message === "uad_workfile_status_locked") return 409;
   if (message.endsWith("_not_found")) return 404;
   if (message.endsWith("_access_denied")) return 403;
   if (message.endsWith("_conflict")) return 409;
@@ -67,6 +68,7 @@ function sendError(res, error) {
   const code = status === 500
     ? "mobile_request_failed"
     : String(error?.message || "mobile_request_failed").split(":")[0];
+  if (code === "uad_workfile_status_locked") res.set("Cache-Control", "no-store");
   if (status === 500) console.error("[mobile] request failed", error);
   return res.status(status).json({
     error: code,

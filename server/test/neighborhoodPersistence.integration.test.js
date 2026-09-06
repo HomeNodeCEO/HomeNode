@@ -13,6 +13,7 @@ import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDat
 import { devNull } from "node:os";
 import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohortBlobDatabaseChecks.js";
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
+import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -373,6 +374,8 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
     await t.test("cohort blobs retain exact tenant-private bytes, reject mutation and honor caller transactions", () => checkNeighborhoodCohortBlobDatabase(pool));
     await t.test("Custom retained subject inputs use actual scoped rows, preserve history and refuse competing locks", async () =>
       checkCustomCohortSubjectDatabase(pool, await identityFixture(pool)));
+    await t.test("Custom retained query selections preserve complete pages, tenant scope, commit and rollback", async () =>
+      checkCustomCohortSelectionDatabase(pool, await identityFixture(pool)));
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
       const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };

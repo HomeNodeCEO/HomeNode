@@ -11,6 +11,7 @@ import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixt
 import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDatabasePlan,
   verifyNeighborhoodCiConnection, prepareNeighborhoodCiDatabase, NEIGHBORHOOD_CI_IDENTITY_SQL } from "./helpers/neighborhoodCiDatabase.js";
 import { devNull } from "node:os";
+import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohortBlobDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -368,6 +369,7 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       "Use a dedicated, idle *_test database; pending jobs are not cleaned up or claimed from another run");
 
     await t.test("required prerequisite fails before DDL; optional GIS absent/empty/populated remains independent", () => privateAbsenceProbes(pool, sql));
+    await t.test("cohort blobs retain exact tenant-private bytes, reject mutation and honor caller transactions", () => checkNeighborhoodCohortBlobDatabase(pool));
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
       const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };

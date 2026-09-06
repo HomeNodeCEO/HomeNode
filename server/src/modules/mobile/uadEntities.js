@@ -5,6 +5,7 @@ import {
   deleteUadEntityWithClient,
 } from "../uad/entities.js";
 import { UAD_REPEATABLE_ENTITY_GROUPS } from "../uad/fieldCatalog.js";
+import { assertLockedUadWorkfileMutable } from "../uad/workfileLifecycle.js";
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
 import { canonicalJson } from "./sync.js";
 
@@ -244,7 +245,7 @@ async function uadSession(client, auth, sessionId, { lock = false, writable = fa
 
 async function currentWorkfile(client, workfileId, { lock = false } = {}) {
   const result = await client.query(
-    `SELECT id, current_revision, specification_release_key, status
+    `SELECT id, current_revision, specification_release_key, status, signed_at
        FROM appraisal.uad_workfiles WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
     [workfileId],
   );
@@ -471,7 +472,7 @@ export async function reviewMobileUadEntityProposal(pool, auth, sessionIdValue, 
   const hash = reviewOperationHash(proposalId, request.decision);
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const session = await uadSession(client, auth, sessionId, { lock: true, writable: true });
     const priorOperation = await client.query(
       `SELECT request_sha256, result FROM app.mobile_uad_entity_review_operations
@@ -511,6 +512,8 @@ export async function reviewMobileUadEntityProposal(pool, auth, sessionIdValue, 
       });
       result = { proposal: proposalResponse(rejected.rows[0]), report_registry_revision: Number(session.registry_revision) };
     } else {
+      const workfile = await currentWorkfile(client, session.uad_workfile_id, { lock: true });
+      await assertLockedUadWorkfileMutable(client, workfile);
       let conflict = null;
       let appliedEntity = null;
       if (proposal.action === "delete") {

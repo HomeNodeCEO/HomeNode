@@ -2222,6 +2222,621 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         assert.deepEqual(await completionState(fixture.workfileId), before);
       } finally { observed.forceRelease(); }
     });
+
+    // Entity lifecycle containment uses the same disposable child database as
+    // the canonical-writer cases above. These tests intentionally exercise the
+    // exported production owners; no route, storage or signing provider is
+    // replaced. Document composition is multi-transaction by design, so its
+    // observer forwards every pool acquisition to a genuine independent client.
+    const {
+      createUadEntity,
+      createUadEntityWithClient,
+      deleteUadEntity,
+      deleteUadEntityWithClient,
+    } = await import("../src/modules/uad/entities.js");
+    const {
+      applyConfirmedUadDocumentCandidate,
+      synchronizeUadPurchaseContract,
+    } = await import("../src/modules/uad/documentEvidence.js");
+    const { createInspectionSession } = await import("../src/modules/mobile/reportFiles.js");
+    const {
+      createMobileUadEntityProposal,
+      reviewMobileUadEntityProposal,
+    } = await import("../src/modules/mobile/uadEntities.js");
+
+    const ENTITY_INPUT = Object.freeze({
+      entity_type: "assignment_seller",
+      label: "Synthetic lifecycle seller",
+      data: Object.freeze({}),
+    });
+    const hostileObservedPool = async (hooks = {}) => {
+      const client = await pool.connect();
+      await client.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+      const isolation = [];
+      const observed = fixedObservedPool(client, {
+        before: hooks.before,
+        async after(statement, rawClient, result) {
+          if (statement.startsWith("BEGIN")) {
+            isolation.push((await rawClient.query("SHOW transaction_isolation")).rows[0]?.transaction_isolation);
+          }
+          await hooks.after?.(statement, rawClient, result);
+        },
+      });
+      return { ...observed, isolation, processID: client.processID };
+    };
+    const entityMutation = (writerPool, workfile, action, entityId = null) => (
+      action === "create"
+        ? createUadEntity(writerPool, workfile.workfileId, ENTITY_INPUT, identity.actorUserId)
+        : deleteUadEntity(writerPool, workfile.workfileId, entityId, identity.actorUserId)
+    );
+    const createEntityMutationFixture = async (action, evidence = null) => {
+      const workfile = await createWorkfileFixture(pool, identity, { status: "draft", revision: 2 });
+      let entityId = null;
+      if (action === "delete") {
+        entityId = (await createUadEntity(pool, workfile.workfileId, ENTITY_INPUT, identity.actorUserId)).id;
+      }
+      await pool.query(
+        `UPDATE appraisal.uad_workfiles
+            SET status = $2, signed_at = NULL, supervisory_appraiser_user_id = $3
+          WHERE id = $1`,
+        [workfile.workfileId, evidence === "historical signature" ? "revised" : "ready",
+          evidence === "current partial signature" ? deletionSupervisorId : null],
+      );
+      if (evidence === "signed_at") {
+        await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [workfile.workfileId]);
+      } else if (evidence === "current partial signature") {
+        await insertSyntheticSignature(pool, identity, workfile, 2);
+      } else if (evidence === "historical signature") {
+        await insertSyntheticSignature(pool, identity, workfile, 1);
+      }
+      return { ...workfile, entityId };
+    };
+    const assertEntityGuardTrace = (observed) => {
+      assert.deepEqual(observed.isolation, ["read committed"]);
+      assertGuardFirst(observed.trace);
+      assert.equal(observed.trace.some((sql) => sql.includes("FROM appraisal.uad_entities")), false);
+    };
+
+    for (const action of ["create", "delete"]) {
+      for (const evidence of ["signed_at", "current partial signature", "historical signature"]) {
+        await t.test(`public entity ${action} preserves complete state when ${evidence} locks the workfile`, async () => {
+          const fixture = await createEntityMutationFixture(action, evidence);
+          const before = await cleanupState(pool, fixture.workfileId);
+          const observed = await hostileObservedPool();
+          let error = null;
+          try {
+            await entityMutation(observed.pool, fixture, action, fixture.entityId).catch((caught) => { error = caught; });
+            const after = await cleanupState(pool, fixture.workfileId);
+            assert.deepEqual(after, before,
+              "a lifecycle refusal must retain canonical rows, signatures, audit, validation and artifacts");
+            assert.equal(error?.message, LOCKED_ERROR);
+            assertEntityGuardTrace(observed);
+          } finally {
+            observed.forceRelease();
+          }
+        });
+      }
+    }
+
+    await t.test("borrowed entity helpers preserve caller-owned transactions, rollback, audit and touch semantics", async () => {
+      const workfile = await createWorkfileFixture(pool, identity, { status: "ready", revision: 2 });
+      const before = await cleanupState(pool, workfile.workfileId);
+      const rawClient = await pool.connect();
+      const trace = [];
+      const client = {
+        async query(config, values) {
+          const statement = statementOf(config);
+          trace.push(statement);
+          return rawClient.query(config, values);
+        },
+      };
+      try {
+        await client.query(READ_COMMITTED_BEGIN);
+        assert.equal((await client.query("SHOW transaction_isolation")).rows[0].transaction_isolation, "read committed");
+        const rolledBackEntity = await createUadEntityWithClient(client, workfile.workfileId, ENTITY_INPUT,
+          { actorUserId: identity.actorUserId, audit: false, touch: false });
+        const uncommittedEntity = await client.query(
+          "SELECT id FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2",
+          [rolledBackEntity.id, workfile.workfileId],
+        );
+        assert.deepEqual(uncommittedEntity.rows.map((row) => row.id), [rolledBackEntity.id],
+          "the borrowed helper must make its entity mutation visible to its caller-owned transaction");
+        const uncommittedWorkfile = JSON.parse(JSON.stringify((await client.query(
+          `SELECT current_revision, status, signed_at, updated_at
+             FROM appraisal.uad_workfiles WHERE id = $1`,
+          [workfile.workfileId],
+        )).rows));
+        assert.deepEqual(uncommittedWorkfile, before.canonical.workfile,
+          "touch:false must leave the workfile unchanged before rollback");
+        const uncommittedAudit = await client.query(
+          "SELECT id FROM appraisal.uad_audit_events WHERE workfile_id = $1",
+          [workfile.workfileId],
+        );
+        assert.deepEqual(uncommittedAudit.rows, [], "audit:false must suppress the event before rollback");
+        await client.query("ROLLBACK");
+        assert.deepEqual(await cleanupState(pool, workfile.workfileId), before);
+        assert.equal(trace.filter((sql) => sql.startsWith("BEGIN")).length, 1,
+          "the borrowed helper must not start its own transaction");
+
+        trace.length = 0;
+        await client.query(READ_COMMITTED_BEGIN);
+        const created = await createUadEntityWithClient(client, workfile.workfileId, ENTITY_INPUT,
+          { actorUserId: identity.actorUserId });
+        await client.query("COMMIT");
+        const createdState = await cleanupState(pool, workfile.workfileId);
+        assert.equal(createdState.canonical.workfile[0].status, "draft");
+        assert.equal(createdState.canonical.workfile[0].current_revision, 2);
+        assert.equal(createdState.canonical.entities.some((row) => row.id === created.id), true);
+        const createAudit = createdState.canonical.audit.find((row) => (
+          row.entity_id === created.id && row.event_type === "uad_entity.created"
+        ));
+        assert.equal(createAudit?.actor_user_id, identity.actorUserId);
+        assert.equal(trace.filter((sql) => sql.startsWith("BEGIN")).length, 1);
+        assert.equal(trace.at(-1), "COMMIT");
+
+        trace.length = 0;
+        await client.query(READ_COMMITTED_BEGIN);
+        await deleteUadEntityWithClient(client, workfile.workfileId, created.id,
+          { actorUserId: identity.actorUserId });
+        await client.query("ROLLBACK");
+        assert.deepEqual(await cleanupState(pool, workfile.workfileId), createdState,
+          "a caller rollback must undo the borrowed deletion, touch and audit together");
+
+        trace.length = 0;
+        await client.query(READ_COMMITTED_BEGIN);
+        await deleteUadEntityWithClient(client, workfile.workfileId, created.id,
+          { actorUserId: identity.actorUserId });
+        await client.query("COMMIT");
+        const deletedState = await cleanupState(pool, workfile.workfileId);
+        assert.equal(deletedState.canonical.entities.some((row) => row.id === created.id), false);
+        const deleteAudit = deletedState.canonical.audit.find((row) => (
+          row.entity_id === created.id && row.event_type === "uad_entity.deleted"
+        ));
+        assert.equal(deleteAudit?.actor_user_id, identity.actorUserId);
+        assert.equal(deletedState.canonical.workfile[0].current_revision, 2);
+        assert.equal(trace.filter((sql) => sql.startsWith("BEGIN")).length, 1);
+        assert.equal(trace.at(-1), "COMMIT");
+      } finally {
+        await rawClient.query("ROLLBACK").catch(() => {});
+        rawClient.release(true);
+      }
+    });
+
+    for (const action of ["create", "delete"]) {
+      await t.test(`public entity ${action} rolls back entity, audit and touch after a pre-COMMIT fault`, async () => {
+        const fixture = await createEntityMutationFixture(action);
+        const before = await cleanupState(pool, fixture.workfileId);
+        const failure = new Error(`synthetic_entity_${action}_before_commit_failure`);
+        const observed = await hostileObservedPool({ before(statement) {
+          if (statement === "COMMIT") throw failure;
+        } });
+        try {
+          await assert.rejects(
+            () => entityMutation(observed.pool, fixture, action, fixture.entityId),
+            error => error === failure,
+          );
+          assert.deepEqual(await cleanupState(pool, fixture.workfileId), before,
+            "a pre-COMMIT fault must roll back the entity, actor audit and workfile touch together");
+          assert.equal(observed.trace.some((sql) => (
+            action === "create"
+              ? sql.startsWith("INSERT INTO appraisal.uad_entities")
+              : sql === "DELETE FROM appraisal.uad_entities WHERE id = $1"
+          )), true);
+          assert.equal(observed.trace.some((sql) => sql.startsWith("INSERT INTO appraisal.uad_audit_events")), true);
+          assert.equal(observed.trace.some((sql) => (
+            sql === "UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1"
+          )), true);
+          assert.ok(observed.trace.indexOf("COMMIT") > 0, "the injected fault must occur at the real commit boundary");
+          assert.equal(observed.trace.at(-1), "ROLLBACK");
+          assert.deepEqual(observed.isolation, ["read committed"]);
+          assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+        } finally {
+          observed.forceRelease();
+        }
+      });
+    }
+
+    const genuineObservedPool = () => {
+      const records = [];
+      return {
+        records,
+        pool: {
+          query: (...args) => pool.query(...args),
+          async connect() {
+            const rawClient = await pool.connect();
+            await rawClient.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+            const record = { trace: [], queries: [], isolation: [], pid: rawClient.processID };
+            records.push(record);
+            let released = false;
+            return {
+              async query(config, values) {
+                const statement = statementOf(config);
+                record.trace.push(statement);
+                record.queries.push({ statement, values: structuredClone(values || []) });
+                const result = await rawClient.query(config, values);
+                if (statement.startsWith("BEGIN")) {
+                  record.isolation.push((await rawClient.query("SHOW transaction_isolation")).rows[0]?.transaction_isolation);
+                }
+                return result;
+              },
+              release() {
+                if (!released) {
+                  released = true;
+                  rawClient.release(true);
+                }
+              },
+            };
+          },
+        },
+      };
+    };
+    const createDocumentFixture = async (workfile, documentType, candidates) => {
+      const content = Buffer.from(`%PDF-1.4 synthetic entity lifecycle ${randomUUID()}`);
+      const checksum = createHash("sha256").update(content).digest("hex");
+      const inserted = await pool.query(
+        `INSERT INTO app.assignment_documents (
+           account_id, uad_workfile_id, report_file_id, document_type, title,
+           file_name, content_type, content, checksum_sha256, file_size_bytes,
+           processing_status
+         ) VALUES ($1, $2, $3, $4, 'Synthetic entity lifecycle evidence',
+           'synthetic-entity-lifecycle.pdf', 'application/pdf', $5, $6, $7, 'reviewed')
+         RETURNING id`,
+        [identity.accountId, workfile.workfileId, workfile.reportFileId, documentType,
+          content, checksum, content.length],
+      );
+      const documentId = inserted.rows[0].id;
+      const candidateIds = new Map();
+      for (const [fieldKey, value] of Object.entries(candidates)) {
+        const candidate = await pool.query(
+          `INSERT INTO app.assignment_document_field_candidates (
+             document_id, field_key, raw_value, normalized_value, review_status,
+             confirmed_value, reviewer, reviewed_at
+           ) VALUES ($1, $2, $3, $3, 'confirmed', $3, 'Synthetic lifecycle reviewer', now())
+           RETURNING id`,
+          [documentId, fieldKey, value],
+        );
+        candidateIds.set(fieldKey, candidate.rows[0].id);
+      }
+      return { documentId, candidateIds };
+    };
+    const recordsWithAdvisory = (observer, advisoryKey) => observer.records.filter((record) => (
+      record.queries.some(({ statement, values }) => (
+        statement.includes("pg_advisory_xact_lock") && values[0] === advisoryKey
+      ))
+    ));
+    const assertReadCommittedOwners = (records, label) => {
+      assert.ok(records.length > 0, `${label} must execute through its real transaction owner`);
+      for (const record of records) {
+        assert.equal(record.trace[0], READ_COMMITTED_BEGIN);
+        assert.deepEqual(record.isolation, ["read committed"]);
+      }
+    };
+    const assertDocumentGuardFirst = (observer) => {
+      assert.equal(observer.records.length, 1,
+        "the document entity owner must refuse before any later section-save transaction starts");
+      const [record] = observer.records;
+      assertReadCommittedOwners([record], "document entity lifecycle guard");
+      const workfileLock = record.trace.findIndex((sql) => (
+        sql.includes("FROM appraisal.uad_workfiles") && sql.endsWith("FOR UPDATE")
+      ));
+      const signatureRead = record.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_signatures"));
+      assert.equal(workfileLock, 1);
+      assert.ok(signatureRead > workfileLock);
+      assert.equal(record.trace.some((sql) => sql.includes("pg_advisory_xact_lock")), false);
+      assert.equal(record.trace.some((sql) => sql.includes("FROM appraisal.uad_entities")), false);
+      assert.equal(record.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+      assert.equal(record.trace.at(-1), "ROLLBACK");
+    };
+
+    for (const [kind, documentType, fieldKey, value, entityType, advisoryMarker] of [
+      ["contact", "engagement_letter", "lender_client_name", "Synthetic Lender LLC",
+        "assignment_contact", "uad-document-contact:"],
+      ["listing", "mls_sheet", "mls_number", "SYNTHETIC-MLS-100",
+        "subject_listing", "uad-document-subject-listing:"],
+    ]) {
+      await t.test(`document ${kind} composition reuses one unsigned entity with actor audit and read-committed ownership`, async () => {
+        const workfile = await createWorkfileFixture(pool, identity, { status: "draft" });
+        const document = await createDocumentFixture(workfile, documentType, { [fieldKey]: value });
+        const observer = genuineObservedPool();
+        const first = await applyConfirmedUadDocumentCandidate(
+          observer.pool, workfile.workfileId, document.documentId,
+          document.candidateIds.get(fieldKey), identity.actorUserId,
+        );
+        const firstEntities = JSON.parse(JSON.stringify((await pool.query(
+          `SELECT * FROM appraisal.uad_entities
+            WHERE workfile_id = $1 AND entity_type = $2 ORDER BY id`,
+          [workfile.workfileId, entityType],
+        )).rows));
+        const repeated = await applyConfirmedUadDocumentCandidate(
+          observer.pool, workfile.workfileId, document.documentId,
+          document.candidateIds.get(fieldKey), identity.actorUserId,
+        );
+        assert.equal(first.applied, true);
+        assert.equal(repeated.applied, true);
+        const entities = (await pool.query(
+          `SELECT * FROM appraisal.uad_entities
+            WHERE workfile_id = $1 AND entity_type = $2 ORDER BY id`,
+          [workfile.workfileId, entityType],
+        )).rows;
+        assert.equal(entities.length, 1);
+        assert.deepEqual(JSON.parse(JSON.stringify(entities)), firstEntities,
+          "the repeat path must return the existing entity without rewriting its row");
+        const audit = (await pool.query(
+          `SELECT actor_user_id FROM appraisal.uad_audit_events
+            WHERE workfile_id = $1 AND event_type = 'uad_entity.created' AND entity_id = $2`,
+          [workfile.workfileId, entities[0].id],
+        )).rows;
+        assert.deepEqual(audit.map((row) => row.actor_user_id), [identity.actorUserId]);
+        const advisoryKey = `${advisoryMarker}${workfile.workfileId}:${document.documentId}`;
+        assertReadCommittedOwners(recordsWithAdvisory(observer, advisoryKey), `document ${kind} owner`);
+      });
+
+      await t.test(`document ${kind} creation cannot commit ahead of a current signature refusal`, async () => {
+        const workfile = await createWorkfileFixture(pool, identity, { status: "ready", revision: 2 });
+        const document = await createDocumentFixture(workfile, documentType, { [fieldKey]: value });
+        await insertSyntheticSignature(pool, identity, workfile, 2);
+        const before = await cleanupState(pool, workfile.workfileId);
+        const observer = genuineObservedPool();
+        let error = null;
+        await applyConfirmedUadDocumentCandidate(
+          observer.pool, workfile.workfileId, document.documentId,
+          document.candidateIds.get(fieldKey), identity.actorUserId,
+        ).catch((caught) => { error = caught; });
+        assert.deepEqual(await cleanupState(pool, workfile.workfileId), before,
+          "the document owner must not commit an entity before a later section save refuses signatures");
+        assert.equal(error?.message, LOCKED_ERROR);
+        assertDocumentGuardFirst(observer);
+      });
+    }
+
+    await t.test("purchase-contract seller reuse cannot partially commit before a later signed-section refusal", async () => {
+      const workfile = await createWorkfileFixture(pool, identity, { status: "draft" });
+      const document = await createDocumentFixture(workfile, "purchase_contract", {
+        seller_name: "Original Synthetic Seller LLC",
+      });
+      await synchronizeUadPurchaseContract(pool, workfile.workfileId, document.documentId, identity.actorUserId);
+      await pool.query(
+        `UPDATE app.assignment_document_field_candidates
+            SET raw_value = 'Changed Synthetic Seller LLC',
+                normalized_value = 'Changed Synthetic Seller LLC',
+                confirmed_value = 'Changed Synthetic Seller LLC', updated_at = now()
+          WHERE id = $1`,
+        [document.candidateIds.get("seller_name")],
+      );
+      const currentRevision = Number((await pool.query(
+        "SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1", [workfile.workfileId],
+      )).rows[0].current_revision);
+      await pool.query("UPDATE appraisal.uad_workfiles SET status = 'ready' WHERE id = $1", [workfile.workfileId]);
+      await insertSyntheticSignature(pool, identity, workfile, currentRevision);
+      const before = await cleanupState(pool, workfile.workfileId);
+      const beforeSellerRows = JSON.parse(JSON.stringify((await pool.query(
+        `SELECT * FROM appraisal.uad_entities
+          WHERE workfile_id = $1 AND entity_type = 'assignment_seller' ORDER BY id`,
+        [workfile.workfileId],
+      )).rows));
+      const observer = genuineObservedPool();
+      let error = null;
+      await synchronizeUadPurchaseContract(
+        observer.pool, workfile.workfileId, document.documentId, identity.actorUserId,
+      ).catch((caught) => { error = caught; });
+      assert.deepEqual(await cleanupState(pool, workfile.workfileId), before,
+        "seller label/data updates must not survive when the later canonical section save refuses the signature");
+      assert.deepEqual(JSON.parse(JSON.stringify((await pool.query(
+        `SELECT * FROM appraisal.uad_entities
+          WHERE workfile_id = $1 AND entity_type = 'assignment_seller' ORDER BY id`,
+        [workfile.workfileId],
+      )).rows)), beforeSellerRows,
+      "the direct seller-reuse path must preserve every database column after refusing signed state");
+      assert.equal(error?.message, LOCKED_ERROR);
+      assertDocumentGuardFirst(observer);
+    });
+
+    const mobileState = async (fixture, sessionId) => {
+      const [state, report, session, sessionEvents, reportEvents, proposals, operations, entityEvents] = await Promise.all([
+        cleanupState(pool, fixture.workfileId),
+        pool.query("SELECT * FROM app.report_files WHERE id = $1", [fixture.reportFileId]),
+        pool.query("SELECT * FROM app.inspection_sessions WHERE id = $1", [sessionId]),
+        pool.query("SELECT * FROM app.inspection_session_events WHERE inspection_session_id = $1 ORDER BY id", [sessionId]),
+        pool.query("SELECT * FROM app.report_file_events WHERE report_file_id = $1 ORDER BY id", [fixture.reportFileId]),
+        pool.query("SELECT * FROM app.mobile_uad_entity_proposals WHERE inspection_session_id = $1 ORDER BY id", [sessionId]),
+        pool.query("SELECT * FROM app.mobile_uad_entity_review_operations WHERE inspection_session_id = $1 ORDER BY id", [sessionId]),
+        pool.query("SELECT * FROM app.mobile_uad_entity_events WHERE inspection_session_id = $1 ORDER BY id", [sessionId]),
+      ]);
+      return JSON.parse(JSON.stringify({ state, report: report.rows, session: session.rows,
+        sessionEvents: sessionEvents.rows, reportEvents: reportEvents.rows,
+        proposals: proposals.rows, operations: operations.rows, entityEvents: entityEvents.rows }));
+    };
+    const createMobileEntityFixture = async () => {
+      const fixture = await createCompletionFixture();
+      const createdSession = await createInspectionSession(pool, fixture.auth, { report_file_id: fixture.reportFileId });
+      const proposal = await createMobileUadEntityProposal(pool, fixture.auth, createdSession.session.id, {
+        client_operation_id: randomUUID(),
+        action: "create",
+        entity_type: "assignment_seller",
+        label: "Synthetic mobile seller",
+        data: {},
+        base_target_revision: fixture.revision,
+      });
+      return { ...fixture, sessionId: createdSession.session.id, proposalId: proposal.proposal.id };
+    };
+
+    await t.test("mobile entity acceptance preserves all review and canonical state after a current signature", async () => {
+      const fixture = await createMobileEntityFixture();
+      await insertSyntheticSignature(pool, fixture.identity, fixture, fixture.revision);
+      const before = await mobileState(fixture, fixture.sessionId);
+      const observed = await hostileObservedPool();
+      let error = null;
+      try {
+        await reviewMobileUadEntityProposal(observed.pool, fixture.auth, fixture.sessionId, fixture.proposalId, {
+          client_operation_id: randomUUID(), decision: "accept",
+        }).catch((caught) => { error = caught; });
+        assert.deepEqual(await mobileState(fixture, fixture.sessionId), before,
+          "a denied mobile acceptance must preserve proposal, operation, event, report and UAD state");
+        assert.equal(error?.message, LOCKED_ERROR);
+        assert.deepEqual(observed.isolation, ["read committed"]);
+        const workfileLock = observed.trace.findIndex((sql) => (
+          sql.includes("FROM appraisal.uad_workfiles") && sql.endsWith("FOR UPDATE")
+        ));
+        const signatureRead = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_signatures"));
+        assert.ok(workfileLock > 0 && signatureRead > workfileLock);
+        assert.equal(observed.trace.some((sql) => sql.includes("FROM appraisal.uad_entities")), false);
+        assert.equal(observed.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+        assert.equal(observed.trace.at(-1), "ROLLBACK");
+      } finally {
+        observed.forceRelease();
+      }
+    });
+
+    await t.test("mobile rejection and exact replay remain available after signing without canonical mutation", async () => {
+      const fixture = await createMobileEntityFixture();
+      await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+      const before = await mobileState(fixture, fixture.sessionId);
+      const operationId = randomUUID();
+      const firstObserved = await hostileObservedPool();
+      let first;
+      try {
+        first = await reviewMobileUadEntityProposal(
+          firstObserved.pool, fixture.auth, fixture.sessionId, fixture.proposalId,
+          { client_operation_id: operationId, decision: "reject" },
+        );
+        assert.equal(first.proposal.status, "rejected");
+        assert.deepEqual(firstObserved.isolation, ["read committed"]);
+        assert.equal(firstObserved.trace.at(-1), "COMMIT");
+      } finally { firstObserved.forceRelease(); }
+      const rejected = await mobileState(fixture, fixture.sessionId);
+      assert.deepEqual(rejected.state, before.state,
+        "review rejection may update mobile workflow state but never signed canonical state");
+      const replayObserved = await hostileObservedPool();
+      try {
+        const replay = await reviewMobileUadEntityProposal(
+          replayObserved.pool, fixture.auth, fixture.sessionId, fixture.proposalId,
+          { client_operation_id: operationId, decision: "reject" },
+        );
+        assert.deepEqual(replay, first);
+        assert.deepEqual(await mobileState(fixture, fixture.sessionId), rejected,
+          "an exact operation replay must be read-only and return the committed result");
+        assert.deepEqual(replayObserved.isolation, ["read committed"]);
+        assert.equal(replayObserved.trace.at(-1), "COMMIT");
+      } finally { replayObserved.forceRelease(); }
+    });
+
+    const assertCommittedEntityMutation = (before, after, action, result) => {
+      assert.equal(after.canonical.workfile[0].current_revision, before.canonical.workfile[0].current_revision,
+        "entity writers do not own workfile revision increments");
+      assert.equal(after.canonical.workfile[0].status, "draft");
+      assert.equal(after.canonical.workfile[0].signed_at, null);
+      assert.deepEqual(after.signatures, []);
+      const priorAuditIds = new Set(before.canonical.audit.map((row) => row.id));
+      const addedAudits = after.canonical.audit.filter((row) => !priorAuditIds.has(row.id));
+      assert.equal(addedAudits.length, 1);
+      assert.equal(addedAudits[0].event_type, `uad_entity.${action === "create" ? "created" : "deleted"}`);
+      assert.equal(addedAudits[0].entity_id, result.id);
+      assert.equal(addedAudits[0].actor_user_id, identity.actorUserId);
+      const comparable = structuredClone(after);
+      comparable.canonical.workfile = structuredClone(before.canonical.workfile);
+      comparable.canonical.audit = comparable.canonical.audit.filter((row) => row.id !== addedAudits[0].id);
+      if (action === "create") {
+        comparable.canonical.entities = comparable.canonical.entities.filter((row) => row.id !== result.id);
+      } else {
+        const prior = before.canonical.entities.find((row) => row.id === result.id);
+        assert.ok(prior);
+        comparable.canonical.entities.push(structuredClone(prior));
+        comparable.canonical.entities.sort((left, right) => left.id.localeCompare(right.id));
+      }
+      assert.deepEqual(comparable, before,
+        "only the committed entity row, its actor audit and the workfile touch may differ");
+    };
+
+    for (const action of ["create", "delete"]) {
+      await t.test(`public entity ${action} waits for an in-flight signature and then preserves its committed evidence`, async () => {
+        const fixture = await createEntityMutationFixture(action);
+        const before = await cleanupState(pool, fixture.workfileId);
+        const signer = await pool.connect();
+        const lockIssued = deferred();
+        const observed = await hostileObservedPool({ before(statement) {
+          if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) lockIssued.resolve();
+        } });
+        let signerTransaction = false;
+        let writing;
+        try {
+          await signer.query(READ_COMMITTED_BEGIN);
+          signerTransaction = true;
+          await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+          writing = entityMutation(observed.pool, fixture, action, fixture.entityId);
+          void writing.catch(() => {});
+          await within(lockIssued.promise, `public entity ${action} issued its workfile lock`);
+          await assertBlockedBy(pool, observed.processID, signer.processID, `public entity ${action}`);
+          await insertSyntheticSignature(signer, identity, fixture, 2);
+          const committedSignatures = JSON.parse(JSON.stringify((await signer.query(
+            "SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId],
+          )).rows));
+          await signer.query("COMMIT");
+          signerTransaction = false;
+          let error = null;
+          await within(writing, `public entity ${action} sees the committed signature`).catch((caught) => { error = caught; });
+          const after = await cleanupState(pool, fixture.workfileId);
+          assert.deepEqual(after.canonical, before.canonical);
+          assert.deepEqual(after.validation, before.validation);
+          assert.deepEqual(after.artifacts, before.artifacts);
+          assert.deepEqual(after.signatures, committedSignatures);
+          assert.equal(error?.message, LOCKED_ERROR);
+          assertEntityGuardTrace(observed);
+        } finally {
+          if (signerTransaction) await signer.query("ROLLBACK").catch(() => {});
+          signer.release(true);
+          if (writing) await within(writing.catch(() => {}), `public entity ${action} cleanup`).catch(() => {});
+          observed.forceRelease();
+        }
+      });
+
+      await t.test(`real signer waits for public entity ${action} and refuses its committed draft without a revision increment`, async () => {
+        const fixture = await createEntityMutationFixture(action);
+        const before = await cleanupState(pool, fixture.workfileId);
+        const writerLocked = deferred();
+        const continueWriter = deferred();
+        const writerObserved = await hostileObservedPool({ async after(statement) {
+          if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+            writerLocked.resolve();
+            await continueWriter.promise;
+          }
+        } });
+        const signerClient = await pool.connect();
+        let signerLockedState;
+        const signerObserved = fixedObservedPool(signerClient, { after(statement, _client, result) {
+          if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+            signerLockedState = { status: result.rows[0]?.status, revision: result.rows[0]?.current_revision };
+          }
+        } });
+        let writing;
+        let signing;
+        try {
+          writing = entityMutation(writerObserved.pool, fixture, action, fixture.entityId);
+          void writing.catch(() => {});
+          await within(writerLocked.promise, `public entity ${action} owns the workfile lock`);
+          signing = signUadWorkfile(signerObserved.pool, fixture.workfileId, { userId: identity.actorUserId },
+            { execution_date: "2026-09-05" }, { now: new Date("2026-09-05T12:00:00.000Z") });
+          void signing.catch(() => {});
+          await assertBlockedBy(pool, signerClient.processID, writerObserved.processID,
+            `real signer versus entity ${action}`);
+          continueWriter.resolve();
+          const result = await within(writing, `public entity ${action} commits before signing`);
+          await assert.rejects(() => within(signing, `real signer observes entity ${action} draft`),
+            { message: "uad_signature_local_validation_required" });
+          assert.deepEqual(signerLockedState, { status: "draft", revision: 2 });
+          assert.equal(signerObserved.trace[0], "BEGIN");
+          assert.equal(signerObserved.trace.at(-1), "ROLLBACK");
+          assert.deepEqual(writerObserved.isolation, ["read committed"]);
+          assert.equal(writerObserved.trace.at(-1), "COMMIT");
+          assertCommittedEntityMutation(before, await cleanupState(pool, fixture.workfileId), action, result);
+        } finally {
+          continueWriter.resolve();
+          if (writing) await within(writing.catch(() => {}), `entity ${action} writer cleanup`).catch(() => {});
+          if (signing) await within(signing.catch(() => {}), `entity ${action} signer cleanup`).catch(() => {});
+          writerObserved.forceRelease();
+          signerObserved.forceRelease();
+        }
+      });
+    }
   } finally {
     await pool.end();
   }

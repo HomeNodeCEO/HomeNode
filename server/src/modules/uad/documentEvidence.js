@@ -1,6 +1,7 @@
 import { createUadEntityWithClient, deleteUadEntityWithClient } from "./entities.js";
 import { saveUadSection } from "./editor.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
+import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
 import {
   buildPurchaseContractAnalysis,
   confirmedPurchaseContractCandidates,
@@ -284,10 +285,20 @@ export function parseUadClientAddress(value) {
   };
 }
 
+async function lockMutableDocumentWorkfile(client, workfileId) {
+  const locked = await client.query(
+    "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE",
+    [workfileId],
+  );
+  if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+  await assertLockedUadWorkfileMutable(client, locked.rows[0]);
+}
+
 async function findOrCreateClientContact(pool, workfileId, documentId, actorUserId) {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await lockMutableDocumentWorkfile(client, workfileId);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`uad-document-contact:${workfileId}:${documentId}`],
@@ -338,7 +349,8 @@ async function synchronizeDocumentSellerParties(
   if (!parties) throw new Error("uad_document_party_name_requires_manual_entry");
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await lockMutableDocumentWorkfile(client, workfileId);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`uad-document-sellers:${workfileId}:${documentId}`],
@@ -425,7 +437,8 @@ async function synchronizeDocumentSellerParties(
 async function findOrCreateSubjectListing(pool, workfileId, documentId, actorUserId) {
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    await lockMutableDocumentWorkfile(client, workfileId);
     await client.query(
       "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
       [`uad-document-subject-listing:${workfileId}:${documentId}`],

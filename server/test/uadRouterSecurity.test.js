@@ -887,15 +887,19 @@ function entityAuditRoutePool(method) {
     created_at: "2026-09-06T00:00:00.000Z",
     updated_at: "2026-09-06T00:00:00.000Z",
   };
-  const lockSql = "SELECT id, status FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE";
+  const lockSql = "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE";
   const auditSql = method === "POST"
     ? "INSERT INTO appraisal.uad_audit_events ( workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data ) VALUES ($1, $2, 'uad_entity.created', $3, $4, $5::jsonb)"
     : "INSERT INTO appraisal.uad_audit_events ( workfile_id, actor_user_id, event_type, entity_type, entity_id, before_data ) VALUES ($1, $2, 'uad_entity.deleted', $3, $4, $5::jsonb)";
   const steps = [
-    ["BEGIN", (params) => { assert.deepEqual(params, []); return { rows: [] }; }],
+    ["BEGIN ISOLATION LEVEL READ COMMITTED", (params) => { assert.deepEqual(params, []); return { rows: [] }; }],
     [lockSql, (params) => {
       assert.deepEqual(params, [WORKFILE_ID]);
-      return { rows: [{ id: WORKFILE_ID, status: "draft" }] };
+      return { rows: [{ id: WORKFILE_ID, status: "draft", signed_at: null }] };
+    }],
+    ["SELECT EXISTS ( SELECT 1 FROM appraisal.uad_signatures WHERE workfile_id = $1 ) AS has_signatures", (params) => {
+      assert.deepEqual(params, [WORKFILE_ID]);
+      return { rows: [{ has_signatures: false }] };
     }],
     ...(method === "POST" ? [
       ["SELECT count(*)::integer AS count FROM appraisal.uad_entities WHERE workfile_id = $1 AND entity_type = $2 AND parent_entity_id IS NOT DISTINCT FROM $3::uuid", (params) => {

@@ -32,10 +32,10 @@ export function prepareNeighborhoodCohortBlob(canonicalJson) {
   });
 }
 
-function reference(hash, bytes) {
+export function prepareNeighborhoodCohortBlobReference(hash, bytes) {
   if (typeof hash !== 'string' || hash.length !== 64 || !HASH.test(hash) || typeof bytes !== 'string' ||
       !/^[1-9][0-9]{0,6}$/.test(bytes) || String(Number(bytes)) !== bytes || Number(bytes) > 1_500_000) fail('invalid_reference');
-  return { content_sha256: hash, canonical_utf8_bytes: bytes };
+  return Object.freeze({ content_sha256: hash, canonical_utf8_bytes: bytes });
 }
 
 function checkedRow(result, expected, expectedText) {
@@ -80,7 +80,7 @@ export function createNeighborhoodCohortBlobRepository(client, organizationId) {
       return expected;
     },
     async get(contentSha256, canonicalUtf8Bytes) {
-      const expected = reference(contentSha256, canonicalUtf8Bytes);
+      const expected = prepareNeighborhoodCohortBlobReference(contentSha256, canonicalUtf8Bytes);
       const found = await find(expected);
       if (found?.rowCount === 0 && Array.isArray(found.rows) && found.rows.length === 0) return null;
       return checkedRow(found, expected);

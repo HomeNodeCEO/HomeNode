@@ -34,7 +34,8 @@ test('PostGIS selected boundary: exact union, holes, full subject and strict sha
   const target = await prepareNeighborhoodCiDatabase();
   const { default: pg } = await import('pg');
   const { createNeighborhoodPostgisTopology, neighborhoodTopologyRevision } = await import('../src/services/neighborhoodAssessment/postgisTopology.js');
-  const { createNeighborhoodSelectedBoundary } = await import('../src/services/neighborhoodAssessment/postgisSelectedBoundary.js');
+  const { createNeighborhoodSelectedBoundary, readNeighborhoodSelectedBoundaryWitness } = await import('../src/services/neighborhoodAssessment/postgisSelectedBoundary.js');
+  const { assessmentEvidenceDigest, canonicalAssessmentJson } = await import('../src/services/neighborhoodAssessment/contract.js');
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 3,
     connectionTimeoutMillis: 3000, statement_timeout: 8000, application_name: 'neighborhood_selected_boundary_integration' });
   const built = new Map();
@@ -124,6 +125,106 @@ test('PostGIS selected boundary: exact union, holes, full subject and strict sha
     assert.deepEqual(checked, { exact_union: true, valid: true, kind: 'POLYGON', holes: expectedHoles,
       exact_perimeter: true, exact_cycles: true, ring_roles: true, whole_subject_covered: true,
       all_members_covered: true, anchor_strictly_in_union: true, anchor_strictly_in_subject: true });
+  };
+
+  // Additive witness coverage uses the same real producer and retained fixture
+  // inputs. No response interception, second topology producer or Gate B data.
+  const frozen = value => {
+    if (value && typeof value === 'object') {
+      assert.equal(Object.isFrozen(value), true);
+      for (const child of Object.values(value)) frozen(child);
+    }
+  };
+  const withWitness = async (value, subjectEvidence, selectedCellIds, limits) => {
+    const input = makeSelectedBoundaryInput({ topology: value, subjectEvidence, selectedCellIds });
+    const original = structuredClone(input);
+    const factory = createNeighborhoodSelectedBoundary(pool, limits === undefined ? {} : { limits });
+    const envelope = await factory.validateWithWitness(input);
+    assert.deepEqual(input, original, 'witness production must leave retained originals unchanged');
+    assert.deepEqual(Object.keys(envelope).sort(), ['envelope_version', 'result', 'witness']);
+    assert.equal(envelope.envelope_version, 1);
+    frozen(envelope);
+    const legacy = await factory.validate(input);
+    assert.equal(canonicalAssessmentJson(envelope.result), canonicalAssessmentJson(legacy),
+      'the additive native path must preserve legacy JSON for this same input');
+    return { input, envelope, result: envelope.result };
+  };
+  const readback = (envelope, originalInput) => readNeighborhoodSelectedBoundaryWitness(originalInput === undefined
+    ? { readback_version: 1, mode: 'representation', envelope }
+    : { readback_version: 1, mode: 'retained_input', envelope, original_input: originalInput });
+  const assertReadback = (actual, { revision = null, full = false, status = 'consistent', reason = null } = {}) => {
+    const success = status === 'consistent';
+    assert.deepEqual(actual, {
+      readback_version: 1, status, validation_revision: revision,
+      checks: { representation: success ? 'matched' : 'not_checked',
+        retained_input: success ? full ? 'matched' : 'not_supplied' : 'not_checked',
+        subject_manifest_linkage: success && full ? 'matched' : 'not_checked',
+        selection_linkage: success && full ? 'matched' : 'not_checked',
+        source_occurrence_linkage: success && full ? 'matched' : 'not_checked' },
+      reason, native_execution: 'not_reexecuted', source_authenticity: 'not_established', report_eligibility: 'not_assessed',
+    });
+    frozen(actual);
+    assert.ok(Buffer.byteLength(canonicalAssessmentJson(actual)) <= 1024);
+  };
+  const auditWitness = async (checked, expectedHoles = 0) => {
+    await audit(checked, expectedHoles); // Existing independent native union/cycle/Covers oracle.
+    const { input, envelope, result } = checked;
+    const { witness } = envelope;
+    assert.deepEqual(Object.keys(witness).sort(), ['preimage', 'validation_revision', 'witness_version']);
+    assert.equal(witness.witness_version, 1);
+    const preimage = witness.preimage;
+    assert.deepEqual(Object.keys(preimage).sort(), ['anchor', 'cycles', 'effective_date', 'engine_versions', 'geometry',
+      'knowledge_cutoff', 'method', 'scope', 'selection_sha256', 'subject_evidence_sha256', 'topology_revision']);
+    assert.deepEqual(Object.keys(preimage.anchor).sort(), ['coordinates', 'inside_subject', 'inside_union', 'member_record_id']);
+    assert.equal(witness.validation_revision, `validation:${assessmentEvidenceDigest(preimage)}`);
+    assert.equal(witness.validation_revision, result.selected_boundary.validation.revision);
+    assert.deepEqual(preimage.scope, input.scope);
+    assert.equal(preimage.effective_date, input.effective_date);
+    assert.equal(preimage.knowledge_cutoff, input.knowledge_cutoff);
+    assert.equal(preimage.topology_revision, input.topology.topology_revision);
+    assert.equal(preimage.selection_sha256, input.selection.content_sha256);
+    for (const key of ['engine_versions', 'method', 'geometry', 'subject_evidence_sha256']) assert.deepEqual(preimage[key], result[key]);
+
+    const members = input.subject_evidence.capture.sources.flatMap(source => source.payload.records)
+      .filter(record => record.data.attributes.account_id === input.scope.account_id)
+      .sort((a, b) => a.record_id < b.record_id ? -1 : a.record_id > b.record_id ? 1 : 0);
+    assert.deepEqual(result.subject_manifest.members, members.map(record => ({ record_id: record.record_id,
+      geometry_ewkb_sha256: createHash('sha256').update(Buffer.from(record.data.geometry.ewkb, 'hex')).digest('hex'),
+      record_sha256: assessmentEvidenceDigest(record) })), 'member identity comes from complete retained capture rows');
+    const selected = new Set(input.selection.selected_cell_ids);
+    // This oracle never consumes the producer's anchor, flags or public manifest.
+    // It projects the independently retained subject bytes and selects a strict
+    // member point against the union of the original selected cells.
+    const { rows: [expectedAnchor] } = await pool.query({ text: `/* selected-boundary-fixture:independent-witness-anchor */
+      WITH original_cells AS (SELECT ST_GeomFromEWKB(decode(value,'hex')) AS geom FROM jsonb_array_elements_text($1::jsonb)),
+      expected_union AS (SELECT ST_UnaryUnion(ST_Collect(geom)) AS geom FROM original_cells),
+      original_members AS (SELECT item.record_id,ST_Transform(ST_GeomFromEWKB(decode(item.ewkb,'hex')),26914) AS geom
+        FROM jsonb_to_recordset($2::jsonb) AS item(record_id text,ewkb text)),
+      member_points AS (SELECT record_id,geom,ST_PointOnSurface(ST_Normalize(geom)) AS point FROM original_members)
+      SELECT m.record_id AS member_record_id,jsonb_build_array(ST_X(m.point),ST_Y(m.point)) AS coordinates,
+        ST_Contains(m.geom,m.point) AS inside_subject,ST_Contains(u.geom,m.point) AS inside_union
+      FROM member_points m CROSS JOIN expected_union u
+      WHERE ST_Covers(u.geom,m.geom) AND ST_Contains(m.geom,m.point) AND ST_Contains(u.geom,m.point)
+      ORDER BY m.record_id COLLATE "C" LIMIT 1`, values: [
+      JSON.stringify(input.topology.cells.filter(cell => selected.has(cell.id)).map(cell => cell.geometry_ewkb)),
+      JSON.stringify(members.map(record => ({ record_id: record.record_id, ewkb: record.data.geometry.ewkb }))),
+    ] });
+    assert.ok(expectedAnchor, 'independent originals must supply a strict anchor');
+    assert.deepEqual(preimage.anchor, expectedAnchor);
+    assert.deepEqual(preimage.anchor.coordinates, result.selected_boundary.label_anchor.coordinates);
+    assert.equal(result.subject_manifest.members.filter(member => member.record_id === preimage.anchor.member_record_id).length, 1);
+    const publicRings = [result.selected_boundary.exterior, ...result.selected_boundary.interiors];
+    assert.equal(preimage.cycles.length, expectedHoles + 1);
+    const firstEdges = preimage.cycles.map(ring => {
+      assert.deepEqual(Object.keys(ring).sort(), ['orientation', 'ring_id', 'segments']);
+      assert.deepEqual(ring, publicRings.find(item => item.ring_id === ring.ring_id));
+      assert.equal(ring.segments[0].edge_id, ring.segments.map(segment => segment.edge_id).sort()[0]);
+      return ring.segments[0].edge_id;
+    });
+    assert.deepEqual(firstEdges, [...firstEdges].sort(), 'preimage keeps deterministic discovery order, not exterior-first reconstruction');
+    assert.ok(Buffer.byteLength(canonicalAssessmentJson(envelope)) <= Math.min(result.limits.output_bytes, 1_000_000));
+    assertReadback(readback(envelope), { revision: witness.validation_revision });
+    assertReadback(readback(envelope, input), { revision: witness.validation_revision, full: true });
   };
 
   try {
@@ -216,6 +317,70 @@ test('PostGIS selected boundary: exact union, holes, full subject and strict sha
       const value = (await topology('crossing')).topology;
       noGeometry((await validate(value, await subject(polygon(10, 10, 20, 20)), undefined, { selected_cells: 1 })).result);
       noGeometry((await validate(value, await subject(polygon(10, 10, 20, 20)), undefined, { output_bytes: 1 })).result);
+    });
+    await t.test('native witness preserves the complete anchor and exact original member/source linkage', async () => {
+      const value = (await topology('closedRing')).topology;
+      const checked = await withWitness(value, await subject(polygon(10, 10, 20, 20), polygon(70, 70, 80, 80)));
+      await auditWitness(checked);
+      assert.deepEqual(checked.input.subject_evidence.subject.member_record_ids, ['dcad_parcels:2', 'dcad_parcels:10']);
+      assert.equal(checked.envelope.witness.preimage.anchor.member_record_id, 'dcad_parcels:10',
+        'native C-order anchor identity is not the first numeric subject roster member');
+
+      // Native result, pure readback negatives: these are linkage tests, not
+      // another native revalidation or an assertion of source authenticity.
+      const badRevision = structuredClone(checked.envelope);
+      badRevision.witness.preimage.anchor.coordinates[0] += 1;
+      assertReadback(readback(badRevision), { status: 'inconsistent', reason: 'revision_mismatch' });
+      const badMember = structuredClone(checked.envelope);
+      badMember.witness.preimage.anchor.member_record_id = 'dcad_parcels:999999';
+      const revision = `validation:${assessmentEvidenceDigest(badMember.witness.preimage)}`;
+      badMember.witness.validation_revision = revision;
+      const boundary = badMember.result.selected_boundary;
+      boundary.validation.revision = revision; boundary.label_anchor.validation_revision = revision;
+      boundary.revision = `boundary:${assessmentEvidenceDigest({ validation_revision: revision })}`;
+      delete boundary.content_sha256; boundary.content_sha256 = assessmentEvidenceDigest(boundary);
+      assertReadback(readback(badMember), { status: 'inconsistent', reason: 'anchor_manifest_mismatch' });
+
+      const changedOccurrence = structuredClone(checked.envelope);
+      const occurrence = changedOccurrence.result.boundary_source_occurrences[0].source_parts[0];
+      [occurrence.start_fraction, occurrence.end_fraction] = [occurrence.end_fraction, occurrence.start_fraction];
+      assertReadback(readback(changedOccurrence), { revision: checked.envelope.witness.validation_revision });
+      assertReadback(readback(changedOccurrence, checked.input), { status: 'inconsistent', reason: 'retained_input_mismatch' });
+      for (const change of [
+        input => input.subject_evidence.subject.member_record_ids.pop(),
+        input => { input.subject_evidence.capture.sources[0].payload.records[0].data.attributes.site_address = 'Synthetic changed evidence'; },
+      ]) {
+        const original = structuredClone(checked.input); change(original);
+        assert.throws(() => readback(checked.envelope, original), {
+          name: 'TypeError', message: 'invalid_neighborhood_selected_boundary_witness:original_input',
+        });
+      }
+    });
+    await t.test('native witness retains actual hole cycles before public interior sorting', async () => {
+      const value = (await topology('nested')).topology;
+      const annulus = value.cells.find(cell => cell.interior_ring_count === 1);
+      assert.ok(annulus);
+      await auditWitness(await withWitness(value, await subject(polygon(5, 5, 15, 15)), [annulus.id]), 1);
+    });
+    await t.test('native geometry rejection never returns a witness and preserves legacy failure JSON', async () => {
+      const nested = (await topology('nested')).topology;
+      const annulus = nested.cells.find(cell => cell.interior_ring_count === 1);
+      assert.ok(annulus);
+      const cases = [
+        { value: nested, ids: [annulus.id], wkt: polygon(45, 45, 55, 55), reason: 'subject_not_wholly_covered' },
+        { value: (await topology('closedRing')).topology,
+          wkt: 'POLYGON ((700010 3600010,700020 3600020,700010 3600020,700020 3600010,700010 3600010))',
+          reason: 'invalid_native_geometry' },
+      ];
+      for (const item of cases) {
+        const checked = await withWitness(item.value, await subject(item.wkt), item.ids);
+        noGeometry(checked.result);
+        assert.deepEqual(checked.result.incomplete_reasons, [item.reason]);
+        assert.equal(checked.envelope.witness, null);
+        assert.ok(Buffer.byteLength(canonicalAssessmentJson(checked.envelope)) <= 16_384);
+        assertReadback(readback(checked.envelope), { status: 'incomplete', reason: 'producer_incomplete' });
+        assertReadback(readback(checked.envelope, checked.input), { status: 'incomplete', reason: 'producer_incomplete' });
+      }
     });
   } finally { await pool.end(); }
 });

@@ -83,12 +83,17 @@ function limitsOf(value = {}) {
 
 // Inspect property descriptors before reading values. Charge exact JSON framing,
 // strings and keys before cloning; never serialize the entire 42MB request.
-function copyJson(value, max, clone = true) {
+function copyJson(value, max, clone = true, control = null) {
   let bytes = 0, nodes = 0;
+  let envelope = null;
   const active = new WeakSet();
-  const charge = size => { bytes += size; if (bytes > max) stop('input_limit_exceeded'); };
+  const charge = size => {
+    bytes += size;
+    if (envelope) envelope.bytes += size;
+    if (bytes > max || (envelope && envelope.bytes > 1_000_000)) stop('input_limit_exceeded');
+  };
   const string = value => {
-    const remaining = max - bytes;
+    const remaining = Math.min(max - bytes, envelope ? 1_000_000 - envelope.bytes : Infinity);
     if (value.length + 2 > remaining) stop('input_limit_exceeded');
     let size = 2;
     for (let index = 0; index < value.length; index++) {
@@ -105,7 +110,8 @@ function copyJson(value, max, clone = true) {
     charge(size); return value;
   };
   function visit(item, depth) {
-    if (++nodes > 2_000_000 || depth > 40) stop('input_limit_exceeded');
+    if (++nodes > (control?.nodes ?? 2_000_000) || depth > 40
+      || (envelope && ++envelope.nodes > 100_000)) stop('input_limit_exceeded');
     if (typeof item === 'string') return string(item);
     if (item === null || typeof item === 'boolean') { charge(item === null ? 4 : item ? 4 : 5); return item; }
     if (typeof item === 'number') { if (!Number.isFinite(item) || Object.is(item, -0)) invalid('json_number'); charge(JSON.stringify(item).length); return item; }
@@ -125,7 +131,10 @@ function copyJson(value, max, clone = true) {
       if (isArray && key !== String(index)) invalid('json_array');
       if (index++) charge(1);
       if (!isArray) { string(key); charge(1); }
+      const boundedEnvelope = control?.envelope === true && depth === 0 && key === 'envelope';
+      if (boundedEnvelope) envelope = { bytes: 0, nodes: 0 };
       const child = visit(descriptor.value, depth + 1);
+      if (boundedEnvelope) envelope = null;
       if (clone) Object.defineProperty(result, key, { value: child, enumerable: true, configurable: true, writable: true });
     }
     active.delete(item); return clone ? result : item;
@@ -483,6 +492,291 @@ function selectionOf(input, maps, limits) {
     boundary: edges.map(edge => ({ id: edge.id, geometry_ewkb: edge.geometry_ewkb, cycle_id: edgeCycles.get(edge.id) })) };
 }
 
+// Both consumers own a descriptor-checked detached input before this admission.
+// Keep the legacy order and privately branded error classifications unchanged.
+function admitSelectedInput(input, limits, check) {
+  keys(input, ['version', 'scope', 'effective_date', 'knowledge_cutoff', 'topology', 'selection', 'subject_evidence'], 'input');
+  if (input.version !== 1) invalid('version'); scoped(input.scope);
+  assessmentDate(input.effective_date); timestamp(input.knowledge_cutoff, 'knowledge_cutoff');
+  const maps = topologyOf(input, limits), selection = selectionOf(input, maps, limits), subject = subjectOf(input, limits);
+  check();
+  return { maps, selection, subject };
+}
+
+function orientedCycle(cycle, interior) {
+  let segments = cycle.segments;
+  if ((cycle.signed > 0) === interior) segments = [...segments].reverse().map(segment => ({ edge_id: segment.edge_id,
+    from_node_id: segment.to_node_id, to_node_id: segment.from_node_id, reversed: !segment.reversed }));
+  const first = segments.reduce((best, segment, index) => compare(segment.edge_id, segments[best].edge_id) < 0 ? index : best, 0);
+  return { ring_id: cycle.id, orientation: interior ? 'clockwise' : 'counterclockwise', segments: [...segments.slice(first), ...segments.slice(0, first)] };
+}
+
+const READY_KEYS = ['status', 'version', 'scope', 'effective_date', 'knowledge_cutoff', 'topology_revision',
+  'selection_sha256', 'subject_evidence_sha256', 'engine_versions', 'method', 'geometry', 'subject_manifest',
+  'boundary_source_occurrences', 'selected_boundary', 'incomplete_reasons', 'authority_limitations', 'limits'];
+const INCOMPLETE_KEYS = ['status', 'version', 'geometry', 'subject_manifest', 'selected_boundary', 'boundary_source_occurrences',
+  'incomplete_reasons', 'metadata_not_returned', 'authority_limitations', 'failure_control_budget_bytes'];
+const PREIMAGE_KEYS = ['method', 'engine_versions', 'topology_revision', 'selection_sha256', 'subject_evidence_sha256',
+  'geometry', 'cycles', 'anchor', 'scope', 'effective_date', 'knowledge_cutoff'];
+const PRODUCER_FAILURES = new Set(['boundary_cycle_invalid', 'boundary_spatial_mismatch', 'connection_release_failed',
+  'connection_timeout', 'duration_limit', 'engine_version_unavailable', 'input_limit_exceeded', 'invalid_native_geometry',
+  'invalid_native_result', 'label_anchor_incomplete', 'native_query_unavailable', 'output_limit_exceeded',
+  'perimeter_limit_exceeded', 'selected_interiors_overlap', 'selected_union_not_connected_polygon', 'subject_knowledge_cutoff',
+  'subject_not_wholly_covered', 'subject_temporal_contradiction', 'subject_unresolved', 'topology_engine_version_mismatch',
+  'unsupported_projection_extent', 'unsupported_projection_policy', 'witness_output_limit_exceeded']);
+const READBACK_LIMIT_MARKERS = new Set(['input_limit_exceeded', 'perimeter_limit_exceeded', 'duration_limit']);
+const READBACK_INPUT_MARKERS = new Set(['unsupported_projection_extent', 'subject_knowledge_cutoff', 'subject_unresolved',
+  'subject_temporal_contradiction', 'boundary_cycle_invalid']);
+function hashId(value, prefix = '') {
+  if (typeof value !== 'string' || !value.startsWith(prefix) || !SHA.test(value.slice(prefix.length))) invalid('hash');
+  return value;
+}
+function positive(value) { if (!Number.isSafeInteger(value) || value < 1) invalid('positive_integer'); return value; }
+function parcelId(value) {
+  if (typeof value !== 'string' || !/^dcad_parcels:(0|[1-9][0-9]{0,18})$/.test(value)
+    || BigInt(value.slice(13)) > 9223372036854775807n) invalid('parcel_record_id');
+}
+function readbackVersions(value) {
+  keys(value, ['postgis', 'geos', 'proj', 'spatial_reference_sha256'], 'engine_versions');
+  for (const key of ['postgis', 'geos', 'proj']) {
+    if (typeof value[key] !== 'string' || !value[key] || value[key].length > 256) invalid('engine_version');
+  }
+  hashId(value.spatial_reference_sha256);
+}
+function readbackIdentity(value) {
+  scoped(value.scope); assessmentDate(value.effective_date); timestamp(value.knowledge_cutoff, 'knowledge_cutoff');
+  hashId(value.topology_revision, 'topology:'); hashId(value.selection_sha256); hashId(value.subject_evidence_sha256);
+  readbackVersions(value.engine_versions);
+  if (!same(value.method, METHOD)) invalid('method');
+}
+function readbackGeometry(value, limits) {
+  keys(value, ['metric_srid', 'display_srid', 'geometry', 'geometry_ewkb', 'geometry_ewkb_sha256', 'geometry_sha256'], 'geometry');
+  if (value.metric_srid !== 26914 || value.display_srid !== 4326) invalid('geometry_srid');
+  hashId(value.geometry_ewkb_sha256); hashId(value.geometry_sha256);
+  const budget = { count: 0, maximum: limits.selected_coordinates };
+  const metric = decode(value.geometry_ewkb, 26914, [3], budget);
+  const display = keys(value.geometry, ['type', 'coordinates'], 'display_geometry');
+  if (display.type !== 'Polygon') invalid('display_geometry');
+  const rings = array(display.coordinates, limits.rings, 'display_rings');
+  if (!rings.length || rings.length !== metric.coordinates.length) invalid('display_rings');
+  let points = 0;
+  for (const ring of rings) {
+    array(ring, limits.selected_coordinates, 'display_ring');
+    if (ring.length < 4) invalid('display_ring');
+    for (const point of ring) {
+      if (++points > limits.selected_coordinates) stop('input_limit_exceeded');
+      if (!Array.isArray(point) || point.length !== 2 || point.some(item => !Number.isFinite(item))
+        || point[0] < WINDOW[0] || point[0] > WINDOW[2] || point[1] < WINDOW[1] || point[1] > WINDOW[3]) invalid('display_point');
+    }
+    if (!same(ring[0], ring.at(-1))) invalid('display_ring');
+  }
+  if (points !== budget.count) invalid('display_coordinates');
+  return value.geometry_ewkb_sha256 === bytesHash(value.geometry_ewkb) && value.geometry_sha256 === digest(display);
+}
+function readbackCycles(cycles, limits) {
+  array(cycles, limits.rings, 'cycles');
+  if (!cycles.length) invalid('cycles');
+  const ids = new Set(), edges = new Set();
+  let exteriors = 0, derived = true;
+  for (const ring of cycles) {
+    keys(ring, ['ring_id', 'orientation', 'segments'], 'cycle'); hashId(ring.ring_id, 'cycle:');
+    if (ids.has(ring.ring_id) || !['clockwise', 'counterclockwise'].includes(ring.orientation)) invalid('cycle');
+    ids.add(ring.ring_id); if (ring.orientation === 'counterclockwise') exteriors++;
+    const segments = array(ring.segments, limits.perimeter_edges, 'segments');
+    if (segments.length < 3) invalid('segments');
+    for (const segment of segments) {
+      keys(segment, ['edge_id', 'from_node_id', 'to_node_id', 'reversed'], 'segment');
+      hashId(segment.edge_id, 'edge:'); hashId(segment.from_node_id, 'node:'); hashId(segment.to_node_id, 'node:');
+      if (typeof segment.reversed !== 'boolean' || segment.from_node_id === segment.to_node_id || edges.has(segment.edge_id)) invalid('segment');
+      edges.add(segment.edge_id); if (edges.size > limits.perimeter_edges) stop('input_limit_exceeded');
+    }
+    for (let index = 0; index < segments.length; index++) {
+      if (segments[index].to_node_id !== segments[(index + 1) % segments.length].from_node_id) invalid('cycle_incidence');
+    }
+    const orderedIds = segments.map(item => item.edge_id).sort(compare);
+    if (ring.ring_id !== `cycle:${digest(orderedIds)}` || segments[0].edge_id !== orderedIds[0]) derived = false;
+  }
+  if (exteriors !== 1) invalid('exterior');
+  return { edges: [...edges].sort(compare), derived };
+}
+function readbackManifest(value, limits) {
+  keys(value, ['captured_at', 'upstream_content_sha256', 'historical_availability', 'roster_completeness', 'members'], 'subject_manifest');
+  timestamp(value.captured_at, 'captured_at'); hashId(value.upstream_content_sha256);
+  if (value.historical_availability !== 'unknown' || value.roster_completeness !== 'whole_supplied_parcel_capture_only') invalid('subject_manifest');
+  const seen = new Set();
+  if (!array(value.members, limits.subject_members, 'members').length) invalid('members');
+  for (const member of value.members) {
+    keys(member, ['record_id', 'geometry_ewkb_sha256', 'record_sha256'], 'member'); parcelId(member.record_id);
+    hashId(member.geometry_ewkb_sha256); hashId(member.record_sha256);
+    if (seen.has(member.record_id)) invalid('duplicate_member'); seen.add(member.record_id);
+  }
+}
+function readbackOccurrences(value, limits) {
+  const edges = new Set(); let total = 0;
+  for (const row of array(value, limits.perimeter_edges, 'occurrences')) {
+    keys(row, ['edge_id', 'source_parts'], 'occurrence'); hashId(row.edge_id, 'edge:');
+    if (edges.has(row.edge_id)) invalid('duplicate_occurrence'); edges.add(row.edge_id);
+    const seen = new Set();
+    if (!array(row.source_parts, limits.source_occurrences, 'source_parts').length) invalid('source_parts');
+    for (const part of row.source_parts) {
+      if (++total > limits.source_occurrences) stop('input_limit_exceeded');
+      keys(part, ['feature_id', 'source_part_index', 'source_segment_index', 'source_fraction_basis', 'start_fraction', 'end_fraction'], 'source_part');
+      hashId(part.feature_id); positive(part.source_part_index); positive(part.source_segment_index);
+      if (part.source_part_index > POSTGIS_TOPOLOGY_LIMITS.input_parts || part.source_segment_index > POSTGIS_TOPOLOGY_LIMITS.primitive_segments
+        || part.source_fraction_basis !== 'source_segment' || !Number.isFinite(part.start_fraction) || !Number.isFinite(part.end_fraction)
+        || part.start_fraction < 0 || part.start_fraction > 1 || part.end_fraction < 0 || part.end_fraction > 1
+        || part.start_fraction === part.end_fraction) invalid('source_part');
+      const id = `${part.feature_id}:${part.source_part_index}:${part.source_segment_index}`;
+      if (seen.has(id)) invalid('duplicate_source_part'); seen.add(id);
+    }
+  }
+  return [...edges].sort(compare);
+}
+function readbackBoundary(value, limits) {
+  keys(value, ['revision', 'scope', 'effective_date', 'knowledge_cutoff', 'topology_revision', 'source_capture_sha256',
+    'geometry_sha256', 'selected_cell_ids', 'validation', 'exterior', 'interiors', 'label_anchor', 'content_sha256'], 'boundary');
+  hashId(value.revision, 'boundary:'); scoped(value.scope); assessmentDate(value.effective_date);
+  timestamp(value.knowledge_cutoff, 'knowledge_cutoff'); hashId(value.topology_revision, 'topology:');
+  hashId(value.source_capture_sha256); hashId(value.geometry_sha256); hashId(value.content_sha256);
+  const cells = array(value.selected_cell_ids, limits.selected_cells, 'selected_cells');
+  if (!cells.length || new Set(cells).size !== cells.length) invalid('selected_cells');
+  cells.forEach(id => hashId(id, 'cell:'));
+  keys(value.validation, ['valid', 'connected', 'contains_subject', 'engine', 'revision'], 'validation');
+  hashId(value.validation.revision, 'validation:');
+  if (value.validation.valid !== true || value.validation.connected !== true || value.validation.contains_subject !== true
+    || value.validation.engine !== SELECTED_BOUNDARY_VERSION) invalid('validation');
+  keys(value.label_anchor, ['metric_srid', 'coordinates', 'basis', 'validation_revision'], 'label_anchor');
+  hashId(value.label_anchor.validation_revision, 'validation:');
+  const xy = value.label_anchor.coordinates;
+  if (value.label_anchor.metric_srid !== 26914 || value.label_anchor.basis !== 'validated_subject_interior_point'
+    || !Array.isArray(xy) || xy.length !== 2 || xy.some(n => !Number.isFinite(n) || Math.abs(n) > 20_000_000)) invalid('label_anchor');
+  array(value.interiors, limits.rings, 'interiors');
+  const cycles = readbackCycles([value.exterior, ...value.interiors], limits);
+  if (value.exterior.orientation !== 'counterclockwise' || value.interiors.some(ring => ring.orientation !== 'clockwise')) invalid('ring_roles');
+  return cycles;
+}
+function readbackOutcome(status, reason, validationRevision = null, mode = null) {
+  const matched = status === 'consistent', full = matched && mode === 'retained_input';
+  const result = { readback_version: 1, status, validation_revision: validationRevision,
+    checks: { representation: matched ? 'matched' : 'not_checked',
+      retained_input: full ? 'matched' : matched ? 'not_supplied' : 'not_checked',
+      subject_manifest_linkage: full ? 'matched' : 'not_checked', selection_linkage: full ? 'matched' : 'not_checked',
+      source_occurrence_linkage: full ? 'matched' : 'not_checked' }, reason,
+    native_execution: 'not_reexecuted', source_authenticity: 'not_established', report_eligibility: 'not_assessed' };
+  copyJson(result, 1024, false);
+  return freeze(result);
+}
+
+/** Pure representation/input linkage only. Even a fully consistent, rehashed
+ * outside-anchor fabrication can pass: native containment is NOT rerun here.
+ * Selected-edge source_parts linkage is not original line/alias authentication. */
+export function readNeighborhoodSelectedBoundaryWitness(raw, options = {}) {
+  let stage = 'options';
+  const started = performance.now();
+  try {
+    const config = copyJson(options, SELECTED_BOUNDARY_ERROR_LIMIT_BYTES).value;
+    if (!config || Object.getPrototypeOf(config) !== Object.prototype || Object.keys(config).some(key => key !== 'limits')) invalid('options');
+    const limits = limitsOf(config.limits);
+    stage = 'request';
+    // One detached aggregate clone: envelope hard caps apply during this same
+    // descriptor-safe walk, BEFORE future-version or producer-incomplete exits.
+    const request = copyJson(raw, limits.input_bytes, true, { envelope: true }).value;
+    if (!request || Object.getPrototypeOf(request) !== Object.prototype
+      || !['representation', 'retained_input'].includes(request.mode)) invalid('request');
+    keys(request, ['readback_version', 'mode', 'envelope', ...(request.mode === 'retained_input' ? ['original_input'] : [])], 'request');
+    positive(request.readback_version);
+    if (request.mode === 'retained_input' && (!request.original_input || Object.getPrototypeOf(request.original_input) !== Object.prototype)) invalid('original_input');
+    stage = 'envelope';
+    const envelope = keys(request.envelope, ['envelope_version', 'result', 'witness'], 'envelope');
+    positive(envelope.envelope_version);
+    const witness = envelope.witness;
+    if (witness !== null) {
+      stage = 'witness'; keys(witness, ['witness_version', 'validation_revision', 'preimage'], 'witness'); positive(witness.witness_version);
+    }
+    if (request.readback_version !== 1 || envelope.envelope_version !== 1 || (witness !== null && witness.witness_version !== 1)) {
+      return readbackOutcome('incomplete', 'unsupported_version');
+    }
+    stage = 'result';
+    const result = envelope.result;
+    if (!result || Object.getPrototypeOf(result) !== Object.prototype || typeof result.version !== 'string') invalid('result');
+    const version = /^postgis-selected-boundary-v([1-9][0-9]*)$/.exec(result.version);
+    if (!version || !Number.isSafeInteger(Number(version[1]))) invalid('result_version');
+    if (Number(version[1]) > 1) return readbackOutcome('incomplete', 'unsupported_version');
+    if (result.status === 'incomplete') {
+      keys(result, INCOMPLETE_KEYS, 'incomplete');
+      if (witness !== null || result.geometry !== null || result.subject_manifest !== null || result.selected_boundary !== null
+        || !Array.isArray(result.boundary_source_occurrences) || result.boundary_source_occurrences.length
+        || !Array.isArray(result.incomplete_reasons) || result.incomplete_reasons.length !== 1
+        || !PRODUCER_FAILURES.has(result.incomplete_reasons[0]) || result.metadata_not_returned !== true
+        || result.failure_control_budget_bytes !== SELECTED_BOUNDARY_ERROR_LIMIT_BYTES || !same(result.authority_limitations, LIMITATIONS)) invalid('incomplete');
+      copyJson(envelope, SELECTED_BOUNDARY_ERROR_LIMIT_BYTES, false, { nodes: 100_000 });
+      return readbackOutcome('incomplete', 'producer_incomplete');
+    }
+    if (result.status !== 'ready') invalid('status');
+    stage = 'envelope';
+    if (witness === null) invalid('ready_witness');
+    copyJson(envelope, Math.min(limits.output_bytes, 1_000_000), false, { nodes: 100_000 });
+    stage = 'result';
+    keys(result, READY_KEYS, 'result'); readbackIdentity(result);
+    keys(result.limits, Object.keys(SELECTED_BOUNDARY_LIMITS), 'limits'); limitsOf(result.limits);
+    if (!same(result.authority_limitations, LIMITATIONS) || !Array.isArray(result.incomplete_reasons) || result.incomplete_reasons.length) invalid('result_literals');
+    const geometryMatches = readbackGeometry(result.geometry, limits);
+    readbackManifest(result.subject_manifest, limits);
+    const occurrences = readbackOccurrences(result.boundary_source_occurrences, limits);
+    const boundary = result.selected_boundary, boundaryCycles = readbackBoundary(boundary, limits);
+    stage = 'witness'; hashId(witness.validation_revision, 'validation:');
+    stage = 'preimage';
+    const preimage = keys(witness.preimage, PREIMAGE_KEYS, 'preimage'); readbackIdentity(preimage);
+    const preimageGeometryMatches = readbackGeometry(preimage.geometry, limits), cycles = readbackCycles(preimage.cycles, limits);
+    keys(preimage.anchor, ['member_record_id', 'coordinates', 'inside_subject', 'inside_union'], 'anchor');
+    parcelId(preimage.anchor.member_record_id);
+    if (preimage.anchor.inside_subject !== true || preimage.anchor.inside_union !== true || !Array.isArray(preimage.anchor.coordinates)
+      || preimage.anchor.coordinates.length !== 2 || preimage.anchor.coordinates.some(n => !Number.isFinite(n) || Math.abs(n) > 20_000_000)) invalid('anchor');
+    if (witness.validation_revision !== `validation:${digest(preimage)}`) return readbackOutcome('inconsistent', 'revision_mismatch');
+    const { content_sha256: contentHash, ...boundaryContent } = boundary;
+    const shared = PREIMAGE_KEYS.filter(key => key !== 'cycles' && key !== 'anchor');
+    if (!geometryMatches || !preimageGeometryMatches || !cycles.derived || !boundaryCycles.derived
+      || shared.some(key => !same(preimage[key], result[key]))
+      || !same(boundary.scope, result.scope) || boundary.effective_date !== result.effective_date
+      || boundary.knowledge_cutoff !== result.knowledge_cutoff || boundary.topology_revision !== result.topology_revision
+      || boundary.geometry_sha256 !== result.geometry.geometry_sha256
+      || boundary.validation.revision !== witness.validation_revision
+      || boundary.revision !== `boundary:${digest({ validation_revision: witness.validation_revision })}`
+      || boundary.label_anchor.validation_revision !== witness.validation_revision
+      || !same(boundary.label_anchor.coordinates, preimage.anchor.coordinates)
+      || !same(boundary.exterior, preimage.cycles.find(ring => ring.orientation === 'counterclockwise'))
+      || !same(boundary.interiors, preimage.cycles.filter(ring => ring.orientation === 'clockwise').sort((a, b) => compare(a.ring_id, b.ring_id)))
+      || contentHash !== digest(boundaryContent) || !same(occurrences, cycles.edges)
+      || !same(boundary.selected_cell_ids, [...boundary.selected_cell_ids].sort(compare))) return readbackOutcome('inconsistent', 'result_mismatch');
+    if (result.subject_manifest.members.filter(member => member.record_id === preimage.anchor.member_record_id).length !== 1) {
+      return readbackOutcome('inconsistent', 'anchor_manifest_mismatch');
+    }
+    if (request.mode === 'representation') return readbackOutcome('consistent', null, witness.validation_revision, request.mode);
+    stage = 'original_input';
+    const input = request.original_input;
+    const { selection, subject } = admitSelectedInput(input, limits, () => { if (performance.now() - started >= limits.total_ms) stop('duration_limit'); });
+    const ringsById = new Map(preimage.cycles.map(ring => [ring.ring_id, ring]));
+    const linkedCycles = selection.cycles.map(cycle => {
+      const ring = ringsById.get(cycle.id);
+      return ring ? orientedCycle(cycle, ring.orientation === 'clockwise') : null;
+    });
+    if (!same(input.scope, result.scope) || input.effective_date !== result.effective_date || input.knowledge_cutoff !== result.knowledge_cutoff
+      || input.topology.topology_revision !== result.topology_revision || input.topology.source_capture_sha256 !== boundary.source_capture_sha256
+      || input.selection.content_sha256 !== result.selection_sha256 || !same(selection.ids, boundary.selected_cell_ids)
+      || subject.digest !== result.subject_evidence_sha256 || !same(subject.manifest, result.subject_manifest)
+      || !same(input.topology.engine_versions, result.engine_versions) || !same(linkedCycles, preimage.cycles)
+      || !same(selection.edges.map(edge => ({ edge_id: edge.id, source_parts: edge.source_parts })), result.boundary_source_occurrences)) {
+      return readbackOutcome('inconsistent', 'retained_input_mismatch');
+    }
+    return readbackOutcome('consistent', null, witness.validation_revision, request.mode);
+  } catch (error) {
+    const marker = failures.get(error);
+    if (stage !== 'options' && READBACK_LIMIT_MARKERS.has(marker)) return readbackOutcome('incomplete', 'readback_limit_exceeded');
+    if (stage === 'original_input' && READBACK_INPUT_MARKERS.has(marker)) return readbackOutcome('incomplete', 'retained_input_unsupported');
+    throw new TypeError(`invalid_neighborhood_selected_boundary_witness:${stage}`);
+  }
+}
+
 const VERSION_SQL = `SELECT postgis_lib_version() AS postgis_version,postgis_geos_version() AS geos_version,
   postgis_proj_version() AS proj_version,auth_name,auth_srid,proj4text,srtext FROM spatial_ref_sys WHERE srid=26914`;
 const INPUT_SQL = `WITH cells AS MATERIALIZED (
@@ -588,8 +882,9 @@ export function createNeighborhoodSelectedBoundary(pool, options = {}) {
     || Object.keys(safeOptions).some(key => key !== 'limits')) invalid('options');
   if (!pool || typeof pool.connect !== 'function') invalid('pool');
   const limits = limitsOf(safeOptions.limits);
-  return { async validate(raw) {
+  async function execute(raw, withWitness) {
     let input, subject, selection, maps, engineVersions = null, client, begun = false, releaseError, result, reason;
+    let witness = null;
     const started = performance.now();
     const check = () => { if (performance.now() - started >= limits.total_ms) stop('duration_limit'); };
     const query = async (tag, sql, values = []) => {
@@ -601,10 +896,7 @@ export function createNeighborhoodSelectedBoundary(pool, options = {}) {
     };
     try {
       input = copyJson(raw, limits.input_bytes).value;
-      keys(input, ['version', 'scope', 'effective_date', 'knowledge_cutoff', 'topology', 'selection', 'subject_evidence'], 'input');
-      if (input.version !== 1) invalid('version'); scoped(input.scope);
-      assessmentDate(input.effective_date); timestamp(input.knowledge_cutoff, 'knowledge_cutoff');
-      maps = topologyOf(input, limits); selection = selectionOf(input, maps, limits); subject = subjectOf(input, limits); check();
+      ({ maps, selection, subject } = admitSelectedInput(input, limits, check));
     } catch (error) {
       if (invalidErrors.has(error)) throw error;
       if (!failures.has(error)) throw new TypeError('invalid_neighborhood_selected_boundary:input_evidence');
@@ -665,17 +957,14 @@ export function createNeighborhoodSelectedBoundary(pool, options = {}) {
         || [...roles.values()].filter(value => !value).length !== 1) stop('boundary_cycle_invalid');
       const rings = selection.cycles.map(cycle => {
         if (!roles.has(cycle.id)) stop('boundary_cycle_invalid'); const interior = roles.get(cycle.id);
-        let segments = cycle.segments;
-        if ((cycle.signed > 0) === interior) segments = [...segments].reverse().map(segment => ({ edge_id: segment.edge_id,
-          from_node_id: segment.to_node_id, to_node_id: segment.from_node_id, reversed: !segment.reversed }));
-        const first = segments.reduce((best, segment, index) => compare(segment.edge_id, segments[best].edge_id) < 0 ? index : best, 0);
-        return { ring_id: cycle.id, orientation: interior ? 'clockwise' : 'counterclockwise', segments: [...segments.slice(first), ...segments.slice(0, first)] };
+        return orientedCycle(cycle, interior);
       });
       const geometry = { metric_srid: 26914, display_srid: 4326, geometry: payload.geometry, geometry_ewkb: payload.geometry_ewkb,
         geometry_ewkb_sha256: bytesHash(payload.geometry_ewkb), geometry_sha256: digest(payload.geometry) };
-      const validationRevision = `validation:${digest({ method: METHOD, engine_versions: engineVersions, topology_revision: input.topology.topology_revision,
+      const preimage = { method: METHOD, engine_versions: engineVersions, topology_revision: input.topology.topology_revision,
         selection_sha256: input.selection.content_sha256, subject_evidence_sha256: subject.digest, geometry,
-        cycles: rings, anchor: payload.anchor, scope: input.scope, effective_date: input.effective_date, knowledge_cutoff: input.knowledge_cutoff })}`;
+        cycles: rings, anchor: payload.anchor, scope: input.scope, effective_date: input.effective_date, knowledge_cutoff: input.knowledge_cutoff };
+      const validationRevision = `validation:${digest(preimage)}`;
       const boundary = { revision: `boundary:${digest({ validation_revision: validationRevision })}`, scope: input.scope,
         effective_date: input.effective_date, knowledge_cutoff: input.knowledge_cutoff, topology_revision: input.topology.topology_revision,
         source_capture_sha256: input.topology.source_capture_sha256, geometry_sha256: geometry.geometry_sha256, selected_cell_ids: selection.ids,
@@ -689,6 +978,18 @@ export function createNeighborhoodSelectedBoundary(pool, options = {}) {
         boundary_source_occurrences: selection.edges.map(edge => ({ edge_id: edge.id, source_parts: edge.source_parts })),
         selected_boundary: boundary, incomplete_reasons: [], authority_limitations: LIMITATIONS, limits };
       if (copyJson(result, limits.output_bytes, false).bytes > limits.output_bytes) stop('output_limit_exceeded');
+      if (withWitness) {
+        // Retain precisely what was hashed, not a reconstruction from the public
+        // boundary (which sorts interiors and intentionally omits anchor identity).
+        keys(payload.anchor, ['member_record_id', 'coordinates', 'inside_subject', 'inside_union'], 'native_anchor');
+        keys(payload.geometry, ['type', 'coordinates'], 'native_display_geometry');
+        // These occurrences are retained verbatim, so an unexpected source key
+        // must fail the additive envelope instead of being silently stripped.
+        readbackOccurrences(result.boundary_source_occurrences, limits);
+        witness = { witness_version: 1, validation_revision: validationRevision, preimage };
+        try { copyJson({ envelope_version: 1, result, witness }, Math.min(limits.output_bytes, 1_000_000), false, { nodes: 100_000 }); }
+        catch (error) { if (failures.has(error)) stop('witness_output_limit_exceeded'); throw error; }
+      }
       await query('commit', 'COMMIT'); begun = false; check();
     } catch (error) {
       reason = failures.get(error) || 'native_query_unavailable';
@@ -698,11 +999,16 @@ export function createNeighborhoodSelectedBoundary(pool, options = {}) {
       if (client && !release(client, releaseError) && !reason) reason = 'connection_release_failed';
     }
     if (reason) {
+      witness = null;
       result = { status: 'incomplete', version: SELECTED_BOUNDARY_VERSION, geometry: null, subject_manifest: null,
         selected_boundary: null, boundary_source_occurrences: [], incomplete_reasons: [reason], metadata_not_returned: true,
         authority_limitations: LIMITATIONS, failure_control_budget_bytes: SELECTED_BOUNDARY_ERROR_LIMIT_BYTES };
       if (Buffer.byteLength(JSON.stringify(result)) > SELECTED_BOUNDARY_ERROR_LIMIT_BYTES) invalid('failure_control');
     }
-    return freeze(result);
-  } };
+    if (!withWitness) return freeze(result);
+    const envelope = { envelope_version: 1, result, witness };
+    if (reason && Buffer.byteLength(JSON.stringify(envelope)) > SELECTED_BOUNDARY_ERROR_LIMIT_BYTES) invalid('failure_control');
+    return freeze(envelope);
+  }
+  return { validate(raw) { return execute(raw, false); }, validateWithWitness(raw) { return execute(raw, true); } };
 }

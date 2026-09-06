@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { createNeighborhoodSelectedBoundary, SELECTED_BOUNDARY_VERSION } from '../src/services/neighborhoodAssessment/postgisSelectedBoundary.js';
+import { createNeighborhoodSelectedBoundary, SELECTED_BOUNDARY_VERSION,
+  readNeighborhoodSelectedBoundaryWitness } from '../src/services/neighborhoodAssessment/postgisSelectedBoundary.js';
 import { assessmentEvidenceDigest, canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { neighborhoodTopologyRevision } from '../src/services/neighborhoodAssessment/postgisTopology.js';
 import { makeSelectedBoundaryInput, makeSubjectEvidence, makeMockSelectedBoundaryTopology, makeMockSelectedBoundaryOracle,
@@ -824,4 +825,458 @@ test('selected boundary: submitted admission SQL uses a non-keyword selected-ove
   assert.doesNotMatch(admission.text, /\boverlaps\s+AS\s*\(|\bFROM\s+overlaps\b/i);
   assert.match(admission.text, /ST_Relate\(\s*a\.geom\s*,\s*b\.geom\s*,\s*'2\*{8}'\s*\)/i);
   assert.match(admission.text, /\bAS\s+overlap_pair_count\b/i);
+});
+
+// Additive witness tests use the same mock native path and retained evidence.
+// No second producer, spatial implementation or proof of native execution.
+async function runWitness(options = {}, limits) {
+  const context = mock(options);
+  const envelope = await createNeighborhoodSelectedBoundary(context.pool, limits === undefined ? {} : { limits })
+    .validateWithWitness(context.input);
+  return { context, envelope };
+}
+const jsonBytes = value => Buffer.byteLength(JSON.stringify(value), 'utf8');
+const representation = envelope => ({ readback_version: 1, mode: 'representation', envelope });
+const retained = (envelope, original_input) => ({ readback_version: 1, mode: 'retained_input', envelope, original_input });
+const witnessError = stage => ({ name: 'TypeError', message: `invalid_neighborhood_selected_boundary_witness:${stage}` });
+function assertReadback(value, status = 'consistent', reason = null, full = false) {
+  assert.deepEqual(Object.keys(value).sort(), ['readback_version', 'status', 'validation_revision', 'checks', 'reason',
+    'native_execution', 'source_authenticity', 'report_eligibility'].sort());
+  assert.equal(value.readback_version, 1); assert.equal(value.status, status); assert.equal(value.reason, reason);
+  assert.deepEqual(value.checks, status === 'consistent' ? { representation: 'matched',
+    retained_input: full ? 'matched' : 'not_supplied', subject_manifest_linkage: full ? 'matched' : 'not_checked',
+    selection_linkage: full ? 'matched' : 'not_checked', source_occurrence_linkage: full ? 'matched' : 'not_checked' }
+    : { representation: 'not_checked', retained_input: 'not_checked', subject_manifest_linkage: 'not_checked',
+      selection_linkage: 'not_checked', source_occurrence_linkage: 'not_checked' });
+  if (status === 'consistent') assert.match(value.validation_revision, /^validation:[a-f0-9]{64}$/);
+  else assert.equal(value.validation_revision, null);
+  assert.equal(value.native_execution, 'not_reexecuted'); assert.equal(value.source_authenticity, 'not_established');
+  assert.equal(value.report_eligibility, 'not_assessed');
+  assert.ok(Object.isFrozen(value) && Object.isFrozen(value.checks));
+  assert.ok(jsonBytes(value) <= 1024); assert.equal(JSON.stringify(value).includes(PRIVATE_ERROR), false);
+}
+function rehashPublicBoundary(envelope) {
+  const boundary = envelope.result.selected_boundary;
+  const { content_sha256: _old, ...manifest } = boundary;
+  boundary.content_sha256 = assessmentEvidenceDigest(manifest);
+}
+function rehashWitnessRepresentation(envelope) {
+  const witness = envelope.witness, boundary = envelope.result.selected_boundary;
+  witness.validation_revision = `validation:${assessmentEvidenceDigest(witness.preimage)}`;
+  boundary.validation.revision = witness.validation_revision;
+  boundary.label_anchor.validation_revision = witness.validation_revision;
+  boundary.revision = `boundary:${assessmentEvidenceDigest({ validation_revision: witness.validation_revision })}`;
+  rehashPublicBoundary(envelope);
+}
+function transcript(context) {
+  return { calls: context.calls.map(({ text, values }) => ({ text, values })),
+    releases: context.released.map(error => error ? error.message : null), connections: context.connections };
+}
+
+test('selected boundary witness: legacy result, SQL, parameters and cleanup remain exactly identical', async t => {
+  t.mock.method(performance, 'now', () => 0);
+  for (const limits of [undefined, { selected_cells: 256, subject_members: 100 }, { perimeter_coordinates: 11 }]) {
+    const legacy = await runMock({}, limits), next = await runWitness({}, limits);
+    assert.equal(JSON.stringify(next.envelope.result), JSON.stringify(legacy.output));
+    assert.deepEqual(transcript(next.context), transcript(legacy.context));
+    assert.deepEqual(next.context.calls, legacy.context.calls, 'including identical timeout values under a fixed clock');
+    assert.deepEqual(Object.keys(next.envelope).sort(), ['envelope_version', 'result', 'witness']);
+    assert.equal(next.envelope.envelope_version, 1);
+    assert.ok(Object.isFrozen(next.envelope) && Object.isFrozen(next.envelope.result));
+    if (legacy.output.status === 'incomplete') assert.equal(next.envelope.witness, null);
+  }
+});
+
+test('selected boundary witness: exact native anchor and eleven-field hash preimage are retained', async () => {
+  let nativeAnchor;
+  const { envelope, context } = await runWitness({ payload(row) { nativeAnchor = clone(row.anchor); } });
+  assert.equal(envelope.result.status, 'ready');
+  const witness = envelope.witness, preimage = witness.preimage;
+  assert.deepEqual(Object.keys(witness).sort(), ['preimage', 'validation_revision', 'witness_version']);
+  assert.equal(witness.witness_version, 1);
+  assert.deepEqual(Object.keys(preimage).sort(), ['method', 'engine_versions', 'topology_revision', 'selection_sha256',
+    'subject_evidence_sha256', 'geometry', 'cycles', 'anchor', 'scope', 'effective_date', 'knowledge_cutoff'].sort());
+  assert.deepEqual(preimage.anchor, nativeAnchor);
+  assert.equal(preimage.anchor.member_record_id, 'dcad_parcels:2');
+  assert.equal(witness.validation_revision, `validation:${assessmentEvidenceDigest(preimage)}`);
+  assert.equal(witness.validation_revision, envelope.result.selected_boundary.validation.revision);
+  assert.deepEqual(preimage.cycles, [envelope.result.selected_boundary.exterior]);
+  assert.ok(Object.isFrozen(preimage.anchor) && Object.isFrozen(preimage.cycles[0].segments[0]));
+  const before = JSON.stringify(envelope); context.input.scope.account_id = 'caller-changed-after-return';
+  assert.equal(JSON.stringify(envelope), before, 'witness and result own their admitted source context');
+});
+
+test('selected boundary witness: compact and full readback expose distinct limited checks without pool use', async () => {
+  const { envelope, context } = await runWitness();
+  const before = transcript(context), request = retained(envelope, context.input), original = clone(request);
+  const compact = readNeighborhoodSelectedBoundaryWitness(representation(envelope));
+  const full = readNeighborhoodSelectedBoundaryWitness(request);
+  assertReadback(compact); assertReadback(full, 'consistent', null, true);
+  assert.equal(compact.validation_revision, full.validation_revision);
+  assert.deepEqual(request, original); assert.deepEqual(transcript(context), before);
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness({ ...representation(envelope), original_input: context.input }), witnessError('request'));
+  for (const original_input of [undefined, null, [], true]) {
+    const bad = { ...request, original_input }; if (original_input === undefined) delete bad.original_input;
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(bad), witnessError('request'));
+  }
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(request, { limits: { selected_cells: 256, subject_members: 100 } }), 'consistent', null, true);
+});
+
+test('selected boundary witness: all recognized runtime failures preserve legacy behavior and withhold witness', async t => {
+  t.mock.method(performance, 'now', () => 0);
+  const cases = ['connect', 'begin', 'settings', 'versions', 'admission', 'build', 'commit'].map(failAt => ({ failAt }));
+  cases.push({ releaseFails: true }, { failAt: 'build', releaseFails: true }, { failAt: 'build', rollbackFails: true });
+  for (const options of cases) {
+    const legacy = await runMock(options), next = await runWitness(options);
+    assert.deepEqual(next.envelope.result, legacy.output); assert.deepEqual(transcript(next.context), transcript(legacy.context));
+    assert.equal(next.envelope.witness, null); atomicFailure(next.envelope.result); assert.ok(jsonBytes(next.envelope) <= 16384);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(next.envelope), { limits: { output_bytes: 1 } }),
+      'incomplete', 'producer_incomplete');
+  }
+  const fake = Object.assign(new Error('neighborhood_selected_boundary_incomplete'), { code: 'input_limit_exceeded' });
+  const next = await runWitness({ failAt: 'build', driverError: fake });
+  assert.deepEqual(next.envelope.result.incomplete_reasons, ['native_query_unavailable'], 'external lookalike is not a private marker');
+});
+
+test('selected boundary witness: malformed input throws retain legacy byte-for-byte errors and never connect', async () => {
+  for (const mutate of [input => { input.version = 9; }, input => { input.selection.content_sha256 = '0'.repeat(64); },
+    input => { input.extra = PRIVATE_ERROR; }, input => { input.scope.account_id = null; }]) {
+    const a = mock(), b = mock(); mutate(a.input); mutate(b.input);
+    let legacyError, nextError;
+    try { await createNeighborhoodSelectedBoundary(a.pool).validate(a.input); } catch (error) { legacyError = error; }
+    try { await createNeighborhoodSelectedBoundary(b.pool).validateWithWitness(b.input); } catch (error) { nextError = error; }
+    assert.ok(legacyError instanceof TypeError && nextError instanceof TypeError);
+    assert.equal(nextError.message, legacyError.message); assert.equal(a.connections + b.connections, 0);
+  }
+});
+
+test('selected boundary witness: deadline expiry after build or commit discards the staged preimage', async t => {
+  let now = 0; t.mock.method(performance, 'now', () => now);
+  for (const expiry of ['build', 'commit']) {
+    now = 0;
+    const result = await runWitness({ onQuery(tag) { if (tag === expiry) now = 30001; } });
+    assert.equal(result.envelope.witness, null); atomicFailure(result.envelope.result);
+    assert.deepEqual(result.envelope.result.incomplete_reasons, ['duration_limit']);
+    assert.equal(result.context.released.length, 1);
+  }
+});
+
+test('selected boundary witness: closed stages reject extra keys and malformed ready/incomplete evidence', async () => {
+  const { envelope } = await runWitness();
+  const cases = [
+    ['envelope', e => { e.extra = true; }], ['witness', e => { e.witness.extra = true; }],
+    ['preimage', e => { e.witness.preimage.extra = true; }], ['preimage', e => { e.witness.preimage.anchor.extra = true; }],
+    ['preimage', e => { e.witness.preimage.anchor.inside_union = false; }],
+    ['preimage', e => { e.witness.preimage.cycles[0].segments[0].extra = true; }],
+    ['result', e => { e.result.extra = true; }], ['result', e => { e.result.selected_boundary.extra = true; }],
+    ['result', e => { e.result.subject_manifest.members[0].extra = true; }],
+    ['result', e => { e.result.boundary_source_occurrences[0].extra = true; }],
+    ['result', e => { e.result.boundary_source_occurrences.push(clone(e.result.boundary_source_occurrences[0])); }],
+    ['envelope', e => { e.witness = null; }],
+  ];
+  // Serialization separates producer-internal shared ring references, so this
+  // matrix corrupts exactly one retained wire stage, not both result/preimage.
+  for (const [stage, mutate] of cases) { const bad = JSON.parse(JSON.stringify(envelope)); mutate(bad);
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(representation(bad)), witnessError(stage)); }
+  const failed = (await runWitness({ failAt: 'build' })).envelope;
+  for (const mutate of [e => { e.result.geometry = {}; }, e => { e.result.incomplete_reasons = [PRIVATE_ERROR]; },
+    e => { e.result.authority_limitations = []; }, e => { e.result.metadata_not_returned = false; }]) {
+    const bad = clone(failed); mutate(bad);
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(representation(bad)), witnessError('result'));
+  }
+});
+
+test('selected boundary witness: revision, public-result and anchor-manifest mismatches have fixed ordered outcomes', async () => {
+  const { envelope, context } = await runWitness();
+  const revision = clone(envelope); revision.witness.validation_revision = `validation:${'0'.repeat(64)}`;
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(revision, { invalid: true })), 'inconsistent', 'revision_mismatch');
+  const projection = clone(envelope); projection.result.selection_sha256 = '0'.repeat(64);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(projection, { invalid: true })), 'inconsistent', 'result_mismatch');
+  const anchor = clone(envelope); anchor.witness.preimage.anchor.member_record_id = 'dcad_parcels:999';
+  rehashWitnessRepresentation(anchor);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(anchor, context.input)), 'inconsistent', 'anchor_manifest_mismatch');
+  const badHash = clone(context.input); badHash.selection.content_sha256 = '0'.repeat(64);
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(envelope, badHash)), witnessError('original_input'));
+});
+
+test('selected boundary witness: representation cannot establish selected-cell or source occurrence linkage', async () => {
+  const { envelope, context } = await runWitness();
+  for (const mutate of [e => { e.result.selected_boundary.selected_cell_ids = [`cell:${'a'.repeat(64)}`]; },
+    e => { e.result.boundary_source_occurrences[0].source_parts[0].start_fraction = 0.125; }]) {
+    const changed = clone(envelope); mutate(changed); rehashPublicBoundary(changed);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(changed)));
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(changed, context.input)), 'inconsistent', 'retained_input_mismatch');
+  }
+  const manifest = clone(envelope); manifest.result.subject_manifest.members[0].record_sha256 = 'a'.repeat(64);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(manifest)));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(manifest, context.input)), 'inconsistent', 'retained_input_mismatch');
+});
+
+test('selected boundary witness: changed complete capture or decision remains detectable after its own valid rehash', async () => {
+  const { envelope, context } = await runWitness();
+  const decision = clone(context.input); decision.selection.revision = 'another-reviewed-selection'; rehashSelection(decision);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, decision)), 'inconsistent', 'retained_input_mismatch');
+  const source = clone(context.input), record = source.subject_evidence.capture.sources[0].payload.records[0];
+  record.data.attributes.account_id = 'other-exact-account';
+  record.data.normalized_content_sha256 = assessmentEvidenceDigest({ feature: record.data.feature,
+    attributes: record.data.attributes, geometry: record.data.geometry });
+  rebindSubjectChunks(source.subject_evidence, { upstream: true });
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(envelope, source)), witnessError('original_input'));
+  const validSource = clone(context.input);
+  validSource.subject_evidence.capture.sources[0].payload.records[0].data.ingest.source_record_hash = 'b'.repeat(64);
+  rebindSubjectChunks(validSource.subject_evidence, { upstream: true });
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, validSource)), 'inconsistent', 'retained_input_mismatch');
+});
+
+test('selected boundary witness: coherently forged outside anchor is explicitly consistent in BOTH unexecuted modes', async () => {
+  const { envelope, context } = await runWitness();
+  const forged = clone(envelope), outside = [799999, 3699999];
+  forged.witness.preimage.anchor.coordinates = outside;
+  forged.result.selected_boundary.label_anchor.coordinates = clone(outside);
+  rehashWitnessRepresentation(forged);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(forged)));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(forged, context.input)), 'consistent', null, true);
+  assert.notEqual(forged.witness.validation_revision, envelope.witness.validation_revision);
+  assert.deepEqual(forged.witness.preimage.anchor.inside_subject, true);
+  // This mock-only counterexample does NOT assert containment. Neither pure
+  // mode executes ST_Contains, authenticates the producer or grants reporting.
+});
+
+test('selected boundary witness: wrapper/header/version precedence is independent of original semantics', async () => {
+  const { envelope, context } = await runWitness();
+  const badOriginal = { bad_hash: PRIVATE_ERROR };
+  for (const mutate of [r => { r.readback_version = 2; }, r => { r.envelope.envelope_version = 2; },
+    r => { r.envelope.witness.witness_version = 2; }, r => { r.envelope.result.version = 'postgis-selected-boundary-v2'; }]) {
+    const request = retained(clone(envelope), clone(badOriginal)); mutate(request);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(request), 'incomplete', 'unsupported_version');
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(request, { limits: { output_bytes: 1 } }), 'incomplete', 'unsupported_version');
+  }
+  for (const [stage, mutate] of [['request', r => { r.readback_version = 0; }],
+    ['envelope', r => { r.envelope.envelope_version = 1.5; }], ['witness', r => { r.envelope.witness.witness_version = '2'; }],
+    ['result', r => { r.envelope.result.version = 'unrelated-v2'; }]]) {
+    const request = retained(clone(envelope), context.input); mutate(request);
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(request), witnessError(stage));
+  }
+  const failed = (await runWitness({ failAt: 'build' })).envelope;
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(failed, badOriginal)), 'incomplete', 'producer_incomplete');
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(failed, badOriginal), { limits: { output_bytes: 1 } }), 'incomplete', 'producer_incomplete');
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(envelope, badOriginal)), witnessError('original_input'));
+  const originalVersion = clone(context.input); originalVersion.version = 2;
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(envelope, originalVersion)), witnessError('original_input'));
+});
+
+test('selected boundary witness: generic descriptor admission precedes every version/incomplete return', async () => {
+  const { envelope, context } = await runWitness(); let invoked = 0;
+  for (const mode of ['future', 'incomplete']) {
+    const source = mode === 'future' ? clone(envelope) : clone((await runWitness({ failAt: 'build' })).envelope);
+    if (mode === 'future') source.envelope_version = 2;
+    const original = Object.defineProperty({}, 'trap', { enumerable: true, get() { invoked++; throw new Error('input_limit_exceeded'); } });
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(source, original)), witnessError('request'));
+  }
+  for (const options of [null, true, 1, [], { limits: undefined }, { limits: { input_bytes: -0 } },
+    Object.defineProperty({}, 'limits', { enumerable: true, get() { invoked++; return {}; } }),
+    new Proxy({}, { ownKeys() { invoked++; return []; } }), { padding: 'x'.repeat(17000) }])
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(representation(envelope), options), witnessError('options'));
+  for (const mutate of [r => { r.original_input = new Proxy({}, { getPrototypeOf() { invoked++; return Object.prototype; } }); },
+    r => { r.original_input = r; }, r => { r.original_input.toJSON = () => { invoked++; return {}; }; },
+    r => { r.original_input.version = -0; }]) {
+    const request = retained(clone(envelope), clone(context.input)); mutate(request);
+    assert.throws(() => readNeighborhoodSelectedBoundaryWitness(request), witnessError('request'));
+  }
+  assert.equal(invoked, 0, 'no accessor, proxy trap, coercion or toJSON hook executes');
+});
+
+test('selected boundary witness: generic future-envelope bytes, nodes and depth beat unsupported version', async () => {
+  const future = padding => ({ envelope_version: 2, result: { padding }, witness: null });
+  for (const padding of ['x'.repeat(1_000_000), Array(100001).fill(null),
+    Array.from({ length: 45 }).reduce(value => ({ nested: value }), null)])
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(future(padding))), 'incomplete', 'readback_limit_exceeded');
+  const small = future('future data');
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(small), { limits: { output_bytes: 1 } }), 'incomplete', 'unsupported_version');
+  const base = future(''); base.result.padding = 'x'.repeat(1_000_000 - jsonBytes(base));
+  assert.equal(jsonBytes(base), 1_000_000);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(base)), 'incomplete', 'unsupported_version');
+  base.result.padding += 'x';
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(base)), 'incomplete', 'readback_limit_exceeded');
+});
+
+test('selected boundary witness: whole request counts aliased subtrees and all framing at exact and one-byte limits', async () => {
+  const { envelope, context } = await runWitness();
+  const request = retained(envelope, context.input), exact = jsonBytes(request);
+  assert.ok(exact > jsonBytes(envelope) + jsonBytes(context.input));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(request, { limits: { input_bytes: exact } }), 'consistent', null, true);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(request, { limits: { input_bytes: exact - 1 } }), 'incomplete', 'readback_limit_exceeded');
+  const aliased = { padding: '\u0000"\\\ud800🙂'.repeat(40) };
+  const future = { readback_version: 2, mode: 'retained_input',
+    envelope: { envelope_version: 2, result: aliased, witness: null }, original_input: aliased };
+  assert.equal(future.envelope.result, future.original_input);
+  const aliasExact = jsonBytes(future);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(future, { limits: { input_bytes: aliasExact } }), 'incomplete', 'unsupported_version');
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(future, { limits: { input_bytes: aliasExact - 1 } }), 'incomplete', 'readback_limit_exceeded');
+  const mismatch = clone(envelope); mismatch.witness.validation_revision = `validation:${'0'.repeat(64)}`;
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(mismatch, context.input), { limits: { input_bytes: exact - 1 } }),
+    'incomplete', 'readback_limit_exceeded', false);
+});
+
+test('selected boundary witness: aggregate success capacity is stricter without changing legacy output capacity', async () => {
+  const base = await runWitness(); assert.equal(base.envelope.result.status, 'ready');
+  let exact = jsonBytes(base.envelope);
+  for (let i = 0; i < 5; i++) { const adjusted = clone(base.envelope); adjusted.result.limits.output_bytes = exact; exact = jsonBytes(adjusted); }
+  const at = await runWitness({}, { output_bytes: exact });
+  assert.equal(at.envelope.result.status, 'ready'); assert.equal(jsonBytes(at.envelope), exact);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(at.envelope), { limits: { output_bytes: exact } }));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(at.envelope), { limits: { output_bytes: exact - 1 } }),
+    'incomplete', 'readback_limit_exceeded');
+  const lower = await runWitness({}, { output_bytes: exact - 1 });
+  assert.equal(lower.envelope.witness, null); atomicFailure(lower.envelope.result);
+  assert.deepEqual(lower.envelope.result.incomplete_reasons, ['witness_output_limit_exceeded']);
+  assert.ok(jsonBytes(lower.envelope) <= 16384);
+  const legacy = await runMock({}, { output_bytes: exact - 1 }); assert.equal(legacy.output.status, 'ready');
+  const tiny = await runWitness({}, { output_bytes: 1 });
+  assert.equal(tiny.envelope.witness, null); assert.ok(jsonBytes(tiny.envelope) > 1 && jsonBytes(tiny.envelope) <= 16384);
+});
+
+test('selected boundary witness: original marker classes stay distinct from imported canonical failures', async () => {
+  const { envelope, context } = await runWitness();
+  for (const mutate of [input => { input.subject_evidence.subject.status = 'unresolved'; },
+    input => { input.subject_evidence.captured_at = '2026-09-06T00:00:00.000Z'; }]) {
+    const original = clone(context.input); mutate(original);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, original)), 'incomplete', 'retained_input_unsupported');
+  }
+  for (const limits of [{ perimeter_coordinates: 11 }, { subject_members: 1 }, { topology_bytes: 1 },
+    { parcel_proof_bytes: 1 }, { perimeter_edges: 3 }])
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, context.input), { limits }), 'incomplete', 'readback_limit_exceeded');
+  const oversizedCanonical = clone(context.input);
+  oversizedCanonical.topology.source_features[0].name = 'x'.repeat(1_500_001);
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(retained(envelope, oversizedCanonical)), witnessError('original_input'));
+  for (const pointCount of [1, 0xffffffff]) {
+    const original = clone(context.input), record = original.subject_evidence.capture.sources[0].payload.records[0];
+    const bytes = Buffer.from(record.data.geometry.ewkb, 'hex'); bytes.writeUInt32LE(pointCount, 13);
+    record.data.geometry.ewkb = bytes.toString('hex'); record.data.geometry.content_sha256 = hashBytes(bytes);
+    record.data.normalized_content_sha256 = assessmentEvidenceDigest({ feature: record.data.feature,
+      attributes: record.data.attributes, geometry: record.data.geometry });
+    rebindSubjectChunks(original.subject_evidence, { upstream: true });
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, original)), 'incomplete', 'readback_limit_exceeded');
+  }
+});
+
+test('selected boundary witness: actual mock hole output preserves raw cycle order and directed traversal in full mode', async () => {
+  const topology = makeMockSelectedBoundaryTopology({ variant: 'hole' });
+  const annulus = topology.cells.find(row => row.interior_ring_count === 1), inner = topology.cells.find(row => row.interior_ring_count === 0);
+  const input = makeSelectedBoundaryInput({ topology, selectedCellIds: [annulus.id] });
+  const options = { input, oracle: makeMockSelectedBoundaryOracle({ variant: 'hole' }), payload(row, config) {
+    row.hole_count = 1;
+    row.cycle_roles.forEach(role => { role.interior = geometryGroups(config).boundary
+      .filter(edge => edge.cycle_id === role.cycle_id).every(edge => inner.boundary_edge_ids.includes(edge.id)); });
+  } };
+  const { envelope, context } = await runWitness(options);
+  assert.equal(envelope.result.status, 'ready');
+  const orderedCycles = [...new Set(geometryGroups(context.calls.find(call => queryTag(call) === 'build')).boundary.map(edge => edge.cycle_id))];
+  assert.deepEqual(envelope.witness.preimage.cycles.map(row => row.ring_id), orderedCycles,
+    'the witness follows actual submitted boundary traversal, not reconstructed public exterior-first ordering');
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(envelope)));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(envelope, context.input)), 'consistent', null, true);
+  assert.ok(signedCycle(envelope.result.selected_boundary.exterior, context.input.topology) > 0);
+  assert.ok(signedCycle(envelope.result.selected_boundary.interiors[0], context.input.topology) < 0);
+  assert.ok(envelope.witness.preimage.cycles.some(ring => ring.segments.some(segment => segment.reversed)));
+  const reordered = clone(envelope); reordered.witness.preimage.cycles.reverse(); rehashWitnessRepresentation(reordered);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(reordered)));
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(reordered, context.input)), 'inconsistent', 'retained_input_mismatch');
+  const altered = clone(envelope), ring = altered.witness.preimage.cycles[0];
+  ring.segments[0].reversed = !ring.segments[0].reversed;
+  const publicRing = altered.result.selected_boundary.exterior.ring_id === ring.ring_id
+    ? altered.result.selected_boundary.exterior : altered.result.selected_boundary.interiors.find(row => row.ring_id === ring.ring_id);
+  publicRing.segments = clone(ring.segments); rehashWitnessRepresentation(altered);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(retained(altered, context.input)), 'inconsistent', 'retained_input_mismatch');
+});
+
+test('selected boundary witness: multiple-hole compact ordering binds exact cycles but does not assert a native producer', async () => {
+  const topology = makeMockSelectedBoundaryTopology({ variant: 'hole' });
+  const annulus = topology.cells.find(row => row.interior_ring_count === 1), inner = topology.cells.find(row => row.interior_ring_count === 0);
+  const { envelope } = await runWitness({ input: makeSelectedBoundaryInput({ topology, selectedCellIds: [annulus.id] }),
+    oracle: makeMockSelectedBoundaryOracle({ variant: 'hole' }), payload(row, config) {
+      row.hole_count = 1;
+      row.cycle_roles.forEach(role => { role.interior = geometryGroups(config).boundary
+        .filter(edge => edge.cycle_id === role.cycle_id).every(edge => inner.boundary_edge_ids.includes(edge.id)); });
+    } });
+  assert.equal(envelope.result.status, 'ready');
+  // Small representation-only assembly, not another topology/native fixture.
+  // The accepted encoder supplies bytes; no spatial operation is emulated.
+  const compact = clone(envelope), boundary = compact.result.selected_boundary;
+  const extra = clone(boundary.interiors[0]);
+  const nodeIds = new Map();
+  for (const segment of extra.segments) for (const id of [segment.from_node_id, segment.to_node_id])
+    nodeIds.set(id, `node:${hashBytes(`second-hole:${id}`)}`);
+  const extraSources = [];
+  for (const segment of extra.segments) {
+    const source = clone(compact.result.boundary_source_occurrences.find(row => row.edge_id === segment.edge_id));
+    segment.edge_id = `edge:${hashBytes(`second-hole:${segment.edge_id}`)}`;
+    segment.from_node_id = nodeIds.get(segment.from_node_id); segment.to_node_id = nodeIds.get(segment.to_node_id);
+    source.edge_id = segment.edge_id; extraSources.push(source);
+  }
+  const first = extra.segments.reduce((best, segment, index) => segment.edge_id < extra.segments[best].edge_id ? index : best, 0);
+  extra.segments = [...extra.segments.slice(first), ...extra.segments.slice(0, first)];
+  extra.ring_id = `cycle:${assessmentEvidenceDigest(extra.segments.map(segment => segment.edge_id).toSorted())}`;
+  boundary.interiors.push(extra); boundary.interiors.sort((a, b) => a.ring_id < b.ring_id ? -1 : 1);
+  compact.result.boundary_source_occurrences.push(...extraSources);
+  compact.result.boundary_source_occurrences.sort((a, b) => a.edge_id < b.edge_id ? -1 : 1);
+  compact.witness.preimage.cycles = [clone(boundary.interiors[1]), clone(boundary.exterior), clone(boundary.interiors[0])];
+  const metricRings = [
+    [[700000, 3600000], [700000, 3600100], [700100, 3600100], [700100, 3600000], [700000, 3600000]],
+    [[700030, 3600030], [700070, 3600030], [700070, 3600070], [700030, 3600070], [700030, 3600030]],
+    [[700080, 3600080], [700090, 3600080], [700090, 3600090], [700080, 3600090], [700080, 3600080]],
+  ];
+  const geometry = compact.result.geometry;
+  geometry.geometry.coordinates.push([[-96.8992, 32.6008], [-96.8991, 32.6008], [-96.8991, 32.6009], [-96.8992, 32.6009], [-96.8992, 32.6008]]);
+  geometry.geometry_ewkb = polygonEwkbHex(metricRings, { srid: 26914 });
+  geometry.geometry_ewkb_sha256 = hashBytes(Buffer.from(geometry.geometry_ewkb, 'hex'));
+  geometry.geometry_sha256 = assessmentEvidenceDigest(geometry.geometry);
+  compact.witness.preimage.geometry = clone(geometry); boundary.geometry_sha256 = geometry.geometry_sha256;
+  rehashWitnessRepresentation(compact);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(compact)));
+  assert.notDeepEqual(compact.witness.preimage.cycles.filter(ring => ring.orientation === 'clockwise'), boundary.interiors);
+  const changedOrder = clone(compact); changedOrder.witness.preimage.cycles.reverse();
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(changedOrder)), 'inconsistent', 'revision_mismatch');
+  const publicOrder = clone(compact); publicOrder.result.selected_boundary.interiors.reverse(); rehashPublicBoundary(publicOrder);
+  assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(publicOrder)), 'inconsistent', 'result_mismatch');
+});
+
+test('selected boundary witness: compact metric decoder preserves under-minimum/overflow marker and fixed-stage errors', async () => {
+  const { envelope } = await runWitness();
+  for (const size of [1, 0xffffffff]) {
+    const bad = clone(envelope), geometry = bad.result.geometry;
+    const bytes = Buffer.from(geometry.geometry_ewkb, 'hex'); bytes.writeUInt32LE(size, 13);
+    geometry.geometry_ewkb = bytes.toString('hex'); geometry.geometry_ewkb_sha256 = hashBytes(bytes);
+    bad.witness.preimage.geometry = clone(geometry); rehashWitnessRepresentation(bad);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(bad)), 'incomplete', 'readback_limit_exceeded');
+  }
+  const malformed = clone(envelope); malformed.result.geometry.geometry_ewkb = 'not-hex';
+  malformed.witness.preimage.geometry = clone(malformed.result.geometry); rehashWitnessRepresentation(malformed);
+  assert.throws(() => readNeighborhoodSelectedBoundaryWitness(representation(malformed)), witnessError('result'));
+});
+
+test('selected boundary witness: unexpected extra native anchor data is never stripped into an apparently valid witness', async () => {
+  const options = { payload(row) { row.anchor.unexpected_native_data = PRIVATE_ERROR; } };
+  const legacy = await runMock(options); assert.equal(legacy.output.status, 'ready', 'existing anchor acceptance stays unchanged');
+  const next = await runWitness(options);
+  assert.equal(next.envelope.witness, null); atomicFailure(next.envelope.result);
+  assert.equal(JSON.stringify(next.envelope).includes(PRIVATE_ERROR), false);
+});
+
+test('selected boundary witness: retained geometry and source occurrences must fit the closed new envelope', async () => {
+  const extraGeometry = { payload(row) { row.geometry.unexpected_native_data = PRIVATE_ERROR; } };
+  const input = makeSelectedBoundaryInput();
+  input.topology.edges[0].source_parts[0].unexpected_source_data = PRIVATE_ERROR;
+  rehashTopology(input);
+  for (const options of [extraGeometry, { input }]) {
+    const legacy = await runMock(options);
+    assert.equal(legacy.output.status, 'ready', 'do not tighten the legacy admission or strip retained evidence');
+    const next = await runWitness(options);
+    assert.equal(next.envelope.witness, null);
+    atomicFailure(next.envelope.result);
+    assert.equal(JSON.stringify(next.envelope).includes(PRIVATE_ERROR), false);
+    assert.equal(next.context.calls.some(call => queryTag(call) === 'commit'), false);
+    assert.equal(next.context.released.length, 1);
+    assertReadback(readNeighborhoodSelectedBoundaryWitness(representation(next.envelope)), 'incomplete', 'producer_incomplete');
+  }
 });

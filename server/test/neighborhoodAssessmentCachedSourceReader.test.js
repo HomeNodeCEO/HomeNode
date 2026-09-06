@@ -651,6 +651,34 @@ test('late acquisition release failures cannot leak or cause a second disposal a
   assert.doesNotMatch(JSON.stringify(result), /PRIVATE|RELEASE/);
 });
 
+test('SQL-shaped account identifiers remain bound values and cannot change query text', async () => {
+  const hostile = "acct');DROP TABLE core.sales;--";
+  const setup = accountId => fake({ data: {
+    parcels: [parcel('1', accountId)],
+    accounts: [{ account_id: accountId, subdivision: 'Synthetic Plat' }],
+  } });
+  const capture = async accountId => {
+    const db = setup(accountId);
+    const input = request({ scope: { ...ASSESSMENT_SCOPE, account_id: accountId }, account_ids: [accountId] });
+    const result = await db.reader.capture(input);
+    assert.equal(result.status, 'captured');
+    assert.equal(result.query_complete, true);
+    return db;
+  };
+  const hostileDb = await capture(hostile);
+  const benignDb = await capture('BENIGN-ACCOUNT');
+  const hostileCalls = hostileDb.calls.filter(call => call.values.flat(Infinity).includes(hostile));
+  assert.ok(hostileCalls.some(call => call.tag === 'scope'));
+  assert.ok(hostileCalls.some(call => call.tag === 'parcels'));
+  assert.ok(hostileCalls.some(call => call.tag === 'accounts'));
+  assert.ok(hostileCalls.some(call => call.tag === 'source-ids'));
+  assert.ok(hostileDb.calls.every(call => !call.text.includes(hostile)));
+  assert.deepEqual(hostileDb.calls.map(call => [call.tag, call.text]),
+    benignDb.calls.map(call => [call.tag, call.text]));
+  assert.equal(hostileDb.poolQueries, 0);
+  assert.equal(benignDb.poolQueries, 0);
+});
+
 test('invalid requests and increased resource ceilings are rejected before a connection is obtained', async () => {
   const db = fake();
   for (const input of [request({ account_ids: [] }), request({ account_ids: [SUBJECT, SUBJECT] }),
@@ -662,6 +690,25 @@ test('invalid requests and increased resource ceilings are rejected before a con
   }
   assert.equal(db.connects, 0);
   assert.throws(() => fake({ limits: { records: 100001 } }), /invalid_neighborhood_cache_reader:limits/);
+});
+
+test('SQL-shaped numeric limit overrides reject before connection or query', () => {
+  for (const limits of [
+    { row_bytes: '64000);DROP TABLE core.sales;--' },
+    { statement_ms: "5000';SELECT pg_sleep(9);--" },
+  ]) {
+    let connects = 0;
+    let poolQueries = 0;
+    const granted = createTestCachedReadAccess(request());
+    const pool = {
+      async connect() { connects += 1; assert.fail('invalid limits must reject before connection'); },
+      async query() { poolQueries += 1; assert.fail('invalid limits must reject before pool query'); },
+    };
+    assert.throws(() => createNeighborhoodCachedSourceReader(pool, { access: granted.access, limits }),
+      /^TypeError: invalid_neighborhood_cache_reader:limits$/);
+    assert.equal(connects, 0);
+    assert.equal(poolQueries, 0);
+  }
 });
 
 test('parameterized source projections avoid DDL, jobs, provider fallbacks, raw documents and relative dates', async () => {

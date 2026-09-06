@@ -125,6 +125,42 @@ test("mocked boundary: ready requires own preparation and PostGIS query, and pre
   assert.equal(JSON.parse(query.values[0]).length, 3); assert.equal(released.length, 1); assert.equal(released[0], undefined);
 });
 
+test('mocked SQL boundary: feature names remain result metadata while only hashed line parts reach PostGIS', async () => {
+  const benign = await runMock();
+  assert.equal(benign.output.status, 'ready');
+  const input = fixture(), marker = "Road'); DROP TABLE spatial_ref_sys; --";
+  input.features[0].name = marker;
+  const prepared = prepareNeighborhoodLinework(input);
+  assert.equal(prepared.status, 'ready_for_preprocessing');
+  const expectedParts = prepared.line_parts.map(({ feature_id, source_part_index, geometry }) => ({
+    feature_id, source_part_index, geometry,
+  }));
+  const { output, calls, connections, released } = await runMock({ input });
+  assert.equal(output.status, 'ready');
+  assert.equal(output.source_features.find(row => row.source_object_id === input.features[0].source_object_id)?.name, marker);
+  assert.equal(connections, 1); assert.deepEqual(released, [undefined]);
+  assert.deepEqual(calls.map(call => call.text), benign.calls.map(call => call.text));
+  assert.deepEqual(calls.map(call => call.values), benign.calls.map(call => call.values),
+    'a name change does not change the hashed source identity or the line-part parameters');
+  for (const call of calls) {
+    assert.equal(call.text.includes(marker), false);
+    assert.equal(JSON.stringify(call.values).includes(marker), false);
+  }
+  const partQueries = calls.filter(call => /neighborhood-topology:(admission|build)/.test(call.text));
+  assert.equal(partQueries.length, 2);
+  for (const query of partQueries) {
+    assert.match(query.text, /FROM jsonb_to_recordset\(\$1::jsonb\) AS p\(feature_id text,source_part_index integer,geometry jsonb\)/);
+    assert.equal(query.values.length, 1); assert.equal(typeof query.values[0], 'string');
+    const parts = JSON.parse(query.values[0]);
+    assert.deepEqual(parts, expectedParts);
+    for (const part of parts) {
+      assert.deepEqual(Object.keys(part).sort(), ['feature_id', 'geometry', 'source_part_index']);
+      assert.match(part.feature_id, /^[a-f0-9]{64}$/);
+      assert.equal(part.source_part_index, 1);
+    }
+  }
+});
+
 test("no DB for incomplete source, unsupported units/snap, or reduced input budgets; caller flags cannot bypass", async () => {
   for (const [change, expected, limits] of [
     [input => { input.capture.coverage = "unknown"; }, "source_preparation_incomplete"],
@@ -309,6 +345,18 @@ test("configuration cannot disable or exceed accepted work bounds", () => {
   assert.throws(() => createNeighborhoodPostgisTopology({}), /invalid_neighborhood_topology:pool/);
 });
 
+test('SQL-shaped topology limits are rejected before any connection or query', () => {
+  for (const limits of [{ candidate_pairs: '3);DROP TABLE spatial_ref_sys;--' },
+    { statement_ms: "5000'; DROP TABLE spatial_ref_sys;--" }]) {
+    const context = mock();
+    assert.throws(() => createNeighborhoodPostgisTopology(context.pool, { limits }), {
+      name: 'TypeError', message: 'invalid_neighborhood_topology:limits',
+    });
+    assert.equal(context.connections, 0);
+    assert.deepEqual(context.calls, []); assert.deepEqual(context.released, []);
+  }
+});
+
 test("external pool and query failures cannot spoof trusted reasons or execute error getters", async () => {
   let getterReads = 0;
   const guarded = new Error('PRIVATE DRIVER DETAIL');
@@ -461,13 +509,18 @@ test('pair/edge/source-ref lower limits and malformed admission metadata cannot 
   for (const admission of [{ primitive_segments: 4, invalid_primitive_count: 0, candidate_pairs: 3 },
     { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: -1 },
     { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: '3' },
+    { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: '3);DROP TABLE spatial_ref_sys;--' },
+    { primitive_segments: '3 UNION SELECT 1', invalid_primitive_count: 0, candidate_pairs: 3 },
     { primitive_segments: 3, invalid_primitive_count: 0, candidate_pairs: 4 },
     { primitive_segments: 3, invalid_primitive_count: 0 },
     { primitive_segments: 3, candidate_pairs: 3 },
     { primitive_segments: 3, invalid_primitive_count: 1, candidate_pairs: 1 },
     ...[-1, 4, 0.5, NaN, Infinity, '0', null].map(invalid_primitive_count => ({ primitive_segments: 3, invalid_primitive_count, candidate_pairs: 3 }))]) {
-    const { output, calls } = await runMock({ admission }); emptyGraph(output);
+    const { output, calls, connections, released } = await runMock({ admission }); emptyGraph(output);
     assert.deepEqual(output.incomplete_reasons, ['invalid_topology_result']); assert.equal(calls.some(row => /:build/.test(row.text)), false);
+    assert.deepEqual(calls.map(call => /neighborhood-topology:(\w+)/.exec(call.text)?.[1] || call.text),
+      ['begin', 'settings', 'versions', 'admission', 'ROLLBACK']);
+    assert.equal(connections, 1); assert.deepEqual(released, [undefined]);
   }
 });
 

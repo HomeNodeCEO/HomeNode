@@ -163,6 +163,82 @@ test("ready partition keeps the full geographic denominator and declared evidenc
   assert.deepEqual(mock.calls.map(row => row.tag), ["begin", "settings", "versions", "validate", "partition", "commit"]);
 });
 
+test("SQL-shaped feature IDs stay in exact bound JSON without changing partition SQL", async () => {
+  const { input, expected } = await fixture();
+  const marker = "A1'); SELECT 'land-use-boundary-marker'; --";
+  assert.ok(Buffer.byteLength(marker) <= 200, "the marker fits the accepted feature ID contract");
+  const benign = structuredClone(input);
+  benign.features[0].id = "A1".padEnd(marker.length, "x");
+  input.features[0].id = marker;
+  const control = fakePool(payloadFor(benign, expected));
+  const hostile = fakePool(payloadFor(input, expected));
+  const controlResult = await kernel(control).build(benign);
+  const result = await kernel(hostile).build(input);
+  for (const [mock, output] of [[control, controlResult], [hostile, result]]) {
+    assert.equal(output.computation_status, "ready");
+    assert.equal(mock.connections, 1);
+    assert.equal(mock.releases, 1);
+    assert.deepEqual(mock.calls.map(call => call.tag), ["begin", "settings", "versions", "validate", "partition", "commit"]);
+  }
+  assert.deepEqual(hostile.calls.map(({ tag, query }) => ({ tag, text: query.text })),
+    control.calls.map(({ tag, query }) => ({ tag, text: query.text })),
+    "same-shaped benign and SQL-shaped inputs must issue identical SQL text and tags");
+  const expectedFeatures = input.features.map(feature => ({
+    id: feature.id, semantics: feature.semantics, ewkb: feature.geometry.ewkb,
+    category: feature.classification.category,
+  })).sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
+  for (const { tag, query } of hostile.calls) {
+    assert.equal(query.text.includes(marker), false, `${tag} must not interpolate the feature ID`);
+    if (tag === "validate" || tag === "partition") {
+      assert.equal(query.values.length, 2);
+      assert.equal(query.values[0], input.boundary.geometry.ewkb);
+      const features = JSON.parse(query.values[1]);
+      assert.deepEqual(features, expectedFeatures, `${tag} retains the exact bound feature projection`);
+      assert.equal(features.filter(feature => feature.id === marker).length, 1);
+    } else {
+      assert.equal(JSON.stringify(query.values).includes(marker), false,
+        `${tag} cannot carry feature input outside the geometry query parameters`);
+    }
+  }
+  assert.ok(result.buckets.find(bucket => bucket.category === "one_unit").source_feature_ids.includes(marker),
+    "the supported output retains the input ID rather than dropping or sanitizing it");
+});
+
+test("SQL-shaped supported categories reject before connect with freshly rebound source evidence", async () => {
+  const { input, expected } = await fixture();
+  const feature = input.features[0];
+  assert.equal(feature.classification.status, "supported");
+  feature.classification.category = "one_unit'); SELECT 'land-use-category-marker'; --";
+  const source = rebindLandUseFixtureFeature(input, feature.id);
+  const record = source.records.find(row => row.source_record_id === feature.source_record_id);
+  assert.equal(record.context_sha256, landUseEvidenceDigest(landUseFixtureFeatureContext(feature)));
+  const { content_sha256, ...manifest } = source;
+  assert.equal(content_sha256, landUseEvidenceDigest(manifest), "a stale source hash must not explain the refusal");
+  const mock = fakePool(payloadFor(input, expected));
+  await assert.rejects(() => kernel(mock).build(input), error => {
+    assert.ok(error instanceof TypeError);
+    assert.equal(error.message, "invalid_neighborhood_land_use:classification");
+    return true;
+  });
+  assert.equal(mock.connections, 0);
+  assert.equal(mock.releases, 0);
+  assert.deepEqual(mock.calls, []);
+});
+
+for (const limit of ["intermediate_coordinates", "statement_ms"]) {
+  test(`SQL-shaped ${limit} overrides reject before connect or query`, () => {
+    const mock = fakePool(null);
+    assert.throws(() => kernel(mock, { [limit]: "1; SELECT 'land-use-limit-marker'; --" }), error => {
+      assert.ok(error instanceof TypeError);
+      assert.equal(error.message, "invalid_neighborhood_land_use:limits");
+      return true;
+    });
+    assert.equal(mock.connections, 0);
+    assert.equal(mock.releases, 0);
+    assert.deepEqual(mock.calls, []);
+  });
+}
+
 test("transaction settings use one parameterized result despite pg multi-statement array semantics", async () => {
   const { input, expected } = await fixture();
   const mock = fakePool(payloadFor(input, expected), { queryHook(tag, query) {

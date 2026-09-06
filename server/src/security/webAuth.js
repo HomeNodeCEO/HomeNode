@@ -14,6 +14,46 @@ const TRANSACTION_COOKIE_OPTIONS = Object.freeze({
 });
 const SAFE_SESSION_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_OIDC_HTTP_TIMEOUT_MS = 5_000;
+const ORIGINAL_SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const originalSessionAttempts = new WeakMap();
+
+function beginOriginalSessionAttempt(req, res) {
+  originalSessionAttempts.get(req)?.retire(true);
+  if (typeof req?.once !== "function" || typeof req?.removeListener !== "function"
+    || typeof res?.once !== "function" || typeof res?.removeListener !== "function") return null;
+  const attempt = { active: true, superseded: false, auth: null, record: null };
+  const closed = () => Boolean(req.aborted || res.destroyed || res.writableEnded || res.writableFinished);
+  const retire = (superseded = false) => {
+    attempt.superseded ||= superseded;
+    attempt.active = false;
+    attempt.auth = null;
+    attempt.record = null;
+    req.removeListener("aborted", onClose);
+    res.removeListener("finish", onClose);
+    res.removeListener("close", onClose);
+    if (originalSessionAttempts.get(req) === attempt) originalSessionAttempts.delete(req);
+  };
+  const onClose = () => retire();
+  attempt.retire = retire;
+  attempt.live = () => attempt.active && originalSessionAttempts.get(req) === attempt && !closed();
+  originalSessionAttempts.set(req, attempt);
+  req.once("aborted", onClose);
+  res.once("finish", onClose);
+  res.once("close", onClose);
+  if (closed()) retire();
+  return attempt;
+}
+
+/** Read-only original hydration provenance, never a substitute for fresh row authorization. */
+export function getOriginalWebSessionAuthentication(req) {
+  const attempt = originalSessionAttempts.get(req);
+  if (!attempt) return null;
+  if (!attempt.live() || (attempt.auth && req.mobileAuth !== attempt.auth)) {
+    attempt.retire();
+    return null;
+  }
+  return attempt.record;
+}
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -217,8 +257,9 @@ async function loadIdentity(pool, issuer, subject) {
 }
 
 async function loadSessionIdentity(pool, token) {
+  const tokenSha256 = sha256(token);
   const { rows } = await pool.query(
-    `SELECT users.id AS user_id, users.email, users.display_name,
+    `SELECT sessions.id AS session_id, users.id AS user_id, users.email, users.display_name,
             memberships.organization_id, organizations.display_name AS organization_display_name,
             roles.role_code
        FROM app_auth.web_sessions sessions
@@ -230,7 +271,7 @@ async function loadSessionIdentity(pool, token) {
        LEFT JOIN app_auth.organizations organizations ON organizations.id = memberships.organization_id
       WHERE sessions.token_sha256 = $1 AND sessions.revoked_at IS NULL AND sessions.expires_at > now()
       ORDER BY memberships.organization_id, roles.role_code`,
-    [sha256(token)],
+    [tokenSha256],
   );
   if (!rows.length) return null;
   const organizations = new Map();
@@ -245,12 +286,13 @@ async function loadSessionIdentity(pool, token) {
     organizations.set(row.organization_id, entry);
   }
   if (!organizations.size) return null;
-  return Object.freeze({
+  const identity = Object.freeze({
     userId: rows[0].user_id,
     email: rows[0].email,
     displayName: rows[0].display_name,
     organizations: [...organizations.values()],
   });
+  return { identity, sessionId: rows[0].session_id, tokenSha256 };
 }
 
 export function createWebSessionAuthenticator({ pool, environment = process.env }) {
@@ -267,12 +309,35 @@ export function createWebSessionAuthenticator({ pool, environment = process.env 
           .json({ error: "csrf_origin_denied" });
       }
     }
+    const originalAttempt = beginOriginalSessionAttempt(req, res);
     try {
-      const identity = await loadSessionIdentity(pool, token);
-      if (identity) req.mobileAuth = identity;
-      else clearBrowserCookie(res, SESSION_COOKIE, sessionSecurity.cookieOptions);
+      const session = await loadSessionIdentity(pool, token);
+      if (originalAttempt?.superseded) return next();
+      if (session) {
+        req.mobileAuth = session.identity;
+        if (originalAttempt?.live()
+          && typeof session.identity.userId === "string" && ORIGINAL_SESSION_UUID.test(session.identity.userId)
+          && typeof session.sessionId === "string" && ORIGINAL_SESSION_UUID.test(session.sessionId)) {
+          const record = Object.freeze({
+            version: 1,
+            transport: "browser_session",
+            user_id: session.identity.userId,
+            session_id: session.sessionId,
+            session_token_sha256: session.tokenSha256,
+            verification_policy: "homenode-local-web-session-v1",
+          });
+          if (Buffer.byteLength(JSON.stringify(record)) <= 16_384) {
+            originalAttempt.auth = req.mobileAuth;
+            originalAttempt.record = record;
+          } else originalAttempt.retire();
+        } else originalAttempt?.retire();
+      } else {
+        originalAttempt?.retire();
+        clearBrowserCookie(res, SESSION_COOKIE, sessionSecurity.cookieOptions);
+      }
       return next();
     } catch {
+      originalAttempt?.retire();
       return res.status(503).json({ error: "authentication_unavailable" });
     }
   };

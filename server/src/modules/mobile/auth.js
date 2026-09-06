@@ -1,9 +1,67 @@
-import { createPublicKey, verify as verifySignature } from "node:crypto";
+import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 
 const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
 const DEFAULT_FETCH_TIMEOUT_MILLISECONDS = 5_000;
+const ORIGINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const MAX_ORIGINAL_RECORD_BYTES = 16_384;
+// Neither proofs nor their minting operations are exported or attached to auth.
+const verifiedClaimProofs = new WeakMap();
+const originalMobileAttempts = new WeakMap();
+
+function tokenDigest(value) {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function originalText(value, maximumUnits = Infinity) {
+  return typeof value === "string" && value.length > 0 && value.length <= maximumUnits
+    && Buffer.byteLength(value) <= 2_000 && value.isWellFormed()
+    && !/[\u0000-\u001f\u007f-\u009f]/.test(value);
+}
+
+function optionalTimeState(payload, key) {
+  if (!Object.hasOwn(payload, key)) return "absent";
+  return Number.isFinite(payload[key]) ? "finite" : "ignored_invalid";
+}
+
+function beginOriginalMobileAttempt(req, res) {
+  originalMobileAttempts.get(req)?.retire(true);
+  if (typeof req?.once !== "function" || typeof req?.removeListener !== "function"
+    || typeof res?.once !== "function" || typeof res?.removeListener !== "function") return null;
+  const attempt = { active: true, superseded: false, auth: null, record: null };
+  const closed = () => Boolean(req.aborted || res.destroyed || res.writableEnded || res.writableFinished);
+  const retire = (superseded = false) => {
+    attempt.superseded ||= superseded;
+    attempt.active = false;
+    attempt.auth = null;
+    attempt.record = null;
+    req.removeListener("aborted", onClose);
+    res.removeListener("finish", onClose);
+    res.removeListener("close", onClose);
+    if (originalMobileAttempts.get(req) === attempt) originalMobileAttempts.delete(req);
+  };
+  const onClose = () => retire();
+  attempt.retire = retire;
+  attempt.live = () => attempt.active && originalMobileAttempts.get(req) === attempt && !closed();
+  originalMobileAttempts.set(req, attempt);
+  req.once("aborted", onClose);
+  res.once("finish", onClose);
+  res.once("close", onClose);
+  if (closed()) retire();
+  return attempt;
+}
+
+/** Original request provenance only; not current authorization, MFA or a job credential. */
+export function getOriginalMobileAuthentication(req) {
+  const attempt = originalMobileAttempts.get(req);
+  if (!attempt) return null;
+  if (!attempt.live() || (attempt.auth && req.mobileAuth !== attempt.auth)) {
+    attempt.retire();
+    return null;
+  }
+  return attempt.record;
+}
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -255,14 +313,40 @@ export function createOidcAccessTokenVerifier({
       throw accessTokenError("signature_verification_failed");
     }
     if (!valid) throw accessTokenError("signature_invalid");
+    const nowSeconds = Math.floor(now() / 1000);
     validateClaims(payload, {
       issuer,
       audience,
       clientId,
-      nowSeconds: Math.floor(now() / 1000),
+      nowSeconds,
       clockToleranceSeconds: tolerance,
     });
-    return Object.freeze({ ...payload, iss: issuer, sub: payload.sub.trim() });
+    const claims = Object.freeze({ ...payload, iss: issuer, sub: payload.sub.trim() });
+    // Unsupported audit values do not change ordinary token acceptance.
+    if (originalText(issuer) && originalText(claims.sub, 500) && originalText(audience, 500)
+      && (!clientId || originalText(clientId, 500)) && Number.isSafeInteger(nowSeconds)) {
+      const record = Object.freeze({
+        version: 1,
+        transport: "oidc_bearer",
+        issuer,
+        subject: claims.sub,
+        token_sha256: tokenDigest(token),
+        verification_policy: "homenode-rs256-access-token-v1",
+        expected_audience: audience,
+        expected_client_id: clientId || null,
+        clock_tolerance_seconds: tolerance,
+        signature_algorithm: "RS256",
+        signing_key_id_sha256: tokenDigest(header.kid),
+        verified_at_unix_seconds: nowSeconds,
+        expires_at_unix_seconds: payload.exp,
+        not_before_state: optionalTimeState(payload, "nbf"),
+        not_before_unix_seconds: Number.isFinite(payload.nbf) ? payload.nbf : null,
+        issued_at_state: optionalTimeState(payload, "iat"),
+        issued_at_unix_seconds: Number.isFinite(payload.iat) ? payload.iat : null,
+      });
+      verifiedClaimProofs.set(claims, { verifier: verifierInstance, record });
+    }
+    return claims;
   }
 
   async function preflight() {
@@ -283,7 +367,8 @@ export function createOidcAccessTokenVerifier({
     });
   }
 
-  return Object.freeze({ configured: true, issuer, audience, preflight, verify });
+  const verifierInstance = Object.freeze({ configured: true, issuer, audience, preflight, verify });
+  return verifierInstance;
 }
 
 export function createMobileAuthenticator({ pool, verifier }) {
@@ -291,13 +376,22 @@ export function createMobileAuthenticator({ pool, verifier }) {
   if (!verifier?.verify) throw new Error("mobile_oidc_verifier_required");
 
   return async function mobileAuthenticator(req, res, next) {
+    const originalAttempt = beginOriginalMobileAttempt(req, res);
     if (!verifier.configured) {
+      originalAttempt?.retire();
       return res.status(503).json({ error: "mobile_oidc_not_configured" });
     }
     let claims;
+    let originalProof;
     try {
-      claims = await verifier.verify(parseBearerToken(req.get("authorization")));
+      const token = parseBearerToken(req.get("authorization"));
+      claims = await verifier.verify(token);
+      const proof = verifiedClaimProofs.get(claims);
+      if (proof?.verifier === verifier && proof.record.token_sha256 === tokenDigest(token)) {
+        originalProof = proof.record;
+      }
     } catch (error) {
+      originalAttempt?.retire();
       if (error?.statusCode === 503) {
         return res.status(503).json({ error: String(error.message || "oidc_unavailable") });
       }
@@ -306,7 +400,7 @@ export function createMobileAuthenticator({ pool, verifier }) {
     }
     try {
       const { rows } = await pool.query(
-        `SELECT users.id AS user_id, users.email, users.display_name,
+        `SELECT identities.id AS identity_id, users.id AS user_id, users.email, users.display_name,
                 memberships.organization_id, organizations.display_name AS organization_display_name,
                 roles.role_code
            FROM app_auth.oidc_identities identities
@@ -323,7 +417,10 @@ export function createMobileAuthenticator({ pool, verifier }) {
           ORDER BY memberships.organization_id, roles.role_code`,
         [claims.iss, claims.sub],
       );
-      if (!rows.length) return res.status(403).json({ error: "mobile_identity_not_provisioned" });
+      if (!rows.length) {
+        originalAttempt?.retire();
+        return res.status(403).json({ error: "mobile_identity_not_provisioned" });
+      }
       const organizations = new Map();
       for (const row of rows) {
         if (!row.organization_id) continue;
@@ -338,6 +435,7 @@ export function createMobileAuthenticator({ pool, verifier }) {
         organizations.set(row.organization_id, organization);
       }
       if (!organizations.size) {
+        originalAttempt?.retire();
         return res.status(403).json({ error: "mobile_organization_membership_required" });
       }
       await pool.query(
@@ -346,6 +444,8 @@ export function createMobileAuthenticator({ pool, verifier }) {
           WHERE issuer = $1 AND subject = $2`,
         [claims.iss, claims.sub],
       );
+      // A superseded successful lookup must not overwrite a newer attempt's identity.
+      if (originalAttempt?.superseded) return next();
       req.mobileAuth = Object.freeze({
         userId: rows[0].user_id,
         email: rows[0].email,
@@ -354,8 +454,19 @@ export function createMobileAuthenticator({ pool, verifier }) {
         subject: claims.sub,
         organizations: [...organizations.values()],
       });
+      if (originalAttempt?.live() && originalProof
+        && typeof rows[0].user_id === "string" && ORIGINAL_UUID.test(rows[0].user_id)
+        && typeof rows[0].identity_id === "string" && ORIGINAL_UUID.test(rows[0].identity_id)) {
+        const record = Object.freeze({ ...originalProof,
+          user_id: rows[0].user_id, identity_id: rows[0].identity_id });
+        if (Buffer.byteLength(JSON.stringify(record)) <= MAX_ORIGINAL_RECORD_BYTES) {
+          originalAttempt.auth = req.mobileAuth;
+          originalAttempt.record = record;
+        } else originalAttempt.retire();
+      } else originalAttempt?.retire();
       return next();
     } catch (error) {
+      originalAttempt?.retire();
       console.error("[mobile] identity lookup failed", error?.message || error);
       return res.status(503).json({ error: "mobile_auth_unavailable" });
     }

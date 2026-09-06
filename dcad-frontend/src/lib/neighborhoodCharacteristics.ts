@@ -1,4 +1,5 @@
 import type { AssignmentDetailsPayload, GeoJsonPolygon } from './api';
+import type { NeighborhoodRelevanceAssessment } from './neighborhoodRelevanceTypes';
 
 export const DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE =
   'These neighborhood boundaries are intentionally broad to show the immediate competing area. Areas outside of this may not be significantly different to the extent that comparable sales are not present in these areas. The purpose of defining the neighborhood is to show competing areas close to the subject but this does not mean properties in areas outside of this defined boundary were completely irrelevant to the analysis. An additional search was performed to ensure that the data within this area was studied but that properties which are truly dissimilar were excluded. This was done to ensure only the most relevant data is being relied on while still giving the client a rough boundary of the competing area.';
@@ -72,6 +73,61 @@ export const NEIGHBORHOOD_ALL_PROPERTY_ROWS = [
     format: 'number',
   },
 ] as const;
+
+// One complete derived-data patch: absent measurements are pending, not old
+// measurements from a different selection or invented zero counts. This keeps
+// the legacy median-to-predominant field mapping; it introduces no estimator.
+export function neighborhoodSelectionStatisticsPatch(
+  draft: AssignmentDetailsPayload,
+  statistics?: NeighborhoodRelevanceAssessment['summary']['relevant_statistics'],
+  replaceArea = false,
+): Partial<AssignmentDetailsPayload> {
+  const sales = statistics?.sales_profile;
+  const properties = statistics?.property_profile;
+  const patch: Partial<AssignmentDetailsPayload> = {
+    neighborhood_sale_count: statistics?.included_sale_count ?? '',
+    neighborhood_all_property_count: statistics?.included_property_count ?? '',
+    neighborhood_all_value_count: properties?.market_value?.count ?? '',
+    neighborhood_all_ppsf_count: properties?.value_per_square_foot?.count ?? '',
+    neighborhood_all_age_count: properties?.age?.count ?? '',
+    neighborhood_all_gla_count: properties?.gla?.count ?? '',
+  };
+  const metrics = [
+    ['neighborhood_house_price', sales?.sale_price],
+    ['neighborhood_ppsf', sales?.price_per_square_foot],
+    ['neighborhood_age', sales?.age],
+    ['neighborhood_gla', sales?.gla],
+    ['neighborhood_all_house_price', properties?.market_value],
+    ['neighborhood_all_ppsf', properties?.value_per_square_foot],
+    ['neighborhood_all_age', properties?.age],
+    ['neighborhood_all_gla', properties?.gla],
+  ] as const;
+  for (const [prefix, metric] of metrics) {
+    patch[`${prefix}_low`] = metric?.low ?? '';
+    patch[`${prefix}_high`] = metric?.high ?? '';
+    patch[`${prefix}_predominant`] = metric?.median ?? '';
+  }
+  const changed = Object.entries(patch).some(([field, value]) =>
+    (draft[field as keyof AssignmentDetailsPayload] ?? '') !== value);
+  // Repeated identical results must not clear/regenerate commentary or cause
+  // extra autosave cycles. Explicit area adoption still invalidates its basis.
+  if (replaceArea || changed || sales?.sale_price?.median == null) {
+    const narrative = String(draft.neighborhood_value_conclusion || '').trim();
+    const automatic = String(draft.neighborhood_value_conclusion_auto || '').trim();
+    Object.assign(patch, {
+      neighborhood_value_position: '',
+      neighborhood_value_difference: '',
+      neighborhood_value_difference_pct: '',
+      neighborhood_value_conclusion_auto: '',
+      neighborhood_value_conclusion_signature: '',
+      neighborhood_value_conclusion_generated_at: '',
+      neighborhood_value_source: '',
+    });
+    // Preserve exact appraiser text; only discard a matching generated draft.
+    if (!narrative || narrative === automatic) patch.neighborhood_value_conclusion = '';
+  }
+  return patch;
+}
 
 export type NeighborhoodRepresentativenessFactor = {
   key: 'house_price' | 'price_per_square_foot' | 'age' | 'living_area';

@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { automaticBoundaryRestoreState } from '../src/lib/neighborhoodBoundaryRestore.ts';
+import { neighborhoodSelectionStatisticsPatch } from '../src/lib/neighborhoodCharacteristics.ts';
 
 // Controlled execution of the actual component callback/effect bodies, without
 // JSX or map mounting. These are callback/effect tests, not browser tests.
@@ -18,7 +19,7 @@ const createComponent = new Function('bindings', `const {
   getNeighborhoodBoundary, runNeighborhoodBoundaryGeneration, runNeighborhoodRelevanceGeneration,
   automaticBoundaryRestoreState, applyPocketOverrides, recommendPocketSelection, summarizePockets,
   neighborhoodBoundaryReadinessErrors, parseNumber, determineNeighborhoodValuePosition,
-  calculateNeighborhoodRepresentativeness, hasSavedNeighborhoodLandUseProfile
+  calculateNeighborhoodRepresentativeness, hasSavedNeighborhoodLandUseProfile, neighborhoodSelectionStatisticsPatch
 } = bindings;
 ${safetyBody}
 return function render({ accountId, assignmentFileId, assignmentDraft, marketConditionsDraft,
@@ -69,9 +70,12 @@ function harness({ automatic = false, initialDraft = draft } = {}) {
     useCallback: (callback, deps) => { const i = cursor++; if (!slots[i] || !equal(deps, slots[i].deps)) slots[i] = { deps, value: callback }; return slots[i].value; },
     useEffect: effect('passive'), useLayoutEffect: effect('layout'),
     getNeighborhoodBoundary: request('lookup'), runNeighborhoodBoundaryGeneration: request('boundary'), runNeighborhoodRelevanceGeneration: request('relevance'),
-    automaticBoundaryRestoreState,
-    applyPocketOverrides: (assessment, removed, added) => ({ ...assessment, summary: { ...assessment.summary,
-      relevant_statistics: { ...assessment.summary.relevant_statistics, included_sale_count: 10 - removed.length + added.length } } }),
+    automaticBoundaryRestoreState, neighborhoodSelectionStatisticsPatch,
+    applyPocketOverrides: (assessment, removed, added) => assessment.summary.relevant_statistics
+      ? ({ ...assessment, summary: { ...assessment.summary,
+        relevant_statistics: { ...assessment.summary.relevant_statistics,
+          included_sale_count: assessment.summary.relevant_statistics.included_sale_count - removed.length + added.length } } })
+      : assessment,
     recommendPocketSelection: () => ({ removedSystemPocketIds: ['recommended'], recommendedPocketIds: [], recommendedPocketCount: 1 }),
     summarizePockets: () => [], neighborhoodBoundaryReadinessErrors: () => [], parseNumber: () => null,
     determineNeighborhoodValuePosition: () => ({ ready: false }), calculateNeighborhoodRepresentativeness: () => ({}), hasSavedNeighborhoodLandUseProfile: () => true,
@@ -303,4 +307,71 @@ test('the first render of a new file or account cannot expose the prior scope su
     assert.equal(firstRender.generatedBoundary, null);
     assert.equal(firstRender.relevanceAssessment, null);
   }
+});
+
+const statisticFields = [
+  'neighborhood_sale_count', 'neighborhood_all_property_count',
+  ...['', 'all_'].flatMap(prefix => ['house_price', 'ppsf', 'age', 'gla'].flatMap(measure =>
+    ['low', 'high', 'predominant'].map(range => `neighborhood_${prefix}${measure}_${range}`))),
+  ...['value', 'ppsf', 'age', 'gla'].map(measure => `neighborhood_all_${measure}_count`),
+];
+const automaticValueFields = ['position', 'difference', 'difference_pct', 'conclusion',
+  'conclusion_auto', 'conclusion_signature', 'conclusion_generated_at', 'source']
+  .map(field => `neighborhood_value_${field}`);
+const populatedDraft = {
+  ...draft, ...Object.fromEntries(statisticFields.map(field => [field, 123])),
+  ...Object.fromEntries(automaticValueFields.map(field => [field, 'old automatic value'])),
+  subject_concluded_value: 300000, neighborhood_city_house_price_low: 222,
+  neighborhood_land_use_one_unit_pct: 80, neighborhood_market_trend: 'stable',
+};
+
+test('explicit analytical replacement invalidates old statistics and generated value companions together', async () => {
+  const h = harness({ initialDraft: populatedDraft });
+  void h.api.generateSuggestedBoundary(4); await h.complete(h.requests[0], boundary());
+  for (const field of [...statisticFields, ...automaticValueFields]) assert.equal(h.draft[field], '', field);
+  for (const field of ['subject_concluded_value', 'neighborhood_city_house_price_low',
+    'neighborhood_land_use_one_unit_pct', 'neighborhood_market_trend']) {
+    assert.equal(h.draft[field], populatedDraft[field], field);
+  }
+  assert.equal(h.draft.neighborhood_boundary_engine_assessment_id, 10);
+});
+
+test('replacement preserves the exact appraiser-written value explanation but invalidates its automatic basis', async () => {
+  const manual = '  My inspection supports this conclusion.\nReview against the new area.  ';
+  const h = harness({ initialDraft: { ...populatedDraft, neighborhood_value_conclusion: manual } });
+  void h.api.generateSuggestedBoundary(4); await h.complete(h.requests[0], boundary());
+  assert.equal(h.draft.neighborhood_value_conclusion, manual);
+  assert.equal(h.draft.neighborhood_value_conclusion_auto, '');
+  assert.equal(h.draft.neighborhood_value_conclusion_signature, '');
+});
+
+test('narrative-only edits and non-adopted suggestions do not invalidate the selected statistics', async () => {
+  const h = harness({ automatic: true, initialDraft: populatedDraft });
+  await h.complete(h.requests.find(r => r.kind === 'lookup'), boundary());
+  h.api.handleCustomGeometryChange(editedGeometry, 'manual');
+  for (const field of [...statisticFields, ...automaticValueFields]) assert.equal(h.draft[field], populatedDraft[field], field);
+});
+
+test('a replacement result without statistics cannot keep old measurements or an old generated explanation', async () => {
+  const h = harness({ initialDraft: populatedDraft });
+  void h.api.analyzeRelevantPropertyDataset();
+  const result = relevance(); delete result.summary.relevant_statistics;
+  await h.complete(h.requests[0], result);
+  for (const field of [...statisticFields, ...automaticValueFields]) assert.equal(h.draft[field], '', field);
+});
+
+test('partial profiles replace the old group without converting unreported metric counts to zero', async () => {
+  const h = harness({ initialDraft: populatedDraft });
+  void h.api.analyzeRelevantPropertyDataset();
+  const result = relevance();
+  result.summary.relevant_statistics = { included_sale_count: 0, included_property_count: 50,
+    property_profile: { market_value: { low: 100000, median: 200000, high: 300000, count: 0 } } };
+  await h.complete(h.requests[0], result);
+  assert.equal(h.draft.neighborhood_sale_count, 0);
+  assert.equal(h.draft.neighborhood_all_property_count, 50);
+  assert.equal(h.draft.neighborhood_all_house_price_predominant, 200000);
+  assert.equal(h.draft.neighborhood_all_value_count, 0);
+  assert.equal(h.draft.neighborhood_all_ppsf_count, '');
+  assert.equal(h.draft.neighborhood_house_price_predominant, '');
+  assert.equal(h.draft.neighborhood_value_conclusion, '');
 });

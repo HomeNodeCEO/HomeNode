@@ -16,6 +16,7 @@ import {
   calculateNeighborhoodRepresentativeness,
   hasSavedNeighborhoodLandUseProfile,
   neighborhoodBoundaryReadinessErrors,
+  neighborhoodSelectionStatisticsPatch,
   NEIGHBORHOOD_ALL_PROPERTY_ROWS,
   NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_RANGE_ROWS,
@@ -650,10 +651,14 @@ export default function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_relevance_removed_pocket_ids", []);
     onAssignmentChange("neighborhood_relevance_added_pocket_ids", []);
     onAssignmentChange("neighborhood_relevance_override_updated_at", "");
+    const pendingStatistics = neighborhoodSelectionStatisticsPatch(currentDraft.current, undefined, true);
+    for (const [field, value] of Object.entries(pendingStatistics)) {
+      onAssignmentChange(field as keyof AssignmentDetails, value);
+    }
     setRelevanceAssessment(null);
     setRelevanceMessage("");
     generatedContextRef.current = currentContextKey();
-  }, [currentContextKey, invalidate, onAssignmentChange, onBoundarySuggestionsChange, setGeneratedBoundary, setRelevanceAssessment]);
+  }, [currentContextKey, currentDraft, invalidate, onAssignmentChange, onBoundarySuggestionsChange, setGeneratedBoundary, setRelevanceAssessment]);
   const applyGeneratedBoundaryRef = useRef(applyGeneratedBoundary);
   applyGeneratedBoundaryRef.current = applyGeneratedBoundary;
   const currentBoundaryContext = () => ({
@@ -840,56 +845,11 @@ export default function NeighborhoodCharacteristicsContent({
   const applyRelevantStatistics = useCallback((
     assessment: NeighborhoodRelevanceAssessment,
   ) => {
-    const relevant = assessment.summary.relevant_statistics;
-    const sales = relevant?.sales_profile;
-    const properties = relevant?.property_profile;
-    if (!relevant || !sales || !properties) return;
-    onAssignmentChange("neighborhood_sale_count", relevant.included_sale_count);
-    onAssignmentChange("neighborhood_all_property_count", relevant.included_property_count);
-    onAssignmentChange("neighborhood_house_price_low", sales.sale_price?.low ?? "");
-    onAssignmentChange("neighborhood_house_price_high", sales.sale_price?.high ?? "");
-    onAssignmentChange("neighborhood_house_price_predominant", sales.sale_price?.median ?? "");
-    onAssignmentChange("neighborhood_ppsf_low", sales.price_per_square_foot?.low ?? "");
-    onAssignmentChange("neighborhood_ppsf_high", sales.price_per_square_foot?.high ?? "");
-    onAssignmentChange("neighborhood_ppsf_predominant", sales.price_per_square_foot?.median ?? "");
-    onAssignmentChange("neighborhood_age_low", sales.age?.low ?? "");
-    onAssignmentChange("neighborhood_age_high", sales.age?.high ?? "");
-    onAssignmentChange("neighborhood_age_predominant", sales.age?.median ?? "");
-    onAssignmentChange("neighborhood_gla_low", sales.gla?.low ?? "");
-    onAssignmentChange("neighborhood_gla_high", sales.gla?.high ?? "");
-    onAssignmentChange("neighborhood_gla_predominant", sales.gla?.median ?? "");
-    onAssignmentChange("neighborhood_all_house_price_low", properties.market_value?.low ?? "");
-    onAssignmentChange("neighborhood_all_house_price_high", properties.market_value?.high ?? "");
-    onAssignmentChange(
-      "neighborhood_all_house_price_predominant",
-      properties.market_value?.median ?? "",
-    );
-    onAssignmentChange(
-      "neighborhood_all_ppsf_low",
-      properties.value_per_square_foot?.low ?? "",
-    );
-    onAssignmentChange(
-      "neighborhood_all_ppsf_high",
-      properties.value_per_square_foot?.high ?? "",
-    );
-    onAssignmentChange(
-      "neighborhood_all_ppsf_predominant",
-      properties.value_per_square_foot?.median ?? "",
-    );
-    onAssignmentChange("neighborhood_all_age_low", properties.age?.low ?? "");
-    onAssignmentChange("neighborhood_all_age_high", properties.age?.high ?? "");
-    onAssignmentChange("neighborhood_all_age_predominant", properties.age?.median ?? "");
-    onAssignmentChange("neighborhood_all_gla_low", properties.gla?.low ?? "");
-    onAssignmentChange("neighborhood_all_gla_high", properties.gla?.high ?? "");
-    onAssignmentChange("neighborhood_all_gla_predominant", properties.gla?.median ?? "");
-    onAssignmentChange("neighborhood_all_value_count", properties.market_value?.count ?? 0);
-    onAssignmentChange(
-      "neighborhood_all_ppsf_count",
-      properties.value_per_square_foot?.count ?? 0,
-    );
-    onAssignmentChange("neighborhood_all_age_count", properties.age?.count ?? 0);
-    onAssignmentChange("neighborhood_all_gla_count", properties.gla?.count ?? 0);
-  }, [onAssignmentChange]);
+    const patch = neighborhoodSelectionStatisticsPatch(currentDraft.current, assessment.summary.relevant_statistics);
+    for (const [field, value] of Object.entries(patch)) {
+      onAssignmentChange(field as keyof AssignmentDetails, value);
+    }
+  }, [currentDraft, onAssignmentChange]);
 
   const analyzeRelevantPropertyDataset = useCallback(async () => {
     if (!accountId) return;
@@ -1463,6 +1423,9 @@ export default function NeighborhoodCharacteristicsContent({
             ) : (
               <div className="mt-3 rounded-lg border border-dashed border-slate-300 bg-white px-3 py-3 text-sm text-slate-600">
                 {valuePosition.narrative}
+                {assignmentDraft.neighborhood_value_conclusion ? (
+                  <p className="mt-2 text-xs">Your written explanation is retained. Review it after statistics for the selected area are available.</p>
+                ) : null}
               </div>
             )}
           </div>

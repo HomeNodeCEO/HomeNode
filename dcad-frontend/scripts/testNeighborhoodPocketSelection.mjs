@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { summarizeRelevantPopulation } from '../../server/src/services/neighborhoodRelevanceEngine.js';
 
 import {
   applyPocketOverrides,
@@ -91,5 +92,67 @@ const protectedRecommendation = recommendPocketSelection({
   ],
 });
 assert.ok(protectedRecommendation.recommendedPocketIds.includes('analysis:selected:4'));
+
+// Unknown measurements must not become zero-valued observations when a pocket
+// is selected. Missing GLA also makes its calculated $/SF unavailable.
+const missingCandidates = [null, undefined].map((missing, index) => ({
+  ...candidates[0],
+  parcel_object_id: 100 + index,
+  score: missing,
+  year_built: missing,
+  site_area_sqft: missing,
+  gla_sqft: missing,
+  market_value: missing,
+  sales: [{ sale_price: 350000, sale_date: '2026-01-01' }],
+}));
+const missingStatistics = calculatePocketStatistics(missingCandidates);
+assert.equal(missingStatistics.included_property_count, 2);
+assert.equal(missingStatistics.included_sale_count, 2);
+for (const profile of [missingStatistics.property_profile, missingStatistics.sales_profile]) {
+  for (const metric of ['age', 'site_size', 'gla', 'similarity_score']) {
+    assert.deepEqual(profile[metric], {
+      count: 0, low: null, high: null, median: null, average: null, cod: null, cv: null,
+    });
+  }
+}
+for (const metric of [
+  missingStatistics.property_profile.market_value,
+  missingStatistics.property_profile.value_per_square_foot,
+  missingStatistics.sales_profile.price_per_square_foot,
+]) assert.equal(metric.count, 0);
+assert.equal(missingStatistics.sales_profile.sale_price.median, 350000);
+assert.equal(summarizePockets(missingCandidates)[0].averageScore, null);
+assert.equal(recommendPocketSelection({ summary: {}, visualization: missingCandidates }).averageSimilarityScore, null);
+
+// Preserve actual zero values while excluding only absent observations from
+// distribution counts and both pocket/recommendation similarity averages.
+const mixedCandidates = [
+  ...missingCandidates,
+  { ...candidates[0], parcel_object_id: 102, score: 0, market_value: 0, site_area_sqft: 0 },
+  { ...candidates[0], parcel_object_id: 103, score: 80 },
+];
+const mixedStatistics = calculatePocketStatistics(mixedCandidates);
+assert.equal(mixedStatistics.property_profile.market_value.count, 2);
+assert.equal(mixedStatistics.property_profile.market_value.low, 0);
+assert.equal(mixedStatistics.property_profile.market_value.median, 150000);
+assert.equal(mixedStatistics.property_profile.site_size.count, 2);
+assert.equal(mixedStatistics.property_profile.site_size.low, 0);
+assert.equal(mixedStatistics.property_profile.similarity_score.count, 2);
+assert.equal(mixedStatistics.property_profile.similarity_score.median, 40);
+const mixedPocket = summarizePockets(mixedCandidates)[0];
+assert.equal(mixedPocket.scoreCount, 2);
+assert.equal(mixedPocket.scoreTotal, 80);
+assert.equal(mixedPocket.averageScore, 40);
+assert.equal(recommendPocketSelection({ summary: {}, visualization: mixedCandidates }).averageSimilarityScore, 40);
+
+// The saved server summary and immediate map recomputation use the same input
+// population. Adapt only the existing GLA field shape; do not infer missing data.
+for (const population of [candidates, missingCandidates, mixedCandidates]) {
+  const serverStatistics = summarizeRelevantPopulation(population.map((candidate) => ({
+    ...candidate,
+    gla_diagnostic: { candidate_gla_sqft: candidate.gla_sqft },
+  })));
+  assert.deepEqual(calculatePocketStatistics(population), serverStatistics);
+}
 
 console.log('neighborhood pocket selection tests passed');

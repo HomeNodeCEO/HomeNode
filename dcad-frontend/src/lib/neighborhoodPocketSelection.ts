@@ -34,7 +34,9 @@ type MetricSummary = {
 };
 
 function finiteValues(values: Array<number | null | undefined>): number[] {
-  return values.map(Number).filter(Number.isFinite);
+  // Absence is not a zero-valued measurement; real numeric zero still counts.
+  return values.filter((value) => value !== null && value !== undefined)
+    .map(Number).filter(Number.isFinite);
 }
 
 function rounded(value: number | null, digits = 2): number | null {
@@ -192,10 +194,9 @@ function percentOf(value: number, total: number): number {
 }
 
 function averageSimilarity(candidates: NeighborhoodRelevanceCandidate[]): number | null {
-  const scores = candidates
+  const scores = finiteValues(candidates
     .filter((candidate) => candidate.primary_population)
-    .map((candidate) => Number(candidate.score))
-    .filter(Number.isFinite);
+    .map((candidate) => candidate.score));
   return scores.length
     ? scores.reduce((sum, score) => sum + score, 0) / scores.length
     : null;
@@ -344,7 +345,7 @@ export function summarizePockets(candidates: NeighborhoodRelevanceCandidate[]) {
     };
     pocket.propertyCount += 1;
     pocket.saleCount += candidate.sales?.length || (Number(candidate.sale_price) > 0 ? 1 : 0);
-    if (Number.isFinite(Number(candidate.score))) {
+    if (candidate.score !== null && candidate.score !== undefined && Number.isFinite(Number(candidate.score))) {
       pocket.scoreTotal += Number(candidate.score);
       pocket.scoreCount += 1;
     }

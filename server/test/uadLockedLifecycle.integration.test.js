@@ -1232,6 +1232,254 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         signerObserved.forceRelease();
       }
     });
+
+    // Reuse the existing synthetic workfile/signature fixture, including its
+    // unrelated verified asset. Only createUploadUrl exists here: it issues a
+    // local fake capability synchronously and cannot upload/read/delete bytes.
+    const { createUadAssetUpload } = await import("../src/modules/uad/assets.js");
+    const uploadInput = Object.freeze({ asset_kind: "photo", content_type: "image/jpeg",
+      file_name: "synthetic-upload.jpg", byte_size: 16,
+      capture_metadata: Object.freeze({ synthetic_upload_request: true }) });
+    const localUploadStorage = (onIssue) => {
+      const calls = [];
+      const capabilities = [];
+      return { calls, capabilities, storage: {
+        provider: "postgres", bucket: "synthetic-local-only",
+        createUploadUrl(request) {
+          assert.equal(request.contentType, uploadInput.content_type);
+          calls.push({ ...request });
+          onIssue?.(request);
+          const capability = { url: `https://synthetic-upload.invalid/${request.objectKey}`,
+            method: "PUT", headers: { "Content-Type": request.contentType }, expires_in_seconds: 900 };
+          capabilities.push(capability);
+          return capability;
+        },
+      } };
+    };
+    const assertUploadGuardFirst = (trace) => {
+      assert.equal(trace[0], READ_COMMITTED_BEGIN);
+      assert.equal(trace[1], "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE");
+      const signatureRead = trace[2]?.includes("AS has_signatures");
+      assert.equal(trace.length, signatureRead ? 4 : 3);
+      if (signatureRead) assert.equal(trace[2], "SELECT EXISTS ( SELECT 1 FROM appraisal.uad_signatures WHERE workfile_id = $1 ) AS has_signatures");
+      assert.equal(trace.at(-1), "ROLLBACK");
+    };
+    const assertUploadDenied = async (fixture) => {
+      const before = await cleanupState(pool, fixture.workfileId);
+      const local = localUploadStorage();
+      const observed = fixedObservedPool(await pool.connect());
+      try {
+        await assert.rejects(() => createUadAssetUpload(observed.pool, local.storage, fixture.workfileId, uploadInput),
+          { message: LOCKED_ERROR });
+        assertUploadGuardFirst(observed.trace);
+        assert.deepEqual(local.calls, []);
+        assert.deepEqual(local.capabilities, []);
+        assert.deepEqual(await cleanupState(pool, fixture.workfileId), before);
+      } finally {
+        observed.forceRelease();
+      }
+    };
+    const assertUploadCreated = async (fixture, before, result, local) => {
+      assert.deepEqual(Object.keys(result).sort(), ["asset_id", "expires_at", "object_key", "upload"]);
+      assert.equal(result.object_key, `organizations/unassigned/uad/${fixture.workfileId}/assets/${result.asset_id}/synthetic-upload.jpg`);
+      assert.deepEqual(local.calls, [{ objectKey: result.object_key, contentType: uploadInput.content_type }]);
+      assert.equal(local.capabilities.length, 1);
+      assert.equal(result.upload, local.capabilities[0], "the same locally issued capability is returned after commit");
+      assert.equal(result.upload.method, "PUT");
+      assert.equal(result.upload.expires_in_seconds, 900);
+      assert.equal(result.upload.url, `https://synthetic-upload.invalid/${result.object_key}`);
+      const after = await cleanupState(pool, fixture.workfileId);
+      assert.equal(after.canonical.assets.length, before.canonical.assets.length + 1);
+      const asset = after.canonical.assets.find(row => row.id === result.asset_id);
+      assert.ok(asset);
+      assert.equal(asset.status, "pending_upload");
+      assert.equal(asset.asset_kind, "photo");
+      assert.equal(asset.object_key, result.object_key);
+      assert.equal(asset.storage_provider, "postgres");
+      assert.equal(asset.storage_bucket, "synthetic-local-only");
+      assert.equal(asset.byte_size, null);
+      assert.equal(asset.checksum_sha256, null);
+      assert.deepEqual(asset.capture_metadata, { synthetic_upload_request: true, expected_byte_size: 16 });
+      const { rows: [details] } = await pool.query(
+        `SELECT workfile_id, entity_id, section_number, caption_type, content_type,
+                original_file_name, upload_expires_at, verified_at
+           FROM appraisal.uad_assets WHERE id = $1`, [result.asset_id]);
+      assert.deepEqual(JSON.parse(JSON.stringify(details)), { workfile_id: fixture.workfileId,
+        entity_id: null, section_number: null, caption_type: null, content_type: "image/jpeg",
+        original_file_name: "synthetic-upload.jpg", upload_expires_at: result.expires_at, verified_at: null });
+      assert.equal(after.canonical.workfile[0].status, "draft");
+      assert.equal(after.canonical.workfile[0].current_revision, 2);
+      assert.ok(Date.parse(after.canonical.workfile[0].updated_at) >= Date.parse(before.canonical.workfile[0].updated_at));
+      const comparable = structuredClone(after);
+      comparable.canonical.assets = comparable.canonical.assets.filter(row => row.id !== result.asset_id);
+      Object.assign(comparable.canonical.workfile[0], { status: before.canonical.workfile[0].status,
+        updated_at: before.canonical.workfile[0].updated_at });
+      assert.deepEqual(comparable, before, "creation changes only pending metadata and draft/timestamp, never revision or signed evidence");
+    };
+
+    for (const status of ["signed", "exported", "submitted", "cancelled"]) {
+      await t.test(`createUadAssetUpload rejects ${status} before capability or asset access`, async () => {
+        await assertUploadDenied(await createDeletionFixture({ status }));
+      });
+    }
+    for (const status of ["draft", "validating", "ready", "revised"]) {
+      await t.test(`createUadAssetUpload rejects signed_at under ${status} without issuing a capability`, async () => {
+        const fixture = await createDeletionFixture({ status });
+        await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+        await assertUploadDenied(fixture);
+      });
+      for (const [name, revision, supervised] of [
+        ["current-revision", 2, false], ["partial current-revision", 2, true], ["historical", 1, false],
+      ]) {
+        await t.test(`createUadAssetUpload rejects ${name} signature under ${status} without issuing a capability`, async () => {
+          const fixture = await createDeletionFixture({ status, supervised });
+          await insertSyntheticSignature(pool, identity, fixture, revision);
+          if (supervised) {
+            const { rows: [quorum] } = await pool.query(
+              `SELECT supervisory_appraiser_user_id,
+                      (SELECT count(*)::integer FROM appraisal.uad_signatures WHERE workfile_id = $1) AS signature_count
+                 FROM appraisal.uad_workfiles WHERE id = $1`, [fixture.workfileId]);
+            assert.equal(quorum.supervisory_appraiser_user_id, deletionSupervisorId);
+            assert.equal(quorum.signature_count, 1, "the required supervisor remains unsigned");
+          }
+          await assertUploadDenied(fixture);
+        });
+      }
+      await t.test(`unsigned ${status} upload creation commits pending metadata before returning its local capability`, async () => {
+        const fixture = await createDeletionFixture({ status });
+        const before = await cleanupState(pool, fixture.workfileId);
+        let returned = false;
+        let local;
+        const observed = fixedObservedPool(await pool.connect(), { async before(statement) {
+          if (statement === "COMMIT") {
+            assert.equal(returned, false);
+            assert.equal(local.calls.length, 1);
+            const { rows } = await pool.query("SELECT id FROM appraisal.uad_assets WHERE object_key = $1", [local.calls[0].objectKey]);
+            assert.deepEqual(rows, [], "another client must not see the pending asset before commit");
+          }
+        } });
+        local = localUploadStorage(() => {
+          assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+          assert.ok(observed.trace.at(-1).includes("AS has_signatures"));
+          assert.equal(observed.trace.some(sql => sql.includes("INSERT INTO appraisal.uad_assets")), false);
+        });
+        try {
+          const result = await createUadAssetUpload(observed.pool, local.storage, fixture.workfileId, uploadInput)
+            .then(value => { returned = true; return value; });
+          assert.equal(returned, true);
+          assert.equal(observed.trace.at(-1), "COMMIT");
+          await assertUploadCreated(fixture, before, result, local);
+        } finally {
+          observed.forceRelease();
+        }
+      });
+    }
+
+    await t.test("upload creation waits for a synthetic partial-signature commit before issuing any local capability", async () => {
+      const fixture = await createDeletionFixture({ status: "ready", supervised: true });
+      const before = await cleanupState(pool, fixture.workfileId);
+      const signer = await pool.connect();
+      let creatorClient;
+      try { creatorClient = await pool.connect(); }
+      catch (error) { signer.release(true); throw error; }
+      const lockIssued = deferred();
+      const observed = fixedObservedPool(creatorClient, { before(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) lockIssued.resolve();
+      } });
+      const local = localUploadStorage();
+      let signerTransaction = false;
+      let creating;
+      try {
+        await creatorClient.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+        await signer.query(READ_COMMITTED_BEGIN);
+        signerTransaction = true;
+        await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        creating = createUadAssetUpload(observed.pool, local.storage, fixture.workfileId, uploadInput);
+        void creating.catch(() => {});
+        await within(lockIssued.promise, "upload creator issued its workfile lock");
+        await assertBlockedBy(pool, creatorClient.processID, signer.processID, "upload creation");
+        assert.deepEqual(local.calls, []);
+        // Synthetic signature state under the real lock; no successful signing
+        // ceremony, provider authentication, quorum or artifact claim is made.
+        await insertSyntheticSignature(signer, identity, fixture, 2);
+        const committedSignatures = JSON.parse(JSON.stringify((await signer.query(
+          "SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId],
+        )).rows));
+        await signer.query("COMMIT");
+        signerTransaction = false;
+        await assert.rejects(() => within(creating, "upload creator observed fresh partial signature"), { message: LOCKED_ERROR });
+        assertUploadGuardFirst(observed.trace);
+        assert.ok(observed.trace.some(sql => sql.includes("AS has_signatures")));
+        assert.deepEqual(local.calls, []);
+        assert.deepEqual(local.capabilities, []);
+        const after = await cleanupState(pool, fixture.workfileId);
+        assert.deepEqual(after, { ...before, signatures: committedSignatures });
+        assert.deepEqual(after.signatures.map(row => [row.revision_number, row.signer_role]), [[2, "appraiser"]]);
+        assert.equal(after.canonical.workfile[0].status, "ready");
+        assert.equal(after.canonical.workfile[0].signed_at, null);
+      } finally {
+        if (signerTransaction) await signer.query("ROLLBACK").catch(() => {});
+        signer.release(true);
+        if (creating) await within(creating.catch(() => {}), "upload creator cleanup").catch(() => {});
+        observed.forceRelease();
+      }
+    });
+
+    await t.test("real signUadWorkfile waits for upload creation then refuses the committed draft", async () => {
+      const fixture = await createDeletionFixture({ status: "ready" });
+      const before = await cleanupState(pool, fixture.workfileId);
+      const creatorClient = await pool.connect();
+      let signerClient;
+      try { signerClient = await pool.connect(); }
+      catch (error) { creatorClient.release(true); throw error; }
+      const creatorLocked = deferred();
+      const continueCreation = deferred();
+      const creatorObserved = fixedObservedPool(creatorClient, { async after(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          creatorLocked.resolve();
+          await continueCreation.promise;
+        }
+      } });
+      let signerLockedState;
+      const signerObserved = fixedObservedPool(signerClient, { after(statement, _client, result) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          signerLockedState = { status: result.rows[0]?.status, revision: result.rows[0]?.current_revision };
+        }
+      } });
+      const local = localUploadStorage();
+      let creating;
+      let signing;
+      try {
+        creating = createUadAssetUpload(creatorObserved.pool, local.storage, fixture.workfileId, uploadInput);
+        void creating.catch(() => {});
+        await within(creatorLocked.promise, "upload creator owns the workfile lock");
+        // The actual signing service must stop at its lifecycle check after
+        // waking; successful credentials/provider/signature artifacts are out
+        // of scope, and no such downstream checks should be reached here.
+        signing = signUadWorkfile(signerObserved.pool, fixture.workfileId, { userId: identity.actorUserId },
+          { execution_date: "2026-09-05" }, { now: new Date("2026-09-05T12:00:00.000Z") });
+        void signing.catch(() => {});
+        await assertBlockedBy(pool, signerClient.processID, creatorClient.processID, "real signer versus upload creation");
+        assert.deepEqual(local.calls, []);
+        continueCreation.resolve();
+        const result = await within(creating, "upload creation committed before signing");
+        await assert.rejects(() => within(signing, "real signer observed the upload-created draft"),
+          { message: "uad_signature_local_validation_required" });
+        assert.deepEqual(signerLockedState, { status: "draft", revision: 2 });
+        assert.equal(signerObserved.trace.length, 3);
+        assert.equal(signerObserved.trace[0], "BEGIN");
+        assert.equal(signerObserved.trace.at(-1), "ROLLBACK");
+        assert.equal(creatorObserved.trace[0], READ_COMMITTED_BEGIN);
+        assert.equal(creatorObserved.trace.at(-1), "COMMIT");
+        await assertUploadCreated(fixture, before, result, local);
+      } finally {
+        continueCreation.resolve();
+        if (creating) await within(creating.catch(() => {}), "upload creation cleanup").catch(() => {});
+        if (signing) await within(signing.catch(() => {}), "real signer cleanup").catch(() => {});
+        creatorObserved.forceRelease();
+        signerObserved.forceRelease();
+      }
+    });
   } finally {
     await pool.end();
   }

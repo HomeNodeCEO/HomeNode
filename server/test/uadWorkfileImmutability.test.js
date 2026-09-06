@@ -49,15 +49,37 @@ test("asset URL creation and verification reject finalized workfiles before stor
     createUploadUrl() { storageTouched = true; },
     inspectObject() { storageTouched = true; },
   };
+  const creationQueries = [];
+  let creationReleased = false;
+  const creationClient = {
+    async query(statement, parameters = []) {
+      const sql = statement.replace(/\s+/g, " ").trim();
+      creationQueries.push(sql);
+      if (sql === "BEGIN ISOLATION LEVEL READ COMMITTED" || sql === "ROLLBACK") {
+        assert.deepEqual(parameters, []);
+        return { rows: [] };
+      }
+      assert.equal(sql, "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE");
+      assert.deepEqual(parameters, [WORKFILE_ID]);
+      return { rows: [{ id: WORKFILE_ID, organization_id: "org", status: "signed", signed_at: null }] };
+    },
+    release() { assert.equal(creationReleased, false); creationReleased = true; },
+  };
   await assert.rejects(
     () => createUadAssetUpload(
-      { query: async () => ({ rows: [{ id: WORKFILE_ID, organization_id: "org", status: "signed" }] }) },
+      { connect: async () => creationClient, query: async () => assert.fail("creation escaped its transaction client") },
       storage,
       WORKFILE_ID,
       { asset_kind: "photo", content_type: "image/jpeg", file_name: "subject.jpg", byte_size: 10 },
     ),
     /uad_workfile_status_locked/,
   );
+  assert.deepEqual(creationQueries, [
+    "BEGIN ISOLATION LEVEL READ COMMITTED",
+    "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE",
+    "ROLLBACK",
+  ]);
+  assert.equal(creationReleased, true);
   await assert.rejects(
     () => verifyUadAssetUpload(
       { query: async () => ({ rows: [{ id: ASSET_ID, workfile_status: "signed" }] }) },

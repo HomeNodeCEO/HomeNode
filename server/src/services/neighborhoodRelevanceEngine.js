@@ -652,7 +652,9 @@ export function applyCompleteRelevantPocketPopulation(
 }
 
 function finiteValues(values) {
-  return values.map(Number).filter(Number.isFinite);
+  // Absence is not a zero-valued measurement; real numeric zero still counts.
+  return values.filter((value) => value !== null && value !== undefined)
+    .map(Number).filter(Number.isFinite);
 }
 
 function percentileValue(values, ratio) {

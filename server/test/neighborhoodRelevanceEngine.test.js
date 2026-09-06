@@ -98,6 +98,52 @@ test("calculates neighborhood ranges from the exact included relevance populatio
   assert.equal(result.property_profile.age.median, 1985);
 });
 
+test("keeps absent pocket measurements unknown without discarding valid sales", () => {
+  const candidates = [null, undefined].map((missing) => ({
+    excluded: false,
+    primary_population: true,
+    score: missing,
+    year_built: missing,
+    site_area_sqft: missing,
+    market_value: missing,
+    gla_diagnostic: { candidate_gla_sqft: missing },
+    sales: [{ sale_price: 350000, sale_date: "2026-01-01" }],
+  }));
+  const result = summarizeRelevantPopulation(candidates);
+  assert.equal(result.included_property_count, 2);
+  assert.equal(result.included_sale_count, 2);
+  for (const profile of [result.property_profile, result.sales_profile]) {
+    for (const metric of ["age", "site_size", "gla", "similarity_score"]) {
+      assert.deepEqual(profile[metric], {
+        count: 0, low: null, high: null, median: null, average: null, cod: null, cv: null,
+      });
+    }
+  }
+  for (const metric of [result.property_profile.market_value,
+    result.property_profile.value_per_square_foot, result.sales_profile.price_per_square_foot]) {
+    assert.equal(metric.count, 0);
+  }
+  assert.equal(result.sales_profile.sale_price.median, 350000);
+});
+
+test("preserves genuine zero measurements while excluding absent pocket observations", () => {
+  const result = summarizeRelevantPopulation([null, undefined, 0, 80].map((score) => ({
+    excluded: false,
+    primary_population: true,
+    score,
+    site_area_sqft: score,
+    market_value: score,
+  })));
+  assert.equal(result.included_property_count, 4);
+  for (const metric of ["market_value", "site_size", "similarity_score"]) {
+    assert.equal(result.property_profile[metric].count, 2);
+    assert.equal(result.property_profile[metric].low, 0);
+    assert.equal(result.property_profile[metric].high, 80);
+    assert.equal(result.property_profile[metric].median, 40);
+    assert.equal(result.property_profile[metric].average, 40);
+  }
+});
+
 test("uses every property in system-selected relevant pockets without a sale-count target", () => {
   const candidates = [
     ...Array.from({ length: 10 }, (_, index) => ({ score: 85, sale_price: 300000 + index, excluded: false })),

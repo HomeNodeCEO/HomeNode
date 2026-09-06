@@ -30,6 +30,7 @@ import {
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
 import type { MarketAreaOrigin } from "@/lib/marketAreaGeometry";
+import { automaticBoundaryRestoreState } from "@/lib/neighborhoodBoundaryRestore";
 import {
   applyPocketOverrides,
   recommendPocketSelection,
@@ -666,22 +667,11 @@ export default function NeighborhoodCharacteristicsContent({
     if (automaticBoundaryAttemptRef.current === attemptSignature) return;
     automaticBoundaryAttemptRef.current = attemptSignature;
     let cancelled = false;
-    const boundaryContext = automaticBoundaryContextRef.current;
-    const currentGeometry = boundaryContext.geometry ||
-      boundaryContext.savedCustomGeometry;
-    const currentSource = String(
-      boundaryContext.source ||
-        (boundaryContext.savedCustomGeometry
-          ? "sales_comparison_market_conditions"
-          : ""),
-    ).toLowerCase();
-    const appraiserCleared = currentSource.includes("cleared");
-    const appraiserAreaPresent = Boolean(currentGeometry) &&
-      !/^neighborhood_boundary_engine_v\d+$/i.test(currentSource);
+    const initialState = automaticBoundaryRestoreState(automaticBoundaryContextRef.current);
 
     setGeneratedBoundaryLoading(true);
     setGeneratedBoundaryMessage(
-      currentGeometry
+      initialState.hasExistingGeometry
         ? "Loading the saved neighborhood suggestion for comparison..."
         : "Loading the automatically suggested neighborhood area...",
     );
@@ -691,24 +681,30 @@ export default function NeighborhoodCharacteristicsContent({
           accountId,
           assignmentFileId || null,
         );
+        if (cancelled) return;
         // Methodology v6 separates the simple-suburban three-mile analytical
         // envelope from the appraiser's narrative road boundary.
         const needsDiscoveryEnvelopeUpgrade = Boolean(result) &&
           Number(result?.methodology_version || 0) < DISCOVERY_ENVELOPE_METHODOLOGY_VERSION;
-        if (needsDiscoveryEnvelopeUpgrade && !appraiserCleared) {
+        if (needsDiscoveryEnvelopeUpgrade &&
+          !automaticBoundaryRestoreState(automaticBoundaryContextRef.current).cleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });
         }
-        if (!result && !appraiserCleared) {
+        if (!result && !automaticBoundaryRestoreState(automaticBoundaryContextRef.current).cleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });
         }
         if (cancelled) return;
+        // Drawing, clearing, or restoring a saved area during this request must
+        // win over the lookup. Even a matching assessment ID is not permission
+        // to reset that area's pocket choices or review confirmation.
+        const currentState = automaticBoundaryRestoreState(automaticBoundaryContextRef.current);
         if (!result) {
           setGeneratedBoundaryMessage(
-            appraiserCleared
+            currentState.cleared
               ? "The appraiser-defined area is intentionally cleared. Use Generate Suggested Boundary when a new suggestion is wanted."
               : "No saved neighborhood suggestion is available yet.",
           );
@@ -716,11 +712,11 @@ export default function NeighborhoodCharacteristicsContent({
         }
         const discovery = result.evidence.discovery;
         applyGeneratedBoundaryRef.current(result, {
-          overwriteGeometry: !appraiserAreaPresent && !appraiserCleared,
-          message: appraiserAreaPresent
-            ? "The saved automatic suggestion is available for comparison. The appraiser-defined area remains unchanged."
-            : appraiserCleared
-              ? "The saved automatic suggestion is available, but the appraiser-cleared area remains empty until Reset to Suggested Area is selected."
+          overwriteGeometry: currentState.mayAdopt,
+          message: currentState.cleared
+            ? "The suggestion is available, but the appraiser-cleared area remains empty until Reset to Suggested Area is selected."
+            : currentState.hasExistingGeometry
+              ? "A neighborhood suggestion is available for comparison. Your existing area, pocket choices, and review confirmation remain unchanged. Use Reset to Suggested Area to adopt it."
               : `The suggested neighborhood loaded automatically from ${Number(discovery?.candidate_count || 0).toLocaleString()} candidate parcels and is ready for appraisal review.`,
         });
       } catch (error) {

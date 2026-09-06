@@ -5,7 +5,7 @@ import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
-import { makeCustomNeighborhoodPreviewFixture as fixture, customControllerForAssessment,
+import { makeCustomNeighborhoodPreviewFixture as fixture,
   customFormatterInput, expectedCustomDisplayNotice, copyCustomFixture as copy } from './fixtures/customNeighborhoodPreviewFixture.mjs';
 
 // Actual frontend modules only, exactly one instance of each. The model's
@@ -244,7 +244,11 @@ test('primitive-only input rejects arbitrary objects without coercion or proxy t
 });
 
 for (const [name, change] of [
-  ['whitespace', s => ' ' + s], ['duplicate key', s => s.replace('{', '{"custom_inspection_version":1,')],
+  ['whitespace', s => ' ' + s], ['duplicate key', s => {
+    // Deliberately construct a duplicate root key for this negative fixture.
+    assert.equal(s[0], '{');
+    return '{"custom_inspection_version":1,' + s.slice(1);
+  }],
   ['numeric exponent', s => s.replace('"assignment_file_id":73', '"assignment_file_id":7.3e1')],
   ['literal lone surrogate', s => s.replace('Synthetic subject', '\ud800')],
   ['escaped lone surrogate', s => s.replace('Synthetic subject', '\\ud800')],

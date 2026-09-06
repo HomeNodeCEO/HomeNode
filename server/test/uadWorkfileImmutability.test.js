@@ -78,7 +78,7 @@ test("asset deletion locks and rejects the workfile before deleting storage", as
       const statement = String(sql).trim();
       queries.push(statement);
       if (statement.startsWith("SELECT id, status")) {
-        return { rows: [{ id: WORKFILE_ID, status: "exported" }] };
+        return { rows: [{ id: WORKFILE_ID, status: "exported", signed_at: null }] };
       }
       return { rows: [] };
     },
@@ -94,6 +94,7 @@ test("asset deletion locks and rejects the workfile before deleting storage", as
     /uad_workfile_status_locked/,
   );
   assert.equal(deleted, false);
+  assert.equal(queries[0], "BEGIN ISOLATION LEVEL READ COMMITTED");
   assert.ok(queries.includes("ROLLBACK"));
   assert.equal(queries.some((sql) => sql.startsWith("SELECT id, object_key")), false);
 });

@@ -43,7 +43,7 @@ const REFERENCE = { kind: "uad_field_value", section: FIELD.section, context_key
   uid: FIELD.uid, report_field_id: FIELD.reportFieldId, entity_id: null };
 
 const SQL = Object.fromEntries(Object.entries({
-  identity: `SELECT users.id AS user_id, users.email, users.display_name,
+  identity: `SELECT identities.id AS identity_id, users.id AS user_id, users.email, users.display_name,
     memberships.organization_id, organizations.display_name AS organization_display_name, roles.role_code
     FROM app_auth.oidc_identities identities
     JOIN app_auth.users users ON users.id = identities.user_id AND users.active = true

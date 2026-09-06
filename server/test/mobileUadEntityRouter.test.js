@@ -22,7 +22,7 @@ const SUBJECT = "synthetic-mobile-appraiser";
 const TOKEN = "synthetic-mobile-bearer";
 const BEGIN = "BEGIN ISOLATION LEVEL READ COMMITTED";
 const normalizeSql = (sql) => String(sql).replace(/\s+/g, " ").trim();
-const IDENTITY_SQL = normalizeSql(`SELECT users.id AS user_id, users.email, users.display_name,
+const IDENTITY_SQL = normalizeSql(`SELECT identities.id AS identity_id, users.id AS user_id, users.email, users.display_name,
   memberships.organization_id, organizations.display_name AS organization_display_name, roles.role_code
   FROM app_auth.oidc_identities identities
   JOIN app_auth.users users ON users.id = identities.user_id AND users.active = true

@@ -5,7 +5,7 @@ import test from "node:test";
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment, canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
 import { createNeighborhoodAssessmentRepository, neighborhoodMemberSetDigest, neighborhoodMemberContentDigest, prepareNeighborhoodPublication } from "../src/services/neighborhoodAssessment/assessmentRepository.js";
 import { neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup, buildNeighborhoodApplicationReceipt } from "../src/services/neighborhoodAssessment/applicationGroup.js";
-import { persistNeighborhoodAttachment, getNeighborhoodAttachment, getAcceptedNeighborhoodApplication, recordNeighborhoodApplicationAcceptance } from "../src/services/neighborhoodAssessment/applicationRepository.js";
+import { persistNeighborhoodAttachment, getNeighborhoodAttachment, getAcceptedNeighborhoodApplication, getAcceptedNeighborhoodApplicationRecord, recordNeighborhoodApplicationAcceptance } from "../src/services/neighborhoodAssessment/applicationRepository.js";
 import { assertNeighborhoodJsonbStorage } from "../src/services/neighborhoodAssessment/jsonbStorage.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
 import { checkedNeighborhoodDatabaseUrl as checkedDatabaseUrl, neighborhoodCiDatabasePlan,
@@ -235,8 +235,18 @@ async function acceptSyntheticUad(pool, identity, uad, application, { invalidAud
     const input = { attachmentId: attachment.attachment_id, applicationIdentitySha256: attachment.application_identity_sha256,
       operationId, actorUserId: identity.actor_user_id, uadRevisionId: revisionId, uadRevisionNumber: 2, auditEventId: audit.id, receipt: application.receipt };
     const result = await recordNeighborhoodApplicationAcceptance(client, input);
-    await afterRecord?.({ result, input, document });
-    await client.query("COMMIT"); return { result, input, document };
+    // This SAME owner client can read its uncommitted acceptance. A returned
+    // verified record is not a COMMIT acknowledgment or a catalog/authority proof.
+    const record = await getAcceptedNeighborhoodApplicationRecord(client, application.lookup);
+    assert.deepEqual(record, { record_version: 1, application_id: result.application_id,
+      operation_id: operationId, actor_user_id: identity.actor_user_id, accepted_editor_revision: 2,
+      uad_revision_id: revisionId, uad_audit_event_id: String(audit.id), receipt: application.receipt });
+    assert.ok(Object.isFrozen(record)); assert.ok(Object.isFrozen(record.receipt));
+    assert.equal(typeof record.uad_audit_event_id, "string");
+    const core = await getAcceptedNeighborhoodApplication(client, application.lookup);
+    assert.equal(canonicalAssessmentJson(record.receipt), canonicalAssessmentJson(core));
+    await afterRecord?.({ result, input, document, record });
+    await client.query("COMMIT"); return { result, input, document, record };
   } catch (error) { await client.query("ROLLBACK"); throw error; }
   finally { client.release(); }
 }
@@ -721,14 +731,34 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       } catch (error) { await proposalClient.query("ROLLBACK"); throw error; }
       finally { proposalClient.release(); }
 
-      await assert.rejects(acceptSyntheticUad(pool, identity, uad, application, { invalidAudit: true }), /uad_link_mismatch/);
-      assert.equal((await pool.query("SELECT current_revision FROM appraisal.uad_workfiles WHERE id=$1", [uad.workfileId])).rows[0].current_revision, 1);
-      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_revisions WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 1);
-      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_audit_events WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 0);
-      assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_applications WHERE report_file_id=$1", [uad.reportFileId])).rows[0].count), 0);
-      for (const table of ["uad_entities", "uad_field_values"]) {
-        assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM appraisal.${table} WHERE workfile_id=$1`, [uad.workfileId])).rows[0].count), 0);
+      let rolledBackRecord = null;
+      for (const { options, expected } of [
+        { options: { invalidAudit: true }, expected: /uad_link_mismatch/ },
+        { options: { afterRecord: async value => {
+          rolledBackRecord = value.record;
+          assert.equal(rolledBackRecord.application_id, value.result.application_id);
+          // A separate client cannot observe the owner's uncommitted row.
+          await rollbackFixture(pool, async observer => {
+            assert.equal(await getAcceptedNeighborhoodApplication(observer, application.lookup), null);
+            assert.equal(await getAcceptedNeighborhoodApplicationRecord(observer, application.lookup), null);
+          });
+          throw new Error("synthetic_owner_abort_after_verified_metadata_read");
+        } }, expected: /synthetic_owner_abort_after_verified_metadata_read/ },
+      ]) {
+        await assert.rejects(acceptSyntheticUad(pool, identity, uad, application, options), expected);
+        assert.equal((await pool.query("SELECT current_revision FROM appraisal.uad_workfiles WHERE id=$1", [uad.workfileId])).rows[0].current_revision, 1);
+        assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_revisions WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 1);
+        assert.equal(Number((await pool.query("SELECT count(*) AS count FROM appraisal.uad_audit_events WHERE workfile_id=$1", [uad.workfileId])).rows[0].count), 0);
+        assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_applications WHERE report_file_id=$1", [uad.reportFileId])).rows[0].count), 0);
+        for (const table of ["uad_entities", "uad_field_values"]) {
+          assert.equal(Number((await pool.query(`SELECT count(*) AS count FROM appraisal.${table} WHERE workfile_id=$1`, [uad.workfileId])).rows[0].count), 0);
+        }
+        await rollbackFixture(pool, async client => {
+          assert.equal(await getAcceptedNeighborhoodApplication(client, application.lookup), null);
+          assert.equal(await getAcceptedNeighborhoodApplicationRecord(client, application.lookup), null);
+        });
       }
+      assert.ok(rolledBackRecord, "The owner read a complete record before deliberately rolling back");
 
       const recorded = deferred(), resumeCommit = deferred(), replayStarted = deferred();
       let staged, accepted, concurrentReplay;
@@ -759,6 +789,8 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       }
       assert.equal(accepted.result.reused, false);
       assert.deepEqual(accepted.result.receipt, application.receipt);
+      assert.notEqual(accepted.record.application_id, rolledBackRecord.application_id);
+      assert.notEqual(accepted.record.operation_id, rolledBackRecord.operation_id);
       const persistedDocument = (await pool.query("SELECT document FROM appraisal.uad_revisions WHERE id=$1", [accepted.input.uadRevisionId])).rows[0].document;
       assert.deepEqual(persistedDocument, accepted.document);
       assert.equal(Object.keys(persistedDocument.values).length, 3, "One UAD revision contains the entire mapped group");
@@ -774,14 +806,21 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
         current_application_identity_sha256: currentAttachment.application_identity_sha256, current_editor_revision: 2,
         existing_values: application.suggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: true,
           value: persistedDocument.values[item.target_key], provenance_digest: persistedDocument.neighborhood_provenance })) };
-      let savedReceipt;
+      let savedReceipt, savedRecord;
       await rollbackFixture(pool, async client => {
         const replay = await recordNeighborhoodApplicationAcceptance(client, accepted.input);
         assert.equal(replay.reused, true); assert.equal(replay.application_id, accepted.result.application_id);
         savedReceipt = await getAcceptedNeighborhoodApplication(client, application.lookup);
         assert.deepEqual(savedReceipt, application.receipt);
+        savedRecord = await getAcceptedNeighborhoodApplicationRecord(client, application.lookup);
+        assert.deepEqual(savedRecord, accepted.record);
+        assert.equal(canonicalAssessmentJson(savedRecord.receipt), canonicalAssessmentJson(savedReceipt));
         assert.equal(await getAcceptedNeighborhoodApplication(client, { ...application.lookup, reportFileId: randomUUID() }), null);
         assert.equal(await getAcceptedNeighborhoodApplication(client, { ...application.lookup, workflowTargetId: randomUUID() }), null);
+        for (const changed of [{ organizationId: randomUUID() }, { reportFileId: randomUUID() },
+          { workflowTargetId: randomUUID() }, { applicationIdentitySha256: "0".repeat(64) }]) {
+          assert.equal(await getAcceptedNeighborhoodApplicationRecord(client, { ...application.lookup, ...changed }), null);
+        }
         await assert.rejects(recordNeighborhoodApplicationAcceptance(client, { ...accepted.input, operationId: randomUUID() }), /uad_link_mismatch/);
         const altered = structuredClone(application.suggestions); altered[1].value = 1;
         await assert.rejects(persistNeighborhoodAttachment(client, { assessment, attachment: application.attachment, mappedSuggestions: altered }), /mapped_manifest_mismatch/);
@@ -879,6 +918,13 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
           json({ ...persistedDocument, unrelated_edit: true }), identity.actor_user_id]);
         const historical = await getAcceptedNeighborhoodApplication(client, application.lookup);
         assert.deepEqual(historical, savedReceipt, "Historical evidence remains readable, not newly applicable");
+        const historicalRecord = await getAcceptedNeighborhoodApplicationRecord(client, application.lookup);
+        assert.deepEqual(historicalRecord, savedRecord, "Later editor revision does not replace original acceptance metadata");
+        assert.equal(historicalRecord.accepted_editor_revision, 2);
+        assert.equal(historicalRecord.uad_revision_id, accepted.input.uadRevisionId);
+        assert.equal(historicalRecord.operation_id, accepted.input.operationId);
+        assert.equal(historicalRecord.actor_user_id, accepted.input.actorUserId);
+        assert.equal(historicalRecord.uad_audit_event_id, String(accepted.input.auditEventId));
         const later = buildNeighborhoodAttachment(assessment, { ...application.attachment, attachment_revision: 3, editor_revision: 3 });
         const plan = prepareNeighborhoodApplicationGroup({ ...replayInput, expected_binding_digest: later.binding_digest_sha256,
           current_application_identity_sha256: later.application_identity_sha256, current_editor_revision: 3, accepted_application: historical });

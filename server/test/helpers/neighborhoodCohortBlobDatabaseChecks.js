@@ -20,7 +20,7 @@ export async function checkNeighborhoodCohortBlobDatabase(pool) {
     assert.equal((await client.query("SELECT count(*)::int AS count FROM app.schema_migrations WHERE migration_name='20261011_neighborhood_cohort_evidence_blobs.sql'")).rows[0].count, 1);
     const migration = await readFile(new URL('../../migrations/20261011_neighborhood_cohort_evidence_blobs.sql', import.meta.url), 'utf8');
     await client.query(migration); await client.query(migration);
-    for (const id of [organization, other]) await client.query('INSERT INTO app_auth.organizations (id,name) VALUES ($1,$2)', [id, `Synthetic cohort blobs ${id}`]);
+    for (const id of [organization, other]) await client.query('INSERT INTO app_auth.organizations (id,legal_name,display_name) VALUES ($1,$2,$2)', [id, `Synthetic cohort blobs ${id}`]);
     const own = repository(client, organization), foreign = repository(client, other);
     ref = await own.put(text);
     assert.equal(await own.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
@@ -60,7 +60,7 @@ export async function checkNeighborhoodCohortBlobDatabase(pool) {
   // Independent committed organization, retained until CI service teardown.
   // Two callers own separate transactions; the repository may not commit either.
   const concurrentOrganization = randomUUID();
-  await pool.query('INSERT INTO app_auth.organizations (id,name) VALUES ($1,$2)', [concurrentOrganization, 'Synthetic concurrent cohort blobs']);
+  await pool.query('INSERT INTO app_auth.organizations (id,legal_name,display_name) VALUES ($1,$2,$2)', [concurrentOrganization, 'Synthetic concurrent cohort blobs']);
   const first = await pool.connect();
   let second, replay;
   try {

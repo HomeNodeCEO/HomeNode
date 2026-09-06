@@ -8,11 +8,11 @@ import { automaticBoundaryRestoreState } from '../src/lib/neighborhoodBoundaryRe
 // This is effect-level coverage, not a browser/render or persistence test.
 const source = readFileSync(new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
 const start = source.indexOf('  useEffect(() => {\n    if (!accountId) return;\n    const attemptSignature =');
-const end = source.indexOf('  }, [accountId, assignmentFileId]);', start);
+const end = source.indexOf('  }, [accountId, assignmentFileId, begin]);', start);
 assert.ok(start >= 0 && end > start, 'automatic boundary effect exists');
 const effectBody = source.slice(start + '  useEffect(() => {'.length, end);
 const effect = new Function('bindings', `const {
-  accountId, assignmentFileId, automaticBoundaryAttemptRef, automaticBoundaryContextRef,
+  accountId, assignmentFileId, automaticBoundaryAttemptRef, currentBoundaryContextRef, begin,
   setGeneratedBoundaryLoading, setGeneratedBoundaryMessage, getNeighborhoodBoundary,
   runNeighborhoodBoundaryGeneration, DISCOVERY_ENVELOPE_METHODOLOGY_VERSION,
   applyGeneratedBoundaryRef, automaticBoundaryRestoreState
@@ -31,7 +31,8 @@ function harness(current) {
   const context = { current };
   const cancel = effect({
     accountId: 'account', assignmentFileId: 12,
-    automaticBoundaryAttemptRef: { current: '' }, automaticBoundaryContextRef: context,
+    automaticBoundaryAttemptRef: { current: '' }, currentBoundaryContextRef: { current: () => context.current },
+    begin: () => () => true,
     setGeneratedBoundaryLoading: value => loading.push(value),
     setGeneratedBoundaryMessage: value => messages.push(value),
     getNeighborhoodBoundary: (...args) => { calls.push(['get', ...args]); return lookup.promise; },

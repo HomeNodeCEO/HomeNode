@@ -1,4 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useNeighborhoodRequestSafety } from "@/hooks/useNeighborhoodRequestSafety";
 import {
   getNeighborhoodBoundary,
   generateNeighborhoodBoundary as runNeighborhoodBoundaryGeneration,
@@ -163,7 +164,7 @@ export default function NeighborhoodCharacteristicsContent({
   assignmentSaveMessage,
   assignmentSaveDisabled,
   savingAssignmentFile,
-  onAssignmentChange,
+  onAssignmentChange: onParentAssignmentChange,
   onRefreshUnemployment,
   onRefreshBoundary,
   onBoundarySuggestionsChange,
@@ -213,15 +214,49 @@ export default function NeighborhoodCharacteristicsContent({
   const [landUseAnalysis, setLandUseAnalysis] = useState<NeighborhoodLandUseAnalysisResponse | null>(null);
   const [landUseAnalysisLoading, setLandUseAnalysisLoading] = useState(false);
   const [landUseAnalysisMessage, setLandUseAnalysisMessage] = useState("");
-  const [generatedBoundary, setGeneratedBoundary] = useState<NeighborhoodBoundaryAssessment | null>(null);
+  const [generatedResult, setGeneratedResult] = useState<{ scope: string; value: NeighborhoodBoundaryAssessment } | null>(null);
   const [generatedBoundaryLoading, setGeneratedBoundaryLoading] = useState(false);
   const [generatedBoundaryMessage, setGeneratedBoundaryMessage] = useState("");
-  const [relevanceAssessment, setRelevanceAssessment] = useState<NeighborhoodRelevanceAssessment | null>(null);
+  const [relevanceResult, setRelevanceResult] = useState<{ scope: string; context: string; value: NeighborhoodRelevanceAssessment } | null>(null);
+  const [relevanceRequestVersion, setRelevanceRequestVersion] = useState(0);
   const [relevanceLoading, setRelevanceLoading] = useState(false);
   const [relevanceMessage, setRelevanceMessage] = useState("");
   const automaticLandUseFingerprintRef = useRef("");
   const automaticBoundaryAttemptRef = useRef("");
   const automaticRelevanceAttemptRef = useRef("");
+  const { currentDraft, onAssignmentChange, begin, invalidate, currentContextKey, scopeKey, contextKey } =
+    useNeighborhoodRequestSafety(accountId, assignmentFileId, assignmentDraft, onParentAssignmentChange);
+  const generatedContextRef = useRef("");
+  // A newly keyed map consumes props before our layout effects clear old state.
+  // Never expose another file's suggestion or pockets during that first render.
+  const generatedBoundary = generatedResult?.scope === scopeKey && generatedContextRef.current === contextKey
+    ? generatedResult.value : null;
+  const relevanceAssessment = relevanceResult?.scope === scopeKey && relevanceResult.context === contextKey
+    ? relevanceResult.value : null;
+  const setGeneratedBoundary = useCallback((value: NeighborhoodBoundaryAssessment | null) => {
+    setGeneratedResult(value ? { scope: scopeKey, value } : null);
+  }, [scopeKey]);
+  const setRelevanceAssessment = useCallback((value: NeighborhoodRelevanceAssessment | null) => {
+    setRelevanceResult(value ? { scope: scopeKey, context: currentContextKey(), value } : null);
+  }, [currentContextKey, scopeKey]);
+  useLayoutEffect(() => {
+    setGeneratedBoundary(null);
+    setGeneratedBoundaryLoading(false);
+    setGeneratedBoundaryMessage("");
+    setRelevanceAssessment(null);
+    setRelevanceLoading(false);
+    setRelevanceMessage("");
+    automaticBoundaryAttemptRef.current = "";
+    automaticRelevanceAttemptRef.current = "";
+  }, [scopeKey, setGeneratedBoundary, setRelevanceAssessment]);
+  useLayoutEffect(() => {
+    setRelevanceAssessment(null);
+    setRelevanceLoading(false);
+    setRelevanceMessage("");
+    setGeneratedBoundaryLoading(false);
+    if (generatedContextRef.current !== contextKey) setGeneratedBoundary(null);
+    automaticRelevanceAttemptRef.current = "";
+  }, [contextKey, setGeneratedBoundary, setRelevanceAssessment]);
   const boundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
   const boundaryRing = assignmentDraft.neighborhood_boundary_geometry?.coordinates?.[0] || [];
   const removedPocketIds = useMemo(
@@ -557,7 +592,12 @@ export default function NeighborhoodCharacteristicsContent({
     );
     setGeneratedBoundary(result);
     setGeneratedBoundaryMessage(options.message);
+    generatedContextRef.current = currentContextKey();
     if (!options.overwriteGeometry) return;
+    invalidate("relevance");
+    // Explicit adoption may reuse the engine ID/geometry; it still needs one reload.
+    setRelevanceRequestVersion((version) => version + 1);
+    setRelevanceLoading(false);
 
     const north = cardinal?.north?.primary_street || "";
     const east = cardinal?.east?.primary_street || "";
@@ -612,26 +652,25 @@ export default function NeighborhoodCharacteristicsContent({
     onAssignmentChange("neighborhood_relevance_override_updated_at", "");
     setRelevanceAssessment(null);
     setRelevanceMessage("");
-  }, [onAssignmentChange, onBoundarySuggestionsChange]);
+    generatedContextRef.current = currentContextKey();
+  }, [currentContextKey, invalidate, onAssignmentChange, onBoundarySuggestionsChange, setGeneratedBoundary, setRelevanceAssessment]);
   const applyGeneratedBoundaryRef = useRef(applyGeneratedBoundary);
   applyGeneratedBoundaryRef.current = applyGeneratedBoundary;
-  const automaticBoundaryContextRef = useRef({
-    geometry: assignmentDraft.neighborhood_boundary_geometry,
-    source: assignmentDraft.neighborhood_boundary_source,
+  const currentBoundaryContext = () => ({
+    geometry: currentDraft.current.neighborhood_boundary_geometry,
+    source: currentDraft.current.neighborhood_boundary_source,
+    savedAt: currentDraft.current.neighborhood_boundary_saved_at,
     savedCustomGeometry: marketConditionsDraft?.response.analyses.find(
       (analysis) => analysis.market.key === "custom",
     )?.market.custom_geometry || null,
   });
-  automaticBoundaryContextRef.current = {
-    geometry: assignmentDraft.neighborhood_boundary_geometry,
-    source: assignmentDraft.neighborhood_boundary_source,
-    savedCustomGeometry: marketConditionsDraft?.response.analyses.find(
-      (analysis) => analysis.market.key === "custom",
-    )?.market.custom_geometry || null,
-  };
+  const currentBoundaryContextRef = useRef(currentBoundaryContext);
+  currentBoundaryContextRef.current = currentBoundaryContext;
 
   const generateSuggestedBoundary = async (discoveryRadiusMiles?: number) => {
-    if (!accountId || generatedBoundaryLoading) return;
+    if (!accountId) return;
+    const isCurrent = begin("boundary");
+    const boundaryAtStart = JSON.stringify(currentBoundaryContextRef.current());
     setGeneratedBoundaryLoading(true);
     setGeneratedBoundaryMessage("Generating a broad neighborhood from saved parcel, road, and zoning data...");
     try {
@@ -639,10 +678,16 @@ export default function NeighborhoodCharacteristicsContent({
         assignmentFileId: assignmentFileId || null,
         discoveryRadiusMiles: discoveryRadiusMiles || null,
       });
+      if (!isCurrent()) return;
       const discovery = result.evidence.discovery;
-      const source = String(assignmentDraft.neighborhood_boundary_source || "").toLowerCase();
-      const hasAppraiserGeometry = Boolean(assignmentDraft.neighborhood_boundary_geometry) &&
-        !/^neighborhood_boundary_engine_v\d+$/i.test(source);
+      const current = currentBoundaryContextRef.current();
+      const source = String(current.source || "").toLowerCase();
+      const changedDuringRequest = JSON.stringify(current) !== boundaryAtStart;
+      const restored = automaticBoundaryRestoreState(current);
+      const hasAppraiserGeometry = Boolean(current.geometry) &&
+        !/^neighborhood_boundary_engine_v\d+$/i.test(source) ||
+        changedDuringRequest && (restored.cleared || restored.hasExistingGeometry);
+      setGeneratedBoundaryLoading(false);
       applyGeneratedBoundary(result, {
         overwriteGeometry: !hasAppraiserGeometry,
         message: hasAppraiserGeometry
@@ -650,6 +695,7 @@ export default function NeighborhoodCharacteristicsContent({
           : `Suggested boundary generated from ${Number(discovery?.candidate_count || 0).toLocaleString()} parcels inside the ${discovery?.profile_label || result.search_profile} discovery area. It was loaded into the editable Appraiser-Defined Area for review.`,
       });
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : "Neighborhood boundary generation failed.";
       setGeneratedBoundaryMessage(
         /subject_parcel_geometry_unavailable/i.test(message)
@@ -657,7 +703,7 @@ export default function NeighborhoodCharacteristicsContent({
           : message,
       );
     } finally {
-      setGeneratedBoundaryLoading(false);
+      if (isCurrent()) setGeneratedBoundaryLoading(false);
     }
   };
 
@@ -667,7 +713,9 @@ export default function NeighborhoodCharacteristicsContent({
     if (automaticBoundaryAttemptRef.current === attemptSignature) return;
     automaticBoundaryAttemptRef.current = attemptSignature;
     let cancelled = false;
-    const initialState = automaticBoundaryRestoreState(automaticBoundaryContextRef.current);
+    const requestIsCurrent = begin("boundary");
+    const isCurrent = () => !cancelled && requestIsCurrent();
+    const initialState = automaticBoundaryRestoreState(currentBoundaryContextRef.current());
 
     setGeneratedBoundaryLoading(true);
     setGeneratedBoundaryMessage(
@@ -681,27 +729,28 @@ export default function NeighborhoodCharacteristicsContent({
           accountId,
           assignmentFileId || null,
         );
-        if (cancelled) return;
+        if (!isCurrent()) return;
         // Methodology v6 separates the simple-suburban three-mile analytical
         // envelope from the appraiser's narrative road boundary.
         const needsDiscoveryEnvelopeUpgrade = Boolean(result) &&
           Number(result?.methodology_version || 0) < DISCOVERY_ENVELOPE_METHODOLOGY_VERSION;
         if (needsDiscoveryEnvelopeUpgrade &&
-          !automaticBoundaryRestoreState(automaticBoundaryContextRef.current).cleared) {
+          !automaticBoundaryRestoreState(currentBoundaryContextRef.current()).cleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });
         }
-        if (!result && !automaticBoundaryRestoreState(automaticBoundaryContextRef.current).cleared) {
+        if (!isCurrent()) return;
+        if (!result && !automaticBoundaryRestoreState(currentBoundaryContextRef.current()).cleared) {
           result = await runNeighborhoodBoundaryGeneration(accountId, {
             assignmentFileId: assignmentFileId || null,
           });
         }
-        if (cancelled) return;
+        if (!isCurrent()) return;
         // Drawing, clearing, or restoring a saved area during this request must
         // win over the lookup. Even a matching assessment ID is not permission
         // to reset that area's pocket choices or review confirmation.
-        const currentState = automaticBoundaryRestoreState(automaticBoundaryContextRef.current);
+        const currentState = automaticBoundaryRestoreState(currentBoundaryContextRef.current());
         if (!result) {
           setGeneratedBoundaryMessage(
             currentState.cleared
@@ -711,6 +760,7 @@ export default function NeighborhoodCharacteristicsContent({
           return;
         }
         const discovery = result.evidence.discovery;
+        setGeneratedBoundaryLoading(false);
         applyGeneratedBoundaryRef.current(result, {
           overwriteGeometry: currentState.mayAdopt,
           message: currentState.cleared
@@ -720,7 +770,7 @@ export default function NeighborhoodCharacteristicsContent({
               : `The suggested neighborhood loaded automatically from ${Number(discovery?.candidate_count || 0).toLocaleString()} candidate parcels and is ready for appraisal review.`,
         });
       } catch (error) {
-        if (!cancelled) {
+        if (isCurrent()) {
           const message = error instanceof Error
             ? error.message
             : "The automatic neighborhood suggestion could not be loaded.";
@@ -731,13 +781,13 @@ export default function NeighborhoodCharacteristicsContent({
           );
         }
       } finally {
-        if (!cancelled) setGeneratedBoundaryLoading(false);
+        if (isCurrent()) setGeneratedBoundaryLoading(false);
       }
     })();
     return () => {
       cancelled = true;
     };
-  }, [accountId, assignmentFileId]);
+  }, [accountId, assignmentFileId, begin]);
 
   const handleCustomGeometryChange = useCallback((
     geometry: AssignmentDetails["neighborhood_boundary_geometry"],
@@ -752,7 +802,6 @@ export default function NeighborhoodCharacteristicsContent({
     }
 
     const now = new Date().toISOString();
-    onAssignmentChange("neighborhood_boundary_geometry", geometry);
     onAssignmentChange(
       "neighborhood_boundary_label",
       origin === "cleared"
@@ -765,6 +814,7 @@ export default function NeighborhoodCharacteristicsContent({
         ? "appraiser_defined_area_cleared"
         : "appraiser_defined_area_manual_v1",
     );
+    onAssignmentChange("neighborhood_boundary_geometry", geometry);
     onAssignmentChange("neighborhood_boundary_saved_at", now);
     onAssignmentChange("neighborhood_boundary_confirmed", false);
     onAssignmentChange("neighborhood_boundary_confirmed_at", "");
@@ -842,17 +892,23 @@ export default function NeighborhoodCharacteristicsContent({
   }, [onAssignmentChange]);
 
   const analyzeRelevantPropertyDataset = useCallback(async () => {
-    if (!accountId || relevanceLoading) return;
+    if (!accountId) return;
     const boundaryAssessmentId = Number(
-      assignmentDraft.neighborhood_boundary_engine_assessment_id,
+      currentDraft.current.neighborhood_boundary_engine_assessment_id,
     );
     if (!Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
       setRelevanceMessage("Generate a suggested boundary before analyzing the relevant property dataset.");
       return;
     }
     const boundaryAssignmentFileId = Number(
-      assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
+      currentDraft.current.neighborhood_boundary_engine_assignment_file_id,
     );
+    if (Number.isSafeInteger(boundaryAssignmentFileId) && boundaryAssignmentFileId > 0 &&
+      boundaryAssignmentFileId !== assignmentFileId) {
+      setRelevanceMessage("The saved analytical boundary belongs to another appraisal file. Generate a suggestion for this file before analyzing its pockets.");
+      return;
+    }
+    const isCurrent = begin("relevance");
     setRelevanceLoading(true);
     setRelevanceMessage("Scoring parcels with GLA, age, and housing type as the primary subject-similarity factors...");
     try {
@@ -863,6 +919,7 @@ export default function NeighborhoodCharacteristicsContent({
           : null,
         boundaryAssessmentId,
       });
+      if (!isCurrent()) return;
       onAssignmentChange("neighborhood_relevance_assessment_id", result.id);
       onAssignmentChange("neighborhood_relevance_methodology_version", result.methodology_version);
       onAssignmentChange("neighborhood_relevance_confidence", result.confidence.confidence || "limited");
@@ -876,8 +933,8 @@ export default function NeighborhoodCharacteristicsContent({
       onAssignmentChange("neighborhood_relevance_generated_at", result.generated_at);
       const effectiveResult = applyPocketOverrides(
         result,
-        assignmentDraft.neighborhood_relevance_removed_pocket_ids || [],
-        assignmentDraft.neighborhood_relevance_added_pocket_ids || [],
+        currentDraft.current.neighborhood_relevance_removed_pocket_ids || [],
+        currentDraft.current.neighborhood_relevance_added_pocket_ids || [],
       );
       applyRelevantStatistics(effectiveResult);
       setRelevanceAssessment(result);
@@ -887,6 +944,7 @@ export default function NeighborhoodCharacteristicsContent({
         `${primaryCount.toLocaleString()} properties across every system-selected relevant pocket form the primary statistical population. All available sales in those pockets are included; ${result.summary.included_count.toLocaleString()} properties remain reviewable on the map.`,
       );
     } catch (error) {
+      if (!isCurrent()) return;
       const message = error instanceof Error ? error.message : "Relevant-property analysis failed.";
       setRelevanceMessage(
         /neighborhood_boundary_required/i.test(message)
@@ -894,17 +952,16 @@ export default function NeighborhoodCharacteristicsContent({
           : message,
       );
     } finally {
-      setRelevanceLoading(false);
+      if (isCurrent()) setRelevanceLoading(false);
     }
   }, [
     accountId,
-    assignmentDraft.neighborhood_boundary_engine_assessment_id,
-    assignmentDraft.neighborhood_boundary_engine_assignment_file_id,
-    assignmentDraft.neighborhood_relevance_added_pocket_ids,
-    assignmentDraft.neighborhood_relevance_removed_pocket_ids,
+    assignmentFileId,
+    begin,
+    currentDraft,
     applyRelevantStatistics,
     onAssignmentChange,
-    relevanceLoading,
+    setRelevanceAssessment,
   ]);
 
   const setPocketIncluded = useCallback((
@@ -913,8 +970,8 @@ export default function NeighborhoodCharacteristicsContent({
     systemSelected: boolean,
   ) => {
     if (!relevanceAssessment) return;
-    const removed = new Set(assignmentDraft.neighborhood_relevance_removed_pocket_ids || []);
-    const added = new Set(assignmentDraft.neighborhood_relevance_added_pocket_ids || []);
+    const removed = new Set(currentDraft.current.neighborhood_relevance_removed_pocket_ids || []);
+    const added = new Set(currentDraft.current.neighborhood_relevance_added_pocket_ids || []);
     if (include) {
       removed.delete(pocketId);
       if (systemSelected) added.delete(pocketId);
@@ -939,8 +996,7 @@ export default function NeighborhoodCharacteristicsContent({
     );
   }, [
     applyRelevantStatistics,
-    assignmentDraft.neighborhood_relevance_added_pocket_ids,
-    assignmentDraft.neighborhood_relevance_removed_pocket_ids,
+    currentDraft,
     onAssignmentChange,
     relevanceAssessment,
   ]);
@@ -986,7 +1042,7 @@ export default function NeighborhoodCharacteristicsContent({
     if (!accountId || !Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
       return;
     }
-    const signature = `${accountId}:${assignmentFileId || "property"}:${boundaryAssessmentId}`;
+    const signature = `${scopeKey}:${contextKey}:${relevanceRequestVersion}`;
     if (automaticRelevanceAttemptRef.current === signature || relevanceLoading) return;
     automaticRelevanceAttemptRef.current = signature;
     void analyzeRelevantPropertyDataset();
@@ -994,6 +1050,9 @@ export default function NeighborhoodCharacteristicsContent({
     accountId,
     assignmentFileId,
     assignmentDraft.neighborhood_boundary_engine_assessment_id,
+    scopeKey,
+    contextKey,
+    relevanceRequestVersion,
     analyzeRelevantPropertyDataset,
     relevanceLoading,
   ]);

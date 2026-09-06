@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { getUadEditorSections, normalizeAndValidateUadValue } from "../uad/fieldCatalog.js";
+import { assertLockedUadWorkfileMutable } from "../uad/workfileLifecycle.js";
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
 import { canonicalJson } from "./sync.js";
 
@@ -199,7 +200,7 @@ async function loadTargetContext(client, session, { lock = false } = {}) {
   }
 
   const workfile = await client.query(
-    `SELECT id, current_revision, status, specification_release_key
+    `SELECT id, current_revision, status, specification_release_key, signed_at
        FROM appraisal.uad_workfiles WHERE id = $1 ${lock ? "FOR UPDATE" : ""}`,
     [session.uad_workfile_id],
   );
@@ -480,6 +481,9 @@ async function applyPropertyTaxProposal(client, auth, session, context, proposal
 }
 
 async function applyUadProposal(client, auth, session, context, proposal, definition, proposed) {
+  // The review owner already holds this workfile's lock. Even equal values
+  // rewrite provenance/revision, so every canonical acceptance needs this guard.
+  await assertLockedUadWorkfileMutable(client, context.target);
   const reference = definition.target_reference;
   const row = context.target.rowsByKey.get(valueKey(reference));
   const changed = !row || !proposed.exists || canonicalJson(row.value) !== canonicalJson(proposed.value);
@@ -600,7 +604,7 @@ export async function reviewTargetFieldProposal(pool, auth, sessionIdValue, prop
   const request = reviewRequest(input);
   const client = await pool.connect();
   try {
-    await client.query("BEGIN");
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const session = await targetSession(client, auth, sessionId, { lock: true, writable: true });
     const operation = await reviewOperation(client, sessionId, proposalId, request);
     if (operation.existing) {

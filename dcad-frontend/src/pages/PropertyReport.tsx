@@ -32,6 +32,7 @@ import {
   type MarketConditionsDraft,
 } from "@/lib/marketConditionsDraft";
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
+import { useAssignmentConflictKeys } from "@/hooks/useAssignmentConflictKeys";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
@@ -72,6 +73,7 @@ import {
   customAppraisalDraftsMatch,
   isVisibleManualAssignmentSave,
   reconcileCustomAppraisalDraft,
+  applyCustomAppraisalRemoteConflicts,
   retainCurrentDraftWhenUnchanged,
   type CustomAppraisalAutosaveState,
 } from "@/lib/customAppraisalAutosave";
@@ -312,7 +314,7 @@ function AddressHero({
   const [assignmentAutosaveState, setAssignmentAutosaveState] =
     useState<CustomAppraisalAutosaveState>("idle");
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
-  const [assignmentConflictKeys, setAssignmentConflictKeys] = useState<string[]>([]);
+  const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
@@ -442,7 +444,7 @@ function AddressHero({
       }
     }
     void loadPropertyContextAssessment(selectedFile.id, isCancelled);
-  }, [accountId, hydrateAssignmentDraft, loadPropertyContextAssessment]);
+  }, [accountId, hydrateAssignmentDraft, loadPropertyContextAssessment, setAssignmentConflictKeys]);
   const {
     assignmentFiles,
     setAssignmentFiles,
@@ -582,7 +584,7 @@ function AddressHero({
     setWorkfileStatusMessage("");
     setMarketConditionsDraft(readMarketConditionsDraft(accountId || ""));
     setSalesComparisonDraft(readAppraisalReportDraft(accountId || ""));
-  }, [accountId, detailLoaded, hydrateAssignmentDraft, resetProfileTracking]);
+  }, [accountId, detailLoaded, hydrateAssignmentDraft, resetProfileTracking, setAssignmentConflictKeys]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
   const streetAddress = address.split(",")[0].trim() || address;
@@ -1094,6 +1096,7 @@ function AddressHero({
       assignmentSavedDraftRef.current,
       assignmentDraftRef.current,
       remoteDraft,
+      assignmentConflictKeysRef.current,
     );
     const nextDraft = cloneEditorValue(reconciliation.rebased);
     const updatedFile = {
@@ -1110,11 +1113,11 @@ function AddressHero({
     setAssignmentDraft(nextDraft);
     setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
     setAssignmentConflictKeys(reconciliation.conflictKeys);
-    setAssignmentAutosaveState(reconciliation.localChangedKeys.length ? "pending" : "saved");
+    setAssignmentAutosaveState(reconciliation.conflictKeys.length ? "conflict" : reconciliation.localChangedKeys.length ? "pending" : "saved");
     setAssignmentSaveMessage(reconciliation.conflictKeys.length
-      ? "Contract evidence was saved; your existing edits were preserved for conflict review."
-      : "Approved contract evidence and analysis were saved to this appraisal file.");
-  }, [setActiveAssignmentFile, setAssignmentFiles]);
+      ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentConflict
+      : CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentSaved);
+  }, [assignmentConflictKeysRef, setAssignmentConflictKeys, setActiveAssignmentFile, setAssignmentFiles]);
 
   const importCustomMarketArea = useCallback(() => {
     const geometry = customMarketStudy?.market.custom_geometry;
@@ -1407,10 +1410,7 @@ function AddressHero({
     }
 
     const remoteDraft = assignmentSavedDraftRef.current;
-    const nextDraft = cloneEditorValue(assignmentDraftRef.current) as AssignmentDetails;
-    const nextRecord = nextDraft as Record<string, unknown>;
-    const remoteRecord = remoteDraft as Record<string, unknown>;
-    for (const key of assignmentConflictKeys) nextRecord[key] = remoteRecord[key];
+    const nextDraft = cloneEditorValue(applyCustomAppraisalRemoteConflicts(assignmentDraftRef.current, remoteDraft, assignmentConflictKeys));
     assignmentDraftRef.current = nextDraft;
     const stillDirty = !customAppraisalDraftsMatch(nextDraft, remoteDraft);
     assignmentDirtyRef.current = stillDirty;
@@ -1913,8 +1913,7 @@ function AddressHero({
             <div>
               <div className="text-sm font-semibold">Concurrent edits need your decision</div>
               <p className="mt-1 text-xs leading-5">
-                Another session changed {assignmentConflictKeys.length} of the same report
-                {assignmentConflictKeys.length === 1 ? " field" : " fields"}. Your entries remain on screen.
+                Another session changed conflicting report data. Neighborhood selections and statistics stay together. Your entries remain on screen.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

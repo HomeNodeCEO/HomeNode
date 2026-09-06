@@ -1480,6 +1480,439 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         signerObserved.forceRelease();
       }
     });
+    // Verification has separate preflight/final transactions. These additions
+    // use the same guarded disposable database and memory-only PNG storage.
+    const { verifyUadAssetUpload } = await import("../src/modules/uad/assets.js");
+    const { buildUadObjectKey, buildUadVerifiedAssetObjectKey } = await import("../src/modules/uad/r2Storage.js");
+    const { createHash } = await import("node:crypto");
+    const verificationPng = Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=", "base64");
+    const verificationChecksum = createHash("sha256").update(verificationPng).digest("hex");
+    const verificationWorkfileLock = "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE";
+    const verificationState = async (workfileId) => JSON.parse(JSON.stringify({
+      state: await cleanupState(pool, workfileId),
+      assets: (await pool.query("SELECT * FROM appraisal.uad_assets WHERE workfile_id = $1 ORDER BY id", [workfileId])).rows,
+      workfile: (await pool.query("SELECT * FROM appraisal.uad_workfiles WHERE id = $1", [workfileId])).rows,
+    }));
+    const createVerificationFixture = async ({ status = "draft", supervised = false,
+      assetStatus = "pending_upload", owned = true } = {}) => {
+      const workfile = await createDeletionFixture({ status, supervised });
+      const assetId = randomUUID(), fileName = "native-verification.png";
+      const sourceKey = owned ? buildUadObjectKey({ organizationId: null, workfileId: workfile.workfileId, assetId, fileName })
+        : `synthetic-legacy-verification/${assetId}.png`;
+      const verifiedKey = buildUadVerifiedAssetObjectKey({ organizationId: null, workfileId: workfile.workfileId,
+        assetId, fileName, checksumSha256: verificationChecksum });
+      await pool.query(
+        `INSERT INTO appraisal.uad_assets (id, workfile_id, asset_kind, storage_provider, storage_bucket,
+          object_key, original_file_name, content_type, status, capture_metadata, created_by_user_id)
+         VALUES ($1, $2, 'photo', 'postgres', 'synthetic-verification-only', $3, $4, 'image/png', $5, $6::jsonb, $7)`,
+        [assetId, workfile.workfileId, sourceKey, fileName, assetStatus,
+          JSON.stringify({ expected_byte_size: verificationPng.length, synthetic_verification: true }), identity.actorUserId]);
+      return { ...workfile, assetId, sourceKey, verifiedKey };
+    };
+    const verificationObserver = ({ before, after } = {}) => {
+      const phases = [], active = new Set(), releases = new Set();
+      const result = { phases, active, pool: {
+        query: (...args) => pool.query(...args),
+        async connect() {
+          const client = await pool.connect();
+          try { await client.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ"); }
+          catch (error) { client.release(true); throw error; }
+          const phase = { number: phases.length + 1, pid: client.processID, trace: [] };
+          phases.push(phase);
+          let released = false;
+          const release = () => { if (!released) { released = true; active.delete(client.processID); client.release(true); } };
+          releases.add(release);
+          return { async query(config, values) {
+            const statement = statementOf(config); phase.trace.push(statement);
+            await before?.(statement, client, phase, values);
+            const rows = await client.query(config, values);
+            if (statement.startsWith("BEGIN")) {
+              active.add(client.processID);
+              const isolation = await client.query("SHOW transaction_isolation");
+              assert.equal(isolation.rows[0].transaction_isolation, "read committed", "verification overrides the hostile session default");
+            }
+            if (statement === "COMMIT" || statement === "ROLLBACK") active.delete(client.processID);
+            await after?.(statement, client, phase, rows);
+            return rows;
+          }, release };
+        },
+      }, forceRelease() { for (const release of releases) release(); } };
+      return result;
+    };
+    const memoryVerificationStorage = (fixture, observers, { inspectMismatch = false, invalidPayload = false,
+      copyMismatchOnce = false, onStorage, existingVerified = false } = {}) => {
+      const objects = new Map([[fixture.sourceKey, Buffer.from(verificationPng)]]), calls = [], storageFailures = [];
+      if (existingVerified) objects.set(fixture.verifiedKey, Buffer.from(verificationPng));
+      let copies = 0;
+      const outsideTransaction = async (method, objectKey) => {
+        const pids = observers.flatMap(observer => observer.phases.map(phase => phase.pid));
+        for (const observer of observers) assert.equal(observer.active.size, 0, `${method} cannot run inside a verifier transaction`);
+        const { rows } = await pool.query(
+          "SELECT pid FROM pg_stat_activity WHERE pid = ANY($1::integer[]) AND xact_start IS NOT NULL", [pids]);
+        assert.deepEqual(rows, [], `${method} must observe actual verifier transaction release`);
+        calls.push({ method, objectKey });
+      };
+      const storage = {
+        async inspectObject({ objectKey }) {
+          await outsideTransaction("inspect", objectKey); await onStorage?.("inspect", objectKey);
+          assert.ok(objects.has(objectKey));
+          return { byte_size: verificationPng.length + (inspectMismatch ? 1 : 0), content_type: "image/png", etag: "synthetic-inspected" };
+        },
+        async getObject({ objectKey }) {
+          await outsideTransaction("get", objectKey); await onStorage?.("get", objectKey);
+          assert.ok(objects.has(objectKey));
+          return { body: invalidPayload ? Buffer.alloc(verificationPng.length, 0x41) : Buffer.from(objects.get(objectKey)),
+            byte_size: verificationPng.length, content_type: "image/png" };
+        },
+        async putObject({ objectKey, contentType, body }) {
+          await outsideTransaction("put", objectKey); assert.equal(objectKey, fixture.verifiedKey);
+          assert.equal(contentType, "image/png"); assert.deepEqual(body, verificationPng);
+          objects.set(objectKey, Buffer.from(body)); const copyNumber = ++copies;
+          await onStorage?.("put", objectKey);
+          return { byte_size: body.length + (copyMismatchOnce && copyNumber === 1 ? 1 : 0), etag: "synthetic-copied" };
+        },
+        async deleteObject({ objectKey }) {
+          await outsideTransaction("delete", objectKey); await onStorage?.("delete", objectKey);
+          assert.equal(objectKey, fixture.sourceKey, "verification must never delete a checksum-addressed object");
+          assert.equal(objects.delete(objectKey), true);
+        },
+      };
+      // GET rejection and best-effort DELETE handling may catch storage errors.
+      // Keep an independent oracle so no contract failure can masquerade as an
+      // invalid payload or disappear during cleanup. These fakes never inject
+      // intentional storage exceptions; invalid outcomes use returned data.
+      for (const [method, operation] of Object.entries(storage)) {
+        storage[method] = async (...args) => {
+          try { return await operation(...args); }
+          catch (error) { storageFailures.push({ method, error }); throw error; }
+        };
+      }
+      return { objects, calls, storage, storageFailures };
+    };
+    const verify = async (observer, memory, fixture) => {
+      try { return await verifyUadAssetUpload(observer.pool, memory.storage, fixture.workfileId, fixture.assetId); }
+      finally { assert.deepEqual(memory.storageFailures, [], "storage contract failures must not be swallowed by verification"); }
+    };
+    const assertVerificationPhase = (phase, ending, { assetRead = true } = {}) => {
+      assert.equal(phase.trace[0], READ_COMMITTED_BEGIN);
+      assert.equal(phase.trace[1], verificationWorkfileLock);
+      assert.ok(phase.trace[2]?.includes("AS has_signatures"));
+      if (assetRead) assert.match(phase.trace[3], /^SELECT id, workfile_id, .* FROM appraisal\.uad_assets .* FOR UPDATE$/);
+      else assert.equal(phase.trace.some(sql => sql.includes("FROM appraisal.uad_assets")), false);
+      assert.equal(phase.trace.at(-1), ending);
+    };
+    const mutateUnderWorkfileLock = async (fixture, action) => {
+      const client = await pool.connect();
+      try {
+        await client.query(READ_COMMITTED_BEGIN);
+        await client.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        await action(client); await client.query("COMMIT");
+      } catch (error) { await client.query("ROLLBACK").catch(() => {}); throw error; }
+      finally { client.release(true); }
+    };
+    const assertVerificationOnlyAssetChanged = (before, after, fixture, status) => {
+      const asset = after.assets.find(row => row.id === fixture.assetId);
+      const originalAsset = before.assets.find(row => row.id === fixture.assetId);
+      assert.equal(asset.status, status); assert.equal(after.workfile[0].status, "draft");
+      assert.equal(after.workfile[0].current_revision, 2);
+      assert.ok(Date.parse(asset.updated_at) >= Date.parse(originalAsset.updated_at));
+      const immutableAsset = structuredClone(asset), originalImmutableAsset = structuredClone(originalAsset);
+      const changedColumns = status === "verified"
+        ? ["status", "byte_size", "checksum_sha256", "object_key", "uploaded_at", "verified_at", "updated_at", "capture_metadata"]
+        : ["status", "updated_at", "capture_metadata"];
+      for (const column of changedColumns) { delete immutableAsset[column]; delete originalImmutableAsset[column]; }
+      assert.deepEqual(immutableAsset, originalImmutableAsset, "identity, applicability, ownership and all other asset columns remain unchanged");
+      const comparable = structuredClone(after);
+      comparable.assets = comparable.assets.map(row => row.id === fixture.assetId ? before.assets.find(old => old.id === row.id) : row);
+      comparable.state.canonical.assets = comparable.state.canonical.assets.map(row => row.id === fixture.assetId
+        ? before.state.canonical.assets.find(old => old.id === row.id) : row);
+      for (const [rows, prior] of [[comparable.workfile, before.workfile],
+        [comparable.state.canonical.workfile, before.state.canonical.workfile]]) {
+        Object.assign(rows[0], { status: prior[0].status, updated_at: prior[0].updated_at });
+      }
+      assert.deepEqual(comparable, before, "verification cannot change canonical values, revision, signatures, history, audit or artifacts");
+      return asset;
+    };
+    for (const status of ["signed", "exported", "submitted", "cancelled"]) {
+      await t.test(`verifyUadAssetUpload rejects ${status} before storage inspection`, async () => {
+        const fixture = await createVerificationFixture({ status }), before = await verificationState(fixture.workfileId);
+        const observer = verificationObserver(), memory = memoryVerificationStorage(fixture, [observer]);
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), { message: LOCKED_ERROR });
+          assert.deepEqual(memory.calls, []); assert.deepEqual(observer.phases, []);
+          assert.deepEqual(await verificationState(fixture.workfileId), before);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    for (const status of ["draft", "validating", "ready", "revised"]) {
+      for (const evidence of ["signed_at", "current signature", "partial signature", "historical signature"]) {
+        await t.test(`verification preflight refuses ${evidence} under ${status} without storage or metadata changes`, async () => {
+          const fixture = await createVerificationFixture({ status, supervised: evidence === "partial signature" });
+          if (evidence === "signed_at") await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+          else await insertSyntheticSignature(pool, identity, fixture, evidence === "historical signature" ? 1 : 2);
+          const before = await verificationState(fixture.workfileId), observer = verificationObserver();
+          const memory = memoryVerificationStorage(fixture, [observer]);
+          try {
+            await assert.rejects(() => verify(observer, memory, fixture), { message: LOCKED_ERROR });
+            assert.equal(observer.phases.length, 1); const phase = observer.phases[0];
+            if (evidence === "signed_at") assert.deepEqual(phase.trace, [READ_COMMITTED_BEGIN, verificationWorkfileLock, "ROLLBACK"]);
+            else assertVerificationPhase(phase, "ROLLBACK", { assetRead: false });
+            assert.deepEqual(memory.calls, []); assert.deepEqual(await verificationState(fixture.workfileId), before);
+          } finally { observer.forceRelease(); }
+        });
+      }
+    }
+    for (const [status, assetStatus] of [["draft", "pending_upload"], ["validating", "pending_upload"],
+      ["ready", "pending_upload"], ["revised", "pending_upload"], ["draft", "uploaded"]]) {
+      await t.test(`unsigned ${status}/${assetStatus} verification commits only verified metadata with storage outside transactions`, async () => {
+        const fixture = await createVerificationFixture({ status, assetStatus }), before = await verificationState(fixture.workfileId);
+        const observer = verificationObserver(), memory = memoryVerificationStorage(fixture, [observer]);
+        try {
+          const result = await verify(observer, memory, fixture), after = await verificationState(fixture.workfileId);
+          assert.equal(result.id, fixture.assetId); assert.equal(result.status, "verified");
+          assert.equal(result.byte_size, verificationPng.length); assert.equal(result.original_file_name, "native-verification.png");
+          assert.equal(observer.phases.length, 2); observer.phases.forEach(phase => assertVerificationPhase(phase, "COMMIT"));
+          const asset = assertVerificationOnlyAssetChanged(before, after, fixture, "verified");
+          assert.equal(asset.object_key, fixture.verifiedKey); assert.equal(asset.checksum_sha256, verificationChecksum);
+          assert.equal(Number(asset.byte_size), verificationPng.length); assert.ok(asset.uploaded_at && asset.verified_at);
+          assert.deepEqual(asset.capture_metadata, { expected_byte_size: verificationPng.length, synthetic_verification: true,
+            storage_etag: "synthetic-copied", verified_dimensions: { width: 1, height: 1, pixels: 1 }, verified_object_immutable: true });
+          assert.deepEqual(memory.calls.map(call => call.method), ["inspect", "get", "put", "delete"]);
+          assert.equal(memory.objects.has(fixture.sourceKey), false); assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    for (const invalid of ["inspection", "payload"]) for (const owned of [true, false]) {
+      await t.test(`invalid ${invalid} verification commits rejection and cleans only an exact owned source (${owned})`, async () => {
+        const fixture = await createVerificationFixture({ status: "ready", owned }), before = await verificationState(fixture.workfileId);
+        const observer = verificationObserver(), memory = memoryVerificationStorage(fixture, [observer], {
+          inspectMismatch: invalid === "inspection", invalidPayload: invalid === "payload", existingVerified: true });
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), { message: "invalid_uad_uploaded_asset" });
+          assert.equal(observer.phases.length, 2); observer.phases.forEach(phase => assertVerificationPhase(phase, "COMMIT"));
+          const asset = assertVerificationOnlyAssetChanged(before, await verificationState(fixture.workfileId), fixture, "rejected");
+          assert.equal(asset.object_key, fixture.sourceKey); assert.equal(asset.checksum_sha256, null); assert.equal(asset.verified_at, null);
+          assert.deepEqual(asset.capture_metadata, invalid === "inspection"
+            ? { expected_byte_size: verificationPng.length, synthetic_verification: true,
+              verification_error: "uploaded_object_does_not_match_request",
+              inspected: { byte_size: verificationPng.length + 1, content_type: "image/png", etag: "synthetic-inspected" } }
+            : { expected_byte_size: verificationPng.length, synthetic_verification: true,
+              verification_error: "invalid_uad_asset_content_type_mismatch" });
+          assert.equal(memory.objects.has(fixture.sourceKey), !owned);
+          assert.equal(memory.calls.filter(call => call.method === "delete").length, owned ? 1 : 0);
+          assert.equal(memory.calls.some(call => call.method === "put"), false);
+          assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    for (const field of ["object_key", "capture_metadata", "caption"]) {
+      await t.test(`verification refuses changed pending ${field} after copy without overwriting or deleting evidence`, async () => {
+        const fixture = await createVerificationFixture(), observer = verificationObserver(); let changed;
+        const memory = memoryVerificationStorage(fixture, [observer], { async onStorage(method) {
+          if (method !== "put") return;
+          await mutateUnderWorkfileLock(fixture, async client => {
+            const value = field === "object_key" ? `synthetic-replacement/${fixture.assetId}.png`
+              : field === "caption" ? "Concurrent owner caption" : JSON.stringify({ expected_byte_size: verificationPng.length, new_owner: true });
+            // field comes only from this fixed test matrix, never a request.
+            await client.query(`UPDATE appraisal.uad_assets SET ${field} = $2${field === "capture_metadata" ? "::jsonb" : ""} WHERE id = $1`, [fixture.assetId, value]);
+          });
+          changed = await verificationState(fixture.workfileId);
+        } });
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), { message: "uad_asset_not_found" });
+          assertVerificationPhase(observer.phases[1], "ROLLBACK"); assert.deepEqual(await verificationState(fixture.workfileId), changed);
+          assert.equal(memory.calls.some(call => call.method === "delete"), false);
+          assert.deepEqual(memory.objects.get(fixture.sourceKey), verificationPng); assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    for (const [stage, invalid] of [["inspect", false], ["put", false], ["inspect", true]]) {
+      await t.test(`synthetic signing during ${stage} storage causes fresh ${invalid ? "rejection" : "promotion"} refusal`, async () => {
+        const fixture = await createVerificationFixture({ status: "ready", supervised: true }), observer = verificationObserver(); let signed;
+        const memory = memoryVerificationStorage(fixture, [observer], { inspectMismatch: invalid, async onStorage(method) {
+          if (method !== stage) return;
+          await mutateUnderWorkfileLock(fixture, client => insertSyntheticSignature(client, identity, fixture, 2));
+          signed = await verificationState(fixture.workfileId);
+        } });
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), { message: LOCKED_ERROR });
+          assertVerificationPhase(observer.phases[0], "COMMIT"); assertVerificationPhase(observer.phases[1], "ROLLBACK", { assetRead: false });
+          assert.equal(signed.state.signatures.length, 1); assert.equal(signed.workfile[0].status, "ready");
+          assert.deepEqual(await verificationState(fixture.workfileId), signed);
+          assert.equal(memory.calls.some(call => call.method === "delete"), false); assert.deepEqual(memory.objects.get(fixture.sourceKey), verificationPng);
+          if (!invalid) assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    await t.test("verification preflight waits for a real partial-signature lock then reads fresh state despite repeatable-read default", async () => {
+      const fixture = await createVerificationFixture({ status: "ready", supervised: true }), signer = await pool.connect();
+      const lockIssued = deferred(); let signerTransaction = false, checking;
+      const observer = verificationObserver({ before(statement) { if (statement === verificationWorkfileLock) lockIssued.resolve(); } });
+      const memory = memoryVerificationStorage(fixture, [observer]);
+      try {
+        await signer.query(READ_COMMITTED_BEGIN); signerTransaction = true;
+        await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        checking = verify(observer, memory, fixture); void checking.catch(() => {});
+        await within(lockIssued.promise, "verification preflight requested the workfile lock");
+        await assertBlockedBy(pool, observer.phases[0].pid, signer.processID, "verification preflight");
+        assert.deepEqual(memory.calls, []);
+        await insertSyntheticSignature(signer, identity, fixture, 2);
+        const signatures = JSON.parse(JSON.stringify((await signer.query("SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId])).rows));
+        await signer.query("COMMIT"); signerTransaction = false;
+        const committed = await verificationState(fixture.workfileId);
+        await assert.rejects(() => within(checking, "verification sees the committed partial signature"), { message: LOCKED_ERROR });
+        assertVerificationPhase(observer.phases[0], "ROLLBACK", { assetRead: false });
+        assert.deepEqual(committed.state.signatures, signatures); assert.deepEqual(await verificationState(fixture.workfileId), committed);
+        assert.deepEqual(memory.calls, []);
+      } finally {
+        if (signerTransaction) await signer.query("ROLLBACK").catch(() => {}); signer.release(true);
+        if (checking) await within(checking.catch(() => {}), "verification preflight cleanup").catch(() => {});
+        observer.forceRelease();
+      }
+    });
+    await t.test("final verification waits for an in-flight partial signature after copying then refuses fresh state", async () => {
+      const fixture = await createVerificationFixture({ status: "ready", supervised: true });
+      const signer = await pool.connect(), finalIssued = deferred(); let checking, signerTransaction = false;
+      const observer = verificationObserver({ before(statement, _client, phase) {
+        if (phase.number === 2 && statement === verificationWorkfileLock) finalIssued.resolve();
+      } });
+      const memory = memoryVerificationStorage(fixture, [observer], { async onStorage(method) {
+        if (method !== "put") return;
+        // A separate synthetic signer owns the real lock while the verifier's
+        // storage call completes. The verifier itself owns no transaction here.
+        await signer.query(READ_COMMITTED_BEGIN); signerTransaction = true;
+        await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        await insertSyntheticSignature(signer, identity, fixture, 2);
+      } });
+      try {
+        checking = verify(observer, memory, fixture); void checking.catch(() => {});
+        await within(finalIssued.promise, "verification final outcome requested the workfile lock");
+        await assertBlockedBy(pool, observer.phases[1].pid, signer.processID, "verification final outcome");
+        const signatures = JSON.parse(JSON.stringify((await signer.query("SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId])).rows));
+        await signer.query("COMMIT"); signerTransaction = false;
+        const committed = await verificationState(fixture.workfileId);
+        await assert.rejects(() => within(checking, "verification final outcome reads fresh signature state"), { message: LOCKED_ERROR });
+        assertVerificationPhase(observer.phases[0], "COMMIT"); assertVerificationPhase(observer.phases[1], "ROLLBACK", { assetRead: false });
+        assert.deepEqual(committed.state.signatures, signatures); assert.deepEqual(await verificationState(fixture.workfileId), committed);
+        assert.equal(committed.assets.find(row => row.id === fixture.assetId).status, "pending_upload");
+        assert.equal(memory.calls.some(call => call.method === "delete"), false);
+        assert.deepEqual(memory.objects.get(fixture.sourceKey), verificationPng); assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+      } finally {
+        if (signerTransaction) await signer.query("ROLLBACK").catch(() => {}); signer.release(true);
+        if (checking) await within(checking.catch(() => {}), "verification final wait cleanup").catch(() => {});
+        observer.forceRelease();
+      }
+    });
+    await t.test("real signUadWorkfile waits for final verification metadata then refuses the committed draft", async () => {
+      const fixture = await createVerificationFixture({ status: "ready" }), before = await verificationState(fixture.workfileId);
+      const finalLocked = deferred(), continueFinal = deferred(); let checking, signing;
+      const observer = verificationObserver({ async after(statement, _client, phase) {
+        if (phase.number === 2 && statement === verificationWorkfileLock) { finalLocked.resolve(); await continueFinal.promise; }
+      } });
+      const signerClient = await pool.connect(), signer = fixedObservedPool(signerClient);
+      const memory = memoryVerificationStorage(fixture, [observer]);
+      try {
+        checking = verify(observer, memory, fixture); void checking.catch(() => {});
+        await within(finalLocked.promise, "verification owns the final workfile lock");
+        signing = signUadWorkfile(signer.pool, fixture.workfileId, { userId: identity.actorUserId },
+          { execution_date: "2026-09-05" }, { now: new Date("2026-09-05T12:00:00.000Z") });
+        void signing.catch(() => {});
+        await assertBlockedBy(pool, signerClient.processID, observer.phases[1].pid, "real signer versus verification publication");
+        continueFinal.resolve(); assert.equal((await within(checking, "verification publication committed")).status, "verified");
+        await assert.rejects(() => within(signing, "real signer sees verification-created draft"), { message: "uad_signature_local_validation_required" });
+        assert.equal(signer.trace.length, 3); assert.equal(signer.trace[0], "BEGIN"); assert.equal(signer.trace.at(-1), "ROLLBACK");
+        assertVerificationOnlyAssetChanged(before, await verificationState(fixture.workfileId), fixture, "verified");
+        assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+      } finally {
+        continueFinal.resolve();
+        if (checking) await within(checking.catch(() => {}), "verification publication cleanup").catch(() => {});
+        if (signing) await within(signing.catch(() => {}), "real signer cleanup").catch(() => {});
+        observer.forceRelease(); signer.forceRelease();
+      }
+    });
+    for (const copyMismatchOnce of [false, true]) {
+      await t.test(`a competing real verifier preserves its committed row and shared checksum bytes when the loser resumes (${copyMismatchOnce})`, async () => {
+        const fixture = await createVerificationFixture(), loser = verificationObserver(), winner = verificationObserver();
+        const copied = deferred(), continueLoser = deferred(); let firstCopy = true, checking;
+        const memory = memoryVerificationStorage(fixture, [loser, winner], { copyMismatchOnce, async onStorage(method) {
+          if (method === "put" && firstCopy) { firstCopy = false; copied.resolve(); await continueLoser.promise; }
+        } });
+        try {
+          checking = verify(loser, memory, fixture); void checking.catch(() => {});
+          await within(copied.promise, "loser copied checksum bytes outside a transaction");
+          const result = await within(verify(winner, memory, fixture), "competing verifier committed publication");
+          assert.equal(result.status, "verified"); const committed = await verificationState(fixture.workfileId);
+          continueLoser.resolve();
+          await assert.rejects(() => within(checking, "late verifier refuses to replace winner"),
+            { message: copyMismatchOnce ? "invalid_uad_uploaded_asset" : "uad_asset_not_found" });
+          assert.deepEqual(await verificationState(fixture.workfileId), committed);
+          assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng); assert.equal(memory.objects.has(fixture.sourceKey), false);
+          assert.deepEqual(memory.calls.filter(call => call.method === "delete"), [{ method: "delete", objectKey: fixture.sourceKey }]);
+          if (!copyMismatchOnce) assertVerificationPhase(loser.phases[1], "ROLLBACK");
+        } finally {
+          continueLoser.resolve(); if (checking) await within(checking.catch(() => {}), "late verifier cleanup").catch(() => {});
+          loser.forceRelease(); winner.forceRelease();
+        }
+      });
+    }
+    for (const invalid of [false, true]) {
+      await t.test(`final verification ${invalid ? "rejection" : "promotion"} rolls back real metadata on commit failure without storage deletion`, async () => {
+        const fixture = await createVerificationFixture({ status: "ready" }), before = await verificationState(fixture.workfileId);
+        const failure = new Error("synthetic_verification_commit_failure");
+        const observer = verificationObserver({ before(statement, _client, phase) {
+          if (phase.number === 2 && statement === "COMMIT") throw failure;
+        } });
+        const memory = memoryVerificationStorage(fixture, [observer], { inspectMismatch: invalid });
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), error => error === failure);
+          assertVerificationPhase(observer.phases[1], "ROLLBACK");
+          assert.ok(observer.phases[1].trace.some(sql => sql.startsWith("WITH mutable_workfile AS")));
+          assert.deepEqual(await verificationState(fixture.workfileId), before);
+          assert.equal(memory.calls.some(call => call.method === "delete"), false); assert.deepEqual(memory.objects.get(fixture.sourceKey), verificationPng);
+          if (!invalid) assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
+    for (const invalid of [false, true]) {
+      await t.test(`lost final ${invalid ? "rejection" : "promotion"} COMMIT acknowledgment retains the committed outcome and every storage object`, async () => {
+        const fixture = await createVerificationFixture({ status: "ready" }), before = await verificationState(fixture.workfileId);
+        const failure = new Error("synthetic_verification_commit_acknowledgment_lost");
+        let commitCompleted = false;
+        const observer = verificationObserver({ after(statement, _client, phase) {
+          if (phase.number === 2 && statement === "COMMIT") {
+            // The actual PostgreSQL COMMIT has completed before this transport-
+            // acknowledgment stand-in throws. A subsequent ROLLBACK cannot undo it.
+            commitCompleted = true; throw failure;
+          }
+        } });
+        const memory = memoryVerificationStorage(fixture, [observer], { inspectMismatch: invalid, existingVerified: true });
+        try {
+          await assert.rejects(() => verify(observer, memory, fixture), error => error === failure);
+          assert.equal(commitCompleted, true); assertVerificationPhase(observer.phases[1], "ROLLBACK");
+          assert.deepEqual(observer.phases[1].trace.slice(-2), ["COMMIT", "ROLLBACK"]);
+          const after = await verificationState(fixture.workfileId);
+          const asset = assertVerificationOnlyAssetChanged(before, after, fixture, invalid ? "rejected" : "verified");
+          assert.equal(asset.capture_metadata.synthetic_verification, true);
+          assert.equal(asset.capture_metadata.expected_byte_size, verificationPng.length);
+          if (invalid) {
+            assert.equal(asset.object_key, fixture.sourceKey); assert.equal(asset.checksum_sha256, null);
+            assert.equal(asset.verified_at, null);
+            assert.deepEqual(asset.capture_metadata, { expected_byte_size: verificationPng.length, synthetic_verification: true,
+              verification_error: "uploaded_object_does_not_match_request",
+              inspected: { byte_size: verificationPng.length + 1, content_type: "image/png", etag: "synthetic-inspected" } });
+          } else {
+            assert.equal(asset.object_key, fixture.verifiedKey); assert.equal(asset.checksum_sha256, verificationChecksum);
+            assert.equal(Number(asset.byte_size), verificationPng.length); assert.ok(asset.verified_at && asset.uploaded_at);
+            assert.deepEqual(asset.capture_metadata, { expected_byte_size: verificationPng.length, synthetic_verification: true,
+              storage_etag: "synthetic-copied", verified_dimensions: { width: 1, height: 1, pixels: 1 }, verified_object_immutable: true });
+          }
+          assert.equal(memory.calls.some(call => call.method === "delete"), false);
+          assert.deepEqual(memory.objects.get(fixture.sourceKey), verificationPng);
+          assert.deepEqual(memory.objects.get(fixture.verifiedKey), verificationPng);
+        } finally { observer.forceRelease(); }
+      });
+    }
   } finally {
     await pool.end();
   }

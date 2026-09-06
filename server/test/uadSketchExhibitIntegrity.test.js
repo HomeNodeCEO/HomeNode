@@ -5,6 +5,7 @@ import { editUadSketch } from "../src/modules/uad/mobileEvidence.js";
 import { normalizeManualSketchDocument } from "../src/modules/mobile/sketches.js";
 import { renderSketchPng } from "../src/modules/mobile/sketchPng.js";
 import { inspectUadAssetPayload } from "../src/modules/uad/uadFileSecurity.js";
+import { buildUadVerifiedAssetObjectKey } from "../src/modules/uad/r2Storage.js";
 
 // This suite is deliberately synthetic. Never inherit a configured database or
 // silently turn these service-level regressions into a native/live integration.
@@ -48,9 +49,9 @@ function phaseCalls(state, phase, label = null) {
   return state.calls.filter(call => clients.has(call.client) && (label === null || call.label === label));
 }
 
-function postCreationCalls(state, label = null) {
-  const clients = new Set(state.clients.filter(client => client.phase === "creation").map(client => client.name));
-  return state.calls.filter(call => !clients.has(call.client) && (label === null || call.label === label));
+function canonicalAndCleanupCalls(state, label = null) {
+  const clients = new Set(state.clients.filter(client => ["canonical", "cleanup"].includes(client.phase)).map(client => client.name));
+  return state.calls.filter(call => clients.has(call.client) && (label === null || call.label === label));
 }
 
 function renderMetadata() {
@@ -81,7 +82,7 @@ function assetRow(id, { status = "verified", generated = false } = {}) {
 // These SQL doubles model only the statements this workflow executes; they are
 // not evidence of native PostgreSQL locking or an actual signing transaction.
 function harness({ existingRender = null, onCanonicalLock = null, lockError = null,
-  onVerificationRead = null, onVerificationPublished = null, cleanupCommitError = null } = {}) {
+  cleanupCommitError = null } = {}) {
   const document = normalizeManualSketchDocument(sketchInput());
   const originalBody = renderSketchPng({ document, revision: 1 }, { fileNumber: FILE_NUMBER, revision: 1 });
   const renderBody = renderSketchPng({ document, revision: 2 }, { fileNumber: FILE_NUMBER, revision: 2 });
@@ -96,6 +97,7 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
     assets: new Map(), objects: new Map(), calls: [], storageCalls: [],
     history: [], sketchAudits: [], importAudits: [], clients: [], createdAssetIds: [], harnessErrors: [],
     validationRuns: [], generatedArtifacts: [],
+    verificationStages: new Map(), verificationSources: new Map(),
   };
   const original = assetRow(ORIGINAL_ASSET_ID);
   original.byte_size = originalBody.length;
@@ -155,6 +157,14 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
       assert.ok(client?.transaction?.snapshot); log("commit");
       if (client.cleanup && cleanupCommitError) throw cleanupCommitError;
       client.transaction = null;
+      if (client.phase === "verification_preflight") {
+        assert.equal(state.verificationStages.get(label), "preflight_locked");
+        state.verificationStages.set(label, "preflight_committed");
+      }
+      if (client.phase === "verification_final") {
+        assert.equal(state.verificationStages.get(label), "copied");
+        state.verificationStages.set(label, "published");
+      }
       return { rows: [] };
     }
     if (sql === "ROLLBACK") {
@@ -181,12 +191,20 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
       return { rows: asset ? [clone(asset)] : [] };
     }
     if (sql === "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
-      await enterPhase(label, client, "creation");
-      log("asset_workfile"); assert.deepEqual(parameters, [WORKFILE_ID]);
+      // Creation and verification deliberately share this lock shape. Classify
+      // it from the real source SELECT / completed copy, never connection count.
+      const stage = state.verificationStages.get(label);
+      const phase = stage === "selected" ? "verification_preflight"
+        : stage === "copied" ? "verification_final" : "creation";
+      if (phase === "creation") assert.equal(stage, undefined);
+      await enterPhase(label, client, phase);
+      if (phase === "verification_preflight") state.verificationStages.set(label, "preflight_locked");
+      log(phase === "creation" ? "asset_workfile" : `${phase}_workfile_lock`);
+      assert.deepEqual(parameters, [WORKFILE_ID]);
       return { rows: [clone(state.workfile)] };
     }
     if (sql.startsWith("SELECT uad_uid, value FROM appraisal.uad_field_values")) {
-      if (client) assert.equal(client.phase, "creation");
+      if (client) assert.ok(["creation", "verification_preflight", "verification_final"].includes(client.phase));
       log("applicability"); assert.deepEqual(parameters, [WORKFILE_ID, ["3300.0002"]]);
       return { rows: [{ uad_uid: "3300.0002", value: true }] };
     }
@@ -203,29 +221,43 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
       return { rows: [{ id: row.id }] };
     }
     if (sql.startsWith("SELECT asset.id, asset.object_key")) {
+      assert.equal(client, null); assert.equal(state.verificationStages.has(label), false);
+      assert.match(sql, /asset\.status IN \('pending_upload', 'uploaded'\)/);
       log("verification_read"); assert.equal(parameters[1], WORKFILE_ID);
       const asset = state.assets.get(parameters[0]);
       assert.ok(asset);
       const rows = ["pending_upload", "uploaded"].includes(asset.status)
         ? [{ ...clone(asset), organization_id: ORGANIZATION_ID, workfile_status: state.workfile.status }]
         : [];
-      // Preserve the selected row snapshot before admitting either concurrent
-      // verifier. Both real service calls can therefore observe pending state.
-      await onVerificationRead?.(label, state);
+      if (rows.length) {
+        state.verificationStages.set(label, "selected");
+        state.verificationSources.set(label, clone(rows[0]));
+      }
       return { rows };
     }
+    if (sql === "SELECT id, workfile_id, object_key, original_file_name, content_type, section_number, entity_id, asset_kind, caption_type, caption, storage_provider, storage_bucket, capture_metadata, status FROM appraisal.uad_assets WHERE id = $1 AND workfile_id = $2 FOR UPDATE") {
+      assert.ok(client?.transaction);
+      assert.ok(["verification_preflight", "verification_final"].includes(client.phase));
+      assert.equal(state.calls.at(-1).kind, "signatures");
+      assert.deepEqual(parameters, [state.verificationSources.get(label).id, WORKFILE_ID]);
+      log("verification_asset_lock");
+      const row = state.assets.get(parameters[0]);
+      return { rows: row?.workfile_id === WORKFILE_ID ? [clone(row)] : [] };
+    }
     if (sql.startsWith("WITH mutable_workfile") && sql.includes("updated_asset AS")) {
+      assert.ok(client?.transaction); assert.equal(client.phase, "verification_final");
+      assert.equal(state.calls.at(-1).kind, "applicability");
+      assert.match(sql, /AND status IN \('pending_upload', 'uploaded'\) AND EXISTS \(SELECT 1 FROM mutable_workfile\)/);
       log("verify_asset"); assert.equal(parameters[1], WORKFILE_ID);
       const row = state.assets.get(parameters[0]);
       assert.ok(row);
+      if (!["pending_upload", "uploaded"].includes(row.status)) return { rows: [] };
       Object.assign(row, { status: "verified", byte_size: parameters[2], checksum_sha256: parameters[4],
         object_key: parameters[5], uploaded_at: STAMP, verified_at: STAMP, updated_at: STAMP,
         capture_metadata: { ...row.capture_metadata, storage_etag: parameters[3],
           verified_dimensions: JSON.parse(parameters[6]), verified_object_immutable: true } });
       state.workfile.status = "draft";
-      const rows = [clone(row)];
-      await onVerificationPublished?.(label, state);
-      return { rows };
+      return { rows: [clone(row)] };
     }
     if (sql.startsWith("WITH import_lock AS MATERIALIZED")) {
       log("import_audit"); assert.equal(parameters[1], WORKFILE_ID);
@@ -352,13 +384,21 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
     query: (sql, parameters) => query(label, sql, parameters),
     async connect() {
       record(label, "connect", "", []);
-      const client = { name: `${label}-${state.clients.length + 1}`, phase: null, transaction: null, released: false, cleanup: false,
+      const client = { name: `${label}-${state.clients.length + 1}`, label, phase: null, transaction: null, released: false, cleanup: false,
         query: (sql, parameters) => query(label, sql, parameters, client),
         release() { assert.equal(client.released, false); client.released = true; record(label, "release", "", [], client); },
       };
       state.clients.push(client); return client;
     },
   });
+  const assertStorageOutsideTransaction = label => {
+    try {
+      assert.equal(state.clients.some(client => client.label === label && client.transaction !== null), false,
+        "external storage must not run inside this invocation's workfile transaction");
+    } catch (error) {
+      state.harnessErrors.push(error.message); throw error;
+    }
+  };
   const storage = label => ({
     configured: true, provider: "r2", bucket: "synthetic-only",
     createUploadUrl({ objectKey, contentType }) {
@@ -371,24 +411,40 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
       return { url: "https://unused-synthetic.invalid/upload", method: "PUT", headers: {}, expires_in_seconds: 900 };
     },
     async putObject({ objectKey, contentType, body }) {
+      assertStorageOutsideTransaction(label);
       assert.equal(contentType, "image/png"); assert.ok(Buffer.isBuffer(body));
       // Actual bytes from the real renderer must satisfy the real verifier.
       const inspected = inspectUadAssetPayload(body, contentType);
+      if (state.verificationStages.get(label) === "preflight_committed") {
+        const source = state.verificationSources.get(label);
+        assert.equal(objectKey, buildUadVerifiedAssetObjectKey({ organizationId: ORGANIZATION_ID,
+          workfileId: WORKFILE_ID, assetId: source.id, checksumSha256: inspected.checksum_sha256,
+          fileName: source.original_file_name }));
+        state.verificationStages.set(label, "copied");
+      } else {
+        assert.equal(state.verificationStages.has(label), false, "only the staging write precedes the verification source read");
+      }
       state.storageCalls.push({ label, kind: "put", objectKey, checksum: inspected.checksum_sha256 });
       state.objects.set(objectKey, Buffer.from(body));
       return { byte_size: body.length, content_type: contentType, etag: "synthetic-etag" };
     },
     async inspectObject({ objectKey }) {
+      assertStorageOutsideTransaction(label);
+      assert.equal(state.verificationStages.get(label), "preflight_committed");
       state.storageCalls.push({ label, kind: "inspect", objectKey });
       const body = state.objects.get(objectKey); assert.ok(body, "synthetic object must exist");
       return { byte_size: body.length, content_type: "image/png", etag: "synthetic-etag" };
     },
     async getObject({ objectKey }) {
+      assertStorageOutsideTransaction(label);
+      assert.equal(state.verificationStages.get(label), "preflight_committed");
       state.storageCalls.push({ label, kind: "get", objectKey });
       const body = state.objects.get(objectKey); assert.ok(body, "synthetic object must exist");
       return { body: Buffer.from(body), byte_size: body.length, content_type: "image/png" };
     },
     async deleteObject({ objectKey }) {
+      assertStorageOutsideTransaction(label);
+      assert.equal(state.verificationStages.get(label), "published");
       state.storageCalls.push({ label, kind: "delete", objectKey });
       state.objects.delete(objectKey); return { deleted: true };
     },
@@ -405,6 +461,15 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
         "begin", "asset_workfile", "signatures", "applicability", "create_asset", "commit", "release",
       ]);
     }
+    for (const [label, stage] of state.verificationStages) {
+      assert.equal(stage, "published");
+      for (const phase of ["verification_preflight", "verification_final"]) {
+        const expected = ["begin", `${phase}_workfile_lock`, "signatures", "verification_asset_lock", "applicability"];
+        if (phase === "verification_final") expected.push("verify_asset");
+        expected.push("commit", "release");
+        assert.deepEqual(phaseCalls(state, phase, label).map(call => call.kind), expected);
+      }
+    }
   } };
 }
 
@@ -417,92 +482,93 @@ function assertVerifiedObjectRetained(state, assetId) {
   assert.equal(state.storageCalls.some(call => call.kind === "delete" && call.objectKey === asset.object_key), false);
 }
 
-test("exhibit preservation: a shared pending winner survives the real loser's canonical revision conflict", { timeout: 10000 }, async t => {
-  const bothRead = deferred(); const bothPublished = deferred(); const winnerFinished = deferred();
-  const readers = new Set(); const publishers = new Set();
+test("exhibit preservation: a shared pending render survives the verifier's real canonical revision conflict", { timeout: 10000 }, async t => {
+  const loserAtCanonical = deferred(); const winnerFinished = deferred();
   const fixture = harness({
     existingRender: "pending_upload",
-    async onVerificationRead(label) {
-      readers.add(label); if (readers.size === 2) bothRead.resolve(); await bothRead.promise;
+    async onCanonicalLock(label) {
+      if (label === "loser") { loserAtCanonical.resolve(); await winnerFinished.promise; }
     },
-    async onVerificationPublished(label) {
-      publishers.add(label); if (publishers.size === 2) bothPublished.resolve(); await bothPublished.promise;
-    },
-    async onCanonicalLock(label) { if (label === "loser") await winnerFinished.promise; },
   });
-  const winning = fixture.run("winner");
   const losing = fixture.run("loser").then(value => ({ value }), error => ({ error }));
+  let winning;
   t.after(async () => {
-    bothRead.resolve(); bothPublished.resolve(); winnerFinished.resolve();
+    loserAtCanonical.resolve(); winnerFinished.resolve();
     await Promise.allSettled([winning, losing]);
   });
+  await Promise.race([loserAtCanonical.promise, losing.then(({ error }) => {
+    throw error || new Error("loser_finished_before_canonical_barrier");
+  })]);
+  assert.equal(fixture.state.assets.get(SHARED_ASSET_ID).status, "verified");
+  // The pending verifier pauses only after both verification transactions.
+  // The winner uses the existing verified-import branch, not a new verify replay.
+  winning = fixture.run("winner");
   let winner;
   try { winner = await winning; } finally { winnerFinished.resolve(); }
   const { error } = await losing;
-  assert.equal(winner.idempotent, false);
+  assert.equal(winner.idempotent, true);
   assert.equal(winner.sketch.revision, 2);
   assert.equal(winner.sketch.rendered_asset_id, SHARED_ASSET_ID);
   assert.equal(error?.message, "uad_sketch_revision_conflict");
   assert.equal(error.currentRevision, 2, "use the real saveUadSketch optimistic-revision guard");
-  assert.deepEqual([...readers].sort(), ["loser", "winner"]);
-  assert.deepEqual([...publishers].sort(), ["loser", "winner"]);
-  assert.equal(fixture.state.createdAssetIds.length, 0, "both requests resumed the same pre-existing pending render");
+  assert.deepEqual(fixture.state.calls.filter(call => call.kind === "verification_read").map(call => call.label), ["loser"]);
+  assert.deepEqual(fixture.state.calls.filter(call => call.kind === "verify_asset").map(call => call.label), ["loser"]);
+  assert.equal(fixture.state.storageCalls.some(call => call.label === "winner"), false);
+  assert.equal(fixture.state.createdAssetIds.length, 0, "the loser verified the existing pending render and the winner reused it");
   assert.equal(fixture.state.sketch.revision, 2);
   assert.equal(fixture.state.sketch.rendered_asset_id, SHARED_ASSET_ID);
   assert.deepEqual(fixture.state.history, [{ sketch_id: SKETCH_ID, revision: 2, rendered_asset_id: SHARED_ASSET_ID }]);
+  assert.equal(fixture.state.sketchAudits.length, 1);
+  assert.equal(fixture.state.importAudits.length, 1);
   const loserCalls = fixture.state.calls.filter(call => call.label === "loser");
   assert.ok(loserCalls.some(call => call.kind === "canonical_sketch"));
   assert.ok(loserCalls.some(call => call.kind === "rollback"));
   assert.equal(loserCalls.some(call => call.kind === "save_sketch"), false);
   assert.equal(fixture.state.clients.every(client => client.released), true);
   fixture.assertComplete();
-  // This was RED against the prior compensation: idempotent:false does not
-  // mean this request owns the asset or may soft-delete the winner's exhibit.
+  assert.equal(fixture.state.objects.has(`synthetic/${WORKFILE_ID}/${SHARED_ASSET_ID}/staging.png`), true,
+    "an unrecognized legacy staging key is retained rather than deleted by prefix");
+  // The original #636 reproduction showed that idempotent:false does not prove
+  // ownership. This schedule preserves that protection with one pending verifier.
   assertVerifiedObjectRetained(fixture.state, SHARED_ASSET_ID);
 });
 
 test("exhibit preservation: the render creator cannot retire an exhibit referenced by the winning request", { timeout: 10000 }, async t => {
-  const creatorRead = deferred(); const bothRead = deferred(); const bothPublished = deferred();
-  const winnerFinished = deferred(); const readers = new Set(); const publishers = new Set();
+  const creatorAtCanonical = deferred(); const winnerFinished = deferred();
   const fixture = harness({
-    async onVerificationRead(label) {
-      readers.add(label);
-      if (label === "creator") creatorRead.resolve();
-      if (readers.size === 2) bothRead.resolve();
-      await bothRead.promise;
+    async onCanonicalLock(label) {
+      if (label === "creator") { creatorAtCanonical.resolve(); await winnerFinished.promise; }
     },
-    async onVerificationPublished(label) {
-      publishers.add(label);
-      if (publishers.size === 2) bothPublished.resolve();
-      await bothPublished.promise;
-    },
-    async onCanonicalLock(label) { if (label === "creator") await winnerFinished.promise; },
   });
   const losing = fixture.run("creator").then(value => ({ value }), error => ({ error }));
   let winning;
   t.after(async () => {
-    creatorRead.resolve(); bothRead.resolve(); bothPublished.resolve(); winnerFinished.resolve();
+    creatorAtCanonical.resolve(); winnerFinished.resolve();
     await Promise.allSettled([winning, losing]);
   });
-  await creatorRead.promise;
+  await Promise.race([creatorAtCanonical.promise, losing.then(({ error }) => {
+    throw error || new Error("creator_finished_before_canonical_barrier");
+  })]);
   assert.equal(fixture.state.createdAssetIds.length, 1);
   const assetId = fixture.state.createdAssetIds[0];
-  assert.equal(fixture.state.assets.get(assetId).status, "pending_upload");
+  assert.equal(fixture.state.assets.get(assetId).status, "verified");
   winning = fixture.run("winner");
   let winner;
   try { winner = await winning; } finally { winnerFinished.resolve(); }
   const { error } = await losing;
-  assert.equal(winner.idempotent, false);
+  assert.equal(winner.idempotent, true);
   assert.equal(winner.sketch.revision, 2);
   assert.equal(winner.sketch.rendered_asset_id, assetId);
   assert.equal(error?.message, "uad_sketch_revision_conflict");
   assert.equal(error.currentRevision, 2);
-  assert.deepEqual([...readers].sort(), ["creator", "winner"]);
-  assert.deepEqual([...publishers].sort(), ["creator", "winner"]);
+  assert.deepEqual(fixture.state.calls.filter(call => call.kind === "verification_read").map(call => call.label), ["creator"]);
+  assert.deepEqual(fixture.state.calls.filter(call => call.kind === "verify_asset").map(call => call.label), ["creator"]);
+  assert.equal(fixture.state.storageCalls.some(call => call.label === "winner"), false);
   assert.equal(fixture.state.createdAssetIds.length, 1);
   assert.deepEqual(fixture.state.history, [{ sketch_id: SKETCH_ID, revision: 2, rendered_asset_id: assetId }]);
   assert.equal(fixture.state.sketchAudits.length, 1);
-  const creatorKinds = postCreationCalls(fixture.state, "creator").map(call => call.kind);
+  assert.equal(fixture.state.importAudits.length, 1);
+  const creatorKinds = canonicalAndCleanupCalls(fixture.state, "creator").map(call => call.kind);
   assert.ok(creatorKinds.includes("canonical_sketch"));
   assert.equal(creatorKinds.includes("save_sketch"), false);
   assert.equal(creatorKinds.filter(kind => kind === "rollback").length, 2);
@@ -535,8 +601,9 @@ for (const lifecycle of ["signed", "partial_signature", "historical_signature"])
     assert.equal(fixture.state.sketch.rendered_asset_id, ORIGINAL_ASSET_ID);
     assert.deepEqual(fixture.state.history, []);
     assert.deepEqual(fixture.state.sketchAudits, []);
-    const kinds = postCreationCalls(fixture.state).map(call => call.kind);
-    assert.ok(kinds.indexOf("verify_asset") < kinds.indexOf("canonical_lock"));
+    const allKinds = fixture.state.calls.map(call => call.kind);
+    const kinds = canonicalAndCleanupCalls(fixture.state).map(call => call.kind);
+    assert.ok(allKinds.indexOf("verify_asset") < allKinds.indexOf("canonical_lock"));
     assert.ok(kinds.includes("rollback"));
     assert.equal(kinds.includes("canonical_sketch"), false);
     assert.equal(kinds.includes("commit"), false);
@@ -580,7 +647,7 @@ test("exhibit preservation: owned unreferenced render receives bounded metadata-
   assert.equal(fixture.state.workfile.status, "draft");
   assert.equal(fixture.state.workfile.current_revision, 4);
   assert.equal(fixture.state.assets.get(ORIGINAL_ASSET_ID).status, "verified");
-  assert.equal(fixture.state.clients.length, 3);
+  assert.equal(fixture.state.clients.length, 5);
   const cleanupClient = fixture.state.clients.find(client => client.phase === "cleanup");
   assert.ok(cleanupClient);
   assert.deepEqual(fixture.state.calls.filter(call => call.client === cleanupClient.name).map(call => call.kind), [
@@ -609,7 +676,7 @@ test("exhibit preservation: cleanup commit failure rolls back retirement and pre
     return true;
   });
   assert.equal(fixture.state.createdAssetIds.length, 1);
-  assert.equal(fixture.state.clients.length, 3);
+  assert.equal(fixture.state.clients.length, 5);
   const cleanupClient = fixture.state.clients.find(client => client.phase === "cleanup");
   assert.ok(cleanupClient);
   const cleanupKinds = fixture.state.calls.filter(call => call.client === cleanupClient.name).map(call => call.kind);
@@ -634,7 +701,7 @@ for (const observer of ["validationRuns", "generatedArtifacts"]) {
     assert.equal(fixture.state.createdAssetIds.length, 1);
     assert.ok(fixture.state.calls.some(call => call.kind === "cleanup_observers"));
     assert.equal(fixture.state.calls.some(call => call.kind === "orphan_compensation"), false);
-    assert.equal(postCreationCalls(fixture.state).some(call => call.kind === "commit"), false);
+    assert.equal(canonicalAndCleanupCalls(fixture.state).some(call => call.kind === "commit"), false);
     assert.equal(fixture.state.calls.filter(call => call.kind === "rollback").length, 2);
     fixture.assertComplete();
     assertVerifiedObjectRetained(fixture.state, fixture.state.createdAssetIds[0]);

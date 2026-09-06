@@ -87,6 +87,9 @@ function compressedActivePdf() {
 function assetRow(overrides = {}) {
   return {
     id: ASSET_ID,
+    workfile_id: WORKFILE_ID,
+    storage_provider: "r2",
+    storage_bucket: "synthetic-only",
     object_key: `organizations/${ORGANIZATION_ID}/uad/${WORKFILE_ID}/assets/${ASSET_ID}/probe.png`,
     original_file_name: "probe.png",
     content_type: "image/png",
@@ -104,6 +107,67 @@ function assetRow(overrides = {}) {
     created_at: "2026-08-21T00:00:00.000Z",
     workfile_status: "draft",
     ...overrides,
+  };
+}
+
+function verificationHarness(source, persistOutcome) {
+  const queries = [];
+  const clients = [];
+  const storageContractFailures = [];
+  const pool = {
+    async query(sql, params) {
+      queries.push({ sql, params });
+      assert.match(sql, /JOIN appraisal\.uad_workfiles/);
+      assert.match(sql, /asset\.status IN \('pending_upload', 'uploaded'\)/);
+      assert.deepEqual(params, [ASSET_ID, WORKFILE_ID]);
+      return { rows: [structuredClone(source)] };
+    },
+    async connect() {
+      const client = { active: false, released: false, statements: [],
+        async query(sql, params = []) {
+          queries.push({ sql, params });
+          const statement = sql.replace(/\s+/g, " ").trim();
+          client.statements.push(statement);
+          if (statement === "BEGIN ISOLATION LEVEL READ COMMITTED") {
+            assert.equal(client.active, false); client.active = true;
+            assert.deepEqual(params, []); return { rows: [] };
+          }
+          assert.equal(client.active, true);
+          if (statement === "COMMIT" || statement === "ROLLBACK") {
+            assert.deepEqual(params, []); client.active = false; return { rows: [] };
+          }
+          if (statement === "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+            assert.deepEqual(params, [WORKFILE_ID]);
+            return { rows: [{ id: WORKFILE_ID, organization_id: ORGANIZATION_ID, status: "draft", signed_at: null }] };
+          }
+          if (statement === "SELECT EXISTS ( SELECT 1 FROM appraisal.uad_signatures WHERE workfile_id = $1 ) AS has_signatures") {
+            assert.deepEqual(params, [WORKFILE_ID]); return { rows: [{ has_signatures: false }] };
+          }
+          if (statement === "SELECT id, workfile_id, object_key, original_file_name, content_type, section_number, entity_id, asset_kind, caption_type, caption, storage_provider, storage_bucket, capture_metadata, status FROM appraisal.uad_assets WHERE id = $1 AND workfile_id = $2 FOR UPDATE") {
+            assert.deepEqual(params, [ASSET_ID, WORKFILE_ID]);
+            return { rows: [structuredClone(source)] };
+          }
+          assert.match(statement, /^WITH mutable_workfile AS /);
+          assert.match(statement, /AND status IN \('pending_upload', 'uploaded'\) AND EXISTS \(SELECT 1 FROM mutable_workfile\)/);
+          return persistOutcome(sql, params);
+        },
+        release() { assert.equal(client.released, false); assert.equal(client.active, false); client.released = true; },
+      };
+      clients.push(client); return client;
+    },
+  };
+  return { pool, queries,
+    assertOutsideTransaction() {
+      try { assert.equal(clients.some(client => client.active), false); }
+      catch (error) { storageContractFailures.push(error.message); throw error; }
+    },
+    assertComplete() {
+      assert.deepEqual(storageContractFailures, [], "rejection/cleanup must not swallow a storage-lock assertion");
+      assert.equal(clients.length, 2, "verification owns distinct preflight and final outcome transactions");
+      assert.equal(clients.every(client => client.released && !client.active), true);
+      assert.equal(clients.every(client => client.statements.at(-1) === "COMMIT"), true);
+      assert.equal(clients.filter(client => client.statements.some(sql => sql.startsWith("WITH mutable_workfile"))).length, 1);
+    },
   };
 }
 
@@ -173,71 +237,66 @@ test("new UAD uploads reject active SVG documents before issuing a storage URL",
 
 test("asset verification copies reviewed bytes to a checksum-addressed immutable key", async () => {
   const source = assetRow({ status: "pending_upload", byte_size: null });
-  const queries = [];
-  const pool = {
-    async query(sql, params) {
-      queries.push({ sql, params });
-      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
-      if (/updated_asset AS/.test(sql)) return { rows: [assetRow({ object_key: params[5] })] };
-      throw new Error(`unexpected_query:${sql}`);
-    },
-  };
+  const fixture = verificationHarness(source, (sql, params) => {
+    assert.match(sql, /updated_asset AS/);
+    return { rows: [assetRow({ object_key: params[5] })] };
+  });
   const operations = [];
   const storage = {
     async inspectObject({ objectKey }) {
+      fixture.assertOutsideTransaction();
       operations.push(["inspect", objectKey]);
       return { byte_size: PNG.length, content_type: "image/png", etag: "source-etag" };
     },
     async getObject({ objectKey }) {
+      fixture.assertOutsideTransaction();
       operations.push(["get", objectKey]);
       return { body: PNG, byte_size: PNG.length, content_type: "image/png" };
     },
     async putObject({ objectKey, contentType, body }) {
+      fixture.assertOutsideTransaction();
       operations.push(["put", objectKey, contentType, body.length]);
       return { byte_size: body.length, etag: "verified-etag" };
     },
     async deleteObject({ objectKey }) {
+      fixture.assertOutsideTransaction();
       operations.push(["delete", objectKey]);
       return { deleted: true };
     },
   };
 
-  const result = await verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID);
-  const update = queries.find((query) => /updated_asset AS/.test(query.sql));
+  const result = await verifyUadAssetUpload(fixture.pool, storage, WORKFILE_ID, ASSET_ID);
+  const update = fixture.queries.find((query) => /updated_asset AS/.test(query.sql));
   assert.equal(result.status, "verified");
   assert.match(update.params[4], /^[a-f0-9]{64}$/);
   assert.match(update.params[5], new RegExp(`/verified-assets/${ASSET_ID}/${update.params[4]}/probe\\.png$`));
   assert.deepEqual(operations.map(([operation]) => operation), ["inspect", "get", "put", "delete"]);
   assert.equal(operations.at(-1)[1], source.object_key);
+  fixture.assertComplete();
 });
 
 test("asset verification rejects and removes a same-size MIME-spoofed upload", async () => {
   const source = assetRow({ status: "pending_upload", byte_size: null });
   const spoof = Buffer.alloc(PNG.length, 0x41);
   let rejected = false;
-  const pool = {
-    async query(sql) {
-      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
-      if (/SET status = 'rejected'/.test(sql)) {
-        rejected = true;
-        return { rows: [{ id: ASSET_ID }] };
-      }
-      throw new Error(`unexpected_query:${sql}`);
-    },
-  };
+  const fixture = verificationHarness(source, (sql) => {
+    assert.match(sql, /SET status = 'rejected'/); rejected = true;
+    return { rows: [{ id: ASSET_ID }] };
+  });
   const deleted = [];
   const storage = {
-    inspectObject: async () => ({ byte_size: spoof.length, content_type: "image/png", etag: "spoof" }),
-    getObject: async () => ({ body: spoof, byte_size: spoof.length, content_type: "image/png" }),
+    inspectObject: async () => { fixture.assertOutsideTransaction(); return { byte_size: spoof.length, content_type: "image/png", etag: "spoof" }; },
+    getObject: async () => { fixture.assertOutsideTransaction(); return { body: spoof, byte_size: spoof.length, content_type: "image/png" }; },
     putObject: async () => assert.fail("spoofed bytes must never be copied"),
-    deleteObject: async ({ objectKey }) => deleted.push(objectKey),
+    deleteObject: async ({ objectKey }) => { fixture.assertOutsideTransaction(); deleted.push(objectKey); },
   };
   await assert.rejects(
-    () => verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID),
+    () => verifyUadAssetUpload(fixture.pool, storage, WORKFILE_ID, ASSET_ID),
     /invalid_uad_uploaded_asset/,
   );
   assert.equal(rejected, true);
   assert.deepEqual(deleted, [source.object_key]);
+  fixture.assertComplete();
 });
 
 test("asset verification rejects and removes structurally invalid PDF bytes", async () => {
@@ -251,30 +310,25 @@ test("asset verification rejects and removes structurally invalid PDF bytes", as
     capture_metadata: { expected_byte_size: malformed.length },
   });
   let rejected = false;
-  const pool = {
-    async query(sql) {
-      if (/JOIN appraisal\.uad_workfiles/.test(sql)) return { rows: [source] };
-      if (/SET status = 'rejected'/.test(sql)) {
-        rejected = true;
-        return { rows: [{ id: ASSET_ID }] };
-      }
-      throw new Error(`unexpected_query:${sql}`);
-    },
-  };
+  const fixture = verificationHarness(source, (sql) => {
+    assert.match(sql, /SET status = 'rejected'/); rejected = true;
+    return { rows: [{ id: ASSET_ID }] };
+  });
   const deleted = [];
   const storage = {
-    inspectObject: async () => ({ byte_size: malformed.length, content_type: "application/pdf" }),
-    getObject: async () => ({ body: malformed, byte_size: malformed.length, content_type: "application/pdf" }),
+    inspectObject: async () => { fixture.assertOutsideTransaction(); return { byte_size: malformed.length, content_type: "application/pdf" }; },
+    getObject: async () => { fixture.assertOutsideTransaction(); return { body: malformed, byte_size: malformed.length, content_type: "application/pdf" }; },
     putObject: async () => assert.fail("invalid PDF bytes must never be copied"),
-    deleteObject: async ({ objectKey }) => deleted.push(objectKey),
+    deleteObject: async ({ objectKey }) => { fixture.assertOutsideTransaction(); deleted.push(objectKey); },
   };
 
   await assert.rejects(
-    () => verifyUadAssetUpload(pool, storage, WORKFILE_ID, ASSET_ID),
+    () => verifyUadAssetUpload(fixture.pool, storage, WORKFILE_ID, ASSET_ID),
     /invalid_uad_uploaded_asset/,
   );
   assert.equal(rejected, true);
   assert.deepEqual(deleted, [source.object_key]);
+  fixture.assertComplete();
 });
 
 test("ZIP construction rejects portable traversal, device, collision, and control-character paths", () => {

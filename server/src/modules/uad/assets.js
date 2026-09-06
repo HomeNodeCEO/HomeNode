@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 
 import { UAD_ASSET_KINDS } from "./constants.js";
 import {
@@ -434,26 +435,86 @@ async function assertCurrentUadWorkfileMutable(queryable, workfileId) {
   assertUadWorkfileMutable(result.rows[0].status);
 }
 
-async function rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, metadata) {
-  const rejected = await pool.query(
-    `WITH mutable_workfile AS (
-       UPDATE appraisal.uad_workfiles
-          SET status = 'draft', updated_at = now()
-        WHERE id = $2 AND status IN ('draft', 'validating', 'ready', 'revised')
-        RETURNING id
-     )
-     UPDATE appraisal.uad_assets
-        SET status = 'rejected', updated_at = now(),
-            capture_metadata = capture_metadata || $3::jsonb
-      WHERE id = $1 AND workfile_id = $2
-        AND EXISTS (SELECT 1 FROM mutable_workfile)
-      RETURNING id`,
-    [assetId, workfileId, JSON.stringify(metadata)],
-  );
-  if (!rejected.rows.length) {
-    await assertCurrentUadWorkfileMutable(pool, workfileId);
-    throw new Error("uad_asset_not_found");
+// These fields bind the bytes being inspected to the original database source.
+// Unrelated attribution/timestamps are intentionally not verification identity.
+const VERIFICATION_SOURCE_FIELDS = Object.freeze([
+  "object_key", "original_file_name", "content_type", "section_number",
+  "entity_id", "asset_kind", "caption_type", "caption", "storage_provider", "storage_bucket",
+]);
+
+// Used for a read-only preflight and again for the final outcome. All storage
+// inspection/copy/cleanup happens between or after these short transactions.
+async function withUadAssetVerificationLock(pool, workfileId, assetId, source, operation) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    const locked = await client.query(
+      `SELECT id, organization_id, status, signed_at
+         FROM appraisal.uad_workfiles
+        WHERE id = $1
+        FOR UPDATE`,
+      [workfileId],
+    );
+    if (!locked.rows.length) throw new Error("uad_workfile_not_found");
+    await assertLockedUadWorkfileMutable(client, locked.rows[0]);
+    if (locked.rows[0].organization_id !== source.organization_id) throw new Error("uad_asset_not_found");
+    const selected = await client.query(
+      `SELECT id, workfile_id, object_key, original_file_name, content_type,
+              section_number, entity_id, asset_kind, caption_type, caption,
+              storage_provider, storage_bucket, capture_metadata, status
+         FROM appraisal.uad_assets
+        WHERE id = $1 AND workfile_id = $2
+        FOR UPDATE`,
+      [assetId, workfileId],
+    );
+    const current = selected.rows[0];
+    if (!current || current.id !== assetId || current.workfile_id !== workfileId
+      || !["pending_upload", "uploaded"].includes(current.status)
+      || !VERIFICATION_SOURCE_FIELDS.every((key) => current[key] === source[key])
+      || !isDeepStrictEqual(current.capture_metadata, source.capture_metadata)) {
+      throw new Error("uad_asset_not_found");
+    }
+    const result = await operation(client, current);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch { /* Preserve the original verification failure. */ }
+    throw error;
+  } finally {
+    client.release();
   }
+}
+
+async function cleanupOwnedUadUploadSource(storage, workfileId, assetId, source) {
+  const ownedKey = buildUadObjectKey({ organizationId: source.organization_id, workfileId, assetId,
+    fileName: source.original_file_name });
+  // Legacy/unrecognized keys are retained, never rebased or deleted by prefix.
+  // A checksum-addressed key cannot equal this exact upload-request key.
+  if (source.object_key === ownedKey) {
+    await storage.deleteObject?.({ objectKey: ownedKey }).catch(() => undefined);
+  }
+}
+
+async function rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, source, metadata) {
+  await withUadAssetVerificationLock(pool, workfileId, assetId, source, async (client) => {
+    const rejected = await client.query(
+      `WITH mutable_workfile AS (
+         UPDATE appraisal.uad_workfiles
+            SET status = 'draft', updated_at = now()
+          WHERE id = $2 AND status IN ('draft', 'validating', 'ready', 'revised')
+          RETURNING id
+       )
+       UPDATE appraisal.uad_assets
+          SET status = 'rejected', updated_at = now(),
+              capture_metadata = capture_metadata || $3::jsonb
+        WHERE id = $1 AND workfile_id = $2
+          AND status IN ('pending_upload', 'uploaded')
+          AND EXISTS (SELECT 1 FROM mutable_workfile)
+        RETURNING id`,
+      [assetId, workfileId, JSON.stringify(metadata)],
+    );
+    if (!rejected.rows.length) throw new Error("uad_asset_not_found");
+  });
 }
 
 export async function createUadAssetUpload(pool, storage, workfileIdValue, input) {
@@ -585,7 +646,8 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   const assetId = normalizeUadWorkfileId(assetIdValue);
   const result = await pool.query(
     `SELECT asset.id, asset.object_key, asset.original_file_name, asset.content_type,
-            asset.section_number,
+            asset.section_number, asset.entity_id, asset.asset_kind,
+            asset.caption_type, asset.caption, asset.storage_provider, asset.storage_bucket,
             asset.capture_metadata, workfile.organization_id,
             workfile.status AS workfile_status
        FROM appraisal.uad_assets AS asset
@@ -598,6 +660,9 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
   const asset = result.rows[0];
   assertUadWorkfileMutable(asset.workfile_status);
   await assertUadAssetApplicable(pool, workfileId, asset);
+  await withUadAssetVerificationLock(pool, workfileId, assetId, asset, async (client, current) => {
+    await assertUadAssetApplicable(client, workfileId, current);
+  });
   const inspected = await storage.inspectObject({ objectKey: asset.object_key });
   const expectedSize = Number(asset.capture_metadata?.expected_byte_size || 0);
   const inspectedType = String(inspected.content_type || "").split(";", 1)[0].trim().toLowerCase();
@@ -606,11 +671,11 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     (expectedSize && inspected.byte_size !== expectedSize) ||
     (inspectedType && inspectedType !== asset.content_type)
   ) {
-    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, {
+    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, asset, {
       verification_error: "uploaded_object_does_not_match_request",
       inspected,
     });
-    await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
+    await cleanupOwnedUadUploadSource(storage, workfileId, assetId, asset);
     throw new Error("invalid_uad_uploaded_asset");
   }
   let downloaded;
@@ -623,10 +688,10 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     verified = inspectUadAssetPayload(downloaded.body, asset.content_type);
     if (verified.content_type === "application/pdf") await inspectUadPdfSafety(downloaded.body);
   } catch (error) {
-    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, {
+    await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, asset, {
       verification_error: String(error?.message || "invalid_uad_uploaded_asset").split(":")[0],
     });
-    await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
+    await cleanupOwnedUadUploadSource(storage, workfileId, assetId, asset);
     throw new Error("invalid_uad_uploaded_asset");
   }
   const verifiedObjectKey = buildUadVerifiedAssetObjectKey({
@@ -642,12 +707,13 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     body: downloaded.body,
   });
   if (Number(copied.byte_size) !== verified.byte_size) {
-    await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
+    // Same asset and bytes share this key with concurrent verifiers. Retain it
+    // on uncertainty; deleting it could destroy another request's publication.
     throw new Error("invalid_uad_uploaded_asset");
   }
-  let updated;
-  try {
-    updated = await pool.query(
+  const updatedAsset = await withUadAssetVerificationLock(pool, workfileId, assetId, asset, async (client, current) => {
+    await assertUadAssetApplicable(client, workfileId, current);
+    const updated = await client.query(
       `WITH mutable_workfile AS (
        UPDATE appraisal.uad_workfiles
           SET status = 'draft', updated_at = now()
@@ -668,6 +734,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
                 'verified_object_immutable', true
               )
         WHERE id = $1 AND workfile_id = $2
+          AND status IN ('pending_upload', 'uploaded')
           AND EXISTS (SELECT 1 FROM mutable_workfile)
         RETURNING *
      )
@@ -677,17 +744,13 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
         verified.checksum_sha256, verifiedObjectKey, JSON.stringify(verified.dimensions),
       ],
     );
-  } catch (error) {
-    await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
-    throw error;
-  }
-  if (!updated.rows.length) {
-    await storage.deleteObject?.({ objectKey: verifiedObjectKey }).catch(() => undefined);
-    await assertCurrentUadWorkfileMutable(pool, workfileId);
-    throw new Error("uad_asset_not_found");
-  }
-  await storage.deleteObject?.({ objectKey: asset.object_key }).catch(() => undefined);
-  return assetResponse(updated.rows[0]);
+    if (!updated.rows.length) throw new Error("uad_asset_not_found");
+    return updated.rows[0];
+  });
+  // No verified-key deletion on refusal, SQL failure or an uncertain COMMIT.
+  // Only an acknowledged transition permits best-effort owned staging cleanup.
+  await cleanupOwnedUadUploadSource(storage, workfileId, assetId, asset);
+  return assetResponse(updatedAsset);
 }
 
 export async function deleteUadAsset(pool, storage, workfileIdValue, assetIdValue) {

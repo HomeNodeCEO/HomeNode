@@ -121,10 +121,13 @@ test("asset deletion locks and rejects the workfile before deleting storage", as
   assert.equal(queries.some((sql) => sql.startsWith("SELECT id, object_key")), false);
 });
 
-test("asset insertion and verification use a race-safe mutable-workfile dependency", () => {
+test("asset insertion and verification retain mutable-workfile dependencies with locked verification admission", () => {
   const assets = fs.readFileSync(path.resolve(directory, "../src/modules/uad/assets.js"), "utf8");
   const validation = fs.readFileSync(path.resolve(directory, "../src/modules/uad/validation.js"), "utf8");
   assert.match(assets, /WITH mutable_workfile AS[\s\S]+status IN \('draft', 'validating', 'ready', 'revised'\)[\s\S]+FROM mutable_workfile/);
   assert.match(assets, /updated_asset AS[\s\S]+EXISTS \(SELECT 1 FROM mutable_workfile\)/);
+  assert.match(assets, /async function withUadAssetVerificationLock[\s\S]+BEGIN ISOLATION LEVEL READ COMMITTED[\s\S]+FOR UPDATE[\s\S]+await assertLockedUadWorkfileMutable\(client, locked\.rows\[0\]\)/);
+  assert.match(assets, /async function rejectUadAssetIfWorkfileMutable[\s\S]+await withUadAssetVerificationLock\(pool, workfileId, assetId, source/);
+  assert.match(assets, /const updatedAsset = await withUadAssetVerificationLock\(pool, workfileId, assetId, asset/);
   assert.match(validation, /assertUadWorkfileMutable\(locked\.rows\[0\]\.status, "uad_validation_status_locked"\)/);
 });

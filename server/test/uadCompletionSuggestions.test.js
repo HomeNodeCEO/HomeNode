@@ -17,6 +17,11 @@ const CUSTOM_REPORT_ID = "95401bd2-05e2-45ca-80bf-ce7b03608264";
 const UAD_REPORT_ID = "0f349b77-c91c-4ca7-829c-5edbe71b5a60";
 const UAD_WORKFILE_ID = "57f26fb0-0ed7-42dc-a7dd-54a87f2b7ab5";
 const ACTOR_USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
+const SUPERVISOR_USER_ID = "891f91b1-fe6d-4b45-adc8-7c214fa85671";
+const OTHER_USER_ID = "49251270-99d8-45c1-a232-3aa1180dac2d";
+const ORGANIZATION_ID = "77604890-455a-458f-b99b-b8bb19c424f9";
+const OTHER_ORGANIZATION_ID = "6c63f1a7-5fac-4908-ae59-4b31cf4d28df";
+const OTHER_WORKFILE_ID = "cb77e55c-a78f-493f-be58-fd4384c021ef";
 
 function fixtureParts() {
   const { snapshot, property } = customAppraisalReportFixture();
@@ -786,6 +791,161 @@ function applyInput(suggestions, selectedSuggestionIds) {
   };
 }
 
+function completionConfirmationReceipt({
+  workfileId = UAD_WORKFILE_ID,
+  organizationId = ORGANIZATION_ID,
+  actorUserId = ACTOR_USER_ID,
+  signerRole = "appraiser",
+} = {}) {
+  return Object.freeze({ workfileId, organizationId, actorUserId, signerRole });
+}
+
+function completionReceiptWithout(field) {
+  const receipt = { ...completionConfirmationReceipt() };
+  delete receipt[field];
+  return Object.freeze(receipt);
+}
+
+function completionAuthorizationHarness(options = {}) {
+  const lockedWorkfile = options.lockedWorkfile || {};
+  const actorUserId = options.actorUserId ?? ACTOR_USER_ID;
+  const workfileIdValue = options.workfileIdValue ?? UAD_WORKFILE_ID;
+  const receipt = Object.hasOwn(options, "receipt")
+    ? options.receipt
+    : completionConfirmationReceipt();
+  const input = fixtureParts();
+  const suggestions = buildUadCompletionSuggestions(buildCanonicalAppraisalCompletion({
+    ...input,
+    generatedAt: "2026-08-20T12:00:00.000Z",
+  }));
+  const selected = suggestions.suggestions.market_fields[0];
+  assert.ok(selected, "the authorization harness needs one real completion suggestion");
+  const trace = [];
+  const downstreamReads = [];
+  const canonicalWrites = [];
+  const auditActorIds = [];
+  const insertedRows = [];
+  let releases = 0;
+  const row = {
+    id: UAD_WORKFILE_ID,
+    organization_id: ORGANIZATION_ID,
+    assigned_appraiser_user_id: ACTOR_USER_ID,
+    supervisory_appraiser_user_id: SUPERVISOR_USER_ID,
+    current_revision: 4,
+    specification_release_key: "uad-3.6-2026-01-26",
+    status: "draft",
+    signed_at: null,
+    ...structuredClone(lockedWorkfile),
+  };
+  const client = {
+    async query(sql, params = []) {
+      const normalized = String(sql).replace(/\s+/g, " ").trim();
+      trace.push({ sql: normalized, params: structuredClone(params) });
+      if (["BEGIN ISOLATION LEVEL READ COMMITTED", "COMMIT", "ROLLBACK"].includes(normalized)) {
+        return { rows: [] };
+      }
+      if (normalized.includes("FROM appraisal.uad_workfiles") && normalized.endsWith("FOR UPDATE")) {
+        assert.deepEqual(params, [String(workfileIdValue).trim().toLowerCase()]);
+        return { rows: [structuredClone(row)] };
+      }
+      if (normalized.includes("AS has_signatures")) {
+        return { rows: [{ has_signatures: false }] };
+      }
+      if (normalized.includes("WHERE uad_workfile_id = $1")) {
+        downstreamReads.push("target_report_file");
+        return { rows: [{ id: UAD_REPORT_ID, account_id: "26272500060150000" }] };
+      }
+      if (normalized.includes("report_file.id = $1")) {
+        downstreamReads.push("registered_report_file");
+        return { rows: [structuredClone(input.targetReportFile)] };
+      }
+      if (normalized.includes("FROM app.appraisal_subject_snapshots")) {
+        downstreamReads.push("subject_snapshot");
+        return { rows: [structuredClone(input.subjectSnapshot)] };
+      }
+      if (normalized.includes("report_file.workflow_type = 'custom_appraisal'")) {
+        downstreamReads.push("source_report_file");
+        return { rows: [structuredClone(input.sourceReportFile)] };
+      }
+      if (normalized.includes("FROM app.custom_appraisal_workfile_sections")) {
+        downstreamReads.push("source_sections");
+        return {
+          rows: Object.entries(input.customSections).map(([sectionKey, section]) => ({
+            section_key: sectionKey,
+            section_value: structuredClone(section.value),
+            revision: section.revision,
+          })),
+        };
+      }
+      if (normalized.includes("SELECT * FROM appraisal.uad_field_values")) {
+        downstreamReads.push("canonical_values");
+        return { rows: structuredClone(insertedRows) };
+      }
+      if (normalized.includes("SELECT *") && normalized.includes("FROM appraisal.uad_entities")) {
+        downstreamReads.push("canonical_entities");
+        return { rows: [] };
+      }
+      if (normalized.includes("INSERT INTO appraisal.uad_field_values")) {
+        canonicalWrites.push("field_value");
+        insertedRows.push({
+          id: params[0],
+          workfile_id: params[1],
+          entity_id: params[2],
+          field_context: params[3],
+          uad_uid: params[4],
+          report_field_id: params[5],
+          value: JSON.parse(params[6]),
+          source_type: "homenode",
+          source_reference: params[7],
+          is_appraiser_confirmed: true,
+        });
+        return { rows: [] };
+      }
+      if (normalized.startsWith("UPDATE appraisal.uad_workfiles")) {
+        canonicalWrites.push("workfile");
+        return { rows: [] };
+      }
+      if (normalized.includes("INSERT INTO appraisal.uad_revisions")) {
+        canonicalWrites.push("revision");
+        return { rows: [] };
+      }
+      if (normalized.includes("INSERT INTO appraisal.uad_audit_events")) {
+        canonicalWrites.push("audit");
+        auditActorIds.push(params[1]);
+        return { rows: [] };
+      }
+      throw new Error(`unexpected_completion_authorization_query:${normalized.slice(0, 120)}`);
+    },
+    release() { releases += 1; },
+  };
+  return {
+    run: () => applyUadCompletionSuggestions(
+      { connect: async () => client },
+      workfileIdValue,
+      applyInput(suggestions, [selected.suggestion_id]),
+      actorUserId,
+      receipt,
+    ),
+    trace,
+    downstreamReads,
+    canonicalWrites,
+    auditActorIds,
+    releases: () => releases,
+  };
+}
+
+async function assertCompletionAuthorizationDenied(options) {
+  const harness = completionAuthorizationHarness(options);
+  await assert.rejects(harness.run, { message: "uad_appraiser_confirmation_access_denied" });
+  assert.equal(harness.trace[0].sql, "BEGIN ISOLATION LEVEL READ COMMITTED");
+  assert.equal(harness.trace.at(-1).sql, "ROLLBACK");
+  assert.equal(harness.trace.filter(({ sql }) => sql === "ROLLBACK").length, 1);
+  assert.equal(harness.trace.some(({ sql }) => sql === "COMMIT"), false);
+  assert.deepEqual(harness.downstreamReads, [], "authorization drift must refuse before suggestion or canonical reads");
+  assert.deepEqual(harness.canonicalWrites, [], "authorization drift must not mutate canonical state or audit");
+  assert.equal(harness.releases(), 1);
+}
+
 test("validates every generated suggestion against the official UAD catalog", () => {
   const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
   const all = [
@@ -1086,7 +1246,16 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
       if (["BEGIN ISOLATION LEVEL READ COMMITTED", "COMMIT", "ROLLBACK"].includes(normalized)) return { rows: [] };
       if (sql.includes("AS has_signatures")) return { rows: [{ has_signatures: false }] };
       if (sql.includes("SELECT id, current_revision, specification_release_key")) {
-        return { rows: [{ id: UAD_WORKFILE_ID, current_revision: 4, specification_release_key: "uad-3.6-2026-01-26", status: "draft", signed_at: null }] };
+        return { rows: [{
+          id: UAD_WORKFILE_ID,
+          organization_id: ORGANIZATION_ID,
+          assigned_appraiser_user_id: ACTOR_USER_ID,
+          supervisory_appraiser_user_id: SUPERVISOR_USER_ID,
+          current_revision: 4,
+          specification_release_key: "uad-3.6-2026-01-26",
+          status: "draft",
+          signed_at: null,
+        }] };
       }
       if (sql.includes("WHERE uad_workfile_id = $1")) {
         return { rows: [{ id: UAD_REPORT_ID, account_id: "26272500060150000" }] };
@@ -1132,6 +1301,7 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
     UAD_WORKFILE_ID,
     applyInput(suggestions, [selected.suggestion_id, selectedGla.suggestion_id]),
     ACTOR_USER_ID,
+    completionConfirmationReceipt(),
   );
 
   assert.equal(result.current_revision, 5);
@@ -1143,3 +1313,128 @@ test("applies reviewed root and seeded-subject fields in one revision and one au
   assert.equal(auditParams[1], ACTOR_USER_ID);
   assert.equal(releases, 1);
 });
+
+test("completion target authorization permits the exact assigned appraiser receipt", async () => {
+  const harness = completionAuthorizationHarness();
+  const result = await harness.run();
+  assert.equal(result.current_revision, 5);
+  assert.equal(result.applied_suggestion_count, 1);
+  assert.deepEqual(harness.canonicalWrites, ["field_value", "workfile", "revision", "audit"]);
+  assert.deepEqual(harness.auditActorIds, [ACTOR_USER_ID]);
+  assert.equal(harness.trace.at(-1).sql, "COMMIT");
+  assert.equal(harness.releases(), 1);
+});
+
+test("completion target authorization permits the exact assigned supervisor receipt", async () => {
+  const receipt = completionConfirmationReceipt({
+    actorUserId: SUPERVISOR_USER_ID,
+    signerRole: "supervisory_appraiser",
+  });
+  const harness = completionAuthorizationHarness({ actorUserId: SUPERVISOR_USER_ID, receipt });
+  const result = await harness.run();
+  assert.equal(result.current_revision, 5);
+  assert.equal(result.applied_suggestion_count, 1);
+  assert.deepEqual(harness.canonicalWrites, ["field_value", "workfile", "revision", "audit"]);
+  assert.deepEqual(harness.auditActorIds, [SUPERVISOR_USER_ID]);
+  assert.equal(harness.trace.at(-1).sql, "COMMIT");
+  assert.equal(harness.releases(), 1);
+});
+
+test("completion target authorization accepts a canonical receipt for an uppercase UUID route value", async () => {
+  const harness = completionAuthorizationHarness({ workfileIdValue: UAD_WORKFILE_ID.toUpperCase() });
+  const result = await harness.run();
+  assert.equal(result.current_revision, 5);
+  assert.deepEqual(harness.canonicalWrites, ["field_value", "workfile", "revision", "audit"]);
+  assert.deepEqual(harness.auditActorIds, [ACTOR_USER_ID]);
+  assert.equal(harness.trace.at(-1).sql, "COMMIT");
+  assert.equal(harness.releases(), 1);
+});
+
+for (const [caseName, options] of [
+  ["organization drift", {
+    lockedWorkfile: { organization_id: OTHER_ORGANIZATION_ID },
+  }],
+  ["assigned appraiser drift", {
+    lockedWorkfile: { assigned_appraiser_user_id: OTHER_USER_ID },
+  }],
+  ["assigned supervisor drift", {
+    lockedWorkfile: { supervisory_appraiser_user_id: OTHER_USER_ID },
+    actorUserId: SUPERVISOR_USER_ID,
+    receipt: completionConfirmationReceipt({
+      actorUserId: SUPERVISOR_USER_ID,
+      signerRole: "supervisory_appraiser",
+    }),
+  }],
+  ["appraiser receipt cannot fall back to the supervisor slot", {
+    lockedWorkfile: {
+      assigned_appraiser_user_id: OTHER_USER_ID,
+      supervisory_appraiser_user_id: ACTOR_USER_ID,
+    },
+  }],
+  ["supervisor receipt cannot fall back to the appraiser slot", {
+    lockedWorkfile: {
+      assigned_appraiser_user_id: SUPERVISOR_USER_ID,
+      supervisory_appraiser_user_id: OTHER_USER_ID,
+    },
+    actorUserId: SUPERVISOR_USER_ID,
+    receipt: completionConfirmationReceipt({
+      actorUserId: SUPERVISOR_USER_ID,
+      signerRole: "supervisory_appraiser",
+    }),
+  }],
+  ["receipt workfile mismatch", {
+    receipt: completionConfirmationReceipt({ workfileId: OTHER_WORKFILE_ID }),
+  }],
+  ["authenticated actor mismatch", {
+    actorUserId: OTHER_USER_ID,
+  }],
+  ["missing confirmation receipt", {
+    receipt: undefined,
+  }],
+  ["null confirmation receipt", {
+    receipt: null,
+  }],
+  ["non-object confirmation receipt", {
+    receipt: "server-confirmed",
+  }],
+  ["array confirmation receipt", {
+    receipt: [UAD_WORKFILE_ID, ORGANIZATION_ID, ACTOR_USER_ID, "appraiser"],
+  }],
+  ["extra confirmation receipt field", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), source: "request-body" }),
+  }],
+  ["unknown signer role", {
+    receipt: completionConfirmationReceipt({ signerRole: "organization_admin" }),
+  }],
+  ["missing workfile binding", {
+    receipt: completionReceiptWithout("workfileId"),
+  }],
+  ["missing organization binding", {
+    receipt: completionReceiptWithout("organizationId"),
+  }],
+  ["missing actor binding", {
+    receipt: completionReceiptWithout("actorUserId"),
+  }],
+  ["missing signer-role binding", {
+    receipt: completionReceiptWithout("signerRole"),
+  }],
+  ["null scalar binding", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), organizationId: null }),
+  }],
+  ["blank scalar binding", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), workfileId: "" }),
+  }],
+  ["whitespace-padded scalar binding", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), actorUserId: ` ${ACTOR_USER_ID}` }),
+  }],
+  ["non-string scalar binding", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), actorUserId: 7 }),
+  }],
+  ["non-string signer role", {
+    receipt: Object.freeze({ ...completionConfirmationReceipt(), signerRole: ["appraiser"] }),
+  }],
+]) {
+  test(`completion target authorization rejects ${caseName} before downstream work`, async () => {
+    await assertCompletionAuthorizationDenied(options);
+  });
+}

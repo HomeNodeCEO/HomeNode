@@ -860,12 +860,19 @@ export function createUadRouter({
 
   router.post("/workfiles/:workfileId/completion-suggestions/apply", async (req, res) => {
     try {
-      authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
+      const confirmation = authorizeUadAppraiserConfirmation(req.mobileAuth, req.uadAuthorizedWorkfile);
+      const confirmationReceipt = Object.freeze({
+        workfileId: req.uadAuthorizedWorkfile.id,
+        organizationId: req.uadAuthorizedWorkfile.organization_id,
+        actorUserId: confirmation.actorUserId,
+        signerRole: confirmation.signerRole,
+      });
       res.json(await applyCompletionSuggestions(
         pool,
         req.params.workfileId,
         req.body || {},
         req.mobileAuth?.userId || null,
+        confirmationReceipt,
       ));
     } catch (error) {
       sendError(res, error);

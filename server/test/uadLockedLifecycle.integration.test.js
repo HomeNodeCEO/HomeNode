@@ -7,6 +7,8 @@ import { prepareNeighborhoodCiDatabase } from "./helpers/neighborhoodCiDatabase.
 const databaseUrl = process.env.DATABASE_URL;
 const LOCKED_ERROR = "uad_workfile_status_locked";
 const READ_COMMITTED_BEGIN = "BEGIN ISOLATION LEVEL READ COMMITTED";
+const COMPLETION_ACCESS_ERROR = "uad_appraiser_confirmation_access_denied";
+const COMPLETION_WORKFILE_LOCK = "SELECT id, current_revision, specification_release_key, status, signed_at, organization_id, assigned_appraiser_user_id, supervisory_appraiser_user_id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE";
 
 const deferred = () => {
   let resolve;
@@ -318,7 +320,9 @@ async function insertSyntheticSignature(client, identity, workfile, revisionNumb
 
 function assertGuardFirst(trace) {
   assert.equal(trace[0], READ_COMMITTED_BEGIN);
-  assert.match(trace[1], /^SELECT id, (current_revision, specification_release_key, )?status, signed_at FROM appraisal\.uad_workfiles/);
+  if (trace[1] !== COMPLETION_WORKFILE_LOCK) {
+    assert.match(trace[1], /^SELECT id, (current_revision, specification_release_key, )?status, signed_at FROM appraisal\.uad_workfiles/);
+  }
   assert.match(trace[1], /FOR UPDATE$/);
   const signatureIndex = trace.findIndex((statement) => statement.includes("FROM appraisal.uad_signatures"));
   const rollbackIndex = trace.indexOf("ROLLBACK");
@@ -350,6 +354,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     { cleanupFailedUadSketchRender },
     { deleteUadAsset },
     { signUadWorkfile },
+    { authorizeUadWorkfileAccess, authorizeUadAppraiserConfirmation },
     { customAppraisalReportFixture },
   ] = await Promise.all([
     import("pg"),
@@ -360,6 +365,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     import("../src/modules/uad/sketchExhibitCleanup.js"),
     import("../src/modules/uad/assets.js"),
     import("../src/modules/uad/certifications.js"),
+    import("../src/modules/uad/access.js"),
     import("./fixtures/customAppraisalReportFixture.js"),
   ]);
   const pool = new pg.Pool({
@@ -372,6 +378,75 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
 
   try {
     const identity = await createIdentityFixture(pool, customAppraisalReportFixture);
+    // Completion authorization fixtures have their own account, identities and
+    // organization. Never bind the baseline's deliberately org-less asset rows.
+    const createCompletionFixture = async (signerRole = "appraiser") => {
+      const completionIdentity = await createIdentityFixture(pool, customAppraisalReportFixture);
+      const workfile = await createWorkfileFixture(pool, completionIdentity, { status: "ready" });
+      const organizationId = randomUUID(), otherOrganizationId = randomUUID(), otherUserId = randomUUID();
+      const actorUserId = completionIdentity.actorUserId;
+      await pool.query(
+        "INSERT INTO app_auth.users (id, email, display_name) VALUES ($1, $2, 'Synthetic alternate completion appraiser')",
+        [otherUserId, `${otherUserId}@example.test`],
+      );
+      for (const id of [organizationId, otherOrganizationId]) {
+        await pool.query(
+          `INSERT INTO app_auth.organizations (id, legal_name, display_name)
+           VALUES ($1, 'Synthetic completion target organization', 'Synthetic completion target organization')`, [id],
+        );
+        for (const userId of [actorUserId, otherUserId]) {
+          await pool.query(
+            "INSERT INTO app_auth.organization_memberships (organization_id, user_id, status) VALUES ($1, $2, 'active')",
+            [id, userId],
+          );
+          await pool.query(
+            `INSERT INTO app_auth.membership_roles (organization_id, user_id, role_code)
+             VALUES ($1, $2, 'appraiser'), ($1, $2, 'supervisory_appraiser')`, [id, userId],
+          );
+        }
+      }
+      await pool.query(
+        `UPDATE appraisal.uad_workfiles
+            SET organization_id = $2, assigned_appraiser_user_id = $3, supervisory_appraiser_user_id = $4
+          WHERE id = $1`,
+        [workfile.workfileId, organizationId, signerRole === "appraiser" ? actorUserId : otherUserId, actorUserId],
+      );
+      await pool.query("UPDATE app.report_files SET organization_id = $2 WHERE account_id = $1",
+        [completionIdentity.accountId, organizationId]);
+      await pool.query("UPDATE app.appraisal_cases SET organization_id = $2 WHERE id = $1",
+        [completionIdentity.appraisalCaseId, organizationId]);
+      await pool.query(
+        "UPDATE app.assignment_files SET organization_id = $2, assigned_appraiser_user_id = $3 WHERE account_id = $1",
+        [completionIdentity.accountId, organizationId, actorUserId],
+      );
+      const membershipRows = (await pool.query(
+        `SELECT membership.organization_id, role.role_code
+           FROM app_auth.organization_memberships membership
+           JOIN app_auth.membership_roles role USING (organization_id, user_id)
+          WHERE membership.user_id = $1 AND membership.status = 'active'
+          ORDER BY membership.organization_id, role.role_code`, [actorUserId],
+      )).rows;
+      const auth = { userId: actorUserId, organizations: [organizationId, otherOrganizationId].map((id) => ({
+        organizationId: id, roles: membershipRows.filter((row) => row.organization_id === id).map((row) => row.role_code),
+      })) };
+      const authorized = await authorizeUadWorkfileAccess(pool, auth, workfile.workfileId, { write: true });
+      const confirmation = authorizeUadAppraiserConfirmation(auth, authorized);
+      assert.equal(confirmation.signerRole, signerRole);
+      const receipt = Object.freeze({ workfileId: authorized.id, organizationId: authorized.organization_id,
+        actorUserId: confirmation.actorUserId, signerRole: confirmation.signerRole });
+      const suggestions = await loadUadCompletionSuggestions(pool, workfile.workfileId);
+      const selected = suggestions.suggestions.sales_comparison_fields.find((item) => (
+        item.field_key === "sales_comparison_summary:1300.0006"
+      ));
+      assert.ok(selected, "the scoped fixture must use a real adapter suggestion, not a validation-error stand-in");
+      return { ...workfile, identity: completionIdentity, actorUserId, organizationId, otherOrganizationId,
+        otherUserId, auth, receipt, request: {
+          selected_suggestion_ids: [selected.suggestion_id],
+          expected_source_digest_sha256: suggestions.source_completion.source_digest_sha256,
+          expected_adapter_version: suggestions.adapter_version,
+          expected_revision: workfile.revision, preserve_existing: true, confirmed: true,
+        } };
+    };
     const sectionWrite = (writerPool, workfile) => saveUadSection(
       writerPool,
       workfile.workfileId,
@@ -527,7 +602,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         is_appraiser_confirmed: true,
       });
 
-      const completionWorkfile = await createWorkfileFixture(pool, identity, { status: "ready" });
+      const completionWorkfile = await createCompletionFixture();
       const suggestions = await loadUadCompletionSuggestions(pool, completionWorkfile.workfileId);
       const selected = suggestions.suggestions.sales_comparison_fields.find((item) => (
         item.field_key === "sales_comparison_summary:1300.0006"
@@ -540,7 +615,7 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         expected_revision: 1,
         preserve_existing: true,
         confirmed: true,
-      }, identity.actorUserId);
+      }, completionWorkfile.actorUserId, completionWorkfile.receipt);
       assert.equal(completionResult.current_revision, 2);
       assert.equal(completionResult.applied_suggestion_count, 1);
       const applied = await pool.query(
@@ -1913,6 +1988,240 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         } finally { observer.forceRelease(); }
       });
     }
+    const completionState = async (workfileId) => {
+      const state = await cleanupState(pool, workfileId);
+      const workfile = (await pool.query("SELECT * FROM appraisal.uad_workfiles WHERE id = $1", [workfileId])).rows;
+      return JSON.parse(JSON.stringify({ state, workfile }));
+    };
+    const withCompletionWorkfile = (before, row) => {
+      const expected = structuredClone(before);
+      expected.workfile = JSON.parse(JSON.stringify([row]));
+      expected.state.canonical.workfile = expected.workfile.map(({ current_revision, status, signed_at, updated_at }) => ({
+        current_revision, status, signed_at, updated_at,
+      }));
+      return expected;
+    };
+    const assertCompletionTargetDenied = (trace) => {
+      assertGuardFirst(trace);
+      assert.equal(trace[1], COMPLETION_WORKFILE_LOCK);
+      assert.equal(trace.length, 4, "target refusal must follow only BEGIN, locked workfile, signature check and ROLLBACK");
+      assert.match(trace[2], /^SELECT EXISTS \( SELECT 1 FROM appraisal\.uad_signatures WHERE workfile_id = \$1 \) AS has_signatures$/);
+    };
+    const assertCompletionApplied = async (fixture, before, result) => {
+      assert.equal(result.current_revision, 2);
+      assert.equal(result.applied_suggestion_count, 1);
+      assert.equal(result.applied_field_count, 1);
+      assert.equal(result.applied_entity_count, 0);
+      assert.deepEqual(result.created_entities, []);
+      const after = await completionState(fixture.workfileId);
+      const canonical = after.state.canonical;
+      assert.equal(before.state.canonical.values.length, 0);
+      assert.equal(canonical.values.length, 1);
+      const saved = canonical.values[0];
+      assert.equal(saved.field_context, "sales_comparison_summary");
+      assert.equal(saved.uad_uid, "1300.0006");
+      assert.equal(saved.value, 302000);
+      assert.equal(saved.source_type, "homenode");
+      assert.equal(saved.is_appraiser_confirmed, true);
+      assert.equal(canonical.revisions.length, before.state.canonical.revisions.length + 1);
+      const revision = canonical.revisions.at(-1);
+      assert.equal(revision.revision_number, 2);
+      assert.equal(revision.document.field_values.length, 1);
+      assert.deepEqual(revision.document.field_values[0], {
+        entity_id: null, uid: saved.uad_uid, context_key: saved.field_context,
+        report_field_id: saved.report_field_id, value: saved.value,
+        source_type: "homenode", is_appraiser_confirmed: true,
+      });
+      assert.equal(canonical.audit.length, before.state.canonical.audit.length + 1);
+      const audit = canonical.audit.find((row) => row.event_type === "uad_completion_suggestions.applied");
+      assert.ok(audit);
+      assert.equal(audit.actor_user_id, fixture.actorUserId);
+      assert.deepEqual(audit.after_data, { applied_suggestion_ids: fixture.request.selected_suggestion_ids, created_entities: [] });
+      assert.equal(audit.metadata.revision_number, 2);
+      assert.equal(audit.metadata.source_digest_sha256, fixture.request.expected_source_digest_sha256);
+      assert.equal(after.workfile[0].current_revision, 2);
+      assert.equal(after.workfile[0].status, "draft");
+      assert.ok(Date.parse(after.workfile[0].updated_at) >= Date.parse(before.workfile[0].updated_at));
+      const comparable = withCompletionWorkfile(after, before.workfile[0]);
+      comparable.state.canonical.values = [];
+      comparable.state.canonical.revisions = canonical.revisions.slice(0, -1);
+      comparable.state.canonical.audit = canonical.audit.filter((row) => row.id !== audit.id);
+      assert.deepEqual(comparable, before,
+        "one authorized suggestion must preserve previous snapshots, assets, entities, signatures, history and audit");
+      const currentIdentity = { ...after.workfile[0], current_revision: before.workfile[0].current_revision,
+        status: before.workfile[0].status, updated_at: before.workfile[0].updated_at };
+      assert.deepEqual(currentIdentity, before.workfile[0], "completion may not rewrite organization or signer slots");
+      return after;
+    };
+
+    await t.test("unsigned completion without an internal confirmation receipt refuses before source reads", async () => {
+      const fixture = await createCompletionFixture(), before = await completionState(fixture.workfileId);
+      const observed = fixedObservedPool(await pool.connect());
+      try {
+        await assert.rejects(() => applyUadCompletionSuggestions(
+          observed.pool, fixture.workfileId, fixture.request, fixture.actorUserId,
+        ), { message: COMPLETION_ACCESS_ERROR });
+        assertCompletionTargetDenied(observed.trace);
+        assert.deepEqual(await completionState(fixture.workfileId), before);
+      } finally { observed.forceRelease(); }
+    });
+    for (const signerRole of ["appraiser", "supervisory_appraiser"]) {
+      await t.test(`matching ${signerRole} completion receipt preserves real apply and audit attribution`, async () => {
+        const fixture = await createCompletionFixture(signerRole), before = await completionState(fixture.workfileId);
+        const lockedParameters = [];
+        const observed = fixedObservedPool(await pool.connect(), { before(statement, _client, values) {
+          if (statement === COMPLETION_WORKFILE_LOCK) lockedParameters.push(values);
+        } });
+        try {
+          const result = await applyUadCompletionSuggestions(
+            observed.pool, signerRole === "appraiser" ? fixture.workfileId.toUpperCase() : fixture.workfileId,
+            fixture.request, fixture.actorUserId, fixture.receipt,
+          );
+          assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+          assert.equal(observed.trace[1], COMPLETION_WORKFILE_LOCK);
+          assert.equal(observed.trace.at(-1), "COMMIT");
+          assert.deepEqual(lockedParameters, [[fixture.workfileId]], "UUID URL casing must resolve to the canonical locked receipt target");
+          await assertCompletionApplied(fixture, before, result);
+        } finally { observed.forceRelease(); }
+      });
+    }
+
+    for (const drift of ["organization", "assigned appraiser", "supervisory slot"]) {
+      await t.test(`completion waits for administrator-first ${drift} drift and refuses the stale exact target`, async () => {
+        const fixture = await createCompletionFixture(drift === "supervisory slot" ? "supervisory_appraiser" : "appraiser");
+        const before = await completionState(fixture.workfileId);
+        // Both real access and confirmation have already succeeded. The DML is
+        // an administrative state change, not a simulated provider/auth result.
+        const administrator = await pool.connect(), lockIssued = deferred();
+        let administratorTransaction = false, writerClient, observed, saving;
+        const isolations = [];
+        try {
+          writerClient = await pool.connect();
+          await writerClient.query("SET SESSION CHARACTERISTICS AS TRANSACTION ISOLATION LEVEL REPEATABLE READ");
+          observed = fixedObservedPool(writerClient, {
+            before(statement) { if (statement === COMPLETION_WORKFILE_LOCK) lockIssued.resolve(); },
+            async after(statement, client) {
+              if (statement === READ_COMMITTED_BEGIN) {
+                isolations.push((await client.query("SHOW transaction_isolation")).rows[0].transaction_isolation);
+              }
+            },
+          });
+          await administrator.query(READ_COMMITTED_BEGIN); administratorTransaction = true;
+          const changed = drift === "organization"
+            ? await administrator.query(
+              "UPDATE appraisal.uad_workfiles SET organization_id = $2, updated_at = now() WHERE id = $1 RETURNING *",
+              [fixture.workfileId, fixture.otherOrganizationId],
+            )
+            : drift === "assigned appraiser"
+              ? await administrator.query(
+                "UPDATE appraisal.uad_workfiles SET assigned_appraiser_user_id = $2, updated_at = now() WHERE id = $1 RETURNING *",
+                [fixture.workfileId, fixture.otherUserId],
+              )
+              : await administrator.query(
+                `UPDATE appraisal.uad_workfiles
+                    SET supervisory_appraiser_user_id = $2, assigned_appraiser_user_id = $3, updated_at = now()
+                  WHERE id = $1 RETURNING *`, [fixture.workfileId, fixture.otherUserId, fixture.actorUserId],
+              );
+          assert.equal(changed.rowCount, 1);
+          const expected = withCompletionWorkfile(before, changed.rows[0]);
+          saving = applyUadCompletionSuggestions(observed.pool, fixture.workfileId, fixture.request, fixture.actorUserId, fixture.receipt);
+          void saving.catch(() => {});
+          await within(lockIssued.promise, "completion requested the administrator-held target lock");
+          await assertBlockedBy(pool, writerClient.processID, administrator.processID, `completion ${drift}`);
+          assert.deepEqual(observed.trace, [READ_COMMITTED_BEGIN, COMPLETION_WORKFILE_LOCK]);
+          await administrator.query("COMMIT"); administratorTransaction = false;
+          await assert.rejects(() => within(saving, "completion observes the committed target drift"), { message: COMPLETION_ACCESS_ERROR });
+          assert.deepEqual(isolations, ["read committed"]);
+          assertCompletionTargetDenied(observed.trace);
+          assert.deepEqual(await completionState(fixture.workfileId), expected,
+            "denial must preserve the administrator's exact row and every canonical, revision and audit record");
+          const newlyAuthorized = await authorizeUadWorkfileAccess(pool, fixture.auth, fixture.workfileId, { write: true });
+          const newConfirmation = authorizeUadAppraiserConfirmation(fixture.auth, newlyAuthorized);
+          assert.equal(newConfirmation.signerRole, drift === "assigned appraiser" ? "supervisory_appraiser" : "appraiser",
+            "broad access or eligibility in the other slot cannot rescue the earlier exact receipt");
+        } finally {
+          if (administratorTransaction) await administrator.query("ROLLBACK").catch(() => {});
+          administrator.release(true);
+          if (saving) await within(saving.catch(() => {}), "completion target-drift cleanup").catch(() => {});
+          observed?.forceRelease();
+          if (writerClient && !observed) writerClient.release(true);
+        }
+      });
+    }
+
+    await t.test("administrator reassignment waits for authorized completion and observes its committed revision", async () => {
+      const fixture = await createCompletionFixture(), before = await completionState(fixture.workfileId);
+      const writerLocked = deferred(), continueWriter = deferred(), administratorUpdated = deferred(), continueAdministrator = deferred();
+      const administrator = await pool.connect();
+      let writerClient, observed, saving, reassigning, administratorTransaction = false, abortAdministrator = false;
+      let changedRow;
+      try {
+        writerClient = await pool.connect();
+        observed = fixedObservedPool(writerClient, { async after(statement) {
+          if (statement === COMPLETION_WORKFILE_LOCK) {
+            writerLocked.resolve(); await continueWriter.promise;
+          }
+        } });
+        saving = applyUadCompletionSuggestions(observed.pool, fixture.workfileId, fixture.request, fixture.actorUserId, fixture.receipt);
+        void saving.catch(() => {});
+        await within(writerLocked.promise, "authorized completion owns its target lock");
+        reassigning = (async () => {
+          await administrator.query(READ_COMMITTED_BEGIN); administratorTransaction = true;
+          const changed = await administrator.query(
+            `UPDATE appraisal.uad_workfiles
+                SET organization_id = $2, assigned_appraiser_user_id = $3,
+                    supervisory_appraiser_user_id = $3, updated_at = now()
+              WHERE id = $1 RETURNING *`, [fixture.workfileId, fixture.otherOrganizationId, fixture.otherUserId],
+          );
+          assert.equal(changed.rowCount, 1);
+          changedRow = changed.rows[0]; administratorUpdated.resolve();
+          await continueAdministrator.promise;
+          if (abortAdministrator) await administrator.query("ROLLBACK");
+          else await administrator.query("COMMIT");
+          administratorTransaction = false;
+        })();
+        void reassigning.catch(() => {});
+        await assertBlockedBy(pool, administrator.processID, writerClient.processID, "administrator versus authorized completion");
+        assert.deepEqual(await completionState(fixture.workfileId), before);
+        continueWriter.resolve();
+        const result = await within(saving, "authorized completion commits before reassignment");
+        await within(administratorUpdated.promise, "administrator sees the committed completion row");
+        assert.equal(changedRow.current_revision, 2); assert.equal(changedRow.status, "draft");
+        assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+        assert.equal(observed.trace[1], COMPLETION_WORKFILE_LOCK);
+        assert.equal(observed.trace.at(-1), "COMMIT");
+        const applied = await assertCompletionApplied(fixture, before, result);
+        continueAdministrator.resolve();
+        await within(reassigning, "administrator commits after the authorized apply");
+        assert.deepEqual(await completionState(fixture.workfileId), withCompletionWorkfile(applied, changedRow));
+      } finally {
+        abortAdministrator = true; continueWriter.resolve(); continueAdministrator.resolve();
+        if (saving) await within(saving.catch(() => {}), "apply-first writer cleanup").catch(() => {});
+        observed?.forceRelease();
+        if (writerClient && !observed) writerClient.release(true);
+        if (reassigning) await within(reassigning.catch(() => {}), "apply-first administrator cleanup").catch(() => {});
+        if (administratorTransaction) await administrator.query("ROLLBACK").catch(() => {});
+        administrator.release(true);
+      }
+    });
+
+    await t.test("signed completion with a mismatched receipt retains lifecycle-error precedence", async () => {
+      const fixture = await createCompletionFixture();
+      await pool.query(
+        "UPDATE appraisal.uad_workfiles SET status = 'signed', signed_at = now(), organization_id = $2 WHERE id = $1",
+        [fixture.workfileId, fixture.otherOrganizationId],
+      );
+      await insertSyntheticSignature(pool, fixture.identity, fixture);
+      const before = await completionState(fixture.workfileId), observed = fixedObservedPool(await pool.connect());
+      try {
+        await assert.rejects(() => applyUadCompletionSuggestions(
+          observed.pool, fixture.workfileId, fixture.request, fixture.actorUserId, fixture.receipt,
+        ), { message: LOCKED_ERROR });
+        assertGuardFirst(observed.trace);
+        assert.equal(observed.trace[1], COMPLETION_WORKFILE_LOCK);
+        assert.deepEqual(await completionState(fixture.workfileId), before);
+      } finally { observed.forceRelease(); }
+    });
   } finally {
     await pool.end();
   }

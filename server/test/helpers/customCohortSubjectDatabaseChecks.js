@@ -27,6 +27,8 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
   const client = await pool.connect();
   let ref;
   try {
+    await assert.rejects(createCustomCohortSubjectRepository(client, scopeJson).capture(), /caller_transaction_required/,
+      'a checked-out autocommit client must not release the row fences between source reads');
     await client.query('BEGIN');
     await client.query("SET LOCAL statement_timeout='8s'");
     const repo = createCustomCohortSubjectRepository(client, scopeJson);

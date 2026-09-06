@@ -23,7 +23,8 @@ function fixture() {
     const t = state.input.target;
     let value;
     switch (tag) {
-      case 'assignment': value = { id: t.assignment_file_id }; break;
+      case 'transaction': value = { transaction_id: '123456789' }; break;
+      case 'assignment': value = { id: t.assignment_file_id, transaction_id: '123456789' }; break;
       case 'workfile': value = { status: state.status, signed_at: state.signedAt }; break;
       case 'signature': value = { present: state.signed }; break;
       case 'report': value = { appraisal_case_id: t.appraisal_case_id, subject_snapshot_id: t.subject_snapshot_id }; break;
@@ -46,9 +47,9 @@ function fixture() {
 }
 test('Custom retained subject reads actual scoped rows in fixed NOWAIT order and replays exact bytes', async () => {
   const { state, repo } = fixture(), ref = await repo.capture();
-  assert.deepEqual(state.calls.slice(0, 7).map(c => c.tag), ['assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'sections']);
-  for (const c of state.calls.slice(0, 7).filter(c => c.tag !== 'signature')) assert.match(c.sql, /FOR (?:UPDATE|SHARE) NOWAIT/);
-  assert.deepEqual(state.calls[0].params, [state.input.target.organization_id, state.input.target.assignment_file_id, state.input.target.account_id]);
+  assert.deepEqual(state.calls.slice(0, 8).map(c => c.tag), ['transaction', 'assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'sections']);
+  for (const c of state.calls.slice(1, 8).filter(c => c.tag !== 'signature')) assert.match(c.sql, /FOR (?:UPDATE|SHARE) NOWAIT/);
+  assert.deepEqual(state.calls[1].params, [state.input.target.organization_id, state.input.target.assignment_file_id, state.input.target.account_id]);
   const loaded = await repo.load(ref);
   assert.equal(loaded.usage, 'retained_subject_inputs_only');
   assert.equal(loaded.effective_date, '2026-09-06');
@@ -154,4 +155,11 @@ test('database failures propagate to transaction owner; repository never commits
   const source = await readFile(new URL('../src/services/neighborhoodAssessment/customCohortSubjectRepository.js', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /\b(?:BEGIN|COMMIT|ROLLBACK|CREATE TABLE|ALTER TABLE|DELETE FROM|UPDATE app\.)\b|fetch\(|\.connect\(/);
   assert.match(source, /octet_length\(value\)<=[\s\S]*original_json/);
+});
+test('an autocommit client cannot claim to keep the subject row fences', async () => {
+  const { state, repo } = fixture();
+  state.transforms.assignment = value => ({ ...value, transaction_id: '123456790' });
+  await assert.rejects(repo.capture(), /caller_transaction_required/);
+  assert.deepEqual(state.calls.map(c => c.tag), ['transaction', 'assignment']);
+  assert.equal(state.db.size, 0);
 });

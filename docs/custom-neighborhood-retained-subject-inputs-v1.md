@@ -17,6 +17,9 @@ pool or generic externally authenticated blob endpoint may call it directly.
 
 `capture()` requires an existing draft workfile without a signature and takes
 NOWAIT locks in assignment, workfile, report, case, snapshot, section order. It
+checks the actual server transaction identity across its first two statements,
+rejecting a checked-out client accidentally left in autocommit mode. The caller
+must still keep that transaction/client exclusively owned through completion. It
 verifies the real report's Custom-only mapping and organization/account links.
 It requires a valid nonnull snapshot-or-case effective date; two supplied dates
 must agree. No current date, new snapshot, missing file, or empty replacement
@@ -34,6 +37,9 @@ projector/scanner's node, depth and numeric admission rules also apply. All five
 canonical blobs are preflighted before the first insert, including string-escape
 growth. Failures are not truncated or converted to success. Repeated identical
 content reuses the same references. SQL errors propagate to the transaction owner.
+The bundle digest includes original unconsumed fields for evidence retention;
+future current-use comparisons must compare the closed material projection, not
+invalidate an analysis merely because unrelated prose changed the bundle digest.
 
 `load(bundleRef)` rechecks the current exact report/assignment tenant/account
 mapping, then reads only original retained references. It does not chase a newer

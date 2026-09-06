@@ -85,9 +85,15 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
   };
   return Object.freeze({
     async capture() {
-      one(await query(`/* custom-cohort-subject:assignment */ SELECT id::text FROM app.assignment_files
+      // A checked-out client alone does not prove the caller began a transaction.
+      // Two real statements must observe the same server transaction; implicit
+      // autocommit would otherwise release every fence before the next read.
+      const transaction = one(await query('/* custom-cohort-subject:transaction */ SELECT txid_current()::text AS transaction_id')).transaction_id;
+      if (typeof transaction !== 'string' || transaction.length > 20 || !/^[1-9][0-9]*$/.test(transaction)) fail('caller_transaction_required');
+      const assignment = one(await query(`/* custom-cohort-subject:assignment */ SELECT id::text, txid_current()::text AS transaction_id FROM app.assignment_files
         WHERE organization_id=$1 AND id=$2::bigint AND account_id=$3 FOR UPDATE NOWAIT`,
       [scope.organization_id, scope.assignment_file_id, scope.account_id]));
+      if (assignment.transaction_id !== transaction) fail('caller_transaction_required');
       const workfile = one(await query(`/* custom-cohort-subject:workfile */ SELECT status, signed_at::text
         FROM app.custom_appraisal_workfiles WHERE assignment_file_id=$1::bigint FOR UPDATE NOWAIT`, [scope.assignment_file_id]));
       if (workfile.status !== 'draft' || workfile.signed_at !== null) fail('protected_workfile');

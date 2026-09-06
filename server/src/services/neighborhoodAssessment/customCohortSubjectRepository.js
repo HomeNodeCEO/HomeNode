@@ -83,8 +83,7 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
   const sameScope = target => {
     if (!SCOPE_KEYS.every(key => target?.[key] === scope[key])) fail('target_mismatch');
   };
-  return Object.freeze({
-    async capture() {
+  const readCurrent = async () => {
       // A checked-out client alone does not prove the caller began a transaction.
       // Two real statements must observe the same server transaction; implicit
       // autocommit would otherwise release every fence before the next read.
@@ -133,24 +132,9 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
       const caseDate = date(caseRow.effective_date, true), snapshotDate = date(s.effective_date, true);
       if ((!caseDate && !snapshotDate) || (caseDate && snapshotDate && caseDate !== snapshotDate)) fail('effective_date_unresolved');
       const prepared = represented(target, sectionsJson, snapshotJson);
-      // Admit the entire bounded bundle before the first INSERT. Oversize raw
-      // wrappers (JSON string escaping included) cannot leave partial evidence.
-      const pending = [];
-      const prepare = value => {
-        const text = canonicalAssessmentJson(value), ref = prepareNeighborhoodCohortBlob(text);
-        pending.push(text);
-        return ref;
-      };
-      const body = { subject_input_version: 1, usage: 'retained_subject_inputs_only', target,
-        effective_date: snapshotDate ?? caseDate, case_effective_date: caseDate,
-        original_snapshot_row: prepare({ pg_row_json: snapshotJson }),
-        original_section_reads: prepare({ pg_reads_json: sectionsJson }),
-        snapshot_evidence: prepare(prepared.snapshot), material_input: prepare(prepared.material) };
-      const ref = prepare(body);
-      for (const text of pending) await blobs.put(text);
-      return ref;
-    },
-    async load(ref) {
+      return { target, effectiveDate: snapshotDate ?? caseDate, caseDate, snapshotJson, sectionsJson, prepared };
+  };
+  const loadRetained = async ref => {
       // Current tenant/file integrity remains required, but history must NOT be
       // silently rebound to the report's newer case/snapshot or current sections.
       one(await query(`/* custom-cohort-subject:history-target */ SELECT r.id FROM app.report_files r
@@ -172,6 +156,45 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
       if (canonicalAssessmentJson(snapshot) !== canonicalAssessmentJson(prepared.snapshot) ||
           canonicalAssessmentJson(material) !== canonicalAssessmentJson(prepared.material)) fail('evidence_mismatch');
       return { ...body, original_snapshot: originalSnapshot, original_sections: originalSections, snapshot, material };
+  };
+  return Object.freeze({
+    async capture() {
+      const current = await readCurrent();
+      // Admit the entire bounded bundle before the first INSERT. Oversize raw
+      // wrappers (JSON string escaping included) cannot leave partial evidence.
+      const pending = [];
+      const prepare = value => {
+        const text = canonicalAssessmentJson(value), ref = prepareNeighborhoodCohortBlob(text);
+        pending.push(text);
+        return ref;
+      };
+      const body = { subject_input_version: 1, usage: 'retained_subject_inputs_only', target: current.target,
+        effective_date: current.effectiveDate, case_effective_date: current.caseDate,
+        original_snapshot_row: prepare({ pg_row_json: current.snapshotJson }),
+        original_section_reads: prepare({ pg_reads_json: current.sectionsJson }),
+        snapshot_evidence: prepare(current.prepared.snapshot), material_input: prepare(current.prepared.material) };
+      const ref = prepare(body);
+      for (const text of pending) await blobs.put(text);
+      return ref;
+    },
+    load: loadRetained,
+    async compareCurrent(ref) {
+      // Actual fresh scoped rows under the SAME fences as capture, not an
+      // editor-revision comparison or a callback asserting "still current".
+      // No persistence occurs: unrelated note/output saves must not generate
+      // new evidence or invalidate the selected material projection.
+      const current = await readCurrent();
+      const original = await loadRetained(ref);
+      const changes = [];
+      if (['appraisal_case_id', 'subject_snapshot_id', 'snapshot_version'].some(key => current.target[key] !== original.target[key])) changes.push('snapshot_identity');
+      if (current.effectiveDate !== original.effective_date) changes.push('effective_date');
+      if (canonicalAssessmentJson(current.prepared.snapshot) !== canonicalAssessmentJson(original.snapshot)) changes.push('snapshot_evidence');
+      if (canonicalAssessmentJson(current.prepared.material) !== canonicalAssessmentJson(original.material)) changes.push('material_inputs');
+      // Equality of inputs alone grants neither permission nor source/fact
+      // eligibility. Caller must keep the fences through its actual operation
+      // and separately prove current authority/context/study/generation.
+      return Object.freeze({ status: changes.length ? 'changed' : 'matched', authority: 'not_established',
+        changed_inputs: Object.freeze(changes) });
     },
   });
 }

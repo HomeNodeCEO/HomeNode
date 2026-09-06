@@ -34,6 +34,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     const repo = createCustomCohortSubjectRepository(client, scopeJson);
     ref = await repo.capture();
     const retained = await repo.load(ref);
+    assert.deepEqual(await repo.compareCurrent(ref), { status: 'matched', authority: 'not_established', changed_inputs: [] });
     assert.equal(retained.effective_date, '2024-06-30');
     const sections = JSON.parse(retained.original_sections.pg_reads_json);
     assert.deepEqual(sections.map(s => [s.section_key, s.row_state, s.row?.assignment_file_id ?? null]), [
@@ -48,6 +49,17 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     assert.deepEqual(await repo.capture(), ref);
     assert.equal((await client.query('SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
       [scope.organization_id])).rows[0].n, 5);
+    await client.query(`UPDATE app.custom_appraisal_sections
+      SET section_value=section_value || '{"reviewer_note":"unrelated edit","neighborhood_output":{"median":123}}'::jsonb,
+        revision=revision+1, updated_at=clock_timestamp()
+      WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs, []);
+    await client.query(`UPDATE app.custom_appraisal_sections
+      SET section_value=jsonb_set(section_value,'{main_improvement,living_area_sqft}','2101')
+      WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs, ['material_inputs']);
+    assert.equal((await client.query('SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
+      [scope.organization_id])).rows[0].n, 5, 'freshness comparisons never persist new blobs');
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, organization_id: randomUUID() })).load(ref), /not_found/);
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, account_id: identity.accounts[1] })).capture(), /not_found/);
 
@@ -61,13 +73,18 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
       WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
     assert.deepEqual(await repo.load(ref), retained);
     await assert.rejects(repo.capture(), /effective_date_unresolved/);
+    await assert.rejects(repo.compareCurrent(ref), /effective_date_unresolved/);
     await client.query('UPDATE app.appraisal_cases SET effective_date=NULL WHERE id=$1', [identity.scope.appraisal_case_id]);
     const nextRef = await repo.capture();
     assert.notEqual(nextRef.content_sha256, ref.content_sha256);
     assert.equal((await repo.load(nextRef)).effective_date, '2024-07-01');
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs,
+      ['snapshot_identity', 'effective_date', 'snapshot_evidence', 'material_inputs']);
+    assert.equal((await repo.compareCurrent(nextRef)).status, 'matched');
     assert.deepEqual(await repo.load(ref), retained);
     await client.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1", [scope.assignment_file_id]);
     await assert.rejects(repo.capture(), /protected_workfile/);
+    await assert.rejects(repo.compareCurrent(ref), /protected_workfile/);
     assert.deepEqual(await repo.load(ref), retained);
   } finally {
     try { await client.query('ROLLBACK'); } finally { client.release(); }
@@ -103,5 +120,26 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
         assert.ok(performance.now() - start < 1500, 'NOWAIT must win before the statement-timeout backstop');
       } finally { await contender.query('ROLLBACK'); await holder.query('ROLLBACK'); }
     }
+    // Compare holds the same real fences through the caller's operation, even
+    // against writers that touch a section directly or insert an absent row.
+    await holder.query('BEGIN');
+    const stableRef = await createCustomCohortSubjectRepository(holder, scopeJson).capture();
+    await holder.query('COMMIT');
+    await holder.query('BEGIN');
+    try {
+      assert.equal((await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef)).status, 'matched');
+      for (const sql of [
+        `UPDATE app.custom_appraisal_sections SET section_value='{}'
+          WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`,
+        `INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
+          VALUES ($1,'report.land_details','{}')`,
+      ]) {
+        await contender.query('BEGIN');
+        try {
+          await contender.query("SET LOCAL statement_timeout='250ms'");
+          await assert.rejects(contender.query(sql, [scope.assignment_file_id]), error => error.code === '57014');
+        } finally { await contender.query('ROLLBACK'); }
+      }
+    } finally { await holder.query('ROLLBACK'); }
   } finally { contender?.release(); holder.release(); }
 }

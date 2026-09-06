@@ -231,7 +231,7 @@ const LINK_COLUMNS = `v.id AS linked_revision_id,v.workfile_id AS linked_revisio
  * Historical receipts remain readable after later edits/signing. The owner's
  * current editor/signed-state gates still decide whether any application may run.
  */
-export async function getAcceptedNeighborhoodApplication(client, input) {
+async function loadVerifiedAcceptance(client, input) {
   clientOf(client); const target = targetOf(input), identity = hash(input.applicationIdentitySha256, "application_identity");
   if (target.workflowType !== "uad_3_6") fail("custom_acceptance_not_supported");
   const rows = await client.query(`/* neighborhood-application:accepted-receipt */
@@ -256,7 +256,34 @@ export async function getAcceptedNeighborhoodApplication(client, input) {
     uadRevisionId: row.uad_revision_id, auditEventId: row.uad_audit_event_id }, stored.attachment, receipt);
   if (record.request_digest_sha256 !== row.request_digest_sha256 || row.accepted_editor_revision !== receipt.accepted_editor_revision) fail("stored_receipt_changed");
   verifyUadLinks(row, record, stored);
-  return receipt;
+  return { row, record, receipt };
+}
+
+/** Preserve the existing four-key receipt API, including historical reads. */
+export async function getAcceptedNeighborhoodApplication(client, input) {
+  const found = await loadVerifiedAcceptance(client, input);
+  return found === null ? null : found.receipt;
+}
+
+/** Additive, SELECT-only parent linkage; not authorization or proof of COMMIT.
+ * Validate the previously unused parent PK only here, preserving the old API.
+ * The core receipt is already detached/frozen. Bound only the seven scalars so
+ * this extra wrapper does not shrink its existing byte/node/depth allowance.
+ */
+export async function getAcceptedNeighborhoodApplicationRecord(client, input) {
+  const found = await loadVerifiedAcceptance(client, input);
+  if (found === null) return null;
+  const metadata = {
+    record_version: 1,
+    application_id: uuid(found.row.id, "application_id"),
+    operation_id: found.record.operation_id,
+    actor_user_id: found.record.actor_user_id,
+    accepted_editor_revision: found.receipt.accepted_editor_revision,
+    uad_revision_id: found.record.uad_revision_id,
+    uad_audit_event_id: found.record.uad_audit_event_id,
+  };
+  if (Buffer.byteLength(JSON.stringify(metadata), "utf8") > 512) fail("application_record_limit");
+  return Object.freeze({ ...metadata, receipt: found.receipt });
 }
 
 /** Call only AFTER the owner writes its complete values, new revision and the

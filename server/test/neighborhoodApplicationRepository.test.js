@@ -4,7 +4,8 @@ import { readFile } from "node:fs/promises";
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment, canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
 import { prepareNeighborhoodApplicationGroup, neighborhoodMappedManifestDigest, buildNeighborhoodApplicationReceipt } from "../src/services/neighborhoodAssessment/applicationGroup.js";
 import { persistNeighborhoodAttachment as persist, getNeighborhoodAttachment as getAttachment,
-  getAcceptedNeighborhoodApplication as getAccepted, recordNeighborhoodApplicationAcceptance as accept } from "../src/services/neighborhoodAssessment/applicationRepository.js";
+  getAcceptedNeighborhoodApplication as getAccepted, getAcceptedNeighborhoodApplicationRecord as getAcceptedRecord,
+  recordNeighborhoodApplicationAcceptance as accept } from "../src/services/neighborhoodAssessment/applicationRepository.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
 
 // Injected-client orchestration/SQL-shape tests only: no real PostgreSQL claims.
@@ -14,11 +15,11 @@ const REVISION = "a0000000-0000-4000-8000-000000000001";
 const APPLICATION = "b0000000-0000-4000-8000-000000000001";
 const AUDIT = "9007199254740993"; // Exercise bigint identity without Number rounding.
 const rows = (items = []) => ({ rows: items, rowCount: items.length });
-function fixture(workflow = "uad_3_6") {
+function fixture(workflow = "uad_3_6", { boundaryValue = "North Road" } = {}) {
   const assessment = buildNeighborhoodAssessment(neighborhoodAssessmentFixture());
   const group = assessment.application_group;
   const mappedSuggestions = [
-    { id: "boundary", target_key: "synthetic:boundary", value: "North Road", dependency_ids: ["source"], evidence_refs: ["geographic_neighborhood", "population:stock-a"], application_group_id: group.id },
+    { id: "boundary", target_key: "synthetic:boundary", value: boundaryValue, dependency_ids: ["source"], evidence_refs: ["geographic_neighborhood", "population:stock-a"], application_group_id: group.id },
     { id: "median", target_key: "synthetic:median", value: 330000, dependency_ids: ["source", "boundary"], evidence_refs: ["statistic:median-sale-price", "population:sales-a"], application_group_id: group.id },
     { id: "source", target_key: "synthetic:source", value: "fixture-source", dependency_ids: [], evidence_refs: ["source:fixture-source"], application_group_id: group.id },
   ];
@@ -82,6 +83,23 @@ function lookup(f) { return { ...f.target, applicationIdentitySha256: f.attachme
 function exact(f) { return { ...f.target, attachmentId: f.attachment.attachment_id, attachmentRevision: f.attachment.attachment_revision }; }
 const noWrites = client => assert.equal(client.calls.some(call => /\bINSERT\b|\bUPDATE\b|\bDELETE\b/.test(call.sql)), false);
 function rehashReceipt(receipt) { const { receipt_digest_sha256: _digest, ...body } = receipt; return { ...body, receipt_digest_sha256: assessmentEvidenceDigest(body) }; }
+function rehashAcceptedRow(row) {
+  row.request_digest_sha256 = assessmentEvidenceDigest(Object.fromEntries([
+    "attachment_id", "attachment_revision", "report_file_id", "application_identity_sha256", "operation_id", "actor_user_id",
+    "accepted_editor_revision", "uad_revision_id", "uad_audit_event_id", "receipt",
+  ].map(key => [key, row[key]])));
+}
+async function rejection(promise) {
+  let caught;
+  await assert.rejects(promise, error => { caught = error; return true; });
+  return caught;
+}
+function assertDeepFrozen(value) {
+  if (value && typeof value === "object") {
+    assert.equal(Object.isFrozen(value), true);
+    Object.values(value).forEach(assertDeepFrozen);
+  }
+}
 
 test("attachment insert captures canonical full mapper manifest and preserves caller input", async () => {
   for (const workflow of ["uad_3_6", "custom_appraisal"]) {
@@ -207,6 +225,10 @@ test("new acceptance refuses changed editor or protected UAD state; historical r
     await assert.rejects(accept(client, f.request), /uad_target_not_editable/); noWrites(client);
     Object.assign(f.acceptedRow, f.links);
     assert.deepEqual(await getAccepted(fake(f), lookup(f)), f.receipt);
+    const original = await getAcceptedRecord(fake(f), lookup(f));
+    assert.deepEqual(original.receipt, f.receipt);
+    assert.equal(original.accepted_editor_revision, f.receipt.accepted_editor_revision);
+    assert.equal(original.operation_id, OPERATION); assert.equal(original.uad_revision_id, REVISION);
   }
 });
 
@@ -214,6 +236,7 @@ test("Custom proposal is available but acceptance/receipt lookup explicitly reje
   const f = fixture("custom_appraisal"), client = fake(f);
   await assert.rejects(accept(client, f.request), /custom_acceptance_not_supported/);
   await assert.rejects(getAccepted(client, lookup(f)), /custom_acceptance_not_supported/);
+  await assert.rejects(getAcceptedRecord(client, lookup(f)), /custom_acceptance_not_supported/);
   assert.equal(client.calls.length, 0);
 });
 
@@ -239,6 +262,7 @@ test("receipt read is exact-target SELECT-only and rejects tampered persisted id
     row => { row.report_file_id = "60000000-0000-4000-8000-000000000009"; }, row => { row.linked_audit_actor = "90000000-0000-4000-8000-000000000009"; }]) {
     const changed = fixture(); edit(changed.acceptedRow);
     await assert.rejects(getAccepted(fake(changed), lookup(changed)), /stored_receipt_changed|target_mismatch|uad_link_mismatch/);
+    await assert.rejects(getAcceptedRecord(fake(changed), lookup(changed)), /stored_receipt_changed|target_mismatch|uad_link_mismatch/);
   }
 });
 
@@ -259,4 +283,202 @@ test("input revision and bigint validation happen without transaction ownership 
   assert.match(source, /never BEGIN, COMMIT/);
   assert.match(source, /NOT authorization or signing controls/);
   assert.doesNotMatch(source, /client\.query\(["'`](?:BEGIN|COMMIT|ROLLBACK)|pool\.connect|\.release\(/);
+});
+
+test("verified acceptance record exposes exactly eight keys and the unchanged receipt with one identical SELECT", async () => {
+  const f = fixture(), client = fake(f), input = lookup(f), before = structuredClone(input);
+  client.connect = () => assert.fail("M1 must use the caller's checked-out client");
+  const old = await getAccepted(client, input), record = await getAcceptedRecord(client, input);
+  assert.deepEqual(Object.keys(record).sort(), ["record_version", "application_id", "operation_id", "actor_user_id",
+    "accepted_editor_revision", "uad_revision_id", "uad_audit_event_id", "receipt"].sort());
+  assert.deepEqual(Object.keys(old).sort(), ["receipt_version", "accepted_editor_revision", "acceptance_manifest", "receipt_digest_sha256"].sort());
+  assert.equal(record.record_version, 1); assert.equal(record.application_id, APPLICATION);
+  assert.equal(record.operation_id, OPERATION); assert.equal(record.actor_user_id, ACTOR);
+  assert.equal(record.uad_revision_id, REVISION); assert.equal(record.uad_audit_event_id, AUDIT);
+  assert.equal(typeof record.uad_audit_event_id, "string");
+  assert.equal(record.accepted_editor_revision, old.accepted_editor_revision);
+  assert.equal(canonicalAssessmentJson(record.receipt), canonicalAssessmentJson(old));
+  assert.deepEqual(input, before); assertDeepFrozen(record);
+  assert.equal(client.calls.length, 2, "one query per explicitly requested read; no hidden second query or cross-call cache");
+  assert.deepEqual(client.calls[1], client.calls[0]);
+  assert.equal(client.calls[0].tag, "accepted-receipt");
+  assert.deepEqual(client.calls[0].values, [f.target.organizationId, f.target.reportFileId, "uad_3_6",
+    f.target.workflowTargetId, f.attachment.application_identity_sha256]);
+  assert.match(client.calls[0].sql, /SELECT x\.\*,a\.attachment/);
+  assert.match(client.calls[0].sql, /n\.publication_status='published'/);
+  assert.match(client.calls[0].sql, /x\.application_identity_sha256=\$5/);
+  assert.doesNotMatch(client.calls[0].sql, /\b(?:BEGIN|COMMIT|ROLLBACK|ORDER BY|LIMIT|FOR UPDATE)\b|is_current|current_revision/);
+  noWrites(client);
+});
+
+test("old and metadata lookups preserve null, validation order, conflict and exact query-error propagation", async () => {
+  const f = fixture();
+  for (const getter of [getAccepted, getAcceptedRecord]) {
+    const absent = fake(f, { "accepted-receipt": rows() });
+    assert.equal(await getter(absent, lookup(f)), null); assert.equal(absent.calls.length, 1);
+    const error = Object.assign(new Error("synthetic_lookup_failure"), { code: "synthetic_driver_code" });
+    const failed = fake(f, { "accepted-receipt": () => { throw error; } });
+    assert.equal(await rejection(getter(failed, lookup(f))), error);
+    assert.equal(failed.calls.length, 1);
+    for (const duplicate of [rows([f.acceptedRow, f.acceptedRow]), { rowCount: 1, rows: [] }])
+      await assert.rejects(getter(fake(f, { "accepted-receipt": duplicate }), lookup(f)),
+        { code: "neighborhood_application_receipt_conflict" });
+    await assert.rejects(getter({ query() {} }, {}), { code: "neighborhood_application_caller_client_required" });
+    for (const [patch, code] of [
+      [{ workflowType: "unknown", organizationId: "bad" }, "invalid_workflow"],
+      [{ organizationId: "bad", reportFileId: "bad" }, "invalid_organization_id"],
+      [{ reportFileId: "bad", workflowTargetId: "bad" }, "invalid_report_file_id"],
+      [{ workflowTargetId: "bad", applicationIdentitySha256: "bad" }, "invalid_uad_workfile_id"],
+      [{ applicationIdentitySha256: "bad" }, "invalid_application_identity"],
+      [{ workflowType: "custom_appraisal", workflowTargetId: 0 }, "invalid_custom_assignment_file_id"],
+      [{ workflowType: "custom_appraisal", workflowTargetId: 1, applicationIdentitySha256: "bad" }, "invalid_application_identity"],
+      [{ workflowType: "custom_appraisal", workflowTargetId: 1 }, "custom_acceptance_not_supported"],
+    ]) {
+      const client = fake(f);
+      await assert.rejects(getter(client, { ...lookup(f), ...patch }), { code: `neighborhood_application_${code}` });
+      assert.equal(client.calls.length, 0);
+    }
+  }
+});
+
+test("only the new lookup validates the previously unused application primary key", async () => {
+  for (const id of [undefined, null, "", "not-a-uuid", 17, {}, [], APPLICATION + "x", "c".repeat(1000)]) {
+    const f = fixture();
+    if (id === undefined) delete f.acceptedRow.id; else f.acceptedRow.id = id;
+    const oldClient = fake(f), newClient = fake(f);
+    assert.deepEqual(await getAccepted(oldClient, lookup(f)), f.receipt);
+    await assert.rejects(getAcceptedRecord(newClient, lookup(f)), { code: "neighborhood_application_invalid_application_id" });
+    assert.equal(oldClient.calls.length, 1); assert.deepEqual(newClient.calls, oldClient.calls);
+  }
+  const f = fixture(); f.acceptedRow.id = APPLICATION.toUpperCase();
+  assert.equal((await getAcceptedRecord(fake(f), lookup(f))).application_id, APPLICATION);
+  const changed = fixture(); changed.acceptedRow.id = "c0000000-0000-4000-8000-000000000002";
+  const record = await getAcceptedRecord(fake(changed), lookup(changed));
+  assert.equal(record.application_id, changed.acceptedRow.id);
+  assert.equal(record.receipt.receipt_digest_sha256, changed.receipt.receipt_digest_sha256,
+    "parent PK is not retroactively added to the core receipt/request digest");
+});
+
+test("metadata uses verified normalized identifiers and maximum bounded revision/bigint scalars", async () => {
+  const f = fixture(); f.acceptedRow = structuredClone(f.acceptedRow);
+  const row = f.acceptedRow, receipt = structuredClone(f.receipt);
+  const originalOperation = "abcdef01-0000-4000-8000-000000000001", originalActor = "bcdef012-0000-4000-8000-000000000001";
+  receipt.accepted_editor_revision = 2_147_483_647;
+  row.receipt = rehashReceipt(receipt); row.accepted_editor_revision = receipt.accepted_editor_revision;
+  row.linked_revision_number = receipt.accepted_editor_revision;
+  row.linked_metadata.uad_revision_number = receipt.accepted_editor_revision;
+  row.linked_metadata.receipt_digest_sha256 = row.receipt.receipt_digest_sha256;
+  row.uad_audit_event_id = "9223372036854775807"; row.linked_audit_id = row.uad_audit_event_id;
+  row.operation_id = originalOperation; row.linked_entity_id = originalOperation; row.linked_metadata.operation_id = originalOperation;
+  row.actor_user_id = originalActor; row.linked_revision_actor = originalActor; row.linked_audit_actor = originalActor;
+  rehashAcceptedRow(row);
+  row.id = APPLICATION.toUpperCase(); row.operation_id = originalOperation.toUpperCase();
+  row.actor_user_id = originalActor.toUpperCase(); row.uad_revision_id = REVISION.toUpperCase();
+  const record = await getAcceptedRecord(fake(f), lookup(f));
+  assert.equal(record.application_id, APPLICATION); assert.equal(record.operation_id, originalOperation);
+  assert.equal(record.actor_user_id, originalActor); assert.equal(record.uad_revision_id, REVISION);
+  assert.equal(record.accepted_editor_revision, 2_147_483_647);
+  assert.equal(record.uad_audit_event_id, "9223372036854775807");
+  assert.equal(canonicalAssessmentJson(record.receipt), canonicalAssessmentJson(await getAccepted(fake(f), lookup(f))));
+  const { receipt: _receipt, ...metadata } = record;
+  assert.equal(Object.keys(metadata).length, 7);
+  assert.ok(Buffer.byteLength(canonicalAssessmentJson(metadata), "utf8") <= 512);
+  for (const audit of [1, "1", "9007199254740993", "9223372036854775807"]) {
+    const sample = fixture(); sample.acceptedRow = structuredClone(sample.acceptedRow);
+    sample.acceptedRow.uad_audit_event_id = String(audit); sample.acceptedRow.linked_audit_id = String(audit);
+    rehashAcceptedRow(sample.acceptedRow); sample.acceptedRow.uad_audit_event_id = audit;
+    assert.equal((await getAcceptedRecord(fake(sample), lookup(sample))).uad_audit_event_id, String(audit));
+  }
+});
+
+test("metadata output is deeply detached and never enumerates or exposes unvalidated row extras", async () => {
+  const f = fixture(); f.acceptedRow = structuredClone(f.acceptedRow);
+  let accessed = 0;
+  const hidden = { private: "synthetic_unverified_row_extra" }; hidden.loop = hidden;
+  Object.defineProperty(f.acceptedRow, "arbitrary_column", { enumerable: true, get() { accessed++; return hidden; } });
+  Object.defineProperty(f.acceptedRow.linked_metadata, "unverified_extra", { enumerable: true, get() { accessed++; return hidden; } });
+  f.acceptedRow.created_at = "2099-01-01T00:00:00.000Z";
+  f.acceptedRow.current_revision = 123; f.acceptedRow.report_data = hidden;
+  const record = await getAcceptedRecord(fake(f), lookup(f)), encoded = JSON.stringify(record);
+  assert.equal(accessed, 0); assertDeepFrozen(record);
+  for (const key of ["created_at", "arbitrary_column", "unverified_extra", "current_revision", "report_data", "linked_metadata"])
+    assert.equal(Object.hasOwn(record, key), false);
+  assert.equal(encoded.includes("synthetic_unverified_row_extra"), false);
+  f.acceptedRow.id = "c0000000-0000-4000-8000-000000000009";
+  f.acceptedRow.receipt.acceptance_manifest.applied[0].value = "mutated fake row";
+  f.acceptedRow.linked_after_data.applied_suggestion_ids.pop();
+  assert.equal(JSON.stringify(record), encoded);
+  assert.throws(() => { record.receipt.acceptance_manifest.applied[0].value = "mutated result"; }, TypeError);
+  assert.throws(() => { record.application_id = "mutated result"; }, TypeError);
+});
+
+test("both acceptance getters reject the same retained context, receipt, provenance and audit corruptions", async () => {
+  const edits = [
+    row => { row.stored_evidence_digest = "0".repeat(64); },
+    row => { row.stored_assessment_id = "10000000-0000-4000-8000-000000000009"; },
+    row => { row.stored_assessment_revision++; },
+    row => { row.assessment.subject_facts.changed = true; },
+    row => { row.organization_id = "10000000-0000-4000-8000-000000000009"; },
+    row => { row.uad_workfile_id = "70000000-0000-4000-8000-000000000009"; },
+    row => { row.appraisal_case_id = "20000000-0000-4000-8000-000000000009"; },
+    row => { row.subject_snapshot_id = "30000000-0000-4000-8000-000000000009"; },
+    row => { row.target_account_id = "other-account"; },
+    row => { row.canonical_effective_date = "2024-06-29"; },
+    row => { row.attachment.editor_revision++; },
+    row => { row.attachment_id = "60000000-0000-4000-8000-000000000009"; },
+    row => { row.binding_digest_sha256 = "0".repeat(64); },
+    row => { row.mapped_suggestions.pop(); },
+    row => { row.operation_id = "browser-name"; },
+    row => { row.actor_user_id = null; },
+    row => { row.uad_revision_id = "a".repeat(1000); },
+    ...[0, "0", "01", "9223372036854775808", 9_007_199_254_740_993, null].map(value => row => { row.uad_audit_event_id = value; }),
+    row => { row.linked_revision_actor = "90000000-0000-4000-8000-000000000009"; },
+    row => { row.linked_audit_workfile_id = "70000000-0000-4000-8000-000000000009"; },
+    row => { row.linked_revision_number = 7; },
+    row => { row.linked_specification_release = "different-release"; },
+    row => { row.linked_event_type = "uad_completion_suggestions.applied"; },
+    row => { row.linked_entity_type = "different-entity"; },
+    row => { row.linked_entity_id = "80000000-0000-4000-8000-000000000009"; },
+    row => { row.linked_metadata.operation_id = "80000000-0000-4000-8000-000000000009"; },
+    row => { row.linked_metadata.receipt_digest_sha256 = "0".repeat(64); },
+    row => { row.linked_metadata.uad_revision_id = "a0000000-0000-4000-8000-000000000009"; },
+    row => { row.linked_after_data.assessment_revision = 2; },
+    row => { row.linked_after_data.applied_suggestion_ids = ["median"]; },
+    row => { row.linked_after_data.reused_suggestion_ids = ["median"]; },
+    ...[
+      receipt => { receipt.accepted_editor_revision = 7; },
+      ...[0, null, 2_147_483_648].map(value => receipt => { receipt.accepted_editor_revision = value; }),
+      receipt => { receipt.acceptance_manifest.base_editor_revision = 4; },
+      receipt => { receipt.acceptance_manifest.provenance.mapper_version = "wrong-mapper"; },
+      receipt => { receipt.acceptance_manifest.binding_digest_sha256 = "0".repeat(64); },
+      receipt => { receipt.acceptance_manifest.prepared_values_sha256 = "0".repeat(64); },
+      receipt => { receipt.acceptance_manifest.applied.pop(); },
+      receipt => { receipt.acceptance_manifest.reused.push(receipt.acceptance_manifest.applied[0]); },
+    ].map(edit => row => { edit(row.receipt); row.receipt = rehashReceipt(row.receipt); }),
+  ];
+  for (const edit of edits) {
+    const f = fixture(); f.acceptedRow = structuredClone(f.acceptedRow); edit(f.acceptedRow);
+    const oldClient = fake(f), newClient = fake(f);
+    const oldError = await rejection(getAccepted(oldClient, lookup(f)));
+    const newError = await rejection(getAcceptedRecord(newClient, lookup(f)));
+    assert.equal(newError.message, oldError.message); assert.equal(newError.code, oldError.code);
+    assert.deepEqual(newClient.calls, oldClient.calls); assert.equal(newClient.calls.length, 1);
+    noWrites(newClient); noWrites(oldClient);
+  }
+});
+
+test("a large valid legacy receipt remains byte-equivalent inside the additive metadata projection", async () => {
+  // A valid mapper/plan repeats values; choose a large admitted core rather
+  // than padding unknown receipt fields or claiming an unreachable 1.5MB edge.
+  const f = fixture("uad_3_6", { boundaryValue: "N".repeat(650_000) });
+  const old = await getAccepted(fake(f), lookup(f));
+  const originalBytes = canonicalAssessmentJson(old);
+  assert.ok(Buffer.byteLength(originalBytes, "utf8") > 650_000);
+  const record = await getAcceptedRecord(fake(f), lookup(f));
+  assert.equal(canonicalAssessmentJson(record.receipt), originalBytes);
+  assert.equal(record.receipt.acceptance_manifest.applied.find(item => item.id === "boundary").value.length, 650_000);
+  const { receipt: _receipt, ...metadata } = record;
+  assert.ok(Buffer.byteLength(canonicalAssessmentJson(metadata), "utf8") <= 512);
+  assert.ok(Buffer.byteLength(JSON.stringify(record), "utf8") > Buffer.byteLength(originalBytes, "utf8"));
+  assertDeepFrozen(record);
 });

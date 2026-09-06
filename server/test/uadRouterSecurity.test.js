@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 
 import express from "express";
@@ -9,12 +10,13 @@ const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
 const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
 const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
 const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
+const REPORT_FILE_ID = "e2f654e7-d35f-4cb5-8cc5-64e86784d0d0";
 
 async function withServer(pool, callback, securityOverrides = {}, routerOverrides = {}) {
   const app = express();
   app.use("/api/uad", createUadRouter({
     pool,
-    storage: { provider: "r2", configured: true },
+    storage: routerOverrides.storage ?? { provider: "r2", configured: true },
     verifier: {
       configured: true,
       async verify() {
@@ -526,6 +528,253 @@ test("private UAD PDF uploads pass the bounded binary parser but still require a
     assert.deepEqual(await response.json(), { error: "invalid_access_token" });
     assert.equal(pool.accessQueries.length, 0);
   });
+});
+
+test("authenticated UAD document uploads ignore a spoofed uploader and retain exact authorized scope", async () => {
+  const basePool = securityPool();
+  const schemaQueries = [];
+  const scopeQueries = [];
+  const inserts = [];
+  const storedObjects = [];
+  const content = Buffer.from("%PDF-1.4\nsynthetic authenticated document attribution");
+  const checksum = createHash("sha256").update(content).digest("hex");
+  const fileName = "uad-actor-test.pdf";
+  const expectedObjectKey = `organizations/${ORGANIZATION_ID}/uad-3.6/accounts/SYNTHETIC-ACCOUNT`
+    + `/workfiles/${WORKFILE_ID}/documents/${checksum}/${fileName}`;
+  const storage = {
+    provider: "r2",
+    configured: true,
+    isolated: true,
+    bucket: "synthetic-private-documents",
+    async putObject(input) {
+      storedObjects.push({
+        ...input,
+        body: Buffer.from(input.body),
+      });
+    },
+    async inspectObject({ objectKey }) {
+      const stored = storedObjects.find((entry) => entry.objectKey === objectKey);
+      assert.ok(stored, "document must be stored before it is inspected");
+      return {
+        byte_size: stored.body.length,
+        etag: '"synthetic-etag"',
+        content_type: stored.contentType,
+      };
+    },
+  };
+  const pool = {
+    ...basePool,
+    async query(sql, params = []) {
+      if (sql.includes("CREATE TABLE IF NOT EXISTS app.assignment_documents")) {
+        schemaQueries.push(sql);
+        return { rows: [] };
+      }
+      if (sql.includes("SELECT workfile.id AS uad_workfile_id")) {
+        scopeQueries.push([...params]);
+        return { rows: [{
+          uad_workfile_id: WORKFILE_ID,
+          account_id: "SYNTHETIC-ACCOUNT",
+          organization_id: ORGANIZATION_ID,
+          report_file_id: REPORT_FILE_ID,
+        }] };
+      }
+      if (sql.includes("INSERT INTO app.assignment_documents")) {
+        inserts.push({ sql, params: [...params] });
+        return { rows: [{
+          id: 44,
+          account_id: params[0],
+          assignment_file_id: params[1],
+          uad_workfile_id: params[2],
+          tax_protest_file_id: params[3],
+          report_file_id: params[4],
+          document_type: params[5],
+          title: params[6],
+          file_name: params[7],
+          content_type: "application/pdf",
+          content: params[8],
+          checksum_sha256: params[9],
+          file_size_bytes: params[10],
+          uploaded_by: params[11],
+          storage_provider: params[12],
+          storage_status: params[13],
+          storage_bucket: params[14],
+          object_key: params[15],
+          storage_etag: params[16],
+          storage_content_type: params[17],
+          storage_verified_at: params[18],
+          storage_last_error: params[19],
+          page_count: null,
+          processing_status: "reviewed",
+          processing_attempts: 0,
+          extraction_summary: {},
+          uploaded_at: "2026-09-06T12:00:00.000Z",
+          processed_at: null,
+          reviewed_at: "2026-09-06T12:01:00.000Z",
+        }] };
+      }
+      return basePool.query(sql, params);
+    },
+  };
+
+  let responseBody;
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer synthetic-token",
+        "content-type": "application/pdf",
+        "x-document-type": "other",
+        "x-document-title": encodeURIComponent("Synthetic evidence"),
+        "x-document-file-name": encodeURIComponent(fileName),
+        "x-document-uploaded-by": encodeURIComponent("Forged Uploader"),
+      },
+      body: content,
+    });
+    assert.equal(response.status, 201);
+    responseBody = await response.json();
+  }, {}, { storage });
+
+  assert.deepEqual(basePool.accessQueries, [[WORKFILE_ID]]);
+  assert.deepEqual(scopeQueries, [[WORKFILE_ID]]);
+  assert.equal(schemaQueries.length, 2);
+  assert.equal(inserts.length, 1);
+  const [insert] = inserts;
+  assert.match(insert.sql, /ON CONFLICT[\s\S]+checksum_sha256[\s\S]+DO UPDATE/);
+  assert.deepEqual(insert.params.slice(0, 5), [
+    "SYNTHETIC-ACCOUNT",
+    null,
+    WORKFILE_ID,
+    null,
+    REPORT_FILE_ID,
+  ]);
+  assert.equal(insert.params[5], "other");
+  assert.equal(insert.params[6], "Synthetic evidence");
+  assert.equal(insert.params[7], fileName);
+  assert.equal(insert.params[8], null);
+  assert.equal(insert.params[9], checksum);
+  assert.equal(insert.params[10], content.length);
+  assert.equal(insert.params[12], "r2");
+  assert.equal(insert.params[13], "stored");
+  assert.equal(insert.params[14], storage.bucket);
+  assert.equal(insert.params[15], expectedObjectKey);
+  assert.equal(insert.params[16], '"synthetic-etag"');
+  assert.equal(insert.params[17], "application/pdf");
+  assert.ok(insert.params[18] instanceof Date);
+  assert.equal(insert.params[19], null);
+  assert.equal(storedObjects.length, 1);
+  assert.deepEqual(storedObjects[0], {
+    objectKey: expectedObjectKey,
+    contentType: "application/pdf",
+    body: content,
+  });
+  assert.deepEqual({
+    account_id: responseBody.document.account_id,
+    assignment_file_id: responseBody.document.assignment_file_id,
+    uad_workfile_id: responseBody.document.uad_workfile_id,
+    tax_protest_file_id: responseBody.document.tax_protest_file_id,
+    report_file_id: responseBody.document.report_file_id,
+    checksum_sha256: responseBody.document.checksum_sha256,
+    file_size_bytes: responseBody.document.file_size_bytes,
+    storage_provider: responseBody.document.storage_provider,
+    storage_status: responseBody.document.storage_status,
+  }, {
+    account_id: "SYNTHETIC-ACCOUNT",
+    assignment_file_id: null,
+    uad_workfile_id: WORKFILE_ID,
+    tax_protest_file_id: null,
+    report_file_id: REPORT_FILE_ID,
+    checksum_sha256: checksum,
+    file_size_bytes: content.length,
+    storage_provider: "r2",
+    storage_status: "stored",
+  });
+
+  assert.equal(insert.params[11], USER_ID);
+  assert.equal(responseBody.document.uploaded_by, USER_ID);
+});
+
+test("UAD document uploads deny unauthorized callers before schema, document, or storage access", async () => {
+  const content = Buffer.from("%PDF-1.4\nsynthetic denied document upload");
+  const cases = [
+    {
+      name: "anonymous",
+      poolOptions: {},
+      headers: {},
+      expectedStatus: 401,
+      expectedBody: { error: "invalid_access_token" },
+      expectedAccessQueries: [],
+    },
+    {
+      name: "foreign organization",
+      poolOptions: { membershipOrganizationId: OTHER_ORGANIZATION_ID },
+      headers: { authorization: "Bearer synthetic-token" },
+      expectedStatus: 403,
+      expectedBody: { error: "uad_workfile_access_denied" },
+      expectedAccessQueries: [[WORKFILE_ID]],
+    },
+    {
+      name: "unassigned appraiser",
+      poolOptions: { assignedAppraiserUserId: "a7253788-a018-4e96-80bd-3cc0b634b53a" },
+      headers: { authorization: "Bearer synthetic-token" },
+      expectedStatus: 403,
+      expectedBody: { error: "uad_workfile_access_denied" },
+      expectedAccessQueries: [[WORKFILE_ID]],
+    },
+  ];
+
+  for (const testCase of cases) {
+    const basePool = securityPool(testCase.poolOptions);
+    const queries = [];
+    const storageCalls = [];
+    const pool = {
+      ...basePool,
+      async query(sql, params = []) {
+        queries.push({ sql, params: [...params] });
+        return basePool.query(sql, params);
+      },
+    };
+    const storage = {
+      provider: "r2",
+      configured: true,
+      isolated: true,
+      bucket: "synthetic-private-documents",
+      async putObject(input) {
+        storageCalls.push(["putObject", input]);
+        throw new Error("denied_upload_must_not_write_storage");
+      },
+      async inspectObject(input) {
+        storageCalls.push(["inspectObject", input]);
+        throw new Error("denied_upload_must_not_inspect_storage");
+      },
+    };
+
+    await withServer(pool, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+        method: "POST",
+        headers: {
+          ...testCase.headers,
+          "content-type": "application/pdf",
+          "x-document-file-name": "denied-upload.pdf",
+          "x-document-uploaded-by": USER_ID,
+        },
+        body: content,
+      });
+      assert.equal(response.status, testCase.expectedStatus, testCase.name);
+      assert.deepEqual(await response.json(), testCase.expectedBody, testCase.name);
+    }, {}, { storage });
+
+    assert.deepEqual(basePool.accessQueries, testCase.expectedAccessQueries, testCase.name);
+    assert.equal(
+      queries.some(({ sql }) => (
+        sql.includes("CREATE TABLE IF NOT EXISTS app.assignment_documents")
+        || sql.includes("SELECT workfile.id AS uad_workfile_id")
+        || sql.includes("INSERT INTO app.assignment_documents")
+      )),
+      false,
+      `${testCase.name} must be denied before document persistence is reached`,
+    );
+    assert.deepEqual(storageCalls, [], testCase.name);
+  }
 });
 
 test("rate limiting keeps one client bucket across rotating proxy addresses", async () => {

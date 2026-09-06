@@ -423,7 +423,7 @@ export function createDesktopPropertyTaxRouter({
           ),
           contentType: req.get("content-type"),
           content: req.body,
-          uploadedBy: decodedDocumentHeader(req, "x-document-uploaded-by"),
+          uploadedBy: req.mobileAuth?.userId || null,
           storage: documentStorage,
         });
         if (document.processing_status === "uploaded") {

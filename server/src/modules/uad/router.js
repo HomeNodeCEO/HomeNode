@@ -561,7 +561,7 @@ export function createUadRouter({
           fileName: decodeHeader("x-document-file-name", "document.pdf"),
           contentType: req.get("content-type"),
           content: req.body,
-          uploadedBy: decodeHeader("x-document-uploaded-by"),
+          uploadedBy: req.mobileAuth?.userId || null,
           storage,
         });
         if (document.processing_status === "uploaded") {

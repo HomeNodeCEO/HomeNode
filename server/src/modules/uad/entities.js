@@ -179,11 +179,11 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
   return entityResponse(inserted.rows[0]);
 }
 
-export async function createUadEntity(pool, workfileIdValue, input = {}) {
+export async function createUadEntity(pool, workfileIdValue, input = {}, actorUserId = null) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const entity = await createUadEntityWithClient(client, workfileIdValue, input);
+    const entity = await createUadEntityWithClient(client, workfileIdValue, input, { actorUserId });
     await client.query("COMMIT");
     return entity;
   } catch (error) {
@@ -238,11 +238,11 @@ export async function deleteUadEntityWithClient(client, workfileIdValue, entityI
   return deleted;
 }
 
-export async function deleteUadEntity(pool, workfileIdValue, entityIdValue) {
+export async function deleteUadEntity(pool, workfileIdValue, entityIdValue, actorUserId = null) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const deleted = await deleteUadEntityWithClient(client, workfileIdValue, entityIdValue);
+    const deleted = await deleteUadEntityWithClient(client, workfileIdValue, entityIdValue, { actorUserId });
     await client.query("COMMIT");
     return deleted;
   } catch (error) {

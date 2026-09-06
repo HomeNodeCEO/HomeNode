@@ -869,3 +869,181 @@ test("UAD body parser hides compression and charset parser diagnostics", async (
     assert.equal(pool.accessQueries.length, 0);
   });
 });
+
+function entityAuditRoutePool(method) {
+  const pool = securityPool();
+  const authorizeQuery = pool.query.bind(pool);
+  const trace = [], poolTrace = [], auditRows = [], failures = [];
+  let connections = 0, releases = 0;
+  let entity = {
+    id: "baebad3d-633b-4ea9-97f8-5e238454d8c0",
+    workfile_id: WORKFILE_ID,
+    parent_entity_id: null,
+    entity_type: "assignment_seller",
+    entity_identifier: "assignment-seller-1",
+    ordinal: 1,
+    label: "Synthetic seller",
+    data: { source: "synthetic-router-control" },
+    created_at: "2026-09-06T00:00:00.000Z",
+    updated_at: "2026-09-06T00:00:00.000Z",
+  };
+  const lockSql = "SELECT id, status FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE";
+  const auditSql = method === "POST"
+    ? "INSERT INTO appraisal.uad_audit_events ( workfile_id, actor_user_id, event_type, entity_type, entity_id, after_data ) VALUES ($1, $2, 'uad_entity.created', $3, $4, $5::jsonb)"
+    : "INSERT INTO appraisal.uad_audit_events ( workfile_id, actor_user_id, event_type, entity_type, entity_id, before_data ) VALUES ($1, $2, 'uad_entity.deleted', $3, $4, $5::jsonb)";
+  const steps = [
+    ["BEGIN", (params) => { assert.deepEqual(params, []); return { rows: [] }; }],
+    [lockSql, (params) => {
+      assert.deepEqual(params, [WORKFILE_ID]);
+      return { rows: [{ id: WORKFILE_ID, status: "draft" }] };
+    }],
+    ...(method === "POST" ? [
+      ["SELECT count(*)::integer AS count FROM appraisal.uad_entities WHERE workfile_id = $1 AND entity_type = $2 AND parent_entity_id IS NOT DISTINCT FROM $3::uuid", (params) => {
+        assert.deepEqual(params, [WORKFILE_ID, "assignment_seller", null]);
+        return { rows: [{ count: 0 }] };
+      }],
+      ["SELECT COALESCE(MAX(ordinal), 0) + 1 AS ordinal FROM appraisal.uad_entities WHERE workfile_id = $1 AND entity_type = $2", (params) => {
+        assert.deepEqual(params, [WORKFILE_ID, "assignment_seller"]);
+        return { rows: [{ ordinal: 1 }] };
+      }],
+      ["INSERT INTO appraisal.uad_entities ( id, workfile_id, parent_entity_id, entity_type, entity_identifier, ordinal, label, data ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8::jsonb) RETURNING *", (params) => {
+        assert.match(params[0], /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/);
+        assert.deepEqual(params.slice(1), [WORKFILE_ID, null, "assignment_seller", "assignment-seller-1", 1,
+          "Synthetic seller", JSON.stringify({ source: "synthetic-router-control" })]);
+        entity = { ...entity, id: params[0] };
+        return { rows: [{ ...entity, ordinal: "1" }] };
+      }],
+    ] : [
+      ["SELECT * FROM appraisal.uad_entities WHERE id = $1 AND workfile_id = $2 FOR UPDATE", (params) => {
+        assert.deepEqual(params, [entity.id, WORKFILE_ID]);
+        return { rows: [{ ...entity, ordinal: "1" }] };
+      }],
+      ["DELETE FROM appraisal.uad_entities WHERE id = $1", (params) => {
+        assert.deepEqual(params, [entity.id]);
+        return { rows: [] };
+      }],
+    ]),
+    [auditSql, (params) => {
+      assert.equal(params.length, 5);
+      assert.equal(params[0], WORKFILE_ID);
+      assert.deepEqual(params.slice(2), ["assignment_seller", entity.id, JSON.stringify(entity)]);
+      // Capture the real INSERT binding; assert actor outside the service so the
+      // old source fails on null attribution, not on an unhandled mock query.
+      auditRows.push({ actor_user_id: params[1], entity: JSON.parse(params[4]) });
+      return { rows: [] };
+    }],
+    ["UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1", (params) => {
+      assert.deepEqual(params, [WORKFILE_ID]);
+      return { rows: [] };
+    }],
+    ["COMMIT", (params) => { assert.deepEqual(params, []); return { rows: [] }; }],
+  ];
+  const client = {
+    async query(sql, params = []) {
+      try {
+        assert.equal(this, client);
+        assert.equal(releases, 0);
+        const statement = String(sql).replace(/\s+/g, " ").trim();
+        const step = steps[trace.length];
+        trace.push(statement);
+        assert.ok(step, "unexpected extra transaction query");
+        assert.equal(statement, step[0]);
+        return step[1](params);
+      } catch (error) { failures.push(error); throw error; }
+    },
+    release() {
+      try {
+        assert.equal(this, client);
+        assert.equal(++releases, 1);
+        assert.deepEqual(trace, steps.map(([sql]) => sql));
+      } catch (error) { failures.push(error); throw error; }
+    },
+  };
+  pool.query = async (sql, params = []) => {
+    try {
+      assert.equal(connections, 0, "persistence escaped the checked-out transaction client");
+      const statement = String(sql).replace(/\s+/g, " ").trim();
+      if (statement.includes("FROM app_auth.oidc_identities identities")) {
+        assert.deepEqual(params, ["https://identity.example", "oidc-subject"]);
+        poolTrace.push("identity");
+      } else if (statement === "UPDATE app_auth.oidc_identities SET last_authenticated_at = now(), updated_at = now() WHERE issuer = $1 AND subject = $2") {
+        assert.deepEqual(params, ["https://identity.example", "oidc-subject"]);
+        poolTrace.push("authenticated");
+      } else {
+        assert.equal(statement, "SELECT id, organization_id, assigned_appraiser_user_id, supervisory_appraiser_user_id FROM appraisal.uad_workfiles WHERE id = $1");
+        assert.deepEqual(params, [WORKFILE_ID]);
+        poolTrace.push("authorized");
+      }
+      return await authorizeQuery(sql, params);
+    } catch (error) { failures.push(error); throw error; }
+  };
+  pool.connect = async () => {
+    assert.equal(++connections, 1);
+    assert.deepEqual(poolTrace, ["identity", "authenticated", "authorized"]);
+    assert.deepEqual(pool.accessQueries, [[WORKFILE_ID]]);
+    return client;
+  };
+  return {
+    pool, auditRows,
+    entity: () => entity,
+    assertFinished() {
+      assert.deepEqual(failures, [], "SQL/client assertions must not be swallowed by the router");
+      assert.equal(connections, 1);
+      assert.equal(releases, 1);
+      assert.deepEqual(trace, steps.map(([sql]) => sql));
+      assert.equal(auditRows.length, 1);
+    },
+  };
+}
+
+for (const method of ["POST", "DELETE"]) {
+  test(`UAD entity ${method} persists the authenticated audit actor through the real wrapper and ignores forged actors`, async () => {
+    const fixture = entityAuditRoutePool(method);
+    const forgedBodyActor = "87a7a94a-504a-4c0a-8061-df9eecb48cd9";
+    const forgedHeaderActor = "b90b2a46-c7af-4590-ab77-e27a8f680c3e";
+    await withServer(fixture.pool, async (baseUrl) => {
+      const suffix = method === "DELETE" ? `/${fixture.entity().id}` : "";
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/entities${suffix}`, {
+        method,
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json",
+          "x-actor-user-id": forgedHeaderActor, "x-user-id": forgedHeaderActor },
+        body: JSON.stringify({ entity_type: "assignment_seller", label: "Synthetic seller",
+          data: { source: "synthetic-router-control" }, actor_user_id: forgedBodyActor, actorUserId: forgedBodyActor }),
+      });
+      assert.equal(response.status, method === "POST" ? 201 : 204);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      if (method === "POST") assert.deepEqual(await response.json(), { entity: fixture.entity() });
+      else assert.equal(await response.text(), "");
+    });
+    fixture.assertFinished();
+    assert.deepEqual(fixture.auditRows, [{ actor_user_id: USER_ID, entity: fixture.entity() }]);
+    assert.notEqual(fixture.auditRows[0].actor_user_id, forgedBodyActor);
+    assert.notEqual(fixture.auditRows[0].actor_user_id, forgedHeaderActor);
+  });
+
+  test(`UAD entity ${method} rejects unauthenticated, foreign-organization, and unassigned requests before mutation`, async () => {
+    for (const scenario of [
+      { authenticated: false, options: {}, status: 401, error: "invalid_access_token" },
+      { authenticated: true, options: { membershipOrganizationId: OTHER_ORGANIZATION_ID }, status: 403, error: "uad_workfile_access_denied" },
+      { authenticated: true, options: { assignedAppraiserUserId: "another-appraiser" }, status: 403, error: "uad_workfile_access_denied" },
+    ]) {
+      const pool = securityPool(scenario.options);
+      let connections = 0;
+      pool.connect = async () => { connections += 1; throw new Error("unauthorized_entity_must_not_connect"); };
+      await withServer(pool, async (baseUrl) => {
+        const suffix = method === "DELETE" ? "/baebad3d-633b-4ea9-97f8-5e238454d8c0" : "";
+        const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/entities${suffix}`, {
+          method,
+          headers: { "content-type": "application/json", "x-actor-user-id": USER_ID,
+            ...(scenario.authenticated ? { authorization: "Bearer synthetic-token" } : {}) },
+          body: JSON.stringify({ entity_type: "assignment_seller", actor_user_id: USER_ID, actorUserId: USER_ID }),
+        });
+        assert.equal(response.status, scenario.status);
+        assert.equal(response.headers.get("cache-control"), "no-store");
+        assert.deepEqual(await response.json(), { error: scenario.error });
+      });
+      assert.equal(connections, 0);
+      assert.deepEqual(pool.accessQueries, scenario.authenticated ? [[WORKFILE_ID]] : []);
+    }
+  });
+}

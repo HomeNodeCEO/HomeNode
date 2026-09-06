@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { buildCachedSourceCaptures } from './cachedSourceCaptures.js';
+import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
@@ -451,11 +452,17 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       semantics:'current_mutable_query_capture_not_historical_replay',
       selection_method:'exact_selected_accounts_all_source_links_no_event_filter',
       provider_coverage:'unknown',limits,capabilities };
-    const manifest=createHash('sha256').update(canonicalAssessmentJson(compact));
+    const compactJson=canonicalAssessmentJson(compact);
+    const manifest=createHash('sha256').update(compactJson);
     // Stream potentially large membership rather than putting 50k IDs into the
     // per-chunk contract envelope. The members themselves remain captured below.
     for (const id of request.account_ids) manifest.update(canonicalAssessmentJson(id)).update('\n');
     const selection_sha256=manifest.digest('hex');
+    // Retain the exact original preimage before compact gains per-capture
+    // fields. Do not reconstruct it from a later result or reread the cache.
+    const queryEvidence=buildCohortLocalQueryEvidenceV1(compactJson,JSON.stringify(request.account_ids),selection_sha256);
+    if (queryEvidence.status!=='syntax_valid') return failedCapture([
+      queryEvidence.status==='limit_exceeded'?'query_evidence_limit':'query_evidence_invalid']);
     const selectionRecords=request.account_ids.map(account_id => ({ record_id:`selected:${account_id}`,data:{ account_id } }));
     const captures=[];
     Object.assign(compact,{ selection_sha256,selected_account_count:request.account_ids.length });
@@ -476,7 +483,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       const source_capture=buildCachedSourceCaptures({ scope:request.scope,captures });
       return freeze({ status:missing.size?'incomplete':'captured',query_complete:missing.size===0,
         scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,
-        source_capture,selection_sha256,capabilities,incomplete_reasons:[...missing].sort(compare),counts,
+        source_capture,selection_sha256,query_evidence:queryEvidence.evidence,capabilities,incomplete_reasons:[...missing].sort(compare),counts,
         unsupported_capabilities:['historical_knowledge_replay','historical_characteristics','verified_market_eligibility',
           'real_transaction_membership','cross_source_transaction_equivalence','price_allocation','provider_coverage'] });
     } catch (error) {

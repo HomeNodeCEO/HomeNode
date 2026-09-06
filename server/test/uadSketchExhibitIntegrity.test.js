@@ -43,6 +43,16 @@ function deferred() {
   return { promise, resolve };
 }
 
+function phaseCalls(state, phase, label = null) {
+  const clients = new Set(state.clients.filter(client => client.phase === phase).map(client => client.name));
+  return state.calls.filter(call => clients.has(call.client) && (label === null || call.label === label));
+}
+
+function postCreationCalls(state, label = null) {
+  const clients = new Set(state.clients.filter(client => client.phase === "creation").map(client => client.name));
+  return state.calls.filter(call => !clients.has(call.client) && (label === null || call.label === label));
+}
+
 function renderMetadata() {
   return {
     source: "homenode_web_sketch_editor", source_uad_sketch_id: SKETCH_ID,
@@ -70,7 +80,7 @@ function assetRow(id, { status = "verified", generated = false } = {}) {
 // applicability, payload verification and immutable-key construction all run.
 // These SQL doubles model only the statements this workflow executes; they are
 // not evidence of native PostgreSQL locking or an actual signing transaction.
-function harness({ existingRender = null, onConnect = null, lockError = null,
+function harness({ existingRender = null, onCanonicalLock = null, lockError = null,
   onVerificationRead = null, onVerificationPublished = null, cleanupCommitError = null } = {}) {
   const document = normalizeManualSketchDocument(sketchInput());
   const originalBody = renderSketchPng({ document, revision: 1 }, { fileNumber: FILE_NUMBER, revision: 1 });
@@ -106,16 +116,26 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
   const record = (label, kind, sql, parameters, client = null) => {
     state.calls.push({ label, kind, sql, parameters: clone(parameters), client: client?.name || null });
   };
+  const enterPhase = async (label, client, phase) => {
+    assert.ok(client?.transaction);
+    assert.equal(client.phase, null);
+    // The SQL identifies the transaction's role, not its connection ordinal.
+    // A simulated canonical lock wait must finish before taking the rollback
+    // snapshot, so a loser cannot undo the winner's already committed state.
+    if (phase === "canonical") await onCanonicalLock?.(label, state);
+    client.phase = phase;
+    client.transaction.snapshot = clone({ workfile: state.workfile, sketch: state.sketch,
+      assets: state.assets, history: state.history, sketchAudits: state.sketchAudits });
+  };
   const executeQuery = async (label, statement, parameters = [], client = null) => {
     assert.equal(typeof statement, "string");
     const sql = statement.replace(/\s+/g, " ").trim();
     const log = kind => record(label, kind, sql, parameters, client);
     if (sql === "BEGIN ISOLATION LEVEL READ COMMITTED") {
-      assert.ok(client, "canonical transaction must use the acquired client");
+      assert.ok(client, "transaction must use the acquired client");
       assert.equal(client.transaction, null);
       log("begin");
-      client.transaction = clone({ workfile: state.workfile, sketch: state.sketch,
-        assets: state.assets, history: state.history, sketchAudits: state.sketchAudits });
+      client.transaction = { snapshot: null };
       return { rows: [] };
     }
     if (sql === "SET LOCAL lock_timeout = '500ms'") {
@@ -132,14 +152,14 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
       return { rows: [] };
     }
     if (sql === "COMMIT") {
-      assert.ok(client?.transaction); log("commit");
+      assert.ok(client?.transaction?.snapshot); log("commit");
       if (client.cleanup && cleanupCommitError) throw cleanupCommitError;
       client.transaction = null;
       return { rows: [] };
     }
     if (sql === "ROLLBACK") {
       assert.ok(client); log("rollback");
-      if (client.transaction) Object.assign(state, client.transaction);
+      if (client.transaction?.snapshot) Object.assign(state, client.transaction.snapshot);
       client.transaction = null;
       return { rows: [] };
     }
@@ -160,15 +180,18 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
         && row.capture_metadata.uad_sketch_editor_revision === PROVENANCE);
       return { rows: asset ? [clone(asset)] : [] };
     }
-    if (sql.startsWith("SELECT id, organization_id, status FROM appraisal.uad_workfiles")) {
+    if (sql === "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+      await enterPhase(label, client, "creation");
       log("asset_workfile"); assert.deepEqual(parameters, [WORKFILE_ID]);
       return { rows: [clone(state.workfile)] };
     }
     if (sql.startsWith("SELECT uad_uid, value FROM appraisal.uad_field_values")) {
+      if (client) assert.equal(client.phase, "creation");
       log("applicability"); assert.deepEqual(parameters, [WORKFILE_ID, ["3300.0002"]]);
       return { rows: [{ uad_uid: "3300.0002", value: true }] };
     }
     if (sql.startsWith("WITH mutable_workfile") && sql.includes("inserted_asset AS")) {
+      assert.ok(client?.transaction?.snapshot); assert.equal(client.phase, "creation");
       log("create_asset"); assert.equal(parameters[1], WORKFILE_ID);
       const row = assetRow(parameters[0], { status: "pending_upload", generated: true });
       Object.assign(row, { entity_id: parameters[2], asset_kind: parameters[3], section_number: parameters[4],
@@ -216,6 +239,7 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
     if (sql.startsWith("SELECT id, status, signed_at FROM appraisal.uad_workfiles")) {
       assert.ok(client?.transaction);
       if (client.cleanup) assert.equal(state.calls.at(-1).kind, "cleanup_statement_timeout");
+      await enterPhase(label, client, client.cleanup ? "cleanup" : "canonical");
       log(client.cleanup ? "cleanup_workfile_lock" : "canonical_lock");
       assert.deepEqual(parameters, [WORKFILE_ID]);
       assert.equal(sql, "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE");
@@ -328,8 +352,7 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
     query: (sql, parameters) => query(label, sql, parameters),
     async connect() {
       record(label, "connect", "", []);
-      await onConnect?.(label, state);
-      const client = { name: `${label}-${state.clients.length + 1}`, transaction: null, released: false, cleanup: false,
+      const client = { name: `${label}-${state.clients.length + 1}`, phase: null, transaction: null, released: false, cleanup: false,
         query: (sql, parameters) => query(label, sql, parameters, client),
         release() { assert.equal(client.released, false); client.released = true; record(label, "release", "", [], client); },
       };
@@ -339,6 +362,11 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
   const storage = label => ({
     configured: true, provider: "r2", bucket: "synthetic-only",
     createUploadUrl({ objectKey, contentType }) {
+      const creator = state.clients.find(client => client.name.startsWith(`${label}-`)
+        && client.phase === "creation" && client.transaction !== null);
+      assert.ok(creator, "upload capability is created inside its admitted creation transaction");
+      assert.deepEqual(phaseCalls(state, "creation", label).map(call => call.kind),
+        ["begin", "asset_workfile", "signatures", "applicability"]);
       state.storageCalls.push({ label, kind: "upload_url", objectKey, contentType });
       return { url: "https://unused-synthetic.invalid/upload", method: "PUT", headers: {}, expires_in_seconds: 900 };
     },
@@ -369,7 +397,14 @@ function harness({ existingRender = null, onConnect = null, lockError = null,
     { expected_revision: 1, caption: CAPTION, sketch: sketchInput() }, ACTOR_ID);
   return { state, run, assertComplete() {
     assert.deepEqual(state.harnessErrors, [], "no mock-contract failure may be swallowed by cleanup");
-    assert.equal(state.clients.every(client => client.released && client.transaction === null), true);
+    assert.equal(state.clients.every(client => client.phase !== null && client.released && client.transaction === null), true);
+    const creators = state.clients.filter(client => client.phase === "creation");
+    assert.equal(creators.length, state.createdAssetIds.length);
+    for (const creator of creators) {
+      assert.deepEqual(state.calls.filter(call => call.client === creator.name).map(call => call.kind), [
+        "begin", "asset_workfile", "signatures", "applicability", "create_asset", "commit", "release",
+      ]);
+    }
   } };
 }
 
@@ -393,7 +428,7 @@ test("exhibit preservation: a shared pending winner survives the real loser's ca
     async onVerificationPublished(label) {
       publishers.add(label); if (publishers.size === 2) bothPublished.resolve(); await bothPublished.promise;
     },
-    async onConnect(label) { if (label === "loser") await winnerFinished.promise; },
+    async onCanonicalLock(label) { if (label === "loser") await winnerFinished.promise; },
   });
   const winning = fixture.run("winner");
   const losing = fixture.run("loser").then(value => ({ value }), error => ({ error }));
@@ -441,7 +476,7 @@ test("exhibit preservation: the render creator cannot retire an exhibit referenc
       if (publishers.size === 2) bothPublished.resolve();
       await bothPublished.promise;
     },
-    async onConnect(label) { if (label === "creator") await winnerFinished.promise; },
+    async onCanonicalLock(label) { if (label === "creator") await winnerFinished.promise; },
   });
   const losing = fixture.run("creator").then(value => ({ value }), error => ({ error }));
   let winning;
@@ -467,7 +502,7 @@ test("exhibit preservation: the render creator cannot retire an exhibit referenc
   assert.equal(fixture.state.createdAssetIds.length, 1);
   assert.deepEqual(fixture.state.history, [{ sketch_id: SKETCH_ID, revision: 2, rendered_asset_id: assetId }]);
   assert.equal(fixture.state.sketchAudits.length, 1);
-  const creatorKinds = fixture.state.calls.filter(call => call.label === "creator").map(call => call.kind);
+  const creatorKinds = postCreationCalls(fixture.state, "creator").map(call => call.kind);
   assert.ok(creatorKinds.includes("canonical_sketch"));
   assert.equal(creatorKinds.includes("save_sketch"), false);
   assert.equal(creatorKinds.filter(kind => kind === "rollback").length, 2);
@@ -483,9 +518,9 @@ test("exhibit preservation: the render creator cannot retire an exhibit referenc
 for (const lifecycle of ["signed", "partial_signature", "historical_signature"]) {
   test(`exhibit preservation: newly created render is not retired after ${lifecycle} canonical refusal`, async () => {
     const fixture = harness({
-      onConnect(_label, state) {
+      onCanonicalLock(_label, state) {
         // The render has already been published. Simulate lifecycle changing
-        // before the real canonical transaction, without faking its guard error.
+        // before canonical row admission, without faking the real guard error.
         if (lifecycle === "signed") {
           state.workfile.status = "signed"; state.workfile.signed_at = STAMP;
         } else {
@@ -500,7 +535,7 @@ for (const lifecycle of ["signed", "partial_signature", "historical_signature"])
     assert.equal(fixture.state.sketch.rendered_asset_id, ORIGINAL_ASSET_ID);
     assert.deepEqual(fixture.state.history, []);
     assert.deepEqual(fixture.state.sketchAudits, []);
-    const kinds = fixture.state.calls.map(call => call.kind);
+    const kinds = postCreationCalls(fixture.state).map(call => call.kind);
     assert.ok(kinds.indexOf("verify_asset") < kinds.indexOf("canonical_lock"));
     assert.ok(kinds.includes("rollback"));
     assert.equal(kinds.includes("canonical_sketch"), false);
@@ -545,8 +580,9 @@ test("exhibit preservation: owned unreferenced render receives bounded metadata-
   assert.equal(fixture.state.workfile.status, "draft");
   assert.equal(fixture.state.workfile.current_revision, 4);
   assert.equal(fixture.state.assets.get(ORIGINAL_ASSET_ID).status, "verified");
-  assert.equal(fixture.state.clients.length, 2);
-  const cleanupClient = fixture.state.clients[1];
+  assert.equal(fixture.state.clients.length, 3);
+  const cleanupClient = fixture.state.clients.find(client => client.phase === "cleanup");
+  assert.ok(cleanupClient);
   assert.deepEqual(fixture.state.calls.filter(call => call.client === cleanupClient.name).map(call => call.kind), [
     "begin", "cleanup_lock_timeout", "cleanup_statement_timeout", "cleanup_workfile_lock", "signatures",
     "cleanup_asset_lock", "cleanup_observers", "orphan_compensation", "commit", "release",
@@ -573,8 +609,9 @@ test("exhibit preservation: cleanup commit failure rolls back retirement and pre
     return true;
   });
   assert.equal(fixture.state.createdAssetIds.length, 1);
-  assert.equal(fixture.state.clients.length, 2);
-  const cleanupClient = fixture.state.clients[1];
+  assert.equal(fixture.state.clients.length, 3);
+  const cleanupClient = fixture.state.clients.find(client => client.phase === "cleanup");
+  assert.ok(cleanupClient);
   const cleanupKinds = fixture.state.calls.filter(call => call.client === cleanupClient.name).map(call => call.kind);
   assert.deepEqual(cleanupKinds, [
     "begin", "cleanup_lock_timeout", "cleanup_statement_timeout", "cleanup_workfile_lock", "signatures",
@@ -590,14 +627,14 @@ test("exhibit preservation: cleanup commit failure rolls back retirement and pre
 for (const observer of ["validationRuns", "generatedArtifacts"]) {
   test(`exhibit preservation: owned render remains verified when any ${observer} history exists`, async () => {
     const sentinel = new Error("synthetic_canonical_storage_failure");
-    const fixture = harness({ lockError: sentinel, onConnect(_label, state) {
+    const fixture = harness({ lockError: sentinel, onCanonicalLock(_label, state) {
       state[observer] = [{ workfile_id: WORKFILE_ID, created_at: "2020-01-01T00:00:00.000Z" }];
     } });
     await assert.rejects(fixture.run("observed-failure"), error => error === sentinel);
     assert.equal(fixture.state.createdAssetIds.length, 1);
     assert.ok(fixture.state.calls.some(call => call.kind === "cleanup_observers"));
     assert.equal(fixture.state.calls.some(call => call.kind === "orphan_compensation"), false);
-    assert.equal(fixture.state.calls.some(call => call.kind === "commit"), false);
+    assert.equal(postCreationCalls(fixture.state).some(call => call.kind === "commit"), false);
     assert.equal(fixture.state.calls.filter(call => call.kind === "rollback").length, 2);
     fixture.assertComplete();
     assertVerifiedObjectRetained(fixture.state, fixture.state.createdAssetIds[0]);
@@ -605,7 +642,7 @@ for (const observer of ["validationRuns", "generatedArtifacts"]) {
 }
 
 test("exhibit preservation: verified idempotent render is retained on real lifecycle refusal without storage access", async () => {
-  const fixture = harness({ existingRender: "verified", onConnect(_label, state) {
+  const fixture = harness({ existingRender: "verified", onCanonicalLock(_label, state) {
     state.workfile.status = "signed"; state.workfile.signed_at = STAMP;
   } });
   await assert.rejects(fixture.run("verified-refusal"), { message: "uad_workfile_status_locked" });

@@ -74,16 +74,35 @@ test("canonical UAD facts gate Sections 7, 20, and 22", async () => {
 
 test("direct upload requests cannot bypass any gated UAD section", async () => {
   for (const [sectionNumber, uid, errorCode] of RULES) {
-    const pool = {
-      async query(sql) {
-        if (/FROM appraisal\.uad_workfiles/.test(sql)) {
-          return { rows: [{ id: WORKFILE_ID, organization_id: ORGANIZATION_ID, status: "draft" }] };
+    const queries = [];
+    let released = false;
+    const client = {
+      async query(statement, parameters = []) {
+        const sql = statement.replace(/\s+/g, " ").trim();
+        queries.push(sql);
+        if (sql === "BEGIN ISOLATION LEVEL READ COMMITTED" || sql === "ROLLBACK") {
+          assert.deepEqual(parameters, []);
+          return { rows: [] };
+        }
+        if (sql === "SELECT id, organization_id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+          assert.deepEqual(parameters, [WORKFILE_ID]);
+          return { rows: [{ id: WORKFILE_ID, organization_id: ORGANIZATION_ID, status: "draft", signed_at: null }] };
+        }
+        if (sql === "SELECT EXISTS ( SELECT 1 FROM appraisal.uad_signatures WHERE workfile_id = $1 ) AS has_signatures") {
+          assert.deepEqual(parameters, [WORKFILE_ID]);
+          return { rows: [{ has_signatures: false }] };
         }
         if (/FROM appraisal\.uad_field_values/.test(sql)) {
+          assert.deepEqual(parameters, [WORKFILE_ID, [uid]]);
           return { rows: [{ uad_uid: uid, value: false }] };
         }
         assert.fail(`inapplicable asset reached mutation SQL: ${sql}`);
       },
+      release() { assert.equal(released, false); released = true; },
+    };
+    const pool = {
+      connect: async () => client,
+      query: async () => assert.fail("creation must use its acquired transaction client"),
     };
     await assert.rejects(
       () => createUadAssetUpload(
@@ -94,6 +113,11 @@ test("direct upload requests cannot bypass any gated UAD section", async () => {
       ),
       new RegExp(errorCode),
     );
+    assert.equal(queries[0], "BEGIN ISOLATION LEVEL READ COMMITTED");
+    assert.equal(queries.at(-1), "ROLLBACK");
+    assert.equal(queries.length, 5);
+    assert.equal(queries.includes("COMMIT"), false);
+    assert.equal(released, true);
   }
 });
 

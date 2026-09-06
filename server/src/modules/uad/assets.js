@@ -460,18 +460,36 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const normalized = normalizeAssetInput(input);
   const assetId = randomUUID();
-  const workfileResult = await pool.query(
-    `SELECT id, organization_id, status
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
+    const upload = await createUadAssetUploadInTransaction(client, storage, workfileId, normalized, assetId);
+    await client.query("COMMIT");
+    return upload;
+  } catch (error) {
+    try { await client.query("ROLLBACK"); } catch { /* Preserve the original creation failure. */ }
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+// Private to the transaction-owning entry point above. URL signing is local;
+// never return that capability until the pending asset transaction commits.
+async function createUadAssetUploadInTransaction(client, storage, workfileId, normalized, assetId) {
+  const workfileResult = await client.query(
+    `SELECT id, organization_id, status, signed_at
        FROM appraisal.uad_workfiles
-      WHERE id = $1`,
+      WHERE id = $1
+      FOR UPDATE`,
     [workfileId],
   );
   if (!workfileResult.rows.length) throw new Error("uad_workfile_not_found");
-  assertUadWorkfileMutable(workfileResult.rows[0].status);
-  await assertUadAssetApplicable(pool, workfileId, normalized);
+  await assertLockedUadWorkfileMutable(client, workfileResult.rows[0]);
+  await assertUadAssetApplicable(client, workfileId, normalized);
   let entity = null;
   if (normalized.entityId) {
-    const entityResult = await pool.query(
+    const entityResult = await client.query(
       `SELECT child.id, child.entity_type, child.parent_entity_id,
               parent.entity_type AS parent_entity_type
          FROM appraisal.uad_entities AS child
@@ -488,7 +506,7 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   if (normalized.sectionNumber === 14) {
     const maximum = UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES[normalized.captionType];
     if (maximum) {
-      const existingImages = await pool.query(
+      const existingImages = await client.query(
         `SELECT count(*)::integer AS count
            FROM appraisal.uad_assets
           WHERE workfile_id = $1
@@ -513,7 +531,7 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   const upload = storage.createUploadUrl({ objectKey, contentType: normalized.contentType });
   const expiresAt = new Date(Date.now() + upload.expires_in_seconds * 1000);
 
-  const created = await pool.query(
+  const created = await client.query(
     `WITH mutable_workfile AS (
        UPDATE appraisal.uad_workfiles
           SET status = 'draft', updated_at = now()
@@ -550,7 +568,7 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
     ],
   );
   if (!created.rows.length) {
-    await assertCurrentUadWorkfileMutable(pool, workfileId);
+    await assertCurrentUadWorkfileMutable(client, workfileId);
     throw new Error("uad_asset_not_found");
   }
 

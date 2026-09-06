@@ -283,6 +283,161 @@ test("native PostGIS GIS evidence reader uses canonical tables, real geometry an
         await query("UPDATE gis.dcad_parcels SET site_address='Synthetic before' WHERE object_id=$1::bigint", [fixture.parcelIds[2]]);
       }
     });
+
+    // GR-S1 source additions: the ordinary real-clock controls above are kept
+    // intact. The clock below is stipulated only where testing a precise native
+    // predicate boundary; no state/page/registry result or boolean is fabricated.
+    const exact = "2024-03-01T12:00:00.500500Z";
+    const observed = "2024-03-01T12:00:00.500Z";
+    const withClock = () => observingPool(verifiedPool, (tag, input, response) => {
+      if (tag === "clock") {
+        assert.equal(response.rows.length, 1);
+        assert.match(response.rows[0].captured_at_exact, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+        response.rows[0] = { ...response.rows[0], captured_at: observed, captured_at_exact: exact };
+      } else if (tag === "state" || tag === "registry" || tag?.startsWith("page:")) {
+        assert.equal(input.values.at(-1), exact, "every native predicate gets the same unrounded stipulated clock");
+      }
+    });
+    const temporalRead = key => read({ pool: withClock(), sourceKeys: key === parcelKey ? [parcelKey] : [parcelKey, key] });
+    const unverified = async (key, reason) => {
+      const result = await temporalRead(key);
+      assert.equal(result.status, "incomplete");
+      assert.ok(diagnostic(result, key).reasons.includes(reason));
+      assert.equal(sourceRecords(result, key).length, 0);
+      if (key !== parcelKey) assert.equal(sourceRecords(result, parcelKey).length, 3);
+    };
+    const withTimeline = async (key, mutate, check) => {
+      // PostgreSQL text preserves all timestamp microseconds, including infinity;
+      // pg's ordinary Date decoding would lose precision during restoration.
+      const ids = [fixture.runIds[key].older, fixture.runIds[key].latest];
+      const runs = (await query(`SELECT id::text, started_at::text, completed_at::text
+        FROM gis.source_sync_runs WHERE id = ANY($1::uuid[]) ORDER BY id`, [ids])).rows;
+      const state = (await query(`SELECT last_attempt_at::text, last_success_at::text
+        FROM gis.source_sync_state WHERE source_key=$1`, [key])).rows[0];
+      const registry = key === zoneKey ? (await query(`SELECT last_success_at::text
+        FROM gis.zoning_source_registry WHERE provider_key=$1`, [fixture.zone.providerKey])).rows[0] : null;
+      assert.equal(runs.length, 2);
+      assert.ok(state);
+      try { await mutate(); await check(); }
+      finally {
+        for (const run of runs) await query(`UPDATE gis.source_sync_runs SET started_at=$2::timestamptz,
+          completed_at=$3::timestamptz WHERE id=$1::uuid`, [run.id, run.started_at, run.completed_at]);
+        await query(`UPDATE gis.source_sync_state SET last_attempt_at=$2::timestamptz,
+          last_success_at=$3::timestamptz WHERE source_key=$1`, [key, state.last_attempt_at, state.last_success_at]);
+        if (registry) await query(`UPDATE gis.zoning_source_registry SET last_success_at=$2::timestamptz
+          WHERE provider_key=$1`, [fixture.zone.providerKey, registry.last_success_at]);
+      }
+    };
+    const setLatest = async (key, start, attempt, end, success) => {
+      await query(`UPDATE gis.source_sync_runs SET started_at=$2::timestamptz, completed_at=$3::timestamptz
+        WHERE id=$1::uuid`, [fixture.runIds[key].latest, start, end]);
+      await query(`UPDATE gis.source_sync_state SET last_attempt_at=$2::timestamptz, last_success_at=$3::timestamptz
+        WHERE source_key=$1`, [key, attempt, success]);
+    };
+
+    await subtest("native chronology rejects reversed microseconds in latest and older origin runs", async () => {
+      const start = "2024-02-01T00:00:00.000900Z", end = "2024-02-01T00:00:00.000100Z";
+      await withTimeline(parcelKey, () => setLatest(parcelKey, start, start, end, start),
+        () => unverified(parcelKey, "source_sync_unverified"));
+      await withTimeline(parcelKey, () => query(`UPDATE gis.source_sync_runs SET started_at=$2::timestamptz,
+        completed_at=$3::timestamptz WHERE id=$1::uuid`, [fixture.runIds[parcelKey].older, start, end]),
+      () => unverified(parcelKey, "origin_run_unverified"));
+      assert.equal((await temporalRead(parcelKey)).status, "ready");
+    });
+
+    await subtest("native ordered microseconds and real-writer equal times remain usable without retained private fields", async () => {
+      for (const values of [
+        ["000100", "000200", "000700", "000900"], ["000100", "000100", "000900", "000900"],
+      ]) await withTimeline(parcelKey, () => setLatest(parcelKey, ...values.map(value => `2024-02-01T00:00:00.${value}Z`)), async () => {
+        const result = await temporalRead(parcelKey);
+        assert.equal(result.status, "ready");
+        const definition = result.capture.sources[0].payload.projection.definition;
+        assert.equal(Object.keys(definition.raw_source_state).length, 16);
+        assert.equal(Object.keys(records(result)[0].data.origin_run).length, 6);
+        assert.equal(JSON.stringify(result).includes('"captured_at_exact"'), false);
+        assert.equal(JSON.stringify(result).includes('"chronology_valid"'), false);
+        assert.equal(records(result)[0].data.origin_run.id, fixture.runIds[parcelKey].older);
+      });
+      const result = await temporalRead(zoneKey);
+      assert.equal(result.status, "ready");
+      const zone = result.capture.sources.find(source => source.payload.upstream.key === zoneKey);
+      assert.equal(Object.keys(zone.payload.projection.definition.zoning_registry).length, 8);
+    });
+
+    await subtest("native attempt chronology refuses null, before-start, after-completion and post-clock timestamps", async () => {
+      for (const attempt of [null, "2024-01-31T23:59:59.999999Z", "2024-02-02T00:00:00.000001Z", "2024-03-01T12:00:00.500501Z"]) {
+        await withTimeline(parcelKey, () => query(`UPDATE gis.source_sync_state SET last_attempt_at=$2::timestamptz
+          WHERE source_key=$1`, [parcelKey, attempt]), () => unverified(parcelKey, "source_sync_unverified"));
+      }
+      assert.equal((await temporalRead(parcelKey)).status, "ready");
+    });
+
+    await subtest("native predicates enforce one-microsecond capture bounds with an explicitly stipulated clock", async () => {
+      const before = "2024-03-01T12:00:00.500100Z", after = "2024-03-01T12:00:00.500501Z";
+      for (const values of [[after, after, after, after], [before, before, after, after], [before, before, before, after]]) {
+        await withTimeline(parcelKey, () => setLatest(parcelKey, ...values), () => unverified(parcelKey, "source_sync_unverified"));
+      }
+      await withTimeline(parcelKey, () => query(`UPDATE gis.source_sync_runs SET started_at=$2::timestamptz,
+        completed_at=$3::timestamptz WHERE id=$1::uuid`, [fixture.runIds[parcelKey].older, before, after]),
+      () => unverified(parcelKey, "origin_run_unverified"));
+      await withTimeline(zoneKey, () => query(`UPDATE gis.zoning_source_registry SET last_success_at=$2::timestamptz
+        WHERE provider_key=$1`, [fixture.zone.providerKey, after]), () => unverified(zoneKey, "zoning_registry_unverified"));
+      assert.equal((await temporalRead(zoneKey)).status, "ready");
+    });
+
+    await subtest("native registry comparisons retain microsecond order and equality with the exact source state", async () => {
+      for (const [registryTime, ready] of [["500399", false], ["500400", true], ["500500", true]]) {
+        await withTimeline(zoneKey, async () => {
+          await setLatest(zoneKey, "2024-03-01T12:00:00.500100Z", "2024-03-01T12:00:00.500200Z",
+            "2024-03-01T12:00:00.500300Z", "2024-03-01T12:00:00.500400Z");
+          await query(`UPDATE gis.zoning_source_registry SET last_success_at=$2::timestamptz WHERE provider_key=$1`,
+            [fixture.zone.providerKey, `2024-03-01T12:00:00.${registryTime}Z`]);
+        }, async () => {
+          if (ready) assert.equal((await temporalRead(zoneKey)).status, "ready");
+          else await unverified(zoneKey, "zoning_registry_unverified");
+        });
+      }
+    });
+
+    await subtest("native nullable and nonfinite chronology operands cannot become a true admission flag", async () => {
+      for (const value of [null, "infinity", "-infinity"]) {
+        for (const column of ["last_attempt_at", "last_success_at"]) await withTimeline(parcelKey,
+          () => query(`UPDATE gis.source_sync_state SET ${column}=$2::timestamptz WHERE source_key=$1`, [parcelKey, value]),
+          () => unverified(parcelKey, "source_sync_unverified"));
+        for (const [which, reason] of [["latest", "source_sync_unverified"], ["older", "origin_run_unverified"]]) {
+          await withTimeline(parcelKey, () => query(`UPDATE gis.source_sync_runs SET completed_at=$2::timestamptz
+            WHERE id=$1::uuid`, [fixture.runIds[parcelKey][which], value]), () => unverified(parcelKey, reason));
+        }
+        await withTimeline(zoneKey, () => query(`UPDATE gis.zoning_source_registry SET last_success_at=$2::timestamptz
+          WHERE provider_key=$1`, [fixture.zone.providerKey, value]), () => unverified(zoneKey, "zoning_registry_unverified"));
+      }
+      // started_at is NOT NULL: exercise infinities without weakening that constraint.
+      for (const value of ["infinity", "-infinity"]) for (const which of ["latest", "older"]) {
+        await withTimeline(parcelKey, () => query(`UPDATE gis.source_sync_runs SET started_at=$2::timestamptz
+          WHERE id=$1::uuid`, [fixture.runIds[parcelKey][which], value]),
+        () => unverified(parcelKey, which === "latest" ? "source_sync_unverified" : "origin_run_unverified"));
+      }
+      assert.equal((await temporalRead(zoneKey)).status, "ready");
+    });
+
+    await subtest("native optional run and sync-state schemas keep chronology parameter arity and source distinctions", async () => {
+      await query("ALTER TABLE gis.source_sync_runs RENAME TO neighborhood_gis_fixture_runs_hidden");
+      try {
+        const result = await temporalRead(zoneKey);
+        assert.equal(result.status, "incomplete");
+        assert.ok(diagnostic(result, parcelKey).reasons.includes("source_sync_schema_absent"));
+        assert.ok(diagnostic(result, zoneKey).reasons.includes("origin_run_unverified"));
+      } finally { await query("ALTER TABLE gis.neighborhood_gis_fixture_runs_hidden RENAME TO source_sync_runs"); }
+      await query("ALTER TABLE gis.source_sync_state RENAME TO neighborhood_gis_fixture_state_hidden");
+      try {
+        const result = await temporalRead(zoneKey);
+        assert.equal(result.status, "incomplete");
+        assert.ok(diagnostic(result, zoneKey).reasons.includes("zoning_registry_unverified"));
+        assert.ok(diagnostic(result, parcelKey).reasons.includes("source_sync_schema_absent"));
+        assert.equal(sourceRecords(result, zoneKey).length, 0);
+      } finally { await query("ALTER TABLE gis.neighborhood_gis_fixture_state_hidden RENAME TO source_sync_state"); }
+      assert.equal((await temporalRead(zoneKey)).status, "ready");
+    });
   } finally {
     try { writer?.release(); } finally { await pool.end(); }
   }

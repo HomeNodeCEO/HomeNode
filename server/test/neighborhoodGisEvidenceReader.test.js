@@ -14,6 +14,7 @@ import { ASSESSMENT_SCOPE } from "./fixtures/neighborhoodAssessmentFixture.js";
 const SCOPE = { ...ASSESSMENT_SCOPE };
 const BOUNDS = { west: -97.01, south: 32.99, east: -96.99, north: 33.01 };
 const NOW = "2026-09-05T00:00:00.000Z";
+const NOW_EXACT = "2026-09-05T00:00:00.000567Z";
 const PARCEL = "dcad_parcels";
 const ROAD = "tiger_roads_primary";
 const TRAFFIC = "txdot_aadt";
@@ -30,6 +31,7 @@ function healthyState(key, overrides = {}) {
     last_attempt_at: "2026-09-03T00:00:00.000Z", last_source_update_at: null,
     run_id: `${key}-latest`, run_source_key: key, run_mode: "incremental", run_status: "complete",
     run_started_at: "2026-09-03T00:00:00.000Z", run_completed_at: "2026-09-04T00:00:00.000Z",
+    chronology_valid: true,
     ...overrides,
   };
 }
@@ -45,6 +47,7 @@ function feature(key, id, overrides = {}) {
     origin_run: {
       id: `${key}-older`, source_key: key, mode: "full", status: "complete",
       started_at: "2026-09-01T00:00:00.000Z", completed_at: "2026-09-02T00:00:00.000Z",
+      chronology_valid: true,
     },
     ...overrides,
   };
@@ -58,7 +61,7 @@ function tag(query) {
 function harness({
   sourceKeys = [PARCEL], rows = { [PARCEL]: [feature(PARCEL, "1")] },
   subject = [{ feature_id: "1", covered: true }], states = {}, absentTables = [],
-  registry, clock = { captured_at: NOW, postgis_version: "3.5.0" }, onQuery, onRelease,
+  registry, clock = { captured_at: NOW, captured_at_exact: NOW_EXACT, postgis_version: "3.5.0" }, onQuery, onRelease,
 } = {}) {
   const calls = [];
   const releases = [];
@@ -68,6 +71,10 @@ function harness({
       assert.equal(typeof query, "object", "the adapter must provide bounded query options");
       assert.equal(typeof query.text, "string");
       assert.ok(Array.isArray(query.values));
+      const parameters = new Set([...query.text.matchAll(/\$(\d+)/g)].map(match => Number(match[1])));
+      const lastParameter = Math.max(0, ...parameters);
+      assert.equal(query.values.length, lastParameter, "every SQL branch must bind exactly its declared parameters");
+      assert.equal(parameters.size, lastParameter, "appended parameters must not leave an untyped positional gap");
       assert.ok(Number.isSafeInteger(query.query_timeout) && query.query_timeout > 0);
       calls.push(structuredClone(query));
       const name = tag(query);
@@ -78,11 +85,12 @@ function harness({
       if (name === "clock") return { rows: [structuredClone(clock)] };
       if (name === "capabilities") return { rows: query.values[0].map(name => ({ name, relation: absentTables.includes(name) ? null : name })) };
       if (name === "state") return { rows: query.values[0].flatMap(key => states[key] === null ? [] : [healthyState(key, {
-        ...(absentTables.includes("gis.source_sync_runs") ? { run_id: null, run_status: null } : {}), ...states[key],
+        ...(absentTables.includes("gis.source_sync_runs") ? { run_id: null, run_status: null, chronology_valid: false } : {}), ...states[key],
       })]) };
       if (name === "registry") return { rows: registry ?? query.values[0].map(provider_key => ({
         provider_key, provider_type: "official_municipal", status: "current", jurisdiction: "Synthetic jurisdiction", last_success_at: "2026-09-04T00:00:00.000Z",
         service_url_matches_catalog: true, service_layer_matches_catalog: true, metadata_oversized: false,
+        chronology_valid: !absentTables.includes("gis.source_sync_state"),
       })) };
       if (name === "subject") return { rows: subject.slice(0, query.values[5]) };
       if (name.startsWith("page:")) {
@@ -326,9 +334,13 @@ test("a byte-bounded page resumes after the last retained feature without losing
 test("wire budget exhaustion aborts even when the retained-record budget would allow all features", async () => {
   const rows = { [PARCEL]: [feature(PARCEL, "1"), feature(PARCEL, "2")] };
   const rawBytes = Buffer.byteLength(rows[PARCEL][0].payload_json);
+  const seed = await harness({ rows }).read({ limits: { page_rows: 1 } });
+  // The first page transfers both rows; its sentinel transfers again on page two.
+  const metadataBytes = seed.totals.wire_bytes_estimate - 3 * (rawBytes + 129);
+  assert.ok(metadataBytes > 0, "clock, capabilities, state and subject metadata are charged before pages");
   // The first response contains one selected row plus its sentinel. Leave only
   // half a raw record for the next page after reserving its bounded metadata.
-  const wireBudget = 2 * (rawBytes + 129) + 2 * 512 + Math.floor(rawBytes / 2);
+  const wireBudget = metadataBytes + 2 * (rawBytes + 129) + 2 * 512 + Math.floor(rawBytes / 2);
   const fake = harness({ rows });
   await fails(fake, "total_wire_bytes_limit", { limits: { page_rows: 1, total_wire_bytes: wireBudget } });
   assert.equal(fake.calls.filter(query => tag(query) === "page:parcel").length, 2);
@@ -374,7 +386,7 @@ test("complete empty selection is captured; missing source tables are unavailabl
 
 test("missing PostGIS or parcel relation cannot certify subject evidence", async t => {
   for (const [name, config] of [
-    ["PostGIS absent", { clock: { captured_at: NOW, postgis_version: null } }],
+    ["PostGIS absent", { clock: { captured_at: NOW, captured_at_exact: NOW_EXACT, postgis_version: null } }],
     ["parcel table absent", { absentTables: ["gis.dcad_parcels"] }],
   ]) await t.test(name, async () => {
     const fake = harness(config);
@@ -613,4 +625,255 @@ test("invalid caller inputs are rejected before acquiring any connection", async
 test("advertised source catalog includes the fixture's four source kinds and is immutable", () => {
   for (const key of [PARCEL, ROAD, TRAFFIC, ZONE.sourceKey]) assert.ok(GIS_EVIDENCE_SOURCE_KEYS.includes(key));
   assert.ok(Object.isFrozen(GIS_EVIDENCE_SOURCE_KEYS));
+});
+
+// Internal SQL precision evidence is admitted, never added to retained v1 records.
+const STATE_KEYS = ["source_key", "status", "source_vintage", "source_url_matches_catalog", "metadata_oversized",
+  "row_count", "last_run_id", "last_success_at", "last_attempt_at", "last_source_update_at", "run_id",
+  "run_source_key", "run_mode", "run_status", "run_started_at", "run_completed_at"].sort();
+const ORIGIN_KEYS = ["id", "source_key", "mode", "status", "started_at", "completed_at"].sort();
+const REGISTRY_KEYS = ["provider_key", "provider_type", "status", "jurisdiction", "service_url_matches_catalog",
+  "service_layer_matches_catalog", "metadata_oversized", "last_success_at"].sort();
+const zoningRow = (zone = ZONE, overrides = {}) => ({ provider_key: zone.providerKey,
+  provider_type: "official_municipal", status: "current", jurisdiction: "Synthetic jurisdiction",
+  service_url_matches_catalog: true, service_layer_matches_catalog: true, metadata_oversized: false,
+  last_success_at: "2026-09-04T00:00:00.000Z", chronology_valid: true, ...overrides });
+
+test("one six-digit clock is reused unchanged in every chronology query and never retained", async () => {
+  const secondZone = OFFICIAL_ZONING_SOURCES.find(zone => zone.providerKey !== ZONE.providerKey);
+  assert.ok(secondZone, "catalog fixture must distinguish two zoning providers");
+  const sourceKeys = [secondZone.sourceKey, ZONE.sourceKey, ROAD, PARCEL];
+  const rows = Object.fromEntries(sourceKeys.map(key => [key, [feature(key, key === PARCEL ? "1" : key === ROAD ? "7" : "Z-1")]]));
+  const fake = harness({ sourceKeys, rows });
+  const result = await fake.read();
+  assert.equal(result.status, "ready");
+  const stateQuery = fake.calls.find(query => tag(query) === "state");
+  assert.equal(stateQuery.values.length, 3);
+  assert.deepEqual(stateQuery.values[0], [...sourceKeys].sort());
+  assert.equal(stateQuery.values[2], NOW_EXACT);
+  assert.match(stateQuery.text, /\$3\s*::\s*timestamptz/);
+  const registryQuery = fake.calls.find(query => tag(query) === "registry");
+  const zones = [...sourceKeys].sort().flatMap(key => OFFICIAL_ZONING_SOURCES.filter(zone => zone.sourceKey === key));
+  assert.deepEqual(registryQuery.values, [zones.map(zone => zone.providerKey), zones.map(zone => zone.url),
+    zones.map(zone => zone.layer), zones.map(zone => zone.sourceKey), NOW_EXACT]);
+  assert.match(registryQuery.text, /\$4\s*::\s*text\[\]/);
+  assert.match(registryQuery.text, /\$5\s*::\s*timestamptz/);
+  assert.match(registryQuery.text, /LEFT\s+JOIN\s+gis\.source_sync_state/i);
+  assert.doesNotMatch(registryQuery.text, /CROSS\s+JOIN/i);
+  assert.match(registryQuery.text, /source_key\s*=|=\s*\w+\.source_key/);
+  for (const query of fake.calls.filter(query => tag(query).startsWith("page:"))) {
+    assert.equal(query.values.length, 10);
+    assert.deepEqual(query.values.slice(0, 4), [BOUNDS.west, BOUNDS.south, BOUNDS.east, BOUNDS.north]);
+    assert.equal(query.values[9], NOW_EXACT);
+    assert.match(query.text, /\$10\s*::\s*timestamptz/);
+    assert.match(query.text, /ST_Intersects/);
+  }
+  assert.deepEqual(Object.keys(result).sort(), ["status", "reader_version", "captured_at", "capture", "subject", "diagnostics", "totals", "applicability"].sort());
+  assert.equal(result.captured_at, NOW);
+  for (const source of result.capture.sources) {
+    const definition = source.payload.projection.definition;
+    assert.deepEqual(Object.keys(definition.raw_source_state).sort(), STATE_KEYS);
+    if (definition.zoning_registry !== null) assert.deepEqual(Object.keys(definition.zoning_registry).sort(), REGISTRY_KEYS);
+  }
+  for (const row of records(result)) assert.deepEqual(Object.keys(row.data.origin_run).sort(), ORIGIN_KEYS);
+  const stack = [result];
+  while (stack.length) {
+    const value = stack.pop();
+    if (!value || typeof value !== "object") continue;
+    assert.equal(Object.hasOwn(value, "captured_at_exact"), false);
+    assert.equal(Object.hasOwn(value, "chronology_valid"), false);
+    stack.push(...Object.values(value));
+  }
+  cleanCommit(fake);
+});
+
+test("different admitted microseconds with identical public inputs do not change retained capture hashes", async () => {
+  const first = await harness({ clock: { captured_at: NOW, captured_at_exact: "2026-09-05T00:00:00.000001Z", postgis_version: "3.5.0" } }).read();
+  const second = await harness({ clock: { captured_at: NOW, captured_at_exact: "2026-09-05T00:00:00.000999Z", postgis_version: "3.5.0" } }).read();
+  assert.equal(first.status, "ready"); assert.equal(second.status, "ready");
+  assert.deepEqual(first.capture, second.capture);
+  assert.deepEqual(first.diagnostics, second.diagnostics);
+  // Wire accounting now includes private metadata; this is not old wire-total parity.
+});
+
+test("private clock and chronology metadata are charged as raw transfer before public projection", async () => {
+  const fake = harness();
+  const result = await fake.read({ limits: { page_rows: 1 } });
+  assert.equal(result.status, "ready");
+  const size = row => Buffer.byteLength(JSON.stringify(row));
+  const clock = { captured_at: NOW, captured_at_exact: NOW_EXACT, postgis_version: "3.5.0" };
+  const state = healthyState(PARCEL), subject = { feature_id: "1", covered: true };
+  const capabilities = fake.calls.find(query => tag(query) === "capabilities").values[0]
+    .map(name => ({ name, relation: name }));
+  const metadataBytes = [clock, ...capabilities, state, subject].reduce((sum, row) => sum + size(row) + 128, 0);
+  const pageBytes = Buffer.byteLength(feature(PARCEL, "1").payload_json) + 1 + 128;
+  assert.equal(result.totals.wire_bytes_estimate, metadataBytes + pageBytes);
+  const { captured_at_exact, ...publicClock } = clock;
+  const { chronology_valid, ...publicState } = state;
+  assert.ok(size(clock) > size(publicClock));
+  assert.ok(size(state) > size(publicState));
+  const under = harness();
+  await fails(under, "total_wire_bytes_limit", { limits: { page_rows: 1, total_wire_bytes: metadataBytes - 1 } });
+  assert.ok(tags(under).includes("subject"), "raw metadata alone reaches the limit before page work");
+  assert.ok(!tags(under).some(name => name.startsWith("page:")));
+  cleanCommit(fake);
+});
+
+test("origin chronology bytes count toward the raw record cap even though they are not retained", async () => {
+  const seed = await harness().read(), original = feature(PARCEL, "1");
+  const normalizedBytes = seed.totals.record_bytes;
+  const padding = " ".repeat(normalizedBytes - Buffer.byteLength(original.payload_json) + 10);
+  const padded = { ...original, payload_json: original.payload_json + padding };
+  const rawBytes = Buffer.byteLength(padded.payload_json);
+  const withoutFlag = JSON.parse(original.payload_json);
+  delete withoutFlag.origin_run.chronology_valid;
+  assert.ok(Buffer.byteLength(JSON.stringify(withoutFlag) + padding) < rawBytes - 1,
+    "the private chronology field, not public evidence size, crosses the reduced cap");
+  assert.ok(normalizedBytes < rawBytes - 1);
+  const exact = harness({ rows: { [PARCEL]: [padded] } });
+  const result = await exact.read({ limits: { record_bytes: rawBytes } });
+  assert.equal(result.status, "ready");
+  assert.equal(result.totals.record_bytes, normalizedBytes);
+  assert.deepEqual(records(result), records(seed));
+  cleanCommit(exact);
+  await fails(harness({ rows: { [PARCEL]: [padded] } }), "record_bytes_limit", { limits: { record_bytes: rawBytes - 1 } });
+});
+
+test("capture clock requires one canonical exact timestamp agreeing with its public projection", async t => {
+  for (const [name, override] of [
+    ["missing exact", { captured_at_exact: undefined }], ["null exact", { captured_at_exact: null }],
+    ["nonstring exact", { captured_at_exact: 2026 }], ["millisecond only", { captured_at_exact: NOW }],
+    ["seven digits", { captured_at_exact: "2026-09-05T00:00:00.0005670Z" }],
+    ["invalid calendar", { captured_at: "2026-02-31T00:00:00.000Z", captured_at_exact: "2026-02-31T00:00:00.000567Z" }],
+    ["public mismatch", { captured_at_exact: "2026-09-05T00:00:00.001001Z" }],
+    ["non-UTC exact", { captured_at_exact: "2026-09-05T00:00:00.000567+00:00" }],
+  ]) await t.test(name, async () => {
+    const fake = harness({ clock: { captured_at: NOW, captured_at_exact: NOW_EXACT, postgis_version: "3.5.0", ...override } });
+    await fails(fake, "invalid_capture_clock");
+    assert.equal(tags(fake).includes("capabilities"), false);
+  });
+  for (const count of [0, 2]) await t.test(`${count} clock rows`, async () => {
+    await fails(harness({ onQuery(name) { if (name === "clock") return { rows: Array.from({ length: count }, () => ({
+      captured_at: NOW, captured_at_exact: NOW_EXACT, postgis_version: "3.5.0",
+    })) }; } }), "invalid_capture_clock");
+  });
+});
+
+test("native chronology flags must be exactly true and withhold only their affected source", async t => {
+  for (const stage of ["state", "origin", "registry"]) for (const [name, value] of [
+    ["false", false], ["null", null], ["omitted", undefined], ["zero", 0], ["truthy string", "true"], ["object", {}],
+  ]) await t.test(`${stage}: ${name}`, async () => {
+    const rows = { [PARCEL]: [feature(PARCEL, "1")], [ZONE.sourceKey]: [feature(ZONE.sourceKey, "Z-1")] };
+    const config = { sourceKeys: [PARCEL, ZONE.sourceKey], rows };
+    if (stage === "state") config.states = { [ZONE.sourceKey]: { chronology_valid: value } };
+    if (stage === "registry") config.registry = [zoningRow(ZONE, { chronology_valid: value })];
+    if (stage === "origin") {
+      const payload = JSON.parse(rows[ZONE.sourceKey][0].payload_json);
+      payload.origin_run.chronology_valid = value;
+      rows[ZONE.sourceKey][0].payload_json = JSON.stringify(payload);
+    }
+    const fake = harness(config), result = await fake.read();
+    assert.equal(result.status, "incomplete");
+    const reason = { state: "source_sync_unverified", origin: "origin_run_unverified", registry: "zoning_registry_unverified" }[stage];
+    assert.ok(diagnostic(result, ZONE.sourceKey).reasons.includes(reason));
+    assert.equal(records(result).filter(row => row.data.feature.source_key === ZONE.sourceKey).length, 0);
+    assert.equal(records(result).filter(row => row.data.feature.source_key === PARCEL).length, 1);
+    assert.equal(result.subject.status, "resolved");
+    cleanCommit(fake);
+  });
+});
+
+test("optional metadata schemas keep every bound parameter typed and preserve absence semantics", async t => {
+  for (const absentTables of [["gis.source_sync_runs"], ["gis.source_sync_state"],
+    ["gis.source_sync_state", "gis.source_sync_runs"], ["gis.zoning_source_registry"]]) await t.test(absentTables.join(" + "), async () => {
+    const fake = harness({ sourceKeys: [PARCEL, ZONE.sourceKey], absentTables, rows: {
+      [PARCEL]: [feature(PARCEL, "1")], [ZONE.sourceKey]: [feature(ZONE.sourceKey, "Z-1")],
+    } });
+    const result = await fake.read();
+    assert.equal(result.status, "incomplete");
+    for (const query of fake.calls) {
+      if (tag(query) === "state") { assert.equal(query.values[2], NOW_EXACT); assert.match(query.text, /\$3\s*::\s*timestamptz/); }
+      if (tag(query) === "registry") {
+        assert.equal(query.values[4], NOW_EXACT); assert.match(query.text, /\$5\s*::\s*timestamptz/);
+        if (absentTables.includes("gis.source_sync_state")) assert.doesNotMatch(query.text, /JOIN\s+gis\.source_sync_state/i);
+      }
+      if (tag(query).startsWith("page:")) { assert.equal(query.values[9], NOW_EXACT); assert.match(query.text, /\$10\s*::\s*timestamptz/); }
+    }
+    assert.equal(tags(fake).includes("state"), !absentTables.includes("gis.source_sync_state"));
+    assert.equal(tags(fake).includes("registry"), !absentTables.includes("gis.zoning_source_registry"));
+    assert.ok(diagnostic(result, ZONE.sourceKey).reasons.includes(absentTables.includes("gis.source_sync_runs")
+      || absentTables.includes("gis.source_sync_state") ? "source_sync_schema_absent" : "zoning_registry_unverified"));
+    cleanCommit(fake);
+  });
+});
+
+test("metadata duplicates and unrequested keys cannot be silently overwritten by a Map", async t => {
+  for (const stage of ["state", "registry"]) for (const extra of [false, true]) await t.test(`${stage}: ${extra ? "unrequested" : "duplicate"}`, async () => {
+    const fake = harness({ sourceKeys: [PARCEL, ZONE.sourceKey], onQuery(name, query) {
+      if (name !== stage) return undefined;
+      const rows = stage === "state" ? query.values[0].map(key => healthyState(key)) : query.values[0].map(key => zoningRow({ providerKey: key }));
+      rows.push(extra ? stage === "state" ? healthyState("unrequested-source") : zoningRow({ providerKey: "unrequested-provider" }) : structuredClone(rows[0]));
+      return { rows };
+    } });
+    await fails(fake, "query_or_capture_failed");
+    assert.equal(fake.calls.some(query => tag(query).startsWith("page:")), false);
+  });
+});
+
+async function caughtRead(fake) {
+  try { await fake.read(); } catch (error) { return error; }
+  assert.fail("read must reject, not return a partial success");
+}
+function assertFreshFailure(error, original, reason, sqlstate) {
+  assert.notEqual(error, original);
+  assert.equal(error.message, `neighborhood_gis_reader:${reason}`);
+  assert.equal(error.code, "NEIGHBORHOOD_GIS_READ_FAILED");
+  assert.equal(error.state, "incomplete"); assert.equal(error.reason, reason); assert.equal(error.sqlstate, sqlstate);
+  assert.deepEqual(Object.keys(error).sort(), ["code", "state", "reason", ...(sqlstate === undefined ? [] : ["sqlstate"])].sort());
+  for (const key of ["detail", "query", "cause", "toJSON"]) assert.equal(Object.hasOwn(error, key), false);
+  assert.doesNotMatch(JSON.stringify(error), /PRIVATE_REPLAY_SENTINEL/);
+  assert.doesNotMatch(String(error.stack), /PRIVATE_REPLAY_SENTINEL/);
+}
+
+test("replayed branded errors use private immutable classification and fresh public errors", async t => {
+  for (const kind of ["internal", "timeout", "release"]) await t.test(kind, async () => {
+    const first = harness(kind === "internal" ? { clock: { captured_at: NOW, captured_at_exact: "bad", postgis_version: "3.5.0" } }
+      : kind === "timeout" ? { onQuery(name) { if (name === "page:parcel") throw Object.assign(new Error("PRIVATE_REPLAY_SENTINEL"), { code: "57014" }); } }
+        : { onRelease() { throw new Error("PRIVATE_REPLAY_SENTINEL"); } });
+    const original = await caughtRead(first);
+    const reason = { internal: "invalid_capture_clock", timeout: "statement_timeout", release: "client_release_failed" }[kind];
+    const sqlstate = kind === "timeout" ? "57014" : undefined;
+    assert.equal(original.reason, reason);
+    if (kind === "release") cleanCommit(first); else cleanRollback(first);
+    let hooks = 0;
+    Object.assign(original, { message: "PRIVATE_REPLAY_SENTINEL", reason: "forged", code: "42501", state: "ready", sqlstate: "08006",
+      detail: "PRIVATE_REPLAY_SENTINEL", query: "PRIVATE_REPLAY_SENTINEL", cause: { private: "PRIVATE_REPLAY_SENTINEL" },
+      toJSON() { hooks++; return "PRIVATE_REPLAY_SENTINEL"; } });
+    for (const key of ["message", "reason", "code", "state", "sqlstate", "stack"]) Object.defineProperty(original, key, {
+      configurable: true, get() { hooks++; throw new Error("PRIVATE_REPLAY_SENTINEL"); },
+    });
+    const second = harness({ onQuery(name) {
+      if (name === "page:parcel") throw original;
+      if (name === "ROLLBACK") throw new Error("PRIVATE_REPLAY_SENTINEL rollback");
+    }, onRelease() { throw new Error("PRIVATE_REPLAY_SENTINEL release"); } });
+    const replay = await caughtRead(second);
+    assertFreshFailure(replay, original, reason, sqlstate);
+    assert.equal(hooks, 0, "no mutable branded property or serialization hook is consulted");
+    cleanRollback(second);
+  });
+});
+
+test("external SQLSTATE extraction never coerces objects or leaks accessor failures", async t => {
+  for (const kind of ["object", "throwing getter", "forged public", "57014", "42501", "08006"]) await t.test(kind, async () => {
+    let coercions = 0;
+    const original = new Error("PRIVATE_REPLAY_SENTINEL");
+    if (kind === "object") original.code = { toString() { coercions++; return "57014"; } };
+    else if (kind === "throwing getter") Object.defineProperty(original, "code", { get() { throw new Error("PRIVATE_REPLAY_SENTINEL accessor"); } });
+    else if (kind === "forged public") Object.assign(original, { code: "NEIGHBORHOOD_GIS_READ_FAILED", state: "incomplete", reason: "statement_timeout", sqlstate: "57014" });
+    else original.code = kind;
+    const fake = harness({ onQuery(name) { if (name === "page:parcel") throw original; } });
+    const error = await caughtRead(fake), primitive = ["57014", "42501", "08006"].includes(kind);
+    assertFreshFailure(error, original, kind === "57014" ? "statement_timeout" : "query_or_capture_failed", primitive ? kind : undefined);
+    assert.equal(coercions, 0); cleanRollback(fake);
+  });
 });

@@ -35,21 +35,36 @@ export const GIS_EVIDENCE_SOURCE_KEYS = Object.freeze(Object.keys(CATALOG).sort(
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const SCOPE_KEYS = ["organization_id", "appraisal_case_id", "subject_snapshot_id", "account_id"];
 const invalid = field => { throw new TypeError(`invalid_neighborhood_gis_reader:${field}`); };
-const safeFailures = new WeakSet();
+const safeFailures = new WeakMap();
+const sqlState = value => typeof value === "string" && /^[0-9A-Z]{5}$/.test(value) ? value : undefined;
 const failure = (reason, sqlstate) => {
+  const classification = Object.freeze({ reason, sqlstate: sqlState(sqlstate) });
   const error = Object.assign(new Error(`neighborhood_gis_reader:${reason}`), {
     code: "NEIGHBORHOOD_GIS_READ_FAILED", state: "incomplete", reason,
-    ...(/^[0-9A-Z]{5}$/.test(sqlstate || "") ? { sqlstate } : {}),
+    ...(classification.sqlstate ? { sqlstate: classification.sqlstate } : {}),
   });
-  safeFailures.add(error);
+  safeFailures.set(error, classification);
   return error;
+};
+const externalSqlState = error => {
+  try { return sqlState(error?.code); } catch { return undefined; }
 };
 const freeze = value => {
   if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
 const digest = value => createHash("sha256").update(canonicalAssessmentJson(value)).digest("hex");
-const timestamp = column => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"')`;
+const timestamp = (column, precision = "MS") => `to_char(${column} AT TIME ZONE 'UTC', 'YYYY-MM-DD"T"HH24:MI:SS.${precision}"Z"')`;
+// Private SQL operands are fixed identifiers/bind positions, never user text.
+const nativeTimeOrder = columns => `COALESCE(${columns.map(column => `(${column} IS NOT NULL AND isfinite(${column}))`).join(" AND ")}
+    AND ${columns.slice(1).map((column, index) => `${columns[index]} <= ${column}`).join(" AND ")}, false)`;
+const publicFields = (row, keys) => row === null ? null : Object.fromEntries(keys
+  .filter(key => Object.hasOwn(row, key)).map(key => [key, row[key]]));
+const STATE_FIELDS = ["source_key", "status", "source_vintage", "source_url_matches_catalog", "metadata_oversized", "row_count",
+  "last_run_id", "last_success_at", "last_attempt_at", "last_source_update_at", "run_id", "run_source_key", "run_mode", "run_status", "run_started_at", "run_completed_at"];
+const ORIGIN_FIELDS = ["id", "source_key", "mode", "status", "started_at", "completed_at"];
+const REGISTRY_FIELDS = ["provider_key", "provider_type", "status", "jurisdiction", "service_url_matches_catalog",
+  "service_layer_matches_catalog", "metadata_oversized", "last_success_at"];
 
 function options(input) {
   if (!input || !input.pool || typeof input.pool.connect !== "function") invalid("pool");
@@ -129,7 +144,9 @@ function pageSql(spec, hasRuns) {
             'sync_run_id', t.sync_run_id::text, 'synced_at', ${timestamp("t.synced_at")}),
           'origin_run', ${hasRuns ? `jsonb_build_object('id', r.id::text, 'source_key', r.source_key,
             'mode', r.mode, 'status', r.status, 'started_at', ${timestamp("r.started_at")},
-            'completed_at', ${timestamp("r.completed_at")})` : "'{}'::jsonb"})::text END AS payload
+            'completed_at', ${timestamp("r.completed_at")},
+            'chronology_valid', ${nativeTimeOrder(["r.started_at", "r.completed_at", "$10::timestamptz"])})`
+    : "jsonb_build_object('chronology_valid', false AND $10::timestamptz IS NOT NULL)"})::text END AS payload
       FROM selected t ${hasRuns ? "LEFT JOIN gis.source_sync_runs r ON r.id = t.sync_run_id" : ""}
     ), sized AS (
       SELECT *, sum(COALESCE(octet_length(payload), 0)) OVER
@@ -155,20 +172,25 @@ const stateSql = hasRuns => `/* neighborhood-gis:state */
     ${hasRuns ? `r.id::text AS run_id,
     CASE WHEN octet_length(r.source_key) <= 100 THEN r.source_key END AS run_source_key, r.mode AS run_mode, r.status AS run_status,
     ${timestamp("r.started_at")} AS run_started_at, ${timestamp("r.completed_at")} AS run_completed_at`
-    : "NULL AS run_id, NULL AS run_source_key, NULL AS run_mode, NULL AS run_status, NULL AS run_started_at, NULL AS run_completed_at"}
+    : "NULL AS run_id, NULL AS run_source_key, NULL AS run_mode, NULL AS run_status, NULL AS run_started_at, NULL AS run_completed_at"},
+    ${hasRuns ? nativeTimeOrder(["r.started_at", "s.last_attempt_at", "r.completed_at", "s.last_success_at", "$3::timestamptz"])
+    : "false AND $3::timestamptz IS NOT NULL"} AS chronology_valid
   FROM gis.source_sync_state s JOIN unnest($1::text[], $2::text[]) AS expected(key, url) ON expected.key = s.source_key
   ${hasRuns ? "LEFT JOIN gis.source_sync_runs r ON r.id = s.last_run_id" : ""}
   ORDER BY s.source_key COLLATE "C"`;
-const REGISTRY_SQL = `/* neighborhood-gis:registry */
-  SELECT provider_key, provider_type, status,
-    CASE WHEN octet_length(jurisdiction) <= 256 THEN jurisdiction END AS jurisdiction,
-    service_url = expected.url AS service_url_matches_catalog,
-    service_layer = expected.layer AS service_layer_matches_catalog,
-    octet_length(jurisdiction) > 256 AS metadata_oversized,
-    ${timestamp("last_success_at")} AS last_success_at
-  FROM gis.zoning_source_registry JOIN unnest($1::text[], $2::text[], $3::integer[]) AS expected(key, url, layer)
-    ON expected.key = provider_key
-  ORDER BY provider_key COLLATE "C"`;
+const registrySql = hasState => `/* neighborhood-gis:registry */
+  SELECT z.provider_key, z.provider_type, z.status,
+    CASE WHEN octet_length(z.jurisdiction) <= 256 THEN z.jurisdiction END AS jurisdiction,
+    z.service_url = expected.url AS service_url_matches_catalog,
+    z.service_layer = expected.layer AS service_layer_matches_catalog,
+    octet_length(z.jurisdiction) > 256 AS metadata_oversized,
+    ${timestamp("z.last_success_at")} AS last_success_at,
+    ${hasState ? nativeTimeOrder(["s.last_success_at", "z.last_success_at", "$5::timestamptz"])
+    : "false AND $5::timestamptz IS NOT NULL"} AS chronology_valid
+  FROM gis.zoning_source_registry z JOIN unnest($1::text[], $2::text[], $3::integer[], $4::text[]) AS expected(key, url, layer, source_key)
+    ON expected.key = z.provider_key
+  ${hasState ? "LEFT JOIN gis.source_sync_state s ON s.source_key = expected.source_key" : ""}
+  ORDER BY z.provider_key COLLATE "C"`;
 const SUBJECT_SQL = `/* neighborhood-gis:subject */
   SELECT object_id::text AS feature_id,
     ST_CoveredBy(geom, ST_MakeEnvelope($1,$2,$3,$4,4326)) AS covered
@@ -177,6 +199,7 @@ const SUBJECT_SQL = `/* neighborhood-gis:subject */
 
 function healthy(state, key, observedAt) {
   return state?.status === "current" && state.last_run_id && state.last_run_id === state.run_id
+    && state.chronology_valid === true
     && state.source_url_matches_catalog === true && state.metadata_oversized === false
     && state.run_source_key === key && state.run_status === "complete"
     && ["full", "incremental"].includes(state.run_mode)
@@ -189,6 +212,11 @@ function healthy(state, key, observedAt) {
 function validTime(value, observedAt) {
   return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(value)
     && Number.isFinite(Date.parse(value)) && new Date(value).toISOString() === value && value <= observedAt;
+}
+
+function exactClock(value, observedAt) {
+  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(value)
+    && value.slice(0, 23) + "Z" === observedAt && validTime(observedAt, observedAt);
 }
 
 function record(row, key, spec, observedAt, limits) {
@@ -213,11 +241,12 @@ function record(row, key, spec, observedAt, limits) {
   const reasons = [];
   if (valid !== true) reasons.push("invalid_or_empty_geometry");
   if (!ingest.sync_run_id || ingest.sync_run_id !== origin.id || origin.source_key !== key
+    || origin.chronology_valid !== true
     || origin.status !== "complete" || !["full", "incremental"].includes(origin.mode)
     || !validTime(origin.started_at, observedAt) || !validTime(origin.completed_at, observedAt)
     || origin.started_at > origin.completed_at) reasons.push("origin_run_unverified");
   const result = { record_id: `${key}:${row.feature_id}`, data: {
-    ...content, normalized_content_sha256: digest(content), ingest, origin_run: origin,
+    ...content, normalized_content_sha256: digest(content), ingest, origin_run: publicFields(origin, ORIGIN_FIELDS),
   } };
   const canonical = canonicalAssessmentJson(result);
   const bytes = Buffer.byteLength(canonical);
@@ -254,6 +283,29 @@ export async function readGisEvidence(input) {
   let client;
   let began = false;
   let discard = false;
+  let totalWireBytes = 0;
+  // Charge bounded raw metadata, including private flags/clock, before projecting
+  // retained public shapes. This diagnostic estimate is not a content hash.
+  const metadataRows = (rows, maximum, reason = "query_or_capture_failed") => {
+    if (!Array.isArray(rows) || rows.length > maximum) throw failure(reason);
+    for (const row of rows) {
+      if (!row || Object.getPrototypeOf(row) !== Object.prototype) throw failure(reason);
+      const bytes = Buffer.byteLength(JSON.stringify(row), "utf8");
+      if (bytes > limits.record_bytes) throw failure("record_bytes_limit");
+      totalWireBytes += bytes + 128;
+      if (totalWireBytes > limits.total_wire_bytes) throw failure("total_wire_bytes_limit");
+    }
+    return rows;
+  };
+  const metadataMap = (rows, key, expected) => {
+    const result = new Map();
+    const allowed = new Set(expected);
+    for (const row of metadataRows(rows, expected.length)) {
+      if (!allowed.has(row[key]) || result.has(row[key])) throw failure("query_or_capture_failed");
+      result.set(row[key], row);
+    }
+    return result;
+  };
   const query = async (text, values = []) => {
     const remaining = Math.floor(deadline - performance.now());
     if (remaining <= 0) throw failure("total_time_limit");
@@ -269,28 +321,36 @@ export async function readGisEvidence(input) {
       set_config('idle_in_transaction_session_timeout', $3, true),
       set_config('TimeZone', 'UTC', true), set_config('DateStyle', 'ISO, YMD', true)`,
     [String(limits.statement_ms), String(Math.min(limits.statement_ms, 1000)), String(limits.total_ms)]);
-    const { rows: [clock] } = await query(`/* neighborhood-gis:clock */
+    const { rows: clockRows } = await query(`/* neighborhood-gis:clock */
       SELECT ${timestamp("statement_timestamp()")} AS captured_at,
+        ${timestamp("statement_timestamp()", "US")} AS captured_at_exact,
         (SELECT extversion FROM pg_extension WHERE extname = 'postgis') AS postgis_version`);
-    if (!clock || !validTime(clock.captured_at, clock.captured_at)) throw failure("invalid_capture_clock");
+    const [clock] = metadataRows(clockRows, 1, "invalid_capture_clock");
+    if (!clock || !exactClock(clock.captured_at_exact, clock.captured_at)) throw failure("invalid_capture_clock");
     const observedAt = clock.captured_at;
+    const capturedAtExact = clock.captured_at_exact;
     const tables = [...new Set(["gis.source_sync_state", "gis.source_sync_runs", "gis.zoning_source_registry",
       ...sourceKeys.map(key => CATALOG[key].table)])];
     const { rows: capabilities } = await query(CAPABILITIES_SQL, [tables]);
-    const available = new Set(capabilities.filter(row => typeof row.relation === "string").map(row => row.name));
+    const available = new Set([...metadataMap(capabilities, "name", tables).values()]
+      .filter(row => typeof row.relation === "string").map(row => row.name));
     const hasRuns = available.has("gis.source_sync_runs");
-    const hasSync = available.has("gis.source_sync_state") && hasRuns;
-    const states = new Map((available.has("gis.source_sync_state")
-      ? (await query(stateSql(hasRuns), [sourceKeys, sourceKeys.map(key => CATALOG[key].url)])).rows : []).map(row => [row.source_key, row]));
-    const zoningSpecs = sourceKeys.filter(key => CATALOG[key].kind === "zoning").map(key => CATALOG[key]);
-    const registry = new Map((zoningSpecs.length && available.has("gis.zoning_source_registry")
-      ? (await query(REGISTRY_SQL, [zoningSpecs.map(spec => spec.partitionValue), zoningSpecs.map(spec => spec.url),
-        zoningSpecs.map(spec => spec.layer)])).rows : []).map(row => [row.provider_key, row]));
+    const hasState = available.has("gis.source_sync_state");
+    const hasSync = hasState && hasRuns;
+    const states = metadataMap(hasState
+      ? (await query(stateSql(hasRuns), [sourceKeys, sourceKeys.map(key => CATALOG[key].url), capturedAtExact])).rows : [], "source_key", sourceKeys);
+    const zoningKeys = sourceKeys.filter(key => CATALOG[key].kind === "zoning");
+    const zoningSpecs = zoningKeys.map(key => CATALOG[key]);
+    const providers = zoningSpecs.map(spec => spec.partitionValue);
+    if (new Set(providers).size !== providers.length) throw failure("query_or_capture_failed");
+    const registry = metadataMap(zoningSpecs.length && available.has("gis.zoning_source_registry")
+      ? (await query(registrySql(hasState), [providers, zoningSpecs.map(spec => spec.url),
+        zoningSpecs.map(spec => spec.layer), zoningKeys, capturedAtExact])).rows : [], "provider_key", providers);
     const envelope = [bounds.west, bounds.south, bounds.east, bounds.north];
     const subjectReasons = [];
     let subjectRows = [];
     if (clock.postgis_version && available.has("gis.dcad_parcels")) {
-      subjectRows = (await query(SUBJECT_SQL, [...envelope, scope.account_id, limits.subject_members + 1])).rows;
+      subjectRows = metadataRows((await query(SUBJECT_SQL, [...envelope, scope.account_id, limits.subject_members + 1])).rows, limits.subject_members + 1);
       if (subjectRows.length > limits.subject_members) subjectReasons.push("subject_members_limit");
       if (subjectRows.some(row => row.covered !== true)) subjectReasons.push("subject_outside_query_envelope");
       if (!subjectRows.length) subjectReasons.push("subject_account_not_resolved");
@@ -299,7 +359,6 @@ export async function readGisEvidence(input) {
     const diagnostics = [];
     let totalRows = 0;
     let totalBytes = 0;
-    let totalWireBytes = 0;
     for (const key of sourceKeys) {
       const spec = CATALOG[key];
       const state = states.get(key) ?? null;
@@ -310,6 +369,7 @@ export async function readGisEvidence(input) {
       if (!hasSync) reasons.add("source_sync_schema_absent");
       if (!healthy(state, key, observedAt)) reasons.add("source_sync_unverified");
       if (spec.kind === "zoning" && (zone?.provider_type !== "official_municipal" || zone.status !== "current"
+        || zone.chronology_valid !== true
         || zone.service_url_matches_catalog !== true || zone.service_layer_matches_catalog !== true || zone.metadata_oversized !== false
         || !validTime(zone.last_success_at, observedAt) || !state?.last_success_at
         || zone.last_success_at < state.last_success_at)) reasons.add("zoning_registry_unverified");
@@ -319,7 +379,7 @@ export async function readGisEvidence(input) {
         spatial_predicate: "bbox_intersection_and_st_intersects", ordering: spec.kind === "zoning" ? "source_record_id_C" : `${spec.id}_numeric`,
         scope_of_completeness: "selected_current_mirror_query_only", provider_coverage: "unknown",
         historical_availability: "unknown", postgis_version: clock.postgis_version ?? null,
-        raw_source_state: state, zoning_registry: spec.kind === "zoning" ? zone : null, limits,
+        raw_source_state: publicFields(state, STATE_FIELDS), zoning_registry: spec.kind === "zoning" ? publicFields(zone, REGISTRY_FIELDS) : null, limits,
         content_digest_protocol: "sha256(canonical_header + LF + each_ordered_canonical_record + LF)",
       };
       const captureHash = createHash("sha256").update(canonicalAssessmentJson(definition)).update("\n");
@@ -334,7 +394,7 @@ export async function readGisEvidence(input) {
         const pageBytes = Math.min(limits.page_bytes, limits.total_wire_bytes - totalWireBytes - (take + 1) * 512);
         if (pageBytes <= 0) throw failure("total_wire_bytes_limit");
         const { rows } = await query(pageSql(spec, hasRuns), [...envelope, spec.partitionValue ?? null, after,
-          take + 1, limits.record_bytes, pageBytes]);
+          take + 1, limits.record_bytes, pageBytes, capturedAtExact]);
         if (!Array.isArray(rows) || rows.length > take + 1) throw failure("invalid_page_size");
         if (rows.some(row => row.invalid_feature_identity === true || row.feature_id === null)) throw failure("invalid_feature_identity");
         let wireBytes = 0;
@@ -403,8 +463,10 @@ export async function readGisEvidence(input) {
     if (began) {
       try { await client.query({ text: "ROLLBACK", values: [], query_timeout: 1000 }); } catch { /* discard below */ }
     }
-    if (safeFailures.has(error)) throw error;
-    throw failure(error?.code === "57014" ? "statement_timeout" : "query_or_capture_failed", error?.code);
+    const previous = safeFailures.get(error);
+    if (previous) throw failure(previous.reason, previous.sqlstate);
+    const code = externalSqlState(error);
+    throw failure(code === "57014" ? "statement_timeout" : "query_or_capture_failed", code);
   } finally {
     if (client && typeof client.release === "function") {
       try { client.release(discard || undefined); }

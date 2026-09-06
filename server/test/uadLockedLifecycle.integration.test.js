@@ -2837,6 +2837,403 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         }
       });
     }
+    // Mobile scalar acceptance owns its transaction independently of the entity
+    // adapter above. Build real catalog-valid proposals before adding lifecycle
+    // evidence; no fake auth middleware, provider receipt or canonical service is
+    // substituted. Existing org-less asset fixtures remain untouched.
+    const {
+      getTargetFieldReview, refreshTargetFieldProposals, reviewTargetFieldProposal,
+    } = await import("../src/modules/mobile/targetFields.js");
+    const scalarValue = "Synthetic original neighborhood";
+    const createMobileScalarFixture = async (action) => {
+      const fixture = await createCompletionFixture();
+      const created = await createInspectionSession(pool, fixture.auth, { report_file_id: fixture.reportFileId });
+      const sessionId = created.session.id;
+      const review = await getTargetFieldReview(pool, fixture.auth, sessionId);
+      const definition = review.catalog.find((item) => (
+        item.target_reference.context_key === "subject"
+        && item.target_reference.uid === "0100.0017" && item.target_reference.entity_id === null
+      ));
+      assert.ok(definition, "the installed catalog must supply the optional root string field");
+      assert.equal(definition.required, false);
+      const fieldId = action === "insert" ? null : randomUUID();
+      if (fieldId) {
+        await pool.query(
+          `INSERT INTO appraisal.uad_field_values (
+             id, workfile_id, field_context, uad_uid, report_field_id, value,
+             source_type, source_reference, source_observed_at, is_appraiser_confirmed,
+             updated_by_user_id
+           ) VALUES ($1, $2, 'subject', '0100.0017', $3, $4::jsonb,
+             'public_record', 'synthetic_original_cadastral_evidence',
+             TIMESTAMPTZ '2026-09-04 12:00:00.123456+00', false, $5)`,
+          [fieldId, fixture.workfileId, definition.target_reference.report_field_id,
+            JSON.stringify(scalarValue), fixture.actorUserId],
+        );
+      }
+      const proposed = action === "delete" ? { exists: false }
+        : { exists: true, value: action === "unchanged" ? scalarValue : "Synthetic revised neighborhood" };
+      const base = fieldId ? { exists: true, value: scalarValue } : { exists: false };
+      const fieldEditId = randomUUID();
+      await pool.query(
+        `INSERT INTO app.inspection_field_edits (
+           id, inspection_session_id, field_path, entered_value, is_tombstone,
+           source_type, appraiser_confirmed, sync_status, session_revision,
+           target_base, target_base_revision, created_by_user_id
+         ) VALUES ($1, $2, $3, $4::jsonb, $5, 'appraiser', true, 'applied', 1, $6::jsonb, $7, $8)`,
+        [fieldEditId, sessionId, definition.field_path, proposed.exists ? JSON.stringify(proposed.value) : null,
+          !proposed.exists, JSON.stringify(base), fixture.revision, fixture.actorUserId],
+      );
+      const prepared = await refreshTargetFieldProposals(pool, fixture.auth, sessionId);
+      assert.deepEqual(prepared.invalid_fields, []);
+      assert.equal(prepared.created.length, 1);
+      const proposal = prepared.created[0];
+      assert.deepEqual(proposal.target_reference, definition.target_reference);
+      assert.deepEqual(proposal.base, base);
+      assert.deepEqual(proposal.proposed, proposed);
+      assert.equal(proposal.status, "pending");
+      return { ...fixture, sessionId, proposalId: proposal.id, fieldEditId, fieldId,
+        definition, base, proposed, action };
+    };
+    const scalarState = async (fixture) => {
+      // to_jsonb retains every column and PostgreSQL timestamp precision, unlike
+      // a selected-column or millisecond Date-only lifecycle snapshot.
+      const tables = [
+        ["workfile", "appraisal.uad_workfiles", "id", fixture.workfileId],
+        ["fields", "appraisal.uad_field_values", "workfile_id", fixture.workfileId],
+        ["report", "app.report_files", "id", fixture.reportFileId],
+        ["session", "app.inspection_sessions", "id", fixture.sessionId],
+        ["fieldEdits", "app.inspection_field_edits", "inspection_session_id", fixture.sessionId],
+        ["proposals", "app.mobile_target_field_proposals", "inspection_session_id", fixture.sessionId],
+        ["operations", "app.mobile_target_review_operations", "inspection_session_id", fixture.sessionId],
+        ["adapterEvents", "app.mobile_target_adapter_events", "inspection_session_id", fixture.sessionId],
+        ["sessionEvents", "app.inspection_session_events", "inspection_session_id", fixture.sessionId],
+        ["reportEvents", "app.report_file_events", "report_file_id", fixture.reportFileId],
+      ];
+      const rows = await Promise.all(tables.map(async ([key, table, column, id]) => [key,
+        (await pool.query(`SELECT to_jsonb(record) AS row FROM ${table} record WHERE ${column} = $1 ORDER BY record.id`, [id]))
+          .rows.map((item) => item.row),
+      ]));
+      return { canonical: await cleanupState(pool, fixture.workfileId), ...Object.fromEntries(rows) };
+    };
+    const scalarRequest = (decision = "accept") => ({ client_operation_id: randomUUID(), decision });
+    const applyScalar = (observed, fixture, request) => reviewTargetFieldProposal(
+      observed.pool, fixture.auth, fixture.sessionId, fixture.proposalId, request,
+    );
+    const assertScalarOwner = (observed, ending) => {
+      assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
+      assert.deepEqual(observed.isolation, ["read committed"]);
+      assert.equal(observed.trace.at(-1), ending);
+    };
+    const assertScalarRefusal = (observed, evidence) => {
+      assertScalarOwner(observed, "ROLLBACK");
+      const lock = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_workfiles") && sql.endsWith("FOR UPDATE"));
+      assert.ok(lock > 0);
+      assert.match(observed.trace[lock], /signed_at/);
+      const signatures = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_signatures"));
+      if (evidence !== "signed_at") assert.ok(signatures > lock);
+      assert.equal(observed.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false,
+        "acceptance refusal must precede canonical and mobile review mutations");
+    };
+    const addScalarSignatureEvidence = async (fixture, evidence) => {
+      if (evidence === "signed_at") {
+        await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+      } else {
+        if (evidence === "historical signature") {
+          await pool.query(
+            `INSERT INTO appraisal.uad_revisions (id, workfile_id, revision_number, specification_release_key,
+               document, change_summary, created_by_user_id)
+             VALUES ($1, $2, 2, $3, '{"synthetic":true,"revision":2}'::jsonb, 'Synthetic historical signature target', $4)`,
+            [randomUUID(), fixture.workfileId, fixture.releaseKey, fixture.actorUserId],
+          );
+          await pool.query("UPDATE appraisal.uad_workfiles SET current_revision = 2, status = 'revised' WHERE id = $1",
+            [fixture.workfileId]);
+        }
+        await insertSyntheticSignature(pool, fixture.identity, fixture, 1);
+      }
+    };
+    for (const [action, evidence] of [
+      ["update", "signed_at"], ["delete", "signed_at"],
+      ["update", "current partial signature"], ["unchanged", "current partial signature"],
+      ["delete", "historical signature"], ["unchanged", "historical signature"],
+      ["insert", "current partial signature"],
+    ]) {
+      await t.test(`mobile scalar ${action} preserves every row when ${evidence} locks its mutable-looking workfile`, async () => {
+        const fixture = await createMobileScalarFixture(action);
+        await addScalarSignatureEvidence(fixture, evidence);
+        const before = await scalarState(fixture);
+        const observed = await hostileObservedPool();
+        let error = null;
+        try {
+          await applyScalar(observed, fixture, scalarRequest()).catch((caught) => { error = caught; });
+          assert.deepEqual(await scalarState(fixture), before,
+            "denial must preserve canonical provenance, revisions, signatures, proposals, operations and all events");
+          assert.equal(error?.message, LOCKED_ERROR);
+          assertScalarRefusal(observed, evidence);
+        } finally { observed.forceRelease(); }
+      });
+    }
+    const assertScalarAccepted = (before, after, fixture, request, result) => {
+      assert.equal(result.proposal.status, "accepted");
+      assert.equal(result.proposal.applied_target_revision, fixture.revision + 1);
+      assert.equal(after.workfile[0].current_revision, fixture.revision + 1);
+      assert.equal(after.workfile[0].status, "draft");
+      assert.equal(after.workfile[0].signed_at, null);
+      assert.equal(after.workfile[0].updated_by_user_id, fixture.actorUserId);
+      const nextField = after.fields.find((row) => row.field_context === "subject" && row.uad_uid === "0100.0017");
+      if (fixture.action === "delete") assert.equal(nextField, undefined);
+      else {
+        assert.ok(nextField);
+        assert.equal(nextField.value, fixture.proposed.value);
+        assert.equal(nextField.entity_id, null);
+        assert.equal(nextField.report_field_id, fixture.definition.target_reference.report_field_id);
+        assert.equal(nextField.source_type, "appraiser");
+        assert.equal(nextField.source_reference, "mobile_target_adapter");
+        assert.equal(nextField.is_appraiser_confirmed, true);
+        assert.equal(nextField.updated_by_user_id, fixture.actorUserId);
+        assert.equal(nextField.is_override, fixture.action === "update");
+        assert.equal(nextField.override_reason, fixture.action === "update" ? "Appraiser accepted a mobile inspection observation." : null);
+        if (fixture.fieldId) {
+          assert.equal(nextField.id, fixture.fieldId);
+          assert.equal(nextField.source_observed_at, before.fields[0].source_observed_at);
+          assert.equal(nextField.created_at, before.fields[0].created_at);
+        }
+      }
+      assert.equal(after.fields.length, fixture.action === "delete" ? 0 : 1);
+      assert.equal(after.proposals.length, 1);
+      assert.equal(after.proposals[0].status, "accepted");
+      assert.equal(after.proposals[0].reviewed_by_user_id, fixture.actorUserId);
+      assert.equal(after.proposals[0].applied_target_revision, fixture.revision + 1);
+      assert.equal(after.operations.length, before.operations.length + 1);
+      const operation = after.operations.find((row) => row.client_operation_id === request.client_operation_id);
+      assert.ok(operation);
+      assert.equal(operation.actor_user_id, fixture.actorUserId);
+      assert.equal(operation.proposal_id, fixture.proposalId);
+      assert.equal(operation.decision, "accept");
+      assert.equal(operation.status, "applied");
+      assert.deepEqual(operation.result, JSON.parse(JSON.stringify(result)));
+      assert.equal(after.report[0].registry_revision, before.report[0].registry_revision + 1);
+      assert.equal(result.report_registry_revision, after.report[0].registry_revision);
+      assert.equal(after.session[0].base_report_revision, after.report[0].registry_revision);
+      assert.equal(after.session[0].status, "synchronized");
+      assert.deepEqual(after.fieldEdits, before.fieldEdits, "review must preserve durable inspection evidence");
+      assert.deepEqual(after.sessionEvents, before.sessionEvents);
+      const addedReport = after.reportEvents.filter((row) => !before.reportEvents.some((prior) => prior.id === row.id));
+      assert.equal(addedReport.length, 1);
+      assert.equal(addedReport[0].event_type, "uad_3_6.mobile_field_accepted");
+      assert.equal(addedReport[0].actor_user_id, fixture.actorUserId);
+      assert.deepEqual(addedReport[0].changed_fields, [fixture.definition.field_path]);
+      const addedAdapter = after.adapterEvents.filter((row) => !before.adapterEvents.some((prior) => prior.id === row.id));
+      assert.equal(addedAdapter.length, 1);
+      assert.equal(addedAdapter[0].event_type, "target_adapter.proposal_accepted");
+      assert.equal(addedAdapter[0].actor_user_id, fixture.actorUserId);
+      const beforeCanonical = before.canonical.canonical, afterCanonical = after.canonical.canonical;
+      for (const key of ["entities", "assets", "sketches", "sketchHistory"]) {
+        assert.deepEqual(afterCanonical[key], beforeCanonical[key]);
+      }
+      for (const key of ["signatures", "validation", "artifacts"]) assert.deepEqual(after.canonical[key], before.canonical[key]);
+      assert.equal(afterCanonical.revisions.length, beforeCanonical.revisions.length + 1);
+      assert.deepEqual(afterCanonical.revisions.slice(0, -1), beforeCanonical.revisions);
+      const revision = afterCanonical.revisions.at(-1);
+      assert.equal(revision.created_by_user_id, fixture.actorUserId);
+      assert.equal(revision.revision_number, fixture.revision + 1);
+      assert.equal(revision.document.field_values.length, after.fields.length);
+      assert.deepEqual(revision.document.entities, []);
+      assert.equal(afterCanonical.audit.length, beforeCanonical.audit.length + 1);
+      const addedAudit = afterCanonical.audit.find((row) => !beforeCanonical.audit.some((prior) => prior.id === row.id));
+      assert.equal(addedAudit.event_type, "uad_mobile_field.accepted");
+      assert.equal(addedAudit.actor_user_id, fixture.actorUserId);
+      assert.equal(addedAudit.metadata.proposal_id, fixture.proposalId);
+    };
+    for (const action of ["update", "delete", "unchanged", "insert"]) {
+      await t.test(`unsigned mobile scalar ${action} commits its real mutation and exact accepted replay remains read-only after signing`, async () => {
+        const fixture = await createMobileScalarFixture(action);
+        const before = await scalarState(fixture);
+        const request = scalarRequest();
+        const observed = await hostileObservedPool();
+        let result;
+        try {
+          result = await applyScalar(observed, fixture, request);
+          assertScalarAccepted(before, await scalarState(fixture), fixture, request, result);
+        } finally { observed.forceRelease(); }
+        await pool.query("UPDATE appraisal.uad_workfiles SET signed_at = now() WHERE id = $1", [fixture.workfileId]);
+        await insertSyntheticSignature(pool, fixture.identity, fixture, fixture.revision + 1);
+        const signed = await scalarState(fixture);
+        const replay = await hostileObservedPool();
+        try {
+          assert.deepEqual(JSON.parse(JSON.stringify(await applyScalar(replay, fixture, request))), JSON.parse(JSON.stringify(result)));
+          assert.deepEqual(await scalarState(fixture), signed);
+          assert.equal(replay.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+          assert.equal(replay.trace.some((sql) => sql.includes("FROM appraisal.uad_workfiles")), false);
+          // Check protocol only after the real success and replay have run on
+          // old source too; a BEGIN mismatch must not hide their compatibility.
+          assertScalarOwner(observed, "COMMIT");
+          assertScalarOwner(replay, "COMMIT");
+          const signatures = observed.trace.findIndex((sql) => sql.includes("FROM appraisal.uad_signatures"));
+          const mutation = observed.trace.findIndex((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql));
+          assert.ok(signatures > 0 && mutation > signatures);
+        } finally { replay.forceRelease(); }
+      });
+    }
+    for (const decision of ["reject", "stale conflict"]) {
+      await t.test(`signed mobile scalar ${decision} preserves canonical evidence and exact metadata replay`, async () => {
+        const fixture = await createMobileScalarFixture("update");
+        if (decision === "stale conflict") {
+          await pool.query("UPDATE appraisal.uad_field_values SET value = $2::jsonb WHERE id = $1",
+            [fixture.fieldId, JSON.stringify("Synthetic competing canonical value")]);
+        }
+        await addScalarSignatureEvidence(fixture, "signed_at");
+        const before = await scalarState(fixture);
+        const request = scalarRequest(decision === "reject" ? "reject" : "accept");
+        const observed = await hostileObservedPool();
+        let result;
+        try {
+          result = await applyScalar(observed, fixture, request);
+          assert.equal(result.proposal.status, decision === "reject" ? "rejected" : "conflict");
+          const after = await scalarState(fixture);
+          assert.deepEqual(after.canonical, before.canonical);
+          assert.deepEqual(after.workfile, before.workfile);
+          assert.deepEqual(after.fields, before.fields);
+          assert.deepEqual(after.fieldEdits, before.fieldEdits);
+          assert.deepEqual(after.report, before.report);
+          assert.deepEqual(after.reportEvents, before.reportEvents);
+          assert.equal(after.operations.length, 1);
+          assert.equal(after.operations[0].status, decision === "reject" ? "applied" : "conflict");
+          assert.equal(after.operations[0].actor_user_id, fixture.actorUserId);
+          assert.deepEqual(after.operations[0].result, JSON.parse(JSON.stringify(result)));
+          if (decision === "stale conflict") {
+            assert.deepEqual(result.proposal.conflict.base, fixture.base);
+            assert.deepEqual(result.proposal.conflict.current, { exists: true, value: "Synthetic competing canonical value" });
+          }
+          assert.equal(observed.trace.some((sql) => sql.includes("FROM appraisal.uad_signatures")), false,
+            "non-accepting metadata outcomes are not canonical lifecycle mutations");
+        } finally { observed.forceRelease(); }
+        const completed = await scalarState(fixture);
+        const replay = await hostileObservedPool();
+        try {
+          assert.deepEqual(JSON.parse(JSON.stringify(await applyScalar(replay, fixture, request))), JSON.parse(JSON.stringify(result)));
+          assert.deepEqual(await scalarState(fixture), completed);
+          assert.equal(replay.trace.some((sql) => /^(INSERT|UPDATE|DELETE)\b/.test(sql)), false);
+          assertScalarOwner(observed, "COMMIT");
+          assertScalarOwner(replay, "COMMIT");
+        } finally { replay.forceRelease(); }
+      });
+    }
+    for (const action of ["update", "delete", "unchanged"]) {
+      await t.test(`mobile scalar ${action} rolls back canonical and review writes when COMMIT has not executed`, async () => {
+        const fixture = await createMobileScalarFixture(action);
+        const before = await scalarState(fixture);
+        const fault = new Error(`synthetic_scalar_${action}_before_commit`);
+        let attemptedCommit = false;
+        const observed = await hostileObservedPool({ async before(statement, rawClient) {
+          if (statement === "COMMIT") {
+            const pendingWorkfile = (await rawClient.query(
+              "SELECT current_revision, status FROM appraisal.uad_workfiles WHERE id = $1", [fixture.workfileId],
+            )).rows[0];
+            assert.deepEqual(pendingWorkfile, { current_revision: fixture.revision + 1, status: "draft" });
+            const pendingFields = (await rawClient.query(
+              "SELECT value, source_type, source_reference FROM appraisal.uad_field_values WHERE workfile_id = $1",
+              [fixture.workfileId],
+            )).rows;
+            assert.deepEqual(pendingFields, action === "delete" ? [] : [{ value: fixture.proposed.value,
+              source_type: "appraiser", source_reference: "mobile_target_adapter" }]);
+            assert.equal((await rawClient.query(
+              "SELECT status FROM app.mobile_target_field_proposals WHERE id = $1", [fixture.proposalId],
+            )).rows[0]?.status, "accepted");
+            attemptedCommit = true;
+            throw fault;
+          }
+        } });
+        let error = null;
+        try {
+          await applyScalar(observed, fixture, scalarRequest()).catch((caught) => { error = caught; });
+          assert.equal(attemptedCommit, true, "the valid action must reach the pre-COMMIT injection point");
+          assert.equal(error, fault);
+          assert.ok(observed.trace.some((sql) => sql.startsWith("INSERT INTO app.mobile_target_review_operations")));
+          assert.deepEqual(await scalarState(fixture), before);
+          assertScalarOwner(observed, "ROLLBACK");
+        } finally { observed.forceRelease(); }
+      });
+    }
+    await t.test("mobile scalar acceptance waits for an in-flight partial signature and reads it after the old snapshot without revision drift", async () => {
+      const fixture = await createMobileScalarFixture("unchanged");
+      const before = await scalarState(fixture);
+      const signer = await pool.connect();
+      const lockIssued = deferred();
+      const observed = await hostileObservedPool({ before(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) lockIssued.resolve();
+      } });
+      let signerTransaction = false, writing;
+      try {
+        await signer.query(READ_COMMITTED_BEGIN);
+        signerTransaction = true;
+        await signer.query("SELECT id FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", [fixture.workfileId]);
+        writing = applyScalar(observed, fixture, scalarRequest());
+        void writing.catch(() => {});
+        await within(lockIssued.promise, "mobile scalar acceptance issued its real workfile lock");
+        await assertBlockedBy(pool, observed.processID, signer.processID, "mobile scalar acceptance behind signer");
+        await insertSyntheticSignature(signer, fixture.identity, fixture, fixture.revision);
+        const signatures = JSON.parse(JSON.stringify((await signer.query(
+          "SELECT * FROM appraisal.uad_signatures WHERE workfile_id = $1 ORDER BY id", [fixture.workfileId],
+        )).rows));
+        await signer.query("COMMIT");
+        signerTransaction = false;
+        let error = null;
+        await within(writing, "mobile scalar sees the newly committed signature").catch((caught) => { error = caught; });
+        const expected = structuredClone(before);
+        expected.canonical.signatures = signatures;
+        assert.deepEqual(await scalarState(fixture), expected);
+        assert.equal(error?.message, LOCKED_ERROR);
+        assertScalarRefusal(observed, "current partial signature");
+      } finally {
+        if (signerTransaction) await signer.query("ROLLBACK").catch(() => {});
+        signer.release(true);
+        if (writing) await within(writing.catch(() => {}), "mobile scalar signer-first cleanup").catch(() => {});
+        observed.forceRelease();
+      }
+    });
+    await t.test("real signer waits for mobile scalar acceptance and refuses its committed draft and advanced revision", async () => {
+      const fixture = await createMobileScalarFixture("update");
+      const before = await scalarState(fixture);
+      const writerLocked = deferred(), continueWriter = deferred();
+      const observed = await hostileObservedPool({ async after(statement) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          writerLocked.resolve();
+          await continueWriter.promise;
+        }
+      } });
+      const signerClient = await pool.connect();
+      let signerLockedState;
+      const signerObserved = fixedObservedPool(signerClient, { after(statement, _client, result) {
+        if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+          signerLockedState = { status: result.rows[0]?.status, revision: result.rows[0]?.current_revision };
+        }
+      } });
+      const request = scalarRequest();
+      let writing, signing;
+      try {
+        writing = applyScalar(observed, fixture, request);
+        void writing.catch(() => {});
+        await within(writerLocked.promise, "mobile scalar acceptance owns the workfile lock");
+        signing = signUadWorkfile(signerObserved.pool, fixture.workfileId, { userId: fixture.actorUserId },
+          { execution_date: "2026-09-05" }, { now: new Date("2026-09-05T12:00:00.000Z") });
+        void signing.catch(() => {});
+        await assertBlockedBy(pool, signerClient.processID, observed.processID, "real signer behind mobile scalar acceptance");
+        continueWriter.resolve();
+        const result = await within(writing, "mobile scalar acceptance commits before signing");
+        await assert.rejects(() => within(signing, "real signer observes the scalar draft"),
+          { message: "uad_signature_local_validation_required" });
+        assert.deepEqual(signerLockedState, { status: "draft", revision: fixture.revision + 1 });
+        assertScalarAccepted(before, await scalarState(fixture), fixture, request, result);
+        assertScalarOwner(observed, "COMMIT");
+        assert.equal(signerObserved.trace.at(-1), "ROLLBACK");
+      } finally {
+        continueWriter.resolve();
+        if (writing) await within(writing.catch(() => {}), "mobile scalar writer-first cleanup").catch(() => {});
+        if (signing) await within(signing.catch(() => {}), "mobile scalar waiting signer cleanup").catch(() => {});
+        observed.forceRelease();
+        signerObserved.forceRelease();
+      }
+    });
   } finally {
     await pool.end();
   }

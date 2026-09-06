@@ -278,18 +278,44 @@ async function loadValues(queryable, workfileId, suffix = "") {
   return rows;
 }
 
+function assertCompletionConfirmationTarget(workfile, workfileId, actorUserId, receipt) {
+  // This context is issued by the authenticated route, never the request body.
+  // Bind its original organization and signer slot; reauthorizing a changed
+  // target could otherwise admit the same actor under a different assignment.
+  const fields = ["workfileId", "organizationId", "actorUserId", "signerRole"];
+  if (!plainObject(receipt) || Object.keys(receipt).length !== fields.length
+    || fields.some((field) => !Object.hasOwn(receipt, field)
+      || typeof receipt[field] !== "string" || !receipt[field]
+      || receipt[field].trim() !== receipt[field])
+    || receipt.workfileId !== workfileId || workfile.id !== workfileId
+    || receipt.organizationId !== workfile.organization_id
+    || receipt.actorUserId !== actorUserId
+    || !["appraiser", "supervisory_appraiser"].includes(receipt.signerRole)) {
+    throw new Error("uad_appraiser_confirmation_access_denied");
+  }
+  const assignedUserId = receipt.signerRole === "appraiser"
+    ? workfile.assigned_appraiser_user_id
+    : workfile.supervisory_appraiser_user_id;
+  if (assignedUserId !== receipt.actorUserId) {
+    throw new Error("uad_appraiser_confirmation_access_denied");
+  }
+}
+
 export async function applyUadCompletionSuggestions(
   pool,
   workfileIdValue,
   input = {},
   actorUserId = null,
+  confirmationReceipt = null,
 ) {
-  const workfileId = normalizeUadWorkfileId(workfileIdValue);
+  // PostgreSQL returns canonical lowercase UUIDs even when the URL used capitals.
+  const workfileId = normalizeUadWorkfileId(workfileIdValue).toLowerCase();
   const client = await pool.connect();
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const locked = await client.query(
-      `SELECT id, current_revision, specification_release_key, status, signed_at
+      `SELECT id, current_revision, specification_release_key, status, signed_at,
+              organization_id, assigned_appraiser_user_id, supervisory_appraiser_user_id
          FROM appraisal.uad_workfiles
         WHERE id = $1
         FOR UPDATE`,
@@ -297,6 +323,7 @@ export async function applyUadCompletionSuggestions(
     );
     if (!locked.rows.length) throw new Error("uad_workfile_not_found");
     await assertLockedUadWorkfileMutable(client, locked.rows[0]);
+    assertCompletionConfirmationTarget(locked.rows[0], workfileId, actorUserId, confirmationReceipt);
     const currentRevision = Number(locked.rows[0].current_revision);
     const suggestions = await loadUadReviewSuggestions(client, workfileId);
     const [existingValues, existingEntities] = await Promise.all([

@@ -81,7 +81,12 @@ test("disabled UAD workspace keeps diagnostics public and fails protected routes
   }, {}, { enabled: false });
 });
 
-function securityPool({ membershipOrganizationId = ORGANIZATION_ID, roleCode = "appraiser" } = {}) {
+function securityPool({
+  membershipOrganizationId = ORGANIZATION_ID,
+  roleCode = "appraiser",
+  assignedAppraiserUserId = USER_ID,
+  supervisoryAppraiserUserId = null,
+} = {}) {
   const accessQueries = [];
   return {
     accessQueries,
@@ -114,8 +119,8 @@ function securityPool({ membershipOrganizationId = ORGANIZATION_ID, roleCode = "
         return { rows: [{
           id: WORKFILE_ID,
           organization_id: ORGANIZATION_ID,
-          assigned_appraiser_user_id: USER_ID,
-          supervisory_appraiser_user_id: null,
+          assigned_appraiser_user_id: assignedAppraiserUserId,
+          supervisory_appraiser_user_id: supervisoryAppraiserUserId,
         }] };
       }
       if (sql.includes("SELECT w.*")) {
@@ -315,6 +320,17 @@ test("UAD workfiles fail closed while the application rollout flag is disabled",
 
 test("UAD completion confirmation is limited to the assigned appraiser and records the actor", async () => {
   const allowedPool = securityPool();
+  const input = {
+    expected_revision: 1,
+    suggestion_ids: ["suggestion-1"],
+    actorUserId: "forged-actor",
+    organizationId: OTHER_ORGANIZATION_ID,
+    signerRole: "supervisory_appraiser",
+    confirmation: {
+      workfileId: "forged-workfile", organizationId: OTHER_ORGANIZATION_ID,
+      actorUserId: "forged-actor", signerRole: "supervisory_appraiser",
+    },
+  };
   const calls = [];
   const applyCompletionSuggestions = async (...args) => {
     calls.push(args);
@@ -326,7 +342,7 @@ test("UAD completion confirmation is limited to the assigned appraiser and recor
       {
         method: "POST",
         headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
-        body: JSON.stringify({ expected_revision: 1, suggestion_ids: ["suggestion-1"] }),
+        body: JSON.stringify(input),
       },
     );
     assert.equal(response.status, 200);
@@ -335,8 +351,16 @@ test("UAD completion confirmation is limited to the assigned appraiser and recor
   assert.equal(calls.length, 1);
   assert.equal(calls[0][0], allowedPool);
   assert.equal(calls[0][1], WORKFILE_ID);
-  assert.deepEqual(calls[0][2], { expected_revision: 1, suggestion_ids: ["suggestion-1"] });
+  assert.deepEqual(calls[0][2], input);
   assert.equal(calls[0][3], USER_ID);
+  assert.equal(calls[0].length, 5);
+  assert.deepEqual(calls[0][4], {
+    workfileId: WORKFILE_ID,
+    organizationId: ORGANIZATION_ID,
+    actorUserId: USER_ID,
+    signerRole: "appraiser",
+  });
+  assert.equal(Object.isFrozen(calls[0][4]), true);
 
   let deniedApplyCalls = 0;
   await withServer(securityPool({ roleCode: "organization_admin" }), async (baseUrl) => {
@@ -354,6 +378,54 @@ test("UAD completion confirmation is limited to the assigned appraiser and recor
     applyCompletionSuggestions: async () => { deniedApplyCalls += 1; },
   });
   assert.equal(deniedApplyCalls, 0);
+});
+
+test("UAD completion binds the assigned supervisor slot for an uppercase workfile UUID", async () => {
+  const pool = securityPool({
+    roleCode: "supervisory_appraiser",
+    assignedAppraiserUserId: "another-assigned-appraiser",
+    supervisoryAppraiserUserId: USER_ID,
+  });
+  const calls = [];
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID.toUpperCase()}/completion-suggestions/apply`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ confirmed: true, signerRole: "appraiser", actor_user_id: "forged-actor" }),
+    });
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { applied_suggestion_count: 1 });
+  }, {}, { async applyCompletionSuggestions(...args) {
+    calls.push(args);
+    return { applied_suggestion_count: 1 };
+  } });
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0][1], WORKFILE_ID.toUpperCase());
+  assert.equal(calls[0][3], USER_ID);
+  assert.deepEqual(calls[0][4], {
+    workfileId: WORKFILE_ID, organizationId: ORGANIZATION_ID,
+    actorUserId: USER_ID, signerRole: "supervisory_appraiser",
+  });
+  assert.equal(Object.isFrozen(calls[0][4]), true);
+});
+
+test("UAD completion target drift is a bounded private access-denied response", async () => {
+  const pool = securityPool();
+  let calls = 0;
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/completion-suggestions/apply`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ confirmed: true }),
+    });
+    assert.equal(response.status, 403);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "uad_appraiser_confirmation_access_denied" });
+    assert.equal(calls, 1);
+  }, {}, { async applyCompletionSuggestions() {
+    calls += 1;
+    throw new Error("uad_appraiser_confirmation_access_denied");
+  } });
 });
 
 test("UAD subject mismatch override rejects organization administrators", async () => {

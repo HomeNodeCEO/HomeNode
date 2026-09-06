@@ -813,3 +813,15 @@ test('selected boundary: rehashing cannot waive a topology producer\'s own primi
   assert.equal(result.context.calls.some(call => queryTag(call) === 'build'), true);
   assert.deepEqual(result.output.geometry.geometry, makeMockSelectedBoundaryOracle({ variant: 'adjacent' }).geometry);
 });
+
+test('selected boundary: submitted admission SQL uses a non-keyword selected-overlap CTE', async () => {
+  const { output, context } = await runMock();
+  assert.equal(output.status, 'ready', JSON.stringify(output.incomplete_reasons));
+  const admission = context.calls.find(call => queryTag(call) === 'admission');
+  assert.ok(admission, 'inspect the actual submitted admission query, not a separate SQL fixture');
+  assert.match(admission.text, /\bselected_overlap_pairs\s+AS\s*\(/i);
+  assert.match(admission.text, /\bFROM\s+selected_overlap_pairs\b/i);
+  assert.doesNotMatch(admission.text, /\boverlaps\s+AS\s*\(|\bFROM\s+overlaps\b/i);
+  assert.match(admission.text, /ST_Relate\(\s*a\.geom\s*,\s*b\.geom\s*,\s*'2\*{8}'\s*\)/i);
+  assert.match(admission.text, /\bAS\s+overlap_pair_count\b/i);
+});

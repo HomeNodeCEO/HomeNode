@@ -503,7 +503,7 @@ const ADMISSION_SQL = `${INPUT_SQL}, cell_checks AS MATERIALIZED (
   SELECT *,ST_IsValid(original) AND ST_IsValid(geom) AND NOT ST_IsEmpty(original) AND NOT ST_IsEmpty(geom)
     AND GeometryType(original) IN ('POLYGON','MULTIPOLYGON') AND ST_SRID(original)=4326 AND ST_NDims(original)=2
     AND ST_Area(geom)>0 AND ${extent('original')} AS valid FROM subjects
-), overlaps AS (
+), selected_overlap_pairs AS (
   SELECT 1 FROM cell_checks a JOIN cell_checks b ON a.id<b.id AND a.geom && b.geom
   WHERE NOT EXISTS(SELECT 1 FROM cell_checks WHERE valid IS DISTINCT FROM true)
     AND ST_Relate(a.geom,b.geom,'2********') LIMIT 1
@@ -515,7 +515,7 @@ const ADMISSION_SQL = `${INPUT_SQL}, cell_checks AS MATERIALIZED (
   (SELECT count(*)::integer FROM subject_checks WHERE valid IS DISTINCT FROM true) AS invalid_subject_count,
   (SELECT count(*)::integer FROM edges WHERE (ST_IsValid(geom) AND NOT ST_IsEmpty(geom) AND GeometryType(geom)='LINESTRING'
     AND ST_SRID(geom)=26914 AND ST_NDims(geom)=2 AND ST_NPoints(geom)=2 AND ST_Length(geom)>0) IS DISTINCT FROM true) AS invalid_edge_count,
-  (SELECT count(*)::integer FROM overlaps) AS overlap_pair_count`;
+  (SELECT count(*)::integer FROM selected_overlap_pairs) AS overlap_pair_count`;
 function buildSql(limits) {
   return `${INPUT_SQL}, dissolved AS MATERIALIZED (
     SELECT ST_Normalize(ST_UnaryUnion(ST_Collect(geom ORDER BY id))) AS geom FROM cells

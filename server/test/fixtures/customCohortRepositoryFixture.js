@@ -40,6 +40,7 @@ export function customCohortRepositoryFixture() {
       case 'report': value = { appraisal_case_id: t.appraisal_case_id, subject_snapshot_id: t.subject_snapshot_id }; break;
       case 'case': value = { effective_date: state.caseDate }; break;
       case 'snapshot': value = { original_json: JSON.stringify(state.input.snapshot) }; break;
+      case 'section-fence': value = { locked_section_count: '3' }; break;
       case 'sections': value = { original_json: JSON.stringify(state.input.sections) }; break;
       case 'history-target': value = { id: t.report_file_id }; break;
       case 'insert': {

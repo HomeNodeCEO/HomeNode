@@ -19,7 +19,8 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
       JSON.stringify({ custom_property_snapshot: { account: { account_id: scope.account_id, address: 'Synthetic Café 🏠' },
         improvement: { living_area_sqft: 2000 } }, retained_extra: { never: 'discard' } }), '{"fixture":"retained"}']);
     await seed.query(`INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
-      VALUES ($1,'report.property_characteristics','{"main_improvement":{"living_area_sqft":2100.00},"reviewer_note":"original"}')`, [scope.assignment_file_id]);
+      VALUES ($1,'report.property_characteristics','{"main_improvement":{"living_area_sqft":2100.00},"reviewer_note":"original"}'),
+        ($1,'report.exemptions','{"reviewer_note":"not material"}')`, [scope.assignment_file_id]);
     await seed.query('COMMIT');
   } catch (error) { await seed.query('ROLLBACK'); throw error; }
   finally { seed.release(); }
@@ -105,6 +106,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     ['SELECT id FROM app.appraisal_cases WHERE id=$1 FOR UPDATE', identity.scope.appraisal_case_id],
     ['SELECT id FROM app.appraisal_subject_snapshots WHERE id=$1 FOR UPDATE', identity.scope.subject_snapshot_id],
     ["SELECT assignment_file_id FROM app.custom_appraisal_sections WHERE assignment_file_id=$1 AND section_key='report.property_characteristics' FOR UPDATE", scope.assignment_file_id],
+    ["SELECT assignment_file_id FROM app.custom_appraisal_sections WHERE assignment_file_id=$1 AND section_key='report.exemptions' FOR UPDATE", scope.assignment_file_id],
   ];
   const holder = await pool.connect();
   let contender;
@@ -133,6 +135,8 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
           WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`,
         `INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
           VALUES ($1,'report.land_details','{}')`,
+        `UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
+          WHERE assignment_file_id=$1 AND section_key='report.exemptions'`,
       ]) {
         await contender.query('BEGIN');
         try {
@@ -141,6 +145,25 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
         } finally { await contender.query('ROLLBACK'); }
       }
     } finally { await holder.query('ROLLBACK'); }
+    // Ordinary non-material edits remain non-material after the fence releases;
+    // an actual committed key move must change the material comparison.
+    await holder.query(`UPDATE app.custom_appraisal_sections SET section_value='{"reviewer_note":"updated"}'
+      WHERE assignment_file_id=$1 AND section_key='report.exemptions'`, [scope.assignment_file_id]);
+    await holder.query('BEGIN');
+    try {
+      assert.equal((await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef)).status, 'matched');
+    } finally { await holder.query('ROLLBACK'); }
+    await holder.query(`UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
+      WHERE assignment_file_id=$1 AND section_key='report.exemptions'`, [scope.assignment_file_id]);
+    await holder.query('BEGIN');
+    try {
+      const moved = await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef);
+      assert.equal(moved.status, 'changed'); assert.ok(moved.changed_inputs.includes('material_inputs'));
+    } finally {
+      await holder.query('ROLLBACK');
+      await holder.query(`UPDATE app.custom_appraisal_sections SET section_key='report.exemptions'
+        WHERE assignment_file_id=$1 AND section_key='report.land_details'`, [scope.assignment_file_id]);
+    }
     // A transaction snapshot established before an absent-section insertion
     // must never be mistaken for current material, even after parent locking.
     for (const isolation of ['REPEATABLE READ', 'SERIALIZABLE', 'READ COMMITTED']) {

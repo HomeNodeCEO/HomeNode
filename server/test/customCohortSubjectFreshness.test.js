@@ -30,7 +30,13 @@ test('fresh actual material comparison is read-only, fenced and explicitly not a
   assert.deepEqual(result, matched);
   assert.ok(Object.isFrozen(result)); assert.ok(Object.isFrozen(result.changed_inputs));
   assert.equal(state.db.size, 5);
-  assert.deepEqual(state.calls.slice(0, 8).map(c => c.tag), ['transaction', 'assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'sections']);
+  assert.deepEqual(state.calls.slice(0, 9).map(c => c.tag), ['transaction', 'assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'section-fence', 'sections']);
+  const sectionFence = state.calls.find(c => c.tag === 'section-fence');
+  assert.match(sectionFence.sql, /WITH held AS MATERIALIZED/);
+  assert.match(sectionFence.sql, /FOR SHARE NOWAIT/);
+  assert.match(sectionFence.sql, /count\(\*\)/);
+  assert.doesNotMatch(sectionFence.sql, /ANY\(|section_value|LIMIT/);
+  assert.deepEqual(sectionFence.params, [state.input.target.assignment_file_id]);
   assert.equal(state.calls.filter(c => c.tag === 'insert').length, 0);
   assert.deepEqual(await repo.compareCurrent(ref), matched);
   assert.equal(state.db.size, 5);
@@ -98,7 +104,7 @@ test('current validation refuses unresolved date, protected workfile, autocommit
 });
 
 test('original lock/connection errors propagate, not a matched result or automatic retry', async () => {
-  for (const tag of ['assignment', 'workfile', 'report', 'case', 'snapshot', 'sections', 'read']) {
+  for (const tag of ['assignment', 'workfile', 'report', 'case', 'snapshot', 'section-fence', 'sections', 'read']) {
     const f = await retained(), error = Object.assign(new Error('synthetic lock'), { code: '55P03' });
     f.state.error = { tag, value: error };
     await assert.rejects(f.repo.compareCurrent(f.ref), actual => actual === error);

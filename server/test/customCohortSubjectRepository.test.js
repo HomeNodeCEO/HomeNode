@@ -8,8 +8,8 @@ import { setSection, pg } from './fixtures/neighborhoodCustomMaterialInputsFixtu
 import { customCohortRepositoryFixture as fixture, customCohortScopeOf as scopeOf } from './fixtures/customCohortRepositoryFixture.js';
 test('Custom retained subject reads actual scoped rows in fixed NOWAIT order and replays exact bytes', async () => {
   const { state, repo } = fixture(), ref = await repo.capture();
-  assert.deepEqual(state.calls.slice(0, 8).map(c => c.tag), ['transaction', 'assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'sections']);
-  for (const c of state.calls.slice(1, 8).filter(c => c.tag !== 'signature')) assert.match(c.sql, /FOR (?:UPDATE|SHARE) NOWAIT/);
+  assert.deepEqual(state.calls.slice(0, 9).map(c => c.tag), ['transaction', 'assignment', 'workfile', 'signature', 'report', 'case', 'snapshot', 'section-fence', 'sections']);
+  for (const c of state.calls.slice(1, 9).filter(c => c.tag !== 'signature')) assert.match(c.sql, /FOR (?:UPDATE|SHARE) NOWAIT/);
   assert.deepEqual(state.calls[1].params, [state.input.target.organization_id, state.input.target.assignment_file_id, state.input.target.account_id]);
   const loaded = await repo.load(ref);
   assert.equal(loaded.usage, 'retained_subject_inputs_only');

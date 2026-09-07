@@ -120,6 +120,14 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
         encoded AS (SELECT row_to_json(held)::text AS value FROM held)
         SELECT CASE WHEN octet_length(value)<=$3 THEN value ELSE NULL END AS original_json FROM encoded`,
       [report.subject_snapshot_id, report.appraisal_case_id, CAP])));
+      // A row can change section_key without changing its assignment FK. Fence
+      // every existing identity so a non-material row cannot become material
+      // after comparison. Count consumes the entire lock query; do not fetch or
+      // project unrelated section payloads into the retained evidence.
+      one(await query(`/* custom-cohort-subject:section-fence */
+        WITH held AS MATERIALIZED (SELECT section_key FROM app.custom_appraisal_sections
+          WHERE assignment_file_id=$1::bigint ORDER BY section_key COLLATE "C" FOR SHARE NOWAIT)
+        SELECT count(*)::text AS locked_section_count FROM held`, [scope.assignment_file_id]));
       const sectionsJson = boundedText(one(await query(`/* custom-cohort-subject:sections */
         WITH held AS (SELECT assignment_file_id::text, section_key, ${pgCell('section_value')} AS section_value,
           revision, last_applied_session_id, last_applied_by_user_id, created_at::text, updated_at::text

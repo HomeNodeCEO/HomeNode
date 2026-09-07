@@ -49,3 +49,6 @@ autocommit and database error refusal; and no added storage during comparisons.
 The existing real PostgreSQL suite also checks changed inputs/history, plus two
 actual clients attempting direct section update and absent-section insertion
 while a successful comparison holds its caller-owned fences.
+# Existing section identity fence
+
+Current capture/comparison also locks every existing section row for the exact assignment, not just the three consumed material keys. An unchanged assignment foreign key does not prevent another transaction from renaming a non-material key into a previously absent material key. A fully consumed, ordered `FOR SHARE NOWAIT` query fences those identities before material reads; unrelated payloads are neither fetched by that fence nor added to the retained projection. Native tests cover contention on a non-material row, attempted key movement during a matched comparison, ordinary non-material edits after release, and detection of a committed key movement. These locks are held only in the caller's real transaction and do not grant authorization.

@@ -19,7 +19,8 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
       JSON.stringify({ custom_property_snapshot: { account: { account_id: scope.account_id, address: 'Synthetic Café 🏠' },
         improvement: { living_area_sqft: 2000 } }, retained_extra: { never: 'discard' } }), '{"fixture":"retained"}']);
     await seed.query(`INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
-      VALUES ($1,'report.property_characteristics','{"main_improvement":{"living_area_sqft":2100.00},"reviewer_note":"original"}')`, [scope.assignment_file_id]);
+      VALUES ($1,'report.property_characteristics','{"main_improvement":{"living_area_sqft":2100.00},"reviewer_note":"original"}'),
+        ($1,'report.exemptions','{"reviewer_note":"not material"}')`, [scope.assignment_file_id]);
     await seed.query('COMMIT');
   } catch (error) { await seed.query('ROLLBACK'); throw error; }
   finally { seed.release(); }
@@ -34,6 +35,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     const repo = createCustomCohortSubjectRepository(client, scopeJson);
     ref = await repo.capture();
     const retained = await repo.load(ref);
+    assert.deepEqual(await repo.compareCurrent(ref), { status: 'matched', authority: 'not_established', changed_inputs: [] });
     assert.equal(retained.effective_date, '2024-06-30');
     const sections = JSON.parse(retained.original_sections.pg_reads_json);
     assert.deepEqual(sections.map(s => [s.section_key, s.row_state, s.row?.assignment_file_id ?? null]), [
@@ -48,6 +50,17 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     assert.deepEqual(await repo.capture(), ref);
     assert.equal((await client.query('SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
       [scope.organization_id])).rows[0].n, 5);
+    await client.query(`UPDATE app.custom_appraisal_sections
+      SET section_value=section_value || '{"reviewer_note":"unrelated edit","neighborhood_output":{"median":123}}'::jsonb,
+        revision=revision+1, updated_at=clock_timestamp()
+      WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs, []);
+    await client.query(`UPDATE app.custom_appraisal_sections
+      SET section_value=jsonb_set(section_value,'{main_improvement,living_area_sqft}','2101')
+      WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs, ['material_inputs']);
+    assert.equal((await client.query('SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
+      [scope.organization_id])).rows[0].n, 5, 'freshness comparisons never persist new blobs');
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, organization_id: randomUUID() })).load(ref), /not_found/);
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, account_id: identity.accounts[1] })).capture(), /not_found/);
 
@@ -61,13 +74,18 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
       WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
     assert.deepEqual(await repo.load(ref), retained);
     await assert.rejects(repo.capture(), /effective_date_unresolved/);
+    await assert.rejects(repo.compareCurrent(ref), /effective_date_unresolved/);
     await client.query('UPDATE app.appraisal_cases SET effective_date=NULL WHERE id=$1', [identity.scope.appraisal_case_id]);
     const nextRef = await repo.capture();
     assert.notEqual(nextRef.content_sha256, ref.content_sha256);
     assert.equal((await repo.load(nextRef)).effective_date, '2024-07-01');
+    assert.deepEqual((await repo.compareCurrent(ref)).changed_inputs,
+      ['snapshot_identity', 'effective_date', 'snapshot_evidence', 'material_inputs']);
+    assert.equal((await repo.compareCurrent(nextRef)).status, 'matched');
     assert.deepEqual(await repo.load(ref), retained);
     await client.query("UPDATE app.custom_appraisal_workfiles SET status='archived' WHERE assignment_file_id=$1", [scope.assignment_file_id]);
     await assert.rejects(repo.capture(), /protected_workfile/);
+    await assert.rejects(repo.compareCurrent(ref), /protected_workfile/);
     assert.deepEqual(await repo.load(ref), retained);
   } finally {
     try { await client.query('ROLLBACK'); } finally { client.release(); }
@@ -88,6 +106,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     ['SELECT id FROM app.appraisal_cases WHERE id=$1 FOR UPDATE', identity.scope.appraisal_case_id],
     ['SELECT id FROM app.appraisal_subject_snapshots WHERE id=$1 FOR UPDATE', identity.scope.subject_snapshot_id],
     ["SELECT assignment_file_id FROM app.custom_appraisal_sections WHERE assignment_file_id=$1 AND section_key='report.property_characteristics' FOR UPDATE", scope.assignment_file_id],
+    ["SELECT assignment_file_id FROM app.custom_appraisal_sections WHERE assignment_file_id=$1 AND section_key='report.exemptions' FOR UPDATE", scope.assignment_file_id],
   ];
   const holder = await pool.connect();
   let contender;
@@ -102,6 +121,78 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
         await assert.rejects(createCustomCohortSubjectRepository(contender, scopeJson).capture(), error => error.code === '55P03');
         assert.ok(performance.now() - start < 1500, 'NOWAIT must win before the statement-timeout backstop');
       } finally { await contender.query('ROLLBACK'); await holder.query('ROLLBACK'); }
+    }
+    // Compare holds the same real fences through the caller's operation, even
+    // against writers that touch a section directly or insert an absent row.
+    await holder.query('BEGIN');
+    const stableRef = await createCustomCohortSubjectRepository(holder, scopeJson).capture();
+    await holder.query('COMMIT');
+    await holder.query('BEGIN');
+    try {
+      assert.equal((await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef)).status, 'matched');
+      for (const sql of [
+        `UPDATE app.custom_appraisal_sections SET section_value='{}'
+          WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`,
+        `INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
+          VALUES ($1,'report.land_details','{}')`,
+        `UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
+          WHERE assignment_file_id=$1 AND section_key='report.exemptions'`,
+      ]) {
+        await contender.query('BEGIN');
+        try {
+          await contender.query("SET LOCAL statement_timeout='250ms'");
+          await assert.rejects(contender.query(sql, [scope.assignment_file_id]), error => error.code === '57014');
+        } finally { await contender.query('ROLLBACK'); }
+      }
+    } finally { await holder.query('ROLLBACK'); }
+    // Ordinary non-material edits remain non-material after the fence releases;
+    // an actual committed key move must change the material comparison.
+    await holder.query(`UPDATE app.custom_appraisal_sections SET section_value='{"reviewer_note":"updated"}'
+      WHERE assignment_file_id=$1 AND section_key='report.exemptions'`, [scope.assignment_file_id]);
+    await holder.query('BEGIN');
+    try {
+      assert.equal((await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef)).status, 'matched');
+    } finally { await holder.query('ROLLBACK'); }
+    await holder.query(`UPDATE app.custom_appraisal_sections SET section_key='report.land_details'
+      WHERE assignment_file_id=$1 AND section_key='report.exemptions'`, [scope.assignment_file_id]);
+    await holder.query('BEGIN');
+    try {
+      const moved = await createCustomCohortSubjectRepository(holder, scopeJson).compareCurrent(stableRef);
+      assert.equal(moved.status, 'changed'); assert.ok(moved.changed_inputs.includes('material_inputs'));
+    } finally {
+      await holder.query('ROLLBACK');
+      await holder.query(`UPDATE app.custom_appraisal_sections SET section_key='report.exemptions'
+        WHERE assignment_file_id=$1 AND section_key='report.land_details'`, [scope.assignment_file_id]);
+    }
+    // A transaction snapshot established before an absent-section insertion
+    // must never be mistaken for current material, even after parent locking.
+    for (const isolation of ['REPEATABLE READ', 'SERIALIZABLE', 'READ COMMITTED']) {
+      await contender.query(`BEGIN ISOLATION LEVEL ${isolation}`);
+      const sectionParams = [scope.assignment_file_id, 'report.land_details'];
+      const sectionQuery = `SELECT section_value FROM app.custom_appraisal_sections
+        WHERE assignment_file_id=$1 AND section_key=$2`;
+      try {
+        assert.equal((await contender.query(sectionQuery, sectionParams)).rowCount, 0);
+        // The other connection commits a previously absent row after that read.
+        await holder.query(`INSERT INTO app.custom_appraisal_sections
+          (assignment_file_id,section_key,section_value) VALUES ($1,$2,'{}')`, sectionParams);
+        const observed = await contender.query(sectionQuery, sectionParams);
+        const repository = createCustomCohortSubjectRepository(contender, scopeJson);
+        if (isolation === 'READ COMMITTED') {
+          assert.equal(observed.rowCount, 1);
+          const result = await repository.compareCurrent(stableRef);
+          assert.equal(result.status, 'changed');
+          assert.ok(result.changed_inputs.includes('material_inputs'));
+        } else {
+          assert.equal(observed.rowCount, 0, 'the native test must reproduce the stale snapshot');
+          await assert.rejects(repository.compareCurrent(stableRef), /read_committed_transaction_required/);
+          await assert.rejects(repository.capture(), /read_committed_transaction_required/);
+        }
+      } finally {
+        await contender.query('ROLLBACK');
+        await holder.query(`DELETE FROM app.custom_appraisal_sections
+          WHERE assignment_file_id=$1 AND section_key=$2`, sectionParams);
+      }
     }
   } finally { contender?.release(); holder.release(); }
 }

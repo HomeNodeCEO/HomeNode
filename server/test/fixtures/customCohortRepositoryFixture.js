@@ -33,7 +33,7 @@ export function customCohortRepositoryFixture() {
     const t = state.input.target;
     let value;
     switch (tag) {
-      case 'transaction': value = { transaction_id: '123456789' }; break;
+      case 'transaction': value = { transaction_id: '123456789', transaction_isolation: 'read committed' }; break;
       case 'assignment': value = { id: t.assignment_file_id, transaction_id: '123456789' }; break;
       case 'workfile': value = { status: state.status, signed_at: state.signedAt }; break;
       case 'signature': value = { present: state.signed }; break;

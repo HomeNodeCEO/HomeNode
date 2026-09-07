@@ -10,6 +10,20 @@ async function retained() {
   return { ...f, ref };
 }
 
+test('capture and comparison require server-observed READ COMMITTED visibility before target reads', async () => {
+  for (const isolation of ['repeatable read', 'serializable', 'read uncommitted', undefined, null, '']) {
+    for (const operation of ['capture', 'compareCurrent']) {
+      const { state, repo, ref } = await retained();
+      const before = state.db.size;
+      state.transforms.transaction = row => ({ ...row, transaction_isolation: isolation });
+      const invoke = operation === 'capture' ? () => repo.capture() : () => repo.compareCurrent(ref);
+      await assert.rejects(invoke, /read_committed_transaction_required/);
+      assert.deepEqual(state.calls.map(call => call.tag), ['transaction']);
+      assert.equal(state.db.size, before);
+    }
+  }
+});
+
 test('fresh actual material comparison is read-only, fenced and explicitly not an authority grant', async () => {
   const { state, repo, ref } = await retained();
   const result = await repo.compareCurrent(ref);

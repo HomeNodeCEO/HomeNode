@@ -141,5 +141,35 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
         } finally { await contender.query('ROLLBACK'); }
       }
     } finally { await holder.query('ROLLBACK'); }
+    // A transaction snapshot established before an absent-section insertion
+    // must never be mistaken for current material, even after parent locking.
+    for (const isolation of ['REPEATABLE READ', 'SERIALIZABLE', 'READ COMMITTED']) {
+      await contender.query(`BEGIN ISOLATION LEVEL ${isolation}`);
+      const sectionParams = [scope.assignment_file_id, 'report.land_details'];
+      const sectionQuery = `SELECT section_value FROM app.custom_appraisal_sections
+        WHERE assignment_file_id=$1 AND section_key=$2`;
+      try {
+        assert.equal((await contender.query(sectionQuery, sectionParams)).rowCount, 0);
+        // The other connection commits a previously absent row after that read.
+        await holder.query(`INSERT INTO app.custom_appraisal_sections
+          (assignment_file_id,section_key,section_value) VALUES ($1,$2,'{}')`, sectionParams);
+        const observed = await contender.query(sectionQuery, sectionParams);
+        const repository = createCustomCohortSubjectRepository(contender, scopeJson);
+        if (isolation === 'READ COMMITTED') {
+          assert.equal(observed.rowCount, 1);
+          const result = await repository.compareCurrent(stableRef);
+          assert.equal(result.status, 'changed');
+          assert.ok(result.changed_inputs.includes('material_inputs'));
+        } else {
+          assert.equal(observed.rowCount, 0, 'the native test must reproduce the stale snapshot');
+          await assert.rejects(repository.compareCurrent(stableRef), /read_committed_transaction_required/);
+          await assert.rejects(repository.capture(), /read_committed_transaction_required/);
+        }
+      } finally {
+        await contender.query('ROLLBACK');
+        await holder.query(`DELETE FROM app.custom_appraisal_sections
+          WHERE assignment_file_id=$1 AND section_key=$2`, sectionParams);
+      }
+    }
   } finally { contender?.release(); holder.release(); }
 }

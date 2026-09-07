@@ -26,6 +26,18 @@ fresh exact assignment access, own a bounded transaction, keep these fences
 through its actual operation, and independently verify context/study/generation
 and facts. Do not cache a `matched` result for later unfenced use.
 
+Both capture and current comparison require a caller-owned **READ COMMITTED**
+transaction, checked from PostgreSQL in the transaction-identity query before
+target reads. Other or unknown isolation levels are rejected, not silently
+changed. Parent-row locks do not refresh a pre-existing REPEATABLE READ or
+SERIALIZABLE snapshot: it can miss a section inserted and committed before the
+locks were acquired. READ COMMITTED supplies new command snapshots while the
+existing parent/section fences prevent subsequent relevant writes. The native
+two-connection regression establishes that old snapshot, commits an absent-section
+insert, verifies snapshot invisibility, and requires rejection; its READ COMMITTED
+counterpart observes the same insert and reports changed material. Historical
+replay is unchanged. See [PostgreSQL isolation semantics](https://www.postgresql.org/docs/17/transaction-iso.html).
+
 Current comparison requires an existing editable unsigned workfile. Historical
 `load` retains its separate behavior and does not require the current draft or
 snapshot to match. No route is activated and no report calculation or writer

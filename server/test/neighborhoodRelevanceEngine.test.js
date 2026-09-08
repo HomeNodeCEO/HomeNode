@@ -7,6 +7,7 @@ import {
   applyLandUsePrerequisite,
   ensureNeighborhoodRelevanceSchema,
   generateNeighborhoodRelevance,
+  getLatestNeighborhoodRelevance,
   normalizeLegalNeighborhoodName,
   summarizeRelevantPopulation,
 } from "../src/services/neighborhoodRelevanceEngine.js";
@@ -18,6 +19,26 @@ test("derives stable neighborhood identity from subdivision or legal description
     "HOLIDAY PARK NORTH 6",
   );
   assert.equal(normalizeLegalNeighborhoodName(null, "LOT 15"), null);
+});
+
+test("cached pocket reads project retained subdivision, land use, and all sales diagnostics", async () => {
+  let candidateProjection = "";
+  const candidate = { parcel_object_id: 1, subdivision_name: "SYNTHETIC POCKET", land_use_category: "one_unit",
+    sales: [{ sale_price: 282500, days_on_market: 0 }, { sale_price: 270000, days_on_market: null }] };
+  const pool = { async query(sql) {
+    if (/SELECT \*/.test(sql) && /FROM app\.neighborhood_relevance_assessments/.test(sql)) {
+      return { rows: [{ id: 1, account_id: "synthetic", summary: {}, distributions: {}, confidence: {} }] };
+    }
+    if (/FROM app\.neighborhood_relevance_candidates/.test(sql) && /ORDER BY score/.test(sql)) {
+      candidateProjection = sql;
+      return { rows: [candidate] };
+    }
+    return { rows: [], rowCount: 0 };
+  } };
+  const result = await getLatestNeighborhoodRelevance(pool, { accountId: "synthetic" });
+  assert.match(candidateProjection, /address, subdivision_name, land_use_category, score/);
+  assert.match(candidateProjection, /diagnostics->'sales'/);
+  assert.deepEqual(result.visualization, [candidate]);
 });
 
 const boundary = {
@@ -212,6 +233,7 @@ test("scores and persists the local parcel population without time-adjusting sal
     parcel_object_id: parcelObjectId,
     account_id: accountId,
     address: `${parcelObjectId} Test Ln`,
+    subdivision_name: "MONICA PARK 4",
     land_use_category: "one_unit",
     year_built: yearBuilt,
     site_area_sqft: site,
@@ -231,7 +253,8 @@ test("scores and persists the local parcel population without time-adjusting sal
   ].map(([accountId, price]) => ({
     primary_account_id: accountId,
     sale_price: price,
-    sale_date: "2026-01-01",
+    closing_date: "2026-01-01",
+    days_on_market: accountId === "A" ? 0 : null,
   }));
   const savedRow = {
     id: 9,
@@ -279,6 +302,16 @@ test("scores and persists the local parcel population without time-adjusting sal
   });
   assert.equal(result.summary.candidate_count, 3);
   assert.equal(result.summary.sale_prices_time_adjusted, false);
+  assert.equal(result.visualization[0].subdivision_name, "MONICA PARK 4");
+  assert.equal(result.visualization[0].land_use_category, "one_unit");
+  assert.equal(result.visualization[0].sales.length, 2);
+  assert.equal(result.visualization[0].sales[0].days_on_market, 0);
+  assert.equal(result.visualization[0].sales[0].sale_date, "2026-01-01");
+  assert.equal(JSON.parse(JSON.stringify(result.visualization[1].sales[0])).sale_date, "2026-01-01");
+  assert.equal(result.visualization[1].sales[0].days_on_market, null);
+  assert.ok(statements.every((sql) => !/closing_date AS sale_date/.test(sql)));
+  assert.ok(statements.some((sql) => /to_char\(sale\.closing_date, 'YYYY-MM-DD'\) AS closing_date/.test(sql)));
+  assert.ok(statements.some((sql) => /sale\.days_on_market/.test(sql)));
   assert.ok(statements.some((sql) => /core\.v_sales_enriched/.test(sql)));
   assert.equal(statements.filter((sql) => /core\.v_sales_enriched/.test(sql)).length, 1);
   assert.ok(statements.every((sql) => !/DISTINCT ON \(sale\.primary_account_id\)/.test(sql)));

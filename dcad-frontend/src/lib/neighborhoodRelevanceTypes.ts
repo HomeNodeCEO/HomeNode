@@ -61,6 +61,8 @@ export interface NeighborhoodRelevanceAssessment {
     parcel_object_id: number;
     account_id: string | null;
     address: string | null;
+    subdivision_name?: string | null;
+    land_use_category?: string | null;
     score: number | null;
     excluded: boolean;
     classification: string;
@@ -79,7 +81,7 @@ export interface NeighborhoodRelevanceAssessment {
     market_value: number | null;
     sale_price: number | null;
     sale_date: string | null;
-    sales: Array<{ sale_price: number; sale_date: string | null }>;
+    sales: Array<{ sale_price: number; sale_date: string | null; days_on_market?: number | null }>;
     distance_miles: number | null;
     point: { type: 'Point'; coordinates: [number, number] };
   }>;

@@ -156,6 +156,7 @@ type Props = {
     include: boolean,
     systemSelected: boolean,
   ) => void;
+  onRelevancePocketInspect?: (pocketId: string) => void;
   embedded?: boolean;
 };
 
@@ -1035,6 +1036,7 @@ export default function MarketConditionsAnalysis({
   onCustomGeometryChange,
   relevanceSummary = null,
   onRelevancePocketToggle,
+  onRelevancePocketInspect,
   embedded = false,
 }: Props) {
   const { session: applicationSession } = useApplicationAuth();
@@ -1149,8 +1151,10 @@ export default function MarketConditionsAnalysis({
   const initialRelevanceVisualizationRef = useRef(relevanceVisualization);
   const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
   const onRelevancePocketToggleRef = useRef(onRelevancePocketToggle);
+  const onRelevancePocketInspectRef = useRef(onRelevancePocketInspect);
   onCustomGeometryChangeRef.current = onCustomGeometryChange;
   onRelevancePocketToggleRef.current = onRelevancePocketToggle;
+  onRelevancePocketInspectRef.current = onRelevancePocketInspect;
   const appraiserModifiedRef = useRef(
     resolvedInitialOrigin === 'appraiser' || resolvedInitialOrigin === 'cleared',
   );
@@ -1672,7 +1676,13 @@ export default function MarketConditionsAnalysis({
             if (boundaryDrawingRef.current) return;
             const properties = event.features?.[0]?.properties;
             const pocketId = String(properties?.pocket_id || '');
-            if (!pocketId || !onRelevancePocketToggleRef.current) return;
+            if (!pocketId) return;
+            // Inspect first; opening a pocket must not mutate saved membership.
+            if (onRelevancePocketInspectRef.current) {
+              onRelevancePocketInspectRef.current(pocketId);
+              return;
+            }
+            if (!onRelevancePocketToggleRef.current) return;
             const currentlyIncluded = properties?.included === true ||
               properties?.included === 'true';
             const systemSelected = properties?.system_selected === true ||
@@ -2488,7 +2498,9 @@ export default function MarketConditionsAnalysis({
                       {relevanceSummary.compositeCod ?? 'Pending'}
                     </div>
                     <div className="mt-1 text-slate-600">
-                      Click a shaded pocket to include or remove it.
+                      {onRelevancePocketInspect
+                        ? 'Click a shaded pocket to view its data, then add or remove it.'
+                        : 'Click a shaded pocket to include or remove it.'}
                     </div>
                     {pocketInteractionMessage ? (
                       <div className="mt-1 font-medium text-emerald-800">

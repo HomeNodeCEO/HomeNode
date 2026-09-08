@@ -33,9 +33,14 @@ export async function checkNeighborhoodCohortBlobDatabase(pool) {
       'UPDATE app.neighborhood_cohort_evidence_blobs SET canonical_utf8=canonical_utf8 WHERE organization_id=$1',
       'DELETE FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
     ]) await rejectsSql(sql, [organization], /neighborhood_cohort_blob_immutable/);
-    // Even if the guard regresses, the savepoint rollback restores this new,
-    // exact synthetic table; there is no live/shared database target here.
-    await rejectsSql('TRUNCATE app.neighborhood_cohort_evidence_blobs', [], /neighborhood_cohort_blob_immutable/);
+    // Context foreign keys reject bare TRUNCATE before BEFORE TRUNCATE triggers.
+    await rejectsSql('TRUNCATE app.neighborhood_cohort_evidence_blobs', [], error =>
+      error.code === '0A000' && /cannot truncate a table referenced in a foreign key constraint/.test(error.message));
+    // CASCADE reaches the independent immutability guard. Even if it regresses,
+    // the savepoint restores every affected table in this isolated synthetic DB.
+    await rejectsSql('TRUNCATE app.neighborhood_cohort_evidence_blobs CASCADE', [], /neighborhood_cohort_blob_immutable/);
+    assert.equal(await own.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
+    assert.equal(await foreign.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
     const insert = 'INSERT INTO app.neighborhood_cohort_evidence_blobs (organization_id,content_sha256,canonical_utf8_bytes,canonical_utf8) VALUES ($1,$2,$3,$4)';
     await rejectsSql(insert, [organization, 'a'.repeat(64), text.length, text], error => error.code === '23514');
     await rejectsSql(insert, [randomUUID(), 'b'.repeat(64), 2, '{}'], error => error.code === '23503');

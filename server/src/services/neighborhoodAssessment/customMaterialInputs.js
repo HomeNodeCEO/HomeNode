@@ -40,6 +40,31 @@ const ADDITIONAL = { number: NUMBER_TEXT, improvement_type: TEXT, area_sqft: NUM
 const LAND = { number: NUMBER_TEXT, line_number: NUMBER_TEXT, state_code: TEXT, area_sqft: NUMBER_TEXT };
 const ACCOUNT = { account_id: TEXT, ...LOCATION, legal_description: TEXT };
 
+// Installed representation schema, built from the SAME field sets consumed
+// below. A retained profile hash is schema identity, never source authority.
+// Change the revision when these semantics change; retain earlier definitions
+// for historical context interpretation instead of silently relabeling them.
+export const CUSTOM_MATERIAL_INPUT_PROFILE = freeze({
+  profile_definition_version: 1, id: 'custom-neighborhood-physical-stock-inputs-v1', revision: '1',
+  workflow_type: 'custom_appraisal', interpretation: 'representation_only',
+  target_fields: TARGET_KEYS, section_roster: SECTION_KEYS,
+  snapshot_root: ['subject_data', 'custom_property_snapshot'],
+  assignment_sections: {
+    subject_identification: { objects: { property_location: LOCATION }, legal_description: 'text_or_legal_object' },
+    property_characteristics: { objects: { main_improvement: MAIN, housing_profile: HOUSING }, arrays: { additional_improvements: ADDITIONAL } },
+    land_details: { arrays: { land_detail: LAND } },
+  },
+  retained_public: { objects: { account: ACCOUNT, legal: { legal_description: TEXT }, improvement: MAIN, housing_profile: HOUSING },
+    arrays: { land: LAND, additional_improvements: ADDITIONAL } },
+  legal_object: { legal_description: TEXT, lines: 'ordered_nullable_text_entries' },
+  identity: { uuid: 'lowercase', assignment_file_id: 'positive_int8_text', snapshot_version: 'positive_int32',
+    account_id: 'exact_text', array_entry: 'original_zero_based_ordinal_text' },
+  values: { absent: 'distinct_from_json_null', row_sql_null: 'unsupported', number_strings: 'preserved_without_coercion',
+    numeric_tokens: 'existing_original_value_decoder', arrays: 'original_order_no_deduplication',
+    manual_snapshot_precedence: 'none', accepted_evidence: 'not_consumed', authority: 'not_established' },
+  limits: CUSTOM_MATERIAL_PROJECTOR_LIMITS,
+});
+
 function stop(status, reason) {
   const token = Object.freeze({});
   PRIVATE.set(token, Object.freeze({ status, reason }));
@@ -351,7 +376,7 @@ export function projectCustomNeighborhoodMaterialInputs(targetJson, sectionReads
     const publicRoot = { value: supplied };
     const material = { material_input_version: 1, workflow_type: 'custom_appraisal',
       report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id, account_id: target.account_id,
-      profile_id: 'custom-neighborhood-physical-stock-inputs-v1', profile_revision: '1',
+      profile_id: CUSTOM_MATERIAL_INPUT_PROFILE.id, profile_revision: CUSTOM_MATERIAL_INPUT_PROFILE.revision,
       assignment_sections: {
         subject_identification: section(manual[2], ref => ({ property_location: objectNode(child(ref, 'property_location'), LOCATION),
           legal_description: legalNode(child(ref, 'legal_description')) })),

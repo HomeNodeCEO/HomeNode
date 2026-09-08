@@ -39,6 +39,8 @@ import {
   summarizePockets,
 } from "@/lib/neighborhoodPocketSelection";
 import MarketConditionsAnalysis from "@/components/MarketConditionsAnalysis";
+import NeighborhoodPocketDetailsPanel from "@/components/NeighborhoodPocketDetailsPanel";
+import { buildNeighborhoodPocketDetails } from "@/lib/neighborhoodPocketDetails";
 import { CheckboxChoice } from "@/components/PropertyReportControls";
 import {
   formatDate,
@@ -301,6 +303,19 @@ export default function NeighborhoodCharacteristicsContent({
   const relevancePockets = useMemo(() => summarizePockets(
     effectiveRelevanceAssessment?.visualization || [],
   ), [effectiveRelevanceAssessment]);
+  const [viewedPocket, setViewedPocket] = useState<{
+    assessment: NeighborhoodRelevanceAssessment;
+    id: string;
+  } | null>(null);
+  const inspectPocket = useCallback((id: string) => {
+    if (relevanceAssessment) setViewedPocket({ assessment: relevanceAssessment, id });
+  }, [relevanceAssessment]);
+  const pocketDetails = useMemo(() =>
+    viewedPocket?.assessment === relevanceAssessment && effectiveRelevanceAssessment
+      ? buildNeighborhoodPocketDetails(effectiveRelevanceAssessment, viewedPocket.id)
+      : null, [effectiveRelevanceAssessment, relevanceAssessment, viewedPocket]);
+  const inspectedPocket = pocketDetails
+    ? relevancePockets.find((pocket) => pocket.id === pocketDetails.id) : null;
   const relevanceLiveSummary = useMemo(() => {
     const statistics = effectiveRelevanceAssessment?.summary.relevant_statistics;
     if (!statistics) return null;
@@ -1660,6 +1675,9 @@ export default function NeighborhoodCharacteristicsContent({
                           {pocket.propertyCount.toLocaleString()} properties · {pocket.saleCount.toLocaleString()} sales · {pocket.averageScore ?? "—"}% avg. relevance
                         </div>
                       </div>
+                      <button type="button" className="btn btn-outline btn-xs normal-case rounded-lg" onClick={() => inspectPocket(pocket.id)}>
+                        View details
+                      </button>
                       <button
                         type="button"
                         className={`btn btn-xs normal-case rounded-lg ${pocket.currentlyIncluded
@@ -1757,6 +1775,17 @@ export default function NeighborhoodCharacteristicsContent({
         )}
       </section>
 
+      {pocketDetails && inspectedPocket ? (
+        <NeighborhoodPocketDetailsPanel
+          key={`${relevanceAssessment?.id}:${pocketDetails.id}`}
+          details={pocketDetails}
+          label="Analytical pocket"
+          included={inspectedPocket.currentlyIncluded}
+          liveSummary={relevanceLiveSummary}
+          onToggle={() => setPocketIncluded(inspectedPocket.id, !inspectedPocket.currentlyIncluded, inspectedPocket.systemSelected)}
+          onClose={() => setViewedPocket(null)}
+        />
+      ) : null}
       {accountId ? (
         <section className="border-t border-slate-200 pt-3">
           <MarketConditionsAnalysis
@@ -1771,6 +1800,7 @@ export default function NeighborhoodCharacteristicsContent({
             relevanceVisualization={relevanceMapVisualization}
             relevanceSummary={relevanceLiveSummary}
             onRelevancePocketToggle={setPocketIncluded}
+            onRelevancePocketInspect={inspectPocket}
             onCustomGeometryChange={handleCustomGeometryChange}
             embedded
           />

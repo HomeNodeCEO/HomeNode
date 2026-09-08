@@ -76,6 +76,8 @@ function relevanceVisualization(candidates = []) {
       parcel_object_id: candidate.parcel_object_id,
       account_id: candidate.account_id || null,
       address: candidate.address || null,
+      subdivision_name: candidate.subdivision_name || null,
+      land_use_category: candidate.land_use_category || null,
       score: candidate.score,
       excluded: candidate.excluded === true,
       classification: candidate.statistical_classification,
@@ -339,6 +341,7 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
         distance_miles: row.distance_miles,
         sale_price: sale?.sale_price ?? null,
         sale_date: sale?.sale_date ?? null,
+        days_on_market: sale?.days_on_market ?? null,
         sales,
         point: row.point,
       };
@@ -346,12 +349,27 @@ async function loadCandidateParcels(pool, { accountId, boundary, radiusMiles }) 
   };
 }
 
+/**
+ * Raw core.v_sales_enriched projection, not the serialized pocket DTO. The
+ * source view coalesces core.sales.closing_date and sale-source close_date.
+ * Format DATE in SQL so the original calendar day survives node-postgres and
+ * JSON serialization in every process timezone. NUMERIC values retain the
+ * representation supplied by the driver.
+ * @typedef {{
+ *   primary_account_id: string,
+ *   sale_price: string | number,
+ *   closing_date: string,
+ *   days_on_market: number | null
+ * }} NeighborhoodCandidateSaleRow
+ */
 async function loadCandidateSales(pool, accountIds) {
   if (!accountIds.length) return new Map();
+  /** @type {{rows: NeighborhoodCandidateSaleRow[]}} */
   const { rows } = await pool.query(
     `SELECT sale.primary_account_id,
        sale.sale_price::numeric AS sale_price,
-       sale.closing_date AS sale_date
+       to_char(sale.closing_date, 'YYYY-MM-DD') AS closing_date,
+       sale.days_on_market
      FROM core.v_sales_enriched sale
      WHERE sale.primary_account_id = ANY($1::text[])
        AND sale.record_type = 'closed_sale'
@@ -367,7 +385,7 @@ async function loadCandidateSales(pool, accountIds) {
     const accountId = String(row.primary_account_id || "").trim();
     if (!accountId) continue;
     const sales = salesByAccount.get(accountId) || [];
-    sales.push({ sale_price: row.sale_price, sale_date: row.sale_date });
+    sales.push({ sale_price: row.sale_price, sale_date: row.closing_date, days_on_market: row.days_on_market ?? null });
     salesByAccount.set(accountId, sales);
   }
   return salesByAccount;
@@ -1027,7 +1045,7 @@ export async function getLatestNeighborhoodRelevance(pool, {
   );
   if (!rows[0]) return null;
   const { rows: candidateRows } = await pool.query(
-    `SELECT parcel_object_id, account_id, address, score, excluded,
+    `SELECT parcel_object_id, account_id, address, subdivision_name, land_use_category, score, excluded,
             statistical_classification AS classification, cluster_id,
             cluster_id AS pocket_id, COALESCE(cluster_size, 1) AS pocket_size,
             primary_population AS system_selected,
@@ -1035,7 +1053,8 @@ export async function getLatestNeighborhoodRelevance(pool, {
             year_built, site_area_sqft,
             NULLIF(diagnostics->'gla'->>'candidate_gla_sqft', '')::numeric AS gla_sqft,
             NULLIF(diagnostics->>'market_value', '')::numeric AS market_value,
-            sale_price, sale_date, COALESCE(diagnostics->'sales', '[]'::jsonb) AS sales,
+            sale_price, to_char(sale_date, 'YYYY-MM-DD') AS sale_date,
+            COALESCE(diagnostics->'sales', '[]'::jsonb) AS sales,
             distance_miles,
             ST_AsGeoJSON(point)::jsonb AS point
      FROM app.neighborhood_relevance_candidates

@@ -505,7 +505,7 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
   };
 }
 
-export async function saveCustomAppraisalWorkfileSection(pool, {
+function prepareCustomAppraisalSectionSave({
   accountId,
   assignmentFileId,
   sectionKey: sectionKeyValue,
@@ -515,7 +515,7 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   reviewer: reviewerValue,
 }) {
   const sectionKey = normalizeCustomAppraisalSectionKey(sectionKeyValue);
-  let sectionValue = normalizeCustomAppraisalSectionValue(
+  const sectionValue = normalizeCustomAppraisalSectionValue(
     sectionKey === "cost_approach"
       ? normalizeCostApproachSection(sectionValueInput)
       : sectionKey === "income_approach"
@@ -527,10 +527,14 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   const expectedRevision = normalizeCustomAppraisalSectionRevision(expectedRevisionValue);
   const saveReason = normalizeCustomAppraisalSaveReason(saveReasonValue);
   const reviewer = String(reviewerValue || "HomeNode editor").trim().slice(0, 200) || "HomeNode editor";
-  await ensureCustomAppraisalWorkfileSchema(pool);
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return { accountId, assignmentFileId, sectionKey, sectionValue, sectionValueInput,
+    expectedRevision, saveReason, reviewer };
+}
+
+async function writeCustomAppraisalSection(client, prepared) {
+  const { accountId, assignmentFileId, sectionKey, sectionValueInput,
+    expectedRevision, saveReason, reviewer } = prepared;
+  let { sectionValue } = prepared;
     await ensureWorkfileRow(client, accountId, assignmentFileId);
     const metaResult = await client.query(
       `SELECT status FROM app.custom_appraisal_workfiles
@@ -598,7 +602,6 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
       `UPDATE app.assignment_files SET updated_at = now() WHERE id = $1`,
       [assignmentFileId],
     );
-    await client.query("COMMIT");
     return {
       key: rows[0].section_key,
       value: rows[0].section_value,
@@ -606,6 +609,35 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
       updated_by: rows[0].updated_by,
       updated_at: rows[0].updated_at,
     };
+}
+
+/** Save within an already authorized, caller-owned write transaction. Schema
+ * preparation must precede BEGIN. The caller must roll back the whole operation
+ * on any failure, including a later acceptance/audit write. This helper neither
+ * authorizes access nor establishes neighborhood acceptance or durable COMMIT.
+ * SAVEPOINT rejects accidental autocommit use before any data writes; the
+ * existing workfile lock still serializes saves/signing and revision checks.
+ */
+export async function saveCustomAppraisalWorkfileSectionInTransaction(client, input) {
+  if (!client || typeof client.query !== "function") {
+    throw new TypeError("custom_appraisal_transaction_client_required");
+  }
+  const prepared = prepareCustomAppraisalSectionSave(input);
+  await client.query("SAVEPOINT homenode_custom_section_save");
+  const saved = await writeCustomAppraisalSection(client, prepared);
+  await client.query("RELEASE SAVEPOINT homenode_custom_section_save");
+  return saved;
+}
+
+export async function saveCustomAppraisalWorkfileSection(pool, input) {
+  const prepared = prepareCustomAppraisalSectionSave(input);
+  await ensureCustomAppraisalWorkfileSchema(pool);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const saved = await writeCustomAppraisalSection(client, prepared);
+    await client.query("COMMIT");
+    return saved;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;

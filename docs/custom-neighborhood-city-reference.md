@@ -1,0 +1,11 @@
+# City outlines are a map reference, not an analytical cohort
+
+The Custom market-area map can show a cached municipal outline for Garland, Duncanville, Coppell, Irving or Dallas. The source is the U.S. Census Bureau Incorporated Places layer, January 1, 2026 vintage. Each feature retains disconnected polygons and holes; it is not converted into a rectangle, circle or dissolved zoning coverage.
+
+The assets are versioned with the application, requested only when the appraiser selects Show city limits, bounded by recorded size, checked against SHA-256 and reused for subsequent views. Reports do not query the live Census GIS. A failed asset load leaves the prior analytical selection and statistics unchanged. The outline is purple with a gold border and no opaque fill. Return to analysis area hides this separate layer and restores the analytical viewport. Ordinary resizing does not pull an active city view back to the neighborhood.
+
+The catalog in `dcad-frontend/src/data/neighborhoodCityBoundaries.json` records the source URL/query, retrieval date, raw source hash, native validation receipt hash and per-city asset hashes. The five original geometries passed native PostGIS validation without repair. The corresponding source/proof artifacts are retained in Foundation's `outputs/city-boundary-source-probe-1788826275183`. These files contain public municipal geometry, not appraisal/client records.
+
+This is a dated reference snapshot, not legal confirmation of current municipal limits, annexation status, zoning or HOA jurisdiction. Selecting a reference city does not establish that the subject is in that jurisdiction. The source date is always visible. Further cities and refreshes must use a newly validated, versioned catalog; never replace geometry under an existing hash. An automated refresh job is not installed by this slice.
+
+Citywide analytical discovery remains a separate follow-up: use complete authorized parcel/sales coverage across county lines, make incomplete data explicit, retain all qualifying sales, and apply scope, membership, criteria and statistics as one coherent group. Merely showing a city outline must never claim the three-mile candidate set is a complete citywide analysis.

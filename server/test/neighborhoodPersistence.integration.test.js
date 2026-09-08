@@ -15,6 +15,7 @@ import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohor
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
 import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
 import { checkCustomCohortContextDatabase } from "./helpers/customCohortContextDatabaseChecks.js";
+import { checkCustomParcelDiscoveryDatabase } from "./helpers/customParcelDiscoveryDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -379,6 +380,8 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       checkCustomCohortSelectionDatabase(pool, await identityFixture(pool)));
     await t.test("Custom immutable context headers preserve exact tenant/file evidence and caller transactions", async () =>
       checkCustomCohortContextDatabase(pool, await identityFixture(pool)));
+    await t.test("Custom discovery readiness audits actual PostGIS geometry, index expressions and unfiltered cache facts", () =>
+      checkCustomParcelDiscoveryDatabase(pool));
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
       const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };

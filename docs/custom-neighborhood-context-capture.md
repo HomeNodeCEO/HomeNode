@@ -80,6 +80,36 @@ content, signing, authentication policy or database schema. The next consumer
 must calculate an honest retained-observation preview and separately establish
 the supported facts/decisions required by publication and atomic report Apply.
 
+## Executable observation preview
+
+The same owner exposes an internal `preview({auth, accountId, assignmentFileId,
+contextRef, selection}, options)` operation for a draft Custom file. Selection is
+`{revision, pockets: [{id, label, account_ids}]}` and is detached before awaiting
+any database work. Exact assignment **read** access is checked; this does not
+give a reviewer write/sign permission or let the caller choose another tenant.
+
+The first bounded transaction authorizes the exact stored context, checks the
+current market policy before loading source rows, and loads the complete retained
+graph. It releases its client before numeric/geometry processing. The pure numeric
+consumer calculates the full captured population, each selected pocket, and
+their deduplicated union. The pure map consumer decodes the original discovered
+parcel EWKB, preserving holes and disconnected parts without fetching or
+repairing geometry. Excluded parcels remain visible with `selected: false`.
+
+A short final transaction rechecks the assignment, consumed subject material and
+market policy before returning **one** `context_ref`/`selection_revision` group
+containing `preview` and `parcel_map`. A client must replace this group together
+and reject late responses for an older selection. This result does not persist
+the selection, certify recommendation/reliability, change report fields or enable
+Apply. An explicit empty pocket list means zero selected members, not a fallback
+to the whole discovery. If exact geometry cannot be shown, the map result is
+explicitly unavailable, never a misleading partial outline.
+
+This is an internal service response, not a public route. Its observation members
+carry assignment-private retained references/raw numeric evidence; a production
+HTTP presentation owner must provide bounded summary/member paging and its
+licensed exposure policy rather than forward the full graph to every browser.
+
 ## Verification
 
 - Focused admission tests cover malformed inputs, cancellation/deadline
@@ -99,3 +129,15 @@ synthetic PostgreSQL 17.11 / PostGIS 3.6.2 database with all 78 genuine migratio
 checksums verified. It did not use production data, service controls or a
 provider-coverage claim. Live-property accuracy, production policy wiring and
 end-to-end appraiser Apply remain separate acceptance work.
+
+The composed preview native run subsequently passed seven groups, including
+actual retained source price after the live cache changed, matching numeric/map
+selection, empty selection, excluded-but-visible parcels, no cache rereads or
+writes during preview, and rejection after a subject-material change. This run
+caught and fixed the distinct original parcel reader (`parcel:<id>`) and mapper
+(`gis.dcad_parcels:<id>`) identity join; neither original identity was relabeled.
+
+A final eight-group run additionally verifies revoked/changed policy and actual
+assignment-owner/subject-material changes after the retained-read transaction
+commits, before the response transaction. Each refuses the stale/unauthorized
+preview. Admission uses the same 128-pocket work limit as the numeric consumer.

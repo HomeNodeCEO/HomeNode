@@ -93,12 +93,77 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await assert.rejects(capture.capture({ ...request, observationPeriod: { start_date: '2022-01-01', end_date: '2024-06-30' } }), /operation_conflict/);
     checks.push('exact authorized replay without source reread or extra evidence; changed operation input refused');
 
+    const previewRequest = { auth, accountId: account, assignmentFileId: assignment, contextRef: result.context_ref,
+      selection: { revision: 1, pockets: [{ id: 'subject-area', label: 'Subject area', account_ids: [account] }] } };
+    const previewFrom = calls.length;
+    const preview = await capture.preview(previewRequest);
+    assert.equal(preview.status, 'preview'); assert.equal(preview.subject_freshness, 'matched');
+    assert.equal(preview.selection_revision, 1); assert.deepEqual(preview.context_ref, result.context_ref);
+    assert.equal(preview.preview.status, 'observations_only'); assert.equal(preview.apply.status, 'blocked');
+    assert.equal(preview.preview.all.stock.member_count, 2); assert.equal(preview.preview.selected.stock.member_count, 1);
+    assert.equal(preview.preview.selected.transactions.metrics.recorded_total_price.median, 300000,
+      'preview must use original retained source value, not the current 400000 cache value');
+    assert.equal(preview.parcel_map.status, 'available', JSON.stringify(preview.parcel_map));
+    assert.equal(preview.parcel_map.geojson.features.length, 2);
+    assert.deepEqual(preview.parcel_map.geojson.features.filter(feature => feature.properties.selected)
+      .map(feature => feature.properties.account_id), [account]);
+    const emptyPreview = await capture.preview({ ...previewRequest, selection: { revision: 2, pockets: [] } });
+    assert.equal(emptyPreview.preview.selected.stock.member_count, 0);
+    assert.equal(emptyPreview.preview.selected.transactions.member_count, 0);
+    assert.equal(emptyPreview.parcel_map.counts.selected_accounts, 0);
+    assert.equal(emptyPreview.parcel_map.geojson.features.length, 2, 'excluded areas stay visible');
+    assert.ok(!calls.slice(previewFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)),
+      'pocket previews must not reacquire mutable property or MLS caches');
+    assert.ok(!calls.slice(previewFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)),
+      'preview does not save, apply, or replace retained evidence');
+    await assert.rejects(capture.preview({ ...previewRequest,
+      selection: { revision: 3, pockets: [{ id: 'foreign', label: 'Not discovered', account_ids: [linked] }] } }), /pocket_membership/);
+    checks.push('retained numeric and exact parcel-map preview share one selection; empty selection stays empty; no source reread or writes');
+
+    for (const deny of [true, false]) {
+      let checksDone = 0;
+      const revoked = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => {
+        if (++checksDone === 1) return grant;
+        return deny ? { allowed: false } : { ...grant, policy_revision: 'changed-after-load' };
+      } });
+      await assert.rejects(revoked.preview(previewRequest), deny ? /market_data_access_denied/ : /market_policy_changed/);
+      assert.equal(checksDone, 2, 'the final fresh policy must decide whether the response may leave');
+    }
+    for (const kind of ['material', 'assignment']) {
+      let commitCount = 0;
+      const afterLoadPool = { async connect() {
+        const client = await pool.connect();
+        return { release: error => client.release(error), async query(config) {
+          const answer = await client.query(config);
+          if (config.text === 'COMMIT' && ++commitCount === 1) {
+            // The real retained-read transaction ended. Change the live owner or
+            // consumed material before the final response transaction begins.
+            if (kind === 'material') await pool.query(`UPDATE app.appraisal_subject_snapshots
+              SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2001') WHERE id=$1`, [snapshot]);
+            else await pool.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=NULL WHERE id=$1', [assignment]);
+          }
+          return answer;
+        } };
+      } };
+      const changedAfterLoad = createCustomCohortContextCapture({ pool: afterLoadPool, authorizeMarketData: async () => grant });
+      try { await assert.rejects(changedAfterLoad.preview(previewRequest), kind === 'material' ? /subject_changed/ : /assignment_access_denied/); }
+      finally {
+        if (kind === 'material') await pool.query(`UPDATE app.appraisal_subject_snapshots
+          SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1`, [snapshot]);
+        else await pool.query('UPDATE app.assignment_files SET assigned_appraiser_user_id=$2 WHERE id=$1', [assignment, actor]);
+      }
+    }
+    checks.push('preview rechecks policy revocation/revision and real assignment/material changes after retained loading');
+
     const denied = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => ({ allowed: false }) });
     const denyFrom = calls.length;
     await assert.rejects(denied.capture(makeInput()), /market_data_access_denied/);
     assert.ok(!calls.slice(denyFrom).some(sql => sql.includes('neighborhood-closure:') || sql.includes('neighborhood-cache:')));
     await assert.rejects(denied.capture(request), /market_data_access_denied/,
       'a retained context must not bypass the current market-source policy');
+    await assert.rejects(denied.preview(previewRequest), /market_data_access_denied/);
+    await assert.rejects(capture.preview({ ...previewRequest,
+      auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
     await assert.rejects(capture.capture({ ...makeInput(), auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
     checks.push('market denial before MLS reads and exact-organization denial');
 
@@ -122,6 +187,8 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       return grant;
     } });
     await assert.rejects(concurrent.capture(changed), /subject_changed/);
+    await assert.rejects(capture.preview(previewRequest), /subject_changed/,
+      'original preview cannot be relabeled current after consumed subject inputs change');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_custom_cohort_contexts WHERE context_id=$1', [changed.operationId])).rows[0].count, 0);
     checks.push('concurrent consumed-subject change refuses registration');
 

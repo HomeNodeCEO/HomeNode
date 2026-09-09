@@ -5,6 +5,10 @@ import PDFDocument from "pdfkit";
 import { loadRemoteImage } from "../security/remoteImageLoader.js";
 import { getAccountPropertyActivityHistory } from "./accountSalesHistory.js";
 import { finalReconciliationReadinessErrors } from "./finalReconciliation.js";
+import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./neighborhoodAssessment/customAcceptanceSnapshot.js";
+import { projectCustomNeighborhoodReportSection } from "./neighborhoodAssessment/customReportMapping.js";
+import { prepareCustomNeighborhoodPdfAppendix, renderCustomNeighborhoodPdfSummary,
+  renderCustomNeighborhoodPdfAppendix } from "./customNeighborhoodReportPdf.js";
 
 const PAGE = Object.freeze({ width: 612, height: 792, margin: 42 });
 const CONTENT_WIDTH = PAGE.width - (PAGE.margin * 2);
@@ -134,6 +138,79 @@ function assignmentDetails(snapshot, property) {
   return assignmentRecord(snapshot, property)?.assignment_details || {};
 }
 
+const REPORT_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const own = (value, key) => value !== null && typeof value === "object" && Object.hasOwn(value, key);
+function acceptedNeighborhoodProjection(snapshot, property, request = null) {
+  if (!own(snapshot?.sections, CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION)) return { status: "absent" };
+  const unavailable = () => ({ status: "unavailable", reason: "custom_neighborhood_report_unavailable" });
+  try {
+    const stored = snapshot.sections[CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION];
+    if (!own(stored, "value") || !Number.isSafeInteger(stored.revision) || stored.revision < 1) return unavailable();
+    const section = stored.value;
+    if (!section || !REPORT_UUID.test(section.operation_id) || !REPORT_UUID.test(section.actor_user_id)
+      || !REPORT_UUID.test(section.attachment_id) || !Number.isSafeInteger(section.attachment_revision) || section.attachment_revision < 1
+      || !Number.isSafeInteger(section.accepted_editor_revision) || section.accepted_editor_revision < 1
+      || stored.revision !== section.accepted_editor_revision
+      || !/^[a-f0-9]{64}$/.test(section.application_identity_sha256)) return unavailable();
+    const assignments = [snapshot.assignment, property?.assignment];
+    const collect = pairs => pairs.filter(([object, key]) => own(object, key)).map(([object, key]) => object[key]);
+    const same = (values, normalize) => {
+      const normalized = values.map(normalize);
+      if (!normalized.length || normalized.some(value => value === null || value !== normalized[0])) throw new Error();
+      return normalized[0];
+    };
+    const positiveId = value => ((typeof value === "number" && Number.isSafeInteger(value))
+      || (typeof value === "string" && /^[1-9][0-9]*$/.test(value))) && Number.isSafeInteger(Number(value)) && Number(value) > 0 ? Number(value) : null;
+    const accountId = same(collect([[snapshot, "account_id"], [property?.account, "account_id"],
+      ...assignments.map(value => [value, "account_id"]), ...(request ? [[request, "accountId"]] : [])]),
+    value => typeof value === "string" && value.length > 0 ? value : null);
+    const assignmentFileId = same(collect([[snapshot, "assignment_file_id"], ...assignments.map(value => [value, "id"]),
+      ...(request ? [[request, "assignmentFileId"]] : [])]), positiveId);
+    const organizationId = same(collect([[snapshot, "organization_id"], [snapshot.signature, "organization_id"],
+      ...assignments.map(value => [value, "organization_id"])]), value => typeof value === "string" && REPORT_UUID.test(value) ? value.toLowerCase() : null);
+    const reportIds = collect([[snapshot, "report_file_id"], ...assignments.map(value => [value, "report_file_id"])]);
+    if (own(snapshot.evidence, "report_files")) {
+      const reports = snapshot.evidence.report_files;
+      if (!Array.isArray(reports) || reports.length !== 1) return unavailable();
+      const report = reports[0];
+      if (!report || positiveId(report.custom_assignment_file_id) !== assignmentFileId || report.account_id !== accountId
+        || report.organization_id !== organizationId || report.workflow_type !== "custom_appraisal"
+        || report.uad_workfile_id !== null || report.tax_protest_file_id !== null) return unavailable();
+      reportIds.push(report.id);
+    }
+    if (reportIds.length === 0) {
+      // This fallback is exclusively for an already trusted immutable signed
+      // snapshot. Unique assignment/account/org binding plus the validated
+      // reserved group supplies the report UUID when no independent report link
+      // was captured. Flags here do not authenticate arbitrary caller JSON;
+      // snapshot loading/signature trust remain the existing workflow's job.
+      if (snapshot.record_kind !== "homenode_custom_appraisal_signed_snapshot" || snapshot.status !== "signed"
+        || !snapshot.signed_at || !Number.isFinite(new Date(snapshot.signed_at).getTime())) return unavailable();
+      reportIds.push(section.mapped_values?.["custom-neighborhood-report:evidence"]?.value?.target?.report_file_id);
+    }
+    const reportFileId = same(reportIds, value => typeof value === "string" && REPORT_UUID.test(value) ? value.toLowerCase() : null);
+    const projected = projectCustomNeighborhoodReportSection({ section, expected: {
+      account_id: accountId, assignment_file_id: assignmentFileId, organization_id: organizationId, report_file_id: reportFileId,
+    } });
+    return projected.status === "ready" ? projected : unavailable();
+  } catch { return unavailable(); }
+}
+
+const NEIGHBORHOOD_LEGACY_FIELD_ALIASES = Object.freeze({
+  neighborhood_land_use_two_to_four_unit_pct: "neighborhood_land_use_two_to_four_pct",
+  neighborhood_house_price_low: "neighborhood_price_low",
+  neighborhood_house_price_predominant: "neighborhood_price_predominant",
+  neighborhood_all_house_price_low: "neighborhood_all_price_low",
+  neighborhood_all_house_price_predominant: "neighborhood_all_price_predominant",
+});
+
+function neighborhoodFieldValue(details, field) {
+  // Only a missing canonical property may use older saved report aliases.
+  // Explicit cleared/unknown values and zero must never resurrect stale values.
+  const legacy = NEIGHBORHOOD_LEGACY_FIELD_ALIASES[field];
+  return !Object.hasOwn(details, field) && legacy ? details[legacy] : details[field];
+}
+
 function manualSectionValue(property, sectionKey) {
   const row = property?.report_manual_values?.[sectionKey];
   if (!row || typeof row !== "object") return {};
@@ -224,6 +301,7 @@ export function customAppraisalReportReadiness(snapshot, property = {}) {
   const addBlocker = (code, message) => blockers.push({ code, message });
   const addWarning = (code, message) => warnings.push({ code, message });
   const details = assignmentDetails(snapshot, property);
+  const neighborhood = acceptedNeighborhoodProjection(snapshot, property);
   const sales = sectionValue(snapshot, "sales_comparison");
   const market = sectionValue(snapshot, "market_conditions");
   const final = sectionValue(snapshot, "final_reconciliation");
@@ -279,26 +357,30 @@ export function customAppraisalReportReadiness(snapshot, property = {}) {
       addBlocker("subject_nonconformity_unexplained", "Explain why the subject does not conform to the neighborhood.");
     }
   }
-  const landUseValues = [
-    details.neighborhood_land_use_one_unit_pct,
-    details.neighborhood_land_use_two_to_four_unit_pct ??
-      details.neighborhood_land_use_two_to_four_pct,
-    details.neighborhood_land_use_multifamily_pct,
-    details.neighborhood_land_use_commercial_pct,
-    details.neighborhood_land_use_other_vacant_pct,
-  ].map(numberValue);
-  if (landUseValues.some((value) => value !== null)) {
-    const total = landUseValues.reduce((sum, value) => sum + (value || 0), 0);
-    if (Math.abs(total - 100) > 0.1) {
-      addBlocker("land_use_total_invalid", "Present land use percentages must total 100%.");
+  if (neighborhood.status === "unavailable") {
+    addBlocker("custom_neighborhood_report_unavailable", "The accepted neighborhood group is unavailable or does not match this appraisal file. Restore its coherent accepted section before signing.");
+  }
+  if (neighborhood.status === "absent") {
+    const landUseValues = [
+      details.neighborhood_land_use_one_unit_pct,
+      neighborhoodFieldValue(details, "neighborhood_land_use_two_to_four_unit_pct"),
+      details.neighborhood_land_use_multifamily_pct,
+      details.neighborhood_land_use_commercial_pct,
+      details.neighborhood_land_use_other_vacant_pct,
+    ].map(numberValue);
+    if (landUseValues.some((value) => value !== null)) {
+      const total = landUseValues.reduce((sum, value) => sum + (value || 0), 0);
+      if (Math.abs(total - 100) > 0.1) {
+        addBlocker("land_use_total_invalid", "Present land use percentages must total 100%.");
+      }
     }
-  }
-  if (!details.neighborhood_boundary_confirmed) {
-    addBlocker("neighborhood_boundary_unconfirmed", "Confirm the neighborhood boundary.");
-  }
-  for (const direction of ["north", "east", "south", "west"]) {
-    if (!String(details[`neighborhood_boundary_${direction}`] || "").trim()) {
-      addBlocker(`neighborhood_boundary_${direction}_missing`, `Enter the ${direction} neighborhood boundary.`);
+    if (!details.neighborhood_boundary_confirmed) {
+      addBlocker("neighborhood_boundary_unconfirmed", "Confirm the neighborhood boundary.");
+    }
+    for (const direction of ["north", "east", "south", "west"]) {
+      if (!String(details[`neighborhood_boundary_${direction}`] || "").trim()) {
+        addBlocker(`neighborhood_boundary_${direction}_missing`, `Enter the ${direction} neighborhood boundary.`);
+      }
     }
   }
   if (!Array.isArray(sales.comparables) || !sales.comparables.length) {
@@ -588,8 +670,8 @@ async function assignmentReportPhotos(client, objectStorage, { accountId, assign
   });
 }
 
-function reportPageCount(assignmentPhotos = []) {
-  return BASE_REPORT_PAGE_COUNT + Math.ceil(assignmentPhotos.length / PHOTOS_PER_APPENDIX_PAGE);
+function reportPageCount(assignmentPhotos = [], neighborhoodPageCount = 0) {
+  return BASE_REPORT_PAGE_COUNT + neighborhoodPageCount + Math.ceil(assignmentPhotos.length / PHOTOS_PER_APPENDIX_PAGE);
 }
 
 function reportMeta(snapshot, property, checksum, pageCount = BASE_REPORT_PAGE_COUNT) {
@@ -900,8 +982,12 @@ function renderCharacteristicsPage(doc, meta, property) {
   });
 }
 
-function renderNeighborhoodPage(doc, meta, snapshot, property) {
+function renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, appendixPageCount) {
   addPage(doc, meta, "Neighborhood Characteristics", 3);
+  if (neighborhood.status === "ready") {
+    renderCustomNeighborhoodPdfSummary(doc, neighborhood, { firstPage: BASE_REPORT_PAGE_COUNT + 1, pageCount: appendixPageCount });
+    return;
+  }
   const details = assignmentDetails(snapshot, property);
   let y = sectionTitle(doc, "Neighborhood Boundaries", 90);
   y = factsGrid(doc, [
@@ -919,7 +1005,7 @@ function renderNeighborhoodPage(doc, meta, snapshot, property) {
   y = sectionTitle(doc, "Present Land Use and Neighborhood Factors", y);
   y = factsGrid(doc, [
     { label: "One-Unit", value: percent(details.neighborhood_land_use_one_unit_pct) },
-    { label: "2-4 Unit", value: percent(details.neighborhood_land_use_two_to_four_pct) },
+    { label: "2-4 Unit", value: percent(neighborhoodFieldValue(details, "neighborhood_land_use_two_to_four_unit_pct")) },
     { label: "Multi-Family", value: percent(details.neighborhood_land_use_multifamily_pct) },
     { label: "Commercial", value: percent(details.neighborhood_land_use_commercial_pct) },
     { label: "Other / Vacant", value: percent(details.neighborhood_land_use_other_vacant_pct) },
@@ -944,16 +1030,16 @@ function renderNeighborhoodPage(doc, meta, snapshot, property) {
       { key: "deviation", label: "Deviation", width: 72, align: "right" },
     ],
     rows: [
-      ["Sale Price", "neighborhood_price_low", "neighborhood_price_predominant", "neighborhood_all_price_low", "neighborhood_all_price_predominant", "neighborhood_representativeness_price_deviation_pct", money],
-      ["Price / SF", "neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_all_ppsf_low", "neighborhood_all_ppsf_predominant", "neighborhood_representativeness_ppsf_deviation_pct", money],
+      ["Sale Price / CAD Value", "neighborhood_house_price_low", "neighborhood_house_price_predominant", "neighborhood_all_house_price_low", "neighborhood_all_house_price_predominant", "neighborhood_representativeness_price_deviation_pct", money],
+      ["Sale / CAD Value per SF", "neighborhood_ppsf_low", "neighborhood_ppsf_predominant", "neighborhood_all_ppsf_low", "neighborhood_all_ppsf_predominant", "neighborhood_representativeness_ppsf_deviation_pct", money],
       ["Age", "neighborhood_age_low", "neighborhood_age_predominant", "neighborhood_all_age_low", "neighborhood_all_age_predominant", "neighborhood_representativeness_age_deviation_pct", count],
       ["GLA", "neighborhood_gla_low", "neighborhood_gla_predominant", "neighborhood_all_gla_low", "neighborhood_all_gla_predominant", "neighborhood_representativeness_gla_deviation_pct", count],
     ].map(([measure, saleLow, saleMed, allLow, allMed, deviation, formatter]) => ({
       measure,
-      sale_low: formatter(details[saleLow]),
-      sale_med: formatter(details[saleMed]),
-      all_low: formatter(details[allLow]),
-      all_med: formatter(details[allMed]),
+      sale_low: formatter(neighborhoodFieldValue(details, saleLow)),
+      sale_med: formatter(neighborhoodFieldValue(details, saleMed)),
+      all_low: formatter(neighborhoodFieldValue(details, allLow)),
+      all_med: formatter(neighborhoodFieldValue(details, allMed)),
       deviation: percent(details[deviation]),
     })),
   });
@@ -1202,7 +1288,7 @@ function renderReconciliationPage(doc, meta, snapshot, property) {
   });
 }
 
-function renderPhotoAppendixPages(doc, meta, assignmentPhotos = []) {
+function renderPhotoAppendixPages(doc, meta, assignmentPhotos = [], neighborhoodPageCount = 0) {
   const pageWidth = (CONTENT_WIDTH - 12) / 2;
   const rowHeight = 314;
   const imageHeight = 220;
@@ -1210,7 +1296,7 @@ function renderPhotoAppendixPages(doc, meta, assignmentPhotos = []) {
     const pageOffset = Math.floor(index / PHOTOS_PER_APPENDIX_PAGE);
     const pageIndex = index % PHOTOS_PER_APPENDIX_PAGE;
     if (pageIndex === 0) {
-      addPage(doc, meta, "Subject Photo Appendix", BASE_REPORT_PAGE_COUNT + pageOffset + 1);
+      addPage(doc, meta, "Subject Photo Appendix", BASE_REPORT_PAGE_COUNT + neighborhoodPageCount + pageOffset + 1);
     }
     const column = pageIndex % 2;
     const row = Math.floor(pageIndex / 2);
@@ -1239,17 +1325,19 @@ function renderPhotoAppendixPages(doc, meta, assignmentPhotos = []) {
   });
 }
 
-export async function renderCustomAppraisalReportPdf({
+async function renderCustomAppraisalReportPdfResult({
   snapshot,
   property,
   images = {},
   assignmentPhotos = [],
   checksum = null,
+  requestIdentity = null,
 }) {
   if (!snapshot || !property?.account) throw new Error("invalid_custom_appraisal_report_payload");
+  const neighborhood = acceptedNeighborhoodProjection(snapshot, property, requestIdentity);
+  if (neighborhood.status === "unavailable") throw Object.assign(new Error("custom_neighborhood_report_unavailable"), { code: "custom_neighborhood_report_unavailable" });
   const normalizedPhotos = assignmentPhotos.slice(0, MAX_REPORT_PHOTOS);
-  const pageCount = reportPageCount(normalizedPhotos);
-  const meta = reportMeta(snapshot, property, checksum, pageCount);
+  const meta = reportMeta(snapshot, property, checksum);
   const timestampValue = snapshot.signed_at || property.captured_at || "2000-01-01T00:00:00.000Z";
   const timestamp = new Date(timestampValue);
   const safeTimestamp = Number.isNaN(timestamp.valueOf()) ? new Date("2000-01-01T00:00:00.000Z") : timestamp;
@@ -1271,18 +1359,27 @@ export async function renderCustomAppraisalReportPdf({
     doc.on("end", () => resolve(Buffer.concat(chunks)));
     doc.on("error", reject);
   });
+  const neighborhoodPages = neighborhood.status === "ready" ? prepareCustomNeighborhoodPdfAppendix(doc, neighborhood) : [];
+  const pageCount = reportPageCount(normalizedPhotos, neighborhoodPages.length);
+  meta.pageCount = pageCount;
   renderPropertyPage(doc, meta, snapshot, property, images, normalizedPhotos);
   renderCharacteristicsPage(doc, meta, property);
-  renderNeighborhoodPage(doc, meta, snapshot, property);
+  renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, neighborhoodPages.length);
   renderMarketPage(doc, meta, snapshot);
   renderSalesPage(doc, meta, snapshot, property);
   renderAdjustmentPage(doc, meta, snapshot, property, images);
   approachPage(doc, meta, snapshot, property, "income", 7);
   approachPage(doc, meta, snapshot, property, "cost", 8);
   renderReconciliationPage(doc, meta, snapshot, property);
-  renderPhotoAppendixPages(doc, meta, normalizedPhotos);
+  renderCustomNeighborhoodPdfAppendix(doc, neighborhoodPages, page => addPage(doc, meta, "Neighborhood Evidence Appendix", BASE_REPORT_PAGE_COUNT + page + 1));
+  renderPhotoAppendixPages(doc, meta, normalizedPhotos, neighborhoodPages.length);
   doc.end();
-  return complete;
+  return { content: await complete, page_count: pageCount };
+}
+
+// Preserve the public byte-buffer renderer contract used by existing callers.
+export async function renderCustomAppraisalReportPdf(options) {
+  return (await renderCustomAppraisalReportPdfResult(options)).content;
 }
 
 export async function buildCustomAppraisalReportPdf(client, {
@@ -1294,22 +1391,27 @@ export async function buildCustomAppraisalReportPdf(client, {
   objectStorage = null,
 }) {
   const property = snapshot?.evidence?.property_report_data || await loadCustomAppraisalPropertySnapshot(client, { accountId, assignmentFileId });
+  // Reject a mismatched reserved group before downloading optional images/photos.
+  if (acceptedNeighborhoodProjection(snapshot, property, { accountId, assignmentFileId }).status === "unavailable") {
+    throw Object.assign(new Error("custom_neighborhood_report_unavailable"), { code: "custom_neighborhood_report_unavailable" });
+  }
   const [images, assignmentPhotos] = await Promise.all([
     includeExternalImages ? reportImages(client, snapshot, property).catch(() => ({})) : {},
     assignmentReportPhotos(client, objectStorage, { accountId, assignmentFileId }),
   ]);
-  const content = await renderCustomAppraisalReportPdf({
+  const { content, page_count } = await renderCustomAppraisalReportPdfResult({
     snapshot,
     property,
     images,
     assignmentPhotos,
     checksum: workfileChecksum,
+    requestIdentity: { accountId, assignmentFileId },
   });
   return {
     content,
     content_sha256: createHash("sha256").update(content).digest("hex"),
     canonical_file_name: canonicalPdfFileName(snapshot),
-    page_count: reportPageCount(assignmentPhotos),
+    page_count,
     report_version: REPORT_VERSION,
     generated_by: REPORT_ENGINE,
   };

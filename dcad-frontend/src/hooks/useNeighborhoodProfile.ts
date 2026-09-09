@@ -20,6 +20,7 @@ type BoundarySuggestions = NonNullable<
 >["cardinal_boundaries"] | null;
 
 type UseNeighborhoodProfileOptions = {
+  enabled?: boolean;
   accountId?: string;
   assignmentFileId?: number | null;
   assignmentDraft: AssignmentDetailsPayload;
@@ -62,6 +63,7 @@ function hasPocketStatistics(draft: AssignmentDetailsPayload): boolean {
 }
 
 export function useNeighborhoodProfile({
+  enabled = true,
   accountId,
   assignmentFileId,
   assignmentDraft,
@@ -83,11 +85,11 @@ export function useNeighborhoodProfile({
   const requestGeneration = useRef(0);
   const loadingRef = useRef(false);
   const effectiveGeometry = profileGeometry(assignmentDraft, customMarketStudy);
-  const inputSignature = profileSignature(accountId, assignmentFileId, effectiveGeometry, marketConditionsDraft);
+  const inputSignature = JSON.stringify([enabled, profileSignature(accountId, assignmentFileId, effectiveGeometry, marketConditionsDraft)]);
   // Check render-current context as well as effect cleanup: a request can finish
   // after a file/period change but before the old effect has been cleaned up.
-  const latestContextRef = useRef({ signature: inputSignature, draft: assignmentDraft });
-  latestContextRef.current = { signature: inputSignature, draft: assignmentDraft };
+  const latestContextRef = useRef({ signature: inputSignature, draft: assignmentDraft, enabled });
+  latestContextRef.current = { signature: inputSignature, draft: assignmentDraft, enabled };
 
   const resetProfileTracking = useCallback(() => {
     attemptedSignature.current = "";
@@ -119,6 +121,7 @@ export function useNeighborhoodProfile({
   }, [inputSignature]);
 
   const refreshProfile = useCallback(async (force = false) => {
+    if (!latestContextRef.current.enabled) return;
     const geometry = effectiveGeometry;
     if (!accountId || !assignmentFileId || !geometry || loadingRef.current) {
       if (!geometry) {
@@ -132,7 +135,7 @@ export function useNeighborhoodProfile({
     const signature = inputSignature;
     const generation = requestGeneration.current + 1;
     requestGeneration.current = generation;
-    const isCurrentRequest = () => requestGeneration.current === generation &&
+    const isCurrentRequest = () => latestContextRef.current.enabled && requestGeneration.current === generation &&
       latestContextRef.current.signature === signature;
     loadingRef.current = true;
     setProfileLoading(true);
@@ -250,7 +253,7 @@ export function useNeighborhoodProfile({
 
   useEffect(() => {
     const geometry = effectiveGeometry;
-    if (!sectionReady || !geometry || !accountId || !assignmentFileId || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    if (!enabled || !sectionReady || !geometry || !accountId || !assignmentFileId || assignmentFilesLoading || !assignmentFilesLoaded) return;
     const structuredBoundariesPresent = [assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west]
       .every((value) => String(value || "").trim());
     const profileValuesPresent = structuredBoundariesPresent && [assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_sale_count]
@@ -260,7 +263,7 @@ export function useNeighborhoodProfile({
     if (attemptedSignature.current === signature) return;
     attemptedSignature.current = signature;
     void refreshProfile(false);
-  }, [accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFileId, assignmentFilesLoaded, assignmentFilesLoading, effectiveGeometry, inputSignature, refreshProfile, retryNonce, sectionReady]);
+  }, [enabled, accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFileId, assignmentFilesLoaded, assignmentFilesLoading, effectiveGeometry, inputSignature, refreshProfile, retryNonce, sectionReady]);
 
   useEffect(() => () => {
     requestGeneration.current += 1;

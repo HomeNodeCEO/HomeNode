@@ -27,6 +27,8 @@ import {
   makeUrl,
 } from "@/lib/api";
 import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
+import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
+import { customNeighborhoodLegacyAllowed, type AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
 import {
   readMarketConditionsDraft,
   type MarketConditionsDraft,
@@ -88,6 +90,8 @@ const MobileSketchReview = lazy(() => import("@/components/MobileSketchReview"))
 const NeighborhoodCharacteristicsContent = lazy(
   () => import("@/components/NeighborhoodCharacteristicsContent"),
 );
+const CustomNeighborhoodAcceptedSummary = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedSummary"));
+const CustomNeighborhoodAcceptedOutline = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedOutline"));
 const ListingsContractsSalesContent = lazy(
   () => import("@/components/ListingsContractsSalesContent"),
 );
@@ -343,6 +347,8 @@ function AddressHero({
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const marketWorkfileSaveErrorRef = useRef<string | null>(null);
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
+  const [acceptedNeighborhood, setAcceptedNeighborhood] = useState<AcceptedNeighborhoodState | null>(null);
+  const legacyNeighborhoodAllowedRef = useRef(false);
   const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
   const sketchEvidenceRefreshInFlight = useRef(false);
   const {
@@ -407,6 +413,9 @@ function AddressHero({
     isCancelled: () => boolean,
   ) => {
     if (!accountId) return;
+    legacyNeighborhoodAllowedRef.current = false;
+    setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "loading", assessment: null,
+      message: "Loading the saved neighborhood selection..." });
     marketWorkfileSaveErrorRef.current = null;
     hydrateAssignmentDraft(selectedFile.assignment_details);
     assignmentDirtyRef.current = false;
@@ -418,6 +427,20 @@ function AddressHero({
     try {
       const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
       if (isCancelled()) return;
+      const neighborhoodSection = workfileResult.workfile.sections.neighborhood_assessment;
+      // Even an absent section needs the authoritative check: retained acceptance
+      // history with a missing current section is NOT an empty legacy file.
+      if (workfileResult.workfile.status === "signed") {
+        setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "signed", assessment: null,
+          message: "This is a signed file. View the signed PDF for its immutable neighborhood analysis." });
+      } else {
+        // Keep this independent: a slow neighborhood read must not delay the
+        // existing sales/market workfile hydration or file-selection completion.
+        // The loader always resolves a checked state, including network failure.
+        void loadCustomNeighborhoodAccepted(accountId, selectedFile.id, neighborhoodSection).then(restored => {
+          if (!isCancelled()) setAcceptedNeighborhood(restored);
+        });
+      }
       const marketSection = workfileResult.workfile.sections.market_conditions;
       const salesSection = workfileResult.workfile.sections.sales_comparison;
       marketWorkfileRevisionRef.current = Number(marketSection?.revision || 0);
@@ -436,6 +459,8 @@ function AddressHero({
       );
     } catch (workfileError) {
       if (!isCancelled()) {
+        setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "unavailable", assessment: null,
+          message: "The workfile could not be loaded. Reload before changing its neighborhood; saved values have not been replaced." });
         setWorkfileStatusMessage(
           workfileError instanceof Error
             ? `Workfile could not be loaded: ${workfileError.message}`
@@ -460,6 +485,10 @@ function AddressHero({
     requestedAssignmentFileId,
     onSelectedFile: handleSelectedAssignmentFile,
   });
+  const legacyNeighborhoodAllowed = customNeighborhoodLegacyAllowed(acceptedNeighborhood, accountId, activeAssignmentFile?.id);
+  legacyNeighborhoodAllowedRef.current = legacyNeighborhoodAllowed;
+  const currentAcceptedNeighborhood = acceptedNeighborhood && acceptedNeighborhood.accountId === accountId
+    && acceptedNeighborhood.assignmentFileId === activeAssignmentFile?.id ? acceptedNeighborhood : null;
 
   const {
     detail: scopedDetail,
@@ -539,6 +568,7 @@ function AddressHero({
     refreshProfile: refreshNeighborhoodProfile,
     resetProfileTracking,
   } = useNeighborhoodProfile({
+    enabled: legacyNeighborhoodAllowed,
     accountId,
     assignmentFileId: activeAssignmentFile?.id || null,
     assignmentDraft,
@@ -991,12 +1021,14 @@ function AddressHero({
     key: K,
     value: AssignmentDetails[K],
   ) => {
+    if (String(key).startsWith("neighborhood_") && !legacyNeighborhoodAllowedRef.current) return;
     setAssignmentDraft((current) => ({ ...current, [key]: value }));
     setAssignmentDirty(true);
     setAssignmentSaveMessage("");
   };
 
   const updateMarketConditions = (draft: MarketConditionsDraft | null) => {
+    if (!legacyNeighborhoodAllowedRef.current) return;
     setMarketConditionsDraft(draft);
     if (!draft) return;
     if (accountId && activeAssignmentFile) {
@@ -1120,6 +1152,7 @@ function AddressHero({
   }, [assignmentConflictKeysRef, setAssignmentConflictKeys, setActiveAssignmentFile, setAssignmentFiles]);
 
   const importCustomMarketArea = useCallback(() => {
+    if (!legacyNeighborhoodAllowedRef.current) return;
     const geometry = customMarketStudy?.market.custom_geometry;
     if (!geometry) {
       setAssignmentSaveMessage("Run and save an Appraiser-Defined Area in the Market Conditions Analysis below first.");
@@ -3328,7 +3361,22 @@ function AddressHero({
               manuallyVerified={Boolean(activeAssignmentFile)}
             >
               <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
-                <NeighborhoodCharacteristicsContent
+                {!legacyNeighborhoodAllowed ? (
+                  currentAcceptedNeighborhood?.status === "accepted" ? (
+                    <div className="space-y-3">
+                      <CustomNeighborhoodAcceptedOutline assessment={currentAcceptedNeighborhood.assessment} />
+                      <CustomNeighborhoodAcceptedSummary assessment={currentAcceptedNeighborhood.assessment} />
+                    </div>
+                  ) : (
+                    <p role="status" className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
+                      {currentAcceptedNeighborhood?.message || (assignmentFilesError
+                        ? "The appraisal files could not be loaded. Reload to retry before changing neighborhood data."
+                        : assignmentFilesLoaded && !activeAssignmentFile
+                          ? "Choose or start an appraisal file to review and save its neighborhood analysis."
+                          : "Loading the saved neighborhood selection...")}
+                    </p>
+                  )
+                ) : <NeighborhoodCharacteristicsContent
               accountId={accountId}
               assignmentFileId={activeAssignmentFile?.id || null}
               assignmentDraft={assignmentDraft}
@@ -3369,7 +3417,7 @@ function AddressHero({
               }}
               onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}
-                />
+                />}
               </Suspense>
             </SummarySection>
           </DeferredReportSection>
@@ -3689,5 +3737,3 @@ export default function PropertyReport() {
     </div>
   );
 }
-
-

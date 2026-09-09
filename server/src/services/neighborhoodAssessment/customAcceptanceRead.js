@@ -2,6 +2,7 @@ import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
 import { canonicalAssessmentJson } from "./contract.js";
 import { getCustomNeighborhoodAcceptance } from "./customAcceptanceRepository.js";
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./customAcceptanceSnapshot.js";
+import { projectCustomNeighborhoodReportSection } from "./customReportMapping.js";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 function unavailable() { throw new Error("custom_neighborhood_saved_group_unavailable"); }
@@ -77,7 +78,11 @@ export async function loadCustomNeighborhoodAcceptance(pool, input) {
       });
       if (!acceptance || acceptance.acceptedEditorRevision !== row.section_revision
         || canonicalAssessmentJson(acceptance.snapshot.section_value) !== canonicalAssessmentJson(section)) unavailable();
-      output = { ...output, status: "accepted", acceptance };
+      const reportProjection = projectCustomNeighborhoodReportSection({ section, expected: {
+        organization_id: row.organization_id, report_file_id: row.report_file_id,
+        assignment_file_id: assignmentFileId, account_id: accountId,
+      } });
+      output = { ...output, status: "accepted", acceptance, report_projection: reportProjection };
     }
     try { await client.query("COMMIT"); }
     catch (error) { discard = error; throw error; }

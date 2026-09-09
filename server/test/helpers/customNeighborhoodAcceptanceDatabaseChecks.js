@@ -10,6 +10,7 @@ import { neighborhoodTargetFixture } from "../fixtures/neighborhoodAssessmentFix
 import { saveCustomNeighborhoodAcceptanceInTransaction } from "../../src/services/neighborhoodAssessment/customAcceptanceSave.js";
 import { saveCustomAppraisalWorkfileSection } from "../../src/services/customAppraisalWorkfiles.js";
 import { loadCustomNeighborhoodAcceptance } from "../../src/services/neighborhoodAssessment/customAcceptanceRead.js";
+import { checkCustomNeighborhoodDraftBindingDatabase } from "./customNeighborhoodDraftBindingDatabaseChecks.js";
 
 /** Real published synthetic assessment/identity supplied by the native harness.
  * Direct section/history SQL below simulates the owner transaction only. These
@@ -87,7 +88,8 @@ export async function checkCustomNeighborhoodAcceptanceDatabase(pool, identity, 
       const atomic = await checkAtomicSave(client, other, request, snapshot, lookup);
       const reader = await checkEditorRead(pool, client, other, request, snapshot,
         { assessment, attachment, mappedSuggestions });
-      return { status: "passed", checks: [...atomic.checks, ...reader] };
+      const draft = await checkCustomNeighborhoodDraftBindingDatabase(client, other, identity);
+      return { status: "passed", checks: [...atomic.checks, ...reader, ...draft] };
     }
     await assert.rejects(recordCustomNeighborhoodAcceptance(client, input), /SAVEPOINT can only be used in transaction blocks/i);
     assert.equal(await count(), 0);

@@ -14,6 +14,17 @@ const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json
 const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
 const imageSizeModule = require.resolve('image-size', { paths: [metroRoot] });
 
+test('Expo tooling YAML parser budgets empty merge sources without breaking normal merges', () => {
+  const xcprettyRequire = createRequire(expoCliRequire.resolve('@expo/xcpretty'));
+  const yaml = xcprettyRequire('js-yaml') as { load: (input: string, options: { maxTotalMergeKeys: number }) => unknown };
+  // Small deterministic reproduction of GHSA-2883-xcg3-v3hh, not a CPU stress test.
+  const input = `empty: &empty {}\nvalue:\n  <<: [${Array(16).fill('*empty').join(', ')}]\n`;
+  assert.throws(() => yaml.load(input, { maxTotalMergeKeys: 4 }), /merge|limit/i);
+  assert.deepEqual(yaml.load('defaults: &defaults { color: gold }\nvalue:\n  <<: *defaults\n', { maxTotalMergeKeys: 4 }), {
+    defaults: { color: 'gold' }, value: { color: 'gold' },
+  });
+});
+
 const malformedImages = {
   heifZeroSizedBox: new Uint8Array([
     0x00, 0x00, 0x00, 0x10, 0x66, 0x74, 0x79, 0x70,

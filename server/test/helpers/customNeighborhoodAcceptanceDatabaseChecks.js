@@ -9,6 +9,7 @@ import { getCustomNeighborhoodAcceptance, recordCustomNeighborhoodAcceptance } f
 import { neighborhoodTargetFixture } from "../fixtures/neighborhoodAssessmentFixture.js";
 import { saveCustomNeighborhoodAcceptanceInTransaction } from "../../src/services/neighborhoodAssessment/customAcceptanceSave.js";
 import { saveCustomAppraisalWorkfileSection } from "../../src/services/customAppraisalWorkfiles.js";
+import { loadCustomNeighborhoodAcceptance } from "../../src/services/neighborhoodAssessment/customAcceptanceRead.js";
 
 /** Real published synthetic assessment/identity supplied by the native harness.
  * Direct section/history SQL below simulates the owner transaction only. These
@@ -83,7 +84,10 @@ export async function checkCustomNeighborhoodAcceptanceDatabase(pool, identity, 
     await client.query("COMMIT");
     if (atomicSave) {
       const { sectionHistoryId: _history, ...request } = input;
-      return await checkAtomicSave(client, other, request, snapshot, lookup);
+      const atomic = await checkAtomicSave(client, other, request, snapshot, lookup);
+      const reader = await checkEditorRead(pool, client, other, request, snapshot,
+        { assessment, attachment, mappedSuggestions });
+      return { status: "passed", checks: [...atomic.checks, ...reader] };
     }
     await assert.rejects(recordCustomNeighborhoodAcceptance(client, input), /SAVEPOINT can only be used in transaction blocks/i);
     assert.equal(await count(), 0);
@@ -328,4 +332,107 @@ async function checkAtomicSave(client, other, input, snapshot, lookup) {
     checks.push(`real_save_rejects_${name}_without_changing_group`);
   }
   return { status: "passed", checks };
+}
+
+// These wrappers delegate every service query to a real PoolClient. Only the
+// observation/timing hook is synthetic; PostgreSQL owns isolation and read-only
+// enforcement. Concurrent changes below use a complete second accepted group.
+async function checkEditorRead(pool, writer, observer, input, snapshot, stored) {
+  const checks = [], id = input.assignmentFileId;
+  const auth = { userId: input.actorUserId,
+    organizations: [{ organizationId: input.organizationId, roles: ["read_only"] }] };
+  const target = { accountId: stored.assessment.scope.account_id, assignmentFileId: id, auth };
+  const state = async () => (await observer.query(`SELECT to_jsonb(a) AS assignment,
+    (SELECT to_jsonb(w) FROM app.custom_appraisal_workfiles w WHERE assignment_file_id=$1) AS workfile,
+    (SELECT jsonb_agg(to_jsonb(s) ORDER BY section_key) FROM app.custom_appraisal_workfile_sections s WHERE assignment_file_id=$1) AS sections,
+    (SELECT jsonb_agg(to_jsonb(h) ORDER BY id) FROM app.custom_appraisal_workfile_section_history h WHERE assignment_file_id=$1) AS history,
+    (SELECT jsonb_agg(to_jsonb(n) ORDER BY id) FROM app.custom_neighborhood_acceptances n WHERE assignment_file_id=$1) AS acceptances
+    FROM app.assignment_files a WHERE id=$1`, [id])).rows[0];
+  const observedPool = afterTarget => ({ async connect() {
+    const client = await pool.connect();
+    let observedTarget = false;
+    return { release: error => client.release(error), async query(sql, values) {
+      assert.match(sql.replace(/^\s*\/\*[\s\S]*?\*\/\s*/, ""), /^\s*(BEGIN|SELECT|COMMIT|ROLLBACK)\b/i);
+      const result = await client.query(sql, values);
+      if (/^BEGIN\b/i.test(sql)) {
+        const mode = (await client.query(`SELECT current_setting('transaction_isolation') AS isolation,
+          current_setting('transaction_read_only') AS read_only`)).rows[0];
+        assert.deepEqual(mode, { isolation: "repeatable read", read_only: "on" });
+      }
+      if (sql.includes("custom-neighborhood-read:current-target")) {
+        assert.equal(observedTarget, false); observedTarget = true;
+        if (afterTarget) await afterTarget();
+      }
+      return result;
+    } };
+  } });
+  const before = await state();
+  const reopened = await loadCustomNeighborhoodAcceptance(observedPool(), target);
+  assert.equal(reopened.status, "accepted"); assert.equal(reopened.report_file_id, input.reportFileId);
+  assert.equal(reopened.acceptance.operationId, input.operationId);
+  assert.deepEqual(reopened.acceptance.snapshot, snapshot);
+  assert.deepEqual(await state(), before);
+  checks.push("editor_read_exact_group_is_read_only_without_timestamp_or_history_changes");
+
+  await assert.rejects(loadCustomNeighborhoodAcceptance(observedPool(), { ...target, auth: { ...auth,
+    organizations: [{ organizationId: randomUUID(), roles: ["read_only"] }] } }), /assignment_file_access_denied/);
+  assert.deepEqual(await state(), before);
+  checks.push("editor_read_rejects_wrong_organization_without_changes");
+
+  for (const [name, status, signed, expected] of [
+    ["signed", "signed", true, /custom_neighborhood_signed_snapshot_required/],
+    ["signed_at_only", "draft", true, /custom_neighborhood_signed_snapshot_required/],
+    ["archived", "archived", false, /custom_neighborhood_saved_group_unavailable/],
+  ]) {
+    // Commit metadata so the independently owned read transaction can see it;
+    // restore these exact synthetic fixture fields before the following case.
+    await writer.query("UPDATE app.custom_appraisal_workfiles SET status=$2,signed_at=CASE WHEN $3 THEN clock_timestamp() ELSE NULL END WHERE assignment_file_id=$1",
+      [id, status, signed]);
+    try {
+      const protectedState = await state();
+      await assert.rejects(loadCustomNeighborhoodAcceptance(observedPool(), target), expected);
+      assert.deepEqual(await state(), protectedState);
+    } finally {
+      await writer.query("UPDATE app.custom_appraisal_workfiles SET status='draft',signed_at=NULL WHERE assignment_file_id=$1", [id]);
+    }
+    assert.deepEqual(await state(), before);
+    checks.push(`editor_read_rejects_${name}_metadata_without_changes`);
+  }
+
+  // New synthetic mapper targets were absent from the previous group. This is
+  // a genuine whole-group revision through the shared engine and actual writer,
+  // not a direct mutation of the accepted section/history behind the reader.
+  const mappedSuggestions = stored.mappedSuggestions.map(item => ({ ...item, target_key: `${item.target_key}:next` }));
+  const attachment = buildNeighborhoodAttachment(stored.assessment, { ...stored.attachment,
+    attachment_id: randomUUID(), editor_revision: reopened.acceptance.acceptedEditorRevision,
+    mapper_version: "synthetic-editor-read-next-v1", mapped_manifest_sha256: neighborhoodMappedManifestDigest(mappedSuggestions) });
+  const plan = prepareNeighborhoodApplicationGroup({ attachment, group: stored.assessment.application_group,
+    suggestions: mappedSuggestions, selected_ids: mappedSuggestions.map(item => item.id),
+    expected_binding_digest: attachment.binding_digest_sha256,
+    current_application_identity_sha256: attachment.application_identity_sha256, current_editor_revision: attachment.editor_revision,
+    existing_values: mappedSuggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: false })),
+    validate_final_group: () => ({ valid: true, issues: [] }) });
+  assert.equal(plan.status, "ready");
+  const next = { ...input, operationId: randomUUID(), attachmentId: attachment.attachment_id,
+    attachmentRevision: attachment.attachment_revision, receipt: buildNeighborhoodApplicationReceipt(plan, attachment.editor_revision + 1) };
+  let nextAccepted, afterCommit;
+  const previousSnapshot = await loadCustomNeighborhoodAcceptance(observedPool(async () => {
+    await writer.query("BEGIN");
+    try {
+      await persistNeighborhoodAttachment(writer, { assessment: stored.assessment, attachment, mappedSuggestions });
+      nextAccepted = await saveCustomNeighborhoodAcceptanceInTransaction(writer, next);
+      await writer.query("COMMIT");
+    } catch (error) { await writer.query("ROLLBACK"); throw error; }
+    afterCommit = await state();
+  }), target);
+  assert.ok(nextAccepted); assert.equal(nextAccepted.acceptedEditorRevision, 2);
+  assert.deepEqual(previousSnapshot, reopened);
+  assert.deepEqual(await state(), afterCommit);
+  checks.push("editor_read_keeps_one_snapshot_across_concurrent_accepted_group_commit");
+  const current = await loadCustomNeighborhoodAcceptance(observedPool(), target);
+  assert.equal(current.acceptance.operationId, next.operationId);
+  assert.deepEqual(current.acceptance.snapshot, nextAccepted.snapshot);
+  assert.deepEqual(await state(), afterCommit);
+  checks.push("editor_read_next_transaction_sees_new_group_without_changes");
+  return checks;
 }

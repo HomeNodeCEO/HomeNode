@@ -122,7 +122,8 @@ function observingPool(pool, { before, after } = {}) {
 
 async function identityFixture(pool, options = {}) {
   const organization_id = randomUUID(), actor_user_id = randomUUID(), appraisal_case_id = randomUUID(), subject_snapshot_id = randomUUID();
-  const accounts = Array.from({ length: 4 }, () => `neighborhood-pg-${randomUUID()}`);
+  // Stay within the editor route's 50-character account identifier contract.
+  const accounts = Array.from({ length: 4 }, () => `neigh-pg-${randomUUID()}`);
   const scope = { organization_id, appraisal_case_id, subject_snapshot_id, account_id: accounts[0] };
   const client = await pool.connect();
   try {

@@ -9,6 +9,7 @@ import { getCustomNeighborhoodAcceptance as getAcceptance,
   recordCustomNeighborhoodAcceptance as recordAcceptance } from "../src/services/neighborhoodAssessment/customAcceptanceRepository.js";
 import { neighborhoodAssessmentFixture, neighborhoodTargetFixture } from "./fixtures/neighborhoodAssessmentFixture.js";
 import { saveCustomNeighborhoodAcceptanceInTransaction as saveGroup } from "../src/services/neighborhoodAssessment/customAcceptanceSave.js";
+import { loadCustomNeighborhoodAcceptance as loadAcceptedGroup } from "../src/services/neighborhoodAssessment/customAcceptanceRead.js";
 
 // Query-double orchestration tests with real contract, attachment and snapshot
 // validation. These do not execute PostgreSQL or prove native authorization.
@@ -112,6 +113,154 @@ const noRelease = client => assert.equal(client.calls.some(call => call.tag === 
 const exactValues = f => [f.target.organizationId, f.target.reportFileId, f.target.assignmentFileId, OPERATION];
 const attachmentValues = f => [f.target.organizationId, f.target.reportFileId, "custom_appraisal",
   String(f.target.assignmentFileId), f.input.attachmentId, f.input.attachmentRevision];
+
+function editorReadDatabase(f, options = {}) {
+  const target = { assignment_file_id: String(f.target.assignmentFileId), account_id: f.assessment.scope.account_id,
+    organization_id: f.target.organizationId, assigned_appraiser_user_id: ACTOR, supervisory_appraiser_user_id: null,
+    report_file_id: f.target.reportFileId, workfile_status: "draft", signed_at: null, has_signed_snapshot: false,
+    has_neighborhood_acceptance: true,
+    section_key: f.snapshot.section_key, section_value: clone(f.snapshot.section_value), section_revision: 6,
+    ...options.target };
+  const client = fake(f, options.handlers), original = client.query.bind(client), commands = [], releases = [];
+  client.release = error => { releases.push(error); };
+  client.query = async (sql, values = []) => {
+    commands.push({ sql, values: clone(values) });
+    if (sql === "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY") {
+      if (options.beginFailure) throw options.beginFailure;
+      options.onBegin?.(); return rows();
+    }
+    if (sql === "COMMIT" || sql === "ROLLBACK") {
+      if (sql === "COMMIT" && options.commitFailure) throw options.commitFailure;
+      if (sql === "ROLLBACK" && options.rollbackFailure) throw options.rollbackFailure;
+      return rows();
+    }
+    if (sql.startsWith("/* custom-neighborhood-read:current-target */")) return options.targetRows ?? rows([target]);
+    return original(sql, values);
+  };
+  return { client, commands, releases, pool: {
+    query() { assert.fail("Reader must not split its snapshot across pool queries"); },
+    async connect() { if (options.connectFailure) throw options.connectFailure; return client; },
+  }, input: { accountId: f.assessment.scope.account_id, assignmentFileId: f.target.assignmentFileId,
+    auth: { userId: OTHER, organizations: [{ organizationId: f.target.organizationId, roles: ["reviewer"] }] } } };
+}
+
+test("editor reopen derives the exact operation from the saved section in one read-only snapshot", async () => {
+  const f = fixture(), db = editorReadDatabase(f);
+  const result = await loadAcceptedGroup(db.pool, db.input);
+  assert.equal(result.status, "accepted");
+  assert.equal(result.report_file_id, f.target.reportFileId);
+  assert.equal(result.assignment_file_id, f.target.assignmentFileId);
+  assert.deepEqual(result.acceptance.snapshot, f.snapshot);
+  assert.equal(result.acceptance.actorUserId, ACTOR, "reopening reviewer must not replace original actor");
+  assert.equal(result.acceptance.sectionHistoryId, HISTORY);
+  assert.equal(result.acceptance.acceptedEditorRevision, 6);
+  assert.equal(db.commands[0].sql, "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
+  assert.equal(db.commands.at(-1).sql, "COMMIT");
+  assert.deepEqual(db.commands[1].values, [f.target.assignmentFileId, f.assessment.scope.account_id, "neighborhood_assessment"]);
+  assert.match(db.commands[1].sql, /r\.organization_id=a\.organization_id AND r\.account_id=a\.account_id/);
+  assert.doesNotMatch(db.commands[1].sql, /ORDER BY|LIMIT|is_current/);
+  assert.deepEqual(db.client.calls[0].values, exactValues(f));
+  assert.deepEqual(db.releases, [undefined]);
+  assert.equal(db.commands.some(({ sql }) => /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|TRUNCATE)\b/i.test(sql)), false);
+});
+
+for (const workfileStatus of [null, "draft"]) {
+  test(`editor reopen leaves a file without an accepted section untouched (${workfileStatus})`, async () => {
+    const f = fixture(), db = editorReadDatabase(f, { target: { workfile_status: workfileStatus,
+      report_file_id: null, section_key: null, section_value: null, section_revision: null, has_neighborhood_acceptance: false } });
+    assert.deepEqual(await loadAcceptedGroup(db.pool, db.input), { status: "not_accepted",
+      account_id: f.assessment.scope.account_id, assignment_file_id: f.target.assignmentFileId,
+      report_file_id: null, acceptance: null });
+    assert.equal(db.client.calls.length, 0, "no acceptance or latest analysis lookup");
+    assert.equal(db.commands.length, 3);
+  });
+}
+
+for (const [name, patch] of Object.entries({
+  "signed status": { workfile_status: "signed" },
+  "signed then archived": { workfile_status: "archived", has_signed_snapshot: true },
+  "signature metadata despite draft": { signed_at: "2026-09-09T15:00:00Z" },
+  "retained signed snapshot despite draft": { has_signed_snapshot: true },
+})) {
+  test(`editor read defers ${name} to immutable signed retrieval`, async () => {
+    const db = editorReadDatabase(fixture(), { target: patch });
+    await assert.rejects(loadAcceptedGroup(db.pool, db.input), /custom_neighborhood_signed_snapshot_required/);
+    assert.equal(db.client.calls.length, 0);
+    assert.equal(db.commands.at(-1).sql, "ROLLBACK");
+    assert.deepEqual(db.releases, [undefined]);
+  });
+}
+
+for (const [name, patch] of Object.entries({
+  "missing exact report": { report_file_id: null },
+  "missing workfile": { workfile_status: null },
+  "archived unsigned": { workfile_status: "archived" },
+  "malformed section": { section_value: null },
+  "bad operation": { section_value: { operation_id: "bad", accepted_editor_revision: 6 } },
+  "mismatched revision": { section_revision: 7 },
+  "wrong assignment": { assignment_file_id: "2" },
+  "wrong account": { account_id: "SYNTHETIC-P2" },
+  "lost section with retained acceptance": { section_key: null, section_value: null, section_revision: null },
+})) {
+  test(`editor read does not fall back when ${name}`, async () => {
+    const db = editorReadDatabase(fixture(), { target: patch });
+    await assert.rejects(loadAcceptedGroup(db.pool, db.input), /custom_neighborhood_saved_group_unavailable/);
+    assert.equal(db.client.calls.length, 0);
+    assert.equal(db.commands.at(-1).sql, "ROLLBACK");
+  });
+}
+
+test("editor read rejects missing acceptance and compares the returned group to its captured section", async () => {
+  const f = fixture();
+  const missing = editorReadDatabase(f, { handlers: { "custom-neighborhood-acceptance:exact-operation": rows() } });
+  await assert.rejects(loadAcceptedGroup(missing.pool, missing.input), /custom_neighborhood_saved_group_unavailable/);
+  const altered = clone(f.snapshot.section_value); altered.mapped_values.boundary.value = "different";
+  const changed = editorReadDatabase(f, { target: { section_value: altered } });
+  await assert.rejects(loadAcceptedGroup(changed.pool, changed.input), /custom_neighborhood_saved_group_unavailable/);
+  assert.equal(changed.commands.at(-1).sql, "ROLLBACK");
+});
+
+test("editor read rechecks organization and assignment policy before disclosing an accepted group", async () => {
+  const f = fixture();
+  for (const patch of [{ organizations: [] }, { organizations: [{ organizationId: OTHER, roles: ["homenode_admin"] }] },
+    { organizations: [{ organizationId: f.target.organizationId, roles: ["appraiser"] }] }]) {
+    const db = editorReadDatabase(f); Object.assign(db.input.auth, patch);
+    await assert.rejects(loadAcceptedGroup(db.pool, db.input), /assignment_file_access_denied/);
+    assert.equal(db.client.calls.length, 0);
+    assert.equal(db.commands.at(-1).sql, "ROLLBACK");
+  }
+  const missing = editorReadDatabase(f, { targetRows: rows() });
+  await assert.rejects(loadAcceptedGroup(missing.pool, missing.input), /assignment_file_not_found/);
+  const ambiguous = editorReadDatabase(f, { targetRows: rows([{}, {}]) });
+  await assert.rejects(loadAcceptedGroup(ambiguous.pool, ambiguous.input), /custom_neighborhood_saved_group_unavailable/);
+});
+
+test("editor read validates and captures request identity before the first await", async () => {
+  const f = fixture(); let connects = 0;
+  for (const patch of [{ assignmentFileId: null }, { assignmentFileId: "1" }, { assignmentFileId: 0 },
+    { accountId: "wrong account" }, { auth: null }, { operationId: OPERATION }, { reportFileId: OTHER }]) {
+    const db = editorReadDatabase(f); Object.assign(db.input, patch);
+    await assert.rejects(loadAcceptedGroup({ async connect() { connects++; } }, db.input), /invalid_|authentication_required/);
+  }
+  assert.equal(connects, 0);
+  const db = editorReadDatabase(f, { onBegin() { db.input.assignmentFileId = 2; db.input.auth.organizations = []; } });
+  assert.equal((await loadAcceptedGroup(db.pool, db.input)).assignment_file_id, f.target.assignmentFileId);
+});
+
+test("editor read cleans up failed transactions and discards uncertain connections", async () => {
+  const f = fixture(), failure = new Error("synthetic_database_failure");
+  for (const mode of ["beginFailure", "commitFailure", "connectFailure"]) {
+    const db = editorReadDatabase(f, { [mode]: failure });
+    await assert.rejects(loadAcceptedGroup(db.pool, db.input), error => error === failure);
+    assert.deepEqual(db.releases, mode === "connectFailure" ? [] : [failure]);
+    assert.equal(db.commands.some(({ sql }) => sql === "ROLLBACK"), mode === "commitFailure");
+  }
+  const db = editorReadDatabase(f, { targetRows: rows(), rollbackFailure: failure });
+  await assert.rejects(loadAcceptedGroup(db.pool, db.input), error => error instanceof AggregateError
+    && error.message === "custom_neighborhood_read_rollback_failed"
+    && error.errors[0].message === "assignment_file_not_found" && error.errors[1] === failure);
+  assert.deepEqual(db.releases, [failure]);
+});
 
 const groupInput = f => { const { sectionHistoryId: _history, ...input } = f.input; return input; };
 function groupDatabase(f, options = {}) {

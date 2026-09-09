@@ -98,6 +98,19 @@ function freeze(value) {
   return value;
 }
 
+/** Validate the same point representation before a server-owned spatial read.
+ * This is data validation, never an authorization or provider-origin receipt. */
+export function prepareNeighborhoodDiscoveryGeometryV1(input) {
+  try {
+    const geometry = geometryOf(input);
+    return freeze({ status: 'prepared', authority: AUTHORITY, geometry_input: geometry,
+      geometry_input_sha256: assessmentEvidenceDigest(geometry) });
+  } catch (error) {
+    if (!(error instanceof InputProblem)) throw error;
+    return Object.freeze({ status: error.status, reason: error.message, authority: AUTHORITY });
+  }
+}
+
 /**
  * Prepare DATA ONLY for the future owner-controlled discovery producer. This does
  * not authenticate caller/source origin, verify a parcel intersection or roster

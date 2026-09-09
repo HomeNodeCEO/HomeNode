@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
@@ -122,6 +122,151 @@ function fake(options = {}) {
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+// Retain the actual reader; fake().reader deliberately creates a new one per call.
+function originalCaptureFixture(options = {}, input = request()) {
+  const db = fake(options);
+  const access = createTestCachedReadAccess(input, { transactionClosure: fixtureClosure(db.data, input.account_ids) });
+  const reader = createNeighborhoodCachedSourceReader(db.pool, { access: access.access, limits: options.limits || {} });
+  return { db, reader, async prepareCapture() {
+    const prepared = await access.prepare();
+    const expectedRequest = structuredClone(prepared.request);
+    const captureRequest = { ...structuredClone(prepared.request), auth: access.auth,
+      selection_grant: prepared.selection_grant, market_grant: prepared.market_grant };
+    return { expectedRequest, request: captureRequest, capture: () => reader.capture(captureRequest) };
+  } };
+}
+const originalCaptureRequired = { code: 'NEIGHBORHOOD_ORIGINAL_CAPTURE_REQUIRED' };
+function assertRecursivelyFrozen(value) {
+  if (value === null || typeof value !== 'object') return;
+  assert.ok(Object.isFrozen(value));
+  for (const child of Object.values(value)) assertRecursivelyFrozen(child);
+}
+
+test('original cached acquisition retains full consumed closure and exact pre-hash metadata once', async () => {
+  const fixture = originalCaptureFixture({ data: { transactions: [transaction()], links: [link(),
+    link('101', { parcel_sequence: 2, parcel_role: 'additional', account_id: 'SECONDARY' })] } });
+  const prepared = await fixture.prepareCapture();
+  const result = await prepared.capture();
+  assert.equal(result.status, 'captured');
+  const publicJson = JSON.stringify(result), hashes = captureHashes(result);
+  const publicKeys = Reflect.ownKeys(result);
+  const calls = fixture.db.calls.length, releases = fixture.db.releases.length;
+  const handoff = consumeNeighborhoodCachedAcquisition(fixture.reader, result);
+  assert.deepEqual(Object.keys(handoff).sort(), ['authority', 'capture_result', 'captured_query_request',
+    'compact_metadata_json', 'provenance', 'version']);
+  assert.equal(handoff.version, 1);
+  assert.equal(handoff.provenance, 'original_cached_reader_invocation');
+  assert.equal(handoff.authority, 'not_established');
+  assert.strictEqual(handoff.capture_result, result);
+  assert.deepEqual(handoff.captured_query_request, prepared.expectedRequest);
+  assert.notStrictEqual(handoff.captured_query_request, prepared.request);
+  assert.deepEqual(handoff.captured_query_request.transaction_closure, prepared.expectedRequest.transaction_closure);
+  assert.match(JSON.stringify(handoff.captured_query_request.transaction_closure), /SECONDARY/);
+  assertRecursivelyFrozen(handoff);
+  for (const key of ['auth', 'selection_grant', 'market_grant']) {
+    assert.equal(Object.hasOwn(handoff.captured_query_request, key), false);
+  }
+  const blobs = new Map(result.query_evidence.blobs.map(item => [item.ref.content_sha256, item.canonical_json]));
+  const preimage = JSON.parse(blobs.get(result.query_evidence.query_preimage.content_sha256));
+  assert.equal(handoff.compact_metadata_json, blobs.get(preimage.compact_metadata.content_sha256));
+  const metadata = JSON.parse(handoff.compact_metadata_json);
+  assert.equal(canonicalAssessmentJson(metadata), handoff.compact_metadata_json);
+  assert.equal(Object.hasOwn(metadata, 'selection_sha256'), false);
+  assert.equal(Object.hasOwn(metadata, 'selected_account_count'), false);
+  assert.equal(cohortFixtureQueryHash(metadata, handoff.captured_query_request.account_ids), result.selection_sha256);
+  assert.ok(result.unsupported_capabilities.includes('provider_coverage'));
+  assert.deepEqual(publicKeys.sort(), ['capabilities', 'captured_at', 'counts', 'incomplete_reasons',
+    'query_complete', 'query_evidence', 'reader_version', 'scope', 'selection_sha256', 'source_capture',
+    'status', 'unsupported_capabilities']);
+  assert.deepEqual(Reflect.ownKeys(result).sort(), publicKeys);
+  assert.equal(JSON.stringify(result), publicJson);
+  assert.deepEqual(captureHashes(result), hashes);
+  assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, result), originalCaptureRequired);
+  assert.equal(fixture.db.calls.length, calls);
+  assert.equal(fixture.db.releases.length, releases);
+});
+
+test('wrong readers and copied successful results cannot consume an original acquisition', async () => {
+  const fixture = originalCaptureFixture(), other = originalCaptureFixture();
+  const result = await (await fixture.prepareCapture()).capture();
+  assert.equal(result.status, 'captured');
+  for (const wrongReader of [other.reader, { ...fixture.reader }, null]) {
+    assert.throws(() => consumeNeighborhoodCachedAcquisition(wrongReader, result), originalCaptureRequired);
+  }
+  for (const copy of [{ ...result }, JSON.parse(JSON.stringify(result)), structuredClone(result),
+    Object.create(result), { status: 'captured', query_complete: true }, null, undefined]) {
+    assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, copy), originalCaptureRequired);
+  }
+  assert.strictEqual(consumeNeighborhoodCachedAcquisition(fixture.reader, result).capture_result, result);
+  assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, result), originalCaptureRequired);
+});
+
+test('identical captures have independent original one-use handoffs on the same reader', async () => {
+  const fixture = originalCaptureFixture();
+  const first = await (await fixture.prepareCapture()).capture();
+  const second = await (await fixture.prepareCapture()).capture();
+  assert.equal(first.status, 'captured'); assert.equal(second.status, 'captured');
+  assert.notStrictEqual(first, second);
+  assert.equal(JSON.stringify(first), JSON.stringify(second));
+  const secondHandoff = consumeNeighborhoodCachedAcquisition(fixture.reader, second);
+  assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, second), originalCaptureRequired);
+  const firstHandoff = consumeNeighborhoodCachedAcquisition(fixture.reader, first);
+  assert.strictEqual(firstHandoff.capture_result, first);
+  assert.strictEqual(secondHandoff.capture_result, second);
+  assert.notStrictEqual(firstHandoff, secondHandoff);
+  assert.equal(firstHandoff.compact_metadata_json, secondHandoff.compact_metadata_json);
+  assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, first), originalCaptureRequired);
+});
+
+test('SQL, release, selected-account coverage and capability failures have no original handoff', async t => {
+  const cases = [
+    ['SQL', { intercept({ tag }) { if (tag === 'parcels') throw new Error('PRIVATE ORIGINAL QUERY'); } }],
+    ['release', { release() { throw new Error('PRIVATE ORIGINAL RELEASE'); } }],
+    ['coverage', { data: { parcels: [] } }],
+    ['capability', { data: { catalog: CATALOG.filter(row => row.column !== 'object_id') } }],
+  ];
+  for (const [name, options] of cases) await t.test(name, async () => {
+    const fixture = originalCaptureFixture(options);
+    const result = await (await fixture.prepareCapture()).capture();
+    assert.equal(result.status, 'incomplete');
+    assert.equal(result.query_complete, false);
+    const publicJson = JSON.stringify(result), calls = fixture.db.calls.length;
+    assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, result), originalCaptureRequired);
+    assert.throws(() => consumeNeighborhoodCachedAcquisition(fixture.reader, structuredClone(result)), originalCaptureRequired);
+    assert.equal(JSON.stringify(result), publicJson);
+    assert.doesNotMatch(publicJson, /PRIVATE ORIGINAL/);
+    assert.equal(fixture.db.calls.length, calls);
+  });
+});
+
+test('source request mutation during SQL cannot rewrite the consumed original request or closure', async () => {
+  let mutableRequest, mutated = false;
+  const fixture = originalCaptureFixture({ data: { transactions: [transaction()], links: [link()] },
+    intercept({ tag }) {
+      if (tag !== 'begin') return;
+      mutableRequest.account_ids[0] = 'MUTATED';
+      mutableRequest.scope.account_id = 'MUTATED';
+      mutableRequest.target.workflow_target_id = '999';
+      mutableRequest.observation_period.start_date = '2000-01-01';
+      mutableRequest.transaction_closure.source_revision = 'mutated-revision';
+      mutableRequest.transaction_closure.transactions = [];
+      mutated = true;
+    } });
+  const prepared = await fixture.prepareCapture();
+  mutableRequest = prepared.request;
+  const result = await prepared.capture();
+  assert.ok(mutated);
+  assert.equal(result.status, 'captured');
+  const publicJson = JSON.stringify(result);
+  const handoff = consumeNeighborhoodCachedAcquisition(fixture.reader, result);
+  assert.deepEqual(handoff.captured_query_request, prepared.expectedRequest);
+  assertRecursivelyFrozen(handoff.captured_query_request);
+  assert.throws(() => { handoff.captured_query_request.account_ids[0] = 'ALTERED'; }, TypeError);
+  assert.throws(() => { handoff.captured_query_request.transaction_closure.source_revision = 'ALTERED'; }, TypeError);
+  assert.doesNotMatch(JSON.stringify(handoff.captured_query_request), /MUTATED|mutated-revision/);
+  assert.equal(JSON.stringify(result), publicJson);
+});
 
 for (const linkCount of [400, 2000]) test(`a verified ${linkCount}-link closure stays out of bounded capture envelopes`, async () => {
   const db = fake({ data: { transactions: [transaction()], links: Array.from({ length: linkCount }, (_, index) =>

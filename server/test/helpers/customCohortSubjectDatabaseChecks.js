@@ -18,6 +18,14 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
       WHERE id=$1`, [identity.scope.subject_snapshot_id,
       JSON.stringify({ custom_property_snapshot: { account: { account_id: scope.account_id, address: 'Synthetic Café 🏠' },
         improvement: { living_area_sqft: 2000 } }, retained_extra: { never: 'discard' } }), '{"fixture":"retained"}']);
+    await seed.query(`UPDATE app.appraisal_subject_snapshots
+      SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,location}',$2::jsonb) WHERE id=$1`,
+    [identity.scope.subject_snapshot_id, JSON.stringify({ account_id: scope.account_id,
+      latitude: 32.91, longitude: -96.65, source: 'dcad_parcel_query', precision: 'parcel_centroid',
+      status: 'matched', confidence: 'high', review_required: false, review_reason: null,
+      match_method: 'parcel_id', source_parcel_id: scope.account_id, feature_count: 1,
+      metadata: { address_agreement: true }, geocoded_at: '2020-01-01T00:00:00.000Z',
+      source_updated_at: '2019-12-31T00:00:00.000Z' })]);
     await seed.query(`INSERT INTO app.custom_appraisal_sections (assignment_file_id,section_key,section_value)
       VALUES ($1,'report.property_characteristics','{"main_improvement":{"living_area_sqft":2100.00},"reviewer_note":"original"}'),
         ($1,'report.exemptions','{"reviewer_note":"not material"}')`, [scope.assignment_file_id]);
@@ -35,6 +43,12 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     const repo = createCustomCohortSubjectRepository(client, scopeJson);
     ref = await repo.capture();
     const retained = await repo.load(ref);
+    const retainedPoint = await repo.loadRecordedPoint(ref);
+    assert.equal(retainedPoint.status, 'represented', retainedPoint.reason);
+    assert.equal(retainedPoint.authority, 'not_established');
+    assert.equal(retainedPoint.provider_geometry_verified, false);
+    assert.deepEqual(retainedPoint.geometry_input.coordinates, ['-96.65', '32.91']);
+    assert.equal(retainedPoint.geometry_input.source_sha256, retained.original_snapshot_row.content_sha256);
     assert.deepEqual(await repo.compareCurrent(ref), { status: 'matched', authority: 'not_established', changed_inputs: [] });
     assert.equal(retained.effective_date, '2024-06-30');
     const sections = JSON.parse(retained.original_sections.pg_reads_json);
@@ -62,6 +76,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     assert.equal((await client.query('SELECT count(*)::int AS n FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1',
       [scope.organization_id])).rows[0].n, 5, 'freshness comparisons never persist new blobs');
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, organization_id: randomUUID() })).load(ref), /not_found/);
+    await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, organization_id: randomUUID() })).loadRecordedPoint(ref), /not_found/);
     await assert.rejects(createCustomCohortSubjectRepository(client, JSON.stringify({ ...scope, account_id: identity.accounts[1] })).capture(), /not_found/);
 
     // A new current snapshot and edited physical data do not replace history.
@@ -73,6 +88,7 @@ export async function checkCustomCohortSubjectDatabase(pool, identity) {
     await client.query(`UPDATE app.custom_appraisal_sections SET section_value='{"main_improvement":{"living_area_sqft":5000}}'
       WHERE assignment_file_id=$1 AND section_key='report.property_characteristics'`, [scope.assignment_file_id]);
     assert.deepEqual(await repo.load(ref), retained);
+    assert.deepEqual(await repo.loadRecordedPoint(ref), retainedPoint, 'a newer snapshot must not silently move the retained search center');
     await assert.rejects(repo.capture(), /effective_date_unresolved/);
     await assert.rejects(repo.compareCurrent(ref), /effective_date_unresolved/);
     await client.query('UPDATE app.appraisal_cases SET effective_date=NULL WHERE id=$1', [identity.scope.appraisal_case_id]);

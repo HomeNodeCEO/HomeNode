@@ -19,7 +19,8 @@ export const NEIGHBORHOOD_CACHED_SOURCE_SCHEMA=`
     structural_style text,housing_type text,attachment_type text,architectural_style text,
     garage_spaces numeric,garage_yn boolean,pool_yn boolean,days_on_market integer,
     parcel_number_raw text,parcel_number2_raw text,match_status text,has_multiple_parcel_numbers boolean,
-    multi_parcel_status text,has_unresolved_parcel boolean,requires_additional_review boolean,data_quality_flags jsonb);
+    multi_parcel_status text,has_unresolved_parcel boolean,requires_additional_review boolean,data_quality_flags jsonb,
+    mls_status text,source_row_number integer,raw_payload jsonb);
   CREATE INDEX cache_fixture_source_account_idx ON core.sales_source_records(primary_account_id);
   CREATE TABLE core.sales(id bigint PRIMARY KEY,source_record_id bigint UNIQUE,account_id text,closing_date date,
     sale_price numeric,source text,loaded_at timestamptz);

@@ -3,6 +3,7 @@ import * as publicCatalog from '../../security/publicCadastralCatalog.js';
 import { hasApplicationPermission } from '../../security/applicationAccess.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
+import { CACHED_SALE_WITNESS_FIELDS } from './cachedSaleWitness.js';
 
 // Runtime capabilities only. None of these maps, issuers, or mint operations is
 // exported. Copying/serializing a token never preserves its authority.
@@ -182,9 +183,21 @@ export function describeNeighborhoodCachedMarketDataPurpose(request) {
     observation_period: period, knowledge_cutoff: cutoff });
 }
 
+// An installed projection, not a browser-supplied field list or new grant.
+// The existing production v1 purpose policy intentionally rejects this shape.
+export function describeNeighborhoodSaleWitnessMarketDataPurpose(request) {
+  return frozen({ ...describeNeighborhoodCachedMarketDataPurpose(request), source_projection: {
+    id: 'cached-sale-scalar-witness-v1', mapping_version: 3, witness_version: 1,
+    fields: [...CACHED_SALE_WITNESS_FIELDS],
+  } });
+}
+const purposeFor = (request, mappingVersion) => mappingVersion === 3
+  ? describeNeighborhoodSaleWitnessMarketDataPurpose(request) : describeNeighborhoodCachedMarketDataPurpose(request);
+
 /** Verify the ORIGINAL server-composition authority, not an injected verifier. */
-export function assertNeighborhoodCachedReadAccess(access) {
+export function assertNeighborhoodCachedReadAccess(access, mappingVersion = 2) {
   if (!access || !authorities.has(access)) deny('authority_required');
+  if (![2, 3].includes(mappingVersion) || authorities.get(access).mappingVersion !== mappingVersion) deny('mapping_profile_mismatch');
   return access;
 }
 
@@ -208,13 +221,23 @@ export function assertNeighborhoodCachedReadAccess(access) {
  * Capabilities cannot be saved in jobs: reauthorize and prepare each worker attempt.
  */
 export function createNeighborhoodCachedReadAccess(options) {
+  return createReadAccess(options, 2);
+}
+
+/** Dormant installed witness profile. Its policy must explicitly admit the
+ * expanded purpose; v2 capabilities cannot authorize this projection. */
+export function createNeighborhoodSaleWitnessReadAccess(options) {
+  return createReadAccess(options, 3);
+}
+
+function createReadAccess(options, mappingVersion) {
   keys(options, ['resolveAuthorizedAssignment', 'resolveTrustedSelection', 'authorizeMarketData', 'resolveTransactionClosure', 'ttl_ms'], 'options');
   const { resolveAuthorizedAssignment, resolveTrustedSelection, authorizeMarketData, resolveTransactionClosure } = options;
   if ([resolveAuthorizedAssignment, resolveTrustedSelection, authorizeMarketData, resolveTransactionClosure].some(fn => typeof fn !== 'function')) deny('trusted_callbacks_required');
   const ttl = options.ttl_ms ?? 30_000;
   if (!Number.isSafeInteger(ttl) || ttl < 1 || ttl > NEIGHBORHOOD_CACHED_READ_ACCESS_LIMITS.ttl_ms) deny('ttl_ms');
   requireCatalog();
-  const issuer = Object.freeze({});
+  const issuer = Object.freeze({ mappingVersion });
   const access = Object.freeze({ async prepare(auth, input) {
     // Age includes authorization/selection latency; a stalled trusted service
     // cannot mint a fresh capability from arbitrarily old assignment authority.
@@ -250,7 +273,7 @@ export function createNeighborhoodCachedReadAccess(options) {
       observation_period: period, knowledge_cutoff: cutoff };
     const selectedRequest = frozen({ ...draft, selection_sha256: selectionDigest(draft) });
     permission(auth, context, user);
-    const purpose = describeNeighborhoodCachedMarketDataPurpose(selectedRequest);
+    const purpose = purposeFor(selectedRequest, mappingVersion);
     checkDeadline();
     const authorization = await authorizeMarketData(auth, context, purpose);
     checkDeadline();
@@ -300,8 +323,8 @@ export function createNeighborhoodCachedReadAccess(options) {
  * CAD detail queries remain limited to account_ids, with no linked-account private
  * overlays, documents or reports. Full transaction links remain metadata only.
  */
-export function consumeNeighborhoodCachedReadAccess(access, auth, inputRequest, grants) {
-  assertNeighborhoodCachedReadAccess(access);
+export function consumeNeighborhoodCachedReadAccess(access, auth, inputRequest, grants, mappingVersion = 2) {
+  assertNeighborhoodCachedReadAccess(access, mappingVersion);
   requireCatalog();
   keys(grants, ['selection_grant', 'market_grant'], 'grants');
   const selected = selections.get(grants.selection_grant);
@@ -313,6 +336,7 @@ export function consumeNeighborhoodCachedReadAccess(access, auth, inputRequest, 
   }
   const request = requestOf(inputRequest);
   if (requestDigest(request) !== selected.requestDigest) deny('request_binding_mismatch');
+  if (!same(selected.purpose, purposeFor(request, mappingVersion))) deny('market_purpose_mismatch');
   permission(auth, request, selected.actor);
   if (selected.purpose.selection_sha256 !== request.selection_sha256
     || !same(selected.purpose.source_classes, ['core.sales_source_records', 'core.sales', 'core.sale_parcels'])

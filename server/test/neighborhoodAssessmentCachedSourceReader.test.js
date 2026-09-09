@@ -1,7 +1,10 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader,
+  createNeighborhoodSaleWitnessSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodSaleWitnessReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
@@ -109,19 +112,77 @@ function fake(options = {}) {
     async query() { poolQueries++; assert.fail('Reader must not query the pool outside its checked-out transaction'); } };
   // Query fixtures represent independently authorized synthetic selections.
   // The adversarial tests below call the raw reader with altered issued tokens.
-  const baseline=createTestCachedReadAccess(request(),{transactionClosure:fixtureClosure(data,[SUBJECT])});
-  createNeighborhoodCachedSourceReader(pool,{limits:options.limits||{},access:baseline.access});
+  const accessOptions={accessFactory:options.accessFactory,authorizeMarketData:options.authorizeMarketData};
+  const readerFactory=options.readerFactory ?? createNeighborhoodCachedSourceReader;
+  const baseline=createTestCachedReadAccess(request(),{...accessOptions,transactionClosure:fixtureClosure(data,[SUBJECT])});
+  readerFactory(pool,{limits:options.limits||{},access:baseline.access});
   return { data, pool, calls, releases, get connects() { return connects; }, get poolQueries() { return poolQueries; },
     reader:{async capture(input) {
-      const granted=createTestCachedReadAccess(input,{transactionClosure:fixtureClosure(data,input.account_ids)});
+      const granted=createTestCachedReadAccess(input,{...accessOptions,transactionClosure:fixtureClosure(data,input.account_ids)});
       const prepared=await granted.prepare();
-      return createNeighborhoodCachedSourceReader(pool,{limits:options.limits||{},access:granted.access})
+      return readerFactory(pool,{limits:options.limits||{},access:granted.access})
         .capture({...prepared.request,auth:granted.auth,selection_grant:prepared.selection_grant,market_grant:prepared.market_grant});
     }} };
 }
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+const emptyWitness=() => ({witness_version:1,root_state:'object',root_json_type:'object',
+  fields:Object.fromEntries(CACHED_SALE_WITNESS_FIELDS.map(key => [key,{state:'absent',json_type:null,value_text:null,utf8_bytes:null}]))});
+function witnessFixture(changes={}) {
+  const row=transaction('10',{source_mls_status:'Closed',source_row_number:1,source_raw_witness:emptyWitness(),...changes});
+  return fake({readerFactory:createNeighborhoodSaleWitnessSourceReader,accessFactory:createNeighborhoodSaleWitnessReadAccess,
+    authorizeMarketData:async(_auth,_context,purpose) => {
+      assert.equal(purpose.source_projection.id,'cached-sale-scalar-witness-v1');
+      assert.deepEqual(purpose.source_projection.fields,CACHED_SALE_WITNESS_FIELDS);
+      return {allowed:true,decision_id:'synthetic-witness-only',policy_revision:'synthetic-witness-v1'};
+    },data:{transactions:[row],links:[link()],catalog:[...CATALOG,
+      ...['mls_status','source_row_number','raw_payload'].map(column=>({relation:'core.sales_source_records',column}))]}});
+}
+
+test('installed witness reader retains mapping3 under its explicit projection purpose and keeps default mapping2',async()=>{
+  const f=witnessFixture(), result=await f.reader.capture(request());
+  assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
+  for(const role of ['parcels','accounts','transactions','sale_links'])for(const row of records(result,role))
+    assert.equal(row.data.data.cached_mapping_version,3);
+  const row=records(result,'transactions')[0].data;
+  assert.equal(row.raw_projection.source_mls_status,'Closed');
+  assert.deepEqual(row.raw_projection.source_raw_witness,emptyWitness());
+  assert.equal(row.data.market_eligible,null); assert.equal(row.data.gla_sqft_at_sale,null);
+  assert.match(f.calls.find(call=>call.tag==='transactions').text,/jsonb_object_agg/);
+  assert.doesNotMatch(f.calls.find(call=>call.tag==='transactions').text,/src\.raw_payload\s+AS\s+raw_payload/);
+  const normal=fake({data:{transactions:[transaction()],links:[link()]}});
+  const baseline=await normal.reader.capture(request());
+  assert.equal(baseline.status,'captured');
+  assert.equal(records(baseline,'transactions')[0].data.data.cached_mapping_version,2);
+  assert.equal(Object.hasOwn(records(baseline,'transactions')[0].data.raw_projection,'source_raw_witness'),false);
+  assert.doesNotMatch(normal.calls.find(call=>call.tag==='transactions').text,/raw_payload|source_mls_status/);
+});
+
+test('witness columns unavailable refuse capture without source reads or fallback to mapping2',async()=>{
+  for(const column of ['mls_status','source_row_number','raw_payload']){
+    const f=witnessFixture(); f.data.catalog=f.data.catalog.filter(row=>row.column!==column);
+    const result=await f.reader.capture(request());
+    assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+    assert.equal(f.calls.some(call=>call.tag==='transactions'),false);
+  }
+});
+
+test('malformed or whole-overflow witness refuses the complete capture; no shortened success',async()=>{
+  for(const source_raw_witness of [null,{}, {...emptyWitness(),witness_version:2}]){
+    const result=await witnessFixture({source_raw_witness}).reader.capture(request());
+    assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+  }
+});
+
+test('witness value/type/presence changes affect retained source hashes while normal observations remain unknown',async()=>{
+  const before=await witnessFixture().reader.capture(request());
+  const w=emptyWitness(); w.fields.ClosePrice={state:'scalar',json_type:'string',value_text:'282500.00',utf8_bytes:9};
+  const after=await witnessFixture({source_raw_witness:w}).reader.capture(request());
+  assert.equal(after.status,'captured'); assert.notDeepEqual(captureHashes(before),captureHashes(after));
+  assert.equal(records(after,'transactions')[0].data.data.market_eligible,null);
+});
 
 // Retain the actual reader; fake().reader deliberately creates a new one per call.
 function originalCaptureFixture(options = {}, input = request()) {

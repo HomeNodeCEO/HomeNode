@@ -7,7 +7,9 @@ import { prepareCustomCohortCaptureInputs as prepare, persistCustomCohortCapture
   loadCustomCohortCaptureInputs as load } from '../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { createNeighborhoodCohortBlobRepository } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { captureNeighborhoodSpatialMembership } from '../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
-import { createNeighborhoodCachedSourceReader, consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCachedSourceReader, createNeighborhoodSaleWitnessSourceReader, consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodSaleWitnessReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { prepareNeighborhoodSelectorInputV1 } from '../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { customCohortRepositoryFixture, customCohortScopeOf } from './fixtures/customCohortRepositoryFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
@@ -24,7 +26,7 @@ const CATALOG = [...tableText.matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'\]/g)]
 
 // Actual repository, spatial reader, access factory, source reader and consumed
 // handoff over bounded query fakes. This is NOT native PostgreSQL/MVCC evidence.
-async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitAccountRows = false, qualityFlags = [] } = {}) {
+async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitAccountRows = false, qualityFlags = [], mappingVersion = 2 } = {}) {
   const f = customCohortRepositoryFixture(), t = f.state.input.target;
   const originalProperty = JSON.parse(f.state.input.snapshot.subject_data.pg_text).custom_property_snapshot;
   setPublic(f.state.input, { ...originalProperty, location: { account_id: t.account_id, longitude: -96.65, latitude: 32.91,
@@ -52,7 +54,8 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
       .filter(p => values[2] === null || BigInt(p.object_id) > BigInt(values[2])).slice(0, values[3]).map(payload => ({ payload })) };
     if (tag === 'scope') return { rows: [{ case_date: subject.effective_date, snapshot_date: subject.effective_date,
       effective_date: subject.effective_date, captured_at: MS, captured_at_precise: NOW }] };
-    if (tag === 'capabilities') return { rows: CATALOG };
+    if (tag === 'capabilities') return { rows: mappingVersion === 3 ? [...CATALOG,
+      ...['mls_status', 'source_row_number', 'raw_payload'].map(column => ({ relation: 'core.sales_source_records', column }))] : CATALOG };
     let rows;
     switch (tag) {
       case 'parcels': rows = parcels.filter(p => BigInt(p.object_id) > BigInt(values[1])).slice(0, values[2]).map(p => ({
@@ -71,6 +74,12 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
       case 'legacy-identities': case 'legacy': rows = []; break;
       default: assert.fail(`Unexpected source query ${tag}`);
     }
+    if (mappingVersion === 3 && tag === 'parcels') rows = rows.map(({ geometry_sha256, ...projected }) => projected);
+    if (mappingVersion === 3 && tag === 'transactions') rows = rows.map(row => ({ ...row,
+      source_mls_status: null, source_row_number: null, source_raw_witness: {
+        witness_version: 1, root_state: 'sql_null', root_json_type: null,
+        fields: Object.fromEntries(CACHED_SALE_WITNESS_FIELDS.map(key => [key,
+          { state: 'payload_unavailable', json_type: null, value_text: null, utf8_bytes: null }])) } }));
     return { rows: rows.map(payload => ({ payload, row_bytes: Buffer.byteLength(JSON.stringify(payload)) })) };
   } };
   const spatial = await captureNeighborhoodSpatialMembership(cacheClient, point.geometry_input);
@@ -86,9 +95,15 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
   const study = { profile_id: selector.query_input.definition.profile_id,
     observation_period: { start_date: '2023-07-01', end_date: '2024-06-30' }, knowledge_cutoff: null };
   const access = createTestCachedReadAccess({ target, scope: readScope, effective_date: subject.effective_date,
-    selection: selector.selection, account_ids: accountIds, ...study }, { transactionClosure: {
+    selection: selector.selection, account_ids: accountIds, ...study }, {
+    ...(mappingVersion === 3 ? { accessFactory: createNeighborhoodSaleWitnessReadAccess,
+      authorizeMarketData: async (_auth, _context, purpose) => {
+        assert.equal(purpose.source_projection.mapping_version, 3);
+        return { allowed: true, decision_id: 'explicit-synthetic-witness', policy_revision: 'explicit-synthetic-witness-v1' };
+      } } : {}), transactionClosure: {
     source_revision: 'original-fixture-closure-v1', transactions: [transaction], links, legacy: [] } });
-  const issued = await access.prepare(), reader = createNeighborhoodCachedSourceReader({ connect() { assert.fail('must use owner'); } }, { access: access.access });
+  const factory = mappingVersion === 3 ? createNeighborhoodSaleWitnessSourceReader : createNeighborhoodCachedSourceReader;
+  const issued = await access.prepare(), reader = factory({ connect() { assert.fail('must use owner'); } }, { access: access.access });
   const result = await reader.captureInSnapshot(cacheClient, { ...issued.request, auth: access.auth,
     selection_grant: issued.selection_grant, market_grant: issued.market_grant });
   assert.equal(result.status, 'captured', JSON.stringify(result.incomplete_reasons));
@@ -104,6 +119,21 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
   f.state.calls.length = 0;
   return { ...f, input, scope, scopeJson, store, reader };
 }
+
+test('original mapping3 retains and reopens its own exact witnesses, metadata and explicit policy without upgrading v2', async () => {
+  const f = await fixture({ mappingVersion: 3 }), before = JSON.stringify(f.input);
+  const prepared = prepare(f.input), refs = await persist(f.client, f.scopeJson, prepared);
+  const reopened = await load(f.client, f.scopeJson, refs);
+  assert.equal(JSON.stringify(f.input), before);
+  assert.deepEqual(reopened.retained_inputs, f.input);
+  assert.equal(JSON.parse(reopened.retained_inputs.acquisition.compact_metadata_json).mapping_version, 3);
+  const rows = reopened.retained_inputs.acquisition.capture_result.source_capture.sources
+    .filter(source => source.payload.projection.definition.role === 'transactions').flatMap(source => source.payload.records);
+  assert.equal(rows[0].data.data.cached_mapping_version, 3);
+  assert.equal(rows[0].data.raw_projection.source_raw_witness.root_state, 'sql_null');
+  assert.equal(rows[0].data.data.market_eligible, null);
+  assert.equal(JSON.parse((await fixture()).input.acquisition.compact_metadata_json).mapping_version, 2);
+});
 
 for (const parcelCount of [2, 1001]) test(`retains/reopens complete original graph with ${parcelCount} spatial rows`, async () => {
   const f = await fixture({ parcelCount, linkCount: 251 }), original = JSON.stringify(f.input);

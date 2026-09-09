@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { mapWitnessParcelRow, mapWitnessAccountRow, mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
   createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
@@ -19,6 +20,8 @@ export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
 });
 const L = CUSTOM_COHORT_CAPTURE_INPUT_LIMITS;
 const preparedPlans = new WeakMap();
+const WITNESS_MAPPERS = Object.freeze({ parcels: mapWitnessParcelRow, accounts: mapWitnessAccountRow,
+  transactions: mapWitnessSaleRow, sale_links: mapWitnessSaleLinkRow });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const SUBJECT_KEYS = ['subject_input_version', 'usage', 'target', 'effective_date', 'case_effective_date',
@@ -183,6 +186,11 @@ function validateSources(capture, request, compact) {
       const sourceId = `${captureId}:${blob(json(p)).content_sha256}`; sourceRefs.push(sourceId);
       for (const row of p.records) {
         closed(row, ['record_id', 'data']);
+        if (compact.mapping_version === 3) {
+          const mapper = WITNESS_MAPPERS[p.projection.definition.role];
+          if (mapper) check(row.data?.data?.cached_mapping_version === 3
+            && same(row.data, mapper(row.data.raw_projection)), 'witness_mapping_mismatch');
+        }
         check(typeof row.record_id === 'string' && !recordIds.has(row.record_id)
           && (!all.length || all.at(-1).record_id < row.record_id));
         recordIds.add(row.record_id); all.push(row); recordSources.push({ record_id: row.record_id, source_ref: sourceId });

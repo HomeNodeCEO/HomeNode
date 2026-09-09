@@ -16,6 +16,7 @@ import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
 import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
+import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers } from './customCohortPreviewPresentation.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -198,7 +199,7 @@ function policyDecision(value) {
     || typeof value.policy_revision !== 'string' || !value.policy_revision) fail('market_data_access_denied');
   return freeze({ allowed: true, decision_id: value.decision_id, policy_revision: value.policy_revision });
 }
-async function boundedPolicy(policy, client, auth, context, purpose, budget) {
+async function boundedPolicy(policy, client, auth, context, purpose, budget, exposure = 'none') {
   budget.check();
   let timer, aborted;
   const expired = new Promise((_, reject) => {
@@ -212,7 +213,7 @@ async function boundedPolicy(policy, client, auth, context, purpose, budget) {
     // work cannot issue another query after its owner closes that client. Join
     // rejections through Promise.race; never leave an unhandled late rejection.
     const result = await Promise.race([Promise.resolve().then(() =>
-      policy(client, auth, context, purpose, { retention: true })), expired]);
+      policy(client, auth, context, purpose, { retention: true, exposure })), expired]);
     budget.check(); return policyDecision(result);
   } finally { clearTimeout(timer); budget.signal?.removeEventListener('abort', aborted); }
 }
@@ -222,7 +223,7 @@ function captured(value, stage) {
   return value;
 }
 
-async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null }) {
+async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null, exposure = 'none' }) {
   const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
   if (!previous) fail('context_unavailable');
   const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
@@ -245,7 +246,7 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     || (study && !same(requestMetadata.observation_period, study.observation_period))
     || requestMetadata.effective_date !== context.effective_date || requestMetadata.knowledge_cutoff !== null) fail('operation_conflict');
   const purpose = describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
-  const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget);
+  const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, exposure);
   if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
   const retained = await loadCustomCohortCaptureInputs(client, scopeJson, refs);
   return { context, retained, purpose, decision };
@@ -262,6 +263,39 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
 export function createCustomCohortContextCapture({ pool, authorizeMarketData } = {}) {
   if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function') {
     throw new TypeError('custom_cohort_capture_dependencies_required');
+  }
+  async function runPreview(value, options, { includeMap = true, exposure = 'none', project } = {}) {
+    const input = previewInputOf(value), budget = operationBudget(options);
+    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, false, 'read');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      return { target, scopeJson, ...await authorizedRetainedInputs(client, {
+        scopeJson, reference: input.contextRef, input, authorizeMarketData, budget, exposure,
+      }) };
+    });
+    // All calculation/presentation happens outside the DB connection and before
+    // the final current authorization check. Selection-only updates need not
+    // decode/resend immutable geometry, nor disclose entire member arrays.
+    budget.check();
+    const preview = buildCustomCohortObservationPreview({ context_ref: input.contextRef,
+      retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
+    budget.check();
+    const parcelMap = includeMap ? buildCustomCohortParcelMap({ retained_inputs: loaded.retained.retained_inputs,
+      selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] })
+      : { status: 'omitted', reason: 'geometry_not_requested' };
+    const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
+    const content = project ? project(preview, expected, parcelMap) : { preview, parcel_map: parcelMap };
+    budget.check();
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
+      if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
+        .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+      const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget, exposure);
+      if (!same(decision, loaded.decision)) fail('market_policy_changed');
+      return freeze({ status: 'preview', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+        ...expected, subject_freshness: 'matched', ...content,
+        apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+    });
   }
   return Object.freeze({ async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options);
@@ -365,36 +399,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities });
     });
-  }, async preview(value, options = {}) {
-    const input = previewInputOf(value), budget = operationBudget(options);
-    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
-      const target = await resolveTarget(client, input, false, 'read');
-      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
-      return { target, scopeJson, ...await authorizedRetainedInputs(client, {
-        scopeJson, reference: input.contextRef, input, authorizeMarketData, budget,
-      }) };
-    });
-    // Pure calculation after releasing the reading client: a pocket toggle
-    // never holds workfile/subject locks while traversing all observations.
-    budget.check();
-    const preview = buildCustomCohortObservationPreview({ context_ref: input.contextRef,
-      retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
-    budget.check();
-    const selected = [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))];
-    const parcelMap = buildCustomCohortParcelMap({ retained_inputs: loaded.retained.retained_inputs, selected_account_ids: selected });
-    budget.check();
-    return transaction(pool, 'READ COMMITTED', budget, async client => {
-      assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
-      if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
-        .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
-      const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget);
-      if (!same(decision, loaded.decision)) fail('market_policy_changed');
-      // One response owns one context/selection for BOTH the map and numbers.
-      // UI owners must replace this group together, never mix response revisions.
-      // No raw retained graph, report writes or eligible-cohort claim is returned.
-      return freeze({ status: 'preview', context_ref: input.contextRef, selection_revision: input.selection.revision,
-        subject_freshness: 'matched', preview, parcel_map: parcelMap,
-        apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
-    });
+  }, preview(value, options = {}) {
+    return runPreview(value, options);
+  }, present(value, presentation = { includeMap: true }, options = {}) {
+    exactKeys(presentation, ['includeMap']);
+    if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');
+    return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary',
+      project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected }), parcel_map: parcelMap }) });
+  }, inspect(value, inspection, options = {}) {
+    exactKeys(inspection, ['population', 'page']);
+    const owned = freeze(JSON.parse(canonicalAssessmentJson(inspection)));
+    return runPreview(value, options, { includeMap: false, exposure: 'report_observation_members',
+      project: (preview, expected) => ({ status: 'members', page: inspectCustomCohortPreviewMembers({ preview, expected, ...owned }) }) });
   } });
 }

@@ -13,6 +13,7 @@ import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitative
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./neighborhoodAssessment/customAcceptanceSnapshot.js";
 import { captureCustomNeighborhoodDraftReportBinding } from "./neighborhoodAssessment/customDraftReportBinding.js";
 import { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
+import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomNeighborhoodWorkspaceCheckpoint } from "./neighborhoodAssessment/customWorkspaceCheckpoint.js";
 export { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
@@ -520,7 +521,9 @@ function prepareCustomAppraisalSectionSave({
         ? normalizeIncomeApproachSection(sectionValueInput)
         : sectionKey === "sales_comparison"
           ? normalizeSalesComparisonQualitativeAnalysis(sectionValueInput)
-          : sectionValueInput,
+          : sectionKey === CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION
+            ? prepareCustomNeighborhoodWorkspaceCheckpoint(sectionValueInput)
+            : sectionValueInput,
   );
   const expectedRevision = normalizeCustomAppraisalSectionRevision(expectedRevisionValue);
   const saveReason = normalizeCustomAppraisalSaveReason(saveReasonValue);

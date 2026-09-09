@@ -62,8 +62,8 @@ importers:
         specifier: ~19.2.18
         version: 19.2.18
       expo-doctor:
-        specifier: ^1.18.1
-        version: 1.20.2
+        specifier: ^1.20.4
+        version: 1.20.4
       tsx:
         specifier: ^4.20.6
         version: 4.23.12
@@ -1265,8 +1265,8 @@ packages:
     peerDependencies:
       expo: '*'
 
-  expo-doctor@1.20.2:
-    resolution: {integrity: sha512-KA32iZLrbviecZV0FAIsJHTfa1DomzLH6EjMXHsfbiV5ETQ8llo/cxA6Qga5FhG/5JSlkt23/yeWDaLZQJwnug==}
+  expo-doctor@1.20.4:
+    resolution: {integrity: sha512-Jm1lIqVdO8br9wiqTg5QhJ1u4zLWAhoue4bXsEuzW543vC3XY+U0cpEOmiLkvJhTTgZgIK+24l4i8VzyZ2VLMg==}
     engines: {node: ^20.19.4 || ^22.13.0 || ^24.3.0 || >= 25.0.0}
     hasBin: true
 
@@ -3823,7 +3823,7 @@ snapshots:
     dependencies:
       expo: 57.0.15(@babel/core@7.29.7(supports-color@8.1.1))(@expo/dom-webview@57.0.1)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1))(react@19.2.3)(supports-color@8.1.1)(typescript@6.0.3)
 
-  expo-doctor@1.20.2: {}
+  expo-doctor@1.20.4: {}
 
   expo-file-system@57.0.6(expo@57.0.15)(react-native@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))(@types/react@19.2.18)(react@19.2.3)(supports-color@8.1.1)):
     dependencies:

@@ -10,6 +10,7 @@ import { normalizeCostApproachSection } from "./costApproach.js";
 import { normalizeIncomeApproachSection } from "./incomeApproach.js";
 import { normalizeFinalReconciliationSection } from "./finalReconciliation.js";
 import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitativeAnalysis.js";
+import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./neighborhoodAssessment/customAcceptanceSnapshot.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
@@ -631,6 +632,11 @@ export async function saveCustomAppraisalWorkfileSectionInTransaction(client, in
 
 export async function saveCustomAppraisalWorkfileSection(pool, input) {
   const prepared = prepareCustomAppraisalSectionSave(input);
+  // Accepted neighborhood values and their receipt/history must change together.
+  // Ordinary browser/manual/autosave requests cannot replace this reserved group.
+  if (prepared.sectionKey === CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION) {
+    throw new Error("custom_neighborhood_acceptance_workflow_required");
+  }
   await ensureCustomAppraisalWorkfileSchema(pool);
   const client = await pool.connect();
   try {

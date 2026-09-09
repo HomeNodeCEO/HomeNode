@@ -186,6 +186,8 @@ test("section save failures preserve not-found, conflict, validation, and bounde
       body: { error: "custom_appraisal_section_revision_conflict", current_revision: 8 },
     },
     { error: new Error("custom_appraisal_workfile_signed"), status: 409, body: { error: "custom_appraisal_workfile_signed" } },
+    { error: new Error("custom_neighborhood_acceptance_workflow_required"), status: 409,
+      body: { error: "custom_neighborhood_acceptance_workflow_required" } },
     { error: new Error("invalid_section_key"), status: 400, body: { error: "invalid_section_key" } },
     { error: new Error("custom_appraisal_section_too_large"), status: 400, body: { error: "custom_appraisal_section_too_large" } },
     { error: diagnostic, status: 500, body: { error: "custom_appraisal_workfile_save_failed" } },

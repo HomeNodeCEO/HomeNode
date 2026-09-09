@@ -119,6 +119,17 @@ const sectionWrites = (db) => db.events.filter((event) => [
   "section", "history", "touch-workfile", "touch-assignment",
 ].includes(event.operation));
 
+test("ordinary saves cannot replace the coherent neighborhood section", async () => {
+  for (const sectionKey of ["neighborhood_assessment", " NEIGHBORHOOD_ASSESSMENT "]) {
+    for (const saveReason of ["autosave", "manual_save", "legacy_import"]) {
+      const db = recordingDatabase();
+      await assert.rejects(saveCustomAppraisalWorkfileSection(db.pool,
+        { ...baseInput, sectionKey, saveReason }), /custom_neighborhood_acceptance_workflow_required/);
+      assert.deepEqual(db.events, [], "reject before schema, connection acquisition or any data write");
+    }
+  }
+});
+
 test("caller-owned helper preserves wrapper response and complete write path", async () => {
   const wrapper = recordingDatabase();
   const transaction = recordingDatabase();

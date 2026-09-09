@@ -116,6 +116,9 @@ export function createAssignmentWorkfileMutationRouter({
         if (error?.message === "custom_appraisal_workfile_signed") {
           return res.status(409).json({ error: error.message });
         }
+        if (error?.message === "custom_neighborhood_acceptance_workflow_required") {
+          return res.status(409).json({ error: error.message });
+        }
         if (
           String(error?.message || "").startsWith("invalid_")
           || error?.message === "custom_appraisal_section_too_large"

@@ -16,6 +16,7 @@ import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectD
 import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
 import { checkCustomCohortContextDatabase } from "./helpers/customCohortContextDatabaseChecks.js";
 import { checkCustomAppraisalTransactionDatabase } from "./helpers/customAppraisalTransactionDatabaseChecks.js";
+import { checkCustomNeighborhoodAcceptanceDatabase } from "./helpers/customNeighborhoodAcceptanceDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -382,6 +383,14 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       checkCustomCohortContextDatabase(pool, await identityFixture(pool)));
     await t.test("Custom section writes participate in caller-owned atomic transactions without changing ordinary saves", async () =>
       checkCustomAppraisalTransactionDatabase(pool, await identityFixture(pool)));
+
+    for (const atomicSave of [false, true]) await t.test(`Custom accepted groups preserve complete persistence (atomic save: ${atomicSave})`, async () => {
+      const identity = await identityFixture(pool), data = publicationFixture(identity);
+      const { job } = await enqueue(identity, data), claim = await claimOne(repository, job.id);
+      assert.equal((await publish(repository, claim, data)).promoted, true);
+      const assessment = await repository.getCurrent(identity.scope);
+      await checkCustomNeighborhoodAcceptanceDatabase(pool, identity, assessment, { atomicSave });
+    });
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
       const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };

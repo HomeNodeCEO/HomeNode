@@ -70,10 +70,16 @@ all-statistic PDF text/pagination and separate ring drawing. The production buil
 and bundle budgets pass. Synthetic browser and PDF visual checks are not proof of
 production data coverage or real-property appraisal accuracy.
 
-The draft binding SQL still needs the normal migrated native database integration
-run, including current-section loss, current subject/date changes and concurrency.
-The independent source-reader caller-snapshot native test is also pending locally.
-Keep this work isolated until those tests and the real source-to-Apply owner are
-complete. Next connect freshly authorized source/context capture, complete discovery,
+Native PostgreSQL verification passed on September 9, 2026: all 31 atomic-save,
+editor-read and draft-binding checks passed on a fresh, canonically migrated
+local test database. This includes current-section loss, changed subject/date,
+cross-file rejection, rollback and coherent reads across a concurrent commit.
+The separate caller-snapshot native test passed all seven tests against actual
+PostgreSQL/PostGIS. Its CI runner now creates its own fresh loopback fixture
+database; a skipped native test is not accepted as success. Remote CI remains
+required, and neither native suite proves real-property/provider accuracy.
+
+The real source-to-Apply owner is not yet connected. Keep this work isolated
+until that integration is complete. Next connect freshly authorized source/context capture, complete discovery,
 evidence-backed cohort eligibility, coherent publication, actual catalog occupancy,
 atomic Apply, pocket editing and real Hardy/Snowmass/Aaron acceptance checks.

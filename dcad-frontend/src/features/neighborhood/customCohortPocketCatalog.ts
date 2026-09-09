@@ -1,4 +1,6 @@
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
+import { checkCustomCohortPocketRecommendation } from './customCohortPocketRecommendation.ts';
+import type { CheckedPocketRecommendation } from './customCohortPocketRecommendation';
 
 export interface CheckedRecordedPocket {
   readonly id: string; readonly label: string; readonly county: string;
@@ -15,6 +17,7 @@ export interface CheckedPocketCatalog {
   readonly subject_membership: { readonly account_id: string; readonly assigned_pocket_id: string | null;
     readonly status: string; readonly recorded_label_match_only: true };
   readonly limitations: readonly string[];
+  readonly recommendation?: CheckedPocketRecommendation | null;
 }
 const UNASSIGNED = 'discovery:unassigned';
 export const CUSTOM_COHORT_UNASSIGNED_GROUP = UNASSIGNED;
@@ -80,13 +83,16 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
   const assignedId = subject.assigned_pocket_id as string | null;
   if (assignedId !== null) ensure(pockets.find(p => p.id === assignedId)?.account_ids.includes(subjectAccount));
   ensure(Array.isArray(catalog.limitations) && catalog.limitations.length <= 64);
-  return frozen({ status: catalog.status as CheckedPocketCatalog['status'],
+  const checked = { status: catalog.status as CheckedPocketCatalog['status'],
     binding: { context_ref: { ...expected.contextRef }, selection_revision: expected.selection.revision }, pockets,
     unassigned: { account_ids: unassignedAccounts, member_count: unassignedAccounts.length, reason_counts },
     coverage: { discovery_member_count: accounts.size, assigned_account_count: assigned, unassigned_account_count: unassignedAccounts.length },
     subject_membership: { account_id: subjectAccount, assigned_pocket_id: assignedId,
-      status: text(subject.status, 200), recorded_label_match_only: true },
-    limitations: catalog.limitations.map(v => text(v, 200)) });
+      status: text(subject.status, 200), recorded_label_match_only: true as const },
+    limitations: catalog.limitations.map(v => text(v, 200)) };
+  const recommendation = Object.hasOwn(response, 'recommendation')
+    ? checkCustomCohortPocketRecommendation(response.recommendation, checked, binding.selection_sha256) : null;
+  return frozen({ ...checked, recommendation });
 }
 
 export function customCohortCatalogGroupIds(catalog: CheckedPocketCatalog): readonly string[] {

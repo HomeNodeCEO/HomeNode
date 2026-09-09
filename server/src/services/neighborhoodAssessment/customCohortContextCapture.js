@@ -18,7 +18,8 @@ import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
 import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers } from './customCohortPreviewPresentation.js';
-import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from './customCohortPocketCatalog.js';
+import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 
@@ -235,7 +236,8 @@ function captured(value, stage) {
   return value;
 }
 
-async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null, exposure = 'none', loadInputs = true }) {
+async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null,
+  exposure = 'none', additionalExposures = [], loadInputs = true }) {
   const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
   if (!previous) fail('context_unavailable');
   const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
@@ -268,6 +270,10 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     : describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
   const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, exposure);
   if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
+  for (const additional of additionalExposures) {
+    const permitted = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, additional);
+    if (!same(permitted, decision)) fail('market_policy_changed');
+  }
   // Review persistence will reopen the original graph in this same transaction.
   // Keep its preceding rights check, without allocating/validating it twice.
   const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
@@ -288,13 +294,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
   if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function') {
     throw new TypeError('custom_cohort_capture_dependencies_required');
   }
-  async function runPreview(value, options, { includeMap = true, exposure = 'none', project } = {}) {
+  async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
       const target = await resolveTarget(client, input, false, 'read');
       const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
       return { target, scopeJson, ...await authorizedRetainedInputs(client, {
-        scopeJson, reference: input.contextRef, input, authorizeMarketData, budget, exposure,
+        scopeJson, reference: input.contextRef, input, authorizeMarketData, budget, exposure, additionalExposures,
       }) };
     });
     // All calculation/presentation happens outside the DB connection and before
@@ -316,9 +322,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget, exposure);
       if (!same(decision, loaded.decision)) fail('market_policy_changed');
-      return freeze({ status: 'preview', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+      for (const additional of additionalExposures) {
+        const permitted = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget, additional);
+        if (!same(permitted, loaded.decision)) fail('market_policy_changed');
+      }
+      const response = { status: 'preview', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
         ...expected, subject_freshness: 'matched', ...content,
-        apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+        apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+      if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
+      return freeze(response);
     });
   }
   return Object.freeze({ async capture(value, options = {}) {
@@ -449,13 +461,24 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
     });
   }, preview(value, options = {}) {
     return runPreview(value, options);
-  }, catalog(value, options = {}) {
-    return runPreview(value, options, { includeMap: false, exposure: 'report_observation_catalog',
-      project: (preview, expected, _parcelMap, retained_inputs) => ({ status: 'catalog',
-        catalog: presentCustomCohortPocketCatalog({
+  }, async catalog(value, options = {}) {
+    // Preserve the original method/response when omitted. The optional summary
+    // uses the two EXISTING exposures; no source-policy key/grant is widened.
+    const requested = value && Object.hasOwn(value, 'includeRecommendation');
+    const include = requested ? value.includeRecommendation : false;
+    if (typeof include !== 'boolean') fail('invalid_input');
+    const input = requested ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'includeRecommendation')) : value;
+    return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
+      additionalExposures: include ? ['report_observation_summary'] : [],
+      outputLimit: include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
+      project: (preview, expected, _parcelMap, retained_inputs) => {
+        const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview }), preview, expected,
-        }),
-      }),
+        });
+        if (!include) return { status: 'catalog', catalog };
+        const recommendation = buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs });
+        return { status: 'catalog', catalog, ...(recommendation ? { recommendation } : {}) };
+      },
     });
   }, present(value, presentation = { includeMap: true }, options = {}) {
     exactKeys(presentation, ['includeMap']);

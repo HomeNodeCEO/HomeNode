@@ -77,6 +77,32 @@ test('body auth, source authority, numeric file IDs and unknown fields never rea
   assert.equal((await request('preview', { ...bodies.preview, include_map: 'false' })).status, 400);
   assert.equal(calls.length, 0);
 });
+
+test('catalog recommendation flag is optional, boolean-only, and forwarded without identity or grant overrides', async t => {
+  const { request, calls } = await start(t);
+  for (const value of [true, false]) {
+    const response = await request('catalog', { ...bodies.catalog, include_recommendation: value });
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    const input = calls.at(-1).args[0];
+    assert.equal(input.includeRecommendation, value); assert.equal(input.auth, auth);
+    assert.equal(input.accountId, 'R-001'); assert.equal(input.assignmentFileId, assignment);
+  }
+  const count = calls.length;
+  for (const value of [null, 'true', 1, [], {}]) {
+    assert.equal((await request('catalog', { ...bodies.catalog, include_recommendation: value })).status, 400);
+  }
+  assert.equal((await request('catalog', { ...bodies.catalog, include_recommendation: true, summary_grant: true })).status, 400);
+  assert.equal((await request('preview', { ...bodies.preview, include_recommendation: true })).status, 400);
+  assert.equal(calls.length, count);
+});
+
+test('optional catalog recommendation response is still bounded by the complete catalog transport limit', async t => {
+  const { request } = await start(t, { methods: { catalog: async () => ({ status: 'catalog',
+    catalog: { marker: 'membership-not-clipped' }, recommendation: { marker: 'x'.repeat(4_000_000) } }) } });
+  const response = await request('catalog', { ...bodies.catalog, include_recommendation: true });
+  assert.equal(response.status, 422); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { error: 'neighborhood_catalog_incomplete', reason: 'catalog_response_byte_limit', membership_returned: false });
+});
 test('anonymous requests cannot parse/read source or reach the owner', async t => {
   const { request, calls } = await start(t, { principal: null });
   const response = await request('capture', { ...bodies.capture, auth });

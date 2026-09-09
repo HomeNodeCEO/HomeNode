@@ -27,6 +27,19 @@ function catalogResponse() {
     } };
 }
 const catalog = catalogHelpers.checkCustomCohortPocketCatalog(catalogResponse(), input);
+function withRecommendation(props, { suggested = [groupId(2)], status = 'recommendation_for_review' } = {}) {
+  const rows = [groupId(2), groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP].map((id, index) => ({
+    id, member_count: 1, review_rank: index + 1, contains_subject: id === groupId(1), subject_group_review: id === groupId(1),
+    suggested_for_review: suggested.includes(id), meets_review_policy: suggested.includes(id),
+    similarity: { lower: index ? 20 : 73.3333, upper: index ? 46.6667 : 100, known_weight_percent: 73.3333 },
+  }));
+  return { ...props, workspace: { ...props.workspace, catalog: { ...props.workspace.catalog, recommendation: {
+    status, policy: { id: 'custom-current-observation-review-v1', revision: 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
+    subject: { in_discovery: true, recorded_group_review_ids: [groupId(1)] }, pockets: rows,
+    all: { member_count: 3, similarity: { lower: 37.7778, upper: 64.4444, known_weight_percent: 73.3333 } },
+    recommended_recorded_group_ids: suggested, limitations: [],
+  } } } };
+}
 function response(request) {
   return { status: 'preview', target: { account_id: request.accountId, assignment_file_id: request.assignmentFileId },
     context_ref: request.contextRef, selection_revision: request.selection.revision, subject_freshness: 'matched',
@@ -200,7 +213,69 @@ test('independent inspection receives the shared transport and never selects its
 test('standalone mode retains broad catalog loading and all-observations initialization', async () => {
   const h = harness(), p = h.props(); delete p.workspace; h.render(p); await h.drain(); await h.tick();
   assert.equal(h.catalogCalls.length, 1); assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'B', 'C']);
+  assert.equal(h.catalogCalls[0][2].include_recommendation, true);
   h.click('Exclude all'); await h.tick(); assert.deepEqual(h.calls[1].request.selection.pockets, []); assert.equal(h.intents.length, 0); h.unmount();
+});
+
+test('recommendation display preserves restored [] and does not auto-select or create extra preview requests', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
+  assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0);
+  assert.deepEqual(h.calls[0].request.selection.pockets, []);
+  assert.match(h.text(), /Recommended pockets for review/); assert.match(h.text(), /37.8–64.4 \/ 100/);
+  assert.match(h.text(), /73.3%/); assert.match(h.text(), /not confidence or reliability/);
+  assert.match(h.text(), /subject’s recorded group is flagged separately/i);
+  assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.checked === false));
+});
+
+test('Use suggested selection emits one exact intent and updates map/statistics only after owner save and matching preview', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
+  const old = h.child('CustomCohortStatistics').group;
+  h.click('Use suggested selection'); assert.deepEqual(h.intents, [[groupId(2)]]);
+  assert.equal(h.calls.length, 1); assert.equal(h.child('CustomCohortStatistics').group, old);
+  const pending = withRecommendation(h.props([])); pending.workspace.saving = true; h.render(pending); await h.tick();
+  assert.equal(h.calls.length, 1); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
+  assert.equal(h.child('CustomCohortParcelMap').group, old);
+  h.render(withRecommendation(h.props([groupId(2)], 8))); await h.tick();
+  assert.equal(h.calls.length, 2); assert.deepEqual(h.calls[1].request.selection.pockets[0].account_ids, ['B']);
+  assert.equal(h.child('CustomCohortStatistics').group, old); await h.complete();
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+  assert.equal(h.child('CustomCohortParcelMap').group, h.child('CustomCohortStatistics').group);
+  assert.equal(h.child('CustomCohortStatistics').group.binding.selectionRevision, 8);
+  assert.equal(h.intents.length, 1); assert.equal(h.catalogCalls.length, 0);
+});
+
+for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture']) test(`${state} blocks Use suggested selection without mutating existing choices`, async t => {
+  const h = harness(); t.after(() => h.unmount()); const p = withRecommendation(h.props([]));
+  if (state === 'saving') p.workspace.saving = true; else p.workspace.blockedReason = state;
+  h.render(p); const use = h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection');
+  assert.ok(use.props.disabled); h.click('Use suggested selection'); await h.tick();
+  assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 0);
+});
+
+test('empty/insufficient suggestion cannot implicitly clear a saved selection; manual Exclude all remains explicit', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  for (const value of [{ suggested: [] }, { status: 'insufficient_observations' }]) {
+    h.render(withRecommendation(h.props([groupId(1)]), value));
+    assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection').props.disabled, true);
+    h.click('Use suggested selection'); assert.equal(h.intents.length, 0);
+  }
+  h.click('Exclude all'); assert.deepEqual(h.intents, [[]]);
+});
+
+test('an already active suggestion does not increment selection revision or write again', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([groupId(2)], 19))); await h.tick(); await h.complete();
+  assert.match(h.text(), /suggested selection is already active/);
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection').props.disabled, true);
+  h.click('Use suggested selection'); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
+});
+
+test('recommended group inspection remains independent and fresh equivalent recommendation objects do not cause request loops', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
+  const beta = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
+  assert.ok(beta); beta.props.onClick(); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(2)); assert.equal(h.intents.length, 0);
+  h.render(withRecommendation(h.props([]))); await h.tick();
+  assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
 });
 test('inspector uses its injected transport once, retains independent selection and aborts on cleanup', async () => {
   const h = harness('CustomCohortPocketInspector'); h.render({ input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport });

@@ -12,9 +12,10 @@ const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomple
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
 
 function invalid() { throw Object.assign(new Error('invalid_input'), { reason: 'invalid_input' }); }
-function bodyOf(body, required) {
+function bodyOf(body, required, optional = []) {
   if (!body || Object.getPrototypeOf(body) !== Object.prototype
-    || Object.keys(body).length !== required.length || !required.every(key => Object.hasOwn(body, key))) invalid();
+    || !required.every(key => Object.hasOwn(body, key))
+    || Object.keys(body).some(key => !required.includes(key) && !optional.includes(key))) invalid();
   if (Buffer.byteLength(JSON.stringify(body)) > BODY_BYTES) {
     throw Object.assign(new Error('request_too_large'), { status: 413 });
   }
@@ -60,7 +61,7 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
   }
   const router = express.Router();
   const parse = express.json({ limit: BODY_BYTES, strict: true });
-  function route(action, fields, execute) {
+  function route(action, fields, execute, optional = []) {
     router.post(`${BASE}/${action}`, (req, res, next) => {
       res.set('cache-control', 'no-store');
       if (typeof req.mobileAuth?.userId !== 'string' || !req.mobileAuth.userId.trim()) {
@@ -73,7 +74,7 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
       const closed = () => { if (!res.writableFinished) abort(); };
       req.once('aborted', abort); res.once('close', closed);
       try {
-        const body = bodyOf(req.body, fields);
+        const body = bodyOf(req.body, fields, optional);
         const requested = req.params.id;
         if (typeof requested !== 'string' || !requested || requested.length > 64
           || requested.trim() !== requested || /[\u0000-\u001f\u007f]/.test(requested)) invalid();
@@ -115,8 +116,12 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
   route('members', ['assignment_file_id', 'context_ref', 'selection', 'population', 'page'], (identity, body, options) =>
     cohortService.inspect({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { population: body.population, page: body.page }, options));
-  route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) =>
-    cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection }, options));
+  route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) => {
+    const requested = Object.hasOwn(body, 'include_recommendation');
+    if (requested && typeof body.include_recommendation !== 'boolean') invalid();
+    return cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection,
+      ...(requested ? { includeRecommendation: body.include_recommendation } : {}) }, options);
+  }, ['include_recommendation']);
   router.use(BASE, (error, _req, res, _next) => {
     const [status, payload] = publicFailure(error);
     return res.status(status).json(payload);

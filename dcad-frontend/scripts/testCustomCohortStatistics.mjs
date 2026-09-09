@@ -107,10 +107,21 @@ test('source-reported records stay in their own expandable population and preser
   assert.ok(marketing[0].includes('>0</td>'));
 });
 test('labels and all server display strings remain escaped React text, never HTML', () => {
-  const group = structuredClone(fixture()); group.summary.pockets[0].label = '<img src=x onerror=alert(1)>';
-  group.summary.selected.stock.metrics.gla_sqft.display.median = '<script>alert(1)</script>';
-  const html = render(group, { pocketId: 'alpha' }); assert.doesNotMatch(html, /<img|<script>/);
-  assert.match(html, /&lt;img/); assert.match(html, /&lt;script&gt;/);
+  for (const [label, value] of [
+    ['<img src=x onerror=alert(1)>', '<script>alert(1)</script>'],
+    ['<IMG SRC=x ONERROR=alert(1)>', '<SCRIPT>alert(1)</SCRIPT>'],
+    ['<ImG src=x onerror=alert(1)>', '<ScRiPt data-x=y>alert(1)</ScRiPt>'],
+  ]) {
+    const group = structuredClone(fixture()); group.summary.pockets[0].label = label;
+    group.summary.selected.stock.metrics.gla_sqft.display.median = value;
+    const html = render(group, { pocketId: 'alpha' });
+    // Assert each exact input's escaped output, not an incomplete HTML-filter
+    // regexp. React owns escaping; this test never implements a sanitizer.
+    for (const input of [label, value]) {
+      assert.equal(html.includes(input), false);
+      assert.ok(html.includes(input.replaceAll('<', '&lt;').replaceAll('>', '&gt;')));
+    }
+  }
 });
 test('null summary presents an explicit empty state without reporting fabricated values', () => {
   const html = render(null); assert.match(html, /No captured statistics are available yet/); assert.doesNotMatch(html, /<table/);

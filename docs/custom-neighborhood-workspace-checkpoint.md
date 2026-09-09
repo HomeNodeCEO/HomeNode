@@ -101,5 +101,65 @@ this section merely points to it. Report publication, supported cohort decisions
 and `saveCustomNeighborhoodAcceptanceInTransaction` remain separate. This
 checkpoint cannot make an observation-only preview eligible for Apply.
 
-Focused verification: `node --test test/customWorkspaceCheckpoint.test.js` from
-`server`; no database, route or browser-host integration is exercised here.
+## Persistence and verification
+
+The existing generic workfile writer invokes the checkpoint validator for the
+normalized `neighborhood_workspace` key in both pool-owned and caller-owned
+transaction paths. It retains the ordinary expected-section-revision check,
+workfile lock, complete section/history write and signed-state guard. The pure
+contract does not create a separate persistence or authorization mechanism.
+
+Focused verification from `server`:
+
+```text
+node --test test/customWorkspaceCheckpoint.test.js test/customWorkspaceCheckpointPersistence.test.js
+```
+
+Those tests cover structural admission and the query-level writer composition;
+they do not by themselves prove PostgreSQL concurrency or durable COMMIT.
+
+The ordinary `test/customCohortContextCapture.integration.test.js` wrapper, already
+included in `npm run test:uad-migration`, now runs these real helpers sequentially:
+
+1. Coordinator capture/retention/preview/catalog checks create the exact synthetic
+   assignment and retained source fixture.
+2. Source-policy checks use a separately checked connection to that same child
+   database and roll back their synthetic organization rights fixtures.
+3. Checkpoint checks require the exact preceding coordinator fixture and exercise
+   actual generic save transactions and separate workfile reads.
+
+The existing `prepareNeighborhoodCiDatabase` guards, canonical migrations,
+loopback socket/database checks and unique disposable child database remain
+unchanged. No shared-database fallback, CI flag spoof, DROP, service control,
+workflow modification or new schema is introduced. With no `DATABASE_URL`, the
+native wrapper remains explicitly skipped; a skip is not native success.
+
+On 2026-09-09 the retained local native runner passed **13 coordinator, 8
+source-policy and 6 checkpoint check groups**, recorded in workspace artifact
+`outputs/custom-neighborhood-context-native-v1/e7c8dbd5ec424dbba173cbfbf96d0d5f.json`.
+Its runner SHA-256 was
+`7e7655384f5fcca09cff4f224d709bf37971382c36fd59b2c10ac9b99b0d6bbf`;
+the artifact also pins source files and canonical migration checksums. This is
+local migrated PostgreSQL/PostGIS evidence, not a claim that the newly extended
+ordinary CI wrapper or an entire remote CI job has already passed.
+
+The six checkpoint groups verify:
+
+- Pending operation UUID/period COMMIT and separate reopen before capture.
+- Actual capture plus exact-operation replay and context/catalog intent reopen.
+- Explicit empty selection and a real retained `compareCurrent` check staying
+  matched after assignment/workfile `updated_at` changes; source caches are not
+  reread and all-population statistics remain identical.
+- Two concurrent saves at one expected revision yield one COMMIT and one CAS
+  conflict, with exact consecutive section history.
+- Caller-owned rollback removes tentative section/history; wrong-account and
+  malformed saves leave durable state untouched.
+- A persisted signed workfile state rejects further checkpoint saves without
+  changing report sections, histories or acceptance records.
+
+Limits: all identities/source grants are synthetic. The signed case tests the
+writer's persisted-state guard, not actual signing, HMAC or PDF artifact creation.
+Acceptance remains absent in this fixture; it proves the checkpoint does not
+create acceptance, not that an existing accepted group was mutated or replayed.
+These checks do not prove browser-host save ordering, production source rights,
+report-ready assessment, recommendation quality or Apply behavior.

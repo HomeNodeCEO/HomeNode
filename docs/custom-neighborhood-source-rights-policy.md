@@ -110,3 +110,20 @@ unchanged. Production factory/router wiring and owner provisioning are separate.
 
 Focused verification: `node --test test/customNeighborhoodSourcePolicy.test.js`
 from `server`. Tests use explicitly synthetic owner grants, never production metadata.
+
+The existing `customCohortContextCapture.integration.test.js` native CI wrapper
+also runs `customNeighborhoodSourcePolicyDatabaseChecks` after the coordinator
+fixture and before checkpoint persistence. It independently checks the policy
+client's socket/database identity using the unchanged neighborhood test guard;
+the policy helper rolls back all of its synthetic rights fixtures.
+
+Eight real policy check groups passed in the local migrated run recorded at
+workspace artifact
+`outputs/custom-neighborhood-context-native-v1/e7c8dbd5ec424dbba173cbfbf96d0d5f.json`:
+all four explicitly permitted exposures; bounded rights-subtree projection;
+policy-revision/exposure changes; revocation; database-clock expiry; foreign/missing
+organization grants; dataset/provider-mix mismatch; and the SQL size guard.
+This tests the actual resolver against synthetic configured rights. It does not
+establish real provider rights, ingestion provenance, production activation or a
+completed remote CI run. See [checkpoint verification](custom-neighborhood-workspace-checkpoint.md#persistence-and-verification)
+for the shared native sequence, retained evidence and remaining limits.

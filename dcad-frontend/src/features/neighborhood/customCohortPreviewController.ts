@@ -201,8 +201,10 @@ function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
   return freeze({ ...map, geojson: { ...map.geojson, features },
     counts: { ...map.counts, selected_accounts: selected.size, geojson_bytes: map.counts.geojson_bytes + byteChange } });
 }
-function accept(value: unknown, input: CustomCohortPreviewInput, hash: string, cached: AvailableMap | null,
-  includeMap: boolean): CustomCohortPreviewGroup {
+/** Inspection reuses the exact summary/target/content binding without requiring
+ * a second parcel geometry download. This never admits geometry or report Apply. */
+export function checkCustomCohortSummaryResponse(value: unknown, input: CustomCohortPreviewInput, hash: string) {
+  prepare(input); ensure(HASH.test(hash));
   const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply']);
   const target = exact(r.target, ['account_id', 'assignment_file_id']);
   ensure(r.status === 'preview' && r.subject_freshness === 'matched' && target.account_id === input.accountId
@@ -219,15 +221,24 @@ function accept(value: unknown, input: CustomCohortPreviewInput, hash: string, c
     && apply.reasons.length > 0 && apply.reasons.length <= 100 && Array.isArray(summaryApply.reasons)
     && summaryApply.reasons.length > 0 && summaryApply.reasons.length <= 100);
   apply.reasons.forEach(v => text(v, 200)); summaryApply.reasons.forEach(v => text(v, 200));
+  return freeze({ binding: { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
+    contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: hash },
+  summary: summary as Record<string, Json>, apply: { status: 'blocked' as const, reasons: [...apply.reasons] as string[] } });
+}
+
+export async function fingerprintCustomCohortSelection(input: CustomCohortPreviewInput) {
+  return fingerprint(prepare(input).selectionJson);
+}
+
+function accept(value: unknown, input: CustomCohortPreviewInput, hash: string, cached: AvailableMap | null,
+  includeMap: boolean): CustomCohortPreviewGroup {
+  const accepted = checkCustomCohortSummaryResponse(value, input, hash), r = object(value);
   const rawMap = object(r.parcel_map), selected = selectedAccounts(input); let parcelMap: ParcelMap;
   if (rawMap.status === 'omitted') {
     exact(rawMap, ['status', 'reason']); ensure(rawMap.reason === 'geometry_not_requested' && !includeMap && cached !== null);
     parcelMap = restyle(cached, selected);
   } else parcelMap = mapOf(rawMap, selected);
-  return freeze({ binding: { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: hash },
-  summary: summary as Record<string, Json>, parcel_map: parcelMap,
-  apply: { status: 'blocked', reasons: [...apply.reasons] as string[] } });
+  return freeze({ ...accepted, parcel_map: parcelMap });
 }
 
 export function createCustomCohortPreviewController(options: Options) {

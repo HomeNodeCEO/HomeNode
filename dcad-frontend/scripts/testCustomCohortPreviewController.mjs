@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
-import { createCustomCohortPreviewController } from '../src/features/neighborhood/customCohortPreviewController.ts';
+import { createCustomCohortPreviewController, checkCustomCohortSummaryResponse,
+  fingerprintCustomCohortSelection } from '../src/features/neighborhood/customCohortPreviewController.ts';
 import { buildCustomCohortObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { presentCustomCohortPreview } from '../../server/src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { buildCustomCohortParcelMap } from '../../server/src/services/neighborhoodAssessment/customCohortParcelMap.js';
@@ -40,6 +41,25 @@ function response(request, { map = request.include_map ? 'available' : 'omitted'
     apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
 }
 const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
+
+test('independent inspection admits the exact bound summary without inventing map geometry', async () => {
+  const request = { ...input(1, [pocket('inspection', ['B'])]), include_map: false };
+  const digest = await fingerprintCustomCohortSelection(input(1, [pocket('inspection', ['B'])]));
+  const result = checkCustomCohortSummaryResponse(response(request), input(1, [pocket('inspection', ['B'])]), digest);
+  assert.deepEqual(Object.keys(result).sort(), ['apply', 'binding', 'summary']);
+  assert.equal(result.summary.selected.stock.member_count, 1);
+  assert.equal(result.binding.selectionFingerprint, selectionHash(request));
+  assert.equal(result.apply.status, 'blocked'); assert.ok(Object.isFrozen(result.summary));
+});
+
+test('inspection summary cannot be substituted from another pocket, revision or target', () => {
+  const request = { ...input(), include_map: false };
+  for (const mutate of [r => { r.target.account_id = 'other'; }, r => { r.selection_revision++; },
+    r => { r.summary.binding.selection_sha256 = 'e'.repeat(64); }, r => { r.subject_freshness = 'changed'; }]) {
+    const value = response(request); mutate(value);
+    assert.throws(() => checkCustomCohortSummaryResponse(value, input(), selectionHash(request)));
+  }
+});
 function harness(options = {}) {
   let nextTimer = 0; const timers = new Map(), calls = [], states = [];
   const timer = { set(callback, delay) { timers.set(++nextTimer, { callback, delay }); return nextTimer; },

@@ -83,13 +83,27 @@ function errorMessage(body: unknown, status: number): string {
  * bounded deadline (or another caller-owned finite AbortSignal). Semantic input
  * admission belongs to that controller and to the authorized server route. */
 export function createCustomCohortPreviewTransport(options: Options) {
+  const post = createCustomCohortJsonTransport(options);
   return async (input: CustomCohortPreviewRequest, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof input.accountId !== 'string' || !input.accountId || input.accountId.length > 64
       || typeof input.include_map !== 'boolean') throw new Error('Invalid neighborhood preview request');
-    const path = `/api/accounts/${encodeURIComponent(input.accountId)}/neighborhood-cohort/preview`;
-    const body = JSON.stringify({ assignment_file_id: input.assignmentFileId, context_ref: input.contextRef,
-      selection: input.selection, include_map: input.include_map });
+    return post(input.accountId, 'preview', { assignment_file_id: input.assignmentFileId, context_ref: input.contextRef,
+      selection: input.selection, include_map: input.include_map }, { signal });
+  };
+}
+
+/** Shared bounded transport for the three read-only views and idempotent context
+ * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
+export function createCustomCohortJsonTransport(options: Options) {
+  return async (accountId: string, operation: 'preview' | 'catalog' | 'members' | 'capture',
+    payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
+    checkSignal(signal);
+    if (typeof accountId !== 'string' || !accountId || accountId.length > 64
+      || !['preview', 'catalog', 'members', 'capture'].includes(operation)) throw new Error('Invalid neighborhood request');
+    const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
+    const body = JSON.stringify(payload);
+    if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
     if (encoder.encode(body).length > REQUEST_BYTES) throw new Error('Neighborhood preview selection is too large');
     const response = await requestWithSignal(options, options.urlFor(path), {
       method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
@@ -106,6 +120,6 @@ export function createCustomCohortPreviewTransport(options: Options) {
       checkSignal(signal); throw new Error(errorMessage(value, response.status));
     }
     if (!json) { stop(response.body); throw new Error('Expected a JSON neighborhood preview response'); }
-    return readJson(response, RESPONSE_BYTES, signal);
+    return readJson(response, operation === 'preview' ? RESPONSE_BYTES : REQUEST_BYTES, signal);
   };
 }

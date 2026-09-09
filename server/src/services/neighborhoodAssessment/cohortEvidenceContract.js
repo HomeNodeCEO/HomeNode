@@ -153,7 +153,10 @@ function metadata(value) {
   shape(value, ['reader_version', 'mapping_version', 'scope', 'effective_date', 'observation_period',
     'knowledge_cutoff', 'capture_observed_at', 'authorization', 'semantics', 'selection_method',
     'provider_coverage', 'limits', 'capabilities']);
-  exact(value.reader_version, 'local-capture-v3'); exact(value.mapping_version, 1);
+  exact(value.reader_version, 'local-capture-v3');
+  // The query envelope is unchanged. Admit original v1 bytes as v1 and new
+  // physical/housing/DOM projections as v2; never relabel retained evidence.
+  if (value.mapping_version !== 1 && value.mapping_version !== 2) invalid('invalid_value');
   shape(value.scope, ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']);
   for (const key of ['organization_id', 'appraisal_case_id', 'subject_snapshot_id']) uuid(value.scope[key]);
   sourceText(value.scope.account_id, 64, true);

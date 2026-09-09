@@ -5,13 +5,14 @@ import { prepareNeighborhoodCiDatabase, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeig
 import { runCustomCohortContextCaptureDatabaseChecks } from './helpers/customCohortContextCaptureDatabaseChecks.js';
 import { run as runCustomNeighborhoodSourcePolicyDatabaseChecks } from './helpers/customNeighborhoodSourcePolicyDatabaseChecks.js';
 import { runCustomWorkspaceCheckpointDatabaseChecks } from './helpers/customWorkspaceCheckpointDatabaseChecks.js';
+import { runCustomCohortReviewDatabaseChecks } from './helpers/customCohortReviewDatabaseChecks.js';
 
-test('Custom context capture composes real discovery, retention, source policy, checkpoint persistence and retry', {
+test('Custom context capture composes real discovery, retention, source policy, checkpoint and review persistence and retry', {
   skip: !process.env.DATABASE_URL, timeout: 360_000,
 }, async () => {
   const target = await prepareNeighborhoodCiDatabase();
   await runCustomCohortContextCaptureDatabaseChecks(target.connectionString);
-  // All three helpers use this one freshly migrated disposable child. The
+  // All helpers use this one freshly migrated disposable child. The
   // checkpoint helper requires the exact coordinator fixture; policy fixtures
   // roll back and must not replace that assignment or its retained source data.
   const { Client } = createRequire(import.meta.url)('pg');
@@ -24,4 +25,5 @@ test('Custom context capture composes real discovery, retention, source policy, 
     await runCustomNeighborhoodSourcePolicyDatabaseChecks(client);
   } finally { await client.end(); }
   await runCustomWorkspaceCheckpointDatabaseChecks(target.connectionString);
+  await runCustomCohortReviewDatabaseChecks(target.connectionString);
 });

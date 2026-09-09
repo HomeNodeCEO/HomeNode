@@ -61,11 +61,16 @@ export async function checkCustomCohortContextDatabase(pool, identity) {
     for (const sql of [
       'UPDATE app.neighborhood_custom_cohort_contexts SET context_revision=context_revision WHERE organization_id=$1 AND context_id=$2',
       'DELETE FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2',
-      'TRUNCATE app.neighborhood_custom_cohort_contexts',
+      // Include the new referencing review table explicitly (never CASCADE),
+      // otherwise PostgreSQL rejects the FK before exercising this trigger.
+      'TRUNCATE app.neighborhood_custom_cohort_contexts, app.custom_neighborhood_review_commands',
     ]) {
       await rejectsWithinSavepoint(() => client.query(sql, sql.startsWith('TRUNCATE') ? [] : [scope.organization_id, body.context_id]),
         error => error.code === '55000' && /custom_cohort_context_immutable/.test(error.message));
     }
+    await rejectsWithinSavepoint(() => client.query('TRUNCATE app.neighborhood_custom_cohort_contexts'),
+      error => error.code === '0A000' && /foreign key constraint/.test(error.message),
+      'standalone context truncation is independently denied by the review foreign key');
     assert.deepEqual(await repo.get(refJson), prepared, 'replay and rejected mutations preserve exact retained bytes');
 
     // Use real existing parent identities so a missing organization/report alone

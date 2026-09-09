@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
 
 export const CUSTOM_COHORT_POCKET_CATALOG_LIMITS = Object.freeze({
   accounts: 50000, source_records: 100000, source_chunks: 1000, pockets: 128,
@@ -42,6 +43,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(capture?.status === 'ready' && input?.acquisition?.capture_result?.query_complete === true
     && input?.spatial?.query_complete === true, 'retained_capture_required');
+  const mappingVersion = customCohortObservationMappingVersion(input.acquisition);
   check(preview?.preview_version === 1 && preview.status === 'observations_only' && preview.authority === 'not_established'
     && preview.apply?.status === 'blocked' && Number.isSafeInteger(preview.selection_revision) && preview.selection_revision > 0, 'observation_preview_required');
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(preview.context_ref));
@@ -92,12 +94,14 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
     const roles = new Set(); let records = 0, accountRows = 0, parcelRows = 0;
     for (const source of array(capture.sources, L.source_chunks)) {
       const role = source.payload?.projection?.definition?.role;
+      check(customCohortObservationProjectionMatches(source.payload?.projection?.definition, mappingVersion), 'mapping_profile_mismatch');
       if (!['accounts', 'parcels'].includes(role)) continue;
       roles.add(role);
       for (const record of array(source.payload.records, L.source_records)) {
         check(++records <= L.source_records, 'input_limit');
         const mapped = record.data, raw = mapped?.raw_projection, normalized = mapped?.data;
-        check(normalized?.cached_mapping_version === 2 && raw && normalized.cached_projection_kind === (role === 'accounts' ? 'account' : 'parcel'), 'mapping_v2_required');
+        check(normalized?.cached_mapping_version === mappingVersion && raw && normalized.cached_projection_kind === (role === 'accounts' ? 'account' : 'parcel'),
+          mappingVersion === 2 ? 'mapping_v2_required' : 'mapping_v3_required');
         const id = account(normalized.account_id); check(raw.account_id === id && accounts.has(id), 'cad_account_scope');
         const facts = accounts.get(id);
         if (role === 'accounts') {

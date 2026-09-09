@@ -16,9 +16,19 @@ const includesError = (error, pattern) => pattern.test(error?.message ?? '')
 // Actual owner, context/blob/subject/retained loader, binder and review repository
 // over scoped query fakes. Transaction snapshots below model rollback and lost
 // acknowledgments; these tests do not establish native locking/MVCC behavior.
-async function fixture() {
-  const f = await decisionEvidenceFixture(), header = prepareCustomCohortContextHeader(f.input.context_header_json);
-  await f.store.put(f.input.context_header_json);
+async function fixture({ deniedRetainedMapping = null } = {}) {
+  const f = await decisionEvidenceFixture();
+  let headerJson = f.input.context_header_json, header = prepareCustomCohortContextHeader(headerJson);
+  if (deniedRetainedMapping !== null) {
+    // Deliberately metadata-only negative fixture. Rebind each enclosing hash,
+    // but deny before source loading; this does NOT claim a valid v3 source graph.
+    const read = async ref => JSON.parse(await f.store.get(ref.content_sha256, ref.canonical_utf8_bytes));
+    const directory = await read(header.body.selection_input), compact = await read(directory.compact_metadata);
+    directory.compact_metadata = await f.store.put(json({ ...compact, mapping_version: deniedRetainedMapping }));
+    headerJson = json({ ...header.body, selection_input: await f.store.put(json(directory)) });
+    header = prepareCustomCohortContextHeader(headerJson);
+  }
+  await f.store.put(headerJson);
   const scope = f.input.expected.target, contextRef = header.context_ref, actor = cohortUuid(800);
   const context = { ...contextRef, header_content_sha256: header.header_blob.ref.content_sha256,
     header_canonical_utf8_bytes: header.header_blob.ref.canonical_utf8_bytes };
@@ -123,7 +133,7 @@ async function fixture() {
   function command(kind = 'closing_date', id = 1) {
     const value = cohortCommandFixture(kind);
     Object.assign(value, { operation_id: cohortUuid(id), target_ref: resolver.binding.target_ref,
-      expected_context: resolver.binding.context_ref, study_ref: resolver.binding.study_ref,
+      expected_context: contextRef, study_ref: resolver.binding.study_ref,
       expected_generation: '0', expected_predecessor: null, subject_ref: { kind: 'capture_candidate', key: f.recordId }, evidence_refs: [evidence] });
     if (kind === 'closing_date') value.claim.value = { date: '2024-03-01', event_evidence_refs: [evidence] };
     if (kind === 'sale_completion') value.claim.value = { completed: true, event_evidence_refs: [evidence] };
@@ -141,6 +151,19 @@ function untouched(f, blobCount) {
   assert.equal(f.state.commits, 0);
   assert.ok(!f.state.calls.some(({ sql }) => /(?:INSERT INTO|UPDATE|DELETE FROM) app\.(?:custom_appraisal_workfile|custom_neighborhood_acceptance|assignment_files|report_files)/i.test(sql)));
 }
+
+for (const mapping of [1, 2, 3]) test(`review authorizes retained mapping${mapping} before rows, independently of current mapping2 owner`, async () => {
+  const f = await fixture({ deniedRetainedMapping: mapping });
+  f.state.onPolicy = () => ({ allowed: false });
+  const before = f.f.f.state.db.size;
+  await assert.rejects(f.service.review(f.input()), /market_data_access_denied/);
+  assert.equal(f.state.policies.length, 1);
+  const purpose = f.state.policies[0].purpose;
+  if (mapping === 3) assert.equal(purpose.source_projection.id, 'cached-sale-scalar-witness-v1');
+  else assert.equal(Object.hasOwn(purpose, 'source_projection'), false);
+  assert.equal(f.state.payloadReads.size, 0);
+  untouched(f, before);
+});
 
 test('review commits once before minimal immutable receipt; actor is the authenticated UUID and retained graph loads once', async () => {
   const f = await fixture(), before = structuredClone(f.f.f.state.input.sections), output = await f.service.review(f.input());

@@ -31,7 +31,7 @@ export function createTestCachedReadAccess(trustedRequest, options = {}) {
     selected_account_ids: selectedIds,
     source_revision: 'synthetic-cache-revision-1', transactions: [], links: [], legacy: [],
   };
-  const access = createNeighborhoodCachedReadAccess({
+  const access = (options.accessFactory ?? createNeighborhoodCachedReadAccess)({
     resolveAuthorizedAssignment: async () => ({ target: copy(target), scope: copy(trusted.scope), effective_date: trusted.effective_date }),
     resolveTrustedSelection: async () => ({ ...copy(selection), account_ids: copy(trusted.account_ids) }),
     authorizeMarketData: options.authorizeMarketData ?? (async () => ({

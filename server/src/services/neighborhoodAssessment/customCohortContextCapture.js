@@ -9,7 +9,8 @@ import { createCustomCohortContextRepository } from './customCohortContextReposi
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembership } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
-import { createNeighborhoodCachedReadAccess, describeNeighborhoodCachedMarketDataPurpose } from './cachedReadAccess.js';
+import { createNeighborhoodCachedReadAccess, describeNeighborhoodCachedMarketDataPurpose,
+  describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
 import { createNeighborhoodCachedSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInputV1 } from './selectorInputProfile.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
@@ -253,10 +254,18 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // Never read full source rows simply because this operation was allowed before.
   const directory = await readMetadata(refs.selection_input);
   const requestMetadata = await readMetadata(directory.request?.metadata);
+  const compact = await readMetadata(directory.compact_metadata);
   if (!same(requestMetadata.target, context.target) || !same(requestMetadata.scope, context.scope)
     || (study && !same(requestMetadata.observation_period, study.observation_period))
     || requestMetadata.effective_date !== context.effective_date || requestMetadata.knowledge_cutoff !== null) fail('operation_conflict');
-  const purpose = describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
+  // Choose the source projection from its original immutable query metadata,
+  // never today's producer default. v3 cannot reopen under a narrower v2 grant.
+  if (compact.reader_version !== 'local-capture-v3' || ![1, 2, 3].includes(compact.mapping_version)
+    || !same(compact.scope, requestMetadata.scope) || compact.effective_date !== requestMetadata.effective_date
+    || !same(compact.authorization?.target, requestMetadata.target)
+    || !same(compact.authorization?.market_decision, requestMetadata.market_decision)) fail('operation_conflict');
+  const purpose = compact.mapping_version === 3 ? describeNeighborhoodSaleWitnessMarketDataPurpose(requestMetadata)
+    : describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
   const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, exposure);
   if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
   // Review persistence will reopen the original graph in this same transaction.

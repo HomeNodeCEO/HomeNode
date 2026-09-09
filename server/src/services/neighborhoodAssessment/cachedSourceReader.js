@@ -9,6 +9,9 @@ import { CACHED_TRANSACTION_IDENTITY_SQL, CACHED_TRANSACTION_IDENTITY_ORDER,
   CACHED_TRANSACTION_SNAPSHOT_SQL as SNAPSHOT_SQL } from './cachedTransactionClosureReader.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
+import { CACHED_SALE_WITNESS_SQL } from './cachedSaleWitness.js';
+import { CACHED_WITNESS_MAPPING_VERSION, mapWitnessParcelRow, mapWitnessAccountRow,
+  mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
 
 export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
@@ -124,6 +127,22 @@ const ORDER = Object.freeze({
 });
 const MAPPERS={ parcels:mapCachedParcelRow, accounts:mapCachedAccountRow,
   transactions:mapCachedSaleRow, sale_links:mapCachedSaleLinkRow };
+const DEFAULT_PROFILE=Object.freeze({ mappingVersion:CACHED_ROW_MAPPING_VERSION,
+  tables:TABLES,transactionsSql:SQL.transactions,mappers:MAPPERS });
+// Extend only the fixed installed SELECT list. Keep the original query literal
+// (including its joins, membership and ordering) unchanged for mapping2. Refuse
+// a future ambiguous query shape instead of accidentally editing a nested join.
+const transactionParts=SQL.transactions.split('    FROM core.sales_source_records src');
+if (transactionParts.length!==2) throw new Error('neighborhood_witness_projection_anchor_changed');
+const WITNESS_PROFILE=Object.freeze({ mappingVersion:CACHED_WITNESS_MAPPING_VERSION,
+  tables:Object.freeze({ ...TABLES,source_records:[TABLES.source_records[0],
+    `${TABLES.source_records[1]} mls_status source_row_number raw_payload`] }),
+  transactionsSql:`${transactionParts[0]},src.mls_status AS source_mls_status,
+    src.source_row_number,${CACHED_SALE_WITNESS_SQL} AS source_raw_witness
+    FROM core.sales_source_records src${transactionParts[1]}`,
+  mappers:Object.freeze({parcels:mapWitnessParcelRow,accounts:mapWitnessAccountRow,
+    transactions:mapWitnessSaleRow,sale_links:mapWitnessSaleLinkRow}),
+});
 
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
@@ -234,8 +253,16 @@ async function connectBounded(pool, timeout) {
  * transaction completeness, historical facts, housing type or provider coverage.
  */
 export function createNeighborhoodCachedSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},DEFAULT_PROFILE);
+}
+/** Explicit server composition only. No existing Custom/UAD producer is
+ * switched by adding this dormant factory; it requires its distinct capability. */
+export function createNeighborhoodSaleWitnessSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},WITNESS_PROFILE);
+}
+function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
-  assertNeighborhoodCachedReadAccess(access);
+  assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
   const limits=limitsOf(overrides);
   async function capture(input, owner=null) {
     const callerOwned=owner!==null;
@@ -247,7 +274,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       || (options.deadline!==undefined && (typeof options.deadline!=='number' || !Number.isFinite(options.deadline))))) invalid('snapshot_options');
     const signal=options.signal;
     const authorized=consumeNeighborhoodCachedReadAccess(access,input?.auth,input,{
-      selection_grant:input?.selection_grant,market_grant:input?.market_grant });
+      selection_grant:input?.selection_grant,market_grant:input?.market_grant },profile.mappingVersion);
     const request=requestOf(authorized,limits);
     const started=performance.now();
     const deadline=Math.min(started+limits.duration_ms,options.deadline ?? Infinity);
@@ -302,7 +329,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       if (identities[group].has(id)) incomplete('duplicate_source_identity');
       // Preserve the entire mapper wrapper: raw values, mapped values, explicit
       // gaps and mapping digest. None of these claims is an eligibility approval.
-      const record={ record_id:id,data:MAPPERS[group]?MAPPERS[group](payload):payload };
+      const record={ record_id:id,data:profile.mappers[group]?profile.mappers[group](payload):payload };
       const bytes=Buffer.byteLength(canonicalAssessmentJson(record));
       if (++counts.records>limits.records) incomplete('record_limit');
       if ((counts.bytes+=bytes)>limits.bytes) incomplete('byte_limit');
@@ -355,8 +382,8 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
         counts.bytes+=Buffer.byteLength(canonicalAssessmentJson({ record_id:`selected:${account_id}`,data:{ account_id } }));
         if (counts.bytes>limits.bytes) incomplete('byte_limit');
       }
-      const catalog=await query('capabilities',SQL.capabilities,[Object.values(TABLES).map(([table]) => table)]);
-      capabilities=Object.fromEntries(Object.entries(TABLES).map(([key,[table,columns]]) => {
+      const catalog=await query('capabilities',SQL.capabilities,[Object.values(profile.tables).map(([table]) => table)]);
+      capabilities=Object.fromEntries(Object.entries(profile.tables).map(([key,[table,columns]]) => {
         const present=new Set(catalog.filter(row => row.relation===table).map(row => row.column));
         const absent=columns.split(' ').filter(column => !present.has(column));
         return [key,{ relation:table,state:!present.size?'absent':absent.length?'unsupported_schema':'available',missing_columns:absent }];
@@ -454,7 +481,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
         if (observedClosure.closure_sha256!==authorized.transaction_closure.closure_sha256) incomplete('transaction_association_drift');
         for (let at=0;at<seedIds.length;at+=limits.page_size) {
           const ids=seedIds.slice(at,at+limits.page_size);
-            const transactions=await rows('transactions',SQL.transactions,[ids,ids.length+1]);
+            const transactions=await rows('transactions',profile.transactionsSql,[ids,ids.length+1]);
             if (transactions.length>ids.length) incomplete('duplicate_source_identity');
             const seen=new Set();
             for (const row of transactions) { const id=big(row.source_record_id); seen.add(id); retain('transactions',`source:${id}`,row); }
@@ -502,7 +529,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
         closure_sha256:closure.closure_sha256,transaction_count:closure.transactions.length,
         link_count:closure.links.length,legacy_sale_count:closure.legacy.length,
         account_count:closure.closure_account_ids.length,source_record_count:closure.source_record_ids.length });
-      const compact={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,
+      const compact={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:profile.mappingVersion,
         scope:request.scope,effective_date:request.effective_date,observation_period:request.observation_period,
         knowledge_cutoff:request.knowledge_cutoff,capture_observed_at:capturedAtPrecise,
         authorization:{target:authorized.target,selection:authorized.selection,selection_sha256:authorized.selection_sha256,

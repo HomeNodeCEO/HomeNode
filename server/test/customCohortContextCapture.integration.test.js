@@ -6,6 +6,8 @@ import { runCustomCohortContextCaptureDatabaseChecks } from './helpers/customCoh
 import { run as runCustomNeighborhoodSourcePolicyDatabaseChecks } from './helpers/customNeighborhoodSourcePolicyDatabaseChecks.js';
 import { runCustomWorkspaceCheckpointDatabaseChecks } from './helpers/customWorkspaceCheckpointDatabaseChecks.js';
 import { runCustomCohortReviewDatabaseChecks } from './helpers/customCohortReviewDatabaseChecks.js';
+import { runCachedSaleWitnessDatabaseChecks } from './helpers/cachedSaleWitnessDatabaseChecks.js';
+import { runCachedSaleWitnessReaderDatabaseChecks } from './helpers/cachedSaleWitnessReaderDatabaseChecks.js';
 
 test('Custom context capture composes real discovery, retention, source policy, checkpoint and review persistence and retry', {
   skip: !process.env.DATABASE_URL, timeout: 360_000,
@@ -23,7 +25,9 @@ test('Custom context capture composes real discovery, retention, source policy, 
     verifyNeighborhoodCiConnection((await client.query(NEIGHBORHOOD_CI_IDENTITY_SQL)).rows[0],
       client.connection?.stream?.remoteAddress, target.databaseName);
     await runCustomNeighborhoodSourcePolicyDatabaseChecks(client);
+    await runCachedSaleWitnessDatabaseChecks(client);
   } finally { await client.end(); }
   await runCustomWorkspaceCheckpointDatabaseChecks(target.connectionString);
   await runCustomCohortReviewDatabaseChecks(target.connectionString);
+  await runCachedSaleWitnessReaderDatabaseChecks(target.connectionString);
 });

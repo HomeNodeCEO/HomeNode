@@ -5,6 +5,8 @@ import { buildCachedSourceCaptures } from './cachedSourceCaptures.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
+import { CACHED_TRANSACTION_IDENTITY_SQL, CACHED_TRANSACTION_IDENTITY_ORDER,
+  CACHED_TRANSACTION_SNAPSHOT_SQL as SNAPSHOT_SQL } from './cachedTransactionClosureReader.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 
@@ -72,23 +74,7 @@ const SQL = Object.freeze({
   accounts: `SELECT account_id,county,subdivision,neighborhood_code,legal_description
     FROM core.accounts WHERE account_id=ANY($1::text[]) AND account_id COLLATE "C">$2::text COLLATE "C"
     ORDER BY account_id COLLATE "C" LIMIT $3`,
-  source_ids: `WITH ids AS (
-    SELECT id FROM core.sales_source_records WHERE primary_account_id=ANY($1::text[])
-    UNION SELECT source_record_id FROM core.sale_parcels WHERE account_id=ANY($1::text[])
-    UNION SELECT source_record_id FROM core.sales WHERE account_id=ANY($1::text[]) AND source_record_id IS NOT NULL
-    ) SELECT id::text AS source_record_id FROM ids WHERE id>$2::bigint ORDER BY id LIMIT $3`,
-  transaction_identities: `SELECT src.id::text AS source_record_id,sale.id::text AS sale_id,
-    src.primary_account_id,sale.account_id AS sale_account_id,src.source_record_hash
-    FROM core.sales_source_records src LEFT JOIN core.sales sale ON sale.source_record_id=src.id
-    WHERE src.id=ANY($1::bigint[]) ORDER BY src.id,sale.id LIMIT $2`,
-  link_identities: `SELECT id::text AS parcel_link_id,source_record_id::text,source_position,
-    parcel_sequence,account_id,is_resolved FROM core.sale_parcels sp
-    WHERE source_record_id=ANY($1::bigint[])
-      AND (source_record_id,source_position,parcel_sequence)>($2::bigint,$3::smallint,$4::smallint)
-    ORDER BY sp.source_record_id,sp.source_position,sp.parcel_sequence LIMIT $5`,
-  legacy_identities: `SELECT id::text AS sale_id,account_id AS sale_account_id FROM core.sales
-    WHERE account_id=ANY($1::text[]) AND source_record_id IS NULL AND id>$2::bigint
-    ORDER BY id LIMIT $3`,
+  ...CACHED_TRANSACTION_IDENTITY_SQL,
   transactions: `SELECT src.id::text AS source_record_id,src.source_name,src.source_filename,
     src.source_sha256,src.source_record_hash,src.transaction_fingerprint,
     src.listing_key,src.listing_id,src.source_system_name,src.source_modified_at::text,
@@ -131,24 +117,13 @@ const SQL = Object.freeze({
 });
 const ORDER = Object.freeze({
   parcels:"(payload->>'object_id')::bigint", accounts:"payload->>'account_id' COLLATE \"C\"",
-  'source-ids':"(payload->>'source_record_id')::bigint",
-  'transaction-identities':"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
-  'link-identities':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
-  'legacy-identities':"(payload->>'sale_id')::bigint",
+  ...CACHED_TRANSACTION_IDENTITY_ORDER,
   transactions:"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
   'sale-links':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
   legacy:"(payload->>'sale_id')::bigint", 'sync-state':"payload->>'source_key' COLLATE \"C\"", 'sync-runs':"payload->>'id' COLLATE \"C\"",
 });
 const MAPPERS={ parcels:mapCachedParcelRow, accounts:mapCachedAccountRow,
   transactions:mapCachedSaleRow, sale_links:mapCachedSaleLinkRow };
-const SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
-  current_setting('transaction_read_only') AS read_only, current_setting('TimeZone') AS timezone,
-  transaction_timestamp() < statement_timestamp() AS explicit_transaction,
-  pg_backend_pid() AS backend_pid, pg_current_snapshot()::text AS snapshot,
-  to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS transaction_started_at,
-  (SELECT setting::integer FROM pg_settings WHERE name='statement_timeout') AS statement_ms,
-  (SELECT setting::integer FROM pg_settings WHERE name='lock_timeout') AS lock_ms,
-  (SELECT setting::integer FROM pg_settings WHERE name='idle_in_transaction_session_timeout') AS idle_ms`;
 
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;

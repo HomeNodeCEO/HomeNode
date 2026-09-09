@@ -13,12 +13,13 @@ const bodies = {
   capture: { assignment_file_id: assignment, operation_id: contextRef.context_id,
     observation_period: { start_date: '2024-01-01', end_date: '2024-06-30' } },
   preview: { assignment_file_id: assignment, context_ref: contextRef, selection, include_map: false },
+  catalog: { assignment_file_id: assignment, context_ref: contextRef, selection },
   members: { assignment_file_id: assignment, context_ref: contextRef, selection,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } },
 };
 async function start(t, { principal = auth, methods = {}, parsed = false } = {}) {
   const calls = [], fallthroughErrors = [];
-  const service = Object.fromEntries(['capture', 'present', 'inspect'].map(name => [name, methods[name] ?? (async (...args) => {
+  const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog'].map(name => [name, methods[name] ?? (async (...args) => {
     calls.push({ name, args }); return { status: name, marker: 'compact-only' };
   })]));
   service.preview = () => assert.fail('raw preview must never reach HTTP');
@@ -47,12 +48,12 @@ test('cohort router requires actual display/inspection owner methods', () => {
 });
 test('cohort endpoints preserve exact IDs, principal and explicit empty selection', async t => {
   const { request, calls } = await start(t);
-  for (const action of ['capture', 'preview', 'members']) {
+  for (const action of ['capture', 'preview', 'members', 'catalog']) {
     const response = await request(action);
     assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
     assert.equal((await response.json()).marker, 'compact-only');
   }
-  assert.deepEqual(calls.map(call => call.name), ['capture', 'present', 'inspect']);
+  assert.deepEqual(calls.map(call => call.name), ['capture', 'present', 'inspect', 'catalog']);
   for (const { args } of calls) {
     assert.equal(args[0].auth, auth); assert.equal(args[0].assignmentFileId, assignment);
     assert.equal(args[0].accountId, 'R-001');
@@ -61,6 +62,9 @@ test('cohort endpoints preserve exact IDs, principal and explicit empty selectio
   assert.deepEqual(calls[1].args[0].selection, selection);
   assert.deepEqual(calls[1].args[1], { includeMap: false });
   assert.deepEqual(calls[2].args[1], { population: bodies.members.population, page: bodies.members.page });
+  assert.deepEqual(calls[3].args[0].contextRef, contextRef);
+  assert.deepEqual(calls[3].args[0].selection, selection);
+  assert.equal(calls[3].args.length, 2);
 });
 test('body auth, source authority, numeric file IDs and unknown fields never reach owner', async t => {
   const { request, calls } = await start(t);
@@ -201,6 +205,97 @@ test('disconnect cancels in-flight preview and removes request listeners', async
   } } });
   const controller = new AbortController();
   const response = request('preview', bodies.preview, { signal: controller.signal });
+  await running; controller.abort(); await assert.rejects(response, { name: 'AbortError' });
+  assert.equal(await cancelled, true);
+});
+
+test('catalog denies unauthenticated access and refuses client source identity before its owner', async t => {
+  const anonymous = await start(t, { principal: null });
+  const denied = await anonymous.request('catalog');
+  assert.equal(denied.status, 401); assert.equal(denied.headers.get('cache-control'), 'no-store');
+  assert.equal(anonymous.calls.length, 0);
+  const owned = await start(t);
+  for (const key of ['auth', 'organization_id', 'account_ids', 'source_rows', 'retained_inputs', 'include_map']) {
+    const response = await owned.request('catalog', { ...bodies.catalog, [key]: 'client authority' });
+    assert.equal(response.status, 400); assert.equal(response.headers.get('cache-control'), 'no-store');
+  }
+  assert.equal(owned.calls.length, 0);
+});
+
+test('catalog ignores query identity and passes only exact route/file/session identity to its owner', async t => {
+  const { calls, origin } = await start(t);
+  const response = await fetch(`${origin}/api/accounts/R-001/neighborhood-cohort/catalog?account_id=OTHER&assignment_file_id=42&auth=FORGED`, {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(bodies.catalog),
+  });
+  assert.equal(response.status, 200); assert.equal(calls.length, 1);
+  assert.deepEqual(calls[0].args[0], { auth, accountId: 'R-001', assignmentFileId: assignment, contextRef, selection });
+});
+
+test('catalog policy and freshness errors are private and all statuses remain no-store', async t => {
+  let failure;
+  const { request } = await start(t, { methods: { catalog: async () => { throw failure; } } });
+  for (const [reason, status, error] of [
+    ['assignment_access_denied', 403, 'neighborhood_access_denied'],
+    ['market_data_access_denied', 403, 'neighborhood_access_denied'],
+    ['market_policy_changed', 409, 'neighborhood_market_policy_changed'],
+    ['subject_changed', 409, 'neighborhood_subject_changed'],
+    ['target_changed', 409, 'neighborhood_target_changed'],
+    ['context_unavailable', 404, 'neighborhood_context_unavailable'],
+    ['cancelled', 503, 'neighborhood_request_interrupted'],
+    ['stock_roster_mismatch', 500, 'neighborhood_request_failed'],
+  ]) {
+    failure = Object.assign(new Error('private retained source diagnostic'), { reason });
+    const response = await request('catalog');
+    assert.equal(response.status, status); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { error });
+  }
+});
+
+test('catalog returns complete or explicit incomplete owner results without clipping memberships', async t => {
+  let result;
+  const { request } = await start(t, { methods: { catalog: async () => result } });
+  for (const status of ['review_only', 'incomplete']) {
+    result = { status: 'catalog', context_ref: contextRef, selection_revision: selection.revision,
+      catalog: { status, catalog_complete: status === 'review_only', pockets: [],
+        unassigned: { account_ids: ['0001', 'r-002'], member_count: 2 },
+        reasons: status === 'incomplete' ? ['pocket_count_limit'] : [] }, apply: { status: 'blocked' } };
+    const response = await request('catalog');
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), result);
+  }
+});
+
+test('catalog enforces actual UTF-8 response bytes and returns no partial roster on transport overflow', async t => {
+  let result;
+  const { request } = await start(t, { methods: { catalog: async () => {
+    if (result instanceof Error) throw result; return result;
+  } } });
+  // Multibyte text proves the limit is bytes rather than JS string length.
+  for (const overflow of [{ text: 'é'.repeat(2_000_000) },
+    Object.assign(new Error('private oversized roster'), { reason: 'catalog_transport_limit' })]) {
+    result = overflow;
+    const response = await request('catalog');
+    assert.equal(response.status, 422); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { error: 'neighborhood_catalog_incomplete',
+      reason: 'catalog_response_byte_limit', membership_returned: false });
+  }
+  result = { text: 'x'.repeat(4_000_000 - Buffer.byteLength(JSON.stringify({ text: '' }))) };
+  const boundary = await request('catalog');
+  assert.equal(boundary.status, 200); assert.equal(Buffer.byteLength(await boundary.text()), 4_000_000);
+});
+
+test('disconnect cancels catalog authorization work through the same owner signal', async t => {
+  let started, aborted;
+  const running = new Promise(resolve => { started = resolve; });
+  const cancelled = new Promise(resolve => { aborted = resolve; });
+  const { request } = await start(t, { methods: { catalog: async (_input, { signal }) => {
+    started(); await new Promise(resolve => signal.addEventListener('abort', () => {
+      aborted(signal.aborted); resolve();
+    }, { once: true }));
+    return { never: 'sent' };
+  } } });
+  const controller = new AbortController();
+  const response = request('catalog', bodies.catalog, { signal: controller.signal });
   await running; controller.abort(); await assert.rejects(response, { name: 'AbortError' });
   assert.equal(await cancelled, true);
 });

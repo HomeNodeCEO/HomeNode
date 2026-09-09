@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { createCustomCohortPreviewTransport } from '../src/features/neighborhood/customCohortPreviewTransport.ts';
+import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport } from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 
 const input = () => ({ accountId: 'R-001/#1', assignmentFileId: '9007199254740993',
   contextRef: { context_id: '71fe3e95-778b-42a8-bf4c-5dfc96de3bd7', context_revision: '1', context_sha256: 'a'.repeat(64) },
@@ -22,6 +22,22 @@ function stream(parts, { hanging = false, onCancel = () => {} } = {}) {
 }
 const responseStream = (body, headers = {}, status = 200) => new Response(body, { status, headers: { 'content-type': 'application/json', ...headers } });
 const encoded = text => new TextEncoder().encode(text);
+
+test('catalog/member/capture operations share cancellation and smaller response limits', async () => {
+  for (const operation of ['catalog', 'members', 'capture']) {
+    let path, count = 0;
+    const transport = createCustomCohortJsonTransport({ urlFor: p => { path = p; return p; }, request: async () => {
+      count++; return responseStream(stream([encoded(`"${'x'.repeat(4_000_000)}"`)]));
+    } });
+    await assert.rejects(transport('R-1', operation, { operation_id: 'unchanged' }, { signal: new AbortController().signal }), /too large/);
+    assert.equal(count, 1); assert.equal(path, `/api/accounts/R-1/neighborhood-cohort/${operation}`);
+  }
+});
+
+test('generic cohort transport refuses arbitrary operation paths before network access', async () => {
+  const transport = createCustomCohortJsonTransport({ urlFor: () => { throw new Error('must not route'); }, request: async () => json({}) });
+  await assert.rejects(transport('R-1', '../admin', {}, { signal: new AbortController().signal }), /Invalid neighborhood request/);
+});
 
 test('posts the exact body to the encoded account URL with the caller signal and no cache', async () => {
   const h = harness(), value = input(); const pending = h.run(value); value.selection.pockets.push({ id: 'changed-later' });

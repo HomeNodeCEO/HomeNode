@@ -24,7 +24,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const account = 'CAPTURE-COORD-SUBJECT', other = 'CAPTURE-COORD-OTHER', linked = 'CAPTURE-COORD-LINKED';
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic Custom capture','Synthetic Custom capture')", [organization]);
     await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic capture actor')", [actor, `${actor}@example.test`]);
-    for (const id of [account, other, linked]) await pool.query("INSERT INTO core.accounts(account_id,county,address,city) VALUES($1,'Dallas','Synthetic only','Synthetic')", [id]);
+    for (const id of [account, other, linked]) await pool.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas','Synthetic only','Synthetic','Retained Oak')", [id]);
     await pool.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')", [appraisalCase, organization, account]);
     const location = { account_id: account, latitude: 32.8005, longitude: -96.6995, source: 'dcad_parcel_query', precision: 'parcel_centroid',
       status: 'matched', confidence: 'high', review_required: false, review_reason: null, match_method: 'parcel_id', source_parcel_id: account,
@@ -64,10 +64,11 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       } };
     } };
     const grant = { allowed: true, decision_id: 'synthetic_all_cached_rows_and_retention', policy_revision: 'synthetic-test-v1' };
-    let policyCalls = 0;
+    let policyCalls = 0; const exposures = [];
     const capture = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async (_client, actualAuth, context, purpose, options) => {
       assert.equal(actualAuth.userId, actor); assert.equal(context.scope.organization_id, organization);
       assert.equal(purpose.event_date_scope, 'all_available_dates_for_seeded_transactions'); assert.equal(options.retention, true);
+      exposures.push(options.exposure);
       if (++policyCalls === 1) await pool.query('UPDATE core.sales SET sale_price=400000 WHERE id=100');
       return grant;
     } });
@@ -140,6 +141,38 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);
     checks.push('compact display uses identical complete statistics without raw rows; immutable map omission and explicit exposure denial');
 
+    // The catalog must consume the original retained account label, not a new
+    // mutable-cache query. A selection never narrows its broad stock roster.
+    await pool.query("UPDATE core.accounts SET subdivision='Live Changed Label' WHERE account_id=$1", [other]);
+    const catalogFrom = calls.length, exposureFrom = exposures.length;
+    const catalog = await capture.catalog(previewRequest);
+    assert.equal(catalog.status, 'catalog'); assert.equal(catalog.subject_freshness, 'matched');
+    assert.deepEqual(catalog.target, display.target);
+    assert.deepEqual(catalog.catalog.binding, display.summary.binding);
+    assert.equal(catalog.catalog.status, 'review_only'); assert.equal(catalog.catalog.catalog_complete, true);
+    assert.equal(catalog.catalog.coverage.stock_member_count, 2);
+    assert.equal(catalog.catalog.pockets.length, 1); assert.equal(catalog.catalog.pockets[0].label, 'Retained Oak');
+    assert.deepEqual(catalog.catalog.pockets[0].account_ids, [account, other].sort());
+    assert.equal(catalog.catalog.pockets[0].member_count, 2);
+    assert.equal(catalog.catalog.subject_membership.assigned_pocket_id, catalog.catalog.pockets[0].id);
+    assert.equal(catalog.catalog.unassigned.member_count, 0);
+    assert.equal(catalog.catalog.pockets[0].raw_label_variants, undefined);
+    assert.equal(catalog.preview, undefined); assert.equal(catalog.parcel_map, undefined);
+    assert.equal(catalog.apply.status, 'blocked'); assert.equal(catalog.catalog.apply.status, 'blocked');
+    assert.deepEqual(exposures.slice(exposureFrom), ['report_observation_catalog', 'report_observation_catalog']);
+    const emptyCatalog = await capture.catalog({ ...previewRequest, selection: { revision: 2, pockets: [] } });
+    assert.deepEqual(emptyCatalog.catalog.pockets, catalog.catalog.pockets);
+    assert.deepEqual(emptyCatalog.catalog.coverage, catalog.catalog.coverage);
+    assert.notEqual(emptyCatalog.catalog.binding.selection_sha256, catalog.catalog.binding.selection_sha256);
+    assert.ok(!calls.slice(catalogFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)));
+    assert.ok(!calls.slice(catalogFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)),
+      'catalog must not write report sections, evidence, contexts or acceptance');
+    const deniedFrom = calls.length;
+    await assert.rejects(exposureDenied.catalog(previewRequest), /market_data_access_denied/);
+    assert.ok(!calls.slice(deniedFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)));
+    assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].count, 0);
+    checks.push('catalog uses retained recorded labels and full stock independent of selection; distinct two-phase exposure; no source reread or report writes');
+
     // Exercise the real HTTP -> exact target -> retained DB -> presentation
     // chain, not merely a router mock. This app is synthetic and loopback-only.
     const app = express();
@@ -162,19 +195,29 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       assert.equal(foreign.status, 404);
       assert.ok(!JSON.stringify(http).includes('raw_projection'));
       assert.ok(!JSON.stringify(page).includes('raw_values'));
+      const catalogResponse = await post('catalog', body);
+      assert.equal(catalogResponse.status, 200); assert.equal(catalogResponse.headers.get('cache-control'), 'no-store');
+      const catalogText = await catalogResponse.text(); assert.ok(Buffer.byteLength(catalogText) <= 4_000_000);
+      assert.deepEqual(JSON.parse(catalogText), catalog);
+      for (const key of ['raw_projection', 'source_record_id', 'source_ref', 'raw_label_variants', 'market_decision']) {
+        assert.ok(!catalogText.includes(`"${key}":`), key);
+      }
+      const foreignCatalog = await post('catalog', { ...body, context_ref: { ...result.context_ref, context_id: randomUUID() } });
+      assert.equal(foreignCatalog.status, 404);
     } finally { await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); }
     checks.push('actual scoped HTTP compact-preview/member pages; foreign context refusal; no raw source exposure');
+    checks.push('actual scoped HTTP retained pocket catalog is byte bounded; exact memberships and foreign-context refusal');
 
-    for (const deny of [true, false]) {
+    for (const method of ['preview', 'catalog']) for (const deny of [true, false]) {
       let checksDone = 0;
       const revoked = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => {
         if (++checksDone === 1) return grant;
         return deny ? { allowed: false } : { ...grant, policy_revision: 'changed-after-load' };
       } });
-      await assert.rejects(revoked.preview(previewRequest), deny ? /market_data_access_denied/ : /market_policy_changed/);
+      await assert.rejects(revoked[method](previewRequest), deny ? /market_data_access_denied/ : /market_policy_changed/);
       assert.equal(checksDone, 2, 'the final fresh policy must decide whether the response may leave');
     }
-    for (const kind of ['material', 'assignment']) {
+    for (const method of ['preview', 'catalog']) for (const kind of ['material', 'assignment']) {
       let commitCount = 0;
       const afterLoadPool = { async connect() {
         const client = await pool.connect();
@@ -191,7 +234,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
         } };
       } };
       const changedAfterLoad = createCustomCohortContextCapture({ pool: afterLoadPool, authorizeMarketData: async () => grant });
-      try { await assert.rejects(changedAfterLoad.preview(previewRequest), kind === 'material' ? /subject_changed/ : /assignment_access_denied/); }
+      try { await assert.rejects(changedAfterLoad[method](previewRequest), kind === 'material' ? /subject_changed/ : /assignment_access_denied/); }
       finally {
         if (kind === 'material') await pool.query(`UPDATE app.appraisal_subject_snapshots
           SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2000') WHERE id=$1`, [snapshot]);
@@ -199,6 +242,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       }
     }
     checks.push('preview rechecks policy revocation/revision and real assignment/material changes after retained loading');
+    checks.push('catalog rechecks policy revocation/revision and real assignment/material changes after retained loading');
 
     const denied = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => ({ allowed: false }) });
     const denyFrom = calls.length;
@@ -207,7 +251,10 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await assert.rejects(denied.capture(request), /market_data_access_denied/,
       'a retained context must not bypass the current market-source policy');
     await assert.rejects(denied.preview(previewRequest), /market_data_access_denied/);
+    await assert.rejects(denied.catalog(previewRequest), /market_data_access_denied/);
     await assert.rejects(capture.preview({ ...previewRequest,
+      auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
+    await assert.rejects(capture.catalog({ ...previewRequest,
       auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
     await assert.rejects(capture.capture({ ...makeInput(), auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
     checks.push('market denial before MLS reads and exact-organization denial');

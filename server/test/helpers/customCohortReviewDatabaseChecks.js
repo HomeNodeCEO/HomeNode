@@ -229,11 +229,104 @@ export async function runCustomCohortReviewDatabaseChecks(connectionString) {
       await cloned({ operation_id: '$3::uuid' }, [randomUUID()], '23505');
     });
     checks.push('direct UPDATE/DELETE/TRUNCATE rejected; native exact-context/account/org/actor/blob/predecessor FKs and generation uniqueness enforce storage boundaries');
-    assert.deepEqual(await totals(), beforeRollback); assert.deepEqual(await protectedState(), before);
+    assert.deepEqual(await totals(), beforeRollback);
+
+    // Unlike the repository checks above, this is the actual internal owner:
+    // workflow + assignment authorization, retention-only policy both before
+    // full graph loading and after the append, and outer transaction ownership.
+    const ownerCalls = [], observedPool = { async connect() {
+      ownerCalls.push({ sql: 'native-owner:connect' });
+      const client = await pool.connect();
+      return { query(statement, values) {
+        ownerCalls.push({ sql: typeof statement === 'string' ? statement : statement.text });
+        return client.query(statement, values);
+      }, release(error) { client.release(error); } };
+    } };
+    const grant = { allowed: true, decision_id: 'synthetic_native_review_fixture_only', policy_revision: 'synthetic-review-v1' };
+    const policySeen = [];
+    const checkedPolicy = async (_client, principal, context, purpose, options) => {
+      assert.equal(principal.userId, fixture.actor_id); assert.equal(context.scope.organization_id, scope.organization_id);
+      assert.equal(context.target.report_file_id, scope.report_file_id); assert.equal(context.target.workflow_target_id, scope.assignment_file_id);
+      assert.equal(purpose.event_date_scope, 'all_available_dates_for_seeded_transactions');
+      assert.deepEqual(options, { retention: true, exposure: 'none' }); policySeen.push(options.exposure); return grant;
+    };
+    const reviewer = createCustomCohortContextCapture({ pool: observedPool, authorizeMarketData: checkedPolicy });
+    const reviewInput = value => ({ ...target, auth, commandJson: json(value) });
+    const ownerCommand = command(4, replacement.decision_ref), beforeOwner = await totals();
+    const ownerReceipt = await reviewer.review(reviewInput(ownerCommand));
+    assert.deepEqual(Object.keys(ownerReceipt).sort(), ['status', 'reused', 'context_ref', 'decision_ref', 'generation', 'authority'].sort());
+    assert.deepEqual(ownerReceipt, { status: 'review_recorded', reused: false, context_ref: captured.context_ref,
+      decision_ref: { decision_id: ownerCommand.operation_id, decision_sha256: ownerReceipt.decision_ref.decision_sha256 },
+      generation: '5', authority: 'not_established' });
+    assert.match(ownerReceipt.decision_ref.decision_sha256, /^[a-f0-9]{64}$/);
+    assert.equal(policySeen.length, 2);
+    assert.equal(ownerCalls.filter(call => call.sql === 'COMMIT').length, 1);
+    const committed = await transaction(client => repo(client).getOperation(ownerCommand.operation_id));
+    assert.deepEqual(committed.decision_ref, ownerReceipt.decision_ref); assert.equal(committed.record.actor_user_id, auth.userId);
+    assert.equal(committed.record.claim_observation.status, 'matched');
+    const afterOwner = await totals();
+    assert.deepEqual(afterOwner, { reviews: beforeOwner.reviews + 1, blobs: beforeOwner.blobs + 1 });
+    const historical = await reviewer.review(reviewInput(firstCommand));
+    assert.deepEqual(historical, { status: 'review_recorded', reused: true, context_ref: captured.context_ref,
+      decision_ref: first.decision_ref, generation: '1', authority: 'not_established' });
+    assert.deepEqual(await totals(), afterOwner); assert.equal(policySeen.length, 4);
+    checks.push('actual owner authorizes retention-only source use, commits one review/blob, returns only opaque receipt and replays original historical generation without a new write');
+
+    const nextOwnerCommand = () => command(5, null, { claim: conditions(`synthetic-owner-${randomUUID()}`) });
+    for (const deniedAuth of [
+      { userId: fixture.actor_id, organizations: [{ organizationId: scope.organization_id, roles: ['read_only'] }] },
+      { userId: randomUUID(), organizations: [{ organizationId: scope.organization_id, roles: ['appraiser'] }] },
+      { userId: fixture.actor_id, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] },
+    ]) {
+      const baseline = await totals(), callStart = ownerCalls.length, policyStart = policySeen.length;
+      await assert.rejects(reviewer.review({ ...reviewInput(nextOwnerCommand()), auth: deniedAuth }), /assignment_access_denied/);
+      assert.deepEqual(await totals(), baseline); assert.equal(policySeen.length, policyStart);
+      assert.ok(!ownerCalls.slice(callStart).some(call => call.sql.includes('custom-cohort-context:read')),
+        'workflow, assignment and organization denial precede retained-context reads');
+    }
+    const cancelled = new AbortController(); cancelled.abort();
+    const cancellationStart = ownerCalls.length, beforeCancellation = await totals();
+    await assert.rejects(reviewer.review(reviewInput(nextOwnerCommand()), { signal: cancelled.signal }), /cancelled/);
+    assert.equal(ownerCalls.length, cancellationStart, 'already-cancelled owner must not acquire a client');
+    assert.deepEqual(await totals(), beforeCancellation);
+    checks.push('actual owner rejects read-only workflow, unassigned appraiser and foreign organization before retained reads; pre-aborted signal acquires no client and writes nothing');
+
+    for (const mode of ['initial_denied', 'initial_denied_replay', 'final_revoked', 'final_changed']) {
+      const baseline = await totals(), value = mode === 'initial_denied_replay' ? firstCommand : nextOwnerCommand();
+      let policyCount = 0, tentativeObserved = false;
+      const gated = createCustomCohortContextCapture({ pool: observedPool,
+        authorizeMarketData: async (client, principal, context, purpose, options) => {
+          await checkedPolicy(client, principal, context, purpose, options); policyCount++;
+          if (mode.startsWith('initial_denied')) return { allowed: false };
+          if (policyCount === 1) return grant;
+          // Prove these rows exist inside the real owner transaction before the
+          // final policy refuses; outside counts must then prove full rollback.
+          const pending = await client.query(`SELECT r.actor_user_id::text,r.content_sha256,b.content_sha256 AS blob_sha256
+            FROM app.custom_neighborhood_review_commands r JOIN app.neighborhood_cohort_evidence_blobs b
+              ON b.organization_id=r.organization_id AND b.content_sha256=r.content_sha256
+            WHERE r.organization_id=$1 AND r.operation_id=$2`, [scope.organization_id, value.operation_id]);
+          assert.equal(pending.rowCount, 1); assert.equal(pending.rows[0].actor_user_id, fixture.actor_id);
+          assert.equal(pending.rows[0].content_sha256, pending.rows[0].blob_sha256); tentativeObserved = true;
+          return mode === 'final_revoked' ? { allowed: false } : { ...grant, policy_revision: 'synthetic-review-changed-final' };
+        } });
+      const callStart = ownerCalls.length;
+      await assert.rejects(gated.review(reviewInput(value)), mode === 'final_changed' ? /market_policy_changed/ : /market_data_access_denied/);
+      assert.equal(policyCount, mode.startsWith('initial_denied') ? 1 : 2);
+      assert.equal(tentativeObserved, !mode.startsWith('initial_denied'));
+      assert.deepEqual(await totals(), baseline);
+      const calls = ownerCalls.slice(callStart);
+      assert.equal(calls.some(call => call.sql === 'COMMIT'), false);
+      assert.equal(calls.some(call => call.sql === 'ROLLBACK'), true);
+      if (mode.startsWith('initial_denied')) assert.ok(!calls.some(call => call.sql.includes('custom-cohort-subject:history-target')),
+        'denied initial source grant must precede full original graph/subject loading, including replay');
+      else assert.equal(await transaction(client => repo(client).getOperation(value.operation_id)), null);
+    }
+    checks.push('initial source denial also gates replay; final revocation or revision change rolls back the real tentative review and canonical blob with no successful COMMIT');
+    assert.deepEqual(await totals(), afterOwner); assert.deepEqual(await protectedState(), before);
     assert.equal(pool.waitingCount, 0);
     checks.push('review retention does not change workspace/accepted sections, history, signatures, report or assignment rows');
     return { checks, fixture: { ...scope, context_ref: captured.context_ref },
-      limitations: ['synthetic principal and source policy; runtime assignment-authorization and provider-denial integration remain unimplemented',
+      limitations: ['synthetic principal and source policy exercise actual internal owner, not authenticated HTTP or production source-rights activation',
         'reviewer command provenance only, not certified facts or Apply', 'signed-state guard only, no signature artifact generated'] };
   } finally {
     try {

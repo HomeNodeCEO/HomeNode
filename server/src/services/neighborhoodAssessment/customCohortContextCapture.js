@@ -18,6 +18,8 @@ import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_
 import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
+import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -72,6 +74,14 @@ function previewInputOf(input) {
   if (!Number.isSafeInteger(selection.revision) || selection.revision < 1
     || !Array.isArray(selection.pockets) || selection.pockets.length > CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS.pockets) fail('invalid_selection');
   return freeze({ ...identity, contextRef, selection });
+}
+function reviewInputOf(input) {
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'commandJson']);
+  const identity = identityOf(input);
+  const admitted = prepareCohortDecisionCommandV1(input.commandJson);
+  if (admitted.status !== 'syntax_valid' || admitted.command.target_ref.workflow_type !== 'custom_appraisal'
+    || admitted.command.target_ref.workflow_target_id !== identity.assignmentFileId) fail('invalid_review_command');
+  return freeze({ ...identity, commandJson: input.commandJson, command: admitted.command });
 }
 function one(result) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1) fail('target_unavailable');
@@ -224,7 +234,7 @@ function captured(value, stage) {
   return value;
 }
 
-async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null, exposure = 'none' }) {
+async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null, exposure = 'none', loadInputs = true }) {
   const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
   if (!previous) fail('context_unavailable');
   const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
@@ -249,12 +259,16 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   const purpose = describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
   const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, exposure);
   if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
-  const retained = await loadCustomCohortCaptureInputs(client, scopeJson, refs);
+  // Review persistence will reopen the original graph in this same transaction.
+  // Keep its preceding rights check, without allocating/validating it twice.
+  const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
   return { context, retained, purpose, decision };
 }
 
 /** Executable, Custom-only acquisition owner. No HTTP route, current-head
  * change, eligible-cohort decision, calculation, Apply or signing occurs here.
+ * The review method retains exact authenticated reviewer commands only; stored
+ * observations/assertions do not become certified facts or accepted statistics.
  * authorizeMarketData is a required SERVER policy and must explicitly cover
  * cached source rows, all-date one-hop identities and immutable retention. It
  * receives only this bounded client; it may not read a pool or a remote provider.
@@ -399,6 +413,30 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         discovery: { radius_metres: '4828.032', parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities });
+    });
+  }, async review(value, options = {}) {
+    const input = reviewInputOf(value), budget = operationBudget(options);
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, true, 'write');
+      if (input.command.target_ref.report_file_id !== target.report_file_id) fail('operation_conflict');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.command.expected_context,
+        input, authorizeMarketData, budget, loadInputs: false });
+      budget.check();
+      const saved = await createCustomCohortReviewRepository(client, scopeJson)
+        .append(input.commandJson, input.auth.userId);
+      budget.check();
+      assertTarget(await resolveTarget(client, input, true, 'write'), target);
+      const finalDecision = await boundedPolicy(authorizeMarketData, client, input.auth,
+        licensed.context, licensed.purpose, budget);
+      if (!same(finalDecision, licensed.decision)) fail('market_policy_changed');
+      // Opaque operation metadata only: no retained MLS field, claim, reviewer
+      // label or raw evidence is exposed by a retention-only rights decision.
+      // transaction() delivers this value only after COMMIT; an uncertain COMMIT
+      // throws with outcome_unknown, allowing a later exact authorized retry.
+      return freeze({ status: 'review_recorded', reused: saved.status === 'reused',
+        context_ref: input.command.expected_context, decision_ref: saved.decision_ref,
+        generation: saved.generation, authority: 'not_established' });
     });
   }, preview(value, options = {}) {
     return runPreview(value, options);

@@ -133,7 +133,7 @@ test('new projection does not admit private payloads, manufactured authority or 
 test('SQL projects the existing source columns directly and both native fixture schemas retain them', () => {
   const files = [
     new URL('../../dcad-scraper-with-api/migrations/004_sales_ingestion.sql', import.meta.url),
-    new URL('./neighborhoodCachedSourceReader.integration.test.js', import.meta.url),
+    new URL('./fixtures/neighborhoodCachedSourceSchemaFixture.js', import.meta.url),
     new URL('./neighborhoodCachedSourceReaderSnapshot.integration.test.js', import.meta.url),
   ];
   const schemas = files.map(file => {

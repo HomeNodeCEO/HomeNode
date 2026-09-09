@@ -5,6 +5,8 @@ import { buildCachedSourceCaptures } from './cachedSourceCaptures.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
+import { CACHED_TRANSACTION_IDENTITY_SQL, CACHED_TRANSACTION_IDENTITY_ORDER,
+  CACHED_TRANSACTION_SNAPSHOT_SQL as SNAPSHOT_SQL } from './cachedTransactionClosureReader.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 
@@ -13,6 +15,30 @@ export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
   records: 100_000, bytes: 30_000_000, row_bytes: 64_000, page_size: 250,
   selected_accounts: 50_000, duration_ms: 30_000, statement_ms: 5000, connect_ms: 3000,
 });
+// Original successful results only: no public minting API and no serializable
+// token. Weak keys do not retain abandoned results or their private closures.
+const ORIGINAL_ACQUISITIONS = new WeakMap();
+
+/** Internal, one-use provenance handoff to acquisition retention. It proves
+ * only that this reader produced these exact bytes after its checked query.
+ * It is NOT current assignment/MLS authorization, source admission, historical
+ * completeness, or permission to apply/report/sign. The caller must establish
+ * fresh authorization and exact target/context binding before retaining data.
+ * For captureInSnapshot, it does not prove that the caller ended its read
+ * transaction or committed a separate retention transaction successfully.
+ * Persisting/copying the returned data never recreates this original handoff.
+ */
+export function consumeNeighborhoodCachedAcquisition(reader, result) {
+  const original = ORIGINAL_ACQUISITIONS.get(result);
+  if (!original || original.reader !== reader) {
+    throw Object.assign(new Error('neighborhood_original_capture_required'), {
+      code: 'NEIGHBORHOOD_ORIGINAL_CAPTURE_REQUIRED',
+    });
+  }
+  ORIGINAL_ACQUISITIONS.delete(result);
+  return original.evidence;
+}
+
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const BIGINT = /^(?:0|[1-9][0-9]{0,18})$/;
 const SCOPE = ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'];
@@ -48,23 +74,7 @@ const SQL = Object.freeze({
   accounts: `SELECT account_id,county,subdivision,neighborhood_code,legal_description
     FROM core.accounts WHERE account_id=ANY($1::text[]) AND account_id COLLATE "C">$2::text COLLATE "C"
     ORDER BY account_id COLLATE "C" LIMIT $3`,
-  source_ids: `WITH ids AS (
-    SELECT id FROM core.sales_source_records WHERE primary_account_id=ANY($1::text[])
-    UNION SELECT source_record_id FROM core.sale_parcels WHERE account_id=ANY($1::text[])
-    UNION SELECT source_record_id FROM core.sales WHERE account_id=ANY($1::text[]) AND source_record_id IS NOT NULL
-    ) SELECT id::text AS source_record_id FROM ids WHERE id>$2::bigint ORDER BY id LIMIT $3`,
-  transaction_identities: `SELECT src.id::text AS source_record_id,sale.id::text AS sale_id,
-    src.primary_account_id,sale.account_id AS sale_account_id,src.source_record_hash
-    FROM core.sales_source_records src LEFT JOIN core.sales sale ON sale.source_record_id=src.id
-    WHERE src.id=ANY($1::bigint[]) ORDER BY src.id,sale.id LIMIT $2`,
-  link_identities: `SELECT id::text AS parcel_link_id,source_record_id::text,source_position,
-    parcel_sequence,account_id,is_resolved FROM core.sale_parcels sp
-    WHERE source_record_id=ANY($1::bigint[])
-      AND (source_record_id,source_position,parcel_sequence)>($2::bigint,$3::smallint,$4::smallint)
-    ORDER BY sp.source_record_id,sp.source_position,sp.parcel_sequence LIMIT $5`,
-  legacy_identities: `SELECT id::text AS sale_id,account_id AS sale_account_id FROM core.sales
-    WHERE account_id=ANY($1::text[]) AND source_record_id IS NULL AND id>$2::bigint
-    ORDER BY id LIMIT $3`,
+  ...CACHED_TRANSACTION_IDENTITY_SQL,
   transactions: `SELECT src.id::text AS source_record_id,src.source_name,src.source_filename,
     src.source_sha256,src.source_record_hash,src.transaction_fingerprint,
     src.listing_key,src.listing_id,src.source_system_name,src.source_modified_at::text,
@@ -107,24 +117,13 @@ const SQL = Object.freeze({
 });
 const ORDER = Object.freeze({
   parcels:"(payload->>'object_id')::bigint", accounts:"payload->>'account_id' COLLATE \"C\"",
-  'source-ids':"(payload->>'source_record_id')::bigint",
-  'transaction-identities':"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
-  'link-identities':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
-  'legacy-identities':"(payload->>'sale_id')::bigint",
+  ...CACHED_TRANSACTION_IDENTITY_ORDER,
   transactions:"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
   'sale-links':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
   legacy:"(payload->>'sale_id')::bigint", 'sync-state':"payload->>'source_key' COLLATE \"C\"", 'sync-runs':"payload->>'id' COLLATE \"C\"",
 });
 const MAPPERS={ parcels:mapCachedParcelRow, accounts:mapCachedAccountRow,
   transactions:mapCachedSaleRow, sale_links:mapCachedSaleLinkRow };
-const SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
-  current_setting('transaction_read_only') AS read_only, current_setting('TimeZone') AS timezone,
-  transaction_timestamp() < statement_timestamp() AS explicit_transaction,
-  pg_backend_pid() AS backend_pid, pg_current_snapshot()::text AS snapshot,
-  to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS transaction_started_at,
-  (SELECT setting::integer FROM pg_settings WHERE name='statement_timeout') AS statement_ms,
-  (SELECT setting::integer FROM pg_settings WHERE name='lock_timeout') AS lock_ms,
-  (SELECT setting::integer FROM pg_settings WHERE name='idle_in_transaction_session_timeout') AS idle_ms`;
 
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
@@ -541,12 +540,25 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       }
       const source_capture=buildCachedSourceCaptures({ scope:request.scope,captures });
       if (callerOwned) check();
-      return freeze({ status:missing.size?'incomplete':'captured',query_complete:missing.size===0,
+      const result = freeze({ status:missing.size?'incomplete':'captured',query_complete:missing.size===0,
         scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,
         source_capture,selection_sha256,query_evidence:queryEvidence.evidence,capabilities,incomplete_reasons:[...missing].sort(compare),counts,
         ...(callerOwned ? { snapshot } : {}),
         unsupported_capabilities:['historical_knowledge_replay','historical_characteristics','verified_market_eligibility',
           'real_transaction_membership','cross_source_transaction_equivalence','price_allocation','provider_coverage'] });
+      // Register only after complete query evidence and bounded construction.
+      // capture() has committed/released; captureInSnapshot() has verified the
+      // caller's snapshot but does not own or certify its eventual termination.
+      // This handoff proves original query bytes, never durable retention.
+      // Preserve the original request/closure
+      // and pre-hash compact JSON, not a reconstruction from public manifests.
+      // All referenced values are already immutable; do not clone/re-encode the
+      // potentially large captures or add private identity data to public JSON.
+      ORIGINAL_ACQUISITIONS.set(result, { reader, evidence: Object.freeze({
+        version: 1, provenance: 'original_cached_reader_invocation', authority: 'not_established',
+        captured_query_request: authorized, compact_metadata_json: compactJson, capture_result: result,
+      }) });
+      return result;
     } catch (error) {
       if (INTERNAL_INCOMPLETE.has(error)) return failedCapture([INTERNAL_INCOMPLETE.get(error)]);
       if (error.code!=='NEIGHBORHOOD_CAPTURE_LIMIT') throw error;
@@ -554,7 +566,7 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
         captured_at:capturedAt,source_capture:null,capabilities,incomplete_reasons:['capture_budget_limit'],counts });
     }
   }
-  return {
+  const reader = {
     capture: input => capture(input),
     /** Private composition API. Caller exclusively owns an explicit RR/RO
      * transaction, bounded server timeouts and UTC. This method never connects,
@@ -567,4 +579,5 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
      */
     captureInSnapshot: (client,input,options={}) => capture(input,{client,options}),
   };
+  return reader;
 }

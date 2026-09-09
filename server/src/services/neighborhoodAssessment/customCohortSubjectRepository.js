@@ -2,6 +2,7 @@ import { canonicalAssessmentJson } from './contract.js';
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
 import { projectCustomNeighborhoodMaterialInputs } from './customMaterialInputs.js';
 import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob } from './cohortEvidenceBlobRepository.js';
+import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const KEYS = ['report.land_details', 'report.property_characteristics', 'report.subject_identification'];
@@ -192,6 +193,11 @@ export function createCustomCohortSubjectRepository(client, scopeJson) {
       return ref;
     },
     load: loadRetained,
+    async loadRecordedPoint(ref) {
+      // Reuse the exact scoped original-blob verification. Never read a newer
+      // account_locations row or accept browser coordinates as a replacement.
+      return representCustomCohortSubjectPoint(await loadRetained(ref));
+    },
     async compareCurrent(ref) {
       // Actual fresh scoped rows under the SAME fences as capture, not an
       // editor-revision comparison or a callback asserting "still current".

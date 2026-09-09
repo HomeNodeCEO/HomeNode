@@ -1,6 +1,7 @@
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { exactDistribution, finiteNumberOrNull } from './statistics.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
 
 export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
   source_chunks: 1000, source_records: 100000, accounts: 50000, pockets: 128,
@@ -107,6 +108,11 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(input?.acquisition?.capture_result?.query_complete === true && capture?.status === 'ready'
     && input?.spatial?.query_complete === true, 'retained_capture_required');
+  const mappingVersion = customCohortObservationMappingVersion(input.acquisition);
+  // Mapping3 retains raw unit witnesses, but observation summaries still do not
+  // interpret provider units or join historical GLA to a closing price.
+  const sourceFields = mappingVersion === 2 ? SOURCE : { ...SOURCE,
+    lot_size_area: ['source_lot_size_area', 'nonnegative', 'Source-reported lot area; units not verified', null] };
   const effectiveDate = assessmentDate(input.subject.effective_date, 'effective_date');
   const period = { start_date: assessmentDate(input.study.observation_period.start_date, 'start_date'),
     end_date: assessmentDate(input.study.observation_period.end_date, 'end_date') };
@@ -145,6 +151,7 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
   const seen = new Set();
   for (const source of bounded(capture.sources, L.source_chunks, 'source_chunks')) {
     const role = source.payload.projection.definition.role;
+    check(customCohortObservationProjectionMatches(source.payload.projection.definition, mappingVersion), 'mapping_profile_mismatch');
     check(['selection', 'parcels', 'accounts', 'transactions', 'sale_links', 'gis_sync'].includes(role)
       && sourceSnapshots.has(source.id), 'source_role');
     if (!roleRows.has(role)) roleRows.set(role, []);
@@ -153,8 +160,8 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       const key = `${role}\n${row.record_id}`, refKey = `${source.id}\n${row.record_id}`;
       check(!seen.has(key) && routes.has(refKey), 'source_routing'); seen.add(key);
       if (['parcels', 'accounts', 'transactions', 'sale_links'].includes(role)) {
-        check(row.data?.data?.cached_mapping_version === 2 && row.data.raw_projection
-          && Array.isArray(row.data.capability_gaps), 'mapping_v2_required');
+        check(row.data?.data?.cached_mapping_version === mappingVersion && row.data.raw_projection
+          && Array.isArray(row.data.capability_gaps), mappingVersion === 2 ? 'mapping_v2_required' : 'mapping_v3_required');
       }
       roleRows.get(role).push({ raw: row.data.raw_projection ?? {}, data: row.data.data ?? row.data,
         capability_gaps: row.data.capability_gaps ?? [], source_references: [{ source_ref: source.id, record_id: row.record_id }] });
@@ -197,11 +204,11 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       capability_gaps: sorted([...rows, ...links].flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) };
   });
   const sourceMembers = [...groupBy(transactionRows, row => row.data.source_record_id)].sort(([a], [b]) => compare(a, b)).map(([id, rows]) => {
-    const links = linksFor(rows); meter('measurement', rows.length * Object.keys(SOURCE).length);
+    const links = linksFor(rows); meter('measurement', rows.length * Object.keys(sourceFields).length);
     return { source_record_id: id, canonical_transaction_ids: sorted(rows.map(row => row.data.canonical_transaction_id).filter(present)),
       associated_account_ids: associations(rows, links), source_names: sorted(rows.map(row => row.raw.source_name).filter(present)),
       record_types: sorted(rows.map(row => row.data.record_type).filter(present)),
-      observations: Object.fromEntries(Object.entries(SOURCE).map(([key, [field, policy]]) => [key, observation(rows.map(row => row.raw[field]), policy)])),
+      observations: Object.fromEntries(Object.entries(sourceFields).map(([key, [field, policy]]) => [key, observation(rows.map(row => row.raw[field]), policy)])),
       capability_gaps: sorted(rows.flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) };
   });
   function distribution(members, getCell, label, unit) {
@@ -246,7 +253,7 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       source_reported: { definition: 'All-date retained MLS/source records associated with these accounts; one member per source record, not per sale or property',
         member_unit: 'source_record', member_count: sources.length, temporal_basis: 'all_dates_retained_source_rows',
         without_canonical_transaction_count: sources.filter(row => row.canonical_transaction_ids.length === 0).length,
-        members: sources, metrics: Object.fromEntries(Object.entries(SOURCE).map(([key, [, , label, unit]]) =>
+        members: sources, metrics: Object.fromEntries(Object.entries(sourceFields).map(([key, [, , label, unit]]) =>
           [key, distribution(sources, row => row.observations[key], label, unit)])) } };
     // Members are charged incrementally above, including every occurrence in
     // overlapping pockets. Only small aggregate metadata is encoded here.

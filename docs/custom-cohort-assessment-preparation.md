@@ -38,6 +38,13 @@ outer limits are 2 million visited nodes, depth 40, 192 MB of logical input
 string bytes and 32 KiB output. This pure preparation still does real validation
 work; it is not a cache or permission to run an unbounded HTTP request.
 
+Original retained mapping3 captures are now admitted through the same preview,
+catalog and exact-evidence preparation path as mapping2. The original compact
+metadata, every source projection and every mapped row must agree on that
+version; v3 row bytes are revalidated by the retained-input loader. This does
+not relabel old captures or produce supported facts. Mapping3's bounded literal
+sale witnesses are available to its separate local-observation interpreter.
+
 ## What still prevents a supported assessment
 
 | Needed resolver input | What the actual retained CAD/sales capture establishes instead |

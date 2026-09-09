@@ -80,8 +80,13 @@ as old1/2. Original-input retention validates v3 row wrappers against the
 installed mapping and reopens their exact hashes. Authorized reopen selects its
 purpose from bounded immutable compact metadata before any retained MLS graph
 load, not from the current factory default. Old v1/v2 bytes are never relabeled,
-remapped or enriched. Existing preview/catalog and sale-meaning consumers remain
-v2-only; a supported v3 interpreter and intentional Custom activation come next.
+remapped or enriched. Observation preview/catalog consumers now follow the
+original mapping2/3 discriminator consistently across source chunks and rows;
+missing metadata supports only the legacy v2 pure-observation shape, never v3.
+They retain current-only/observations-only labels and blocked Apply. The additive
+`customCohortSaleWitnessMeaningResolver.js` interprets the stored v3 witnesses
+without promoting them into provider facts. Supported interpretation and
+intentional Custom activation remain separate.
 
 Focused tests cover shape, precision, presence, bounds, privacy vocabulary,
 non-invocation of getters/proxies, original v2 behavior, cross-profile denial and

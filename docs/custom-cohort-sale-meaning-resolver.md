@@ -52,14 +52,14 @@ CSV SHA alone cannot attribute every current value to that file/revision.
 Trestle can also fall back from absent ClosePrice to ListPrice for a closed row;
 agreement with a canonical price is therefore not proof of closing consideration.
 
-The narrow next capture extension can retain `mls_status` and an allowlisted
+The separately installed mapping3 capture extension now retains `mls_status` and an allowlisted
 source-field witness from **existing** `raw_payload` columns; it need not expose
 all raw payload/private remarks or initially change the database schema. Compare
 each typed value with the exact witnessed raw field under an installed extractor
 revision. A blank/missing/mismatched latest raw field cannot claim an older
 COALESCE-preserved typed value. Preserve its generic stored observation instead.
-That extension must have an explicit new capture/projection version and retain
-old v2 behavior, not retrofit evidence into old contexts.
+That extension uses an explicit new projection version and retains old v2
+behavior; it does not retrofit evidence into old contexts.
 
 Once genuine exporter/provider definitions are available, bind each reviewed
 meaning profile to an explicit provider/schema/extractor revision and immutable
@@ -71,6 +71,37 @@ headers and has no per-field import lineage; missing original meanings require
 the original export/configuration or prospective immutable import observations.
 Neither this module nor a source-rights activation fills those evidence gaps.
 
-Tests reuse `decisionEvidenceFixture` through actual capture/persist/reopen
-contracts over bounded query fakes; no new duplicate capture fixture, native
-database claim, live source grant or production activation is introduced.
+## Mapping3 literal-witness interpretation
+
+`createCustomCohortSaleWitnessMeaningResolver(preparationInput)` in the additive
+`customCohortSaleWitnessMeaningResolver.js` follows the same exact retained-record
+binding. Its installed `getCustomSaleWitnessMeaningProfile()` is separate from
+the unchanged v2 profile. Original mapping3 records are required: caller flags,
+old v2 records, mixed versions or a forged source reference cannot select it.
+
+The result retains all 28 literal witness keys with their original JSON type and
+presence state. Missing keys, SQL/JSON null, blank strings, numeric zero, false,
+non-scalar fields and oversized fields remain distinguishable. Interpretations
+and exact typed-to-literal comparisons are diagnostics, not a provider data
+dictionary or proof that the latest raw field originally supplied a coalesced
+typed value. ClosePrice, CurrentPrice and ListPrice remain separate fields;
+neither missing price nor unit is filled from a different field or default.
+
+An observed `USD`, `Closed` or area-unit string remains source-reported literal
+text. It does not authorize exposure or certify currency, completed sale status,
+historical GLA, complete interests or market eligibility. The output remains
+observations-only with blocked Apply. It is not selected by a public route or
+default producer in this change.
+
+Observation preview/catalog consumers can now follow the original mapping3
+metadata without modifying old snapshots. They still show current CAD records,
+stored canonical transactions and source observations as distinct populations,
+not a supported report assessment. No statistical formula, legal subdivision
+claim, recommendation selection or accepted report field changes here.
+
+V2 tests retain the unchanged `decisionEvidenceFixture`. The isolated mapping3
+fixture executes its installed reader/access plus actual capture/persist/reopen
+contracts over bounded query fakes, with synthetic selected witness cells. It
+does not relabel the v2 fixture or pretend to validate the real SQL expression;
+the separate native witness tests cover that expression. No live source grant
+or production activation is introduced.

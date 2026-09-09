@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
+import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 
@@ -119,6 +121,49 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await assert.rejects(capture.preview({ ...previewRequest,
       selection: { revision: 3, pockets: [{ id: 'foreign', label: 'Not discovered', account_ids: [linked] }] } }), /pocket_membership/);
     checks.push('retained numeric and exact parcel-map preview share one selection; empty selection stays empty; no source reread or writes');
+
+    const display = await capture.present(previewRequest, { includeMap: true });
+    assert.deepEqual(display.target, { account_id: account, assignment_file_id: assignment });
+    assert.equal(display.summary.all.stock.member_count, 2);
+    assert.equal(display.summary.selected.stock.member_count, 1);
+    assert.equal(display.summary.selected.transactions.metrics.recorded_total_price.median, 300000);
+    assert.equal(display.summary.all.stock.members, undefined);
+    assert.equal(display.summary.all.account_ids, undefined);
+    assert.equal(display.preview, undefined, 'internal full member data must not accompany compact display');
+    assert.equal(display.parcel_map.status, 'available');
+    const toggled = await capture.present({ ...previewRequest, selection: { revision: 2, pockets: [] } }, { includeMap: false });
+    assert.equal(toggled.summary.selected.stock.member_count, 0);
+    assert.deepEqual(toggled.parcel_map, { status: 'omitted', reason: 'geometry_not_requested' });
+    assert.notEqual(toggled.summary.binding.selection_sha256, display.summary.binding.selection_sha256);
+    const exposureDenied = createCustomCohortContextCapture({ pool: observed,
+      authorizeMarketData: async (_client, _auth, _context, _purpose, { exposure }) => exposure === 'none' ? grant : { allowed: false } });
+    await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);
+    checks.push('compact display uses identical complete statistics without raw rows; immutable map omission and explicit exposure denial');
+
+    // Exercise the real HTTP -> exact target -> retained DB -> presentation
+    // chain, not merely a router mock. This app is synthetic and loopback-only.
+    const app = express();
+    app.use((req, _res, next) => { req.mobileAuth = auth; next(); });
+    app.use(createCustomNeighborhoodCohortRouter({ pool, resolveAccountId: async (_pool, id) => id, cohortService: capture }));
+    const server = await new Promise(resolve => { const listener = app.listen(0, '127.0.0.1', () => resolve(listener)); });
+    try {
+      const url = `http://127.0.0.1:${server.address().port}/api/accounts/${account}/neighborhood-cohort`;
+      const post = (action, body) => fetch(`${url}/${action}`, { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) });
+      const body = { assignment_file_id: assignment, context_ref: result.context_ref, selection: previewRequest.selection };
+      const response = await post('preview', { ...body, include_map: false });
+      assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+      const http = await response.json();
+      assert.deepEqual(http.summary, display.summary); assert.equal(http.preview, undefined);
+      const pageResponse = await post('members', { ...body, population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } });
+      assert.equal(pageResponse.status, 200);
+      const page = await pageResponse.json(); assert.equal(page.status, 'members');
+      assert.deepEqual(page.context_ref, result.context_ref); assert.equal(page.selection_revision, 1);
+      const foreign = await post('preview', { ...body, context_ref: { ...result.context_ref, context_id: randomUUID() }, include_map: false });
+      assert.equal(foreign.status, 404);
+      assert.ok(!JSON.stringify(http).includes('raw_projection'));
+      assert.ok(!JSON.stringify(page).includes('raw_values'));
+    } finally { await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); }
+    checks.push('actual scoped HTTP compact-preview/member pages; foreign context refusal; no raw source exposure');
 
     for (const deny of [true, false]) {
       let checksDone = 0;

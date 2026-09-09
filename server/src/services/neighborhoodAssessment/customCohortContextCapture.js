@@ -6,6 +6,7 @@ import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
+import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembership } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCachedReadAccess, describeNeighborhoodCachedMarketDataPurpose } from './cachedReadAccess.js';
@@ -13,6 +14,8 @@ import { createNeighborhoodCachedSourceReader, consumeNeighborhoodCachedAcquisit
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInputV1 } from './selectorInputProfile.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
+import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
+import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -33,24 +36,40 @@ function exactKeys(value, keys) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype
     || Object.keys(value).length !== keys.length || !keys.every(key => Object.hasOwn(value, key))) fail('invalid_input');
 }
-function inputOf(input) {
-  // This is an internal service. The HTTP owner must supply its authenticated
-  // principal separately from body fields; no body-auth or source-roster API.
-  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId', 'observationPeriod']);
-  const { accountId, assignmentFileId, operationId } = input;
+function identityOf(input) {
+  const { accountId, assignmentFileId } = input;
   if (typeof accountId !== 'string' || !accountId || accountId.length > 64 || accountId.trim() !== accountId
     || /[\u0000-\u001f\u007f]/.test(accountId)) fail('invalid_account');
   if (typeof assignmentFileId !== 'string' || !/^[1-9]\d{0,18}$/.test(assignmentFileId)
     || BigInt(assignmentFileId) > 9223372036854775807n) fail('invalid_assignment');
-  if (typeof operationId !== 'string' || !UUID.test(operationId)) fail('invalid_operation');
-  exactKeys(input.observationPeriod, ['start_date', 'end_date']);
-  const period = Object.fromEntries(Object.entries(input.observationPeriod).map(([key, value]) => [key, assessmentDate(value)]));
-  if (period.start_date > period.end_date) fail('invalid_period');
   if (typeof input.auth?.userId !== 'string' || !input.auth.userId.trim()) fail('authentication_required');
   // Admit/copy only the existing authorization policy's fields before awaiting.
   const auth = JSON.parse(canonicalAssessmentJson({ userId: input.auth.userId,
     organizations: input.auth.organizations ?? [] }));
-  return freeze({ auth, accountId, assignmentFileId, operationId, observationPeriod: period });
+  return freeze({ auth, accountId, assignmentFileId });
+}
+function inputOf(input) {
+  // This is an internal service. The HTTP owner must supply its authenticated
+  // principal separately from body fields; no body-auth or source-roster API.
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId', 'observationPeriod']);
+  const identity = identityOf(input), { operationId } = input;
+  if (typeof operationId !== 'string' || !UUID.test(operationId)) fail('invalid_operation');
+  exactKeys(input.observationPeriod, ['start_date', 'end_date']);
+  const period = Object.fromEntries(Object.entries(input.observationPeriod).map(([key, value]) => [key, assessmentDate(value)]));
+  if (period.start_date > period.end_date) fail('invalid_period');
+  return freeze({ ...identity, operationId, observationPeriod: period });
+}
+function previewInputOf(input) {
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'selection']);
+  const identity = identityOf(input);
+  const contextRef = prepareCustomCohortContextReference(canonicalAssessmentJson(input.contextRef));
+  // Detach the bounded selection before any await; changing a caller's object
+  // while evidence loads must not change which map/statistics pair is returned.
+  const selection = JSON.parse(canonicalAssessmentJson(input.selection));
+  exactKeys(selection, ['revision', 'pockets']);
+  if (!Number.isSafeInteger(selection.revision) || selection.revision < 1
+    || !Array.isArray(selection.pockets) || selection.pockets.length > CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS.pockets) fail('invalid_selection');
+  return freeze({ ...identity, contextRef, selection });
 }
 function one(result) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1) fail('target_unavailable');
@@ -149,15 +168,15 @@ async function transaction(pool, mode, budget, execute) {
   }
 }
 
-async function resolveTarget(client, input, locked) {
+async function resolveTarget(client, input, locked, permission = 'write') {
   const assignment = one(await client.query(`/* custom-cohort-capture:assignment */
     SELECT id::text AS assignment_file_id,account_id,organization_id,
       assigned_appraiser_user_id,supervisory_appraiser_user_id
     FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2
     ${locked ? 'FOR UPDATE NOWAIT' : ''}`, [input.assignmentFileId, input.accountId]));
   if (assignment.assignment_file_id !== input.assignmentFileId || assignment.account_id !== input.accountId
-    || !hasApplicationPermission(input.auth, 'custom_appraisal', 'write', assignment.organization_id)
-    || !decideAssignmentAccess(input.auth, assignment, 'write')) fail('assignment_access_denied');
+    || !hasApplicationPermission(input.auth, 'custom_appraisal', permission, assignment.organization_id)
+    || !decideAssignmentAccess(input.auth, assignment, permission)) fail('assignment_access_denied');
   const report = one(await client.query(`/* custom-cohort-capture:report */
     SELECT id AS report_file_id,appraisal_case_id,subject_snapshot_id
     FROM app.report_files WHERE custom_assignment_file_id=$1::bigint AND account_id=$2 AND organization_id=$3
@@ -203,6 +222,35 @@ function captured(value, stage) {
   return value;
 }
 
+async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, budget, study = null }) {
+  const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
+  if (!previous) fail('context_unavailable');
+  const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
+  const context = { target: {
+    report_file_id: previous.body.target.report_file_id, workflow_type: 'custom_appraisal',
+    workflow_target_id: previous.body.target.workflow_target_id,
+  }, scope: Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
+    .map(key => [key, previous.body.target[key]])), effective_date: previous.body.effective_date };
+  const blobs = createNeighborhoodCohortBlobRepository(client, context.scope.organization_id);
+  const readMetadata = async ref => {
+    const text = await blobs.get(ref?.content_sha256, ref?.canonical_utf8_bytes);
+    if (text === null) fail('retained_inputs_unavailable');
+    return JSON.parse(text);
+  };
+  // Only the bounded request directory is opened before current licensing.
+  // Never read full source rows simply because this operation was allowed before.
+  const directory = await readMetadata(refs.selection_input);
+  const requestMetadata = await readMetadata(directory.request?.metadata);
+  if (!same(requestMetadata.target, context.target) || !same(requestMetadata.scope, context.scope)
+    || (study && !same(requestMetadata.observation_period, study.observation_period))
+    || requestMetadata.effective_date !== context.effective_date || requestMetadata.knowledge_cutoff !== null) fail('operation_conflict');
+  const purpose = describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
+  const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget);
+  if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
+  const retained = await loadCustomCohortCaptureInputs(client, scopeJson, refs);
+  return { context, retained, purpose, decision };
+}
+
 /** Executable, Custom-only acquisition owner. No HTTP route, current-head
  * change, eligible-cohort decision, calculation, Apply or signing occurs here.
  * authorizeMarketData is a required SERVER policy and must explicitly cover
@@ -231,31 +279,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       if (existing.rowCount) {
         if (existing.rowCount !== 1 || existing.rows.length !== 1) fail('operation_conflict');
         const reference = { context_id: input.operationId, context_revision: '1', context_sha256: existing.rows[0].context_sha256 };
-        const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
-        const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
-        const blobs = createNeighborhoodCohortBlobRepository(client, scope.organization_id);
-        const readMetadata = async ref => {
-          const text = await blobs.get(ref?.content_sha256, ref?.canonical_utf8_bytes);
-          if (text === null) fail('retained_inputs_unavailable');
-          return JSON.parse(text);
-        };
-        // Read only the bounded retained request directory before licensing;
-        // no source payload, transaction identities or row-level evidence yet.
-        const directory = await readMetadata(refs.selection_input);
-        const requestMetadata = await readMetadata(directory.request?.metadata);
-        const priorContext = { target: {
-          report_file_id: previous.body.target.report_file_id, workflow_type: 'custom_appraisal',
-          workflow_target_id: previous.body.target.workflow_target_id,
-        }, scope: Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
-          .map(key => [key, previous.body.target[key]])), effective_date: previous.body.effective_date };
-        if (!same(requestMetadata.target, priorContext.target) || !same(requestMetadata.scope, priorContext.scope)
-          || !same(requestMetadata.observation_period, study.observation_period)
-          || requestMetadata.effective_date !== priorContext.effective_date || requestMetadata.knowledge_cutoff !== null) fail('operation_conflict');
-        const replayDecision = await boundedPolicy(authorizeMarketData, client, input.auth, priorContext,
-          describeNeighborhoodCachedMarketDataPurpose(requestMetadata), budget);
-        if (!same({ decision_id: replayDecision.decision_id, policy_revision: replayDecision.policy_revision },
-          requestMetadata.market_decision)) fail('market_policy_changed');
-        const retained = await loadCustomCohortCaptureInputs(client, scopeJson, refs);
+        const { retained } = await authorizedRetainedInputs(client, {
+          scopeJson, reference, input, authorizeMarketData, budget, study,
+        });
         if (retained.acquisition_intent.body.actor_user_id !== input.auth.userId || !same(retained.study, study)) fail('operation_conflict');
         if ((await repository.compareCurrent(retained.subject_reference)).status !== 'matched') fail('subject_changed');
         // Replay confirms durable registration only, not a new source read or
@@ -338,6 +364,37 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         discovery: { radius_metres: '4828.032', parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities });
+    });
+  }, async preview(value, options = {}) {
+    const input = previewInputOf(value), budget = operationBudget(options);
+    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, false, 'read');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      return { target, scopeJson, ...await authorizedRetainedInputs(client, {
+        scopeJson, reference: input.contextRef, input, authorizeMarketData, budget,
+      }) };
+    });
+    // Pure calculation after releasing the reading client: a pocket toggle
+    // never holds workfile/subject locks while traversing all observations.
+    budget.check();
+    const preview = buildCustomCohortObservationPreview({ context_ref: input.contextRef,
+      retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
+    budget.check();
+    const selected = [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))];
+    const parcelMap = buildCustomCohortParcelMap({ retained_inputs: loaded.retained.retained_inputs, selected_account_ids: selected });
+    budget.check();
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
+      if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
+        .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+      const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.context, loaded.purpose, budget);
+      if (!same(decision, loaded.decision)) fail('market_policy_changed');
+      // One response owns one context/selection for BOTH the map and numbers.
+      // UI owners must replace this group together, never mix response revisions.
+      // No raw retained graph, report writes or eligible-cohort claim is returned.
+      return freeze({ status: 'preview', context_ref: input.contextRef, selection_revision: input.selection.revision,
+        subject_freshness: 'matched', preview, parcel_map: parcelMap,
+        apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
     });
   } });
 }

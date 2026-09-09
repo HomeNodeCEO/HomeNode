@@ -76,3 +76,27 @@ test('Custom capture discards uncertain BEGIN and failed rollback connections ex
     if (failureAt === 'BEGIN') assert.equal(calls.length, 1);
   }
 });
+
+const previewInput = () => {
+  const { auth, accountId, assignmentFileId } = input();
+  return { auth, accountId, assignmentFileId,
+    contextRef: { context_id: input().operationId, context_revision: '1', context_sha256: 'a'.repeat(64) },
+    selection: { revision: 1, pockets: [] } };
+};
+
+test('Custom observation preview rejects client authority, malformed context and selection before checkout', async () => {
+  for (const key of ['organization_id', 'source_rows', 'subject_freshness', 'retained_inputs']) {
+    await assert.rejects(setup().preview({ ...previewInput(), [key]: {} }), /invalid_input/);
+  }
+  await assert.rejects(setup().preview({ ...previewInput(), contextRef: { context_id: 'unknown' } }));
+  for (const revision of [0, -1, 1.5, '1', Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(setup().preview({ ...previewInput(), selection: { revision, pockets: [] } }), /invalid_selection/);
+  }
+  await assert.rejects(setup().preview({ ...previewInput(), selection: { revision: 1, pockets: Array(129).fill({}) } }), /invalid_selection/);
+});
+
+test('Custom observation preview rejects missing principal and pre-cancelled work without reading evidence', async () => {
+  await assert.rejects(setup().preview({ ...previewInput(), auth: null }), /authentication_required/);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(setup().preview(previewInput(), { signal: controller.signal }), /cancelled/);
+});

@@ -202,4 +202,10 @@ capacity cases use trusted builder-shaped projection fixtures, not claimed nativ
 acquisition. Native helper additions cover real retained labels after live-cache
 mutation, exact full membership, policy checks/revocation, assignment/material
 changes, no source reread/report writes, and actual HTTP. These added native cases
-remain pending until run against a genuine migrated disposable test database.
+passed as part of the 13 coordinator groups in the genuine migrated disposable
+local run recorded at workspace artifact
+`outputs/custom-neighborhood-context-native-v1/e7c8dbd5ec424dbba173cbfbf96d0d5f.json`.
+The same ordinary native CI wrapper now additionally runs source-policy and
+checkpoint checks; this wiring is not itself a completed remote-CI result.
+All source/owner fixtures remain synthetic, with no production source-rights,
+legal subdivision, recommendation or report-acceptance claim.

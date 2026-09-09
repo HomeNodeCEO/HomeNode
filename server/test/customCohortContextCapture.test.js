@@ -100,3 +100,27 @@ test('Custom observation preview rejects missing principal and pre-cancelled wor
   const controller = new AbortController(); controller.abort();
   await assert.rejects(setup().preview(previewInput(), { signal: controller.signal }), /cancelled/);
 });
+
+test('Custom catalog uses the same exact principal, context, selection and aggregate budget guards', async () => {
+  for (const key of ['account_ids', 'retained_inputs', 'source_grant', 'organization_id', 'catalog']) {
+    await assert.rejects(setup().catalog({ ...previewInput(), [key]: {} }), /invalid_input/);
+  }
+  await assert.rejects(setup().catalog({ ...previewInput(), auth: null }), /authentication_required/);
+  await assert.rejects(setup().catalog({ ...previewInput(), assignmentFileId: 1 }), /invalid_assignment/);
+  await assert.rejects(setup().catalog({ ...previewInput(), contextRef: {} }));
+  await assert.rejects(setup().catalog({ ...previewInput(), selection: { revision: 0, pockets: [] } }), /invalid_selection/);
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(setup().catalog(previewInput(), { signal: controller.signal }), /cancelled/);
+  await assert.rejects(setup().catalog(previewInput(), { deadline: performance.now() }), /deadline_exceeded/);
+});
+
+test('Custom catalog rolls back missing target without reading source or writing reports', async () => {
+  const calls = [], releases = [];
+  const capture = setup(async () => ({
+    async query({ text }) { calls.push(text); return { rowCount: 0, rows: [] }; },
+    release(error) { releases.push(error); },
+  }));
+  await assert.rejects(capture.catalog(previewInput()), /target_unavailable/);
+  assert.ok(calls.includes('ROLLBACK')); assert.deepEqual(releases, [undefined]);
+  assert.ok(!calls.some(sql => /neighborhood-(cache|membership|closure):|\b(INSERT|UPDATE|DELETE)\b/i.test(sql)));
+});

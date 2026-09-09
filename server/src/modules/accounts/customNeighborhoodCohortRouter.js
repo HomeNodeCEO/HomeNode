@@ -1,4 +1,5 @@
 import express from 'express';
+import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -22,6 +23,8 @@ function bodyOf(body, required) {
   return body;
 }
 function publicFailure(error) {
+  if (error?.reason === 'catalog_transport_limit') return [422, { error: 'neighborhood_catalog_incomplete',
+    reason: 'catalog_response_byte_limit', membership_returned: false }];
   if (error?.outcome_unknown) return [409, { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true }];
   if (error?.type === 'entity.too.large' || error?.status === 413) return [413, { error: 'neighborhood_request_too_large' }];
   if (error?.type === 'entity.parse.failed') return [400, { error: 'invalid_neighborhood_request' }];
@@ -52,7 +55,7 @@ function publicFailure(error) {
  * Never supply its internal raw `.preview` method as `.present` here.
  */
 export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
-  if (['capture', 'present', 'inspect'].some(key => typeof cohortService?.[key] !== 'function')) {
+  if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
   }
   const router = express.Router();
@@ -82,6 +85,15 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
         // Principal is taken only from middleware. Never spread body into input.
         const identity = { auth: req.mobileAuth, accountId, assignmentFileId: body.assignment_file_id };
         const result = await execute(identity, body, { signal: controller.signal });
+        if (action === 'catalog') {
+          const encoded = JSON.stringify(result);
+          if (Buffer.byteLength(encoded, 'utf8') > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
+            throw Object.assign(new Error('catalog_transport_limit'), { reason: 'catalog_transport_limit' });
+          }
+          // Send the exact checked bytes: application-wide JSON indentation or
+          // replacers must not expand an otherwise bounded catalog response.
+          if (!controller.signal.aborted && !res.destroyed) return res.type('application/json').send(encoded);
+        }
         if (!controller.signal.aborted && !res.destroyed) return res.json(result);
       } catch (error) {
         if (!controller.signal.aborted && !res.destroyed) {
@@ -103,6 +115,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
   route('members', ['assignment_file_id', 'context_ref', 'selection', 'population', 'page'], (identity, body, options) =>
     cohortService.inspect({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { population: body.population, page: body.page }, options));
+  route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) =>
+    cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection }, options));
   router.use(BASE, (error, _req, res, _next) => {
     const [status, payload] = publicFailure(error);
     return res.status(status).json(payload);

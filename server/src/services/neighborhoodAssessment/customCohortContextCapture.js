@@ -17,6 +17,7 @@ import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
 import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers } from './customCohortPreviewPresentation.js';
+import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -284,7 +285,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] })
       : { status: 'omitted', reason: 'geometry_not_requested' };
     const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
-    const content = project ? project(preview, expected, parcelMap) : { preview, parcel_map: parcelMap };
+    const content = project ? project(preview, expected, parcelMap, loaded.retained.retained_inputs) : { preview, parcel_map: parcelMap };
     budget.check();
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
@@ -401,6 +402,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
     });
   }, preview(value, options = {}) {
     return runPreview(value, options);
+  }, catalog(value, options = {}) {
+    return runPreview(value, options, { includeMap: false, exposure: 'report_observation_catalog',
+      project: (preview, expected, _parcelMap, retained_inputs) => ({ status: 'catalog',
+        catalog: presentCustomCohortPocketCatalog({
+          catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview }), preview, expected,
+        }),
+      }),
+    });
   }, present(value, presentation = { includeMap: true }, options = {}) {
     exactKeys(presentation, ['includeMap']);
     if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');

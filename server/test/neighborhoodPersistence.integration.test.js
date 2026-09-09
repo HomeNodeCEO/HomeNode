@@ -15,6 +15,8 @@ import { checkNeighborhoodCohortBlobDatabase } from "./helpers/neighborhoodCohor
 import { checkCustomCohortSubjectDatabase } from "./helpers/customCohortSubjectDatabaseChecks.js";
 import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelectionDatabaseChecks.js";
 import { checkCustomCohortContextDatabase } from "./helpers/customCohortContextDatabaseChecks.js";
+import { checkCustomAppraisalTransactionDatabase } from "./helpers/customAppraisalTransactionDatabaseChecks.js";
+import { checkCustomNeighborhoodAcceptanceDatabase } from "./helpers/customNeighborhoodAcceptanceDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -120,7 +122,8 @@ function observingPool(pool, { before, after } = {}) {
 
 async function identityFixture(pool, options = {}) {
   const organization_id = randomUUID(), actor_user_id = randomUUID(), appraisal_case_id = randomUUID(), subject_snapshot_id = randomUUID();
-  const accounts = Array.from({ length: 4 }, () => `neighborhood-pg-${randomUUID()}`);
+  // Stay within the editor route's 50-character account identifier contract.
+  const accounts = Array.from({ length: 4 }, () => `neigh-pg-${randomUUID()}`);
   const scope = { organization_id, appraisal_case_id, subject_snapshot_id, account_id: accounts[0] };
   const client = await pool.connect();
   try {
@@ -379,6 +382,16 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       checkCustomCohortSelectionDatabase(pool, await identityFixture(pool)));
     await t.test("Custom immutable context headers preserve exact tenant/file evidence and caller transactions", async () =>
       checkCustomCohortContextDatabase(pool, await identityFixture(pool)));
+    await t.test("Custom section writes participate in caller-owned atomic transactions without changing ordinary saves", async () =>
+      checkCustomAppraisalTransactionDatabase(pool, await identityFixture(pool)));
+
+    for (const atomicSave of [false, true]) await t.test(`Custom accepted groups preserve complete persistence (atomic save: ${atomicSave})`, async () => {
+      const identity = await identityFixture(pool), data = publicationFixture(identity);
+      const { job } = await enqueue(identity, data), claim = await claimOne(repository, job.id);
+      assert.equal((await publish(repository, claim, data)).promoted, true);
+      const assessment = await repository.getCurrent(identity.scope);
+      await checkCustomNeighborhoodAcceptanceDatabase(pool, identity, assessment, { atomicSave });
+    });
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {
       const payload = { padding: "x".repeat(1_469_990), values: Array(10_000).fill(0) };

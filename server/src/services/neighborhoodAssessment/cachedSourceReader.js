@@ -20,7 +20,7 @@ const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const TABLES = Object.freeze({
   parcels: ['gis.dcad_parcels', 'object_id account_id low_parcel_id residential_year_built residential_area_sqft parcel_area_sqft current_market_value land_use_category classification_confidence classification_review_reason subdivision_name source_record_hash source_updated_at sync_run_id synced_at geom'],
   accounts: ['core.accounts', 'account_id county subdivision neighborhood_code legal_description'],
-  source_records: ['core.sales_source_records', 'id source_name source_filename source_sha256 source_record_hash transaction_fingerprint listing_key listing_id source_system_name source_modified_at loaded_at updated_at primary_account_id record_type close_date listing_contract_date current_price living_area parcel_number_raw parcel_number2_raw match_status has_multiple_parcel_numbers multi_parcel_status has_unresolved_parcel requires_additional_review data_quality_flags'],
+  source_records: ['core.sales_source_records', 'id source_name source_filename source_sha256 source_record_hash transaction_fingerprint listing_key listing_id source_system_name source_modified_at loaded_at updated_at primary_account_id record_type close_date listing_contract_date current_price living_area lot_size_area year_built bedrooms_total bathrooms_total_integer bathrooms_full bathrooms_half structural_style housing_type attachment_type architectural_style garage_spaces garage_yn pool_yn days_on_market parcel_number_raw parcel_number2_raw match_status has_multiple_parcel_numbers multi_parcel_status has_unresolved_parcel requires_additional_review data_quality_flags'],
   sales: ['core.sales', 'id source_record_id account_id closing_date sale_price source loaded_at'],
   sale_links: ['core.sale_parcels', 'id source_record_id source_position parcel_sequence parcel_role parcel_number_raw parcel_number_normalized account_id match_method is_resolved loaded_at'],
   sync_state: ['gis.source_sync_state', 'source_key status source_vintage row_count last_attempt_at last_success_at last_source_update_at last_run_id updated_at'],
@@ -71,7 +71,15 @@ const SQL = Object.freeze({
     src.loaded_at::text AS source_loaded_at,src.updated_at::text AS source_updated_at,
     src.primary_account_id,src.record_type,src.close_date::text AS source_close_date,
     src.listing_contract_date::text,src.current_price::text AS source_current_price,
-    src.living_area::text AS source_living_area,src.parcel_number_raw,src.parcel_number2_raw,
+    src.living_area::text AS source_living_area,src.lot_size_area::text AS source_lot_size_area,
+    src.year_built AS source_year_built,src.bedrooms_total AS source_bedrooms_total,
+    src.bathrooms_total_integer AS source_bathrooms_total_integer,
+    src.bathrooms_full AS source_bathrooms_full,src.bathrooms_half AS source_bathrooms_half,
+    src.structural_style AS source_structural_style,src.housing_type AS source_housing_type,
+    src.attachment_type AS source_attachment_type,src.architectural_style AS source_architectural_style,
+    src.garage_spaces::text AS source_garage_spaces,src.garage_yn AS source_garage_yn,
+    src.pool_yn AS source_pool_yn,src.days_on_market AS source_days_on_market,
+    src.parcel_number_raw,src.parcel_number2_raw,
     src.match_status,src.has_multiple_parcel_numbers,src.multi_parcel_status,
     src.has_unresolved_parcel,src.requires_additional_review,src.data_quality_flags,
     sale.id::text AS sale_id,sale.account_id AS sale_account_id,
@@ -109,6 +117,28 @@ const ORDER = Object.freeze({
 });
 const MAPPERS={ parcels:mapCachedParcelRow, accounts:mapCachedAccountRow,
   transactions:mapCachedSaleRow, sale_links:mapCachedSaleLinkRow };
+const SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
+  current_setting('transaction_read_only') AS read_only, current_setting('TimeZone') AS timezone,
+  transaction_timestamp() < statement_timestamp() AS explicit_transaction,
+  pg_backend_pid() AS backend_pid, pg_current_snapshot()::text AS snapshot,
+  to_char(transaction_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS transaction_started_at,
+  (SELECT setting::integer FROM pg_settings WHERE name='statement_timeout') AS statement_ms,
+  (SELECT setting::integer FROM pg_settings WHERE name='lock_timeout') AS lock_ms,
+  (SELECT setting::integer FROM pg_settings WHERE name='idle_in_transaction_session_timeout') AS idle_ms`;
+
+function callerSnapshot(rows, limits) {
+  const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
+  if (!row || row.isolation!=='repeatable read' || row.read_only!=='on' || row.explicit_transaction!==true
+    || !Number.isSafeInteger(row.backend_pid) || row.backend_pid<1
+    || typeof row.snapshot!=='string' || row.snapshot.length>limits.row_bytes
+    || !/^\d+:\d+:(?:\d+(?:,\d+)*)?$/.test(row.snapshot)
+    || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(row.transaction_started_at ?? '')
+    || sourceTime(row.transaction_started_at)===null) incomplete('caller_snapshot_transaction_required');
+  if (row.timezone!=='UTC' || !Number.isSafeInteger(row.statement_ms) || row.statement_ms<1 || row.statement_ms>limits.statement_ms
+    || !Number.isSafeInteger(row.lock_ms) || row.lock_ms<1 || row.lock_ms>1000
+    || !Number.isSafeInteger(row.idle_ms) || row.idle_ms<1 || row.idle_ms>10000) incomplete('caller_snapshot_settings_required');
+  return freeze({ backend_pid:row.backend_pid, snapshot:row.snapshot, transaction_started_at:row.transaction_started_at });
+}
 
 const INTERNAL_INVALID = new WeakSet();
 const INTERNAL_INCOMPLETE = new WeakMap();
@@ -208,13 +238,23 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access);
   const limits=limitsOf(overrides);
-  return { async capture(input) {
+  async function capture(input, owner=null) {
+    const callerOwned=owner!==null;
+    const options=callerOwned ? owner.options : {};
+    if (callerOwned && (typeof owner.client?.query!=='function' || typeof owner.client.release!=='function')) invalid('caller_client');
+    if (callerOwned && (!options || Object.getPrototypeOf(options)!==Object.prototype
+      || Object.keys(options).some(key => !['signal','deadline'].includes(key))
+      || (options.signal!==undefined && !(options.signal instanceof AbortSignal))
+      || (options.deadline!==undefined && (typeof options.deadline!=='number' || !Number.isFinite(options.deadline))))) invalid('snapshot_options');
+    const signal=options.signal;
     const authorized=consumeNeighborhoodCachedReadAccess(access,input?.auth,input,{
       selection_grant:input?.selection_grant,market_grant:input?.market_grant });
     const request=requestOf(authorized,limits);
     const started=performance.now();
+    const deadline=Math.min(started+limits.duration_ms,options.deadline ?? Infinity);
     const counts={ records:0, bytes:0, queries:0 };
-    let client;
+    let client=owner?.client;
+    let snapshot=null;
     let began=false;
     let releaseError;
     let primaryFailure=null;
@@ -229,13 +269,21 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
     const failedCapture=reasons => freeze({ status:'incomplete',query_complete:false,scope:request.scope,
       reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,source_capture:null,
       capabilities,incomplete_reasons:reasons,counts });
-    const check=() => { if (performance.now()-started>limits.duration_ms) incomplete('duration_limit'); };
+    const check=() => {
+      if (signal?.aborted) incomplete('capture_cancelled');
+      if (performance.now()>deadline) incomplete('duration_limit');
+    };
     const query=async (tag,sql,values=[]) => {
       check(); counts.queries++;
       const result=await client.query({ text:`/* neighborhood-cache:${tag} */ ${sql}`,values,
-        query_timeout:limits.statement_ms+1000 });
+        query_timeout:callerOwned ? Math.max(1,Math.min(limits.statement_ms+1000,Math.ceil(deadline-performance.now()))) : limits.statement_ms+1000 });
       check();
       return result.rows;
+    };
+    const verifySnapshot=async () => {
+      const current=callerSnapshot(await query('caller-snapshot',SNAPSHOT_SQL),limits);
+      if (snapshot && canonicalAssessmentJson(current)!==canonicalAssessmentJson(snapshot)) incomplete('caller_snapshot_changed');
+      snapshot=current;
     };
     const rows=async (tag,sql,values=[]) => {
       // Limit each projected row in PostgreSQL BEFORE sending large geometry or
@@ -277,12 +325,19 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
       }
     };
     try {
-      client=await connectBounded(pool,limits.connect_ms);
-      // Once BEGIN is attempted, even a client timeout leaves server state
-      // uncertain. Always rollback (or destroy on failed rollback) before release.
-      began=true;
-      await query('begin','BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      await query('settings',`SET LOCAL statement_timeout='${limits.statement_ms}ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL timezone='UTC'`);
+      if (callerOwned) {
+        // Two separate commands reject an implicit transaction even if its
+        // session defaults happen to be RR/RO. Each probe also requires a
+        // transaction start strictly before this command's statement start.
+        await verifySnapshot(); await verifySnapshot();
+      } else {
+        client=await connectBounded(pool,limits.connect_ms);
+        // Once BEGIN is attempted, even a client timeout leaves server state
+        // uncertain. Always rollback (or destroy on failed rollback) before release.
+        began=true;
+        await query('begin','BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+        await query('settings',`SET LOCAL statement_timeout='${limits.statement_ms}ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL timezone='UTC'`);
+      }
       const scopeRows=await query('scope',SQL.scope,SCOPE.map(key => request.scope[key]));
       if (scopeRows.length!==1) invalid('scope_mismatch');
       const canonical=scopeRows[0];
@@ -418,7 +473,8 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
         }
         await page('legacy',SQL.legacy,[request.account_ids,'0',n],1,row => big(row.sale_id),row => retain('transactions',`legacy:${big(row.sale_id)}`,row));
       }
-      await query('commit','COMMIT'); began=false;
+      if (callerOwned) await verifySnapshot();
+      else { await query('commit','COMMIT'); began=false; }
     } catch (error) {
       if (began) { try { await client.query({ text:'ROLLBACK',query_timeout:limits.statement_ms+1000 }); }
         catch { releaseError=new Error('neighborhood_cache_rollback_failed'); } }
@@ -427,69 +483,88 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
     } finally {
       // Each acquired client is released exactly once; a secondary cleanup error
       // must not expose driver details or replace an already classified failure.
-      if (client && !releaseSafely(client,releaseError) && !primaryFailure && !invalidFailure && !missing.size) {
+      if (!callerOwned && client && !releaseSafely(client,releaseError) && !primaryFailure && !invalidFailure && !missing.size) {
         primaryFailure=failedCapture(['connection_release_failed']);
       }
     }
     if (invalidFailure) throw invalidFailure;
     if (primaryFailure) return primaryFailure;
     if (missing.size) return failedCapture([...missing].sort(compare));
-    // The database transaction is closed before hashing/chunking CPU work. These
-    // exact retained bytes, not another mutable-cache query, feed publication.
+    // capture() has closed its transaction before hashing/chunking. The caller
+    // variant deliberately keeps its transaction untouched and bounds this CPU
+    // work with the same deadline. Exact retained bytes feed publication.
     // Keep the large, verified identity closure private to authorization/drift
     // checking. Only its immutable digest and bounded counts belong in every
     // source envelope; never spread an authorized request into evidence metadata.
-    const closure=authorized.transaction_closure;
-    const closureManifest=freeze({ version:closure.version,source_revision:closure.source_revision,
-      closure_sha256:closure.closure_sha256,transaction_count:closure.transactions.length,
-      link_count:closure.links.length,legacy_sale_count:closure.legacy.length,
-      account_count:closure.closure_account_ids.length,source_record_count:closure.source_record_ids.length });
-    const compact={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,
-      scope:request.scope,effective_date:request.effective_date,observation_period:request.observation_period,
-      knowledge_cutoff:request.knowledge_cutoff,capture_observed_at:capturedAtPrecise,
-      authorization:{target:authorized.target,selection:authorized.selection,selection_sha256:authorized.selection_sha256,
-        transaction_closure:closureManifest,market_decision:authorized.market_decision},
-      semantics:'current_mutable_query_capture_not_historical_replay',
-      selection_method:'exact_selected_accounts_all_source_links_no_event_filter',
-      provider_coverage:'unknown',limits,capabilities };
-    const compactJson=canonicalAssessmentJson(compact);
-    const manifest=createHash('sha256').update(compactJson);
-    // Stream potentially large membership rather than putting 50k IDs into the
-    // per-chunk contract envelope. The members themselves remain captured below.
-    for (const id of request.account_ids) manifest.update(canonicalAssessmentJson(id)).update('\n');
-    const selection_sha256=manifest.digest('hex');
-    // Retain the exact original preimage before compact gains per-capture
-    // fields. Do not reconstruct it from a later result or reread the cache.
-    const queryEvidence=buildCohortLocalQueryEvidenceV1(compactJson,JSON.stringify(request.account_ids),selection_sha256);
-    if (queryEvidence.status!=='syntax_valid') return failedCapture([
-      queryEvidence.status==='limit_exceeded'?'query_evidence_limit':'query_evidence_invalid']);
-    const selectionRecords=request.account_ids.map(account_id => ({ record_id:`selected:${account_id}`,data:{ account_id } }));
-    const captures=[];
-    Object.assign(compact,{ selection_sha256,selected_account_count:request.account_ids.length });
-    for (const [key,records] of Object.entries({ selection:selectionRecords,...groups })) {
-      const hash=createHash('sha256').update(canonicalAssessmentJson(compact));
-      for (const record of records.toSorted((a,b) => compare(a.record_id,b.record_id))) hash.update(canonicalAssessmentJson(record)).update('\n');
-      const digest=hash.digest('hex');
-      captures.push({ upstream:{ id:`local-cache:${key}`,key,state:records.length?'populated':'present_empty',
-        complete:true,revision:`${NEIGHBORHOOD_CACHE_READER_VERSION}:${digest}`,content_sha256:digest,
-        captured_at:capturedAt,visibility:'assignment_private',scope:request.scope,row_count:records.length },
-        metadata:{ id:`local-cache-${key}`,provider:'HomeNode local database projection',revision:NEIGHBORHOOD_CACHE_READER_VERSION,
-          valid_from:null,valid_to:null,observed_at:capturedAt,historical_availability:'unknown' },
-        projection:{ id:`cache-${key}`,revision:NEIGHBORHOOD_CACHE_READER_VERSION,
-          definition:{ ...compact,role:key,source_gaps:[...missing].sort(compare) },
-          input_row_count:records.length,output_record_count:records.length,complete:true },records });
-    }
     try {
+      if (callerOwned) check();
+      const closure=authorized.transaction_closure;
+      const closureManifest=freeze({ version:closure.version,source_revision:closure.source_revision,
+        closure_sha256:closure.closure_sha256,transaction_count:closure.transactions.length,
+        link_count:closure.links.length,legacy_sale_count:closure.legacy.length,
+        account_count:closure.closure_account_ids.length,source_record_count:closure.source_record_ids.length });
+      const compact={ reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,mapping_version:CACHED_ROW_MAPPING_VERSION,
+        scope:request.scope,effective_date:request.effective_date,observation_period:request.observation_period,
+        knowledge_cutoff:request.knowledge_cutoff,capture_observed_at:capturedAtPrecise,
+        authorization:{target:authorized.target,selection:authorized.selection,selection_sha256:authorized.selection_sha256,
+          transaction_closure:closureManifest,market_decision:authorized.market_decision},
+        semantics:'current_mutable_query_capture_not_historical_replay',
+        selection_method:'exact_selected_accounts_all_source_links_no_event_filter',
+        provider_coverage:'unknown',limits,capabilities };
+      const compactJson=canonicalAssessmentJson(compact);
+      const manifest=createHash('sha256').update(compactJson);
+      // Stream potentially large membership rather than putting 50k IDs into the
+      // per-chunk contract envelope. The members themselves remain captured below.
+      for (const id of request.account_ids) manifest.update(canonicalAssessmentJson(id)).update('\n');
+      const selection_sha256=manifest.digest('hex');
+      // Retain the exact original preimage before compact gains per-capture
+      // fields. Do not reconstruct it from a later result or reread the cache.
+      const queryEvidence=buildCohortLocalQueryEvidenceV1(compactJson,JSON.stringify(request.account_ids),selection_sha256);
+      if (queryEvidence.status!=='syntax_valid') return failedCapture([
+        queryEvidence.status==='limit_exceeded'?'query_evidence_limit':'query_evidence_invalid']);
+      const selectionRecords=request.account_ids.map(account_id => ({ record_id:`selected:${account_id}`,data:{ account_id } }));
+      const captures=[];
+      Object.assign(compact,{ selection_sha256,selected_account_count:request.account_ids.length });
+      for (const [key,records] of Object.entries({ selection:selectionRecords,...groups })) {
+        if (callerOwned) check();
+        const hash=createHash('sha256').update(canonicalAssessmentJson(compact));
+        for (const record of records.toSorted((a,b) => compare(a.record_id,b.record_id))) hash.update(canonicalAssessmentJson(record)).update('\n');
+        const digest=hash.digest('hex');
+        captures.push({ upstream:{ id:`local-cache:${key}`,key,state:records.length?'populated':'present_empty',
+          complete:true,revision:`${NEIGHBORHOOD_CACHE_READER_VERSION}:${digest}`,content_sha256:digest,
+          captured_at:capturedAt,visibility:'assignment_private',scope:request.scope,row_count:records.length },
+          metadata:{ id:`local-cache-${key}`,provider:'HomeNode local database projection',revision:NEIGHBORHOOD_CACHE_READER_VERSION,
+            valid_from:null,valid_to:null,observed_at:capturedAt,historical_availability:'unknown' },
+          projection:{ id:`cache-${key}`,revision:NEIGHBORHOOD_CACHE_READER_VERSION,
+            definition:{ ...compact,role:key,source_gaps:[...missing].sort(compare) },
+            input_row_count:records.length,output_record_count:records.length,complete:true },records });
+      }
       const source_capture=buildCachedSourceCaptures({ scope:request.scope,captures });
+      if (callerOwned) check();
       return freeze({ status:missing.size?'incomplete':'captured',query_complete:missing.size===0,
         scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,
         source_capture,selection_sha256,query_evidence:queryEvidence.evidence,capabilities,incomplete_reasons:[...missing].sort(compare),counts,
+        ...(callerOwned ? { snapshot } : {}),
         unsupported_capabilities:['historical_knowledge_replay','historical_characteristics','verified_market_eligibility',
           'real_transaction_membership','cross_source_transaction_equivalence','price_allocation','provider_coverage'] });
     } catch (error) {
+      if (INTERNAL_INCOMPLETE.has(error)) return failedCapture([INTERNAL_INCOMPLETE.get(error)]);
       if (error.code!=='NEIGHBORHOOD_CAPTURE_LIMIT') throw error;
       return freeze({ status:'incomplete',query_complete:false,scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,
         captured_at:capturedAt,source_capture:null,capabilities,incomplete_reasons:['capture_budget_limit'],counts });
     }
-  } };
+  }
+  return {
+    capture: input => capture(input),
+    /** Private composition API. Caller exclusively owns an explicit RR/RO
+     * transaction, bounded server timeouts and UTC. This method never connects,
+     * changes settings, begins/ends a transaction or releases the client, even on
+     * failure. Caller must rollback/discard after SQL errors/timeouts. `deadline`
+     * is an optional shared performance.now() deadline; cancellation is checked
+     * around awaited bounded queries, never by abandoning an active driver query.
+     * The returned snapshot is comparison metadata, NOT a transferable capability
+     * or spatial/coverage proof. Original read capabilities remain mandatory.
+     */
+    captureInSnapshot: (client,input,options={}) => capture(input,{client,options}),
+  };
 }

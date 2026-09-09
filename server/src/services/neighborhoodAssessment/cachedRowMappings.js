@@ -2,7 +2,9 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { finiteNumberOrNull } from "./statistics.js";
 import { assertNeighborhoodJsonbStorage } from "./jsonbStorage.js";
 
-export const CACHED_ROW_MAPPING_VERSION = 1;
+// v2 retains source-row physical/housing/DOM evidence without certifying it.
+// Existing v1 captures keep their original version, bytes and digests.
+export const CACHED_ROW_MAPPING_VERSION = 2;
 const freeze = value => {
   if (value && typeof value === "object") { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
@@ -20,7 +22,11 @@ export const CACHED_ROW_PROJECTION_FIELDS = freeze({
   sale: ["source_record_id", "source_name", "source_filename", "source_sha256", "source_record_hash",
     "transaction_fingerprint", "listing_key", "listing_id", "source_system_name", "source_modified_at",
     "source_loaded_at", "source_updated_at", "primary_account_id", "record_type", "source_close_date",
-    "listing_contract_date", "source_current_price", "source_living_area", "parcel_number_raw",
+    "listing_contract_date", "source_current_price", "source_living_area", "source_lot_size_area",
+    "source_year_built", "source_bedrooms_total", "source_bathrooms_total_integer",
+    "source_bathrooms_full", "source_bathrooms_half", "source_structural_style", "source_housing_type",
+    "source_attachment_type", "source_architectural_style", "source_garage_spaces", "source_garage_yn",
+    "source_pool_yn", "source_days_on_market", "parcel_number_raw",
     "parcel_number2_raw", "match_status", "has_multiple_parcel_numbers", "multi_parcel_status",
     "has_unresolved_parcel", "requires_additional_review", "data_quality_flags",
     "sale_id", "sale_account_id", "sale_closing_date", "sale_price", "sale_source", "sale_loaded_at"],

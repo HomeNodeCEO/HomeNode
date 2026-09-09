@@ -3,6 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
 import { getCustomAppraisalReportPdf } from "../../services/customAppraisalReportPdf.js";
+import { loadCustomNeighborhoodAcceptance } from "../../services/neighborhoodAssessment/customAcceptanceRead.js";
 import {
   getCustomAppraisalWorkfile,
   getCustomAppraisalWorkfileDownload,
@@ -33,6 +34,7 @@ export function createAssignmentWorkfileReadRouter({
   getReadiness = getCustomAppraisalWorkfileReadiness,
   getDownload = getCustomAppraisalWorkfileDownload,
   getReportPdf = getCustomAppraisalReportPdf,
+  getNeighborhood = loadCustomNeighborhoodAcceptance,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   logger = console,
 } = {}) {
@@ -55,6 +57,7 @@ export function createAssignmentWorkfileReadRouter({
     || typeof getReadiness !== "function"
     || typeof getDownload !== "function"
     || typeof getReportPdf !== "function"
+    || typeof getNeighborhood !== "function"
     || typeof getSigningSecret !== "function"
   ) {
     throw new TypeError("assignment_workfile_read_dependency_required");
@@ -67,6 +70,42 @@ export function createAssignmentWorkfileReadRouter({
   router.use("/api/accounts/:id/assignment-files/:fileId/workfile", (_req, res, next) => {
     res.set("Cache-Control", "no-store");
     next();
+  });
+
+  /** Reopen the exact accepted editor group without modifying signed/download responses. */
+  router.get("/api/accounts/:id/assignment-files/:fileId/workfile/neighborhood", async (req, res) => {
+    if (!req.mobileAuth?.userId) return res.status(401).json({ error: "authentication_required" });
+    if (!requireWorkflowAccess(req, res, CUSTOM_APPRAISAL_WORKFLOW, "read")) return undefined;
+    const accountId = requestedAccountId(req, res);
+    if (!accountId) return undefined;
+    try {
+      const assignmentFileId = normalizeFileId(req.params.fileId, { required: true });
+      await ensureCustomAppraisalWorkfilesAvailable();
+      const canonicalId = await resolveAccountId(pool, accountId);
+      if (!await requireAssignmentAccess(req, res, canonicalId, assignmentFileId, "read")) return undefined;
+      const neighborhood = await getNeighborhood(pool, { accountId: canonicalId, assignmentFileId, auth: req.mobileAuth });
+      return res.json({ ok: true, account_id: canonicalId, neighborhood });
+    } catch (error) {
+      const message = String(error?.message || "");
+      if (message === "assignment_file_not_found") return res.status(404).json({ error: message });
+      if (message === "assignment_file_access_denied") return res.status(403).json({ error: message });
+      if (message === "authentication_required") return res.status(401).json({ error: message });
+      if (["invalid_account_id", "invalid_assignment_file_id", "invalid_custom_neighborhood_read_input"].includes(message)) {
+        return res.status(400).json({ error: message });
+      }
+      if (message === "custom_neighborhood_signed_snapshot_required") return res.status(409).json({ error: message });
+      // Corrupt/stale groups must not masquerade as an empty file or fall back to
+      // a different analysis. Do not expose stored evidence in error responses.
+      if (message.startsWith("custom_neighborhood_acceptance_") || message.startsWith("neighborhood_application_")
+        || message.startsWith("invalid_neighborhood_assessment:") || message.startsWith("neighborhood_jsonb_storage_")
+        || error instanceof SyntaxError || message === "custom_neighborhood_saved_group_unavailable") {
+        logger.error?.("custom neighborhood accepted group unavailable", error);
+        return res.status(409).json({ error: "custom_neighborhood_saved_group_unavailable" });
+      }
+      if (error?.code === "42P01") return res.status(503).json({ error: "custom_neighborhood_storage_unavailable" });
+      logger.error?.("custom neighborhood accepted group load failed", error);
+      return res.status(500).json({ error: "custom_neighborhood_load_failed" });
+    }
   });
 
   /** Load all database-backed sections for one Custom Appraisal file. */

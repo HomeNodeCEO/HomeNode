@@ -10,10 +10,13 @@ import { normalizeCostApproachSection } from "./costApproach.js";
 import { normalizeIncomeApproachSection } from "./incomeApproach.js";
 import { normalizeFinalReconciliationSection } from "./finalReconciliation.js";
 import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitativeAnalysis.js";
+import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./neighborhoodAssessment/customAcceptanceSnapshot.js";
+import { captureCustomNeighborhoodDraftReportBinding } from "./neighborhoodAssessment/customDraftReportBinding.js";
+import { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
+export { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
 
 const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
-const MAX_SECTION_BYTES = 850_000;
 const READINESS_WARNING_CODE_PATTERN = /^[a-z][a-z0-9_]{1,95}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const schemaReadyByPool = new WeakMap();
@@ -28,16 +31,6 @@ export function normalizeCustomAppraisalSectionKey(value) {
     throw new Error("invalid_custom_appraisal_section_key");
   }
   return sectionKey;
-}
-
-export function normalizeCustomAppraisalSectionValue(value) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    throw new Error("invalid_custom_appraisal_section_value");
-  }
-  if (jsonBytes(value) > MAX_SECTION_BYTES) {
-    throw new Error("custom_appraisal_section_too_large");
-  }
-  return value;
 }
 
 export function normalizeCustomAppraisalSectionRevision(value) {
@@ -371,6 +364,11 @@ export async function getCustomAppraisalWorkfileReadiness(pool, {
     assignment: property.assignment,
     evidence: { property_report_data: property },
   };
+  if (workfile.status === "draft") {
+    Object.assign(snapshot.evidence, await captureCustomNeighborhoodDraftReportBinding(pool, {
+      accountId, assignmentFileId, section: workfile.sections[CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION],
+    }));
+  }
   return {
     ...customAppraisalReportReadiness(snapshot, property),
     assignment_file_id: Number(assignmentFileId),
@@ -505,7 +503,7 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
   };
 }
 
-export async function saveCustomAppraisalWorkfileSection(pool, {
+function prepareCustomAppraisalSectionSave({
   accountId,
   assignmentFileId,
   sectionKey: sectionKeyValue,
@@ -515,7 +513,7 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   reviewer: reviewerValue,
 }) {
   const sectionKey = normalizeCustomAppraisalSectionKey(sectionKeyValue);
-  let sectionValue = normalizeCustomAppraisalSectionValue(
+  const sectionValue = normalizeCustomAppraisalSectionValue(
     sectionKey === "cost_approach"
       ? normalizeCostApproachSection(sectionValueInput)
       : sectionKey === "income_approach"
@@ -527,10 +525,14 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
   const expectedRevision = normalizeCustomAppraisalSectionRevision(expectedRevisionValue);
   const saveReason = normalizeCustomAppraisalSaveReason(saveReasonValue);
   const reviewer = String(reviewerValue || "HomeNode editor").trim().slice(0, 200) || "HomeNode editor";
-  await ensureCustomAppraisalWorkfileSchema(pool);
-  const client = await pool.connect();
-  try {
-    await client.query("BEGIN");
+  return { accountId, assignmentFileId, sectionKey, sectionValue, sectionValueInput,
+    expectedRevision, saveReason, reviewer };
+}
+
+async function writeCustomAppraisalSection(client, prepared) {
+  const { accountId, assignmentFileId, sectionKey, sectionValueInput,
+    expectedRevision, saveReason, reviewer } = prepared;
+  let { sectionValue } = prepared;
     await ensureWorkfileRow(client, accountId, assignmentFileId);
     const metaResult = await client.query(
       `SELECT status FROM app.custom_appraisal_workfiles
@@ -598,7 +600,6 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
       `UPDATE app.assignment_files SET updated_at = now() WHERE id = $1`,
       [assignmentFileId],
     );
-    await client.query("COMMIT");
     return {
       key: rows[0].section_key,
       value: rows[0].section_value,
@@ -606,6 +607,40 @@ export async function saveCustomAppraisalWorkfileSection(pool, {
       updated_by: rows[0].updated_by,
       updated_at: rows[0].updated_at,
     };
+}
+
+/** Save within an already authorized, caller-owned write transaction. Schema
+ * preparation must precede BEGIN. The caller must roll back the whole operation
+ * on any failure, including a later acceptance/audit write. This helper neither
+ * authorizes access nor establishes neighborhood acceptance or durable COMMIT.
+ * SAVEPOINT rejects accidental autocommit use before any data writes; the
+ * existing workfile lock still serializes saves/signing and revision checks.
+ */
+export async function saveCustomAppraisalWorkfileSectionInTransaction(client, input) {
+  if (!client || typeof client.query !== "function") {
+    throw new TypeError("custom_appraisal_transaction_client_required");
+  }
+  const prepared = prepareCustomAppraisalSectionSave(input);
+  await client.query("SAVEPOINT homenode_custom_section_save");
+  const saved = await writeCustomAppraisalSection(client, prepared);
+  await client.query("RELEASE SAVEPOINT homenode_custom_section_save");
+  return saved;
+}
+
+export async function saveCustomAppraisalWorkfileSection(pool, input) {
+  const prepared = prepareCustomAppraisalSectionSave(input);
+  // Accepted neighborhood values and their receipt/history must change together.
+  // Ordinary browser/manual/autosave requests cannot replace this reserved group.
+  if (prepared.sectionKey === CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION) {
+    throw new Error("custom_neighborhood_acceptance_workflow_required");
+  }
+  await ensureCustomAppraisalWorkfileSchema(pool);
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const saved = await writeCustomAppraisalSection(client, prepared);
+    await client.query("COMMIT");
+    return saved;
   } catch (error) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
@@ -717,6 +752,19 @@ export async function signCustomAppraisalWorkfile(pool, {
       [assignmentFileId],
     );
     if (!sectionResult.rows.length) throw new Error("custom_appraisal_workfile_empty");
+    const neighborhoodSection = sectionResult.rows.find(
+      (section) => section.section_key === CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION,
+    );
+    // The workfile lock serializes Apply and signing. Verify both present and
+    // absent groups on this same transaction before legacy readiness can run.
+    await captureCustomNeighborhoodDraftReportBinding(client, {
+      accountId,
+      assignmentFileId,
+      section: neighborhoodSection ? {
+        revision: Number(neighborhoodSection.revision),
+        value: neighborhoodSection.section_value,
+      } : undefined,
+    });
     const manifest = await signedEvidenceManifest(client, { accountId, assignmentFileId });
     const snapshot = {
       record_kind: "homenode_custom_appraisal_signed_snapshot",
@@ -850,10 +898,14 @@ export async function getCustomAppraisalWorkfileDownload(pool, {
     };
   }
   const workfile = await getCustomAppraisalWorkfile(pool, { accountId, assignmentFileId });
+  const neighborhoodEvidence = await captureCustomNeighborhoodDraftReportBinding(pool, {
+      accountId, assignmentFileId, section: workfile.sections[CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION],
+    });
   return {
     snapshot: {
       record_kind: "homenode_custom_appraisal_draft",
       ...workfile,
+      ...(neighborhoodEvidence ? { evidence: neighborhoodEvidence } : {}),
     },
     canonical_file_name: workfile.canonical_file_name,
     checksum_sha256: null,

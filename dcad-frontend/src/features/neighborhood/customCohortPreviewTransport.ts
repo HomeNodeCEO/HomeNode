@@ -79,6 +79,25 @@ function errorMessage(body: unknown, status: number): string {
   return `Neighborhood preview request failed (HTTP ${status})`;
 }
 
+async function jsonRequest(options: Options, path: string, init: RequestInit, maximum: number, signal: AbortSignal) {
+  const response = await requestWithSignal(options, options.urlFor(path), {
+    ...init, headers: { accept: 'application/json', ...init.headers }, signal, cache: 'no-store',
+  }, signal);
+  const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
+  const json = /^application\/(?:json|[a-z0-9_.-]+\+json)$/i.test(contentType);
+  if (!response.ok) {
+    let value: unknown = null;
+    if (json) {
+      try { value = await readJson(response, ERROR_BYTES, signal); }
+      catch (error) { if (isAbort(error, signal)) throw abortError(); }
+    } else stop(response.body);
+    checkSignal(signal);
+    throw Object.assign(new Error(errorMessage(value, response.status)), { status: response.status });
+  }
+  if (!json) { stop(response.body); throw new Error('Expected a JSON neighborhood preview response'); }
+  return readJson(response, maximum, signal);
+}
+
 /** One request, no retry or independent timer. Use with the preview controller's
  * bounded deadline (or another caller-owned finite AbortSignal). Semantic input
  * admission belongs to that controller and to the authorized server route. */
@@ -105,21 +124,43 @@ export function createCustomCohortJsonTransport(options: Options) {
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
     if (encoder.encode(body).length > REQUEST_BYTES) throw new Error('Neighborhood preview selection is too large');
-    const response = await requestWithSignal(options, options.urlFor(path), {
-      method: 'POST', headers: { accept: 'application/json', 'content-type': 'application/json' },
-      body, signal, cache: 'no-store',
-    }, signal);
-    const contentType = (response.headers.get('content-type') ?? '').split(';')[0].trim();
-    const json = /^application\/(?:json|[a-z0-9_.-]+\+json)$/i.test(contentType);
-    if (!response.ok) {
-      let value: unknown = null;
-      if (json) {
-        try { value = await readJson(response, ERROR_BYTES, signal); }
-        catch (error) { if (isAbort(error, signal)) throw abortError(); }
-      } else stop(response.body);
-      checkSignal(signal); throw new Error(errorMessage(value, response.status));
-    }
-    if (!json) { stop(response.body); throw new Error('Expected a JSON neighborhood preview response'); }
-    return readJson(response, operation === 'preview' ? RESPONSE_BYTES : REQUEST_BYTES, signal);
+    return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
+      operation === 'preview' ? RESPONSE_BYTES : REQUEST_BYTES, signal);
   };
+}
+
+/** Existing generic workfile endpoints, but only this one editor-intent section.
+ * No reviewer/signing identity is supplied by the browser. The server remains
+ * the authority for session identity, assignment access, CAS and signed locks.
+ * These legacy endpoints still encode IDs as JSON numbers; reject unsafe IDs
+ * instead of rounding them, even though the cohort API supports int64 strings.
+ */
+export function createCustomWorkspaceSectionTransport(options: Options) {
+  function path(accountId: string, assignmentFileId: string) {
+    if (typeof accountId !== 'string' || typeof assignmentFileId !== 'string'
+      || !/^[0-9A-Za-z_-]{1,50}$/.test(accountId) || !/^[1-9][0-9]{0,15}$/.test(assignmentFileId)
+      || !Number.isSafeInteger(Number(assignmentFileId))) throw new Error('Invalid custom workspace target');
+    return `/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${assignmentFileId}/workfile`;
+  }
+  return Object.freeze({
+    read(accountId: string, assignmentFileId: string, { signal }: { signal: AbortSignal }) {
+      checkSignal(signal);
+      return jsonRequest(options, path(accountId, assignmentFileId), { method: 'GET' }, RESPONSE_BYTES, signal);
+    },
+    save(accountId: string, assignmentFileId: string,
+      input: { value: unknown; expectedRevision: number; editorKey: string }, { signal }: { signal: AbortSignal }) {
+      checkSignal(signal);
+      const endpoint = path(accountId, assignmentFileId);
+      if (!Number.isInteger(input.expectedRevision) || input.expectedRevision < 0 || input.expectedRevision >= 2_147_483_647
+        || typeof input.editorKey !== 'string' || !input.editorKey || input.editorKey.length > 4096
+        || /[\r\n]/.test(input.editorKey)) throw new Error('Invalid custom workspace save');
+      const value = JSON.stringify(input.value);
+      if (typeof value !== 'string' || encoder.encode(value).length > 32_768) throw new Error('Invalid custom workspace checkpoint size');
+      // Serialize once before awaiting authentication/network; caller mutations
+      // cannot change the value paired with this expected revision.
+      const body = `{"value":${value},"expected_revision":${input.expectedRevision},"save_reason":"autosave"}`;
+      return jsonRequest(options, `${endpoint}/sections/neighborhood_workspace`, { method: 'PUT',
+        headers: { 'content-type': 'application/json', 'x-homenode-editor-key': input.editorKey }, body }, 65_536, signal);
+    },
+  });
 }

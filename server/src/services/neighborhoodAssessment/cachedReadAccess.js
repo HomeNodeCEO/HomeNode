@@ -165,6 +165,23 @@ function requestOf(value) {
   return frozen(result);
 }
 
+/** Shared policy purpose description only, never a permission grant. Both a
+ * new source read and an authorized retained-input replay must request the same
+ * all-date association/record scope. The server policy supplies the decision. */
+export function describeNeighborhoodCachedMarketDataPurpose(request) {
+  const effectiveDate = assessmentDate(request.effective_date);
+  const period = periodOf(request.observation_period, effectiveDate);
+  const cutoff = cutoffOf(request.knowledge_cutoff);
+  return frozen({ kind: 'neighborhood_cached_market_data', selection_sha256: hash(request.selection_sha256, 'selection_sha256'),
+    source_classes: ['core.sales_source_records', 'core.sales', 'core.sale_parcels'],
+    source_classification: { 'core.sales_source_records': 'licensed_mls_source_records',
+      'core.sales': 'canonical_sales', 'core.sale_parcels': 'transaction_parcel_associations' },
+    transaction_scope: 'transactions_intersecting_selection', association_metadata: 'all_transaction_parcel_links',
+    event_date_scope: 'all_available_dates_for_seeded_transactions',
+    additional_cadastral_accounts: false, private_assignment_overlays: false,
+    observation_period: period, knowledge_cutoff: cutoff });
+}
+
 /** Verify the ORIGINAL server-composition authority, not an injected verifier. */
 export function assertNeighborhoodCachedReadAccess(access) {
   if (!access || !authorities.has(access)) deny('authority_required');
@@ -233,14 +250,7 @@ export function createNeighborhoodCachedReadAccess(options) {
       observation_period: period, knowledge_cutoff: cutoff };
     const selectedRequest = frozen({ ...draft, selection_sha256: selectionDigest(draft) });
     permission(auth, context, user);
-    const purpose = frozen({ kind: 'neighborhood_cached_market_data', selection_sha256: selectedRequest.selection_sha256,
-      source_classes: ['core.sales_source_records', 'core.sales', 'core.sale_parcels'],
-      source_classification: { 'core.sales_source_records': 'licensed_mls_source_records',
-        'core.sales': 'canonical_sales', 'core.sale_parcels': 'transaction_parcel_associations' },
-      transaction_scope: 'transactions_intersecting_selection', association_metadata: 'all_transaction_parcel_links',
-      event_date_scope: 'all_available_dates_for_seeded_transactions',
-      additional_cadastral_accounts: false, private_assignment_overlays: false,
-      observation_period: period, knowledge_cutoff: cutoff });
+    const purpose = describeNeighborhoodCachedMarketDataPurpose(selectedRequest);
     checkDeadline();
     const authorization = await authorizeMarketData(auth, context, purpose);
     checkDeadline();

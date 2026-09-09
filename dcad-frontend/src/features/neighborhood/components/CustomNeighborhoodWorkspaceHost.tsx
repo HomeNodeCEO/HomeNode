@@ -122,8 +122,13 @@ function HostSession(props: Props) {
       return Promise.reject(new Error('custom_workspace_target_changed'));
     return requests.run(signal => initial.api.preview(input, signal), options);
   });
-  const busy = !state || actionPending || state.operation_pending || readOnly || locked || state.status === 'busy';
-  const saving = busy || state?.status !== 'ready' || Boolean(state?.recovery) || Boolean(state?.checkpoint?.pending_capture);
+  const saving = !state || actionPending || state.operation_pending || state.status === 'busy';
+  const busy = saving || readOnly || locked;
+  const blockedReason = readOnly || locked ? 'read_only'
+    : actionFailed.current || message || state?.status === 'invalid' || state?.status === 'error'
+      || (state?.recovery && state.recovery !== 'resume_pending') ? 'reload_required'
+    : state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending' ? 'pending_capture'
+    : state?.status !== 'ready' && state?.status !== 'idle' ? 'reload_required' : null;
   const active = lastReady?.checkpoint?.active;
   async function reload() {
     const requests = lane.current, lifecycle = owner.current;
@@ -148,22 +153,22 @@ function HostSession(props: Props) {
         disabled={busy} onChange={event => setStart(event.target.value)} /></label>
       <label className="text-sm">Observation end<input type="date" className="input input-bordered block" value={end}
         disabled={busy} onChange={event => setEnd(event.target.value)} /></label>
-      <button type="button" className={button} disabled={busy || !start || !end || Boolean(state?.recovery) || Boolean(state?.checkpoint?.pending_capture)}
-        onClick={() => act(() => owner.current!.start({ start_date: start, end_date: end }))}>
+      <button type="button" className={button} disabled={busy || !start || !end || Boolean(blockedReason)}
+        onClick={() => { if (!blockedReason) act(() => owner.current!.start({ start_date: start, end_date: end })); }}>
         {active ? 'Capture a new 3-mile study' : 'Start 3-mile exploration'}</button>
       <button type="button" className={button} disabled={busy} onClick={() => act(reload)}>Reload saved choices</button>
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
         disabled={busy || (state.recovery !== null && state.recovery !== 'resume_pending')}
         onClick={() => act(() => owner.current!.resumePending())}>Resume saved capture</button>}
     </div>
-    <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : busy
-      ? 'Updating neighborhood workspace…' : state?.status === 'ready' && !saving
+    <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
+      ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
         ? 'Neighborhood choices saved to this appraisal file.' : 'Neighborhood exploration has not changed the accepted report.'}</p>
     {(message || state?.status === 'invalid' || state?.status === 'error') && <p role="alert" className="text-sm">
       {message ?? 'The saved neighborhood workspace needs to be reloaded or reviewed before continuing. No default selection was substituted.'}</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
-      workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, previewTransport,
-        onSelectionIntent: ids => act(() => owner.current!.setGroups(ids)) }} />}
+      workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason, previewTransport,
+        onSelectionIntent: ids => { if (!blockedReason) act(() => owner.current!.setGroups(ids)); } }} />}
   </section>;
 }

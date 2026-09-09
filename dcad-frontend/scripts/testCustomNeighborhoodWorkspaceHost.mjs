@@ -115,7 +115,8 @@ function harness(t, db, initialSection, overrides = {}) {
   const registered = [];
   function WorkspaceStub({ workspace, accountId, assignmentFileId }) {
     return jsx.jsx('div', { 'data-testid': 'controlled-workspace', 'data-target': `${accountId}/${assignmentFileId}`,
-      'data-saving': String(workspace.saving), children: JSON.stringify(workspace.selection) });
+      'data-saving': String(workspace.saving), 'data-blocked-reason': workspace.blockedReason ?? '',
+      children: JSON.stringify(workspace.selection) });
   }
   const react = {
     useState(initial) {
@@ -163,6 +164,7 @@ function harness(t, db, initialSection, overrides = {}) {
     click(label) { const node = this.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, `${label} enabled`);
       node.props.onClick(); flush(); },
     select(ids) { const child = this.workspace(); assert.ok(child); assert.equal(child.workspace.saving, false);
+      assert.equal(Boolean(child.workspace.blockedReason), false);
       child.workspace.onSelectionIntent(ids); flush(); },
     strictReplay() { const effects = fiber.cells.filter(cell => cell?.setup); effects.forEach(effect => effect.cleanup?.());
       effects.forEach(effect => { effect.cleanup = effect.setup(); }); flush(); },
@@ -208,6 +210,9 @@ test('committed selection with lost acknowledgement blocks flush until explicit 
   const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
   db.overrides.set('save', (_call, respond) => { respond(); throw new Error('synthetic lost acknowledgement'); });
   h.select([]); await h.settle(); assert.equal(await h.controls.flush(), false); assert.match(h.html(), /role="alert"/);
+  assert.equal(h.workspace().workspace.saving, false);
+  assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
+  assert.doesNotMatch(h.html(), /Updating neighborhood workspace|Neighborhood choices saved/);
   assert.deepEqual(db.file(TARGET).section.value.active.selection.included_recorded_group_ids, []);
   assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, [groupId(2)]);
   h.click('Reload saved choices'); await h.settle();
@@ -329,7 +334,10 @@ test('host read-only quiescence waits for the pending owned save and prevents an
   assert.equal(db.calls.filter(call => call.kind === 'save').length, 1);
   const flushed = h.controls.flush(); held.resolve(); await h.settle(); assert.equal(await flushed, true);
   assert.deepEqual(db.file(TARGET).section.value.active.selection.included_recorded_group_ids, []);
+  assert.equal(h.workspace().workspace.saving, false); assert.equal(h.workspace().workspace.blockedReason, 'read_only');
+  assert.doesNotMatch(h.html(), /Updating neighborhood workspace|Neighborhood choices saved/);
   h.controls.setReadOnly(false); await h.settle(); assert.equal(h.workspace().workspace.saving, false);
+  assert.equal(h.workspace().workspace.blockedReason ?? null, null);
 });
 
 test('failed fresh reload cannot report flush success from the previous ready lifecycle', async t => {
@@ -338,9 +346,46 @@ test('failed fresh reload cannot report flush success from the previous ready li
   db.overrides.set('read', () => { throw new Error('synthetic unavailable fresh workfile'); });
   h.click('Reload saved choices'); await h.settle();
   assert.match(h.html(), /role="alert"/); assert.equal(await h.controls.flush(), false);
+  assert.equal(h.workspace().workspace.saving, false); assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
+  assert.doesNotMatch(h.html(), /Updating neighborhood workspace|Neighborhood choices saved/);
   assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
   assert.deepEqual(db.file(TARGET).section, initial); assert.deepEqual(kinds(db), ['catalog', 'read']);
+  const start = h.button('Capture a new 3-mile study'); assert.equal(start.props.disabled, true);
+  assert.equal(h.button('Reload saved choices').props.disabled, false);
+  // Guards must hold for already-captured child/button callbacks as well as DOM disabled state.
+  h.workspace().workspace.onSelectionIntent([groupId(1)]); start.props.onClick(); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'read']); assert.equal(await h.controls.flush(), false);
+  assert.match(h.html(), /role="alert"/); assert.doesNotMatch(h.html(), /Neighborhood choices saved/);
   db.overrides.delete('read'); h.click('Reload saved choices'); await h.settle();
   assert.equal(await h.controls.flush(), true); assert.doesNotMatch(h.html(), /role="alert"/);
+  assert.equal(h.workspace().workspace.blockedReason ?? null, null); assert.match(h.html(), /Neighborhood choices saved/);
   assert.deepEqual(kinds(db), ['catalog', 'read', 'read', 'catalog']);
+});
+
+test('a reopened active selection with durable pending capture is paused, not permanently saving', async t => {
+  const initial = activeSection([]), operation = '20000000-0000-4000-8000-000000000001';
+  initial.value.pending_capture = { operation_id: operation, observation_period: copy(PERIOD) };
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, []);
+  assert.equal(h.workspace().workspace.saving, false); assert.equal(h.workspace().workspace.blockedReason, 'pending_capture');
+  assert.doesNotMatch(h.html(), /Updating neighborhood workspace|Neighborhood choices saved/);
+  assert.equal(await h.controls.flush(), false); assert.equal(h.button('Resume saved capture').props.disabled, false);
+  h.workspace().workspace.onSelectionIntent([groupId(1)]); await h.settle(); assert.deepEqual(kinds(db), ['catalog']);
+  h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'capture', 'catalog', 'save']);
+  assert.equal(db.calls[1].body.operation_id, operation); assert.equal(await h.controls.flush(), true);
+  assert.equal(h.workspace().workspace.blockedReason ?? null, null);
+});
+
+test('idle read-only host shows no request progress and can become editable without a request', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  h.controls.setReadOnly(true); await h.settle();
+  assert.equal(h.workspace().workspace.saving, false); assert.equal(h.workspace().workspace.blockedReason, 'read_only');
+  assert.doesNotMatch(h.html(), /Updating neighborhood workspace|Neighborhood choices saved/);
+  assert.equal(h.button('Reload saved choices').props.disabled, true);
+  h.workspace().workspace.onSelectionIntent([groupId(1)]); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog']); assert.equal(await h.controls.flush(), true);
+  h.controls.setReadOnly(false); await h.settle(); assert.equal(h.workspace().workspace.blockedReason ?? null, null);
+  assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, []);
+  assert.deepEqual(kinds(db), ['catalog']); assert.match(h.html(), /Neighborhood choices saved/);
 });

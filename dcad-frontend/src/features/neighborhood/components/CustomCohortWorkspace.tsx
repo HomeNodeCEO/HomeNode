@@ -13,6 +13,7 @@ export interface CustomCohortControlledWorkspace {
   readonly catalog: CheckedPocketCatalog;
   readonly selection: { readonly revision: number; readonly included_recorded_group_ids: readonly string[] };
   readonly saving: boolean;
+  readonly blockedReason?: 'reload_required' | 'pending_capture' | 'read_only' | null;
   readonly onSelectionIntent: (ids: readonly string[]) => void;
   /** The host owns serialization with checkpoint saves and independent reads. */
   readonly previewTransport: typeof requestCustomCohortObservationPreview;
@@ -60,6 +61,8 @@ function WorkspaceSession(props: Props) {
   const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
   const revision = props.workspace?.selection.revision ?? localRevision;
   const saving = props.workspace?.saving ?? false;
+  const blockedReason = props.workspace?.blockedReason ?? null;
+  const selectionBlocked = saving || Boolean(blockedReason);
   const transport = props.workspace?.previewTransport ?? requestCustomCohortObservationPreview;
   const transportRef = useRef(transport);
   transportRef.current = transport;
@@ -101,11 +104,11 @@ function WorkspaceSession(props: Props) {
   }, [accountId, assignmentFileId, contextRef, controlled, input, reload]);
 
   useEffect(() => {
-    if (!saving) controller.current?.setSelection(desired);
-  }, [desired, retry, saving]);
+    if (!selectionBlocked) controller.current?.setSelection(desired);
+  }, [desired, retry, selectionBlocked]);
 
   const choose = (ids: readonly string[]) => {
-    if (saving || !desired) return;
+    if (selectionBlocked || !desired) return;
     if (props.workspace) props.workspace.onSelectionIntent(Object.freeze([...ids]));
     else { setIncluded(ids); setRevision(n => n + 1); }
   };
@@ -124,12 +127,12 @@ function WorkspaceSession(props: Props) {
           && pocket.account_ids.every((id, member) => id === other.account_ids[member]);
       });
   }, [desired, preview.requested]);
-  const current = !saving && desired !== null && preview.freshness === 'current'
+  const current = !selectionBlocked && desired !== null && preview.freshness === 'current'
     && preview.group?.binding.selectionRevision === revision
     && requestMatches;
   const group = desired ? preview.group : null;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
-  const selectionDisabled = saving || !desired;
+  const selectionDisabled = selectionBlocked || !desired;
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -155,6 +158,9 @@ function WorkspaceSession(props: Props) {
       </div>
       <p role="status" aria-live="polite" className="text-sm">
         {saving ? 'Saving the group selection… Any displayed map and statistics still match the preceding selection.'
+          : blockedReason === 'reload_required' ? 'Saved choices need to be reloaded before continuing. Any displayed map and statistics still match the preceding selection.'
+          : blockedReason === 'pending_capture' ? 'Resume the saved capture before changing groups. Any displayed map and statistics still match the preceding selection.'
+          : blockedReason === 'read_only' ? 'Neighborhood selection is read-only. Any displayed map and statistics reflect the saved selection.'
           : pending ? 'Updating the map and statistics together…' : preview.status === 'failed'
           ? 'The preview could not update. Any displayed map and statistics are from the preceding selection.'
           : current ? 'Map and statistics match the current preview selection.' : 'Preparing observations…'}

@@ -126,6 +126,46 @@ test('an in-flight old preview completing during a save is never labelled curren
   const h = harness(); h.render(h.props()); await h.tick(); const next = h.props([groupId(2)], 8); next.workspace.saving = true;
   h.render(next); await h.complete(); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); h.unmount();
 });
+
+const blockedMessages = {
+  reload_required: 'Saved choices need to be reloaded before continuing. Any displayed map and statistics still match the preceding selection.',
+  pending_capture: 'Resume the saved capture before changing groups. Any displayed map and statistics still match the preceding selection.',
+  read_only: 'Neighborhood selection is read-only. Any displayed map and statistics reflect the saved selection.',
+};
+for (const [reason, message] of Object.entries(blockedMessages)) {
+  test(`${reason} retains one stale map/statistics group without claiming an active save`, async t => {
+    const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
+    const before = h.child('CustomCohortStatistics').group, next = h.props(); next.workspace.blockedReason = reason;
+    h.render(next); await h.tick();
+    assert.equal(h.child('CustomCohortStatistics').group, before); assert.equal(h.child('CustomCohortParcelMap').group, before);
+    assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'stale');
+    assert.ok(h.text().includes(message));
+    assert.doesNotMatch(h.text(), /Saving the group selection|Updating the map and statistics|match the current preview selection/);
+    assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled));
+    h.click('Include all observations'); h.click('Exclude all'); h.check('Include Alpha');
+    assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
+    // Only the owner removes the block. The exact newly acknowledged [] must survive.
+    h.render(h.props([], 8)); await h.tick(); assert.equal(h.calls.length, 2);
+    assert.deepEqual(h.calls[1].request.selection, { revision: 8, pockets: [] }); await h.complete();
+    assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+    assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => !n.props.checked && !n.props.disabled));
+  });
+
+  test(`${reason} blocks changed-selection scheduling, retry and late response current labels`, async t => {
+    const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
+    h.render(h.props([groupId(2)], 8)); await h.tick(); assert.equal(h.calls.length, 2);
+    const next = h.props([groupId(1)], 9); next.workspace.blockedReason = reason;
+    h.render(next); await h.tick(); assert.equal(h.calls.length, 2);
+    await h.complete(1); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
+    assert.equal(h.child('CustomCohortStatistics').group, h.child('CustomCohortParcelMap').group);
+    assert.ok(h.text().includes(message)); assert.doesNotMatch(h.text(), /Saving the group selection|match the current preview selection/);
+    h.render(h.props([groupId(1)], 9)); await h.tick(); assert.equal(h.calls.length, 3); await h.fail(2);
+    h.render(next); await h.tick();
+    const retry = h.nodes().find(n => n.type === 'button' && text(n) === 'Retry preview'); assert.ok(retry); assert.equal(retry.props.disabled, true);
+    h.click('Retry preview'); await h.tick(); assert.equal(h.calls.length, 3); assert.equal(h.intents.length, 0);
+    assert.ok(h.text().includes(message));
+  });
+}
 test('equivalent new catalog/selection/transport wrapper objects do not reset saved exclusions or request again', async () => {
   const h = harness(); h.render(h.props([groupId(2)])); await h.tick(); await h.complete();
   const next = h.props([groupId(2)]); next.workspace.catalog = structuredClone(catalog);

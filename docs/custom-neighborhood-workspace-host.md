@@ -65,6 +65,12 @@ owned by the lifecycle and inner workspace. An unrelated hydration/autosave echo
 must not reset selections. A real file/session change disposes the old owner;
 late responses from it cannot update the new workspace.
 
+Request progress and paused editing are separate states. Only an outstanding
+owned request says it is saving. A failed/uncertain update says to reload, a
+durable pending capture says to resume, and finalization says read-only. A failed
+fresh read stays latched even if the previous lifecycle was ready: it cannot
+display a saved-success label or accept another selection/capture until recovery.
+
 ## Reporting boundary
 
 The entire exploration host/view is excluded from printing. The accepted
@@ -84,3 +90,11 @@ Controlled workspace tests independently exercise its real preview controller.
 Neither is a production login/database/map-accuracy test. Browser fixtures use
 the actual map component with synthetic geometry and explicitly separate those
 results from the native PostgreSQL checkpoint evidence.
+
+The synthetic real-browser pass verified 18 accounts / 38 transactions initially,
+12 / 26 after excluding Pine Grove, exact exclusion and empty-selection restore,
+lost-ack recovery, a refused conflicting revision, same-UUID pending-capture
+recovery, session reopening, independent 4 / 8 pocket inspection, and removal of
+editing after a fresh signed-status read. No unhandled browser errors occurred.
+It identified the misleading persistent saving label addressed above. Fixture
+HTTP storage is process memory, not native persistence or production acceptance.

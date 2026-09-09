@@ -158,8 +158,8 @@ function HostSession(props: Props) {
         {active ? 'Capture a new 3-mile study' : 'Start 3-mile exploration'}</button>
       <button type="button" className={button} disabled={busy} onClick={() => act(reload)}>Reload saved choices</button>
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
-        disabled={busy || (state.recovery !== null && state.recovery !== 'resume_pending')}
-        onClick={() => act(() => owner.current!.resumePending())}>Resume saved capture</button>}
+        disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
+        onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}
     </div>
     <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
       ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason

@@ -377,6 +377,31 @@ test('a reopened active selection with durable pending capture is paused, not pe
   assert.equal(h.workspace().workspace.blockedReason ?? null, null);
 });
 
+test('pending capture cannot bypass a failed fresh reload, including its direct Resume callback', async t => {
+  const initial = activeSection([]), operation = '20000000-0000-4000-8000-000000000001';
+  initial.value.pending_capture = { operation_id: operation, observation_period: copy(PERIOD) };
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  assert.equal(h.button('Resume saved capture').props.disabled, false);
+  db.overrides.set('read', () => { throw new Error('synthetic unavailable fresh pending workfile'); });
+  h.click('Reload saved choices'); await h.settle();
+  assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
+  assert.equal(h.workspace().workspace.saving, false); assert.equal(await h.controls.flush(), false);
+  const resume = h.button('Resume saved capture'); assert.equal(resume.props.disabled, true);
+  resume.props.onClick(); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'read']); assert.deepEqual(db.file(TARGET).section, initial);
+  assert.equal(h.workspace().workspace.blockedReason, 'reload_required'); assert.equal(await h.controls.flush(), false);
+  assert.match(h.html(), /role="alert"/); assert.doesNotMatch(h.html(), /Neighborhood choices saved/);
+  db.overrides.delete('read'); h.click('Reload saved choices'); await h.settle();
+  assert.equal(h.workspace().workspace.blockedReason, 'pending_capture');
+  assert.equal(h.button('Resume saved capture').props.disabled, false); assert.equal(await h.controls.flush(), false);
+  assert.deepEqual(kinds(db), ['catalog', 'read', 'read', 'catalog']);
+  h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'read', 'read', 'catalog', 'capture', 'catalog', 'save']);
+  assert.equal(db.calls[4].body.operation_id, operation); assert.deepEqual(db.calls[4].body.observation_period, PERIOD);
+  assert.equal(db.file(TARGET).section.value.active.context_ref.context_id, operation);
+  assert.equal(h.workspace().workspace.blockedReason ?? null, null); assert.equal(await h.controls.flush(), true);
+});
+
 test('idle read-only host shows no request progress and can become editable without a request', async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   h.controls.setReadOnly(true); await h.settle();

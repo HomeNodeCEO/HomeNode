@@ -7,6 +7,42 @@ published assessment or report Apply endpoint.
 
 ## Installed reconstruction profile
 
+### Effective-date requirement
+
+The Custom Appraisal neighborhood must describe conditions at the report's
+effective date, including retrospective assignments. Current CAD characteristics
+are not a reviewer-approved substitute for historical stock. The actual owner
+now checks the effective date against the exact retained acquisition's UTC
+capture day before running this reconstruction adapter. If that current-mirror
+capture is later, it returns `historical_stock_evidence_required`, with no
+supported computation or report candidate. All final authorization, workspace,
+review, subject and saved-geography freshness checks still run.
+
+This is a conservative exclusion, not proof of historical coverage. A same-day
+or earlier capture still has to satisfy source-period and field-specific support;
+it does not become report-ready. The clock used for this exclusion is retained,
+so reopening unchanged evidence another day cannot change the result. Review
+labels, import dates and GIS synchronization dates cannot override it. Old pure
+adapter outputs/profile hashes remain available for diagnostic inspection only;
+they are not a historical-fact admission path.
+
+Sales currently arrive by CSV. Future Trestle ingestion must normalize into the
+same PostgreSQL sales model and downstream matching/classification pipeline,
+preserving source identity, field meaning, units, event dates and ingestion dates.
+A later-imported record may document a genuine older sale. Its closing date, not
+its import date, controls the existing observation-period filter. That fact alone
+does not establish the property's historical GLA, housing type, zoning or stock
+membership. Recorded prices remain unadjusted.
+
+Before historical report activation, implement dated source/field support for
+then-existing buildings and demolitions, physical characteristics, parcel and
+subdivision/phase membership, relevant zoning/influences, and the subject. Missing
+coverage must remain unavailable, not zero or a present-day estimate. Adding an
+archive-capable source requires a separately tested admission profile; do not
+remove this current-mirror guard merely because a source has been imported.
+Boundary, selected populations and statistics must still apply/reopen together
+as one coherent effective-date-bound group.
+
 The initial profile's basis is `retained_reviewer_reconstruction`. Existing
 authorized review commands can supply explicitly reviewed computational inputs
 after their complete bindings and dependencies are checked. Neither a `known`

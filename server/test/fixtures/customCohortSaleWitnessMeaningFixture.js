@@ -65,11 +65,11 @@ schema.push(...['mls_status', 'source_row_number', 'raw_payload'].map(column => 
 // capture, persistence and reopen over bounded query fakes. No v2 capture is
 // modified, rehashed or relabeled. NOT native PostgreSQL/MVCC/rights evidence.
 export async function saleWitnessMeaningFixture(options = {}) {
-  const { parcelCount = 2, missingCounty = false, saleOverrides = {}, extraTransactions = [], assignmentFileId } = options;
+  const { parcelCount = 2, missingCounty = false, saleOverrides = {}, extraTransactions = [], assignmentFileId, effectiveDate } = options;
   const rawPayload = Object.hasOwn(options, 'rawPayload') ? options.rawPayload : DEFAULT_RAW_PAYLOAD;
   const witness = Object.hasOwn(options, 'witness') ? options.witness : syntheticSaleWitness(rawPayload);
   assert.ok(!Object.hasOwn(options, 'mappingVersion'), 'fixture is original mapping3 only; use decisionEvidenceFixture for original mapping2');
-  const f = customCohortRepositoryFixture({ assignmentFileId }), t = f.state.input.target;
+  const f = customCohortRepositoryFixture({ assignmentFileId, effectiveDate }), t = f.state.input.target;
   const property = JSON.parse(f.state.input.snapshot.subject_data.pg_text).custom_property_snapshot;
   setPublic(f.state.input, { ...property, location: { account_id: t.account_id, longitude: -96.65, latitude: 32.91,
     source: 'dcad_parcel_query', precision: 'parcel_centroid', status: 'matched', confidence: 'high', review_required: false,

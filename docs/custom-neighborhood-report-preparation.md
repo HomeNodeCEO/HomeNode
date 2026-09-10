@@ -6,6 +6,15 @@ now also invokes `buildCustomCohortReportPreparation()`. It assembles an actual
 version-one assessment and publication bundle and calls the existing Custom
 report candidate mapper. It does not publish, accept, sign or modify a report.
 
+The [effective-date guard](custom-neighborhood-supported-inputs.md#effective-date-requirement)
+runs in that actual owner before both reconstruction and report assembly. A
+later current-mirror capture returns an incomplete diagnostic with
+`historical_stock_evidence_required`, the saved geography diagnosis and retained
+capture/effective dates. Supported inputs, assessment, publication bundle and
+candidate remain null. It is not a populated historical neighborhood. The old
+pure assembler is an internal diagnostic consumer, not an alternative public
+route around this guard.
+
 ## One saved review state
 
 The preparatory result binds the retained context, selected pockets, selection

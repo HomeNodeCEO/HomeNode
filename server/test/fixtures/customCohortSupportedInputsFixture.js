@@ -22,8 +22,8 @@ const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [structuredClone(
  * provider rights, source truth, clock, licensure, or production readiness.
  */
 export async function supportedInputsFixture({ mappingVersion = 2, saleCount = 3, packageSale = false,
-  saleOverrides = {}, missingCounty = false, assignmentFileId } = {}) {
-  const base = await saleWitnessMeaningFixture({ assignmentFileId }), old = base.originalRetained;
+  saleOverrides = {}, missingCounty = false, assignmentFileId, effectiveDate } = {}) {
+  const base = await saleWitnessMeaningFixture({ assignmentFileId, effectiveDate }), old = base.originalRetained;
   const sourceText = readFileSync(new URL('../../src/services/neighborhoodAssessment/cachedSourceReader.js', import.meta.url), 'utf8');
   const schema = [...sourceText.match(/const TABLES = Object.freeze\(\{([\s\S]*?)\n\}\);/)[1].matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'\]/g)]
     .flatMap(([, relation, columns]) => columns.split(' ').map(column => ({ relation, column })));

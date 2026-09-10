@@ -105,9 +105,35 @@ test('presentation disclosure text remains bounded rather than clipped', async (
   input.recommendation.limitations.push('é'.repeat(513)); assert.throws(() => present(input), /text/);
 });
 
-test('production catalog composition matches direct baseline presentation for an exact retained context', async () => {
+for (const effectiveDate of ['2026-09-06', '2026-09-07']) {
+  test(`capture no later than effective date ${effectiveDate} preserves diagnostic-only composition`, async () => {
+    const f = await decisionEvidenceFixture({ effectiveDate }), input = inputs(f);
+    const result = compose({ catalog: input.catalog, expected: input.expected, retained_inputs: f.input.retained_inputs });
+    assert.deepEqual(result, present(input));
+    assert.equal(result.authority, 'not_established'); assert.equal(result.apply.status, 'blocked');
+    assert.equal(f.input.retained_inputs.subject.effective_date, effectiveDate);
+    assert.equal(f.input.retained_inputs.acquisition.capture_result.captured_at, '2026-09-06T08:00:00.123Z');
+  });
+}
+
+for (const [version, fixture] of [[2, decisionEvidenceFixture], [3, saleWitnessMeaningFixture]]) {
+  test(`retrospective mapping${version} composer omits recommendation without altering current observation inspection`, async () => {
+    const f = await fixture({ effectiveDate: '2026-09-05' }), input = inputs(f);
+    const before = JSON.stringify({ retained: f.input.retained_inputs, ...input });
+    const observation = present(input);
+    assert.equal(compose({ catalog: input.catalog, expected: input.expected, retained_inputs: f.input.retained_inputs }), null);
+    assert.equal(JSON.stringify({ retained: f.input.retained_inputs, ...input }), before);
+    assert.deepEqual(present(input), observation);
+    assert.equal(observation.authority, 'not_established'); assert.equal(observation.apply.status, 'blocked');
+    assert.equal(input.catalog.catalog_complete, true);
+  });
+}
+
+test('catalog admission still precedes retrospective omission and missing retained dates cannot enable recommendations', async () => {
   const f = await base, input = inputs(f);
-  assert.deepEqual(compose({ catalog: input.catalog, expected: input.expected, retained_inputs: f.input.retained_inputs }), present(input));
+  assert.throws(() => compose({ ...input, catalog: { ...input.catalog, authority: 'established' },
+    retained_inputs: f.input.retained_inputs }), /catalog/);
+  assert.throws(() => compose({ catalog: input.catalog, expected: input.expected, retained_inputs: null }));
 });
 
 test('actual public-only byte collapse preserves the entire synthetic roster and skips rebuilding named recommendations', async () => {

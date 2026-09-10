@@ -1,6 +1,7 @@
 import { canonicalAssessmentJson as json } from './contract.js';
 import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY } from './customCohortPocketRecommendation.js';
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
+import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
@@ -115,6 +116,9 @@ export function buildCustomCohortPocketRecommendationPresentation({ catalog, exp
   check(catalog?.catalog_version === 1 && typeof catalog.catalog_complete === 'boolean'
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
   if (!catalog.catalog_complete) return null;
+  const temporal = customCohortCurrentStockSupport({ effective_date: retained_inputs?.subject?.effective_date,
+    retained_capture_at: retained_inputs?.acquisition?.capture_result?.captured_at });
+  if (temporal.status === 'historical_stock_evidence_required') return null;
   return presentCustomCohortPocketRecommendation({ catalog, expected,
     recommendation: buildCustomCohortPocketRecommendation({ context_ref: expected.context_ref, retained_inputs,
       selection: { revision: expected.selection_revision, included_recorded_group_ids: [] } }),

@@ -26,7 +26,7 @@ const render = (group, props = {}) => renderToStaticMarkup(React.createElement(C
 
 // Real v2 source mappings, observation calculator and public formatter feed the
 // renderer. Synthetic evidence tests representation, not live provider coverage.
-function fixture({ empty = false, count = 80 } = {}) {
+function fixture({ empty = false, count = 80, effectiveDate = '2024-06-30' } = {}) {
   const contextRef = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'a'.repeat(64) };
   const target = { ...contextFixture().target, account_id: 'A', assignment_file_id: '17' };
   const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'].map(key => [key, target[key]]));
@@ -48,7 +48,7 @@ function fixture({ empty = false, count = 80 } = {}) {
       observed_at: captured_at, historical_availability: 'unknown' },
     projection: { id: `test-${role}`, revision: 'fixture-v2', definition: { role }, complete: true, input_row_count: records.length, output_record_count: records.length }, records })) });
   const preview = buildCustomCohortObservationPreview({ context_ref: contextRef,
-    retained_inputs: { subject: { target, effective_date: '2024-06-30' }, study: { observation_period: { start_date: '2024-01-01', end_date: '2024-06-30' } },
+    retained_inputs: { subject: { target, effective_date: effectiveDate }, study: { observation_period: { start_date: '2024-01-01', end_date: '2024-06-30' } },
       spatial: { query_complete: true, account_ids: ['A', 'B'], parcels: parcels.map(p => ({ object_id: p.object_id, account_id: p.account_id })) },
       acquisition: { captured_query_request: { scope, account_ids: ['A', 'B'] }, capture_result: { query_complete: true, captured_at, source_capture } } },
     selection: { revision: 7, pockets: empty ? [] : [{ id: 'alpha', label: 'Alpha recorded group', account_ids: ['A'] }] } });
@@ -76,6 +76,35 @@ test('unknown currency, temporal applicability and descriptive COD are not turne
   assert.match(html, /COD describes dispersion, not reliability/); assert.match(html, /historical applicability are not established/);
   assert.match(html, /This preview cannot be applied to the report/);
   assert.match(html, /2024-01-01 through 2024-06-30/);
+});
+
+test('retrospective main and inspector statistics warn about current stock without hiding older in-period transactions', () => {
+  const group = fixture(), before = JSON.stringify(group);
+  for (const selectedOnly of [false, true]) {
+    const html = render(group, { selectedOnly });
+    assert.match(html, /Current CAD captured on 2026-09-09 is later than the effective date/);
+    assert.match(html, /current reference only/); assert.match(html, /historical stock evidence is required/);
+    assert.match(html, /In-period transaction observations remain available below/);
+    assert.match(html, /40 recorded transactions/); assert.equal(metricRows(html, 'recorded_total_price').length, selectedOnly ? 1 : 2);
+    assert.equal(JSON.stringify(group), before);
+  }
+});
+
+for (const effectiveDate of ['2026-09-09', '2026-09-10']) test(`capture no later than ${effectiveDate} still does not establish historical applicability`, () => {
+  const html = render(fixture({ effectiveDate }));
+  assert.doesNotMatch(html, /is later than the effective date|historical stock evidence is required/);
+  assert.match(html, /historical applicability are not established/);
+  assert.match(html, /This preview cannot be applied to the report/);
+});
+
+test('absent, malformed and normalized-impossible summary dates do not assert a historical relationship', () => {
+  for (const [field, value] of [['effective_date', null], ['effective_date', '2024-02-30'], ['effective_date', '24-06-30'],
+    ['captured_at', null], ['captured_at', '2026-09-31T12:00:00.000Z'], ['captured_at', '2026-09-09T25:00:00.000Z'],
+    ['captured_at', '2026-09-09T12:00:00.000-06:00']]) {
+    const group = structuredClone(fixture()); group.summary[field] = value;
+    const html = render(group); assert.doesNotMatch(html, /historical stock evidence is required/);
+    assert.match(html, /historical applicability are not established/);
+  }
 });
 test('empty selected population remains empty and null metrics display unavailable rather than zero', () => {
   const group = fixture({ empty: true }), html = render(group);

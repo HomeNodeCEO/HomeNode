@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { createReportedObservationValidators, neighborhoodAssessmentInputVersion } from "./reportedObservationContract.js";
 
 export const NEIGHBORHOOD_ASSESSMENT_CONTRACT_VERSION = 1;
 export const NEIGHBORHOOD_ASSESSMENT_METHOD_VERSION = "foundation-v1";
@@ -147,7 +148,7 @@ function scope(value) {
   };
 }
 
-function sourceSnapshot(value, assessmentScope) {
+function sourceSnapshot(value, assessmentScope, readTimestamp = timestamp) {
   record(value, "source_snapshot");
   const visibility = choice(value.visibility, ["public", "organization", "assignment"], "source.visibility");
   const owner = value.scope === null ? null : scope(value.scope);
@@ -167,7 +168,7 @@ function sourceSnapshot(value, assessmentScope) {
     id: string(value.id, "source.id"), revision: string(value.revision, "source.revision"),
     provider: string(value.provider, "source.provider"), content_sha256: hash,
     visibility, scope: owner, valid_from: validFrom, valid_to: validTo,
-    observed_at: timestamp(value.observed_at, "source.observed_at"),
+    observed_at: readTimestamp(value.observed_at, "source.observed_at"),
     historical_availability: choice(value.historical_availability,
       ["contemporaneous", "reconstructed", "unknown"], "source.historical_availability"),
   };
@@ -434,8 +435,13 @@ function selection(value) {
  * It performs no DB access, GET side effects, form application, or report signing.
  */
 export function buildNeighborhoodAssessment(input) {
+  const inputVersion = neighborhoodAssessmentInputVersion(input);
   record(input, "input");
-  if (input.contract_version !== NEIGHBORHOOD_ASSESSMENT_CONTRACT_VERSION) fail("contract_version");
+  const profile = inputVersion === 2 ? createReportedObservationValidators(input, {
+    assessmentDate, string, integer, choice, strings, list, clone, refs, checkedDigest,
+    polygonGeometry, sourceSnapshot, canonicalAssessmentJson,
+  }) : null;
+  if (inputVersion !== NEIGHBORHOOD_ASSESSMENT_CONTRACT_VERSION && profile === null) fail("contract_version");
   for (const key of ["target", "report_file_id", "assignment_file_id", "review_decisions"]) {
     if (Object.hasOwn(input, key)) fail(`target_outside_core.${key}`);
   }
@@ -448,17 +454,17 @@ export function buildNeighborhoodAssessment(input) {
   const requiredStats = strings(input.required_statistic_ids, "required_statistic_ids");
   const requiredPopulationIds = strings(input.required_population_ids, "required_population_ids", 100);
   const snapshots = list(input.source_snapshots, "source_snapshots", 1000)
-    .map(value => sourceSnapshot(value, assessmentScope)).sort(byId);
+    .map(value => (profile?.sourceSnapshot ?? sourceSnapshot)(value, assessmentScope)).sort(byId);
   const sourceIds = new Set(snapshots.map(source => source.id));
   if (sourceIds.size !== snapshots.length) fail("source_snapshots.duplicate");
   const sources = new Map(snapshots.map(source => [source.id, source]));
   const populations = list(input.populations, "populations", 100)
-    .map(value => population(value, effectiveDate, dataCutoff, studyPeriod, sources)).sort(byId);
+    .map(value => (profile?.population ?? population)(value, effectiveDate, dataCutoff, studyPeriod, sources)).sort(byId);
   const populationMap = new Map(populations.map(value => [value.id, value]));
   if (populationMap.size !== populations.length) fail("populations.duplicate");
   if (requiredPopulationIds.some(id => !populationMap.has(id))) fail("required_population_ids.missing_population");
   const statistics = list(input.statistics, "statistics", 1000)
-    .map(value => statistic(value, populationMap, sources, effectiveDate)).sort(byId);
+    .map(value => (profile?.statistic ?? statistic)(value, populationMap, sources, effectiveDate)).sort(byId);
   if (new Set(statistics.map(value => value.id)).size !== statistics.length) fail("statistics.duplicate");
   const methodology = clone(record(input.methodology, "methodology"));
   string(methodology.version, "methodology.version");
@@ -480,9 +486,9 @@ export function buildNeighborhoodAssessment(input) {
   const result = {
     ...signatureInputs,
     id: uuid(input.id, "id"), revision: integer(input.revision, "revision", 1),
-    generated_at: timestamp(input.generated_at, "generated_at"),
+    generated_at: (profile?.timestamp ?? timestamp)(input.generated_at, "generated_at"),
     input_signature_sha256: assessmentEvidenceDigest(signatureInputs),
-    geographic_neighborhood: geography(input.geographic_neighborhood, sources, effectiveDate),
+    geographic_neighborhood: (profile?.geography ?? geography)(input.geographic_neighborhood, sources, effectiveDate),
     populations, statistics,
     development_evidence: clone(record(input.development_evidence, "development_evidence")),
     diagnostics: clone(record(input.diagnostics, "diagnostics")),
@@ -517,7 +523,9 @@ export function buildNeighborhoodAssessment(input) {
       requiredStats.every(id => statsById.get(id).status === "ready") ? "ready" : "incomplete",
   };
   const { generated_at: _generatedAt, ...evidence } = result;
-  return freeze({ ...result, evidence_digest_sha256: assessmentEvidenceDigest(evidence) });
+  const output = { ...result, evidence_digest_sha256: assessmentEvidenceDigest(evidence) };
+  profile?.result(output);
+  return freeze(output);
 }
 
 /** Scope/revision binding only; NOT an authorization decision. Existing target
@@ -525,7 +533,11 @@ export function buildNeighborhoodAssessment(input) {
  */
 export function buildNeighborhoodAttachment(assessment, target) {
   record(target, "target");
-  if (assessment.contract_version !== 1) fail("attachment.contract_version");
+  if (assessment.contract_version !== 1 && assessment.contract_version !== 2) fail("attachment.contract_version");
+  if (assessment.contract_version === 2) {
+    if (target.workflow_type !== "custom_appraisal") fail("attachment.reported_observations_custom_only");
+    if (canonicalAssessmentJson(buildNeighborhoodAssessment(assessment)) !== canonicalAssessmentJson(assessment)) fail("attachment.changed_assessment");
+  }
   const { generated_at: _generatedAt, evidence_digest_sha256: expectedDigest, ...evidence } = assessment;
   if (assessmentEvidenceDigest(evidence) !== checkedDigest(expectedDigest)) fail("attachment.changed_assessment");
   if (canonicalAssessmentJson(scope(target.scope)) !== canonicalAssessmentJson(assessment.scope)) fail("attachment.scope_mismatch");

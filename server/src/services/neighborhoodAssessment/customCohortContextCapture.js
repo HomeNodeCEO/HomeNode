@@ -6,7 +6,7 @@ import { customNeighborhoodPrivateSalesPurpose } from '../../security/customNeig
 import { captureAssignmentSalesCsv, recheckAssignmentSalesCsvCapture } from '../assignmentSalesCsv/capture.js';
 import { buildCustomCohortPrivateSalesObservations, presentCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { authorizePublicCadastralCatalogRead } from '../../security/publicCadastralCatalog.js';
-import { assessmentDate, canonicalAssessmentJson } from './contract.js';
+import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
@@ -29,6 +29,13 @@ import { createCustomCohortReviewRepository } from './customCohortReviewReposito
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
+import { buildCustomCohortReportedAssessment } from './customCohortReportedAssessment.js';
+import { createNeighborhoodAssessmentRepositoryInTransaction } from './assessmentRepository.js';
+import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
+import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply } from './customReportMapping.js';
+import { buildNeighborhoodApplicationReceipt } from './applicationGroup.js';
+import { getCustomNeighborhoodAcceptance } from './customAcceptanceRepository.js';
+import { saveCustomNeighborhoodAcceptanceInTransaction } from './customAcceptanceSave.js';
 import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography,
   CUSTOM_COHORT_REPORT_GEOGRAPHY_FIELDS, CUSTOM_COHORT_REPORT_GEOGRAPHY_LIMITS } from './customCohortReportGeography.js';
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from './customAcceptanceSnapshot.js';
@@ -116,6 +123,29 @@ function reviewedInputsInputOf(input) {
     || typeof expectedReviewGeneration !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(expectedReviewGeneration)
     || BigInt(expectedReviewGeneration) > 9223372036854775807n) fail('invalid_reviewed_input_revision');
   return freeze({ ...identity, contextRef, expectedWorkspaceRevision, expectedReviewGeneration });
+}
+function reportedInputOf(value, applying = false) {
+  exactKeys(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'expectedWorkspaceRevision',
+    'expectedEditorRevision', 'operationId', ...(applying ? ['proposalOperationId', 'attachmentId',
+      'attachmentRevision', 'bindingDigest', 'adopt'] : [])]);
+  const identity = identityOf(value);
+  const input = { ...identity, contextRef: prepareCustomCohortContextReference(canonicalAssessmentJson(value.contextRef)),
+    expectedWorkspaceRevision: value.expectedWorkspaceRevision, expectedEditorRevision: value.expectedEditorRevision,
+    operationId: value.operationId };
+  if (!Number.isInteger(input.expectedWorkspaceRevision) || input.expectedWorkspaceRevision < 1
+    || input.expectedWorkspaceRevision > 2147483647 || !Number.isInteger(input.expectedEditorRevision)
+    || input.expectedEditorRevision < 0 || input.expectedEditorRevision >= 2147483647
+    || typeof input.operationId !== 'string' || !UUID.test(input.operationId)
+    || !UUID.test(identity.auth.userId) || BigInt(identity.assignmentFileId) > BigInt(Number.MAX_SAFE_INTEGER)) fail('invalid_reported_input');
+  if (applying) {
+    if (value.adopt !== true || typeof value.proposalOperationId !== 'string' || !UUID.test(value.proposalOperationId)
+      || typeof value.attachmentId !== 'string' || !UUID.test(value.attachmentId)
+      || !Number.isInteger(value.attachmentRevision) || value.attachmentRevision < 1 || value.attachmentRevision > 2147483647
+      || typeof value.bindingDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.bindingDigest)) fail('invalid_reported_input');
+    Object.assign(input, { proposalOperationId: value.proposalOperationId, attachmentId: value.attachmentId,
+      attachmentRevision: value.attachmentRevision, bindingDigest: value.bindingDigest, adopt: true });
+  }
+  return freeze(input);
 }
 function one(result) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1) fail('target_unavailable');
@@ -309,7 +339,7 @@ async function transaction(pool, mode, budget, execute) {
   }
 }
 
-async function resolveTarget(client, input, locked, permission = 'write') {
+async function resolveTarget(client, input, locked, permission = 'write', lockReport = false) {
   const assignment = one(await client.query(`/* custom-cohort-capture:assignment */
     SELECT id::text AS assignment_file_id,account_id,organization_id,
       assigned_appraiser_user_id,supervisory_appraiser_user_id
@@ -321,7 +351,7 @@ async function resolveTarget(client, input, locked, permission = 'write') {
   const report = one(await client.query(`/* custom-cohort-capture:report */
     SELECT id AS report_file_id,appraisal_case_id,subject_snapshot_id
     FROM app.report_files WHERE custom_assignment_file_id=$1::bigint AND account_id=$2 AND organization_id=$3
-      AND workflow_type='custom_appraisal' AND uad_workfile_id IS NULL AND tax_protest_file_id IS NULL`,
+      AND workflow_type='custom_appraisal' AND uad_workfile_id IS NULL AND tax_protest_file_id IS NULL${lockReport ? ' FOR SHARE NOWAIT' : ''}`,
   [input.assignmentFileId, input.accountId, assignment.organization_id]));
   return freeze({ ...Object.fromEntries(TARGET_FIELDS.filter(key => key !== 'report_file_id').map(key => [key, assignment[key]])), ...report });
 }
@@ -376,7 +406,7 @@ function captured(value, stage) {
 }
 
 async function authorizedRetainedInputs(client, { scopeJson, reference, input, authorizeMarketData, authorizePrivateSales, budget, study = null,
-  exposure = 'none', additionalExposures = [], loadInputs = true, privateSummary = false }) {
+  exposure = 'none', additionalExposures = [], loadInputs = true, privateSummary = false, beforeLoad = null }) {
   const previous = await createCustomCohortContextRepository(client, scopeJson).get(canonicalAssessmentJson(reference));
   if (!previous) fail('context_unavailable');
   const refs = Object.fromEntries(DEPENDENCIES.map(key => [key, previous.body[key]]));
@@ -431,8 +461,10 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   }
   // Review persistence will reopen the original graph in this same transaction.
   // Keep its preceding rights check, without allocating/validating it twice.
+  const metadata = { context, purpose, decision, privateAuthorization, header: previous };
+  const beforeLoadResult = beforeLoad === null ? null : await beforeLoad(metadata);
   const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
-  return { context, retained, purpose, decision, privateAuthorization, header: previous };
+  return { ...metadata, retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
 
 /** Executable, Custom-only acquisition owner. No HTTP route, current-head
@@ -448,8 +480,10 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
  * licensing. Source completeness and historical support remain unknown.
  */
 export function createCustomCohortContextCapture({ pool, authorizeMarketData,
-  authorizePrivateSales = async () => ({ allowed: false }) } = {}) {
-  if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function') {
+  authorizePrivateSales = async () => ({ allowed: false }),
+  authorizeReportedObservations = async () => ({ allowed: false }) } = {}) {
+  if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function'
+    || typeof authorizeReportedObservations !== 'function') {
     throw new TypeError('custom_cohort_capture_dependencies_required');
   }
   async function recheckPrivatePolicy(client, input, loaded, budget, exposures = ['none']) {
@@ -459,6 +493,118 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         loaded.privateAuthorization.purpose, budget, exposure);
       if (!same(decision, loaded.privateAuthorization.decision)) fail('market_policy_changed');
     }
+  }
+  function reportPurpose(input, retained) {
+    const privatePurpose = retained.privateAuthorization?.purpose;
+    return { kind: 'custom_reported_observations_v2', context_ref: input.contextRef,
+      shared_source_purpose: retained.purpose, private_sales_import: privatePurpose ? {
+        batch_id: privatePurpose.batch_id, expected_review_revision: privatePurpose.expected_review_revision } : null };
+  }
+  async function reportPermission(client, input, retained, budget) {
+    try {
+      return await boundedPolicy(authorizeReportedObservations, client, input.auth, retained.context,
+        reportPurpose(input, retained), budget, 'custom_report_observations');
+    } catch (error) {
+      if (error?.reason === 'market_data_access_denied') fail('report_observation_access_denied');
+      throw error;
+    }
+  }
+  function reportRequest(input, target) {
+    return { actor_user_id: input.auth.userId, target: Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])),
+      context_ref: input.contextRef, workspace_section_revision: input.expectedWorkspaceRevision,
+      editor_revision: input.expectedEditorRevision, operation_id: input.proposalOperationId ?? input.operationId };
+  }
+  function reportFences(loaded) {
+    return { workspace_sha256: assessmentEvidenceDigest(loaded.workspace), editor: loaded.reportEditor,
+      boundary: { assignment_revision: loaded.savedBoundary.assignment_revision,
+        ...Object.fromEntries(Object.entries(loaded.savedBoundary.projection).filter(([key]) => key !== 'projected_json')) },
+      subject_reference: loaded.retained.retained.subject_reference,
+      market_decision: loaded.retained.decision, private_decision: loaded.retained.privateAuthorization?.decision ?? null,
+      report_decision: loaded.retained.beforeLoadResult };
+  }
+  const attachmentTarget = (target, id, revision) => ({ organizationId: target.organization_id,
+    reportFileId: target.report_file_id, workflowType: 'custom_appraisal', workflowTargetId: Number(target.assignment_file_id),
+    attachmentId: id, attachmentRevision: revision });
+  async function storedReportProposal(client, input, target) {
+    const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
+      .map(key => [key, target[key]]));
+    const rows = await client.query(`/* custom-cohort-capture:reported-operation */
+      SELECT j.status,j.result_revision,j.input_signature_sha256,j.request_digest_sha256,
+        r.request_digest_sha256 AS operation_digest,h.id AS assessment_id,
+        j.effective_date::text,j.data_cutoff::text,j.max_attempts,
+        CASE WHEN octet_length(j.request_payload::text)<=65536 THEN j.request_payload ELSE NULL END AS payload
+      FROM app.neighborhood_assessment_requests r
+      JOIN app.neighborhood_assessments h ON h.id=r.assessment_id
+      JOIN app.neighborhood_assessment_jobs j ON j.id=r.job_id AND j.assessment_id=h.id
+      WHERE h.organization_id=$1 AND h.appraisal_case_id=$2 AND h.subject_snapshot_id=$3 AND h.account_id=$4
+        AND r.operation_id=$5`, [...Object.values(scope), input.proposalOperationId ?? input.operationId]);
+    if (rows?.rowCount === 0 && rows.rows?.length === 0) return null;
+    const row = one(rows), payload = row.payload;
+    if (!payload || payload.proposal_version !== 1 || !same(payload.request, reportRequest(input, target))
+      || row.status !== 'succeeded' || !Number.isInteger(row.result_revision) || row.result_revision < 1
+      || row.max_attempts !== 3 || row.operation_digest !== row.request_digest_sha256
+      || assessmentEvidenceDigest({ scope, effective_date: row.effective_date, data_cutoff: row.data_cutoff,
+        input_signature_sha256: row.input_signature_sha256, payload, max_attempts: 3 }) !== row.request_digest_sha256) fail('operation_conflict');
+    const stored = await getNeighborhoodAttachment(client, attachmentTarget(target, payload.attachment?.id, payload.attachment?.revision));
+    if (!stored || stored.assessment.contract_version !== 2 || stored.assessment.id !== row.assessment_id
+      || stored.assessment.revision !== row.result_revision || stored.assessment.input_signature_sha256 !== row.input_signature_sha256
+      || stored.attachment.editor_revision !== input.expectedEditorRevision) fail('operation_conflict');
+    return { payload, stored };
+  }
+  async function loadReported(client, input, budget, { allowSigned = false, geography = true } = {}) {
+    const workfile = await privateCaptureWorkfile(client, input);
+    if (!allowSigned) privateDraft(workfile);
+    const target = await resolveTarget(client, input, true, 'write', true);
+    const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+    const workspace = await savedWorkspace(client, input);
+    const retained = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+      authorizeMarketData, authorizePrivateSales, budget, study: workspace.checkpoint.active,
+      beforeLoad: metadata => reportPermission(client, input, metadata, budget) });
+    const reportEditor = await reportEditorState(client, input), savedBoundary = await reportGeographyState(client, input);
+    let reportGeography = null, derivedAt = null;
+    if (geography) {
+      derivedAt = new Date(Date.parse(await databaseTime(client))).toISOString();
+      const admission = prepareCustomCohortReportGeography({ target: JSON.parse(scopeJson), ...savedBoundary,
+        captured_at: derivedAt, retained_subject: retained.retained.retained_inputs.subject });
+      reportGeography = completeCustomCohortReportGeography(admission, admission.geometry_for_validation === null ? null
+        : await reportGeometryTopology(client, admission.geometry_for_validation, admission.subject_point_for_validation));
+    }
+    return { workfile, target, scopeJson, workspace, retained, reportEditor, savedBoundary, reportGeography, derivedAt };
+  }
+  async function recheckReported(client, input, loaded, budget, { acceptedReplay = false, editorAfterSave = false } = {}) {
+    assertTarget(await resolveTarget(client, input, true, 'write', true), loaded.target);
+    if (!same(await savedWorkspace(client, input), loaded.workspace)) fail('workspace_changed');
+    if (!editorAfterSave && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
+    if (!same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
+    if (!acceptedReplay && (await createCustomCohortSubjectRepository(client, loaded.scopeJson)
+      .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+    const privateCapture = loaded.retained.retained.retained_inputs.private_sales?.capture;
+    if (privateCapture) await recheckAssignmentSalesCsvCapture(client.query.bind(client), privateCapture);
+    const decision = await boundedPolicy(authorizeMarketData, client, input.auth, loaded.retained.context,
+      loaded.retained.purpose, budget);
+    if (!same(decision, loaded.retained.decision)) fail('market_policy_changed');
+    await recheckPrivatePolicy(client, input, loaded.retained, budget);
+    if (!same(await reportPermission(client, input, loaded.retained, budget), loaded.retained.beforeLoadResult)) fail('report_policy_changed');
+  }
+  function proposalResponse(input, loaded, candidate, assessment, issues = [], reused = false) {
+    const response = { status: candidate?.status === 'ready' ? 'proposed' : 'incomplete',
+      target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId }, context_ref: input.contextRef,
+      workspace_section_revision: input.expectedWorkspaceRevision, editor_revision: input.expectedEditorRevision,
+      proposal_operation_id: input.operationId, reused,
+      attachment_ref: candidate?.status === 'ready' ? { attachment_id: candidate.attachment.attachment_id,
+        attachment_revision: candidate.attachment.attachment_revision, binding_digest: candidate.attachment.binding_digest_sha256 } : null,
+      assessment: assessment ? { contract_version: 2, assessment_id: assessment.id, revision: assessment.revision,
+        status: assessment.application_group.status, basis: 'reported_observations_not_verified_market_facts',
+        statistics: assessment.statistics, populations: assessment.populations.map(pop => Object.fromEntries(
+          ['id', 'kind', 'member_unit', 'member_count', 'unique_account_count', 'account_link_count'].map(key => [key, pop[key]]))),
+        geography_status: assessment.geographic_neighborhood.status,
+        boundary: { geometry: assessment.geographic_neighborhood.geometry,
+          cardinal_summaries: assessment.geographic_neighborhood.cardinal_summaries } } : null,
+      issues: issues.map(item => ({ code: typeof item.code === 'string' && item.code.length <= 200
+        && /^[a-zA-Z0-9_:.-]+$/.test(item.code) ? item.code : 'report_preparation_incomplete' })) };
+    // A summary never transports sources, member arrays or original CSV rows.
+    if (Buffer.byteLength(JSON.stringify(response)) > 524288) fail('report_response_limit');
+    return freeze(response);
   }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
@@ -656,6 +802,114 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       return freeze({ status: 'review_recorded', reused: saved.status === 'reused',
         context_ref: input.command.expected_context, decision_ref: saved.decision_ref,
         generation: saved.generation, authority: 'not_established' });
+    });
+  }, async prepareReportedObservations(value, options = {}) {
+    const input = reportedInputOf(value), budget = operationBudget(options);
+    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+      const data = await loadReported(client, input, budget);
+      if (data.reportEditor.editor_revision !== input.expectedEditorRevision) fail('report_editor_changed');
+      const previous = await storedReportProposal(client, input, data.target);
+      if (previous && !same(previous.payload.fences, reportFences(data))) fail('report_proposal_changed');
+      await recheckReported(client, input, data, budget);
+      return { ...data, previous };
+    });
+    if (loaded.previous) return proposalResponse(input, loaded, { status: 'ready',
+      attachment: loaded.previous.stored.attachment }, loaded.previous.stored.assessment, [], true);
+    const active = loaded.workspace.checkpoint.active;
+    const target = { scope: loaded.retained.context.scope, report_file_id: loaded.target.report_file_id,
+      custom_assignment_file_id: Number(input.assignmentFileId), editor_revision: input.expectedEditorRevision,
+      effective_date: loaded.retained.context.effective_date, data_cutoff: loaded.retained.context.effective_date };
+    const identity = { assessment_id: randomUUID(), assessment_revision: 1, attachment_id: randomUUID(), attachment_revision: 1 };
+    budget.check();
+    const prepared = buildCustomCohortReportedAssessment({ context_ref: input.contextRef,
+      retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
+      preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt });
+    // Rehearse the exact public shape before any publication writes. The final
+    // published identity is checked again after its actual revision is assigned.
+    if (prepared.status === 'ready') proposalResponse(input, loaded, prepared.candidate, prepared.assessment);
+    budget.check();
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      privateDraft(await privateCaptureWorkfile(client, input));
+      await recheckReported(client, input, loaded, budget);
+      // Another exact retry may have committed while this request assembled.
+      const previous = await storedReportProposal(client, input, loaded.target);
+      if (previous) {
+        if (!same(previous.payload.fences, reportFences(loaded))) fail('report_proposal_changed');
+        return proposalResponse(input, loaded, { status: 'ready', attachment: previous.stored.attachment }, previous.stored.assessment, [], true);
+      }
+      if (prepared.status !== 'ready') return proposalResponse(input, loaded, null, null, prepared.issues);
+      const repository = createNeighborhoodAssessmentRepositoryInTransaction(client);
+      const payload = { proposal_version: 1, request: reportRequest(input, loaded.target), fences: reportFences(loaded),
+        attachment: { id: identity.attachment_id, revision: identity.attachment_revision } };
+      if (Buffer.byteLength(canonicalAssessmentJson(payload)) > 32000) fail('report_response_limit');
+      const queued = await repository.enqueue(target.scope, { operation_id: input.operationId,
+        effective_date: target.effective_date, data_cutoff: target.data_cutoff,
+        input_signature_sha256: prepared.assessment.input_signature_sha256, payload });
+      const claim = await repository.claimExact(target.scope,
+        { job_id: queued.job.id, expected_request_generation: queued.request_generation });
+      const published = await repository.publish(claim, prepared.assessment, prepared.publication_bundle.members,
+        prepared.publication_bundle.sources.map(source => ({ id: source.snapshot.id, payload: source.payload })));
+      if (!published.promoted) fail('report_proposal_changed');
+      const candidate = buildCustomNeighborhoodReportCandidate({ assessment: published.assessment,
+        target: { ...target, attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,
+          workflow_type: 'custom_appraisal', uad_workfile_id: null, specification_release: null } });
+      if (candidate.status !== 'ready') fail('report_publication_incomplete');
+      await persistNeighborhoodAttachment(client, { assessment: published.assessment,
+        attachment: candidate.attachment, mappedSuggestions: candidate.suggestions });
+      await recheckReported(client, input, loaded, budget);
+      return proposalResponse(input, loaded, candidate, published.assessment);
+    });
+  }, async applyReportedObservations(value, options = {}) {
+    const input = reportedInputOf(value, true), budget = operationBudget(options);
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      const loaded = await loadReported(client, input, budget, { allowSigned: true, geography: false });
+      const proposal = await storedReportProposal(client, input, loaded.target);
+      if (!proposal || proposal.stored.attachment.attachment_id !== input.attachmentId
+        || proposal.stored.attachment.attachment_revision !== input.attachmentRevision
+        || proposal.stored.attachment.binding_digest_sha256 !== input.bindingDigest) fail('operation_conflict');
+      const acceptanceTarget = { organizationId: loaded.target.organization_id, reportFileId: loaded.target.report_file_id,
+        assignmentFileId: Number(input.assignmentFileId), operationId: input.operationId };
+      const accepted = await getCustomNeighborhoodAcceptance(client, acceptanceTarget);
+      const fences = reportFences(loaded);
+      if (accepted) {
+        if (accepted.actorUserId !== input.auth.userId || accepted.attachmentId !== input.attachmentId
+          || accepted.attachmentRevision !== input.attachmentRevision
+          || accepted.acceptedEditorRevision !== loaded.reportEditor.editor_revision) fail('operation_conflict');
+        // The accepted operation itself advanced only the reserved editor. All
+        // other proposal bindings, current rights and exact target still apply.
+        fences.editor = proposal.payload.fences.editor;
+      } else {
+        privateDraft(loaded.workfile);
+        if (loaded.reportEditor.editor_revision !== input.expectedEditorRevision) fail('report_editor_changed');
+        // First adoption only. Occupied groups are never relabeled empty;
+        // explicit atomic replacement is a distinct subsequent product slice.
+        if (loaded.reportEditor.editor_revision !== 0) fail('report_group_conflict');
+        const history = one(await client.query(`/* custom-cohort-capture:reported-never-accepted */
+          SELECT EXISTS(SELECT 1 FROM app.custom_neighborhood_acceptances
+            WHERE assignment_file_id=$1::bigint) AS has_acceptance`, [input.assignmentFileId]));
+        // A removed reserved section must not erase immutable acceptance intent.
+        // The parent workfile lock serializes this check with actual acceptance.
+        if (history.has_acceptance !== false) fail('report_group_conflict');
+      }
+      if (!same(fences, proposal.payload.fences)) fail('report_proposal_changed');
+      await recheckReported(client, input, loaded, budget, { acceptedReplay: Boolean(accepted) });
+      let result = accepted;
+      if (!accepted) {
+        const stored = proposal.stored, attachment = stored.attachment;
+        const plan = prepareCustomNeighborhoodReportApply({ assessment: stored.assessment, target: attachment,
+          current_application_identity_sha256: attachment.application_identity_sha256,
+          current_editor_revision: loaded.reportEditor.editor_revision,
+          request: { selected_ids: stored.mappedSuggestions.map(item => item.id), binding_digest_sha256: input.bindingDigest },
+          existing_values: stored.mappedSuggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: false })) });
+        if (plan.status !== 'ready') fail('report_group_conflict');
+        result = await saveCustomNeighborhoodAcceptanceInTransaction(client, { ...acceptanceTarget,
+          actorUserId: input.auth.userId, attachmentId: input.attachmentId, attachmentRevision: input.attachmentRevision,
+          receipt: buildNeighborhoodApplicationReceipt(plan, input.expectedEditorRevision + 1) });
+      }
+      await recheckReported(client, input, loaded, budget, { acceptedReplay: Boolean(accepted), editorAfterSave: !accepted });
+      return freeze({ status: 'accepted', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+        context_ref: input.contextRef, operation_id: input.operationId, proposal_operation_id: input.proposalOperationId,
+        accepted_editor_revision: result.acceptedEditorRevision, reused: Boolean(accepted) });
     });
   }, async prepareReviewedInputs(value, options = {}) {
     const input = reviewedInputsInputOf(value), budget = operationBudget(options);

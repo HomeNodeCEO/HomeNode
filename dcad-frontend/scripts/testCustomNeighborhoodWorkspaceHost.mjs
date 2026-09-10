@@ -132,6 +132,7 @@ function harness(t, db, initialSection, overrides = {}) {
       'data-saving': String(workspace.saving), 'data-blocked-reason': workspace.blockedReason ?? '',
       children: JSON.stringify(workspace.selection) });
   }
+  function AdoptionStub() { return jsx.jsx('div', { 'data-testid': 'report-adoption' }); }
   const react = {
     useState(initial) {
       const owner = currentFiber, index = cursor++;
@@ -154,6 +155,7 @@ function harness(t, db, initialSection, overrides = {}) {
   const Host = compile('components/CustomNeighborhoodWorkspaceHost.tsx', {
     react, 'react/jsx-runtime': jsx, '../customWorkspaceLifecycle': lifecycle,
     '../customWorkspaceRequestLane': lane, './CustomCohortWorkspace': { default: WorkspaceStub, __esModule: true },
+    './CustomReportedObservationAdoption': { default: AdoptionStub, __esModule: true },
   }).default;
   const cleanup = () => { if (!fiber) return; fiber.cells.forEach(cell => cell?.cleanup?.()); fiber.live = false; fiber = null; };
   function render(next = props) {
@@ -174,6 +176,7 @@ function harness(t, db, initialSection, overrides = {}) {
     render(next) { render(next); flush(); },
     html: () => renderToStaticMarkup(tree), text: () => text(tree),
     workspace: () => walk(tree).find(node => node.type === WorkspaceStub)?.props,
+    adoption: () => walk(tree).find(node => node.type === AdoptionStub),
     button(label) { return walk(tree).find(node => node.type === 'button' && text(node) === label); },
     click(label) { const node = this.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, `${label} enabled`);
       node.props.onClick(); flush(); },
@@ -494,4 +497,100 @@ test('idle read-only host shows no request progress and can become editable with
   h.controls.setReadOnly(false); await h.settle(); assert.equal(h.workspace().workspace.blockedReason ?? null, null);
   assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, []);
   assert.deepEqual(kinds(db), ['catalog']); assert.match(h.html(), /Neighborhood choices saved/);
+});
+
+test('report controls share the exact saved workspace, lane and save barrier without starting an automatic proposal', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const child = h.adoption(); assert.ok(child); assert.deepEqual(child.props.contextRef, initial.value.active.context_ref);
+  assert.equal(child.props.workspaceRevision, initial.revision); assert.deepEqual(kinds(db), ['catalog']);
+  const held = deferred(); let entered = false;
+  const task = child.props.run(async io => { entered = true; assert.ok(io.signal instanceof AbortSignal); await held.promise; });
+  await h.settle(); assert.equal(entered, true); assert.equal(h.adoption().props.disabled, true);
+  let flushed = false; const wait = h.controls.flush().then(value => { flushed = true; return value; });
+  await h.settle(); assert.equal(flushed, false);
+  assert.equal(await child.props.run(async () => assert.fail('parallel report action')), false);
+  held.resolve(); assert.equal(await task, true); assert.equal(await wait, true); await h.settle();
+  assert.equal(h.adoption().props.disabled, false); assert.deepEqual(kinds(db), ['catalog']);
+});
+
+test('unconfirmed Apply blocks exploration and save/sign; workspace-only reload cannot discard its exact retry', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const child = h.adoption(); child.props.onOutcomeUncertain(true); await h.settle();
+  assert.equal(await h.controls.flush(), false); assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
+  assert.equal(h.adoption().props.disabled, false);
+  assert.equal(h.button('Reload saved choices').props.disabled, true);
+  h.button('Reload saved choices').props.onClick(); await h.settle();
+  assert.equal(h.adoption().key, child.key); assert.equal(await h.controls.flush(), false);
+  assert.equal(await h.controls.useReviewedSales({ batch_id: OLD, expected_review_revision: 1 }), false);
+  h.workspace().workspace.onSelectionIntent([groupId(1)]); await h.settle(); assert.deepEqual(kinds(db), ['catalog']);
+  assert.equal(await h.adoption().props.run(async () => child.props.onOutcomeUncertain(false)), true);
+  await h.settle(); assert.equal(await h.controls.flush(), true);
+  h.click('Reload saved choices'); await h.settle();
+  assert.notEqual(h.adoption().key, child.key); assert.equal(await h.controls.flush(), true);
+});
+
+test('save/sign quiescence closes report admission and file switch invalidates a running report lane', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const old = h.adoption(); h.controls.setReadOnly(true); await h.settle();
+  assert.equal(await old.props.run(async () => assert.fail('read-only action')), false);
+  h.controls.setReadOnly(false); await h.settle();
+  const held = deferred(); let signal;
+  const pending = old.props.run(async io => { signal = io.signal; await held.promise; }); await h.settle();
+  h.unmount(); assert.equal(signal.aborted, true); held.resolve(); assert.equal(await pending, false);
+});
+
+for (const phase of ['unknown Apply', 'acknowledged Apply awaiting fresh read']) {
+  test(`${phase} deadline permits only explicit report recovery after the actual lane settles`, async t => {
+    t.mock.timers.enable({ apis: ['setTimeout'] });
+    const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+    const child = h.adoption(), staleWorkspace = h.workspace(), staleReload = h.button('Reload saved choices').props.onClick;
+    const operationId = '30000000-0000-4000-8000-000000000001', calls = [], held = deferred(); let signal;
+    // The real Adoption owns its UUID/known-ACK latch; this Host test exercises
+    // that unchanged mounted child's report-task seam and the actual lane.
+    const pending = child.props.run(async io => {
+      signal = io.signal; calls.push({ operationId, phase }); child.props.onOutcomeUncertain(true);
+      await held.promise;
+    });
+    await h.settle(); t.mock.timers.tick(65_000); await h.settle();
+    assert.equal(await pending, false); assert.equal(signal.aborted, true);
+    assert.equal(h.adoption().key, child.key); assert.equal(h.adoption().props.disabled, false);
+    assert.equal(h.button('Reload saved choices').props.disabled, true);
+    assert.equal(await h.controls.flush(), false); assert.match(h.text(), /Saving and finalizing remain paused/);
+    assert.equal(await h.adoption().props.run(async () => assert.fail('retry before underlying operation settles')), false);
+    staleReload(); staleWorkspace.workspace.onSelectionIntent([groupId(1)]);
+    assert.equal(await h.controls.useReviewedSales({ batch_id: OLD, expected_review_revision: 1 }), false);
+    await assert.rejects(staleWorkspace.workspace.previewTransport({ accountId: TARGET.accountId,
+      assignmentFileId: TARGET.assignmentFileId, contextRef: context(OLD), selection: { revision: 9, pockets: [] } },
+    { signal: new AbortController().signal }), /custom_workspace_read_only/);
+    await h.settle(); assert.deepEqual(kinds(db), ['catalog']); assert.equal(calls.length, 1);
+    held.resolve(); await h.settle();
+    assert.equal(await h.controls.flush(), false, 'Settling alone never clears report uncertainty/recovery');
+    assert.equal(h.adoption().key, child.key); assert.equal(h.adoption().props.disabled, false);
+    h.controls.setReadOnly(true); await h.settle();
+    assert.equal(await child.props.run(async () => assert.fail('save/sign quiescence bypass')), false);
+    h.controls.setReadOnly(false); await h.settle();
+    const retry = h.adoption().props.run(async () => {
+      calls.push(phase === 'unknown Apply' ? { operationId, phase } : { readOnlyAcceptedRefresh: true });
+      child.props.onOutcomeUncertain(false);
+    });
+    await h.settle(); assert.equal(await retry, true); assert.equal(await h.controls.flush(), true);
+    assert.equal(h.adoption().key, child.key); assert.equal(h.button('Reload saved choices').props.disabled, false);
+    assert.doesNotMatch(h.text(), /Saving and finalizing remain paused/);
+    assert.deepEqual(calls, [{ operationId, phase }, phase === 'unknown Apply'
+      ? { operationId, phase } : { readOnlyAcceptedRefresh: true }]);
+    assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(db.file(TARGET).section, initial);
+  });
+}
+
+test('report retry cannot recover a failed workspace save or a superseded file lane', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const oldChild = h.adoption();
+  db.overrides.set('save', () => { throw new Error('synthetic failed workspace save'); });
+  h.select([groupId(1)]); await h.settle();
+  assert.equal(await oldChild.props.run(async () => assert.fail('report cannot clear workspace recovery')), false);
+  assert.equal(await h.controls.flush(), false); assert.equal(h.button('Reload saved choices').props.disabled, false);
+  const nextTarget = { ...TARGET, assignmentFileId: '42' }; db.install(nextTarget, initial);
+  h.render({ ...h.props, target: nextTarget }); await h.settle();
+  assert.equal(await oldChild.props.run(async () => assert.fail('superseded report lane')), false);
+  assert.equal(await h.controls.flush(), true); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
 });

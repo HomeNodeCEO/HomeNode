@@ -15,6 +15,7 @@ export interface CustomNeighborhoodReportBridgeInput {
   enabled: boolean; accountId?: string | null; assignmentFileId?: number | null;
   workfileStatus?: 'draft' | 'signed' | 'archived' | null; subjectLabel: string;
   auth: { ready: boolean; bootstrapError: string | null; session: Session | null };
+  onAccepted?: () => Promise<boolean>;
 }
 export interface CustomNeighborhoodReportSaveLease {
   isCurrent(): boolean;
@@ -64,6 +65,7 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
   const [retryRevision, setRetryRevision] = useState(0);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
   const latest = useRef<Runtime | null>(null);
+  const acceptedCallback = useRef(input.onAccepted); acceptedCallback.current = input.onAccepted;
   const sessionIdentity = identity(input.auth.session), enabled = input.enabled === true;
   const accountId = input.accountId ?? null, assignmentFileId = input.assignmentFileId ?? null;
   const fileStatus = input.workfileStatus ?? null;
@@ -191,6 +193,11 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
     initialPeriod: checkpoint?.active?.observation_period ?? checkpoint?.pending_capture?.observation_period ?? null,
     workfileStatus: fileStatus === 'signed' || fileStatus === 'archived' ? fileStatus : result.status,
     api: runtime.api, registerControls: runtime.registerControls,
+    onAccepted: async () => {
+      if (!runtime.live || latest.current !== runtime || runtime.stop?.signal.aborted) return false;
+      const restored = await acceptedCallback.current?.();
+      return restored === true && runtime.live && latest.current === runtime && !runtime.stop?.signal.aborted;
+    },
   } : null;
   const useReviewedSales = async (reference: CustomWorkspacePrivateSalesImport): Promise<boolean> => {
     const controls = runtime.controls;

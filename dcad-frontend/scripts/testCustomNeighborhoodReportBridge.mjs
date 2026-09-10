@@ -264,10 +264,30 @@ test('disposed bridge cannot report success or issue a late editor-key save', as
   assert.equal(h.credentials.length, 0); assert.equal(h.calls.length, 1);
 });
 
-test('automatic reads and host props introduce no print listener, guessed date, or accepted-report mutation seam', () => {
+test('automatic reads introduce no print listener, guessed date, or browser report mutation', () => {
   const source = readFileSync(new URL('../src/features/neighborhood/useCustomNeighborhoodReportBridge.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(source, /addEventListener\(['"](?:beforeprint|homenode:prepare-report)|localStorage|new Date\(/);
-  assert.doesNotMatch(source, /neighborhood_assessment|assignment_details|onAccepted|setAssignmentDraft|requestEditorCredential/);
+  assert.doesNotMatch(source, /neighborhood_assessment|assignment_details|setAssignmentDraft|requestEditorCredential/);
+});
+
+test('accepted notification is explicit, uses the latest callback without rebooting and rejects a switched file', async t => {
+  let calls = 0;
+  const h = harness(t, { initialProps: { ...props(), onAccepted: async () => { calls++; return true; } } });
+  await h.settle(); assert.equal(calls, 0);
+  const old = h.view.hostProps, target = old.target;
+  h.render({ ...h.props, onAccepted: async () => { calls += 10; return true; } }); await h.settle();
+  assert.equal(h.view.hostProps.target, target); assert.equal(h.calls.length, 1);
+  assert.equal(await old.onAccepted(), true); assert.equal(calls, 10);
+  h.render({ ...h.props, accountId: 'OTHER' });
+  assert.equal(await old.onAccepted(), false); assert.equal(calls, 10);
+});
+
+test('file switch during accepted-group refetch cannot acknowledge the old report', async t => {
+  const held = deferred();
+  const h = harness(t, { initialProps: { ...props(), onAccepted: () => held.promise } }); await h.settle();
+  const pending = h.view.hostProps.onAccepted();
+  h.render({ ...h.props, assignmentFileId: 42 }); held.resolve(true);
+  assert.equal(await pending, false);
 });
 
 test('private capture delegates only to current mounted draft controls and respects save/session barriers', async t => {

@@ -7,7 +7,7 @@
   "sourceFiles": {
     "server/src/oldServer.js": 21700,
     "server/src/modules/uad/editor.js": 283335,
-    "dcad-frontend/src/pages/PropertyReport.tsx": 169785,
+    "dcad-frontend/src/pages/PropertyReport.tsx": 170400,
     "dcad-frontend/src/pages/ComparableSalesAnalysis.tsx": 270075,
     "dcad-frontend/src/lib/api.ts": 133321
   }

@@ -19,8 +19,19 @@ const compiled = ts.transpileModule(readFileSync(componentFile, 'utf8'), {
 });
 assert.deepEqual((compiled.diagnostics ?? []).filter(item => item.category === ts.DiagnosticCategory.Error), []);
 const module = { exports: {} };
+function loadV2(url) {
+  const fileName = fileURLToPath(url), child = { exports: {} };
+  const output = ts.transpileModule(readFileSync(url, 'utf8'), { fileName,
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
+  new Script(`(function(require,module,exports){\n${output.outputText}\n})`, { filename: fileName }).runInThisContext()(name => {
+    if (name.startsWith('.')) return loadV2(new URL(name, url));
+    assert.ok(['react', 'react/jsx-runtime'].includes(name)); return requireRuntime(name);
+  }, child, child.exports);
+  return child.exports;
+}
 new Script(`(function(require,module,exports){\n${compiled.outputText}\n})`, { filename: componentFile })
   .runInThisContext()(name => {
+    if (name === './CustomReportedObservationSummary') return loadV2(new URL('../src/features/neighborhood/components/CustomReportedObservationSummary.tsx', import.meta.url));
     assert.ok(['react', 'react/jsx-runtime'].includes(name), `Unexpected component dependency: ${name}`);
     return requireRuntime(name);
   }, module, module.exports);

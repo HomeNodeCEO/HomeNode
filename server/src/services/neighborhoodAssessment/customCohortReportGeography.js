@@ -265,3 +265,37 @@ export function customCohortReportGeographyForAssessment(value, { target, bindin
   diagnostic: { status: value.status, reason: value.reason, assignment_revision: value.binding.assignment_revision,
     projected_sha256: value.binding.projected_sha256, source_ref: id } });
 }
+
+/** Custom v2 adopts the saved manual outline as an appraiser-defined display
+ * boundary, not a sourced road network. Reuse the exact completed admission;
+ * neither JSON supplied by a browser nor the old manual-v1 marker qualifies.
+ * Interior holes remain in the original geometry. Edges reference literal
+ * outer-ring segments; we do not snap, simplify or invent official road names.
+ */
+export function customCohortReportGeographyForReportedAssessment(value, { target, binding }) {
+  customCohortReportGeographyForAssessment(value, { target, binding });
+  const payload = { report_manual_geography_source_version: 2, support_basis: 'appraiser_defined_observation_boundary',
+    authority: 'not_established', report_binding: binding, saved_geography: value,
+    limitations: ['manual_outline_not_official_road_or_subdivision_boundary', 'point_coverage_not_whole_parcel_containment',
+      'no_historical_boundary_assertion', 'selected_data_may_differ_from_broad_narrative_boundary'] };
+  const content = digest(payload), id = `reported-manual-geography:${content}`;
+  const oracle = value.oracle_observation, ring = value.geometry?.coordinates?.[0];
+  const reasons = [];
+  if (value.status !== 'manual_geometry_recorded') reasons.push(value.reason);
+  if (value.subject_point_observation?.relation?.covers_recorded_subject_point !== true) reasons.push('recorded_subject_point_not_covered');
+  if (!Object.values(value.cardinal_summaries).every(v => typeof v === 'string' && v.length > 0)) reasons.push('manual_cardinal_descriptions_required');
+  if (ring && ring.length - 1 > 5000) reasons.push('manual_perimeter_capacity_exceeded');
+  const perimeter = ring && ring.length - 1 <= 5000 ? ring.slice(0, -1).map((_point, index, vertices) => ({
+    edge_id: `manual-segment:${index}`, from_node: `manual-vertex:${index}`, to_node: `manual-vertex:${(index + 1) % vertices.length}`,
+    name: null, source_refs: [id],
+  })) : [];
+  return freeze({ source: { id, payload }, source_snapshot: { id, revision: '2', provider: 'Appraiser-defined saved manual outline',
+    content_sha256: content, visibility: 'assignment', scope: target.scope, valid_from: null, valid_to: null,
+    observed_at: value.binding.captured_at, historical_availability: 'unknown' },
+    geography: { basis: 'appraiser_defined_observation_boundary', manual_source: MANUAL,
+      status: reasons.length ? 'incomplete' : 'ready', reasons, revision: `manual-geography:${content}`, crs: 'EPSG:4326',
+      geometry: value.geometry, perimeter, cardinal_summaries: value.cardinal_summaries,
+      validation: { valid: oracle?.is_valid ?? null, connected: oracle ? oracle.is_valid && oracle.component_count === 1 : null,
+        covers_recorded_subject_point: value.subject_point_observation?.relation?.covers_recorded_subject_point ?? null,
+        engine: oracle?.postgis_version ?? null, revision: oracle ? 'native-manual-outline-v1' : null } } });
+}

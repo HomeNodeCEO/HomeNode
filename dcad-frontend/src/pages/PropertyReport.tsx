@@ -27,6 +27,7 @@ import {
 } from "@/lib/api";
 import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
+import { useCustomNeighborhoodAcceptedReload } from "@/features/neighborhood/useCustomNeighborhoodAcceptedReload";
 import { customNeighborhoodLegacyAllowed, type AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
 import { useCustomNeighborhoodReportBridge } from "@/features/neighborhood/useCustomNeighborhoodReportBridge";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "@/lib/propertyReportHydration";
@@ -222,6 +223,7 @@ function AddressHero({
     setPrivateSalesBusy(busy);
   }, []);
   const [acceptedNeighborhood, setAcceptedNeighborhood] = useState<AcceptedNeighborhoodState | null>(null);
+  const acceptedReadGeneration = useRef(0);
   const legacyNeighborhoodAllowedRef = useRef(false);
   const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
   const sketchEvidenceRefreshInFlight = useRef(false);
@@ -264,6 +266,7 @@ function AddressHero({
     isCancelled: () => boolean,
   ) => {
     if (!accountId) return;
+    const acceptedRead = ++acceptedReadGeneration.current;
     legacyNeighborhoodAllowedRef.current = false;
     setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "loading", assessment: null,
       message: "Loading the saved neighborhood selection..." });
@@ -282,14 +285,14 @@ function AddressHero({
       // Even an absent section needs the authoritative check: retained acceptance
       // history with a missing current section is NOT an empty legacy file.
       if (workfileResult.workfile.status === "signed") {
-        setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "signed", assessment: null,
+        if (acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "signed", assessment: null,
           message: "This is a signed file. View the signed PDF for its immutable neighborhood analysis." });
       } else {
         // Keep this independent: a slow neighborhood read must not delay the
         // existing sales/market workfile hydration or file-selection completion.
         // The loader always resolves a checked state, including network failure.
         void loadCustomNeighborhoodAccepted(accountId, selectedFile.id, neighborhoodSection).then(restored => {
-          if (!isCancelled()) setAcceptedNeighborhood(restored);
+          if (!isCancelled() && acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood(restored);
         });
       }
       const marketSection = workfileResult.workfile.sections.market_conditions;
@@ -310,7 +313,7 @@ function AddressHero({
       );
     } catch (workfileError) {
       if (!isCancelled()) {
-        setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "unavailable", assessment: null,
+        if (acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "unavailable", assessment: null,
           message: "The workfile could not be loaded. Reload before changing its neighborhood; saved values have not been replaced." });
         setWorkfileStatusMessage(
           workfileError instanceof Error
@@ -470,6 +473,8 @@ function AddressHero({
   }, [accountId, detailLoaded, hydrateAssignmentDraft, resetProfileTracking, setAssignmentConflictKeys]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
+  const handleNeighborhoodAccepted = useCustomNeighborhoodAcceptedReload(accountId,
+    activeAssignmentFileRef, selectionGenerationRef, setAcceptedNeighborhood, acceptedReadGeneration);
   const neighborhoodWorkspace = useCustomNeighborhoodReportBridge({
     enabled: CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED,
     accountId,
@@ -477,6 +482,7 @@ function AddressHero({
     workfileStatus: activeAssignmentFile?.workfile?.status ?? null,
     subjectLabel: address,
     auth: applicationAuth,
+    onAccepted: handleNeighborhoodAccepted,
   });
   const { streetAddress, city, state, postalCode, documentReviewSubjectAddress, censusZip } = propertyReportLocationContext(detail?.property_location);
   const handleCensusProfilesLoaded = useCallback(({

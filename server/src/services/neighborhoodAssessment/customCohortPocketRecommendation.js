@@ -2,6 +2,7 @@ import { buildNeighborhoodRelevanceDistributions, scoreNeighborhoodCandidate,
   NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION, NEIGHBORHOOD_RELEVANCE_WEIGHTS } from '../neighborhoodRelevance.js';
 import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
 import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBaseline.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 
 const freeze = value => {
@@ -190,6 +191,8 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
       'no_automatic_inclusion_exclusion_or_report_apply', ...catalog.reasons],
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] },
   };
+  const cad = buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups });
+  if (cad !== null) result.cad_recorded_evidence = cad;
   charge({ all: result.all, selected: result.selected, subject: result.subject });
   // Incremental checks limit construction. Count the COMPLETE final envelope as
   // well, including both ID lists, ranks, separators and binding/disclosures.

@@ -1,4 +1,6 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
+import { checkCustomCohortCadEvidence } from './customCohortCadEvidence.ts';
+import type { CheckedCadRecordedEvidence } from './customCohortCadEvidence';
 
 const FACTORS = ['gla', 'age', 'housing_type', 'site_size', 'proximity', 'sale_price'] as const;
 type Factor = typeof FACTORS[number];
@@ -20,6 +22,7 @@ export interface CheckedPocketRecommendation {
   readonly all: Population;
   readonly recommended_recorded_group_ids: readonly string[];
   readonly limitations: readonly string[];
+  readonly cad_recorded_evidence?: CheckedCadRecordedEvidence;
 }
 type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>;
 const WEIGHTS = { gla: .4, age: .3, housing_type: .2, site_size: 1 / 30, proximity: 1 / 30, sale_price: 1 / 30 };
@@ -91,8 +94,10 @@ function population(value: Record<string, unknown>): Population {
  * catalog, never to the current selected-union statistics. This admits just
  * public display fields, not retained source rows/material or report authority. */
 export function checkCustomCohortPocketRecommendation(value: unknown, catalog: Catalog, selectionFingerprint: unknown): CheckedPocketRecommendation {
+  const hasCadEvidence = value !== null && typeof value === 'object' && Object.hasOwn(value, 'cad_recorded_evidence');
   const r = object(value, ['presentation_version', 'recommendation_version', 'status', 'basis', 'selection_scope', 'authority',
-    'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply']);
+    'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply',
+    ...(hasCadEvidence ? ['cad_recorded_evidence'] : [])]);
   ensure(r.presentation_version === 1 && r.recommendation_version === 1
     && (r.status === 'recommendation_for_review' || r.status === 'insufficient_observations')
     && r.basis === 'current_retained_observations' && r.authority === 'not_established'
@@ -140,8 +145,10 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const apply = object(r.apply, ['status', 'reasons']); ensure(apply.status === 'blocked');
   array(apply.reasons, 64).forEach(value => text(value));
   const limitations = array(r.limitations, 64).map(value => text(value));
+  const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog) : null;
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= 512_000);
   return freeze({ status: r.status, policy: { id: p.id, revision: 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
-    subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations });
+    subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations,
+    ...(cad ? { cad_recorded_evidence: cad } : {}) });
 }

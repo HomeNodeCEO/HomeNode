@@ -7,6 +7,7 @@ import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import * as cadEvidenceHelpers from '../src/features/neighborhood/customCohortCadEvidence.ts';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
 const ref = { context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -85,6 +86,7 @@ function harness(name = 'CustomCohortWorkspace') {
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortPreviewApi') return api;
     if (key === '../customCohortPocketCatalog') return catalogHelpers;
+    if (key === '../customCohortCadEvidence') return cadEvidenceHelpers;
     if (key === '../customCohortPreviewController') return { ...controller,
       fingerprintCustomCohortSelection: value => {
         const task = controller.fingerprintCustomCohortSelection(value); fingerprints.add(task);

@@ -3,9 +3,14 @@ import { reportedObservationMeasurements } from './customReportedObservationPres
 import type { ReportedStatistic } from './customReportedObservationPresentation';
 
 type Data = Record<string, unknown>;
+export interface ReportedReplacementIntent { kind: 'accepted_custom_reported_group' }
+export interface ReportedReplacement extends ReportedReplacementIntent {
+  predecessor: { acceptance_id: string; operation_id: string; accepted_editor_revision: number; section_value_sha256: string };
+}
 export interface ReportedProposalExpectation {
   accountId: string; assignmentFileId: string; contextRef: CustomCohortContextRef;
   workspaceRevision: number; editorRevision: number; operationId: string;
+  replacement?: ReportedReplacementIntent | ReportedReplacement;
 }
 export interface ReportedProposal {
   status: 'proposed' | 'incomplete'; editorRevision: number; operationId: string;
@@ -14,6 +19,7 @@ export interface ReportedProposal {
     cardinal_summaries: { north: string | null; east: string | null; south: string | null; west: string | null } } | null;
   populations: { id: string; kind: string; member_unit: string; member_count: number | null; unique_account_count: number | null; account_link_count: number | null }[];
   statistics: ReportedStatistic[]; issues: string[];
+  replacement?: ReportedReplacement;
 }
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const sha = /^[a-f0-9]{64}$/;
@@ -32,6 +38,28 @@ function checkedExpectation(value: ReportedProposalExpectation) {
   const ref = object(value.contextRef); fields(ref, ['context_id', 'context_revision', 'context_sha256']);
   check(typeof ref.context_id === 'string' && uuid.test(ref.context_id) && ref.context_revision === '1'
     && typeof ref.context_sha256 === 'string' && sha.test(ref.context_sha256));
+  if (Object.hasOwn(value, 'replacement')) {
+    const intent = object(value.replacement);
+    fields(intent, Object.hasOwn(intent, 'predecessor') ? ['kind', 'predecessor'] : ['kind']);
+    check(intent.kind === 'accepted_custom_reported_group' && value.editorRevision > 0);
+    if (Object.hasOwn(intent, 'predecessor')) replacement(intent, value.editorRevision);
+  }
+}
+function replacement(value: unknown, editorRevision: number): ReportedReplacement {
+  const r = object(value); fields(r, ['kind', 'predecessor']);
+  check(r.kind === 'accepted_custom_reported_group');
+  const p = object(r.predecessor); fields(p, ['acceptance_id', 'operation_id', 'accepted_editor_revision', 'section_value_sha256']);
+  check(typeof p.acceptance_id === 'string' && uuid.test(p.acceptance_id) && typeof p.operation_id === 'string' && uuid.test(p.operation_id)
+    && p.accepted_editor_revision === editorRevision && editorRevision > 0 && typeof p.section_value_sha256 === 'string' && sha.test(p.section_value_sha256));
+  return r as unknown as ReportedReplacement;
+}
+function responseReplacement(response: Data, expected: ReportedProposalExpectation, applying = false) {
+  if (!Object.hasOwn(expected, 'replacement')) return undefined;
+  const r = replacement(response.replacement, expected.editorRevision), pinned = expected.replacement;
+  check(pinned && (!applying || 'predecessor' in pinned));
+  if ('predecessor' in pinned) check(Object.keys(r.predecessor).every(key =>
+    r.predecessor[key as keyof typeof r.predecessor] === pinned.predecessor[key as keyof typeof pinned.predecessor]));
+  return r;
 }
 function calendar(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d\d-\d\d$/.test(value)) return false;
@@ -71,7 +99,8 @@ export function decodeCustomReportedProposal(value: unknown, expected: ReportedP
   checkedExpectation(expected);
   const response = object(detached(value));
   fields(response, ['status', 'target', 'context_ref', 'workspace_section_revision', 'editor_revision',
-    'proposal_operation_id', 'reused', 'attachment_ref', 'assessment', 'issues']);
+    'proposal_operation_id', 'reused', 'attachment_ref', 'assessment', 'issues', ...(Object.hasOwn(expected, 'replacement') ? ['replacement'] : [])]);
+  const replacing = responseReplacement(response, expected);
   responseTarget(response.target, expected); context(response.context_ref, expected.contextRef);
   check(response.workspace_section_revision === expected.workspaceRevision && response.editor_revision === expected.editorRevision
     && response.proposal_operation_id === expected.operationId && typeof response.reused === 'boolean'
@@ -156,12 +185,15 @@ export function decodeCustomReportedProposal(value: unknown, expected: ReportedP
   if (response.status === 'proposed') check(attachment && response.assessment !== null && issues.length === 0);
   else check(attachment === null && issues.length > 0);
   return detached({ status: response.status, editorRevision: expected.editorRevision,
-    operationId: expected.operationId, attachment, boundary, populations, statistics, issues }) as ReportedProposal;
+    operationId: expected.operationId, attachment, boundary, populations, statistics, issues,
+    ...(replacing ? { replacement: replacing } : {}) }) as ReportedProposal;
 }
 
 export function checkCustomReportedApply(value: unknown, expected: ReportedProposalExpectation, operationId: string): number {
   checkedExpectation(expected); check(typeof operationId === 'string' && uuid.test(operationId));
-  const response = object(detached(value)); fields(response, ['status', 'target', 'context_ref', 'operation_id', 'proposal_operation_id', 'accepted_editor_revision', 'reused']);
+  const response = object(detached(value)); fields(response, ['status', 'target', 'context_ref', 'operation_id', 'proposal_operation_id', 'accepted_editor_revision', 'reused',
+    ...(Object.hasOwn(expected, 'replacement') ? ['replacement'] : [])]);
+  responseReplacement(response, expected, true);
   responseTarget(response.target, expected); context(response.context_ref, expected.contextRef);
   check(response.status === 'accepted' && response.operation_id === operationId && response.proposal_operation_id === expected.operationId
     && response.accepted_editor_revision === expected.editorRevision + 1 && typeof response.reused === 'boolean');

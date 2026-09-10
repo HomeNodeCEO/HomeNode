@@ -9,7 +9,7 @@ const INPUT_ERRORS = new Set(['invalid_input', 'invalid_account', 'invalid_assig
 const ACCESS_ERRORS = new Set(['assignment_access_denied', 'market_data_access_denied', 'report_observation_access_denied']);
 const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed', 'private_source_read_only',
   'workspace_changed', 'workspace_capture_pending', 'report_editor_changed', 'report_geography_changed',
-  'report_policy_changed', 'report_proposal_changed', 'report_group_conflict']);
+  'report_policy_changed', 'report_proposal_changed', 'report_group_conflict', 'report_replacement_conflict']);
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
 
@@ -143,14 +143,16 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
     ['assignment_file_id', 'context_ref', 'expected_workspace_revision', 'expected_editor_revision', 'operation_id'],
     (identity, body, options) => cohortService.prepareReportedObservations({ ...identity, contextRef: body.context_ref,
       expectedWorkspaceRevision: body.expected_workspace_revision, expectedEditorRevision: body.expected_editor_revision,
-      operationId: body.operation_id }, options));
+      operationId: body.operation_id,
+      ...(Object.hasOwn(body, 'replacement') ? { replacement: body.replacement } : {}) }, options), ['replacement']);
   if (typeof cohortService.applyReportedObservations === 'function') route('reported-apply',
     ['assignment_file_id', 'context_ref', 'expected_workspace_revision', 'expected_editor_revision', 'operation_id',
       'proposal_operation_id', 'attachment_id', 'attachment_revision', 'binding_digest', 'adopt'],
     (identity, body, options) => cohortService.applyReportedObservations({ ...identity, contextRef: body.context_ref,
       expectedWorkspaceRevision: body.expected_workspace_revision, expectedEditorRevision: body.expected_editor_revision,
       operationId: body.operation_id, proposalOperationId: body.proposal_operation_id, attachmentId: body.attachment_id,
-      attachmentRevision: body.attachment_revision, bindingDigest: body.binding_digest, adopt: body.adopt }, options));
+      attachmentRevision: body.attachment_revision, bindingDigest: body.binding_digest, adopt: body.adopt,
+      ...(Object.hasOwn(body, 'replacement') ? { replacement: body.replacement } : {}) }, options), ['replacement']);
   router.use(BASE, (error, _req, res, _next) => {
     const [status, payload] = publicFailure(error);
     return res.status(status).json(payload);

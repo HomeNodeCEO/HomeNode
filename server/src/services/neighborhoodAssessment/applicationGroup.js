@@ -43,11 +43,50 @@ export function prepareNeighborhoodApplicationGroup(input) {
     conflicts: [{ code: "invalid_application_manifest", target_key: null }], writes: [], acceptance_manifest: null }); }
 }
 
+/** Explicit Custom v2 replacement only. Both manifests come from the workflow
+ * owner, including the old persisted receipt and ACTUAL occupied target values.
+ * Re-prove the old complete group before allowing the new five-part manifest;
+ * no ordinary Apply option or caller boolean relaxes populated-value conflicts.
+ */
+export function prepareNeighborhoodApplicationGroupReplacement({ current, predecessor }) {
+  try {
+    const customV2 = value => value?.attachment?.workflow_type === "custom_appraisal"
+      && value.attachment.mapper_version === "custom-reported-observations-report-v2";
+    const fail = () => { throw new TypeError("invalid_custom_replacement"); };
+    if (!customV2(current) || !customV2(predecessor) || current.accepted_application != null
+      || predecessor.accepted_application == null) fail();
+    for (const field of ["report_file_id", "custom_assignment_file_id", "uad_workfile_id", "scope"]) {
+      if (canonicalAssessmentJson(current.attachment[field]) !== canonicalAssessmentJson(predecessor.attachment[field])) fail();
+    }
+    if (current.current_editor_revision !== predecessor.current_editor_revision
+      || current.attachment.application_identity_sha256 === predecessor.attachment.application_identity_sha256) fail();
+    const oldPlan = prepare(predecessor);
+    if (oldPlan.status !== "already_applied") fail();
+    const order = values => [...values].sort((a, b) => compare(a.target_key, b.target_key));
+    const occupied = snapshot(current.existing_values), previous = snapshot(predecessor.existing_values);
+    const keys = values => order(values).map(value => value.target_key);
+    if (occupied.length !== 5 || previous.length !== 5
+      || occupied.some(value => value.target_exists !== true || value.populated !== true)
+      || canonicalAssessmentJson(keys(occupied)) !== canonicalAssessmentJson(
+        ['evidence', 'geography', 'populations', 'selection', 'statistics'].map(part => `custom_neighborhood:${part}`))
+      || canonicalAssessmentJson(order(occupied)) !== canonicalAssessmentJson(order(previous))
+      || canonicalAssessmentJson(keys(occupied)) !== canonicalAssessmentJson(keys(current.suggestions))
+      || canonicalAssessmentJson(keys(occupied)) !== canonicalAssessmentJson(keys(predecessor.suggestions))) fail();
+    // This second argument is private to this module, after old-receipt and
+    // actual-occupancy validation. Every replacement part is applied, even when
+    // its displayed value happens to match; provenance belongs to the new group.
+    return snapshot(prepare(current, { occupied }));
+  } catch {
+    return snapshot({ status: "conflict", http_status: 409,
+      conflicts: [{ code: "invalid_custom_report_replacement", target_key: null }], writes: [], acceptance_manifest: null });
+  }
+}
+
 function prepare({
   attachment, expected_binding_digest, group, suggestions, selected_ids,
   current_application_identity_sha256, current_editor_revision,
   accepted_application = null, existing_values, validate_final_group,
-}) {
+}, replacement = null) {
   attachment = snapshot(attachment);
   group = snapshot(group);
   const conflicts = [];
@@ -118,6 +157,9 @@ function prepare({
     }
     old.set(item.target_key, item);
   }
+  if (replacement && canonicalAssessmentJson(existing_values) !== canonicalAssessmentJson(replacement.occupied)) {
+    add("changed_replacement_values"); return rejected();
+  }
   const provenance = {
     application_identity_sha256: applicationIdentity,
     attachment_id: attachment.attachment_id,
@@ -171,11 +213,12 @@ function prepare({
       add("unresolved_target", item.target_key); continue;
     }
     if (previous.populated === true) {
-      if (canonicalAssessmentJson(previous.value) !== canonicalAssessmentJson(item.value) ||
+      if (replacement) {
+        writes.push({ id: item.id, target_key: item.target_key, value: item.value });
+      } else if (canonicalAssessmentJson(previous.value) !== canonicalAssessmentJson(item.value) ||
           previous.provenance_digest !== provenanceDigest) {
         add("incompatible_existing_value", item.target_key); continue;
-      }
-      reused.push({ id: item.id, target_key: item.target_key, value: item.value });
+      } else reused.push({ id: item.id, target_key: item.target_key, value: item.value });
     } else if (previous.populated === false) {
       writes.push({ id: item.id, target_key: item.target_key, value: item.value });
     } else { add("unknown_existing_value_state", item.target_key); continue; }

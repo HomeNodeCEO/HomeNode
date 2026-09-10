@@ -8,6 +8,7 @@ import { buildCustomCohortReportedSharedSales } from './customCohortReportedShar
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortReportGeographyForReportedAssessment } from './customCohortReportGeography.js';
 import { buildCustomNeighborhoodReportCandidate } from './customReportMapping.js';
+import { types as utilTypes } from 'node:util';
 
 const profile = { contract_version: 2, profile_id: REPORTED_OBSERVATION_PROFILE_ID };
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
@@ -42,6 +43,19 @@ function privateMetric(value) {
     conflicting_count: value.conflicting_count, unsupported_count: value.unsupported_count,
     unit: value.unit, low: value.low, median: value.median, high: value.high };
 }
+function proposalBinding(value, target) {
+  if (value === undefined) return null;
+  check(value && !utilTypes.isProxy(value) && Object.getPrototypeOf(value) === Object.prototype, 'proposal_binding');
+  const keys = ['operation_id', 'actor_user_id', 'expected_editor_revision'], descriptors = Object.getOwnPropertyDescriptors(value);
+  check(Reflect.ownKeys(descriptors).length === keys.length
+    && keys.every(key => Object.hasOwn(descriptors, key) && Object.hasOwn(descriptors[key], 'value') && descriptors[key].enumerable), 'proposal_binding');
+  const result = Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+  const uuid = value => typeof value === 'string' && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value);
+  check(uuid(result.operation_id) && uuid(result.actor_user_id) && Number.isInteger(result.expected_editor_revision)
+    && result.expected_editor_revision >= 0 && result.expected_editor_revision < 2147483647
+    && result.expected_editor_revision === target.editor_revision, 'proposal_binding');
+  return Object.freeze(result);
+}
 
 /** Internal retained-data consumer only. The workflow owner must authenticate,
  * load this exact graph/checkpoint, run native geography validation, and recheck
@@ -50,7 +64,12 @@ function privateMetric(value) {
  * economic-property inference, temporal promotion, or report writes occur here.
  */
 export function buildCustomCohortReportedAssessment({ context_ref, retained_inputs, selection, target,
-  preparation_identity: identity, report_geography, derived_at }) {
+  preparation_identity: identity, report_geography, derived_at, proposal_binding }) {
+  // Distinguish independently authorized proposal operations without changing
+  // their observations or inventing a later clock. This is audit identity, not
+  // source truth, report rights or reviewer licensure. Omission preserves the
+  // original pure preparation profile/content exactly.
+  const proposal = proposalBinding(proposal_binding, target);
   const retained = retained_inputs, effective = retained.subject.effective_date;
   check(target.effective_date === effective && target.data_cutoff === effective, 'effective_date');
   check(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
@@ -90,7 +109,8 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
   if (privateSales) check(['organization_id', 'report_file_id', 'assignment_file_id', 'account_id']
     .every(key => privateSales.binding.target[key] === retained.subject.target[key]), 'private_target');
   const binding = { context_ref, selection_revision: selection.revision,
-    selected_account_set_sha256: neighborhoodMemberSetDigest(preview.selected.account_ids), derived_at };
+    selected_account_set_sha256: neighborhoodMemberSetDigest(preview.selected.account_ids), derived_at,
+    ...(proposal ? { proposal_binding: proposal } : {}) };
   const geography = customCohortReportGeographyForReportedAssessment(report_geography, { target, binding });
   const sources = [geography.source], snapshots = [geography.source_snapshot], members = [], populations = [], statistics = [];
   const addSource = (id, payload, observed_at, provider) => {

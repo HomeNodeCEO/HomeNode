@@ -1,6 +1,7 @@
 import { assessmentEvidenceDigest, buildNeighborhoodAssessment, buildNeighborhoodAttachment,
   canonicalAssessmentJson } from "./contract.js";
-import { buildNeighborhoodApplicationReceipt, neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup } from "./applicationGroup.js";
+import { buildNeighborhoodApplicationReceipt, neighborhoodMappedManifestDigest, prepareNeighborhoodApplicationGroup,
+  prepareNeighborhoodApplicationGroupReplacement } from "./applicationGroup.js";
 import { prepareCustomNeighborhoodAcceptanceSnapshot } from "./customAcceptanceSnapshot.js";
 import { normalizeCustomAppraisalSectionValue } from "../customAppraisalSectionValue.js";
 
@@ -113,6 +114,40 @@ export function prepareCustomNeighborhoodReportApply({ assessment, target, exist
       const valid = equal(order(values), order(candidate.suggestions));
       return { valid, issues: valid ? [] : [{ code: "custom_neighborhood_report_catalog_changed" }] };
     } });
+}
+
+/** Server-resolved predecessor only. This does not discover an acceptance,
+ * authorize replacement or save it. The locked owner supplies the exact old
+ * assessment/attachment/receipt and occupied values verified against history.
+ */
+export function prepareCustomNeighborhoodReportReplacement({ assessment, target, existing_values, request,
+  current_application_identity_sha256, current_editor_revision, predecessor }) {
+  try {
+    requireThat(assessment?.contract_version === 2 && predecessor?.assessment?.contract_version === 2, "v2_replacement_required");
+    const next = buildCustomNeighborhoodReportCandidate({ assessment, target });
+    const old = buildCustomNeighborhoodReportCandidate({ assessment: predecessor.assessment, target: predecessor.attachment });
+    requireThat(next.status === "ready" && old.status === "ready"
+      && equal(old.attachment, predecessor.attachment), "replacement_candidate_mismatch");
+    const input = (candidate, revision, identity, receipt, selected, binding) => ({ attachment: candidate.attachment,
+      group: candidate.group, suggestions: candidate.suggestions, current_editor_revision: revision,
+      current_application_identity_sha256: identity, accepted_application: receipt, existing_values,
+      selected_ids: selected, expected_binding_digest: binding,
+      validate_final_group: values => {
+        const order = items => items.map(({ target_key, value }) => ({ target_key, value }))
+          .sort((a, b) => a.target_key < b.target_key ? -1 : 1);
+        const valid = equal(order(values), order(candidate.suggestions));
+        return { valid, issues: valid ? [] : [{ code: "custom_neighborhood_report_catalog_changed" }] };
+      } });
+    return prepareNeighborhoodApplicationGroupReplacement({
+      current: input(next, current_editor_revision, current_application_identity_sha256, null,
+        request?.selected_ids, request?.binding_digest_sha256),
+      predecessor: input(old, current_editor_revision, old.attachment.application_identity_sha256,
+        predecessor.receipt, old.suggestions.map(item => item.id), old.attachment.binding_digest_sha256),
+    });
+  } catch {
+    return freeze({ status: "conflict", http_status: 409, writes: [], acceptance_manifest: null,
+      conflicts: [{ code: "invalid_custom_report_replacement", target_key: null }] });
+  }
 }
 
 /** Reconstruct ONLY the exact saved catalog group. Call after the owner has

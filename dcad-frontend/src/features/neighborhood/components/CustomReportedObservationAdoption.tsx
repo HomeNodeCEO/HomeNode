@@ -35,6 +35,8 @@ export default function CustomReportedObservationAdoption(props: Props) {
 function AdoptionOwner(props: Props) {
   const [proposal, setProposal] = useState<ReportedProposal | null>(null);
   const [message, setMessage] = useState<string | null>(null);
+  const [occupiedRevision, setOccupiedRevision] = useState<number | null>(null);
+  const occupied = useRef<number | null>(null);
   const [accepted, setAccepted] = useState(false), [busy, setBusy] = useState(false), [needsReload, setNeedsReload] = useState(false);
   const live = useRef(false), generation = useRef(0), pending = useRef<object | null>(null), acceptedRef = useRef(false);
   const expectation = useRef<ReportedProposalExpectation | null>(null), applyId = useRef<string | null>(null);
@@ -81,27 +83,40 @@ function AdoptionOwner(props: Props) {
     if (!acceptedRef.current || !needsReload) return;
     run('reload', reopen);
   }
-  function propose() {
+  function propose(replace = false) {
+    if (replace && occupied.current === null && !expectation.current?.replacement) return;
     const request = { ...latest.current, target: { ...latest.current.target }, contextRef: { ...latest.current.contextRef } };
     run('proposal', async (io, epoch) => {
       if (!expectation.current) {
-        const editorRevision = await request.api.readReportEditor(request.target, io);
+        const editorRevision = replace ? occupied.current! : await request.api.readReportEditor(request.target, io);
         if (!current(epoch, io)) { failure('proposal', epoch); return; }
+        if (editorRevision > 0 && !replace) {
+          failed.current = null; occupied.current = editorRevision; setOccupiedRevision(editorRevision); setMessage(null); return;
+        }
         expectation.current = { accountId: request.target.accountId, assignmentFileId: request.target.assignmentFileId,
-          contextRef: { ...request.contextRef }, workspaceRevision: request.workspaceRevision, editorRevision, operationId: crypto.randomUUID() };
+          contextRef: { ...request.contextRef }, workspaceRevision: request.workspaceRevision, editorRevision, operationId: crypto.randomUUID(),
+          ...(replace ? { replacement: { kind: 'accepted_custom_reported_group' as const } } : {}) };
       }
       const e = expectation.current;
       const value = await request.api.reportedOperation({ target: request.target, operation: 'reported-proposal', body: {
         context_ref: e.contextRef, expected_workspace_revision: e.workspaceRevision,
         expected_editor_revision: e.editorRevision, operation_id: e.operationId,
+        ...(e.replacement ? { replacement: { kind: e.replacement.kind } } : {}),
       } }, io);
       if (!current(epoch, io)) { failure('proposal', epoch); return; }
       const result = decodeCustomReportedProposal(value, e);
+      if (result.replacement) expectation.current = { ...e, replacement: result.replacement };
       failed.current = null; setProposal(result); setMessage(null);
     });
   }
+  function cancelReplacement() {
+    if (!live.current || latest.current.disabled || pending.current || acceptedRef.current || failed.current === 'apply') return;
+    if (occupiedRevision === null && !expectation.current?.replacement) return;
+    ++generation.current; expectation.current = null; applyId.current = null; failed.current = null; occupied.current = null;
+    setOccupiedRevision(null); setProposal(null); setMessage('Replacement review cancelled. The saved report group has not been changed.');
+  }
   function apply() {
-    if (!proposal?.attachment || !expectation.current) return;
+    if (!proposal?.attachment || !expectation.current || proposal.operationId !== expectation.current.operationId) return;
     const e = expectation.current, attachment = proposal.attachment, request = { ...latest.current, target: { ...latest.current.target } };
     run('apply', async (io, epoch) => {
       applyId.current ??= crypto.randomUUID();
@@ -111,6 +126,7 @@ function AdoptionOwner(props: Props) {
         expected_editor_revision: e.editorRevision, proposal_operation_id: e.operationId,
         attachment_id: attachment.attachment_id, attachment_revision: attachment.attachment_revision,
         binding_digest: attachment.binding_digest, operation_id: applyId.current, adopt: true,
+        ...(proposal.replacement ? { replacement: proposal.replacement } : {}),
       } }, io);
       if (!current(epoch, io)) { failure('apply', epoch); return; }
       checkCustomReportedApply(value, e, applyId.current);
@@ -126,9 +142,14 @@ function AdoptionOwner(props: Props) {
     <div className="flex flex-wrap items-center justify-between gap-2">
       <div><h4 className="font-semibold">Review neighborhood report group</h4>
         <p className="text-xs text-slate-600">Your rough boundary and the selected pockets’ reported statistics are applied together.</p></div>
-      {!accepted && <button type="button" className={button} disabled={props.disabled || busy || failed.current === 'apply'} onClick={propose}>
-        {failed.current === 'proposal' ? 'Retry report proposal' : proposal ? 'Reload this proposal' : 'Prepare report group'}</button>}
+      {!accepted && <button type="button" className={button} disabled={props.disabled || busy || failed.current === 'apply'} onClick={() => propose(occupiedRevision !== null)}>
+        {failed.current === 'proposal' ? 'Retry report proposal' : proposal ? 'Reload this proposal' : occupiedRevision !== null ? 'Prepare replacement' : 'Prepare report group'}</button>}
     </div>
+    {!accepted && occupiedRevision !== null && <div className="mt-2 rounded-lg border border-amber-300 p-2 text-sm">
+      <p>A neighborhood report group is already saved at editor revision {occupiedRevision}. Replacement requires an accepted Custom reported-observation group.</p>
+      <p>Preparing a replacement does not change the saved group. Applying it replaces its boundary, selection, populations, statistics and evidence together.</p>
+      <button type="button" className={`${button} mt-2`} disabled={props.disabled || busy || failed.current === 'apply'} onClick={cancelReplacement}>Cancel replacement</button>
+    </div>}
     {busy && <p role="status" className="mt-2 text-xs">Confirming the report request…</p>}
     {message && <p role={failed.current ? 'alert' : 'status'} className="mt-2 text-sm">{message}</p>}
     {accepted && needsReload && <button type="button" className={`${button} mt-2`} disabled={props.disabled || busy} onClick={reloadAccepted}>Reload accepted group</button>}
@@ -137,6 +158,15 @@ function AdoptionOwner(props: Props) {
         {issueText[code] ?? `Review needed: ${code.replaceAll('_', ' ')}`}</p>)}
     </div>}
     {proposal && <>
+      {proposal.replacement && <div className="mt-3 text-sm">
+        <p>{accepted ? 'Replaced' : 'Replacement for'} saved editor revision {proposal.replacement.predecessor.accepted_editor_revision} with revision {proposal.editorRevision + 1}.
+          {!accepted && ' The preceding saved group remains unchanged until this replacement is saved.'}</p>
+        <details className="mt-1 text-xs"><summary>Predecessor identity</summary>
+          <dl className="break-all"><dt>Acceptance</dt><dd>{proposal.replacement.predecessor.acceptance_id}</dd>
+            <dt>Operation</dt><dd>{proposal.replacement.predecessor.operation_id}</dd>
+            <dt>Saved section digest</dt><dd>{proposal.replacement.predecessor.section_value_sha256}</dd></dl>
+        </details>
+      </div>}
       {proposal.boundary && <div className="mt-3 rounded-lg border border-violet-200 p-2">
         <h5 className="text-sm font-semibold">{accepted ? 'Accepted' : 'Proposed'} observation boundary</h5>
         {outline ? <svg role="img" aria-label="Exact proposed outline with excluded holes" viewBox="0 0 600 300" className="mt-2 max-h-64 w-full bg-violet-50">
@@ -165,7 +195,7 @@ function AdoptionOwner(props: Props) {
         </div>)}
       </div>
       {proposal.status === 'proposed' && !accepted && <button type="button" className={`${button} mt-3`} disabled={props.disabled || busy} onClick={apply}>
-        {failed.current === 'apply' ? 'Retry same Apply request' : 'Apply boundary and statistics together'}</button>}
+        {failed.current === 'apply' ? 'Retry same Apply request' : proposal.replacement ? 'Replace saved boundary and statistics together' : 'Apply boundary and statistics together'}</button>}
     </>}
   </section>;
 }

@@ -76,7 +76,7 @@ function harness(name = 'CustomCohortWorkspace') {
   });
   const api = { requestCustomCohortObservationPreview: previewTransport,
     requestCustomCohortOperation: (...args) => { catalogCalls.push(args); return Promise.resolve(catalogResponse()); } };
-  const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortPocketInspector'].map(key => [key, function Stub() {}]));
+  const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortPocketInspector', 'CustomCohortMemberBrowser'].map(key => [key, function Stub() {}]));
   const file = fileURLToPath(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url));
   const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
@@ -227,9 +227,15 @@ test('preview retry is read-only and preserves the exact saved selection revisio
   await h.complete(); assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.unmount();
 });
 test('independent inspection receives the shared transport and never selects its group', async () => {
-  const h = harness(); h.render(h.props([groupId(1)])); await h.tick(); await h.complete(); h.click('Beta1 accounts · Dallas');
+  const h = harness(), props = h.props([groupId(1)]), memberTransport = () => assert.fail('Member reads must be explicit');
+  props.workspace.memberTransport = memberTransport;
+  h.render(props); await h.tick(); await h.complete(); h.click('Beta1 accounts · Dallas');
   const inspect = h.child('CustomCohortPocketInspector'); assert.equal(inspect.previewTransport, h.previewTransport);
-  assert.equal(inspect.pocketId, groupId(2)); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1); h.unmount();
+  assert.equal(inspect.memberTransport, memberTransport); assert.equal(inspect.membersPaused, false);
+  assert.equal(inspect.pocketId, groupId(2)); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
+  h.render({ ...props, workspace: { ...props.workspace, saving: true } });
+  assert.equal(h.child('CustomCohortPocketInspector').membersPaused, true);
+  assert.equal(h.child('CustomCohortPocketInspector').memberTransport, memberTransport); h.unmount();
 });
 test('standalone mode retains broad catalog loading and all-observations initialization', async () => {
   const h = harness(), p = h.props(); delete p.workspace; h.render(p); await h.drain(); await h.tick();
@@ -303,6 +309,14 @@ test('inspector uses its injected transport once, retains independent selection 
   t.after(() => h.unmount()); await h.waitForRequest(0);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0].request.include_map, false);
   assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['B']); await h.complete();
+  const members = h.child('CustomCohortMemberBrowser'); assert.ok(members);
+  assert.deepEqual(members.input, h.calls[0].request.include_map === false
+    ? { accountId: input.accountId, assignmentFileId: input.assignmentFileId, contextRef: input.contextRef,
+      selection: h.calls[0].request.selection } : null);
+  assert.equal(members.group, h.child('CustomCohortStatistics').group);
+  h.render({ ...h.propsNow, membersPaused: true });
+  assert.equal(h.child('CustomCohortMemberBrowser').paused, true);
+  assert.equal(h.child('CustomCohortMemberBrowser').group, members.group);
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.render({ ...h.propsNow, label: 'Beta label' }); await h.drain();
   assert.equal(h.calls.length, 1); h.unmount(); assert.equal(h.calls[0].signal.aborted, true);
 });

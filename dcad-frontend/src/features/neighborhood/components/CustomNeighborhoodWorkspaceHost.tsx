@@ -5,6 +5,7 @@ import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImpor
 import { createCustomWorkspaceRequestLane } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
 import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
+import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
 import CustomReportedObservationAdoption from './CustomReportedObservationAdoption';
 
@@ -150,6 +151,21 @@ function HostSession(props: Props) {
       return Promise.reject(new Error('custom_workspace_target_changed'));
     return requests.run(signal => initial.api.preview(input, signal), options);
   });
+  const [memberTransport] = useState<CustomCohortMemberTransport>(() => (...[input, population, page, options]: Parameters<CustomCohortMemberTransport>) => {
+    const requests = lane.current, current = owner.current?.getState();
+    // Completed pages may stay visible while saving, but new inspection work
+    // cannot compete with mutation or reopen a lane already quiesced for signing.
+    if (!live.current || readonlyRef.current || lockedRef.current || reportUncertainRef.current || reportRecoveryRef.current
+      || currentAction.current || actionFailed.current || current?.status !== 'ready' || current.recovery || current.checkpoint?.pending_capture)
+      return Promise.reject(new Error('custom_workspace_read_only'));
+    if (!requests || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId)
+      return Promise.reject(new Error('custom_workspace_target_changed'));
+    const context = current.checkpoint?.active?.context_ref;
+    if (!context || context.context_id !== input.contextRef.context_id || context.context_revision !== input.contextRef.context_revision
+      || context.context_sha256 !== input.contextRef.context_sha256)
+      return Promise.reject(new Error('custom_workspace_context_changed'));
+    return requests.run(io => initial.api.members(input, population, page, io), options);
+  });
   const saving = !state || actionPending || state.operation_pending || state.status === 'busy';
   const busy = saving || readOnly || locked;
   const blockedReason = readOnly || locked ? 'read_only'
@@ -237,7 +253,7 @@ function HostSession(props: Props) {
     {reportRecovery && <p role="alert" className="text-sm">The report request did not finish in time. Once it settles, retry the same report request or reload its accepted group below. Saving and finalizing remain paused.</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
-      workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport,
+      workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport, memberTransport,
         onSelectionIntent: ids => { if (!explorationBlocked) act(() => owner.current!.setGroups(ids)); } }} />}
     {active && state?.status === 'ready' && state.section_revision !== null && <CustomReportedObservationAdoption
       key={JSON.stringify([active.context_ref, state.section_revision, reportEpoch])}

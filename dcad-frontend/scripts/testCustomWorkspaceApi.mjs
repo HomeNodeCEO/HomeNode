@@ -126,7 +126,7 @@ for (const [name, mutate] of [
   ['status unknown', b => { b.workfile.status = 'approved'; }], ['status case changed', b => { b.workfile.status = 'SIGNED'; }],
   ['null checkpoint section', b => { b.workfile.sections[SECTION] = null; }],
   ['null checkpoint value', b => { b.workfile.sections[SECTION].value = null; }],
-  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 3; }],
+  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 4; }],
   ['zero checkpoint revision', b => { b.workfile.sections[SECTION].revision = 0; }],
   ['wrong section key', b => { b.workfile.sections[SECTION].key = 'neighborhood_assessment'; }],
   ['extra saved metrics', b => { b.workfile.sections[SECTION].value.active.statistics = []; }],
@@ -216,7 +216,8 @@ for (const [name, mutate] of [
   });
 }
 test('capture emits only exact target, pending operation and period; source response goes to lifecycle admission', async () => {
-  const result = { status: 'registered', reused: false, context_ref: CONTEXT, source_query_complete: true };
+  const result = { status: 'registered', reused: false, context_ref: CONTEXT, source_query_complete: true,
+    discovery: { radius_metres: '4828.032', account_count: 3, parcel_count: 3 } };
   const f = fixture(result), input = { target: TARGET, operationId: OPERATION, observationPeriod: PERIOD,
     auth: { userId: 'untrusted' }, assignment_file_id: 'wrong', account_id: 'wrong' };
   assert.deepEqual(await f.api.capture(input, io()), result);
@@ -228,6 +229,7 @@ test('capture emits only exact target, pending operation and period; source resp
 test('explicit private capture sends only the pinned batch and review revision without latest or grants', async () => {
   const privateSalesImport = { batch_id: OPERATION, expected_review_revision: 9 };
   const result = { status: 'registered', reused: false, context_ref: CONTEXT, source_query_complete: true,
+    discovery: { radius_metres: '4828.032', account_count: 3, parcel_count: 3 },
     private_sales_import: copy(privateSalesImport) };
   const f = fixture(result), pending = f.api.capture({ target: TARGET, operationId: OPERATION, observationPeriod: PERIOD, privateSalesImport }, io());
   privateSalesImport.expected_review_revision = 10;

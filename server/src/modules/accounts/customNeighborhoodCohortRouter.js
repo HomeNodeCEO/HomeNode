@@ -5,7 +5,7 @@ const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
 const FILE_ID = /^[1-9]\d{0,18}$/;
 const INPUT_ERRORS = new Set(['invalid_input', 'invalid_account', 'invalid_assignment',
-  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import', 'invalid_reported_input']);
+  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import', 'invalid_reported_input', 'invalid_discovery']);
 const ACCESS_ERRORS = new Set(['assignment_access_denied', 'market_data_access_denied', 'report_observation_access_denied']);
 const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed', 'private_source_read_only',
   'workspace_changed', 'workspace_capture_pending', 'report_editor_changed', 'report_geography_changed',
@@ -122,7 +122,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
   }
   route('capture', ['assignment_file_id', 'operation_id', 'observation_period'], (identity, body, options) =>
     cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period,
-      ...(Object.hasOwn(body, 'private_sales_import') ? { privateSalesImport: body.private_sales_import } : {}) }, options), ['private_sales_import']);
+      ...(Object.hasOwn(body, 'private_sales_import') ? { privateSalesImport: body.private_sales_import } : {}),
+      ...(Object.hasOwn(body, 'discovery') ? { discovery: body.discovery } : {}) }, options), ['private_sales_import', 'discovery']);
   route('preview', ['assignment_file_id', 'context_ref', 'selection', 'include_map'], (identity, body, options) => {
     if (typeof body.include_map !== 'boolean') invalid();
     return cohortService.present({ ...identity, contextRef: body.context_ref, selection: body.selection },

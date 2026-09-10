@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { normalizePublicCadastralAccountId } from '../../security/publicCadastralCatalog.js';
 import { assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
-import { prepareNeighborhoodDiscoveryGeometryV1 } from './selectorInputProfile.js';
+import { prepareNeighborhoodDiscoveryGeometryV1, prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
 
 const LIMITS = Object.freeze({ page_size: 500, parcels: 100000, accounts: 50000,
   bytes: 16777216, duration_ms: 15000, query_ms: 5000 });
@@ -36,6 +36,9 @@ const PAGE_SQL = `WITH page AS MATERIALIZED (
 )
 SELECT CASE WHEN octet_length(payload::text) <= 2048 THEN payload ELSE NULL END AS payload
 FROM encoded ORDER BY object_id`;
+// Keep v1's SQL literal/parameter positions exactly unchanged. v2 adds only a
+// bounded numeric distance parameter; no caller expression or alternate predicate.
+const PAGE_SQL_V2 = PAGE_SQL.replace('4828.032, true', '$5::double precision, true');
 
 class IncompleteMembership extends Error {}
 function incomplete(reason) { throw new IncompleteMembership(reason); }
@@ -72,7 +75,8 @@ function snapshotOf(rows) {
  * A complete result describes this cache snapshot ONLY; admission must still
  * establish full source coverage, original subject evidence and current access.
  */
-export async function captureNeighborhoodSpatialMembership(client, geometryInput, overrides = {}) {
+export async function captureNeighborhoodSpatialMembership(client, geometryInput, overrides = {}, discoveryChoice) {
+  const discovery = discoveryChoice === undefined ? null : prepareNeighborhoodDiscoveryChoice(discoveryChoice);
   const prepared = prepareNeighborhoodDiscoveryGeometryV1(geometryInput);
   if (prepared.status !== 'prepared') return prepared;
   if (!client || typeof client.query !== 'function') throw new TypeError('spatial_membership_client_required');
@@ -95,12 +99,15 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
     if ((await query('geometry-eligibility', INELIGIBLE_SQL)).length) incomplete('cached_geometry_ineligible');
     const parcels = [];
     const accounts = new Set();
-    const digest = createHash('sha256').update('homenode-cached-spatial-membership-v1\n')
-      .update(canonicalAssessmentJson({ geometry_input: prepared.geometry_input,
-        radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
+    const digest = createHash('sha256').update(discovery ? 'homenode-cached-spatial-membership-v2\n' : 'homenode-cached-spatial-membership-v1\n')
+      .update(canonicalAssessmentJson(discovery
+        ? { geometry_input: prepared.geometry_input, discovery, distance_semantics: 'postgis_geography_spheroid_v1',
+          parcel_predicate: 'all_intersecting_parcels' }
+        : { geometry_input: prepared.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
     let cursor = null;
     while (true) {
-      const rows = await query('parcels', PAGE_SQL, [...prepared.geometry_input.coordinates, cursor, limits.page_size + 1]);
+      const rows = await query('parcels', discovery ? PAGE_SQL_V2 : PAGE_SQL,
+        [...prepared.geometry_input.coordinates, cursor, limits.page_size + 1, ...(discovery ? [discovery.radius_metres] : [])]);
       if (rows.length > limits.page_size + 1) incomplete('database_page_invalid');
       for (const { payload } of rows.slice(0, limits.page_size)) {
         if (!payload) incomplete('row_bytes_limit');
@@ -130,7 +137,8 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
     const accountIds = [...accounts].sort();
     return freeze({ status: 'captured', query_complete: true, authority: 'not_established',
       source_coverage: 'not_established', geometry_input: prepared.geometry_input,
-      geometry_input_sha256: prepared.geometry_input_sha256, radius_metres: '4828.032',
+      geometry_input_sha256: prepared.geometry_input_sha256, radius_metres: discovery?.radius_metres ?? '4828.032',
+      ...(discovery ? { discovery } : {}),
       snapshot, parcels, account_ids: accountIds,
       account_ids_sha256: assessmentEvidenceDigest({ account_ids: accountIds }),
       membership_sha256: digest.digest('hex'), counts });

@@ -91,7 +91,7 @@ function server(initialSection) {
         if (body.private_sales_import) privateContexts.set(body.operation_id, copy(body));
         return json({ status: 'registered', reused: false, context_ref: context(body.operation_id),
         source_query_complete: true, provider_coverage: 'not_established',
-        discovery: { account_count: 3, parcel_count: 3, radius_metres: '4828.032' }, unsupported_capabilities: ['historical_characteristics'],
+        discovery: { account_count: 3, parcel_count: 3, radius_metres: body.discovery?.radius_metres ?? '4828.032' }, unsupported_capabilities: ['historical_characteristics'],
         ...(body.private_sales_import ? { private_sales_import: body.private_sales_import } : {}) });
       }
       if (kind === 'catalog') {
@@ -178,6 +178,8 @@ function harness(t, db, initialSection, overrides = {}) {
     workspace: () => walk(tree).find(node => node.type === WorkspaceStub)?.props,
     adoption: () => walk(tree).find(node => node.type === AdoptionStub),
     button(label) { return walk(tree).find(node => node.type === 'button' && text(node) === label); },
+    radius(value) { const select = walk(tree).find(node => node.type === 'select'); assert.ok(select);
+      assert.equal(Boolean(select.props.disabled), false); select.props.onChange({ target: { value } }); flush(); },
     click(label) { const node = this.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, `${label} enabled`);
       node.props.onClick(); flush(); },
     select(ids) { const child = this.workspace(); assert.ok(child); assert.equal(child.workspace.saving, false);
@@ -190,6 +192,55 @@ function harness(t, db, initialSection, overrides = {}) {
   };
 }
 const kinds = db => db.calls.map(call => call.kind);
+
+test('radius chooser is intent-only until capture and then persists the exact expanded study', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const before = copy(db.file(TARGET).accepted);
+  h.radius('5'); await h.settle(); assert.deepEqual(kinds(db), ['catalog']);
+  assert.match(h.html(), /Displayed study: 3-mile radius/);
+  h.click('Capture a new 5-mile study'); await h.settle();
+  const capture = db.calls.find(call => call.kind === 'capture');
+  assert.deepEqual(capture.body.discovery, { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' });
+  assert.deepEqual(db.calls.find(call => call.kind === 'save').body.value.pending_capture.discovery, capture.body.discovery);
+  assert.deepEqual(db.file(TARGET).section.value.active.discovery, capture.body.discovery);
+  assert.match(h.html(), /Displayed study: 5-mile radius/); assert.equal(await h.controls.flush(), true);
+  assert.deepEqual(db.file(TARGET).accepted, before);
+  h.unmount(); const reopened = harness(t, db, copy(db.file(TARGET).section)); await reopened.settle();
+  assert.match(reopened.html(), /Displayed study: 5-mile radius/);
+  assert.ok(reopened.button('Capture a new 5-mile study'));
+  const count = db.calls.filter(call => call.kind === 'capture').length;
+  reopened.radius('3'); await reopened.settle(); assert.equal(db.calls.filter(call => call.kind === 'capture').length, count);
+  reopened.click('Capture a new 3-mile study'); await reopened.settle();
+  assert.equal(db.calls.filter(call => call.kind === 'capture').at(-1).body.discovery.radius_metres, '4828.032');
+  assert.deepEqual(db.file(TARGET).accepted, before);
+});
+
+test('larger capture failure retains the displayed area and exact pending radius for retry', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const before = copy(db.file(TARGET).accepted);
+  db.overrides.set('capture', () => json({ error: 'neighborhood_source_unavailable' }, 422));
+  h.radius('10'); h.click('Capture a new 10-mile study'); await h.settle();
+  const pending = copy(db.file(TARGET).section.value.pending_capture);
+  assert.equal(pending.discovery.radius_metres, '16093.44');
+  assert.equal(h.workspace().contextRef.context_id, OLD); assert.match(h.html(), /Displayed study: 3-mile radius/);
+  assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, []);
+  assert.equal(await h.controls.flush(), false); assert.deepEqual(db.file(TARGET).accepted, before);
+  db.overrides.delete('capture'); h.click('Reload saved choices'); await h.settle();
+  h.click('Resume saved capture'); await h.settle();
+  const retry = db.calls.filter(call => call.kind === 'capture').at(-1);
+  assert.equal(retry.body.operation_id, pending.operation_id); assert.deepEqual(retry.body.discovery, pending.discovery);
+  assert.match(h.html(), /Displayed study: 10-mile radius/); assert.equal(await h.controls.flush(), true);
+});
+
+test('private CSV capture uses the displayed next radius without converting it to three miles', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  h.radius('5');
+  const reference = { batch_id: '20000000-0000-4000-8000-000000000001', expected_review_revision: 3 };
+  const task = h.controls.useReviewedSales(reference); await h.settle(); assert.equal(await task, true);
+  const capture = db.calls.find(call => call.kind === 'capture');
+  assert.deepEqual(capture.body.private_sales_import, reference); assert.equal(capture.body.discovery.radius_metres, '8046.72');
+  assert.equal(db.file(TARGET).section.value.workspace_version, 3);
+});
 
 test('member pages share the owned lane, preserve report data, and quiesce with Save Everything', async t => {
   const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();

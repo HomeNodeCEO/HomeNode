@@ -8,6 +8,7 @@ import { runCustomWorkspaceCheckpointDatabaseChecks } from './helpers/customWork
 import { runCustomCohortReviewDatabaseChecks } from './helpers/customCohortReviewDatabaseChecks.js';
 import { runCachedSaleWitnessDatabaseChecks } from './helpers/cachedSaleWitnessDatabaseChecks.js';
 import { runCachedSaleWitnessReaderDatabaseChecks } from './helpers/cachedSaleWitnessReaderDatabaseChecks.js';
+import { runCustomCohortDiscoveryDatabaseChecks } from './helpers/customCohortDiscoveryDatabaseChecks.js';
 
 test('Custom context capture composes real discovery, retention, source policy, checkpoint and review persistence and retry', {
   skip: !process.env.DATABASE_URL, timeout: 360_000,
@@ -30,4 +31,5 @@ test('Custom context capture composes real discovery, retention, source policy, 
   await runCustomWorkspaceCheckpointDatabaseChecks(target.connectionString);
   await runCustomCohortReviewDatabaseChecks(target.connectionString);
   await runCachedSaleWitnessReaderDatabaseChecks(target.connectionString);
+  await runCustomCohortDiscoveryDatabaseChecks(target.connectionString);
 });

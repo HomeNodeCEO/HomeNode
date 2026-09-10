@@ -12,17 +12,24 @@ export interface CustomWorkspaceObservationPeriod {
 export interface CustomWorkspacePrivateSalesImport {
   readonly batch_id: string; readonly expected_review_revision: number;
 }
+export const CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES = Object.freeze(['4828.032', '8046.72', '16093.44'] as const);
+export interface CustomWorkspaceDiscovery {
+  readonly profile_id: 'custom-suburban-radius-v2';
+  readonly radius_metres: typeof CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES[number];
+}
 export interface CustomWorkspacePendingCapture {
   readonly operation_id: string; readonly observation_period: CustomWorkspaceObservationPeriod;
   readonly private_sales_import?: CustomWorkspacePrivateSalesImport;
+  readonly discovery?: CustomWorkspaceDiscovery;
 }
 export interface CustomWorkspaceActiveCheckpoint {
   readonly context_ref: CustomCohortContextRef;
   readonly observation_period: CustomWorkspaceObservationPeriod;
   readonly selection: { readonly revision: number; readonly included_recorded_group_ids: readonly string[] };
+  readonly discovery?: CustomWorkspaceDiscovery;
 }
 export interface CustomWorkspaceCheckpoint {
-  readonly workspace_version: 1 | 2;
+  readonly workspace_version: 1 | 2 | 3;
   readonly active: CustomWorkspaceActiveCheckpoint | null;
   readonly pending_capture: CustomWorkspacePendingCapture | null;
 }
@@ -89,13 +96,21 @@ function groups(value: unknown): readonly string[] {
   }
   return result; // Preserve intentional order and [], without repairing malformed input.
 }
-function active(value: unknown): CustomWorkspaceActiveCheckpoint | null {
+function active(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']): CustomWorkspaceActiveCheckpoint | null {
   if (value === null) return null;
-  const record = closed(value, ['context_ref', 'observation_period', 'selection'], 'active');
+  const record = closed(value, ['context_ref', 'observation_period', 'selection'], 'active', version === 3 ? ['discovery'] : []);
   const selection = closed(record.selection, ['revision', 'included_recorded_group_ids'], 'selection');
   if (!Number.isSafeInteger(selection.revision) || Number(selection.revision) < 1) fail('selection.revision');
   return { context_ref: context(record.context_ref), observation_period: period(record.observation_period),
-    selection: { revision: selection.revision as number, included_recorded_group_ids: groups(selection.included_recorded_group_ids) } };
+    selection: { revision: selection.revision as number, included_recorded_group_ids: groups(selection.included_recorded_group_ids) },
+    ...(Object.hasOwn(record, 'discovery') ? { discovery: prepareCustomWorkspaceDiscovery(record.discovery) } : {}) };
+}
+/** An installed discovery choice only, never browser geometry or source authority. */
+export function prepareCustomWorkspaceDiscovery(value: unknown): CustomWorkspaceDiscovery {
+  const record = closed(value, ['profile_id', 'radius_metres'], 'discovery');
+  if (record.profile_id !== 'custom-suburban-radius-v2'
+    || !CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES.some(radius => radius === record.radius_metres)) fail('discovery');
+  return Object.freeze({ profile_id: record.profile_id, radius_metres: record.radius_metres as CustomWorkspaceDiscovery['radius_metres'] });
 }
 /** Exact saved review selection, not source rights or a request for latest. */
 export function prepareCustomWorkspacePrivateSalesImport(value: unknown): CustomWorkspacePrivateSalesImport {
@@ -105,12 +120,14 @@ export function prepareCustomWorkspacePrivateSalesImport(value: unknown): Custom
     || Number(record.expected_review_revision) > 2147483647) fail('private_sales_import');
   return Object.freeze({ batch_id: record.batch_id, expected_review_revision: record.expected_review_revision as number });
 }
-function pending(value: unknown, version: 1 | 2): CustomWorkspaceCheckpoint['pending_capture'] {
+function pending(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']): CustomWorkspaceCheckpoint['pending_capture'] {
   if (value === null) return null;
-  const record = closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : [])], 'pending_capture');
+  const record = closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
+    ...(version === 3 ? ['discovery'] : [])], 'pending_capture', version === 3 ? ['private_sales_import'] : []);
   if (typeof record.operation_id !== 'string' || !UUID.test(record.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: record.operation_id, observation_period: period(record.observation_period),
-    ...(version === 2 ? { private_sales_import: prepareCustomWorkspacePrivateSalesImport(record.private_sales_import) } : {}) };
+    ...(Object.hasOwn(record, 'private_sales_import') ? { private_sales_import: prepareCustomWorkspacePrivateSalesImport(record.private_sales_import) } : {}),
+    ...(version === 3 ? { discovery: prepareCustomWorkspaceDiscovery(record.discovery) } : {}) };
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
@@ -120,12 +137,14 @@ function freeze<T>(value: T): T {
  * source bodies, authorization, or accepted report group can be smuggled in. */
 export function prepareCustomWorkspaceCheckpoint(value: unknown): CustomWorkspaceCheckpoint {
   const record = closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (record.workspace_version !== 1 && record.workspace_version !== 2) fail('workspace_version');
-  const result: CustomWorkspaceCheckpoint = { workspace_version: record.workspace_version, active: active(record.active), pending_capture: pending(record.pending_capture, record.workspace_version) };
+  if (record.workspace_version !== 1 && record.workspace_version !== 2 && record.workspace_version !== 3) fail('workspace_version');
+  const result: CustomWorkspaceCheckpoint = { workspace_version: record.workspace_version, active: active(record.active, record.workspace_version), pending_capture: pending(record.pending_capture, record.workspace_version) };
   const current = result.active, next = result.pending_capture;
   if (current && next && current.context_ref.context_id === next.operation_id
     && (current.observation_period.start_date !== next.observation_period.start_date
       || current.observation_period.end_date !== next.observation_period.end_date)) fail('operation_study_conflict');
+  if (current && next && current.context_ref.context_id === next.operation_id
+    && JSON.stringify(current.discovery) !== JSON.stringify(next.discovery)) fail('operation_discovery_conflict');
   // Closed ASCII field names/primitives make ordinary JSON and server canonical
   // JSON identical in byte length; key sorting cannot affect this size bound.
   if (new TextEncoder().encode(JSON.stringify(result)).length > LIMITS.canonical_utf8_bytes) fail('checkpoint_bytes');

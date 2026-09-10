@@ -9,7 +9,8 @@ import { createCustomCohortSelectionRepository } from './customCohortSelectionRe
 import { prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
 import { getCustomNeighborhoodMaterialProfile } from './customMaterialProfile.js';
-import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 } from './selectorInputProfile.js';
+import { prepareNeighborhoodSelectorInput, prepareNeighborhoodDiscoveryChoice,
+  NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2 } from './selectorInputProfile.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
@@ -125,13 +126,16 @@ function planBuilder() {
   };
   return { ...budget, pending, existing, text, add, pages };
 }
-function validateSpatial(spatial, point) {
+function validateSpatial(spatial, point, discovery) {
   check(spatial.status === 'captured' && spatial.query_complete === true && spatial.authority === 'not_established'
-    && spatial.source_coverage === 'not_established' && spatial.radius_metres === '4828.032');
+    && spatial.source_coverage === 'not_established' && spatial.radius_metres === (discovery?.radius_metres ?? '4828.032'));
+  check(discovery ? same(spatial.discovery, discovery) : !Object.hasOwn(spatial, 'discovery'));
   check(same(spatial.geometry_input, point.geometry_input)
     && spatial.geometry_input_sha256 === assessmentEvidenceDigest(point.geometry_input));
-  const digest = createHash('sha256').update('homenode-cached-spatial-membership-v1\n')
-    .update(json({ geometry_input: point.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
+  const digest = createHash('sha256').update(discovery ? 'homenode-cached-spatial-membership-v2\n' : 'homenode-cached-spatial-membership-v1\n')
+    .update(json(discovery ? { geometry_input: point.geometry_input, discovery,
+      distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' }
+      : { geometry_input: point.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
   const ids = new Set(); let cursor = null, bytes = 0;
   for (const row of array(spatial.parcels, L.spatial_parcels)) {
     closed(row, ['object_id', 'account_id', 'source_record_hash', 'sync_run_id', 'synced_at', 'source_updated_at', 'geometry_sha256']);
@@ -235,20 +239,24 @@ export function prepareCustomCohortCaptureInputs(input) {
   for (const [key, value] of [['original_snapshot_row', subject.original_snapshot], ['original_section_reads', subject.original_sections],
     ['snapshot_evidence', subject.snapshot], ['material_input', subject.material]]) check(same(b.add(value, true), subject[key]));
   const point = representCustomCohortSubjectPoint(subject); check(point.status === 'represented', 'recorded_point_required');
-  validateSpatial(spatial, point);
+  const v2 = study?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2;
+  closed(study, ['profile_id', ...(v2 ? ['discovery'] : []), 'observation_period', 'knowledge_cutoff']);
+  const discovery = v2 ? prepareNeighborhoodDiscoveryChoice(study.discovery) : null;
+  check(study.profile_id === (v2 ? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2 : NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1)
+    && study.knowledge_cutoff === null && request.knowledge_cutoff === null
+    && same(study.observation_period, request.observation_period));
+  validateSpatial(spatial, point, discovery);
   const expectedScope = pick(subject.target, ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']);
   const target = { report_file_id: scope.report_file_id, workflow_type: 'custom_appraisal', workflow_target_id: scope.assignment_file_id };
   check(same(request.target, target) && same(request.scope, expectedScope) && same(result.scope, expectedScope)
     && request.effective_date === subject.effective_date && same(request.account_ids, spatial.account_ids));
   const definition = selector.query_input.definition;
-  const rebuilt = prepareNeighborhoodSelectorInputV1({ profile_id: NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, target,
+  const rebuilt = prepareNeighborhoodSelectorInput({ profile_id: study.profile_id, target,
     scope: expectedScope, effective_date: subject.effective_date, selection: { id: request.selection.id,
       revision: request.selection.revision, source_sha256: spatial.membership_sha256 }, geometry_input: point.geometry_input,
     discovery: definition.discovery, roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
   check(rebuilt.status === 'prepared' && same(selector, rebuilt) && same(selector.selection, request.selection));
-  closed(study, ['profile_id', 'observation_period', 'knowledge_cutoff']);
-  check(study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 && study.knowledge_cutoff === null
-    && request.knowledge_cutoff === null && same(study.observation_period, request.observation_period));
+  check(definition.discovery.radius_metres === (discovery?.radius_metres ?? '4828.032'));
   closed(intent, ['reference', 'body']);
   closed(intent.body, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at',
     ...(hasPrivate ? ['private_sales_import'] : [])]);
@@ -330,7 +338,7 @@ export function prepareCustomCohortCaptureInputs(input) {
     selection_input: selectionInput, study_input: studyInput };
   for (const ref of Object.values(refs)) b.ref(ref);
   const prepared = freeze({ status: 'prepared', authority: 'not_established', refs,
-    summary: { radius_metres: '4828.032', parcel_count: spatial.parcels.length, account_count: spatial.account_ids.length,
+    summary: { radius_metres: spatial.radius_metres, parcel_count: spatial.parcels.length, account_count: spatial.account_ids.length,
       source_chunk_count: capture.sources.length, source_record_count: capture.sources.reduce((n, s) => n + s.payload.records.length, 0),
       source_query_complete: true, provider_coverage: 'not_established' }, counts: { ...b.counts } });
   preparedPlans.set(prepared, { scope, subjectRef, queryRef, queryJson: JSON.stringify(evidence), pending: b.pending, existing: b.existing });

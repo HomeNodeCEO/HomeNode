@@ -4,6 +4,8 @@ import { NEIGHBORHOOD_CACHED_READ_ACCESS_LIMITS } from './cachedReadAccess.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 
 export const NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 = 'custom-simple-suburban-radius-v1';
+export const NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2 = 'custom-suburban-radius-v2';
+export const NEIGHBORHOOD_DISCOVERY_RADII_METRES = Object.freeze(['4828.032', '8046.72', '16093.44']);
 const AUTHORITY = 'not_established';
 const SCOPE = ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'];
 const TARGET = ['report_file_id', 'workflow_type', 'workflow_target_id'];
@@ -98,6 +100,20 @@ function freeze(value) {
   return value;
 }
 
+/** Explicit server-admitted discovery DATA, not a source/access capability.
+ * Absence is handled by the caller's unchanged v1 path, never defaulted here. */
+export function prepareNeighborhoodDiscoveryChoice(value) {
+  try {
+    const choice = record(value, ['profile_id', 'radius_metres'], 'discovery');
+    if (choice.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2
+      || !NEIGHBORHOOD_DISCOVERY_RADII_METRES.includes(choice.radius_metres)) reject('discovery.unsupported');
+    return Object.freeze({ profile_id: choice.profile_id, radius_metres: choice.radius_metres });
+  } catch (error) {
+    if (!(error instanceof InputProblem)) throw error;
+    throw new TypeError('invalid_neighborhood_discovery_choice');
+  }
+}
+
 /** Validate the same point representation before a server-owned spatial read.
  * This is data validation, never an authorization or provider-origin receipt. */
 export function prepareNeighborhoodDiscoveryGeometryV1(input) {
@@ -119,10 +135,22 @@ export function prepareNeighborhoodDiscoveryGeometryV1(input) {
  * producer; immutable storage and fresh workflow/license authorization stay there.
  */
 export function prepareNeighborhoodSelectorInputV1(input) {
+  return prepareSelectorInput(input, false);
+}
+
+/** Dispatch installed discovery profiles without changing the legacy entry point.
+ * Discovery retains the exact spheroid/intersecting-parcel semantics in either
+ * version. Only the v2 profile permits an explicitly selected larger radius. */
+export function prepareNeighborhoodSelectorInput(input) {
+  return prepareSelectorInput(input, true);
+}
+
+function prepareSelectorInput(input, allowV2) {
   try {
     input = record(input, ['profile_id', 'target', 'scope', 'effective_date', 'selection',
       'geometry_input', 'discovery', 'roster'], 'input');
-    if (input.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1) reject('profile.unsupported', 'unsupported');
+    const v2 = allowV2 && input.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2;
+    if (!v2 && input.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1) reject('profile.unsupported', 'unsupported');
     input.target = record(input.target, TARGET, 'target');
     if (input.target.workflow_type !== 'custom_appraisal') reject('workflow.unsupported', 'unsupported');
     const target = { report_file_id: uuid(input.target.report_file_id, 'target.report_file_id'),
@@ -141,7 +169,9 @@ export function prepareNeighborhoodSelectorInputV1(input) {
     const sourceHash = hash(input.selection.source_sha256, 'selection.source_sha256');
     const geometry = geometryOf(input.geometry_input);
     input.discovery = record(input.discovery, Object.keys(DISCOVERY), 'discovery');
-    if (Object.keys(DISCOVERY).some(key => input.discovery[key] !== DISCOVERY[key])) reject('discovery.unsupported_semantics', 'unsupported');
+    const discovery = { ...DISCOVERY, ...(v2 ? { radius_metres: input.discovery.radius_metres } : {}) };
+    if ((v2 && !NEIGHBORHOOD_DISCOVERY_RADII_METRES.includes(discovery.radius_metres))
+      || Object.keys(DISCOVERY).some(key => input.discovery[key] !== discovery[key])) reject('discovery.unsupported_semantics', 'unsupported');
     input.roster = record(input.roster, ['complete', 'account_count', 'account_ids'], 'roster');
     if (input.roster.complete === false) reject('roster.incomplete', 'incomplete');
     if (input.roster.complete !== true) reject('roster.complete');
@@ -160,10 +190,10 @@ export function prepareNeighborhoodSelectorInputV1(input) {
     // Hash the flat list, not 50k object entries: shared canonical JSON has a 100k-node ceiling.
     const rosterHash = assessmentEvidenceDigest({ account_ids: accounts });
     const geometryHash = assessmentEvidenceDigest(geometry);
-    const definition = { query_input_version: 1, profile_id: NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
+    const definition = { query_input_version: v2 ? 2 : 1, profile_id: input.profile_id,
       target, scope, effective_date: effectiveDate,
       selection_ref: { id: selectionId, revision }, source_sha256: sourceHash,
-      geometry_input: geometry, geometry_input_sha256: geometryHash, discovery: { ...DISCOVERY },
+      geometry_input: geometry, geometry_input_sha256: geometryHash, discovery,
       roster_binding: { account_count: accounts.length, account_ids_sha256: rosterHash, completeness: 'declared_complete' } };
     const definitionHash = assessmentEvidenceDigest(definition);
     const selection = { id: selectionId, revision,

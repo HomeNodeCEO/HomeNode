@@ -1,6 +1,7 @@
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { normalizeCustomAppraisalSectionValue } from '../customAppraisalSectionValue.js';
+import { prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
 
 // Editor navigation intent only. This is deliberately NOT the reserved accepted
 // neighborhood_assessment section, an acquisition receipt or a source grant.
@@ -60,13 +61,21 @@ function groups(value) {
   }
   return result; // Preserve explicit [] and order; never deduplicate or truncate.
 }
-function active(value) {
+function discovery(value) {
+  closed(value, ['profile_id', 'radius_metres'], 'discovery');
+  // Installed choice grammar only; this does not authorize or execute a larger
+  // acquisition. Do not reinterpret absent legacy discovery as explicit v2.
+  try { return prepareNeighborhoodDiscoveryChoice(value); }
+  catch { fail('discovery'); }
+}
+function active(value, version) {
   if (value === null) return null;
-  closed(value, ['context_ref', 'observation_period', 'selection'], 'active');
+  closed(value, ['context_ref', 'observation_period', 'selection'], 'active', version === 3 ? ['discovery'] : []);
   closed(value.selection, ['revision', 'included_recorded_group_ids'], 'selection');
   if (!Number.isSafeInteger(value.selection.revision) || value.selection.revision < 1) fail('selection.revision');
   return { context_ref: context(value.context_ref), observation_period: period(value.observation_period),
-    selection: { revision: value.selection.revision, included_recorded_group_ids: groups(value.selection.included_recorded_group_ids) } };
+    selection: { revision: value.selection.revision, included_recorded_group_ids: groups(value.selection.included_recorded_group_ids) },
+    ...(version === 3 && Object.hasOwn(value, 'discovery') ? { discovery: discovery(value.discovery) } : {}) };
 }
 function privateSalesImport(value) {
   closed(value, ['batch_id', 'expected_review_revision'], 'private_sales_import');
@@ -77,10 +86,13 @@ function privateSalesImport(value) {
 }
 function pending(value, version) {
   if (value === null) return null;
-  closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : [])], 'pending_capture');
+  closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
+    ...(version === 3 ? ['discovery'] : [])], 'pending_capture', version === 3 ? ['private_sales_import'] : []);
   if (typeof value.operation_id !== 'string' || !UUID.test(value.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: value.operation_id, observation_period: period(value.observation_period),
-    ...(version === 2 ? { private_sales_import: privateSalesImport(value.private_sales_import) } : {}) };
+    ...(version === 2 || (version === 3 && Object.hasOwn(value, 'private_sales_import'))
+      ? { private_sales_import: privateSalesImport(value.private_sales_import) } : {}),
+    ...(version === 3 ? { discovery: discovery(value.discovery) } : {}) };
 }
 function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -95,14 +107,18 @@ function freeze(value) {
  */
 export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
   closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (value.workspace_version !== 1 && value.workspace_version !== 2) fail('workspace_version');
-  const result = { workspace_version: value.workspace_version, active: active(value.active), pending_capture: pending(value.pending_capture, value.workspace_version) };
+  if (value.workspace_version !== 1 && value.workspace_version !== 2 && value.workspace_version !== 3) fail('workspace_version');
+  const result = { workspace_version: value.workspace_version, active: active(value.active, value.workspace_version),
+    pending_capture: pending(value.pending_capture, value.workspace_version) };
   // Actual capture registers context_id = operationId and rejects changed study
   // on UUID replay. A pending retry may overlap active only for that same study.
   const current = result.active, next = result.pending_capture;
   if (current && next && current.context_ref.context_id === next.operation_id
     && (current.observation_period.start_date !== next.observation_period.start_date
       || current.observation_period.end_date !== next.observation_period.end_date)) fail('operation_study_conflict');
+  if (current && next && current.context_ref.context_id === next.operation_id
+    && (current.discovery?.profile_id !== next.discovery?.profile_id
+      || current.discovery?.radius_metres !== next.discovery?.radius_metres)) fail('operation_discovery_conflict');
   if (Buffer.byteLength(canonicalAssessmentJson(result), 'utf8') > LIMITS.canonical_utf8_bytes) fail('checkpoint_bytes');
   normalizeCustomAppraisalSectionValue(result); // Rehearse the actual store's bound, without changing it.
   return freeze(result);

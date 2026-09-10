@@ -29,6 +29,7 @@ import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
 import { customNeighborhoodLegacyAllowed, type AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
 import { useCustomNeighborhoodReportBridge } from "@/features/neighborhood/useCustomNeighborhoodReportBridge";
+import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "@/lib/propertyReportHydration";
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import {
   readMarketConditionsDraft,
@@ -93,6 +94,7 @@ const NeighborhoodCharacteristicsContent = lazy(
 const CustomNeighborhoodAcceptedSummary = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedSummary"));
 const CustomNeighborhoodAcceptedOutline = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedOutline"));
 const CustomNeighborhoodWorkspaceHost = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodWorkspaceHost"));
+const PrivateSalesImportsPanel = lazy(() => import("@/features/neighborhood/components/PrivateSalesImportsPanel"));
 // Rollout requires the independently configured server/source owner as well.
 // This display gate is not authorization and stays off unless explicitly built on.
 const CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED = import.meta.env.VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true";
@@ -212,6 +214,13 @@ function AddressHero({
   const marketWorkfileSaveQueueRef = useRef<Promise<void>>(Promise.resolve());
   const marketWorkfileSaveErrorRef = useRef<string | null>(null);
   const [workfileStatusMessage, setWorkfileStatusMessage] = useState("");
+  const [privateSalesBusy, setPrivateSalesBusy] = useState(false);
+  const privateSalesBusyRef = useRef(false);
+  const [privateSalesSaveLock, setPrivateSalesSaveLock] = useState<{ accountId?: string; fileId: number; lease: object } | null>(null);
+  const onPrivateSalesBusyChange = useCallback((busy: boolean) => {
+    privateSalesBusyRef.current = busy;
+    setPrivateSalesBusy(busy);
+  }, []);
   const [acceptedNeighborhood, setAcceptedNeighborhood] = useState<AcceptedNeighborhoodState | null>(null);
   const legacyNeighborhoodAllowedRef = useRef(false);
   const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
@@ -228,30 +237,7 @@ function AddressHero({
   const hydrateAssignmentDraft = useCallback((value: AssignmentDetails) => {
     const serverDraft = assignmentDraftFromDetail(value);
     setAssignmentDraft((current) => {
-      if (!unemploymentLookupSucceeded.current) {
-        assignmentDraftRef.current = serverDraft;
-        assignmentSavedDraftRef.current = cloneEditorValue(serverDraft);
-        return serverDraft;
-      }
-      const zipComparison = hasValue(current.neighborhood_unemployment_pct) ? {
-        neighborhood_unemployment_pct: current.neighborhood_unemployment_pct,
-        neighborhood_unemployment_zip: current.neighborhood_unemployment_zip,
-        neighborhood_unemployment_source: current.neighborhood_unemployment_source,
-        neighborhood_unemployment_dataset_year:
-          current.neighborhood_unemployment_dataset_year,
-        neighborhood_unemployment_variable: current.neighborhood_unemployment_variable,
-      } : {};
-      const cityComparison = hasValue(current.neighborhood_city_unemployment_pct) ? {
-        neighborhood_city_unemployment_pct: current.neighborhood_city_unemployment_pct,
-        neighborhood_city_unemployment_name: current.neighborhood_city_unemployment_name,
-        neighborhood_city_unemployment_source:
-          current.neighborhood_city_unemployment_source,
-        neighborhood_city_unemployment_dataset_year:
-          current.neighborhood_city_unemployment_dataset_year,
-        neighborhood_city_unemployment_variable:
-          current.neighborhood_city_unemployment_variable,
-      } : {};
-      const hydrated = { ...serverDraft, ...zipComparison, ...cityComparison };
+      const hydrated = retainPropertyReportUnemploymentComparisons(serverDraft, current, unemploymentLookupSucceeded.current);
       assignmentDraftRef.current = hydrated;
       assignmentSavedDraftRef.current = cloneEditorValue(hydrated);
       return hydrated;
@@ -492,25 +478,7 @@ function AddressHero({
     subjectLabel: address,
     auth: applicationAuth,
   });
-  const streetAddress = address.split(",")[0].trim() || address;
-  const city = displayValue(detail?.property_location?.city);
-  const state = displayValue(detail?.property_location?.state, "TX");
-  const postalCode = displayValue(detail?.property_location?.postal_code);
-  const documentReviewStreetAddress = String(detail?.property_location?.address || "").trim();
-  const documentReviewSubjectAddress = documentReviewStreetAddress
-    ? [
-        documentReviewStreetAddress,
-        detail?.property_location?.city,
-        detail?.property_location?.state || "TX",
-        detail?.property_location?.postal_code,
-      ]
-        .map((value) => String(value || "").trim())
-        .filter(Boolean)
-        .join(", ")
-    : "";
-  const censusZip = String(detail?.property_location?.postal_code || "")
-    .replace(/\D/g, "")
-    .slice(0, 5);
+  const { streetAddress, city, state, postalCode, documentReviewSubjectAddress, censusZip } = propertyReportLocationContext(detail?.property_location);
   const handleCensusProfilesLoaded = useCallback(({
     zipProfile,
     cityProfile,
@@ -1265,6 +1233,10 @@ function AddressHero({
   };
 
   const saveCustomAppraisalNow = async () => {
+    if (privateSalesBusyRef.current) {
+      setAssignmentSaveMessage("Wait for the private CSV request to finish before saving everything.");
+      return;
+    }
     if (assignmentAutosaveState === "conflict") {
       setAssignmentSaveMessage(
         "Resolve the concurrent-edit choice before saving the complete appraisal.",
@@ -1289,6 +1261,7 @@ function AddressHero({
     }
     const current = () => lease.isCurrent() && selectionGenerationRef.current === selectionGeneration
       && activeAssignmentFileRef.current?.id === currentFile.id;
+    setPrivateSalesSaveLock({ accountId, fileId: currentFile.id, lease });
     try {
       setAssignmentSaveMessage("Saving all current changes…");
       // This must precede BOTH the dirty-assignment early return and clean-save
@@ -1326,6 +1299,7 @@ function AddressHero({
     } catch {
       if (current()) setAssignmentSaveMessage("The complete save could not be confirmed. Review the save status and reload saved neighborhood choices before continuing.");
     } finally {
+      setPrivateSalesSaveLock(lock => lock?.lease === lease ? null : lock);
       lease.release();
     }
   };
@@ -1412,6 +1386,10 @@ function AddressHero({
   };
 
   const finalizeCustomAppraisalFile = async () => {
+    if (privateSalesBusyRef.current) {
+      setAssignmentSaveMessage("Wait for the private CSV request to finish before finalizing this file.");
+      return;
+    }
     if (!accountId || !activeAssignmentFile) return;
     const signingFile = activeAssignmentFile;
     const selectionGeneration = selectionGenerationRef.current;
@@ -1619,7 +1597,7 @@ function AddressHero({
             ? "All displayed changes saved"
             : "Choose or start an assignment file to enable saving";
   const saveEverythingDisabled = Boolean(
-    assignmentFilesLoading ||
+    privateSalesBusy || assignmentFilesLoading ||
       savingAssignmentFile ||
       assignmentAutosaveState === "conflict" ||
       activeAssignmentFile?.workfile?.status === "signed",
@@ -3252,6 +3230,21 @@ function AddressHero({
                   <CustomNeighborhoodWorkspaceHost {...neighborhoodWorkspace.hostProps} />
                 </Suspense>}
               </SummarySection>
+            </div>
+          )}
+
+          {detailLoaded && accountId && activeAssignmentFile?.account_id === accountId
+            && applicationAuth.ready && !applicationAuth.bootstrapError && applicationAuth.session?.user_id && (
+            <div className="order-3 print:hidden">
+              <Suspense fallback={null}>
+                {/* Private intake never feeds report statistics or the autosave
+                    loop. The collapsed panel performs no background requests. */}
+                <PrivateSalesImportsPanel accountId={accountId} assignmentFileId={activeAssignmentFile.id}
+                  sessionKey={applicationAuth.session.user_id}
+                  readOnly={activeAssignmentFile.workfile?.status !== "draft" || Boolean(finalizingAssignmentFile)
+                    || Boolean(privateSalesSaveLock?.accountId === accountId && privateSalesSaveLock?.fileId === activeAssignmentFile.id)}
+                  onBusyChange={onPrivateSalesBusyChange} />
+              </Suspense>
             </div>
           )}
 

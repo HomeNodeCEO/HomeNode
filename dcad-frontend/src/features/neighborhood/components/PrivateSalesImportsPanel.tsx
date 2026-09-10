@@ -1,0 +1,213 @@
+import { useEffect, useRef, useState } from 'react';
+import { fetchWithApplicationAuthentication, makeUrl } from '@/lib/api';
+import { PRIVATE_SALES_MAX_BYTES, PrivateSalesError, createPrivateSalesImportsClient, privateSalesFileDigest,
+  makePrivateSalesPending, readPrivateSalesPending, savePrivateSalesPending, clearPrivateSalesPending } from '../privateSalesImports';
+import type { PrivateSalesIdentity, PrivateSalesTarget, PrivateSalesReceipt, PrivateSalesPending, PrivateSalesRow, PrivateSalesIo } from '../privateSalesImports';
+
+export interface PrivateSalesImportsPanelProps extends PrivateSalesIdentity { readOnly: boolean; onBusyChange?: (busy: boolean) => void }
+const button = 'hn-action-secondary btn btn-sm normal-case';
+const message = (error: unknown) => error instanceof PrivateSalesError && error.code === 'wrong_file'
+  ? 'Choose the same file name and exact file contents to retry this pending upload.'
+  : error instanceof PrivateSalesError && error.code === 'pending_storage_unavailable'
+    ? 'Browser session storage is unavailable. No new upload can start until its operation ID can be retained.'
+    : error instanceof PrivateSalesError && error.code === 'invalid_file'
+      ? 'Choose a non-empty CSV file no larger than 8 MiB with a valid file name.'
+      : error instanceof PrivateSalesError && error.status === 403
+        ? 'This request is not authorized. Any pending operation is retained; check its saved status before retrying.'
+        : error instanceof PrivateSalesError && error.status === 409
+          ? 'The file may be read-only or this operation may conflict. Its ID is retained; check the saved upload.'
+          : 'The request could not be confirmed. Any pending operation is retained; use Check saved upload before retrying.';
+
+/** Unmounted until an authenticated Custom report host explicitly supplies its
+ * exact file/session. This panel never edits report drafts, stats or selection. */
+export default function PrivateSalesImportsPanel(props: PrivateSalesImportsPanelProps) {
+  return <PanelSession key={JSON.stringify([props.accountId, props.assignmentFileId, props.sessionKey])} {...props} />;
+}
+function PanelSession(props: PrivateSalesImportsPanelProps) {
+  const [identity] = useState<PrivateSalesIdentity>(() => ({ accountId: props.accountId,
+    assignmentFileId: props.assignmentFileId, sessionKey: props.sessionKey }));
+  const [api] = useState(() => createPrivateSalesImportsClient(identity,
+    { request: fetchWithApplicationAuthentication, urlFor: path => {
+      const separator = path.indexOf('?');
+      return separator < 0 ? makeUrl(path) : makeUrl(path.slice(0, separator),
+        Object.fromEntries(new URLSearchParams(path.slice(separator + 1))));
+    } }));
+  const [open, setOpen] = useState(false), [loaded, setLoaded] = useState(false), [busy, setBusy] = useState(false);
+  const [target, setTarget] = useState<PrivateSalesTarget | null>(null), [pending, setPending] = useState<PrivateSalesPending | null>(null);
+  const [storageInvalid, setStorageInvalid] = useState(false), [error, setError] = useState(''), [notice, setNotice] = useState('');
+  const [imports, setImports] = useState<PrivateSalesReceipt[]>([]), [older, setOlder] = useState<string | null>(null);
+  const [file, setFile] = useState<File | null>(null), [selected, setSelected] = useState<PrivateSalesReceipt | null>(null);
+  const [rows, setRows] = useState<PrivateSalesRow[]>([]), [nextRow, setNextRow] = useState<number | null>(null);
+  const alive = useRef(true), active = useRef<AbortController | null>(null), busyRef = useRef(false);
+  const writing = useRef(false);
+  const busyCallback = useRef(props.onBusyChange); busyCallback.current = props.onBusyChange;
+  const current = useRef({ readOnly: props.readOnly, target, pending, storageInvalid });
+  current.current = { readOnly: props.readOnly, target, pending, storageInvalid };
+  useEffect(() => { alive.current = true; return () => {
+    alive.current = false; active.current?.abort();
+    if (busyRef.current) { busyRef.current = false; busyCallback.current?.(false); }
+  }; }, []);
+  useEffect(() => { if (props.readOnly && writing.current) active.current?.abort(); }, [props.readOnly]);
+  const live = (controller: AbortController) => alive.current && active.current === controller && !controller.signal.aborted;
+  async function run(work: (io: PrivateSalesIo, currentRun: () => boolean) => Promise<void>) {
+    if (!alive.current || busyRef.current) return;
+    const controller = new AbortController(); active.current = controller; busyRef.current = true;
+    busyCallback.current?.(true);
+    setBusy(true); setError(''); setNotice('');
+    const timeout = setTimeout(() => controller.abort(), 45000);
+    let interrupted: (() => void) | undefined;
+    try {
+      // File.arrayBuffer and hashing cannot themselves be canceled. Release the
+      // operation on abort; every late continuation still checks its own live ID.
+      await Promise.race([new Promise<never>((_, reject) => {
+        interrupted = () => reject(new PrivateSalesError('request_interrupted'));
+        controller.signal.addEventListener('abort', interrupted, { once: true });
+        if (controller.signal.aborted) interrupted();
+      }), work({ signal: controller.signal, deadlineMs: 30000 }, () => live(controller))]);
+    }
+    catch (problem) { if (alive.current && active.current === controller) setError(message(problem)); }
+    finally {
+      clearTimeout(timeout);
+      if (interrupted) controller.signal.removeEventListener('abort', interrupted);
+      if (alive.current && active.current === controller) {
+        busyRef.current = false; writing.current = false; setBusy(false); active.current = null; busyCallback.current?.(false);
+      }
+    }
+  }
+  async function list(reportId: string, cursor: string | null, io: PrivateSalesIo, currentRun: () => boolean) {
+    const result = await api.list(reportId, cursor, io);
+    if (currentRun()) { setImports(result.imports); setOlder(result.next_before_batch_id); }
+  }
+  function acknowledge(receipt: PrivateSalesReceipt, currentRun: () => boolean) {
+    if (!currentRun()) return;
+    clearPrivateSalesPending(sessionStorage, identity);
+    current.current.pending = null; setPending(null); setFile(null);
+    setNotice(`Saved ${receipt.row_count} private row receipts. They are not automatically matched or included in analysis.`);
+  }
+  const initialize = () => run(async (io, currentRun) => {
+    setLoaded(false);
+    const restored = readPrivateSalesPending(sessionStorage, identity);
+    if (currentRun()) {
+      const saved = restored.status === 'restored' ? restored.pending : null;
+      setPending(saved); current.current.pending = saved;
+      setStorageInvalid(restored.status === 'invalid'); current.current.storageInvalid = restored.status === 'invalid';
+    }
+    const destination = await api.target(io); if (!currentRun()) return;
+    setTarget(destination); current.current.target = destination;
+    if (restored.status === 'restored' && restored.pending.report_file_id !== destination.report_file_id) {
+      setStorageInvalid(true); current.current.storageInvalid = true;
+      throw new PrivateSalesError('invalid_pending_target');
+    }
+    await list(destination.report_file_id, null, io, currentRun);
+    if (!currentRun()) return; setLoaded(true);
+    if (restored.status === 'restored') {
+      const saved = await api.check(restored.pending, io); if (!currentRun()) return;
+      if (saved) { acknowledge(saved, currentRun); await list(destination.report_file_id, null, io, currentRun); }
+      else setNotice('No saved receipt was found. This does not prove an earlier request stopped. Re-select the same file to retry the same operation ID.');
+    }
+  });
+  const initializeRef = useRef(initialize); initializeRef.current = initialize;
+  const openedOnce = useRef(false);
+  useEffect(() => {
+    if (open && !openedOnce.current) { openedOnce.current = true; void initializeRef.current(); }
+    // Only first explicit expansion starts acquisition. Rerenders (including
+    // unrelated report saves) must not restart requests or upload operations.
+  }, [open]);
+  const checkSaved = () => run(async (io, currentRun) => {
+    const savedPending = current.current.pending;
+    if (!savedPending || current.current.storageInvalid) return;
+    const receipt = await api.check(savedPending, io); if (!currentRun()) return;
+    if (receipt) { acknowledge(receipt, currentRun); await list(receipt.report_file_id, null, io, currentRun); }
+    else setNotice('No receipt was found yet. Keep this operation ID; retry only with the same file. A 404 is not proof that an earlier request cannot commit.');
+  });
+  const upload = () => run(async (io, currentRun) => {
+    if (!loaded || current.current.readOnly || !current.current.target?.can_upload || current.current.storageInvalid || !file) return;
+    writing.current = true;
+    if (file.size < 1 || file.size > PRIVATE_SALES_MAX_BYTES) throw new PrivateSalesError('invalid_file');
+    const chosen = file, bytes = new Uint8Array(await chosen.arrayBuffer());
+    const descriptor = { file_name: chosen.name, file_size: bytes.byteLength, file_sha256: await privateSalesFileDigest(bytes) };
+    if (!currentRun() || current.current.readOnly || !current.current.target?.can_upload) return;
+    const retained = current.current.pending;
+    if (retained && (retained.file_name !== descriptor.file_name || retained.file_size !== descriptor.file_size
+      || retained.file_sha256 !== descriptor.file_sha256)) throw new PrivateSalesError('wrong_file');
+    const operation = retained ?? makePrivateSalesPending(identity, current.current.target.report_file_id, descriptor, crypto.randomUUID());
+    // Durable browser metadata precedes POST. Never store file contents, raw
+    // rows, report drafts or session credentials in this recovery record.
+    savePrivateSalesPending(sessionStorage, identity, operation);
+    setPending(operation); current.current.pending = operation;
+    if (!currentRun() || current.current.readOnly) return;
+    let receipt: PrivateSalesReceipt;
+    try { receipt = await api.commit(operation, bytes, io); }
+    catch (problem) {
+      // Only this never-previously-sent ID can be released on a fixed, explicit
+      // input rejection. A retry may overlap an earlier unknown commit, even if
+      // its own request is rejected or a status read currently returns 404.
+      if (!retained && currentRun() && problem instanceof PrivateSalesError && problem.code === 'input_rejected') {
+        clearPrivateSalesPending(sessionStorage, identity);
+        current.current.pending = null; setPending(null); setFile(null);
+        setNotice('This new upload was not saved because its CSV or file metadata was rejected. Correct the file and choose it again.');
+        return;
+      }
+      throw problem;
+    }
+    if (currentRun()) { acknowledge(receipt, currentRun); await list(receipt.report_file_id, null, io, currentRun); }
+  });
+  const showRows = (receipt: PrivateSalesReceipt, after = 0) => run(async (io, currentRun) => {
+    const result = await api.rows(receipt, after, 50, io);
+    if (currentRun()) { setSelected(receipt); setRows(result.rows); setNextRow(result.next_after_row); }
+  });
+  const canWrite = loaded && !busy && !props.readOnly && target?.can_upload === true && !storageInvalid;
+  return <details className="print:hidden rounded-lg border border-purple-200 bg-white/80 p-3" open={open}
+    onToggle={event => setOpen(event.currentTarget.open)}>
+    <summary className="cursor-pointer font-semibold text-purple-900">Private neighborhood sales (CSV)</summary>
+    {open && <div className="mt-3 space-y-3">
+      <p className="text-sm">The original file and every row stay private to this assignment. Saving does not automatically match accounts or include sales in analysis.</p>
+      <p className="text-sm">Older sales alone do not establish historical housing stock for a retrospective appraisal.</p>
+      {props.readOnly || (target && !target.can_upload) ? <p className="text-sm">Uploads are read-only. Saved files and rows remain available to authorized readers.</p> : null}
+      {storageInvalid && <p role="alert">Pending upload metadata is unavailable or belongs to a different report. Uploads are blocked; do not replace an unresolved operation.</p>}
+      {error && <p role="alert" className="text-sm text-red-800">{error}</p>}
+      {notice && <p role="status" className="text-sm">{notice}</p>}
+      {busy && <p role="status" className="text-sm">Working on this private upload…</p>}
+      <div className="flex flex-wrap gap-2">
+        <button type="button" className={button} disabled={busy} onClick={() => void initialize()}>Refresh saved uploads</button>
+        {pending && <button type="button" className={button} disabled={busy || storageInvalid} onClick={() => void checkSaved()}>Check saved upload</button>}
+      </div>
+      {pending && <p className="text-sm">Pending: {pending.file_name} ({pending.file_size.toLocaleString()} bytes). Retry reuses the saved operation ID; a different file cannot replace it.</p>}
+      <div className="flex flex-wrap items-center gap-2">
+        <label className="text-sm">CSV file (up to 8 MiB)
+          <input aria-label="Private sales CSV file" type="file" accept=".csv,text/csv" disabled={!canWrite}
+            onChange={event => setFile(event.currentTarget.files?.[0] ?? null)} className="block text-sm" /></label>
+        <button type="button" className="hn-action-primary btn btn-sm normal-case" disabled={!canWrite || !file}
+          onClick={() => void upload()}>{pending ? 'Retry same upload' : 'Save private CSV'}</button>
+      </div>
+      {loaded && imports.length === 0 && <p className="text-sm">No saved uploads are shown for this file.</p>}
+      <ul className="space-y-2">{imports.map(receipt => <li key={receipt.batch_id} className="rounded border border-purple-100 p-2 text-sm">
+        <div className="font-medium">{receipt.file_name} — {receipt.row_count.toLocaleString()} saved rows</div>
+        <div>{Object.entries(receipt.summary).map(([name, count]) => `${name.replaceAll('_', ' ')}: ${count}`).join(' · ')}</div>
+        <div className="text-xs">{receipt.stored_at} · {receipt.source_byte_length.toLocaleString()} original bytes</div>
+        <button type="button" className={button} disabled={busy} onClick={() => void showRows(receipt)}>View row receipts</button>
+      </li>)}</ul>
+      {older && target && <button type="button" className={button} disabled={busy}
+        onClick={() => void run((io, currentRun) => list(target.report_file_id, older, io, currentRun))}>Older uploads</button>}
+      {selected && <section aria-label="Private CSV row receipts" className="space-y-2">
+        <h4 className="font-medium">Rows from {selected.file_name}</h4>
+        {rows.length === 0 && <p className="text-sm">This saved file has no logical data rows.</p>}
+        {rows.map(row => <details key={row.receipt_id} className="rounded border border-purple-100 p-2 text-sm">
+          <summary className="cursor-pointer">Source row {row.source_row_number}: {row.preparation_disposition.replaceAll('_', ' ')}</summary>
+          <p>{row.issues.length ? row.issues.join(' · ') : 'No preparation issues recorded; source interpretation is still not reviewed.'}</p>
+          <dl>{row.raw_cells.map((value, index) => <div key={index} className="mt-1">
+            <dt className="font-medium">{selected.raw_headers[index] ?? `Extra column ${index + 1}`}</dt>
+            <dd className="whitespace-pre-wrap break-words">{value || '(empty)'}</dd>
+          </div>)}</dl>
+          <details><summary className="cursor-pointer">Prepared observations (not verified analysis)</summary>
+            <pre className="overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(row.values, null, 2)}</pre></details>
+        </details>)}
+        <div className="flex gap-2">
+          <button type="button" className={button} disabled={busy} onClick={() => void showRows(selected)}>First rows</button>
+          {nextRow !== null && <button type="button" className={button} disabled={busy}
+            onClick={() => void showRows(selected, nextRow)}>Next rows</button>}
+        </div>
+      </section>}
+    </div>}
+  </details>;
+}

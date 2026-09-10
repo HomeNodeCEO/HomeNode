@@ -19,6 +19,21 @@ function handler(name, environment) {
   }).outputText;
   return new Function(...Object.keys(environment), compiled)(...Object.values(environment));
 }
+function privateSalesReadOnly(environment) {
+  const matches = [];
+  function visit(node) {
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === 'PrivateSalesImportsPanel') {
+      const attribute = node.attributes.properties.find(value => ts.isJsxAttribute(value) && value.name.getText(ast) === 'readOnly');
+      matches.push(attribute.initializer.expression);
+    }
+    ts.forEachChild(node, visit);
+  }
+  visit(ast); assert.equal(matches.length, 1);
+  const compiled = ts.transpileModule(`return (${matches[0].getText(ast)});`, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
+  }).outputText;
+  return new Function(...Object.keys(environment), compiled)(...Object.values(environment));
+}
 function deferred() {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -27,10 +42,12 @@ function deferred() {
 const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 function fixture(options = {}) {
   const events = [], messages = [], workMessages = [], files = [];
-  const state = { owned: false, live: true, retained: false, readonly: false };
+  const state = { owned: false, live: true, retained: false, readonly: false, privateSalesSaveLock: null };
   const file = { id: 37, file_number: 'QA-37', reviewer: 'Synthetic Reviewer', workfile: { status: 'draft' } };
   const env = {
     accountId: 'QA-0001', activeAssignmentFile: file,
+    privateSalesBusyRef: { current: Boolean(options.privateSalesBusy) },
+    setPrivateSalesSaveLock: value => { state.privateSalesSaveLock = typeof value === 'function' ? value(state.privateSalesSaveLock) : value; },
     activeAssignmentFileRef: { current: file }, selectionGenerationRef: { current: 1 },
     assignmentAutosaveState: 'idle', assignmentDirty: false, assignmentDirtyRef: { current: Boolean(options.dirty) },
     assignmentDraft: {}, salesComparisonDraft: { comparables: [{}], opinionOfValue: 250000 },
@@ -93,6 +110,41 @@ for (const dirty of [false, true]) test(`uncertain neighborhood save blocks ${di
 test('double Save Everything cannot acquire concurrent completion paths', async () => {
   const hold = deferred(), f = fixture({ flush: hold.promise }); const first = f.save(); await f.save();
   assert.equal(f.events.filter(x => x === 'flush').length, 1); hold.resolve(true); await first;
+});
+
+for (const action of ['save', 'sign']) test(`private CSV activity blocks direct ${action} before any save barrier or signing request`, async () => {
+  const f = fixture({ dirty: true, privateSalesBusy: true }); await f[action]();
+  assert.deepEqual(f.events, []); assert.equal(f.state.privateSalesSaveLock, null);
+  assert.match(f.messages.at(-1), /Wait for the private CSV request to finish/);
+  f.env.privateSalesBusyRef.current = false; await f[action]();
+  assert.ok(f.events.includes('barrier'), 'settled CSV activity permits an explicit new attempt');
+});
+test('explicit Save Everything prevents new uploads until its owned barrier settles, without changing autosave', async () => {
+  const hold = deferred(), f = fixture({ flush: hold.promise }); const pending = f.save();
+  assert.equal(f.state.privateSalesSaveLock.accountId, 'QA-0001'); assert.equal(f.state.privateSalesSaveLock.fileId, 37);
+  const panel = () => ({ accountId: f.env.accountId, activeAssignmentFile: f.env.activeAssignmentFile,
+    finalizingAssignmentFile: null, privateSalesSaveLock: f.state.privateSalesSaveLock });
+  assert.equal(privateSalesReadOnly(panel()), true, 'the actual mounted panel receives the save lock');
+  assert.equal(privateSalesReadOnly({ ...panel(), accountId: 'OTHER' }), false, 'lock does not apply to another account');
+  assert.equal(privateSalesReadOnly({ ...panel(), activeAssignmentFile: { id: 38, workfile: { status: 'draft' } } }), false);
+  assert.equal(f.env.assignmentSaveInFlightRef.current, null); hold.resolve(true); await pending;
+  assert.equal(f.state.privateSalesSaveLock, null);
+  assert.equal(privateSalesReadOnly(panel()), false);
+  assert.equal(privateSalesReadOnly({ ...panel(), finalizingAssignmentFile: {} }), true);
+  for (const status of ['signed', 'archived', undefined]) assert.equal(privateSalesReadOnly({ ...panel(),
+    activeAssignmentFile: { id: 37, workfile: { status } } }), true);
+});
+test('failed save releases its private-upload lock and late old completion cannot release a newer lock', async () => {
+  const failure = fixture({ flush: Promise.resolve(false) }); await failure.save(); assert.equal(failure.state.privateSalesSaveLock, null);
+  const hold = deferred(), f = fixture({ flush: hold.promise }); const pending = f.save();
+  const newer = { accountId: 'QA-0001', fileId: 99, lease: {} }; f.state.privateSalesSaveLock = newer; f.state.live = false;
+  hold.resolve(true); await pending; assert.equal(f.state.privateSalesSaveLock, newer);
+});
+test('unrelated CSV read activity during finalization does not invalidate the reviewed report', async () => {
+  const hold = deferred(), f = fixture({ readiness: hold.promise }); const pending = f.sign(); await tick();
+  f.env.privateSalesBusyRef.current = true;
+  hold.resolve({ readiness: { ready: true, warnings: [], warning_codes: [] } }); await pending;
+  assert.ok(f.events.includes('sign')); assert.equal(f.files[0].workfile.status, 'signed');
 });
 test('missing bootstrap/controls cannot silently count as a completed save', async () => {
   const f = fixture({ unavailable: true }); await f.save();

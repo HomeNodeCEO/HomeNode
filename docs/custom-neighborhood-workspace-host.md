@@ -3,8 +3,10 @@
 `CustomNeighborhoodWorkspaceHost` composes the exact retained-context lifecycle,
 checked workfile API adapter, bounded request lane and controlled pocket view.
 It is an explicitly injected component, not a production feature flag or route
-activation. The production report caller and source-policy factory remain a
-separate integration step. No UAD/Mobile/Property Tax workflow is mounted here.
+activation. The Custom report bridge and source-policy factory are now integrated
+behind independently configured feature flags and real source permissions; this
+document does not assert that a deployment has enabled them. No UAD/Mobile/Property
+Tax workflow is mounted here.
 
 ## Required owner inputs
 
@@ -52,7 +54,7 @@ a genuine CAS conflict; they are never overwritten silently.
 
 ## Save Everything and finalization integration
 
-The eventual report mount must register this host's target-bound controls.
+The Custom report bridge registers this host's target-bound controls.
 Before readiness/signing, call `setReadOnly(true)` and await `flush()`. A false
 result means Save Everything/finalization must not claim all changes were saved.
 Release read-only mode if finalization fails. A flush succeeds only for the
@@ -71,14 +73,37 @@ durable pending capture says to resume, and finalization says read-only. A faile
 fresh read stays latched even if the previous lifecycle was ready: it cannot
 display a saved-success label or accept another selection/capture until recovery.
 
+## Capture refusal guidance
+
+The API translates only an explicit allowlist of exact HTTP-status/machine-code
+pairs from the capture endpoint. The transport preserves the original bounded
+`error` code separately from normalized display text; message-only, malformed,
+unknown or wrong-status responses cannot acquire a more specific meaning.
+Other section, preview and report-operation errors keep their existing handling.
+
+The host distinguishes sign-in/access/disabled-service issues, unavailable or
+oversized sources, changed private-source reviews, changed subject/target/policy,
+conflicting operations and interrupted/unknown-outcome requests. All wording is
+fixed application text, not raw database, provider or server error details.
+
+These messages are guidance only. They do not retry, clear pending intent, invent
+another UUID, bypass a source grant, relax a save barrier or apply report data.
+An unknown outcome requires a fresh saved-state read and explicit same-operation
+resume; a timeout is not evidence of rollback. Explicit set-aside still uses the
+existing CAS-protected recovery path. No message promises that another editor
+has not changed the report concurrently.
+
 ## Reporting boundary
 
 The entire exploration host/view is excluded from printing. The accepted
 `neighborhood_assessment` group, its outline/statistics, immutable acceptance
 and signed PDF remain unchanged. An observation preview is not historical
 eligibility, a legal subdivision, predominant-value determination, reliability
-score or report-ready recommendation. Connecting supported evidence to the
-existing assessment/atomic Apply pipeline remains outstanding.
+score or report-ready recommendation. The implemented reported-observation
+adoption path separately prepares and applies the saved rough boundary and
+selected observed statistics as one checked five-part group, with explicit
+limitations and fresh source/report permissions. It does not promote those
+observations to verified appraisal conclusions or historical stock evidence.
 
 ## Verification
 

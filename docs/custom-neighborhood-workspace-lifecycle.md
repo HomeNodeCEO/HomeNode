@@ -1,5 +1,11 @@
 # Custom workspace lifecycle controller
 
+This describes the controller's original contract. The [host](custom-neighborhood-workspace-host.md),
+Custom report bridge, [radius expansion](custom-neighborhood-discovery-expansion.md)
+and [city discovery](custom-neighborhood-city-study.md) are now implemented.
+Their capture/checkpoint extensions preserve the recovery ordering below; no
+additional parallel host or persistence layer is needed.
+
 `dcad-frontend/src/features/neighborhood/customWorkspaceLifecycle.ts` is a pure,
 injected controller. It does not mount React, fetch, change authentication or
 source policy, enable Apply, or touch accepted neighborhood/report values.
@@ -69,11 +75,12 @@ logical action rejects promptly, but pending stays true until that actual promis
 settles. It cannot trigger a late catalog/save or restore success; `onChange`
 signals eventual settled completion without retrying anything.
 
-The future host must coalesce rapid user selection intent or disable controls;
+The host must coalesce rapid user selection intent or disable controls;
 it must not silently drop a rejected busy selection. It must also serialize its
 preview/inspection requests with this lane: existing coordinator final checks
 take NOWAIT assignment/workfile locks. This controller cannot stop unrelated
-requests launched by the currently independent workspace component. Save
+requests launched outside its ownership. The implemented controlled workspace
+uses the shared host lane. Save
 Everything/finalize must flush that owned lane or explicitly report pending
 exploration, separately from ordinary report autosave.
 
@@ -83,6 +90,6 @@ workfiles and enforce its existing access/readiness state; a standalone checkpoi
 section does not contain file status and is never an authorization grant.
 
 Ready state provides the checkpoint, checked catalog and exact reconstructed
-selection for a future controlled workspace host. This slice adds no production
+selection for the controlled workspace host. The controller itself adds no production
 mount. Focused test: `node --experimental-strip-types --test
 scripts/testCustomWorkspaceLifecycle.mjs` from `dcad-frontend`.

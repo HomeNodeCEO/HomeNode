@@ -5,7 +5,10 @@
 The Custom Report now has a default-disabled connection to the existing saved
 neighborhood exploration workspace. It is not a replacement for accepted report
 statistics, a production activation, or a completed supported-assessment Apply
-path. UAD, Property Tax, authentication policy, source grants, report calculations
+path. The later reported-observation adoption path does atomically apply the
+reviewed rough boundary and selected observed statistics as one five-part group;
+it does not certify them as supported appraisal conclusions. UAD, Property Tax,
+authentication policy, source grants, report calculations
 and signing authority are unchanged.
 
 `useCustomNeighborhoodReportBridge` performs a fresh authenticated, no-store read
@@ -63,8 +66,10 @@ capture owner and cohort router, after the existing application boundary and
 workfile routes. Disabled requests require a principal before returning a bounded
 no-store 503; disabled composition creates no cohort owner or cohort pool queries.
 Existing global authentication, CSRF, rate limiting and JSON parser behavior remain
-in place, including the upstream 1 MiB body limit. The producer remains mapping2;
-this wiring does not silently enable the expanded mapping3 witness scope.
+in place, including the upstream 1 MiB body limit. New captures now use the
+documented mapping4 CAD/housing extension; old mapping2 captures remain replayable.
+Mapping4 preserves the prior sales projection and does not implicitly acquire
+mapping3's expanded MLS unit witnesses.
 
 Before enabling either gate, verify additive migrations, real organization and
 assignment access, the independently maintained source profile and genuine owner
@@ -96,8 +101,10 @@ source limit is raised. Full server/frontend suites, TypeScript, targeted lint,
 source budgets and protected production-build/security/migration workflows must
 pass before merge.
 
-Remaining feature work: source-backed supported assessment assembly, coherent
-Custom boundary/statistics Apply, real-source activation and sample-property QA,
-followed by broader city discovery, subdivision/phase overlays and richer pocket
-information where supporting data exists. Unknown builder/HOA/amenity facts must
-remain unknown rather than inferred from unrelated records.
+Implemented subsequent extensions include coherent Custom boundary/observations
+Apply and explicit replacement, radius and bounded city discovery, recorded
+subdivision labels, housing/proximity review scores and pocket member drilldown.
+Remaining work includes supported-assessment evidence, real-source activation,
+large-area capacity and sample-property QA, verified subdivision/phase outlines
+and richer pocket information where supporting data exists. Unknown builder,
+HOA and amenity facts remain unknown rather than inferred from unrelated records.

@@ -1,5 +1,10 @@
 # Recorded parcel proximity for Custom neighborhood recommendations
 
+The measurement and version-2 behavior below remain supported. The later
+[recorded-housing extension](custom-neighborhood-recorded-housing.md) adds a
+version-3 policy for new mapping4 captures. [City studies](custom-neighborhood-city-study.md)
+use that housing policy without inventing a radius-based proximity measurement.
+
 This additive recommendation version uses the subject location and parcel geometry
 already retained with the exact study. It does not fetch GIS, change the captured
 roster, alter accepted report statistics, or select pockets for the appraiser.
@@ -25,10 +30,11 @@ are review aids, not a reliability certification or an appraisal conclusion.
 
 ## Compatibility and ownership
 
-The prior pure scorer remains version 1 when proximity is omitted; complete
-previous result hashes are regression-tested. The authenticated Custom catalog
-owner explicitly requests the version-2 policy only for a complete current-stock
-catalog. Retrospective stock restrictions remain unchanged. Ordinary catalog,
+The prior pure scorer remains version 1 when both proximity and the later housing
+extension are omitted; complete previous result hashes are regression-tested.
+The proximity-only path requests version 2 for a complete current-stock catalog;
+new captures may use version 3 as described above. Retrospective stock
+restrictions remain unchanged. Ordinary catalog,
 selection preview, member reads and report Apply do not request native distances.
 
 The derivation accepts original retained EWKB, subject geometry and context only.
@@ -54,7 +60,9 @@ check a four-mile parcel, authorized catalog composition, post-computation right
 revocation, genuine statement-timeout recovery and unchanged accepted reports.
 It is explicitly registered in the migration CI suite.
 
-This change does not activate production source grants or configuration. Citywide
-analytical capture, fine housing-type evidence, historical stock coverage and
-live-property acceptance remain separate work. Recorded names are not legal
-subdivision or phase boundaries; city reference outlines do not enlarge a study.
+This change does not activate production source grants or configuration. Bounded
+city-shaped capture and recorded housing categories are now implemented in the
+linked extensions. Verified housing classification, historical stock coverage,
+large-city capacity and live-property acceptance still need evidence. Recorded
+names are not legal subdivision or phase boundaries; city reference outlines do
+not enlarge a study.

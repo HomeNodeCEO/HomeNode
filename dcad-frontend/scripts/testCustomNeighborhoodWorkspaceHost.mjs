@@ -297,6 +297,58 @@ test('unknown city error remains generic and never displays raw server text', as
   assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
 });
 
+for (const [status, errorCode, guidance] of [
+  [401, 'authentication_required', 'Sign in again'],
+  [403, 'neighborhood_access_denied', 'Confirm assignment and source access'],
+  [503, 'custom_neighborhood_workspace_disabled', 'disabled in this environment'],
+  [404, 'neighborhood_context_unavailable', 'saved capture target is unavailable'],
+  [422, 'neighborhood_source_unavailable', 'source data is unavailable or exceeds capture limits'],
+  [422, 'neighborhood_private_source_review_required', 'source-use review completed'],
+  [422, 'neighborhood_private_source_limit', 'private-sales source exceeds the capture limits'],
+  [409, 'neighborhood_private_review_changed', 'private-sales review changed'],
+  [409, 'neighborhood_private_source_read_only', 'no longer editable for a private-sales capture'],
+  [409, 'neighborhood_operation_conflict', 'do not retry it with changed inputs'],
+  [409, 'neighborhood_subject_changed', 'subject data changed during capture'],
+  [409, 'neighborhood_target_changed', 'appraisal target changed during capture'],
+  [409, 'neighborhood_market_policy_changed', 'Source access changed during capture'],
+  [409, 'neighborhood_operation_outcome_unknown', 'recover the same saved operation. Do not start another capture'],
+  [503, 'neighborhood_request_interrupted', 'retry the same saved operation'],
+]) test(`capture refusal ${status}/${errorCode} shows fixed guidance while preserving pending operation and old display`, async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  db.overrides.set('capture', () => {
+    // Another editor may change a report while this capture is refused. The
+    // Host must describe only this capture's effects, not promise global stasis.
+    db.file(TARGET).accepted = { revision: 8, value: { synthetic_other_editor: true } };
+    return json({ error: errorCode, detail: 'secret provider/database data', retry_same_operation: true }, status);
+  });
+  h.radius('5'); h.click('Capture a new 5-mile study'); await h.settle();
+  const pending = copy(db.file(TARGET).section.value.pending_capture);
+  assert.ok(h.text().includes(guidance)); assert.match(h.text(), /This capture has not applied anything to the report/);
+  assert.doesNotMatch(h.text(), /secret provider\/database data|your report has not changed|accepted report are unchanged/);
+  assert.equal(h.workspace().contextRef.context_id, OLD); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.deepEqual(db.file(TARGET).accepted, { revision: 8, value: { synthetic_other_editor: true } });
+  assert.equal(await h.controls.flush(), false); assert.equal(h.button('Resume saved capture').props.disabled, true);
+  h.button('Resume saved capture').props.onClick(); await h.settle(); assert.equal(db.calls.filter(c => c.kind === 'capture').length, 1);
+  db.overrides.delete('capture'); h.click('Reload saved choices'); await h.settle();
+  assert.equal(db.calls.filter(c => c.kind === 'capture').length, 1, 'reload must not auto-capture');
+  assert.deepEqual(db.file(TARGET).section.value.pending_capture, pending); assert.equal(await h.controls.flush(), false);
+  h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(db.calls.filter(c => c.kind === 'capture').map(c => c.body.operation_id), [pending.operation_id, pending.operation_id]);
+  assert.deepEqual(db.calls.filter(c => c.kind === 'capture').map(c => c.body.discovery), [pending.discovery, pending.discovery]);
+  assert.equal(db.file(TARGET).section.value.pending_capture, null); assert.equal(await h.controls.flush(), true);
+  assert.equal(db.maxOpen, 1);
+});
+
+test('unknown capture errors and strings normalized to known codes stay generic and actor-relative', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  db.overrides.set('capture', () => json({ error: 'authentication_required\n', detail: 'secret' }, 401));
+  h.radius('5'); h.click('Capture a new 5-mile study'); await h.settle();
+  assert.match(h.text(), /This update has not applied anything to the report/);
+  assert.doesNotMatch(h.text(), /Sign in again|your report has not changed|secret/);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+});
+
 test('catalog city hash mismatch on fresh reopen blocks workspace without requesting capture or defaults', async t => {
   const initial = activeSection([]); initial.value.workspace_version = 4; initial.value.active.discovery = cityChoice(cityCatalog.cities[0]);
   const db = server(initial); db.overrides.set('catalog', async (_call, respond) => {

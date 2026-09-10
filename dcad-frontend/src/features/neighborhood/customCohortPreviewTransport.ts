@@ -79,6 +79,14 @@ function errorMessage(body: unknown, status: number): string {
   }
   return `Neighborhood preview request failed (HTTP ${status})`;
 }
+function exactErrorCode(body: unknown): string | undefined {
+  if (!body || typeof body !== 'object' || Array.isArray(body) || !Object.hasOwn(body, 'error')) return undefined;
+  const value = (body as Record<string, unknown>).error;
+  // Preserve only original machine vocabulary, never normalized display text
+  // or a message fallback. Callers must still allowlist exact code + status.
+  return typeof value === 'string' && value.length <= 100 && /^[a-z]/.test(value)
+    && !/[^a-z0-9_]/.test(value) ? value : undefined;
+}
 
 async function jsonRequest(options: Options, path: string, init: RequestInit, maximum: number, signal: AbortSignal) {
   const response = await requestWithSignal(options, options.urlFor(path), {
@@ -93,7 +101,8 @@ async function jsonRequest(options: Options, path: string, init: RequestInit, ma
       catch (error) { if (isAbort(error, signal)) throw abortError(); }
     } else stop(response.body);
     checkSignal(signal);
-    throw Object.assign(new Error(errorMessage(value, response.status)), { status: response.status });
+    const errorCode = exactErrorCode(value);
+    throw Object.assign(new Error(errorMessage(value, response.status)), { status: response.status, ...(errorCode ? { errorCode } : {}) });
   }
   if (!json) { stop(response.body); throw new Error('Expected a JSON neighborhood preview response'); }
   return readJson(response, maximum, signal);

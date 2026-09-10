@@ -30,6 +30,23 @@ interface Props {
   onAccepted?: () => Promise<boolean>;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
+const CAPTURE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
+  capture_authentication_required: 'Sign in again, then reload saved choices before resuming the same saved capture.',
+  capture_access_denied: 'Your current access does not allow this capture. Confirm assignment and source access, then reload saved choices before resuming the same saved capture.',
+  capture_disabled: 'Neighborhood capture is currently disabled in this environment. Contact your administrator, then reload saved choices before resuming the same saved capture.',
+  capture_context_unavailable: 'The saved capture target is unavailable. Reload this appraisal file and its saved choices before continuing.',
+  capture_source_unavailable: 'Required recorded source data is unavailable or exceeds capture limits. Reload saved choices before resuming the same saved capture or setting it aside.',
+  capture_private_source_review_required: 'The selected private-sales source needs its source-use review completed. Then reload saved choices and set aside the pending capture before choosing the reviewed revision.',
+  capture_private_source_limit: 'The selected private-sales source exceeds the capture limits. Reload saved choices, then set aside the pending capture before choosing a smaller reviewed source.',
+  capture_private_review_changed: 'The selected private-sales review changed. Reload saved choices, then set aside the pending capture before choosing the updated review.',
+  capture_private_source_read_only: 'This appraisal file is no longer editable for a private-sales capture. Reload this appraisal file before continuing.',
+  capture_operation_conflict: 'This saved capture conflicts with an existing operation. Reload saved choices and review the pending capture; do not retry it with changed inputs.',
+  capture_subject_changed: 'The subject data changed during capture. Reload saved choices and review the subject before deciding whether to set aside the pending capture.',
+  capture_target_changed: 'The appraisal target changed during capture. Reload this appraisal file and its saved choices before continuing.',
+  capture_market_policy_changed: 'Source access changed during capture. Confirm source access, then reload saved choices before continuing.',
+  capture_outcome_unknown: 'The server could not confirm whether this capture was recorded. Reload saved choices, then use “Resume saved capture” to recover the same saved operation. Do not start another capture to resolve this request.',
+  capture_interrupted: 'The capture request was interrupted or reached its time limit. Reload saved choices, then use “Resume saved capture” to retry the same saved operation.',
+});
 const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
 type RadiusMiles = keyof typeof RADII;
 const scopeKey = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
@@ -120,8 +137,10 @@ function HostSession(props: Props) {
           const code = error instanceof Error && 'workspaceCode' in error ? error.workspaceCode : null;
           const cityFailure = code === 'city_subject_outside_scope' ? 'The subject is outside the selected city polygon.'
             : code === 'city_source_unavailable' ? 'The selected city polygon is unavailable for capture.' : null;
-          setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. Your previous study and accepted report are unchanged.`
-            : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing; your report has not changed.'); }
+          const guidance = typeof code === 'string' && Object.hasOwn(CAPTURE_GUIDANCE, code) ? CAPTURE_GUIDANCE[code] : null;
+          setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. This capture has not applied anything to the report.`
+            : guidance ? `${guidance} This capture has not applied anything to the report.`
+            : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing. This update has not applied anything to the report.'); }
       }
       return false;
     }).finally(() => {

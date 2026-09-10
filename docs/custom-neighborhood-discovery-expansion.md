@@ -4,7 +4,7 @@ The radius behavior below remains supported. The subsequent [city-study extensio
 
 ## Implemented behavior
 
-The Custom saved neighborhood workspace supports three-, five- and ten-mile analytical discovery. Changing **Study radius** changes only the next capture choice. It does not fetch a new roster, alter the displayed study, select pockets or apply report values until the appraiser explicitly starts a capture.
+The Custom saved neighborhood workspace supports three-, five- and ten-mile analytical discovery. Changing the radius in **Analytical study area** changes only the next capture choice. It does not fetch a new roster, alter the displayed study, select pockets or apply report values until the appraiser explicitly starts a capture.
 
 The displayed study is labelled separately from the next capture choice. A successful capture saves its exact context, period, radius and selected recorded-group IDs. Reopening uses that saved context; it does not reconstruct the radius from the current dropdown or today's source data. Explicit empty pocket selection remains empty.
 
@@ -12,7 +12,7 @@ The radius measures spheroid distance from the original retained subject point t
 
 ## Capture API and installed profile
 
-`POST /api/accounts/:id/neighborhood-cohort/capture` retains the existing authenticated assignment, operation and period fields. The optional `discovery` object is closed and accepts only:
+`POST /api/accounts/:id/neighborhood-cohort/capture` retains the existing authenticated assignment, operation and period fields. For a radius study, the optional `discovery` object is closed and accepts:
 
 ```json
 {
@@ -80,13 +80,15 @@ The expansion does not raise the installed limits:
 
 These are admission ceilings, not measured performance guarantees. Parcel, account, identity, source and association data consume downstream budgets; a radius does not guarantee that a dense area will fit. Membership/source limit failures do not publish a clipped successful roster. Catalog overflow can preserve the entire captured roster as explicitly unresolved membership, without an arbitrary prefix of named pockets or actionable recommendations. Map capacity failure is reported as unavailable rather than fabricated geometry.
 
+In particular, **50,000 spatial accounts is not a supported end-to-end population size**. The reader's 100,000-record ceiling counts selection, account and parcel records separately, before additional sync, sale and association records. Even a one-parcel-per-account population consumes at least three records per account; byte, preview and map ceilings may bind sooner. Measure the complete source mix and downstream projections before increasing an area or making a performance promise. Do not raise limits solely to bypass a refusal.
+
 Complete cached-query membership is **not provider completeness**, citywide market coverage, historical stock evidence, competitive eligibility or reliability. Existing source-policy retention/exposure checks and final authorization checks remain in force. Current CAD observations remain current observations. Larger radius and old CSV sale dates do not bypass the retrospective-stock guard or turn a later mirror into evidence of the past neighborhood.
 
 If a new capture fails, the prior active checkpoint and last coherent displayed map/statistics are retained; the failed or uncertain pending intent stays explicit for recovery or **Set aside pending capture**. Setting it aside clears only the pending choice, not immutable source evidence or an accepted report. The existing report remains unchanged until an explicit coherent whole-group Apply or replacement succeeds.
 
 ## City reference is still separate
 
-The installed January 2026 Census incorporated-place outlines are dated map references. Showing a city, switching references or returning the camera does not change the analytical capture. This change does not implement municipality-shaped discovery, mailing-city selection or unrestricted citywide analysis. A ten-mile radius is not a city boundary, and a municipal outline is not proof that all of its parcels or sales are present in the cached sources.
+The installed January 2026 Census incorporated-place outlines are dated map references. Showing a city, switching references or returning the camera does not change the analytical capture. The separate [city study chooser](custom-neighborhood-city-study.md) now supports explicit municipality-shaped capture within the same capacity limits; it does not use mailing-city text. A ten-mile radius is not a city boundary, and a municipal outline is not proof that all of its parcels or sales are present in the cached sources.
 
 ## Verification at this checkpoint
 

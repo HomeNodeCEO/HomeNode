@@ -19,10 +19,18 @@ export function customCohortQueryFixture(subject, { accountIds = [subject.target
   return createCohortLocalQueryEvidenceFixture({ accountIds, metadata });
 }
 
-export function customCohortRepositoryFixture() {
+export function customCohortRepositoryFixture({ assignmentFileId } = {}) {
   const input = inputs(); input.snapshot.effective_date = '2026-09-06';
   setPublic(input, { account: { account_id: input.target.account_id }, improvement: { living_area_sqft: 2000 } });
   setSection(input, 1, '{"main_improvement":{"living_area_sqft":2100.00},"review_note":"keep me"}');
+  // Test-only identity chosen BEFORE original capture. Preserve default fixture
+  // bytes; never rewrite already-retained subject/source identities or hashes.
+  if (assignmentFileId !== undefined) {
+    assert.ok(typeof assignmentFileId === 'string' && /^[1-9][0-9]{0,18}$/.test(assignmentFileId)
+      && BigInt(assignmentFileId) <= 9223372036854775807n);
+    input.target.assignment_file_id = assignmentFileId;
+    for (const section of input.sections) if (section.row !== null) section.row.assignment_file_id = assignmentFileId;
+  }
   const state = { input, caseDate: '2026-09-06', status: 'draft', signedAt: null, signed: false,
     calls: [], missing: null, db: new Map(), transforms: {}, error: null };
   const client = { release() { throw new Error('repository must not release'); }, async query(sql, params) {

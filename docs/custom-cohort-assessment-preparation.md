@@ -1,5 +1,12 @@
 # Custom cohort assessment preparation: diagnostic only
 
+This document describes the original diagnostic function. The separate,
+subsequently implemented [reviewed-input owner](custom-neighborhood-supported-inputs.md)
+and [report preparer](custom-neighborhood-report-preparation.md) now consume exact
+retained review state and call the real calculation/assessment/candidate functions.
+They still do not establish automatic provider support, geography, publication or
+Apply; the original diagnostic below remains diagnostic-only.
+
 `server/src/services/neighborhoodAssessment/customCohortAssessmentPreparation.js`
 exports `prepareCustomCohortAssessmentPreparation`. This is **not an assessment
 assembler**, a supported-fact issuer, an HTTP endpoint, or an Apply bridge.

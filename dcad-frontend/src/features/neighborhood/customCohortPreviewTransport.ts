@@ -115,11 +115,11 @@ export function createCustomCohortPreviewTransport(options: Options) {
 /** Shared bounded transport for the three read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'catalog' | 'members' | 'capture',
+  return async (accountId: string, operation: 'preview' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'catalog', 'members', 'capture'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply'].includes(operation)) throw new Error('Invalid neighborhood request');
     const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');

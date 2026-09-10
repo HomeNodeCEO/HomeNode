@@ -157,5 +157,27 @@ export function createCustomWorkspaceApi(options: Options) {
       // IDs. Do not apply the older generic workfile number limit to this view.
       return safely(io.signal, () => preview(input, io));
     },
+    readReportEditor(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions) {
+      return safely(io.signal, async () => {
+        const bound = target(input), envelope = responseIdentity(await workfile.read(bound.accountId, bound.assignmentFileId, io), bound);
+        const file = object(envelope.workfile); responseFile(file.assignment_file_id, bound.assignmentFileId);
+        requireThat(file.status === 'draft', 'report_read_only');
+        const sections = object(file.sections);
+        if (!Object.hasOwn(sections, 'neighborhood_assessment')) return 0;
+        const value = object(sections.neighborhood_assessment);
+        requireThat(Number.isInteger(value.revision) && Number(value.revision) > 0 && Number(value.revision) < 2147483647, 'invalid_response');
+        return Number(value.revision);
+      });
+    },
+    reportedOperation(input: { target: CustomWorkspaceTarget; operation: 'reported-proposal' | 'reported-apply';
+      body: Record<string, unknown> }, io: CustomWorkspaceOperationOptions) {
+      // The dedicated report controller creates only the closed proposal/Apply
+      // command; no generic assignment-section save or browser facts are used.
+      return safely(io.signal, async () => {
+        const bound = target(input.target);
+        requireThat(!Object.hasOwn(input.body, 'assignment_file_id'), 'invalid_input');
+        return cohort(bound.accountId, input.operation, { assignment_file_id: bound.assignmentFileId, ...input.body }, io);
+      });
+    },
   });
 }

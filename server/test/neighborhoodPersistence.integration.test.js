@@ -17,6 +17,7 @@ import { checkCustomCohortSelectionDatabase } from "./helpers/customCohortSelect
 import { checkCustomCohortContextDatabase } from "./helpers/customCohortContextDatabaseChecks.js";
 import { checkCustomAppraisalTransactionDatabase } from "./helpers/customAppraisalTransactionDatabaseChecks.js";
 import { checkCustomNeighborhoodAcceptanceDatabase } from "./helpers/customNeighborhoodAcceptanceDatabaseChecks.js";
+import { checkReportedObservationDatabase } from "./helpers/neighborhoodReportedObservationDatabaseChecks.js";
 
 // Run only against a fresh GitHub CI child database prepared by the ordinary
 // UAD/mobile scripts. Never add records to the shared runner database or delete
@@ -371,6 +372,10 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
     // The ordinary runner owns migration registration. Re-execution here tests
     // additive rerun safety without deleting existing application/test records.
     await pool.query(sql); await pool.query(sql);
+    // A historical function rerun must be followed by the installed additive
+    // dispatch; otherwise this test alone would downgrade the migrated guards.
+    const observationSql = await readFile(new URL("../migrations/20261017_neighborhood_reported_observations.sql", import.meta.url), "utf8");
+    await pool.query(observationSql); await pool.query(observationSql);
     assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_jobs WHERE status IN ('queued','running','retry')")).rows[0].count), 0,
       "Use a dedicated, idle *_test database; pending jobs are not cleaned up or claimed from another run");
 
@@ -391,6 +396,11 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
       assert.equal((await publish(repository, claim, data)).promoted, true);
       const assessment = await repository.getCurrent(identity.scope);
       await checkCustomNeighborhoodAcceptanceDatabase(pool, identity, assessment, { atomicSave });
+    });
+
+    await t.test("Custom v2 reported observations publish with exact account counts and immutable evidence", async () => {
+      const identity = await identityFixture(pool), uad = await uadFixture(pool, identity);
+      await checkReportedObservationDatabase({ pool, identity, uad, databaseName: target.databaseName });
     });
 
     await t.test("compact canonical bytes and PostgreSQL jsonb text storage have distinct budgets", async () => {

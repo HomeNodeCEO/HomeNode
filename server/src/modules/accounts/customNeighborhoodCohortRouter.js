@@ -5,9 +5,11 @@ const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
 const FILE_ID = /^[1-9]\d{0,18}$/;
 const INPUT_ERRORS = new Set(['invalid_input', 'invalid_account', 'invalid_assignment',
-  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import']);
-const ACCESS_ERRORS = new Set(['assignment_access_denied', 'market_data_access_denied']);
-const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed', 'private_source_read_only']);
+  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import', 'invalid_reported_input']);
+const ACCESS_ERRORS = new Set(['assignment_access_denied', 'market_data_access_denied', 'report_observation_access_denied']);
+const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed', 'private_source_read_only',
+  'workspace_changed', 'workspace_capture_pending', 'report_editor_changed', 'report_geography_changed',
+  'report_policy_changed', 'report_proposal_changed', 'report_group_conflict']);
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
 
@@ -32,6 +34,11 @@ function publicFailure(error) {
     return [422, { error: 'neighborhood_private_source_review_required' }];
   }
   if (error?.code === 'assignment_sales_import_preparation_limit') return [422, { error: 'neighborhood_private_source_limit' }];
+  if (['report_response_limit', 'report_publication_incomplete'].includes(error?.reason)) {
+    return [422, { error: 'neighborhood_report_incomplete' }];
+  }
+  if (['55P03', '57014', '40001', '40P01'].includes(error?.code)) return [503, { error: 'neighborhood_request_interrupted' }];
+  if (error?.code === 'custom_neighborhood_acceptance_not_current_section') return [409, { error: 'neighborhood_report_editor_changed' }];
   if (error?.reason === 'catalog_transport_limit') return [422, { error: 'neighborhood_catalog_incomplete',
     reason: 'catalog_response_byte_limit', membership_returned: false }];
   if (error?.type === 'entity.too.large' || error?.status === 413) return [413, { error: 'neighborhood_request_too_large' }];
@@ -130,6 +137,20 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
     return cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection,
       ...(requested ? { includeRecommendation: body.include_recommendation } : {}) }, options);
   }, ['include_recommendation']);
+  // Optional owner methods keep older/default-disabled composition unchanged.
+  // Browser input identifies saved intent only; no assessment/member/source JSON.
+  if (typeof cohortService.prepareReportedObservations === 'function') route('reported-proposal',
+    ['assignment_file_id', 'context_ref', 'expected_workspace_revision', 'expected_editor_revision', 'operation_id'],
+    (identity, body, options) => cohortService.prepareReportedObservations({ ...identity, contextRef: body.context_ref,
+      expectedWorkspaceRevision: body.expected_workspace_revision, expectedEditorRevision: body.expected_editor_revision,
+      operationId: body.operation_id }, options));
+  if (typeof cohortService.applyReportedObservations === 'function') route('reported-apply',
+    ['assignment_file_id', 'context_ref', 'expected_workspace_revision', 'expected_editor_revision', 'operation_id',
+      'proposal_operation_id', 'attachment_id', 'attachment_revision', 'binding_digest', 'adopt'],
+    (identity, body, options) => cohortService.applyReportedObservations({ ...identity, contextRef: body.context_ref,
+      expectedWorkspaceRevision: body.expected_workspace_revision, expectedEditorRevision: body.expected_editor_revision,
+      operationId: body.operation_id, proposalOperationId: body.proposal_operation_id, attachmentId: body.attachment_id,
+      attachmentRevision: body.attachment_revision, bindingDigest: body.binding_digest, adopt: body.adopt }, options));
   router.use(BASE, (error, _req, res, _next) => {
     const [status, payload] = publicFailure(error);
     return res.status(status).json(payload);

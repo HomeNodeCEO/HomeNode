@@ -1,4 +1,5 @@
 import type { ReactElement } from 'react';
+import CustomReportedObservationSummary from './CustomReportedObservationSummary';
 
 type RecordValue = Record<string, unknown>;
 interface Props { assessment: unknown }
@@ -119,6 +120,7 @@ function metricPresentation(statistic: RecordValue, population: RecordValue, sou
  * No source verification, authority decision, recomputation, requests or writes. */
 export default function CustomNeighborhoodAcceptedSummary({ assessment }: Props): ReactElement {
   const data = record(assessment);
+  if (data.contract_version === 2) return <CustomReportedObservationSummary assessment={assessment} />;
   if (data.contract_version !== 1 || !Array.isArray(data.populations) || !Array.isArray(data.statistics) || !Array.isArray(data.source_snapshots)) {
     return <section className={panel} aria-label="Accepted neighborhood summary unavailable"><h3 className="font-semibold">Neighborhood summary unavailable</h3>
       <p className="mt-1 text-sm">Unavailable — a normalized NeighborhoodAssessment v1 with populations, statistics and source snapshots is required.</p></section>;

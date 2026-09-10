@@ -15,7 +15,24 @@ const estimators = { count: "Count", exact_median: "Median", exact_quantile: "Qu
   ratio: "Ratio", modal_interval: "Predominant modal interval [lower, upper)", coefficient_of_dispersion: "Coefficient of dispersion", unsupported: "Unsupported estimator" };
 const roles = { geographic_stock: "Geographic stock", competitive_stock: "Competitive stock", transactions: "Transactions", listings: "Listings" };
 const units = { property: "Properties", canonical_transaction: "Canonical transactions", allocated_property_sale: "Allocated property sales", listing: "Listings" };
-const basis = { closing_date: "closing date", contract_date: "contract date", status_as_of: "status as of", effective_date: "effective date" };
+const basis = { closing_date: "closing date", contract_date: "contract date", status_as_of: "status as of", effective_date: "effective date", capture_date: "capture date" };
+const reportedLabels = {
+  account_count: "CAD account count", source_record_count: "Source-record count", current_cad_living_area: "Current CAD living area",
+  current_cad_parcel_area: "Current CAD parcel area", current_cad_year_built: "Current CAD year built", current_cad_calendar_age: "Current CAD calendar age",
+  reported_close_price: "Reported ClosePrice", reported_current_price: "Reported CurrentPrice (not ClosePrice)", reported_living_area: "Reported living area",
+  reported_site_area: "Reported site area", reported_year_built: "Reported year built", reported_days_on_market: "Reported days on market",
+};
+// Normalized v2 decimal strings can exceed Number's exact integer range. Round
+// for display with integer arithmetic; the exact retained scalar follows below.
+function reportedNumber(value, unit) {
+  if (typeof value === "number") return displayCount(value);
+  if (typeof value !== "string" || !/^(?:0|[1-9]\d*)(?:\.\d*[1-9])?$/.test(value)
+    || value.replace(".", "").length > 31 || (value.split(".")[1]?.length ?? 0) > 13) throw new TypeError("invalid_reported_observation_decimal");
+  const [whole, fraction = ""] = value.split(".");
+  const cents = (BigInt(whole) * 10n ** 13n + BigInt(fraction.padEnd(13, "0")) + 50_000_000_000n) / 100_000_000_000n;
+  const digits = (cents / 100n).toString(), tail = (cents % 100n).toString().padStart(2, "0").replace(/0+$/, "");
+  return `${unit === "USD" ? "$" : ""}${unit === "year" ? digits : digits.replace(/\B(?=(\d{3})+(?!\d))/g, ",")}${tail ? `.${tail}` : ""}`;
+}
 const supplied = value => value === null || value === undefined ? "Unavailable" : String(value);
 const decimal = new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
 const currency = new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", minimumFractionDigits: 0, maximumFractionDigits: 2 });
@@ -55,7 +72,7 @@ function wrap(doc, value, width, font, size) {
  * exact page counts. Long definitions, IDs and reasons continue without ellipsis.
  */
 export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
-  const assessment = projected.assessment, pages = [[]];
+  const assessment = projected.assessment, pages = [[]], reported = assessment.contract_version === 2;
   let y = TOP;
   const paragraph = (value, heading = false) => {
     const font = heading ? "Helvetica-Bold" : "Helvetica", size = heading ? 9 : 8;
@@ -70,16 +87,40 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
   paragraph(`Assessment: ${assessment.id}; revision: ${assessment.revision}; evidence SHA-256: ${assessment.evidence_digest_sha256}.`);
   paragraph(`Operation: ${projected.operation_id}; accepted editor revision: ${projected.accepted_editor_revision}. Effective date: ${assessment.effective_date}; data cutoff: ${assessment.data_cutoff}.`);
   paragraph(`Study observation period: ${period(assessment.observation_period)}.`);
-  paragraph("Values and statuses are producer-supplied, not recalculated. COD is dispersion, not reliability. Non-ASCII characters are preserved as Unicode escapes.");
+  paragraph(reported ? "Reported observations, not verified market facts. CAD accounts are not economic properties; source records are not canonical transactions. Provider coverage is not established. Non-ASCII characters are preserved as Unicode escapes."
+    : "Values and statuses are producer-supplied, not recalculated. COD is dispersion, not reliability. Non-ASCII characters are preserved as Unicode escapes.");
+  if (reported) paragraph("Current CAD capture does not establish historical housing stock. Later source capture does not establish historical availability. Full multi-account source records retain their total; no package price allocation is inferred.");
   paragraph("Descriptive geographic boundaries (not competitive pocket selection)", true);
   const geography = assessment.geographic_neighborhood;
   paragraph(`Geography revision: ${geography.revision}; coordinate reference: ${geography.crs}; status: ${geography.status}.`);
   for (const direction of ["north", "east", "south", "west"]) paragraph(`${direction.toUpperCase()}: ${supplied(geography.cardinal_summaries[direction])}`);
   for (const edge of geography.perimeter) paragraph(`Perimeter edge ${edge.edge_id}: ${supplied(edge.name)}; from ${edge.from_node} to ${edge.to_node}; sources: ${references(edge.source_refs)}.`);
-  paragraph("Selected competitive pocket IDs", true);
-  paragraph(assessment.selection.pocket_ids.length ? JSON.stringify(assessment.selection.pocket_ids) : "No competitive pockets selected (0 supplied IDs).");
-  paragraph(`Selection revision: ${assessment.selection.revision}; housing eligibility: ${supplied(assessment.selection.housing_eligibility)}; overrides: ${JSON.stringify(assessment.selection.overrides)}.`);
+  paragraph(reported ? "Selected recorded pocket IDs" : "Selected competitive pocket IDs", true);
+  paragraph(assessment.selection.pocket_ids.length ? JSON.stringify(assessment.selection.pocket_ids) : reported ? "No recorded pockets selected (0 supplied IDs)." : "No competitive pockets selected (0 supplied IDs).");
+  paragraph(reported ? `Selection revision: ${assessment.selection.revision}; overrides: ${JSON.stringify(assessment.selection.overrides)}. Housing eligibility is not established by this observation profile.`
+    : `Selection revision: ${assessment.selection.revision}; housing eligibility: ${supplied(assessment.selection.housing_eligibility)}; overrides: ${JSON.stringify(assessment.selection.overrides)}.`);
   for (const population of assessment.populations) {
+    if (reported) {
+      paragraph(`Population ${population.id} - ${population.kind === "account_observations" ? "CAD-account observations" : "Reported source-record observations"}`, true);
+      paragraph(`Definition: ${population.definition}`);
+      paragraph(`Member count: ${displayCount(population.member_count)} (${population.member_unit === "account" ? "Accounts" : "Source records"}); unique account count: ${displayCount(population.unique_account_count)}; account link count: ${displayCount(population.account_link_count)}.`);
+      paragraph(`Retained roster completeness: ${population.completeness}; provider coverage: not established; reasons: ${population.reasons.length ? JSON.stringify(population.reasons) : "none"}.`);
+      paragraph(`Observation period: ${period(population.observation_period)}. Captured at: ${supplied(population.captured_at)}; temporal basis: ${population.temporal_basis}.`);
+      paragraph(`Pocket IDs: ${JSON.stringify(population.pocket_ids)}; sources: ${references(population.source_refs)}.`);
+      paragraph(`Members resource: ${population.members_resource_id}; member-set SHA-256: ${supplied(population.member_set_sha256)}.`);
+      const statistics = assessment.statistics.filter(statistic => statistic.population_id === population.id);
+      if (!statistics.length) paragraph("Unavailable - no statistics supplied for this population.");
+      for (const statistic of statistics) {
+        paragraph(`Statistic ${statistic.id} - ${reportedLabels[statistic.measurement]}`, true);
+        const value = statistic.status === "ready" ? `${reportedNumber(statistic.value, statistic.unit)} ${statistic.unit === "source_records" ? "source records" : statistic.unit}`
+          : `Unavailable - ${statistic.reason || statistic.status}`;
+        paragraph(`Estimator: ${estimators[statistic.estimator]}; status: ${statistic.status}; value: ${value}.`);
+        if (statistic.value !== null) paragraph(`Exact retained value: ${statistic.value}; unit: ${statistic.unit}.`);
+        paragraph(`Observed: ${displayCount(statistic.observed_count)}; missing: ${displayCount(statistic.missing_count)}; invalid: ${displayCount(statistic.invalid_count)}; conflicting: ${displayCount(statistic.conflicting_count)}; unsupported: ${displayCount(statistic.unsupported_count)}; denominator: ${displayCount(statistic.denominator_count)} (population members).`);
+        paragraph(`Observation period: ${period(statistic.observation_period)}. Sources: ${references(statistic.source_refs)}. Estimator metadata: ${JSON.stringify(statistic.estimator_parameters)}.`);
+      }
+      continue;
+    }
     paragraph(`Population ${population.id} - ${roles[population.kind]}`, true);
     paragraph(`Definition: ${population.definition}`);
     paragraph(`Member count: ${displayCount(population.member_count)} (${units[population.member_unit]}); unique property count: ${displayCount(population.unique_property_count)}; property link count: ${displayCount(population.property_link_count)}.`);
@@ -103,6 +144,11 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
       paragraph(`Observation period: ${period(statistic.observation_period)}. Sources: ${references(statistic.source_refs)}.`);
       paragraph(`Estimator metadata: ${JSON.stringify(statistic.estimator_parameters)}; uncertainty: ${JSON.stringify(statistic.uncertainty)}.`);
     }
+  }
+  if (reported) {
+    paragraph("Recorded observation limitations", true);
+    paragraph("Median is not predominant. Recorded subject-point coverage is not full parcel containment or a legal subdivision assertion. Boundary and population membership remain separate.");
+    paragraph(JSON.stringify(assessment.diagnostics.limitations));
   }
   paragraph("Source snapshots", true);
   for (const source of assessment.source_snapshots) {
@@ -137,10 +183,10 @@ export function drawCustomNeighborhoodOutline(doc, geometry, frame) {
 }
 
 export function renderCustomNeighborhoodPdfSummary(doc, projected, appendix) {
-  const assessment = projected.assessment;
+  const assessment = projected.assessment, reported = assessment.contract_version === 2;
   const write = (value, x, y, width = WIDTH, size = 8, bold = false, height = undefined) => doc.font(bold ? "Helvetica-Bold" : "Helvetica")
     .fontSize(size).fillColor("#0f172a").text(ascii(value), x, y, { width, ...(height ? { height, ellipsis: true } : {}) });
-  write("ACCEPTED NEIGHBORHOOD GROUP", LEFT, 90, WIDTH, 9, true);
+  write(reported ? "ACCEPTED REPORTED NEIGHBORHOOD OBSERVATIONS" : "ACCEPTED NEIGHBORHOOD GROUP", LEFT, 90, WIDTH, 9, true);
   write(`Assessment ${assessment.id} / revision ${assessment.revision}`, LEFT, 108);
   write(`Accepted operation ${projected.operation_id} / editor revision ${projected.accepted_editor_revision}`, LEFT, 124);
   write(`Effective date ${assessment.effective_date} / data cutoff ${assessment.data_cutoff}`, LEFT, 140);
@@ -148,7 +194,7 @@ export function renderCustomNeighborhoodPdfSummary(doc, projected, appendix) {
   drawCustomNeighborhoodOutline(doc, assessment.geographic_neighborhood.geometry, { x: LEFT, y: 184, width: 300, height: 202 });
   write("Descriptive geography", 355, 190, 210, 9, true);
   write("Stored geographic boundary only. The outline is a north-up longitude/latitude schematic, without a basemap. It does not depict competitive pocket shapes or measure distances.", 355, 210, 210);
-  write(`Selected competitive pockets: ${displayCount(assessment.selection.pocket_ids.length)}. Exact IDs and complete boundary descriptions are retained in the appendix. Population membership is separate from descriptive geography.`, 355, 282, 210);
+  write(`Selected ${reported ? "recorded" : "competitive"} pockets: ${displayCount(assessment.selection.pocket_ids.length)}. Exact IDs and complete boundary descriptions are retained in the appendix. Population membership is separate from descriptive geography.`, 355, 282, 210);
   const short = value => {
     const result = ascii(value);
     return result.length <= 125 ? result : `${result.slice(0, 125)} [full text in appendix]`;
@@ -160,8 +206,10 @@ export function renderCustomNeighborhoodPdfSummary(doc, projected, appendix) {
   });
   write("COMPLETE ACCEPTED EVIDENCE", LEFT, 574, WIDTH, 9, true);
   write(`All ${displayCount(assessment.populations.length)} supplied populations, ${displayCount(assessment.statistics.length)} statistics and ${displayCount(assessment.source_snapshots.length)} source snapshots appear on appendix pages ${appendix.firstPage}-${appendix.firstPage + appendix.pageCount - 1}. No populations are pooled or limited to the first 30 sales.`, LEFT, 594);
-  write("Recorded sale prices, package-allocated prices and CAD assessed values are distinct. Median is not predominant. Age at sale is not age at the effective date. Unsupported and incomplete statistics remain unavailable with their supplied reasons.", LEFT, 630);
-  write("COD measures dispersion, not reliability. Legacy neighborhood form values are not mixed into this accepted group. Land use and other legacy-only judgments are unavailable in this catalog unless supplied as typed accepted evidence.", LEFT, 675);
+  write(reported ? "CAD accounts are not economic properties; source records are not canonical transactions. Reported ClosePrice and CurrentPrice remain distinct. Median is not predominant. Unsupported observations remain unavailable; exact retained scalars appear in the appendix."
+    : "Recorded sale prices, package-allocated prices and CAD assessed values are distinct. Median is not predominant. Age at sale is not age at the effective date. Unsupported and incomplete statistics remain unavailable with their supplied reasons.", LEFT, 630);
+  write(reported ? "Reported observations are not verified market facts. Provider coverage and historical stock are not established. Full source-record totals are not allocated to accounts. Legacy values are not mixed into this accepted group."
+    : "COD measures dispersion, not reliability. Legacy neighborhood form values are not mixed into this accepted group. Land use and other legacy-only judgments are unavailable in this catalog unless supplied as typed accepted evidence.", LEFT, 675);
 }
 
 export function renderCustomNeighborhoodPdfAppendix(doc, pages, addPage) {

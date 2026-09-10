@@ -5,6 +5,9 @@ import { prepareCustomNeighborhoodAcceptanceSnapshot } from "./customAcceptanceS
 import { normalizeCustomAppraisalSectionValue } from "../customAppraisalSectionValue.js";
 
 export const CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION = "custom-neighborhood-report-v1";
+export const CUSTOM_REPORTED_OBSERVATION_MAPPER_VERSION = "custom-reported-observations-report-v2";
+const mapperVersion = assessment => assessment.contract_version === 2
+  ? CUSTOM_REPORTED_OBSERVATION_MAPPER_VERSION : CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION;
 // These are the five dependent values of the reserved workfile section, NOT
 // assignment_details aliases. Keeping a median in its typed statistic avoids
 // silently exporting it into the old form's "predominant" field.
@@ -30,7 +33,7 @@ function targetOf(assessment, target) {
 function partition(assessment, target) {
   const { geographic_neighborhood: geography, selection, populations, statistics, ...rest } = assessment;
   return { geography, selection, populations, statistics,
-    evidence: { mapper_version: CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION, target, assessment: rest } };
+    evidence: { mapper_version: mapperVersion(assessment), target, assessment: rest } };
 }
 function suggestionsFor(assessment, target) {
   const parts = partition(assessment, target), group = assessment.application_group;
@@ -61,13 +64,14 @@ function checkedAssessment(value) {
 export function buildCustomNeighborhoodReportCandidate({ assessment: input, target }) {
   try {
     const assessment = checkedAssessment(input);
+    const mapper = mapperVersion(assessment);
     const binding = targetOf(assessment, target);
     const suggestions = suggestionsFor(assessment, binding);
     const attachment = buildNeighborhoodAttachment(assessment, { ...target,
-      mapper_version: CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION,
+      mapper_version: mapper,
       mapped_manifest_sha256: neighborhoodMappedManifestDigest(suggestions),
       source_digest_sha256: assessmentEvidenceDigest({ target: binding, assessment,
-        mapper_version: CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION }) });
+        mapper_version: mapper }) });
     // The same limits used by persistence apply here, before offering Apply.
     canonicalAssessmentJson(suggestions);
     // Capacity rehearsal only, never actual occupancy, authorization or a receipt
@@ -83,7 +87,7 @@ export function buildCustomNeighborhoodReportCandidate({ assessment: input, targ
       actorUserId: "00000001-0000-4000-8000-000000000001", operationId: "00000002-0000-4000-8000-000000000002",
       receipt: buildNeighborhoodApplicationReceipt(capacity, attachment.editor_revision + 1) });
     normalizeCustomAppraisalSectionValue(capacitySnapshot.section_value);
-    return freeze({ status: "ready", mapper_version: CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION,
+    return freeze({ status: "ready", mapper_version: mapper,
       attachment, group: assessment.application_group, suggestions });
   } catch (error) {
     return freeze({ status: "incomplete", issues: [{ code: error.message }], suggestions: [] });
@@ -127,7 +131,7 @@ export function projectCustomNeighborhoodReportSection({ section, expected }) {
       requireThat(item?.target_key === key(part) && equal(Object.keys(item).sort(), ["target_key", "value"]), "catalog_mismatch");
       return [part, item.value];
     }));
-    requireThat(parts.evidence?.mapper_version === CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION, "mapper_mismatch");
+    requireThat(parts.evidence?.mapper_version === mapperVersion(parts.evidence?.assessment ?? {}), "mapper_mismatch");
     requireThat(expected && equal(Object.keys(expected).sort(), ["account_id", "assignment_file_id", "organization_id", "report_file_id"])
       && equal(expected, parts.evidence.target), "target_mismatch");
     const assessment = checkedAssessment({ ...parts.evidence.assessment, geographic_neighborhood: parts.geography,
@@ -144,7 +148,7 @@ export function projectCustomNeighborhoodReportSection({ section, expected }) {
     requireThat(Object.keys(decision.applied).length > 0 && decisions.length === PARTS.length
       && new Set(decisions.map(([name]) => name)).size === PARTS.length
       && decisions.every(([name, accepted]) => accepted === true && PARTS.some(part => id(part) === name)), "partial_group");
-    return freeze({ status: "ready", mapper_version: CUSTOM_NEIGHBORHOOD_REPORT_MAPPER_VERSION,
+    return freeze({ status: "ready", mapper_version: mapperVersion(assessment),
       operation_id: section.operation_id, accepted_editor_revision: section.accepted_editor_revision, assessment });
   } catch (error) {
     return freeze({ status: "unavailable", reason: error.message, assessment: null });

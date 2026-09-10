@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { assessmentDate, assessmentEvidenceDigest, buildNeighborhoodAssessment, canonicalAssessmentJson } from './contract.js';
 import { assertNeighborhoodJsonbStorage } from './jsonbStorage.js';
+import { REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
@@ -47,16 +48,25 @@ export function neighborhoodMemberSetDigest(ids) {
   return digest.update(']').digest('hex');
 }
 
-function normalizedMember(value) {
+function memberProfile(value = { contract_version: 1 }) {
+  const profile = objectCopy(value, 'member_profile');
+  if (profile.contract_version === 1 && Object.keys(profile).length === 1) return profile;
+  if (profile.contract_version === 2 && profile.profile_id === REPORTED_OBSERVATION_PROFILE_ID
+      && Object.keys(profile).length === 2) return profile;
+  fail('member_profile');
+}
+
+function normalizedMember(value, version) {
   const row = objectCopy(value, 'member');
   if (Object.keys(row).some(key => !['population_id', 'member_id', 'member_unit', 'account_ids', 'member_data'].includes(key))) fail('member_field');
   text(row.population_id, 'population_id', 200); text(row.member_id, 'member_id');
-  if (!['property', 'canonical_transaction', 'allocated_property_sale', 'listing'].includes(row.member_unit)) fail('member_unit');
+  const reported = version === 2;
+  if (!(reported ? ['account', 'source_record'] : ['property', 'canonical_transaction', 'allocated_property_sale', 'listing']).includes(row.member_unit)) fail('member_unit');
   if (!Array.isArray(row.account_ids) || row.account_ids.length < 1 || row.account_ids.length > 1000 ||
-      (row.member_unit !== 'canonical_transaction' && row.account_ids.length !== 1)) fail('member_accounts');
+      (row.member_unit !== (reported ? 'source_record' : 'canonical_transaction') && row.account_ids.length !== 1)) fail('member_accounts');
   row.account_ids = row.account_ids.map(id => text(id, 'member_account', 100)).sort(compare);
   if (new Set(row.account_ids).size !== row.account_ids.length ||
-      (row.member_unit === 'property' && row.account_ids[0] !== row.member_id)) fail('member_accounts');
+      (row.member_unit === (reported ? 'account' : 'property') && row.account_ids[0] !== row.member_id)) fail('member_accounts');
   row.member_data = objectCopy(row.member_data, 'member_data');
   const refs = row.member_data.source_refs;
   if (!Array.isArray(refs) || refs.length > 1000 || new Set(refs).size !== refs.length) fail('member_sources');
@@ -85,10 +95,14 @@ function* memberBatches(members) {
  * source before constructing/enqueuing the assessment. The source metadata is
  * supplied by the caller; this helper invents no provenance or capture dates.
  */
-export function neighborhoodMemberContentDigest(members) {
+export function neighborhoodMemberContentDigest(members, profileInput) {
   if (!Array.isArray(members) || members.length > 100_000) fail('member_limit');
-  const rows = members.map(normalizedMember).sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
-  const digest = createHash('sha256').update('[');
+  const profile = memberProfile(profileInput);
+  const rows = members.map(row => normalizedMember(row, profile.contract_version))
+    .sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
+  // V1 hashes remain the exact original canonical row array. V2 additionally
+  // binds its installed observation profile, including an empty member array.
+  const digest = createHash('sha256').update(profile.contract_version === 2 ? '{"contract_version":2,"members":[' : '[');
   let bytes = 0;
   rows.forEach((row, index) => {
     if (index && row.population_id === rows[index - 1].population_id && row.member_id === rows[index - 1].member_id) fail('duplicate_member');
@@ -96,11 +110,14 @@ export function neighborhoodMemberContentDigest(members) {
     if (bytes > 32_000_000) fail('publication_bytes');
     if (index) digest.update(','); digest.update(encoded);
   });
-  return digest.update(']').digest('hex');
+  return digest.update(profile.contract_version === 2 ? `],"profile_id":${canonicalAssessmentJson(profile.profile_id)}}` : ']').digest('hex');
 }
 
 export function prepareNeighborhoodPublication(assessmentInput, members, sources) {
   const assessment = buildNeighborhoodAssessment(assessmentInput);
+  const profile = memberProfile(assessment.contract_version === 2
+    ? { contract_version: 2, profile_id: assessment.methodology.configuration.profile_id } : { contract_version: 1 });
+  const reported = profile.contract_version === 2;
   let storageBytes = assertNeighborhoodJsonbStorage(assessment);
   if (!Array.isArray(members) || members.length > 100_000 || !Array.isArray(sources) || sources.length > 1000) fail('publication_limit');
   const populations = new Map(assessment.populations.map(item => [item.id, { item, members: [], rows: [], accounts: new Set(), links: 0 }]));
@@ -108,7 +125,7 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
   let bytes = 0;
   const accountLinks = { count: 0 };
   const normalizedMembers = members.map(member => {
-    const row = normalizedMember(member);
+    const row = normalizedMember(member, profile.contract_version);
     const encoded = canonicalAssessmentJson(row);
     if (Buffer.byteLength(encoded) + 2 > 1_500_000) fail('member_row_bytes');
     bytes += Buffer.byteLength(encoded);
@@ -132,8 +149,11 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
   }).sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
   for (const { item, members: ids, accounts, links } of populations.values()) {
     const memberDigest = neighborhoodMemberSetDigest(ids);
-    if (item.completeness === 'complete' && (item.member_count !== ids.length || item.unique_property_count !== accounts.size ||
-        item.property_link_count !== links || item.member_set_sha256 !== memberDigest)) fail('population_membership_mismatch');
+    const uniqueCount = reported ? item.unique_account_count : item.unique_property_count;
+    const linkCount = reported ? item.account_link_count : item.property_link_count;
+    if (item.completeness === 'complete' && (item.member_count !== ids.length || uniqueCount !== accounts.size ||
+        linkCount !== links || item.member_set_sha256 !== memberDigest)) fail('population_membership_mismatch');
+    if (reported && ((uniqueCount !== null && uniqueCount !== accounts.size) || (linkCount !== null && linkCount !== links))) fail('population_account_counts');
     if (item.member_count !== null && item.member_count !== ids.length) fail('population_member_count');
     if (item.member_set_sha256 !== null && item.member_set_sha256 !== memberDigest) fail('population_member_digest');
   }
@@ -154,9 +174,12 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
   });
   for (const { item, rows } of populations.values()) {
     const captures = item.source_refs.map(id => bySource.get(id)?.payload).filter(payload =>
-      payload?.capture_type === 'neighborhood_population_members_v1' && payload.population_id === item.id);
+      (reported ? ['neighborhood_population_members_v1', 'neighborhood_population_members_v2'].includes(payload?.capture_type)
+        : payload?.capture_type === 'neighborhood_population_members_v1') && payload.population_id === item.id);
     if (captures.length !== 1 || captures[0].member_unit !== item.member_unit ||
-        captures[0].member_content_sha256 !== neighborhoodMemberContentDigest(rows)) fail('member_content_mismatch');
+        (reported && (captures[0].capture_type !== 'neighborhood_population_members_v2' || captures[0].contract_version !== 2
+          || captures[0].profile_id !== profile.profile_id)) ||
+        captures[0].member_content_sha256 !== neighborhoodMemberContentDigest(rows, profile)) fail('member_content_mismatch');
   }
   return freeze({ assessment, members: normalizedMembers, sources: normalizedSources });
 }
@@ -201,6 +224,38 @@ const fence = `id=$1 AND claim_token=$2 AND attempts=$3 AND status='running' AND
  */
 export function createNeighborhoodAssessmentRepository(pool) {
   if (typeof pool?.connect !== 'function' || typeof pool?.query !== 'function') fail('invalid_pool');
+  return repositoryWithTransaction(operation => transaction(pool, operation));
+}
+
+/** Explicit exclusive caller transaction only; never a simulated nested pool. */
+export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
+  if (typeof client?.query !== 'function' || typeof client?.release !== 'function') fail('caller_client_required');
+  let active = false;
+  return repositoryWithTransaction(async operation => {
+    if (active) fail('caller_client_busy');
+    active = true; let opened = false;
+    try {
+      await client.query('SAVEPOINT neighborhood_repository_owner'); opened = true;
+      const state = one(await client.query(`/* neighborhood:caller-transaction */
+        SELECT current_setting('transaction_isolation') AS isolation,current_setting('transaction_read_only') AS read_only`),
+      'caller_transaction_required');
+      if (state.isolation !== 'read committed' || state.read_only !== 'off') fail('caller_transaction_required');
+      const result = await operation(client);
+      await client.query('RELEASE SAVEPOINT neighborhood_repository_owner'); opened = false;
+      return result;
+    } catch (error) {
+      if (opened) {
+        try {
+          await client.query('ROLLBACK TO SAVEPOINT neighborhood_repository_owner');
+          await client.query('RELEASE SAVEPOINT neighborhood_repository_owner');
+        } catch (cleanup) { throw new AggregateError([error, cleanup], 'neighborhood_caller_cleanup_failed'); }
+      }
+      throw error;
+    } finally { active = false; }
+  });
+}
+
+function repositoryWithTransaction(runTransaction) {
   return {
     async enqueue(scopeInput, request) {
       const scope = scopeOf(scopeInput);
@@ -212,7 +267,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
       const payload = objectCopy(request?.payload, 'request_payload');
       const maxAttempts = integer(request?.max_attempts ?? 3, 'max_attempts', 1, 10);
       const requestDigest = assessmentEvidenceDigest({ scope, effective_date: effectiveDate, data_cutoff: cutoff, input_signature_sha256: inputSignature, payload, max_attempts: maxAttempts });
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope, effectiveDate);
         await client.query(`/* neighborhood:ensure-head */ INSERT INTO app.neighborhood_assessments
           (id, organization_id, appraisal_case_id, subject_snapshot_id, account_id) VALUES ($1,$2,$3,$4,$5)
@@ -257,9 +312,36 @@ export function createNeighborhoodAssessmentRepository(pool) {
       });
     },
 
+    async claimExact(scopeInput, { job_id, expected_request_generation, lease_seconds = 120 }) {
+      const scope = scopeOf(scopeInput), id = uuid(job_id, 'job_id');
+      const generation = integer(expected_request_generation, 'expected_request_generation', 1, 2_147_483_647);
+      integer(lease_seconds, 'lease_seconds', 15, 900);
+      return runTransaction(async client => {
+        await verifyScope(client, scope);
+        const found = one(await client.query(`/* neighborhood:exact-job-head */
+          SELECT j.assessment_id FROM app.neighborhood_assessment_jobs j
+          JOIN app.neighborhood_assessments h ON h.id=j.assessment_id
+          WHERE h.organization_id=$1 AND h.appraisal_case_id=$2 AND h.subject_snapshot_id=$3 AND h.account_id=$4
+            AND j.id=$5`, [...scopeValues(scope), id]), 'job_not_found');
+        const head = await lockedHead(client, found.assessment_id);
+        if (head.requested_job_id !== id || head.request_generation !== generation) fail('request_generation_changed');
+        const job = one(await client.query(`/* neighborhood:exact-job-lock */
+          SELECT * FROM app.neighborhood_assessment_jobs WHERE assessment_id=$1 AND id=$2 FOR UPDATE NOWAIT`,
+        [head.id, id]), 'job_not_found');
+        if (job.request_generation > generation) fail('request_generation_changed');
+        return one(await client.query(`/* neighborhood:exact-claim */
+          UPDATE app.neighborhood_assessment_jobs SET status='running',attempts=attempts+1,claim_token=$3,
+            lease_expires_at=clock_timestamp()+($4::integer*interval '1 second'),updated_at=clock_timestamp()
+          WHERE assessment_id=$1 AND id=$2 AND attempts<max_attempts AND
+            ((status IN ('queued','retry') AND run_after<=clock_timestamp())
+              OR (status='running' AND lease_expires_at<=clock_timestamp()))
+          RETURNING *`, [head.id, id, randomUUID(), lease_seconds]), 'exact_claim_unavailable');
+      });
+    },
+
     async claim({ limit = 1, lease_seconds = 120 } = {}) {
       integer(limit, 'claim_limit', 1, 10); integer(lease_seconds, 'lease_seconds', 15, 900);
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await client.query(`/* neighborhood:exhausted */ WITH expired AS (
           SELECT id FROM app.neighborhood_assessment_jobs WHERE status='running' AND lease_expires_at<=clock_timestamp()
             AND attempts>=max_attempts ORDER BY lease_expires_at,id LIMIT $1 FOR UPDATE SKIP LOCKED
@@ -280,7 +362,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
     async heartbeat(claim, { lease_seconds = 120, checkpoint = {} } = {}) {
       integer(lease_seconds, 'lease_seconds', 15, 900);
       const values = [...claimValues(claim), lease_seconds, canonicalAssessmentJson(objectCopy(checkpoint, 'checkpoint'))];
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         affected(await client.query(`/* neighborhood:heartbeat */ UPDATE app.neighborhood_assessment_jobs
           SET lease_expires_at=clock_timestamp()+$4*interval '1 second',checkpoint=$5::jsonb,updated_at=clock_timestamp()
           WHERE ${fence} RETURNING id`, values), 'claim_lost');
@@ -291,7 +373,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
       if (!/^[a-z][a-z0-9_]{0,99}$/.test(errorCode)) fail('invalid_error_code');
       integer(retry_seconds, 'retry_seconds', 1, 3600);
       const values = [...claimValues(claim), errorCode, retry_seconds];
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         affected(await client.query(`/* neighborhood:failure */ UPDATE app.neighborhood_assessment_jobs
           SET status=CASE WHEN attempts<max_attempts THEN 'retry' ELSE 'failed' END,claim_token=NULL,lease_expires_at=NULL,
             run_after=clock_timestamp()+$5*interval '1 second',last_error_code=$4,updated_at=clock_timestamp()
@@ -302,7 +384,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
     async cancel(scopeInput, jobId, { expected_request_generation: expectedGeneration } = {}) {
       const scope = scopeOf(scopeInput); jobId = uuid(jobId, 'job_id');
       integer(expectedGeneration, 'expected_request_generation', 1, 2_147_483_647);
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope);
         const head = one(await client.query(`/* neighborhood:head-by-job */ SELECT h.* FROM app.neighborhood_assessments h
           JOIN app.neighborhood_assessment_jobs j ON j.assessment_id=h.id WHERE j.id=$5
@@ -319,7 +401,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
       const prepared = prepareNeighborhoodPublication(assessmentInput, members, sources);
       const scope = scopeOf(prepared.assessment.scope);
       const values = claimValues(claim);
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope, prepared.assessment.effective_date);
         const lookup = one(await client.query('/* neighborhood:job-head */ SELECT assessment_id FROM app.neighborhood_assessment_jobs WHERE id=$1', [values[0]]), 'job_not_found');
         const head = await lockedHead(client, lookup.assessment_id);
@@ -330,7 +412,15 @@ export function createNeighborhoodAssessmentRepository(pool) {
             String(job.effective_date).slice(0, 10) !== prepared.assessment.effective_date ||
             String(job.data_cutoff).slice(0, 10) !== prepared.assessment.data_cutoff) fail('job_input_mismatch');
         const revision = integer(head.next_revision, 'next_revision', 1, 2_147_483_646);
-        const assessment = buildNeighborhoodAssessment({ ...prepared.assessment, id: head.id, revision });
+        let publicationInput = prepared.assessment;
+        if (publicationInput.contract_version === 2) {
+          // Preflight has checked these derived values. The repository now owns
+          // the real immutable revision, so recompute its group/digest rather
+          // than presenting provisional identity fields as saved facts.
+          const { input_signature_sha256, application_group, evidence_digest_sha256, ...raw } = publicationInput;
+          publicationInput = raw;
+        }
+        const assessment = buildNeighborhoodAssessment({ ...publicationInput, id: head.id, revision });
         await client.query(`/* neighborhood:revision */ INSERT INTO app.neighborhood_assessment_revisions
           (assessment_id,revision,input_signature_sha256,evidence_digest_sha256,assessment,publication_status)
           VALUES ($1,$2,$3,$4,$5::jsonb,'staging')`, [head.id, revision, assessment.input_signature_sha256, assessment.evidence_digest_sha256, canonicalAssessmentJson(assessment)]);
@@ -344,8 +434,10 @@ export function createNeighborhoodAssessmentRepository(pool) {
           await client.query(`/* neighborhood:population */ INSERT INTO app.neighborhood_assessment_populations
             (assessment_id,revision,population_id,member_unit,member_count,unique_property_count,property_link_count,completeness,member_set_sha256,population)
             VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
-          [head.id, revision, population.id, population.member_unit, population.member_count, population.unique_property_count,
-            population.property_link_count, population.completeness, population.member_set_sha256, canonicalAssessmentJson(population)]);
+          [head.id, revision, population.id, population.member_unit, population.member_count,
+            assessment.contract_version === 2 ? null : population.unique_property_count,
+            assessment.contract_version === 2 ? null : population.property_link_count,
+            population.completeness, population.member_set_sha256, canonicalAssessmentJson(population)]);
         }
         for (const batch of memberBatches(prepared.members)) {
           await client.query(`/* neighborhood:members */ INSERT INTO app.neighborhood_assessment_members
@@ -372,7 +464,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
 
     async getCurrent(scopeInput) {
       const scope = scopeOf(scopeInput);
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope);
         const result = await client.query(`/* neighborhood:current */ SELECT r.assessment FROM app.neighborhood_assessments h
           JOIN app.neighborhood_assessment_revisions r ON r.assessment_id=h.id AND r.revision=h.current_revision AND r.publication_status='published'
@@ -383,7 +475,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
 
     async getJob(scopeInput, jobId) {
       const scope = scopeOf(scopeInput); uuid(jobId, 'job_id');
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope);
         const result = await client.query(`/* neighborhood:job-status */ SELECT j.id,j.assessment_id,j.status,j.attempts,j.max_attempts,
           j.request_generation,j.result_revision,j.last_error_code,j.run_after,j.updated_at
@@ -396,7 +488,7 @@ export function createNeighborhoodAssessmentRepository(pool) {
     async getMembers(scopeInput, { assessment_id, revision, population_id, after = null, limit = 250 }) {
       const scope = scopeOf(scopeInput); uuid(assessment_id, 'assessment_id'); integer(revision, 'revision', 1, 2_147_483_647);
       text(population_id, 'population_id'); if (after !== null) text(after, 'after'); integer(limit, 'member_page_limit', 1, 500);
-      return transaction(pool, async client => {
+      return runTransaction(async client => {
         await verifyScope(client, scope);
         const result = await client.query(`/* neighborhood:member-page */ SELECT m.member_id,m.member_unit,m.account_ids,m.member_data
           FROM app.neighborhood_assessment_members m JOIN app.neighborhood_assessments h ON h.id=m.assessment_id

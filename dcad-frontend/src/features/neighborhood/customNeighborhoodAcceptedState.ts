@@ -2,6 +2,8 @@
  * equality of browser strings is not evidence authority. Never merge a partial
  * response into assignment_details or let a failed read restart legacy analysis.
  */
+import { checkReportedObservationAssessment, REPORTED_OBSERVATION_MAPPER } from './customReportedObservationPresentation.ts';
+
 export type AcceptedNeighborhoodState = {
   accountId: string; assignmentFileId: number;
   status: 'loading' | 'legacy' | 'accepted' | 'unavailable' | 'signed';
@@ -30,7 +32,7 @@ export function matchCustomNeighborhoodAcceptedResponse(input: {
   const accepted = record(neighborhood?.acceptance), snapshot = record(accepted?.snapshot);
   const projection = record(neighborhood?.report_projection), assessment = record(projection?.assessment);
   const scope = record(assessment?.scope);
-  if (!section || response?.ok !== true || response.account_id !== accountId || neighborhood?.status !== 'accepted'
+  if (!section || !assessment || response?.ok !== true || response.account_id !== accountId || neighborhood?.status !== 'accepted'
     || neighborhood.account_id !== accountId || neighborhood.assignment_file_id !== assignmentFileId
     || accepted?.assignmentFileId !== assignmentFileId || accepted.reportFileId !== neighborhood.report_file_id
     || typeof value?.operation_id !== 'string' || typeof value.attachment_id !== 'string'
@@ -40,7 +42,25 @@ export function matchCustomNeighborhoodAcceptedResponse(input: {
     || accepted.attachmentRevision !== value.attachment_revision
     || projection?.status !== 'ready' || projection.operation_id !== value.operation_id
     || projection.accepted_editor_revision !== section?.revision || scope?.account_id !== accountId
-    || scope.organization_id !== accepted.organizationId || assessment?.contract_version !== 1) return fail();
+    || scope.organization_id !== accepted.organizationId || ![1, 2].includes(Number(assessment?.contract_version))) return fail();
+  if (assessment?.contract_version !== 1) {
+    try {
+      checkReportedObservationAssessment(assessment);
+      if (projection.mapper_version !== REPORTED_OBSERVATION_MAPPER || value.schema_version !== 1) return fail();
+      const mapped = record(value.mapped_values), parts = ['geography', 'selection', 'populations', 'statistics', 'evidence'];
+      if (!mapped || Object.keys(mapped).length !== parts.length) return fail();
+      const evidence = record(record(mapped['custom-neighborhood-report:evidence'])?.value);
+      if (evidence?.mapper_version !== REPORTED_OBSERVATION_MAPPER || !sameJson(evidence.target, {
+        organization_id: scope.organization_id, account_id: accountId, report_file_id: neighborhood.report_file_id, assignment_file_id: assignmentFileId,
+      })) return fail();
+      const { geographic_neighborhood, selection, populations, statistics, ...rest } = assessment;
+      const expected = [geographic_neighborhood, selection, populations, statistics,
+        { mapper_version: REPORTED_OBSERVATION_MAPPER, target: evidence.target, assessment: rest }];
+      if (!parts.every((part, index) => sameJson(mapped[`custom-neighborhood-report:${part}`], {
+        target_key: `custom_neighborhood:${part}`, value: expected[index],
+      }))) return fail();
+    } catch { return fail(); }
+  }
   // Workfile and accepted-group reads are separate requests. Compare the entire
   // selected section, not just a revision integer reused in another assignment.
   if (!sameJson(record(snapshot?.section_value), value)) return fail();

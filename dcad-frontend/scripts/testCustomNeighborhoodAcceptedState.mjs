@@ -82,7 +82,7 @@ test('integration keeps saved group out of autosave draft and blocks late legacy
   assert.doesNotMatch(host, /if \(neighborhoodSection\)/);
   assert.match(host, /void loadCustomNeighborhoodAccepted\(accountId, selectedFile.id, neighborhoodSection\)\.then/);
   assert.doesNotMatch(host, /await loadCustomNeighborhoodAccepted/);
-  assert.match(host, /if \(!isCancelled\(\)\) setAcceptedNeighborhood\(restored\)/);
+  assert.match(host, /if \(!isCancelled\(\) && acceptedReadGeneration.current === acceptedRead\) setAcceptedNeighborhood\(restored\)/);
   assert.match(host, /enabled: legacyNeighborhoodAllowed/);
   assert.match(host, /<CustomNeighborhoodAcceptedSummary assessment=\{currentAcceptedNeighborhood.assessment\}/);
   assert.doesNotMatch(host, /setAssignmentDraft\([^;]*(?:report_projection|acceptedNeighborhood.assessment)/);

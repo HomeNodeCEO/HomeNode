@@ -113,7 +113,7 @@ test('page delegates only pure manual-editor values and keeps accepted read/hydr
   const helper = readFileSync(new URL('../src/lib/propertyReportEditableSections.ts', import.meta.url), 'utf8');
   assert.match(page, /editablePropertyReportSectionValue\(sectionKey, \{\s*detail, improvement, housing, inspectionDetails, additionalImprovements,/);
   assert.match(page, /void loadCustomNeighborhoodAccepted\(accountId, selectedFile.id, neighborhoodSection\)\.then/);
-  assert.match(page, /if \(!isCancelled\(\)\) setAcceptedNeighborhood\(restored\)/);
+  assert.match(page, /if \(!isCancelled\(\) && acceptedReadGeneration.current === acceptedRead\) setAcceptedNeighborhood\(restored\)/);
   assert.match(page, /enabled: legacyNeighborhoodAllowed/);
   assert.doesNotMatch(helper, /\b(?:fetch|useEffect|useState|setAssignmentDraft|loadCustomNeighborhoodAccepted|saveCustomAppraisalWorkfileSection)\b/);
 });

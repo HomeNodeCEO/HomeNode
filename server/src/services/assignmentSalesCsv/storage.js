@@ -106,6 +106,19 @@ async function authorize(query, scope, locking = false) {
   return owner;
 }
 
+// Internal service composition seam: related private-intake owners use the
+// same detached identity, transaction budget and signing-lock order. It is
+// never a route-supplied callback or an authorization token for later work.
+export async function withAssignmentSalesImportAccess(pool, input, permission, write, operation) {
+  if (!['read', 'write'].includes(permission) || typeof write !== 'boolean'
+    || (write && permission !== 'write') || typeof operation !== 'function') throw failure('invalid_input');
+  const scope = scopeOf(input, permission);
+  return transaction(pool, !write, async query => {
+    const owner = await authorize(query, scope, write);
+    return operation({ query, scope, owner });
+  });
+}
+
 const BATCH_COLUMNS = `b.batch_id, b.operation_id, b.report_file_id, b.assignment_file_id::text,
   b.account_id, b.file_name, b.source_sha256, b.source_byte_length, b.preparation_sha256,
   b.preparation_profile, b.preparation_version, b.stored_at, b.actor_user_id, b.row_count,

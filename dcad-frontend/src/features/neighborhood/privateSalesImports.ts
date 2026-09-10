@@ -1,4 +1,5 @@
 import { checkPrivateSalesMatchProposals } from './privateSalesMatchProposals.ts';
+import { createPrivateSalesReviewClient } from './privateSalesReview.ts';
 
 export const PRIVATE_SALES_MAX_BYTES = 8 * 1024 * 1024;
 const RESPONSE_BYTES = 8 * 1024 * 1024;
@@ -212,9 +213,14 @@ export function createPrivateSalesImportsClient(identityInput: PrivateSalesIdent
           return JSON.parse(new TextDecoder('utf-8', { fatal: true }).decode(body));
         }
         if (!response.ok) {
-          if (isJson && [400, 413, 415].includes(response.status)) {
+          if (isJson && [400, 409, 413, 415].includes(response.status)) {
             let errorBody: unknown;
             try { errorBody = await readJson(1024); } catch { /* Unknown or oversized error is never a definitive rejection. */ }
+            if (errorBody && typeof errorBody === 'object' && 'error' in errorBody
+              && response.status === 409 && ['assignment_sales_import_revision_conflict', 'assignment_sales_import_stale_match',
+                'assignment_sales_import_read_only'].includes(String(errorBody.error))) {
+              throw new PrivateSalesError('review_conflict', response.status);
+            }
             if (errorBody && typeof errorBody === 'object' && 'error' in errorBody
               && typeof errorBody.error === 'string' && INPUT_REJECTIONS.has(errorBody.error)) {
               throw new PrivateSalesError('input_rejected', response.status);
@@ -233,6 +239,7 @@ export function createPrivateSalesImportsClient(identityInput: PrivateSalesIdent
     return base + suffix + '?' + new URLSearchParams({ report_file_id: reportId, ...query }).toString();
   };
   return {
+    reviews: createPrivateSalesReviewClient(identity, { call }),
     async target(io: PrivateSalesIo) { return checkPrivateSalesTarget(await call(base + '/target', {}, io), identity); },
     async list(reportId: string, before: string | null, io: PrivateSalesIo) {
       requireValue(before === null || uuid(before), 'invalid_cursor');

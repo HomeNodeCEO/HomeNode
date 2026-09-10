@@ -624,6 +624,28 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       assert.deepEqual(geo.geometry, boundaryPolygon); assert.equal(geo.binding.assignment_revision, currentAssignmentRevision);
       assert.equal(geo.binding.target.assignment_file_id, reviewedAssignment); assert.equal(geo.binding.target.account_id, account);
       assert.equal(geo.oracle_observation.is_valid, true); assert.ok(geo.oracle_observation.postgis_version.length > 0);
+      assert.equal(geo.oracle_observation.geometry_type, 'ST_Polygon'); assert.equal(geo.oracle_observation.is_empty, false);
+      assert.equal(geo.oracle_observation.component_count, 1);
+      const recordedPoint = geo.subject_point_observation;
+      assert.equal(recordedPoint.point.status, 'represented');
+      assert.deepEqual(recordedPoint.point.geometry_input.coordinates, ['-96.6995', '32.8005']);
+      assert.equal(recordedPoint.point.geometry_input.coordinate_encoding, 'decimal_string_v1');
+      assert.equal(recordedPoint.point.geometry_input.axis_order, 'longitude_latitude');
+      assert.equal(recordedPoint.retained_subject_binding.target.subject_snapshot_id, reviewedSnapshot);
+      assert.equal(recordedPoint.retained_subject_binding.target.appraisal_case_id, reviewedCase);
+      assert.equal(recordedPoint.retained_subject_binding.target.assignment_file_id, reviewedAssignment);
+      assert.equal(recordedPoint.point.geometry_input.source_sha256, recordedPoint.retained_subject_binding.original_snapshot_row.content_sha256);
+      const originalPointBlob = await pool.query(`SELECT canonical_utf8,canonical_utf8_bytes::text
+        FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1 AND content_sha256=$2`,
+      [reviewedOrganization, recordedPoint.retained_subject_binding.original_snapshot_row.content_sha256]);
+      assert.equal(originalPointBlob.rowCount, 1);
+      assert.equal(originalPointBlob.rows[0].canonical_utf8_bytes, recordedPoint.retained_subject_binding.original_snapshot_row.canonical_utf8_bytes);
+      const originalPointRow = JSON.parse(JSON.parse(originalPointBlob.rows[0].canonical_utf8).pg_row_json);
+      const originalLocation = JSON.parse(originalPointRow.subject_data.pg_text).custom_property_snapshot.location;
+      assert.equal(originalPointRow.id, reviewedSnapshot); assert.equal(originalPointRow.appraisal_case_id, reviewedCase);
+      assert.deepEqual(recordedPoint.point.geometry_input.coordinates, [String(originalLocation.longitude), String(originalLocation.latitude)]);
+      assert.deepEqual(recordedPoint.relation, { status: 'observed', reason: null,
+        covers_recorded_subject_point: true, contains_recorded_subject_point: true });
       assert.equal(geo.binding.projected_sha256, createHash('sha256').update(geo.projection.projected_json).digest('hex'));
       assert.equal(geo.binding.projected_utf8_bytes, Buffer.byteLength(geo.projection.projected_json));
       assert.deepEqual(JSON.parse(geo.projection.projected_json),
@@ -656,11 +678,41 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
           assert.equal(resultGeo.oracle_observation.is_valid, false);
           assert.match(resultGeo.oracle_observation.validation_reason, /[Ss]elf-intersection/);
           assert.deepEqual(JSON.parse(resultGeo.projection.projected_json).neighborhood_boundary_geometry, invalidPolygon);
+          assert.equal(resultGeo.oracle_observation.covers_recorded_subject_point, null);
+          assert.equal(resultGeo.oracle_observation.contains_recorded_subject_point, null);
+          assert.deepEqual(resultGeo.subject_point_observation.relation, { status: 'unavailable', reason: 'native_geometry_invalid',
+            covers_recorded_subject_point: null, contains_recorded_subject_point: null });
         } else assert.equal(resultGeo.oracle_observation, null);
       }
       await replaceBoundary(boundaryDetails);
       assert.deepEqual(await boundaryState(), storedBoundary);
       checks.push('native self-intersection remains invalid without repair; legacy/automatic/cleared saved geometry never invokes the topology oracle');
+
+      const rectangle = (west, south, east, north) => [[west, south], [east, south], [east, north], [west, north], [west, south]];
+      for (const [name, rings, covers, contains] of [
+        ['outside', [rectangle(-96.72, 32.79, -96.71, 32.82)], false, false],
+        ['exterior edge', [rectangle(-96.6995, 32.79, -96.68, 32.82)], true, false],
+        ['hole interior', [boundaryPolygon.coordinates[0], rectangle(-96.7005, 32.7995, -96.6985, 32.8015)], false, false],
+        ['hole edge', [boundaryPolygon.coordinates[0], rectangle(-96.6995, 32.7995, -96.6985, 32.8015)], true, false],
+      ]) {
+        const geometry = { type: 'Polygon', coordinates: rings };
+        await replaceBoundary({ ...boundaryDetails, neighborhood_boundary_geometry: geometry });
+        const from = calls.length, report = (await reviewedOwner.prepareReviewedInputs(reviewedRequest)).report_preparation;
+        const currentGeo = report.report_geography;
+        assert.equal(currentGeo.status, 'manual_geometry_recorded', name);
+        assert.deepEqual(currentGeo.geometry, geometry, `${name}: no boundary repair or simplification`);
+        assert.deepEqual(currentGeo.subject_point_observation.point, recordedPoint.point, `${name}: same retained original centroid`);
+        assert.deepEqual(currentGeo.subject_point_observation.relation, { status: 'observed', reason: null,
+          covers_recorded_subject_point: covers, contains_recorded_subject_point: contains }, name);
+        assert.equal(currentGeo.oracle_observation.covers_recorded_subject_point, covers, name);
+        assert.equal(currentGeo.oracle_observation.contains_recorded_subject_point, contains, name);
+        assert.equal(calls.slice(from).filter(sql => sql.includes('report-geography-topology')).length, 1);
+        assert.ok(!calls.slice(from).some(sql => /account_locations|ST_Centroid|ST_PointOnSurface|neighborhood-(cache|membership):/i.test(sql)));
+        assert.equal(report.status, 'incomplete'); assert.equal(report.apply.status, 'blocked');
+      }
+      await replaceBoundary(boundaryDetails);
+      assert.deepEqual(await boundaryState(), storedBoundary);
+      checks.push('native ST_Covers/ST_Contains distinguish retained-centroid inside/outside/exterior edge/hole interior/hole edge without geocoding, repair or parcel-containment authority');
 
       for (const mutation of [
         { revision: currentAssignmentRevision + 1, details: boundaryDetails },
@@ -678,6 +730,37 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
         assert.deepEqual(await boundaryState(), storedBoundary);
       }
       checks.push('native final manual-boundary fence rejects separately committed assignment-revision and fixed-revision projection changes; exact owned state restored');
+
+      const snapshotState = async () => {
+        const row = await pool.query(`SELECT to_jsonb(s) AS value FROM app.appraisal_subject_snapshots s
+          WHERE id=$1 AND appraisal_case_id=$2`, [reviewedSnapshot, reviewedCase]);
+        assert.equal(row.rowCount, 1); return row.rows[0].value;
+      };
+      const snapshotBefore = await snapshotState(), movedSubject = structuredClone(snapshotBefore.subject_data);
+      assert.equal(movedSubject.custom_property_snapshot.location.longitude, -96.6995);
+      movedSubject.custom_property_snapshot.location.longitude = -96.6;
+      let pointChanged = false;
+      const movedPointOwner = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+        if (pointChanged) return;
+        const changed = await pool.query(`UPDATE app.appraisal_subject_snapshots SET subject_data=$3::jsonb
+          WHERE id=$1 AND appraisal_case_id=$2 AND subject_data=$4::jsonb`,
+        [reviewedSnapshot, reviewedCase, JSON.stringify(movedSubject), JSON.stringify(snapshotBefore.subject_data)]);
+        assert.equal(changed.rowCount, 1); pointChanged = true;
+      }), authorizeMarketData: reviewedPolicy });
+      try {
+        await assert.rejects(movedPointOwner.prepareReviewedInputs(reviewedRequest), /subject_changed/);
+        assert.ok(pointChanged, 'actual current location-only edit occurs after retained-point evaluation');
+      } finally {
+        if (pointChanged) {
+          const restored = await pool.query(`UPDATE app.appraisal_subject_snapshots SET subject_data=$3::jsonb
+            WHERE id=$1 AND appraisal_case_id=$2 AND subject_data=$4::jsonb`,
+          [reviewedSnapshot, reviewedCase, JSON.stringify(snapshotBefore.subject_data), JSON.stringify(movedSubject)]);
+          assert.equal(restored.rowCount, 1);
+        }
+        assert.deepEqual(await snapshotState(), snapshotBefore);
+      }
+      assert.deepEqual(await boundaryState(), storedBoundary);
+      checks.push('native current subject-location-only edit after point observation fails final subject fence; exact owned snapshot and boundary state restored');
     } finally {
       await replaceBoundary(originalDetails, boundaryBefore.assignment.revision);
       assert.deepEqual(await boundaryState(), boundaryBefore);

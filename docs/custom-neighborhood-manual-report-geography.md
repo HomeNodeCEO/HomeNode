@@ -48,7 +48,38 @@ into a hull or circle.
 PostGIS checks those exact coordinates for validity. An invalid shape, including
 a self-intersection, stays in the saved evidence but is unavailable as report
 geometry. The validity result and PostGIS version are retained as diagnostic
-observations, not claims of named-road alignment or subject containment.
+observations, not claims of named-road alignment or whole-parcel containment.
+
+## Relation to the retained subject location
+
+The internal owner also supplies the subject already reopened from the exact
+retained capture. The existing recorded-point adapter verifies its original
+snapshot representation and produces longitude/latitude decimal strings. It does
+not query the latest account location, geocode the address or accept a point from
+the browser. The original snapshot reference, complete target and representation
+limitations remain attached to the observation. A different case or snapshot in
+the same file cannot reuse this observation during report projection.
+
+The existing bounded PostGIS query checks that same saved polygon against the
+represented point. It records two different predicates: coverage includes a point
+on an exterior or hole boundary, whereas strict containment requires the point
+to be inside the polygon's interior. A point inside a cut-out hole is neither
+covered nor contained. See the official [ST_Covers documentation](https://postgis.net/docs/ST_Covers.html).
+The predicates run only after actual validity and nonempty single-Polygon checks;
+invalid geometry does not produce a guessed false or true spatial relationship.
+
+Inside, outside and border results are diagnostic observations. A valid drawing
+is retained unchanged even when the recorded point falls outside it. Missing or
+unsupported recorded locations remain unavailable, not coordinates at zero or a
+replacement geocoder result. The final subject-current check rejects a concurrent
+location change just as it rejects any other consumed snapshot change.
+
+This is coverage of a retained recorded centroid, not proof that the complete
+subject parcel is contained, the centroid is independently verified, or the
+geometry is appropriate as of the appraisal date. Consequently the assessment's
+whole-subject validation remains unknown and the report group remains incomplete.
+Older pure callers that omit the optional retained subject preserve their exact
+previous output shape and evidence hashes.
 
 ## Same-state report bundle
 
@@ -76,6 +107,10 @@ automatic → clear → reset path without a generation record. Pure and owner t
 cover stored intent, malformed and missing fields, exact geometry and cardinal
 preservation, and concurrent edits. Native tests separately exercise the actual
 bounded projection and PostGIS validity query on an isolated local database.
+The retained-point tests additionally distinguish exterior and hole boundaries
+from strict interior, retain exact decimal inputs and source identity, and reject
+same-file case/snapshot rebinding. Native tests execute the point predicates on
+actual PostGIS and check a concurrent subject-location change separately.
 Synthetic SQL responses or handler execution are not live browser verification,
 source rights, appraiser authorization or production readiness.
 
@@ -87,3 +122,12 @@ It confirmed valid holes, an invalid self-intersection without repair, scoped
 projection/hash behavior and concurrent assignment changes. Exact owned test
 state was restored. Interactive production-browser verification remains
 unobserved and protected remote CI remains required before merge.
+
+The subsequent retained-point verification passed 163 focused preparation and
+geography tests, 5,259 full server tests (21 skipped), 1,259 frontend tests,
+TypeScript, production build and all bundle/source/lint gates. The fresh native
+run applied the same 79 unchanged canonical migrations and passed 29 coordinator
+groups plus the existing policy, checkpoint, review and source-reader groups.
+It separately verified exact snapshot restoration after the location-change test.
+Those results establish local regression/database coverage, not live browser or
+production readiness; this change still requires its protected remote checks.

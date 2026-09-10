@@ -186,13 +186,29 @@ async function reportGeographyState(client, input) {
   return { assignment_revision: row.assignment_revision, projection: { details_type: row.details_type,
     projected_utf8_bytes: row.projected_utf8_bytes, projected_sha256: row.projected_sha256, projected_json: row.projected_json } };
 }
-async function reportGeometryTopology(client, geometry) {
+async function reportGeometryTopology(client, geometry, point) {
   // Only the pure module's bounded structural Polygon admission reaches PostGIS.
   // Validate exactly those saved coordinates; never ST_MakeValid, snap or repair.
+  // The point is represented from the SAME retained subject snapshot used for
+  // discovery, not a mutable account location, browser input or geocoder result.
+  // Keep border coverage distinct from strict interior containment. Do not run
+  // spatial predicates on invalid geometry (including self-intersections).
   return one(await client.query(`/* custom-cohort-capture:report-geography-topology */
-    WITH supplied AS MATERIALIZED (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::jsonb),4326) AS geom)
-    SELECT ST_IsValid(geom) AS is_valid,ST_IsValidReason(geom) AS validation_reason,
-      postgis_lib_version() AS postgis_version FROM supplied`, [canonicalAssessmentJson(geometry)]));
+    WITH supplied AS MATERIALIZED (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::jsonb),4326) AS geom),
+    checked AS MATERIALIZED (SELECT geom,ST_IsValid(geom) AS is_valid,
+      ST_IsValidReason(geom) AS validation_reason,ST_GeometryType(geom) AS geometry_type,
+      ST_IsEmpty(geom) AS is_empty,ST_NumGeometries(geom) AS component_count FROM supplied)
+    SELECT is_valid,validation_reason,geometry_type,is_empty,component_count,
+      postgis_lib_version() AS postgis_version,
+      CASE WHEN is_valid AND NOT is_empty AND geometry_type='ST_Polygon' AND component_count=1
+        AND $2::double precision IS NOT NULL AND $3::double precision IS NOT NULL
+        THEN ST_Covers(geom,ST_SetSRID(ST_MakePoint($2::double precision,$3::double precision),4326))
+        ELSE NULL END AS covers_recorded_subject_point,
+      CASE WHEN is_valid AND NOT is_empty AND geometry_type='ST_Polygon' AND component_count=1
+        AND $2::double precision IS NOT NULL AND $3::double precision IS NOT NULL
+        THEN ST_Contains(geom,ST_SetSRID(ST_MakePoint($2::double precision,$3::double precision),4326))
+        ELSE NULL END AS contains_recorded_subject_point FROM checked`,
+    [canonicalAssessmentJson(geometry), point?.coordinates[0] ?? null, point?.coordinates[1] ?? null]));
 }
 
 function operationBudget(options = {}) {
@@ -591,9 +607,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         const admitted = prepareCustomCohortReportGeography({
           target: { organization_id: target.organization_id, report_file_id: target.report_file_id,
             assignment_file_id: input.assignmentFileId, account_id: input.accountId },
-          ...savedBoundary, captured_at: derivedAt });
+          ...savedBoundary, captured_at: derivedAt, retained_subject: retained.retained.retained_inputs.subject });
         const topology = admitted.geometry_for_validation === null ? null
-          : await reportGeometryTopology(client, admitted.geometry_for_validation);
+          : await reportGeometryTopology(client, admitted.geometry_for_validation, admitted.subject_point_for_validation);
         reportGeography = completeCustomCohortReportGeography(admitted, topology);
       }
       return { target, scopeJson, workspace, review, retained, reportEditor, savedBoundary, reportGeography, now, derivedAt };

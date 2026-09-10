@@ -3,6 +3,7 @@ import test from 'node:test';
 import { createHash } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { buildCustomCohortSupportedInputs } from '../src/services/neighborhoodAssessment/customCohortSupportedInputs.js';
+import { representCustomCohortSubjectPoint } from '../src/services/neighborhoodAssessment/customCohortSubjectPoint.js';
 import { supportedInputsFixture } from './fixtures/customCohortSupportedInputsFixture.js';
 
 const NOW = '2026-09-09T12:00:00.123456Z';
@@ -19,12 +20,15 @@ const MANUAL = { neighborhood_boundary_source: 'appraiser_defined_area_manual_v2
 const one = value => ({ rowCount: value === null ? 0 : 1, rows: value === null ? [] : [structuredClone(value)] });
 const sha = value => createHash('sha256').update(value).digest('hex');
 const writes = /\b(?:INSERT\s+INTO|UPDATE\s+app\.|DELETE\s+FROM|CREATE\s+TABLE|DROP\s+TABLE)\b/i;
+const oracle = (change = {}) => ({ is_valid: true, validation_reason: 'Valid Geometry', postgis_version: 'synthetic-query-fixture',
+  geometry_type: 'ST_Polygon', is_empty: false, component_count: 1,
+  covers_recorded_subject_point: true, contains_recorded_subject_point: true, ...change });
 
 // The actual source capture/retention/review and owner modules run. These query
 // rows model only a bounded DB projection and a PostGIS answer; native tests
 // separately execute PostgreSQL text hashing and geometry validation.
 async function setup({ boundary = MANUAL, reviewed = false, afterFirstCommit,
-  topology = { is_valid: true, validation_reason: 'Valid Geometry', postgis_version: 'synthetic-query-fixture' },
+  topology = oracle(),
   afterTopology, policy } = {}) {
   const f = await supportedInputsFixture({ assignmentFileId: '41', saleCount: 1 });
   if (reviewed) await f.reviewAll();
@@ -71,7 +75,9 @@ async function setup({ boundary = MANUAL, reviewed = false, afterFirstCommit,
       if (text.includes('custom-cohort-capture:report-geography-topology')) {
         assert.equal(phase, 1, 'topology is checked once against the exact initial projected geometry');
         assert.deepEqual(JSON.parse(values[0]), JSON.parse(state.boundary.projected_json).neighborhood_boundary_geometry);
+        assert.deepEqual(values.slice(1), ['-96.65', '32.91'], 'exact retained decimal longitude/latitude, never a new geocoder result');
         assert.match(text, /ST_IsValid\(geom\)/); assert.match(text, /ST_IsValidReason\(geom\)/);
+        assert.match(text, /ST_Covers\(/); assert.match(text, /ST_Contains\(/);
         assert.doesNotMatch(text, /ST_MakeValid|ST_Buffer|ST_Snap/i);
         if (afterTopology) await afterTopology();
         return one(state.topology);
@@ -104,6 +110,14 @@ test('owner uses exact saved manual Polygon with holes, isolated source binding 
   assert.equal(report.report_geography.binding.assignment_revision, 5);
   assert.equal(report.report_geography.binding.projected_sha256, f.state.boundary.projected_sha256);
   assert.equal(report.report_geography.binding.captured_at, '2026-09-09T12:00:00.123Z');
+  const pointObservation = report.report_geography.subject_point_observation;
+  assert.deepEqual(pointObservation.retained_subject_binding, {
+    target: f.f.input.retained_inputs.subject.target,
+    original_snapshot_row: f.f.input.retained_inputs.subject.original_snapshot_row,
+  });
+  assert.deepEqual(pointObservation.point, representCustomCohortSubjectPoint(f.f.input.retained_inputs.subject));
+  assert.deepEqual(pointObservation.relation, { status: 'observed', reason: null,
+    covers_recorded_subject_point: true, contains_recorded_subject_point: true });
   assert.deepEqual(report.assessment.geographic_neighborhood.geometry, POLYGON);
   assert.deepEqual(report.assessment.geographic_neighborhood.cardinal_summaries,
     { north: 'Literal north note', east: null, south: null, west: null });
@@ -123,6 +137,8 @@ test('owner uses exact saved manual Polygon with holes, isolated source binding 
   }
   assert.ok(f.state.calls.findIndex(c => c.text.includes(':time')) < f.state.calls.findIndex(c => c.text.includes('report-geography-topology')));
   assert.equal(f.state.policyVisits, 2); f.unchanged();
+  assert.ok(!f.state.calls.some(c => /account_locations|ST_Centroid|ST_PointOnSurface|neighborhood-(cache|membership):/i.test(c.text)),
+    'owner preparation must not replace the recorded point with fresh cache/geocoder geometry');
 });
 
 for (const [name, change] of [
@@ -159,6 +175,8 @@ for (const [name, boundary, status] of [
   const f = await setup({ boundary }), result = await f.owner.prepareReviewedInputs(f.request);
   const geo = result.report_preparation.report_geography;
   assert.equal(geo.status, status); assert.equal(geo.geometry, null); assert.equal(geo.oracle_observation, null);
+  assert.deepEqual(geo.subject_point_observation.relation, { status: 'unavailable', reason: 'manual_geometry_not_admitted',
+    covers_recorded_subject_point: null, contains_recorded_subject_point: null });
   assert.equal(topologyCalls(f.state).length, 0); assert.equal(projectionCalls(f.state).length, 2); f.unchanged();
 });
 
@@ -166,12 +184,57 @@ test('self-intersecting manual polygon keeps an actual false-oracle diagnosis an
   const boundary = { ...MANUAL, neighborhood_boundary_geometry: { type: 'Polygon', coordinates: [
     [[-97, 32], [-96, 33], [-97, 33], [-96, 32], [-97, 32]],
   ] } };
-  const f = await setup({ boundary, topology: { is_valid: false, validation_reason: 'Self-intersection[-96.5 32.5]',
-    postgis_version: 'synthetic-query-fixture' } });
+  const f = await setup({ boundary, topology: oracle({ is_valid: false, validation_reason: 'Self-intersection[-96.5 32.5]',
+    covers_recorded_subject_point: null, contains_recorded_subject_point: null }) });
   const result = await f.owner.prepareReviewedInputs(f.request), geo = result.report_preparation.report_geography;
   assert.equal(geo.status, 'invalid_topology'); assert.equal(geo.geometry, null);
   assert.equal(geo.oracle_observation.is_valid, false); assert.equal(topologyCalls(f.state).length, 1);
+  assert.equal(geo.oracle_observation.covers_recorded_subject_point, null);
+  assert.equal(geo.oracle_observation.contains_recorded_subject_point, null);
+  assert.deepEqual(geo.subject_point_observation.relation, { status: 'unavailable', reason: 'native_geometry_invalid',
+    covers_recorded_subject_point: null, contains_recorded_subject_point: null });
   assert.deepEqual(JSON.parse(geo.projection.projected_json), boundary); f.unchanged();
+});
+
+const rectangle = (west, south, east, north) => [[west, south], [east, south], [east, north], [west, north], [west, south]];
+for (const [name, rings, covers, contains] of [
+  ['inside', [rectangle(-97, 32, -96, 33)], true, true],
+  ['outside', [rectangle(-97, 32, -96.8, 33)], false, false],
+  ['on exterior edge', [rectangle(-96.65, 32, -96, 33)], true, false],
+  ['in hole', [rectangle(-97, 32, -96, 33), rectangle(-96.7, 32.8, -96.6, 32.95)], false, false],
+  ['on hole edge', [rectangle(-97, 32, -96, 33), rectangle(-96.65, 32.8, -96.6, 32.95)], true, false],
+]) test(`owner preserves separate recorded-centroid relations ${name} without promoting parcel containment`, async () => {
+  const geometry = { type: 'Polygon', coordinates: rings };
+  const f = await setup({ reviewed: true, boundary: { ...MANUAL, neighborhood_boundary_geometry: geometry },
+    topology: oracle({ covers_recorded_subject_point: covers, contains_recorded_subject_point: contains }) });
+  const report = (await f.owner.prepareReviewedInputs(f.request)).report_preparation;
+  assert.equal(report.report_geography.status, 'manual_geometry_recorded');
+  assert.deepEqual(report.report_geography.geometry, geometry);
+  assert.deepEqual(report.report_geography.subject_point_observation.relation, { status: 'observed', reason: null,
+    covers_recorded_subject_point: covers, contains_recorded_subject_point: contains });
+  assert.equal(report.assessment.geographic_neighborhood.validation.contains_subject, null);
+  assert.equal(report.assessment.geographic_neighborhood.validation.valid, null);
+  assert.equal(report.status, 'incomplete'); assert.equal(report.apply.status, 'blocked');
+  assert.deepEqual(report.candidate.suggestions, []); f.unchanged();
+});
+
+test('a location-only current snapshot change after initial COMMIT cannot replace the retained point or pass the final subject fence', async () => {
+  const f = await setup({ afterFirstCommit: ({ f }) => {
+    const row = f.base.f.state.input.snapshot.subject_data, value = JSON.parse(row.pg_text);
+    value.custom_property_snapshot.location.longitude = -96.66; row.pg_text = JSON.stringify(value);
+  } });
+  await assert.rejects(f.owner.prepareReviewedInputs(f.request), /subject_changed/);
+  assert.equal(topologyCalls(f.state).length, 1);
+  assert.deepEqual(topologyCalls(f.state)[0].values.slice(1), ['-96.65', '32.91']);
+  finalRollback(f.state); f.unchanged();
+});
+
+test('caller point/oracle replacements cannot enter the internal owner request', async () => {
+  const f = await setup();
+  for (const key of ['retained_subject', 'subject_point', 'subject_point_observation', 'topology']) {
+    await assert.rejects(f.owner.prepareReviewedInputs({ ...f.request, [key]: {} }), /invalid_input/);
+  }
+  assert.equal(f.state.connects, 0); f.unchanged();
 });
 
 for (const [name, change] of [

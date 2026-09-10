@@ -1,4 +1,5 @@
 import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
+import { isCustomCohortPreviewCapacityError } from './customCohortPreviewTransport.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
 
 /** Request lifecycle only: this never writes a workfile or authorizes report Apply.
@@ -45,7 +46,7 @@ export interface CustomCohortPreviewState {
   readonly freshness: 'none' | 'current' | 'stale';
   readonly requested: CustomCohortPreviewInput | null;
   readonly group: CustomCohortPreviewGroup | null;
-  readonly error: 'invalid_input' | 'request_failed' | 'request_timeout' | 'invalid_response' | null;
+  readonly error: 'invalid_input' | 'request_failed' | 'request_timeout' | 'invalid_response' | 'capacity_exceeded' | null;
 }
 interface Options {
   transport: (request: CustomCohortPreviewRequest, options: { signal: AbortSignal }) => Promise<unknown>;
@@ -296,10 +297,11 @@ export function createCustomCohortPreviewController(options: Options) {
       cached = group.parcel_map.status === 'available' ? group.parcel_map : null;
       if (deadline !== null) { options.timer.clear(deadline.handle); deadline = null; }
       abort = null; publish({ status: 'ready', freshness: 'current', requested: prepared.input, group, error: null });
-    } catch {
+    } catch (error) {
       if (!isCurrent()) return;
       if (deadline !== null) { options.timer.clear(deadline.handle); deadline = null; }
-      abort = null; publish({ ...state, status: 'failed', freshness: state.group === null ? 'none' : 'stale', error: phase });
+      abort = null; publish({ ...state, status: 'failed', freshness: state.group === null ? 'none' : 'stale',
+        error: phase === 'request_failed' && isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : phase });
     }
   };
   return Object.freeze({

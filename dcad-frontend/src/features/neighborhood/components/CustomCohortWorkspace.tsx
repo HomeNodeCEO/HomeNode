@@ -3,6 +3,7 @@ import { requestCustomCohortObservationPreview, requestCustomCohortOperation } f
 import { createCustomCohortPreviewController } from '../customCohortPreviewController';
 import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
+import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
   CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
@@ -106,8 +107,10 @@ function WorkspaceSession(props: Props) {
       // Begin broad: all retained discovered accounts, including unresolved
       // groups. No sale-count target and no unsupported automatic recommendation.
       setCatalog(checked); setIncluded(customCohortCatalogGroupIds(checked)); setRevision(1);
-    }).catch(() => {
-      if (active && !abort.signal.aborted) setCatalogError('Recorded groups are unavailable. The saved report has not changed.');
+    }).catch(error => {
+      if (active && !abort.signal.aborted) setCatalogError(isCustomCohortPreviewCapacityError(error)
+        ? 'This captured study exceeds the preview capacity even before groups are selected. Its groups cannot be loaded here; retrying the same study may reach the same limit. No selection was substituted and this read has not applied anything to the report.'
+        : 'Recorded groups are unavailable. The saved report has not changed.');
     }).finally(() => clearTimeout(timeout));
     return () => { active = false; clearTimeout(timeout); abort.abort(); };
   }, [accountId, assignmentFileId, contextRef, controlled, input, reload]);
@@ -220,7 +223,8 @@ function WorkspaceSession(props: Props) {
           : blockedReason === 'reload_required' ? 'Saved choices need to be reloaded before continuing. Any displayed map and statistics still match the preceding selection.'
           : blockedReason === 'pending_capture' ? 'Resume the saved capture before changing groups. Any displayed map and statistics still match the preceding selection.'
           : blockedReason === 'read_only' ? 'Neighborhood selection is read-only. Any displayed map and statistics reflect the saved selection.'
-          : pending ? 'Updating the map and statistics together…' : preview.status === 'failed'
+          : pending ? 'Updating the map and statistics together…' : preview.error === 'capacity_exceeded'
+          ? 'This selection exceeds the preview capacity. Choose fewer recorded groups, use “Exclude all” and include groups individually, or try the subject’s recorded group. Any displayed map and statistics still represent the preceding selection, not these choices. No groups were automatically removed.' : preview.status === 'failed'
           ? 'The preview could not update. Any displayed map and statistics are from the preceding selection.'
           : current ? 'Map and statistics match the current preview selection.' : 'Preparing observations…'}
       </p>

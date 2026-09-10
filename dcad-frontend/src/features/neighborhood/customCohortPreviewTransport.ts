@@ -11,6 +11,13 @@ const ERROR_BYTES = 16_000;
 const STREAM_CHUNKS = 65_536;
 const encoder = new TextEncoder();
 const abortError = () => new DOMException('Neighborhood preview request cancelled', 'AbortError');
+/** Only a settled, exact server refusal (or its sanitized workspace equivalent)
+ * identifies computed preview capacity. Timeouts and local decoder limits do not. */
+export function isCustomCohortPreviewCapacityError(error: unknown): boolean {
+  return error instanceof Error && 'status' in error && error.status === 422
+    && (('errorCode' in error && error.errorCode === 'neighborhood_preview_capacity_exceeded')
+      || ('workspaceCode' in error && error.workspaceCode === 'preview_capacity_exceeded'));
+}
 const stop = (stream: ReadableStream<Uint8Array> | null) => { void stream?.cancel().catch(() => {}); };
 function checkSignal(signal: AbortSignal) { if (signal.aborted) throw abortError(); }
 function isAbort(error: unknown, signal: AbortSignal) {

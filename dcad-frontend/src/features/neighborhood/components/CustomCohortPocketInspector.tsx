@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortMembers } from '../customCohortPreviewApi';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
+import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortSummaryResponse, fingerprintCustomCohortSelection } from '../customCohortPreviewController';
 import type { CustomCohortPreviewInput } from '../customCohortPreviewController';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
@@ -58,7 +59,7 @@ function InspectorSession(props: Props) {
   const [input] = useState(() => ({ ...props.input,
     selection: selectionFromRecordedGroups(props.catalog, [props.pocketId], 1) }));
   const [group, setGroup] = useState<ReturnType<typeof checkCustomCohortSummaryResponse> | null>(null);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<'request_failed' | 'capacity_exceeded' | null>(null);
   const [retry, setRetry] = useState(0);
   const completed = useRef(false);
   const failedRetry = useRef<number | null>(null);
@@ -68,8 +69,8 @@ function InspectorSession(props: Props) {
   useEffect(() => {
     if (paused || completed.current || failedRetry.current === retry) return;
     let active = true; const abort = new AbortController();
-    setGroup(null); setError(false);
-    const timeout = setTimeout(() => { abort.abort(); if (active) { failedRetry.current = retry; setError(true); } }, 65_000);
+    setGroup(null); setError(null);
+    const timeout = setTimeout(() => { abort.abort(); if (active) { failedRetry.current = retry; setError('request_failed'); } }, 65_000);
     void (async () => {
       const hash = await fingerprintCustomCohortSelection(input);
       if (!active || abort.signal.aborted) return;
@@ -80,7 +81,8 @@ function InspectorSession(props: Props) {
       if (omitted?.status !== 'omitted' || omitted.reason !== 'geometry_not_requested') throw new Error('Unexpected inspection geometry');
       const checked = checkCustomCohortSummaryResponse(value, input, hash);
       completed.current = true; setGroup(checked);
-    })().catch(() => { if (active && !abort.signal.aborted) { failedRetry.current = retry; setError(true); } }).finally(() => clearTimeout(timeout));
+    })().catch(error => { if (active && !abort.signal.aborted) { failedRetry.current = retry;
+      setError(isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : 'request_failed'); } }).finally(() => clearTimeout(timeout));
     return () => { active = false; clearTimeout(timeout); abort.abort(); };
   }, [input, retry, paused]);
   return <section className="space-y-2 rounded-xl border border-violet-200 p-3 print:hidden" aria-label={`Inspect ${props.label}`}>
@@ -88,7 +90,9 @@ function InspectorSession(props: Props) {
     <p className="text-sm">Independent inspection only. Opening this group does not include or exclude it.</p>
     {paused && <p role="status">Group inspection is paused while the report is being saved or finalized. Any displayed observations are retained from this context.</p>}
     {!group && !error && !paused && <p role="status">Loading this group’s observations…</p>}
-    {error && <div role="alert"><p>This group could not be inspected. The main selection has not changed.</p>
+    {error && <div role="alert"><p>{error === 'capacity_exceeded'
+      ? 'This group exceeds the preview capacity and cannot be inspected here. Try another recorded group; record paging does not reduce this summary limit. The main selection has not changed.'
+      : 'This group could not be inspected. The main selection has not changed.'}</p>
       <button type="button" className="hn-action-secondary btn btn-sm normal-case" disabled={paused}
         onClick={() => { if (!paused) setRetry(n => n + 1); }}>Retry inspection</button></div>}
     {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly />}

@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -85,6 +86,7 @@ function harness(name = 'CustomCohortWorkspace') {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortPreviewApi') return api;
+    if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
     if (key === '../customCohortPocketCatalog') return catalogHelpers;
     if (key === '../customCohortCadEvidence') return cadEvidenceHelpers;
     if (key === '../customCohortPreviewController') return { ...controller,
@@ -101,7 +103,7 @@ function harness(name = 'CustomCohortWorkspace') {
     effects.splice(0).forEach(fn => fn());
   }
   function flush() { let n = 0; while (dirty) { assert.ok(++n < 20, 'No render loop'); render(); } }
-  return { calls, catalogCalls, intents, previewTransport,
+  return { calls, catalogCalls, intents, previewTransport, api,
     props(ids = [groupId(1)], revision = 7) { return { ...input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'session-1',
       workspace: { catalog, selection: { revision, included_recorded_group_ids: ids }, saving: false,
         previewTransport, onSelectionIntent: value => intents.push(value) } }; },
@@ -135,6 +137,63 @@ test('controlled restored empty selection stays empty and makes no catalog read'
   assert.deepEqual(h.calls[0].request.selection, { revision: 7, pockets: [] }); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.checked === false)); h.unmount();
+});
+
+test('capacity refusal preserves stale map and stats, and narrowing stays an explicit save-gated intent', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props([groupId(1)], 7)); await h.tick(); await h.complete();
+  const old = h.child('CustomCohortStatistics').group;
+  h.render(h.props([groupId(1), groupId(2)], 8)); await h.tick();
+  h.calls[1].reject(Object.assign(new Error('SECRET'), { status: 422, workspaceCode: 'preview_capacity_exceeded' })); await h.drain();
+  assert.match(h.text(), /selection exceeds the preview capacity/); assert.match(h.text(), /No groups were automatically removed/);
+  assert.doesNotMatch(h.text(), /SECRET|Map and statistics match the current preview selection/);
+  assert.equal(h.child('CustomCohortStatistics').group, old); assert.equal(h.child('CustomCohortParcelMap').group, old);
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'stale');
+  assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.disabled === false));
+  h.render(h.props([groupId(1), groupId(2)], 8)); await h.tick(); assert.equal(h.calls.length, 2); assert.equal(h.intents.length, 0);
+  h.click('Exclude all'); assert.deepEqual(h.intents, [[]]); assert.equal(h.calls.length, 2);
+  const saving = h.props([groupId(1), groupId(2)], 8); saving.workspace.saving = true; h.render(saving);
+  h.click('Preview subject’s recorded group'); await h.tick(); assert.deepEqual(h.intents, [[]]); assert.equal(h.calls.length, 2);
+  assert.equal(h.child('CustomCohortStatistics').group, old);
+  h.render(h.props([], 9)); await h.tick(); assert.deepEqual(h.calls[2].request.selection, { revision: 9, pockets: [] });
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'stale'); await h.complete(2);
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+  assert.equal(h.child('CustomCohortStatistics').group.binding.selectionRevision, 9);
+  assert.equal(h.child('CustomCohortParcelMap').group, h.child('CustomCohortStatistics').group);
+  h.click('Preview subject’s recorded group'); assert.deepEqual(h.intents, [[], [groupId(1)]]);
+});
+
+test('capacity retry does not silently narrow or increment the saved revision', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props([groupId(1), groupId(2)], 17)); await h.tick();
+  h.calls[0].reject(Object.assign(new Error('SECRET'), { status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' })); await h.drain();
+  assert.equal(h.child('CustomCohortParcelMap'), undefined); assert.equal(h.child('CustomCohortStatistics').group, null);
+  h.click('Retry preview'); await h.tick();
+  assert.deepEqual(h.calls[1].request.selection, h.calls[0].request.selection);
+  assert.equal(h.intents.length, 0); assert.equal(h.catalogCalls.length, 0);
+});
+
+test('independent capacity refusal does not substitute a summary, load members or change inclusion', { timeout: 10000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport };
+  h.render(props); await h.waitForRequest(0);
+  h.calls[0].reject(Object.assign(new Error('SECRET'), { status: 422, workspaceCode: 'preview_capacity_exceeded' })); await h.drain();
+  assert.match(h.text(), /group exceeds the preview capacity/); assert.match(h.text(), /main selection has not changed/);
+  assert.doesNotMatch(h.text(), /SECRET/); assert.equal(h.child('CustomCohortStatistics'), undefined);
+  assert.equal(h.child('CustomCohortMemberBrowser'), undefined); assert.equal(h.intents.length, 0);
+  h.render({ ...props }); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
+  h.render({ ...props, paused: true }); h.click('Retry inspection'); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
+  h.render(props); h.click('Retry inspection'); await h.waitForRequest(1);
+  assert.deepEqual(h.calls[1].request, h.calls[0].request); await h.complete(1); assert.ok(h.child('CustomCohortStatistics'));
+});
+
+test('standalone catalog capacity is explicit and cannot invent all/empty groups or auto-retry', async t => {
+  const h = harness(); t.after(() => h.unmount()); let calls = 0;
+  h.api.requestCustomCohortOperation = async () => { calls++; throw Object.assign(new Error('SECRET'), {
+    status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' }); };
+  const props = h.props(); delete props.workspace; h.render(props); await h.drain(); await h.tick();
+  assert.equal(calls, 1); assert.equal(h.calls.length, 0); assert.equal(h.intents.length, 0);
+  assert.match(h.text(), /even before groups are selected/); assert.doesNotMatch(h.text(), /SECRET/);
+  assert.ok(!h.nodes().some(node => node.props?.type === 'checkbox'));
+  h.render({ ...props }); await h.drain(); assert.equal(calls, 1);
 });
 test('selection controls emit only intent; changed owner IDs and revision drive the next preview', async () => {
   const h = harness(); h.render(h.props()); await h.tick(); await h.complete();

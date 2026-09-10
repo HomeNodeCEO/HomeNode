@@ -204,6 +204,70 @@ function harness(t, db, initialSection, overrides = {}) {
 }
 const kinds = db => db.calls.map(call => call.kind);
 
+test('capacity after new capture preserves pending UUID, old study, exact reload and explicit set-aside CAS', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('catalog', (call, respond) => call.body.context_ref.context_id === OLD ? respond()
+    : json({ error: 'neighborhood_preview_capacity_exceeded', detail: 'SECRET' }, 422));
+  h.click('Capture a new 3-mile study'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'save', 'capture', 'catalog']);
+  const pending = copy(db.file(TARGET).section.value.pending_capture), revision = db.file(TARGET).section.revision;
+  assert.ok(pending.operation_id); assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.match(h.text(), /exceeds the preview capacity before its recorded groups can be loaded/);
+  assert.match(h.text(), /If the previous study reopens/); assert.doesNotMatch(h.text(), /SECRET/);
+  assert.equal(h.workspace().workspace.blockedReason, 'reload_required'); assert.equal(await h.controls.flush(), false);
+  assert.equal(h.adoption(), undefined); assert.equal(h.button('Set aside pending capture').props.disabled, true);
+  h.button('Resume saved capture').props.onClick(); await h.settle(); assert.equal(kinds(db).length, 4);
+  h.click('Reload saved choices'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'save', 'capture', 'catalog', 'read', 'catalog']);
+  assert.deepEqual(db.file(TARGET).section.value.pending_capture, pending);
+  assert.equal(h.workspace().workspace.blockedReason, 'pending_capture'); assert.equal(await h.controls.flush(), false);
+  h.click('Set aside pending capture'); await h.settle();
+  const saves = db.calls.filter(call => call.kind === 'save'); assert.equal(saves.length, 2);
+  assert.equal(saves[1].body.expected_revision, revision); assert.equal(saves[1].body.value.pending_capture, null);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.equal(await h.controls.flush(), true); assert.equal(h.workspace().workspace.blockedReason ?? null, null);
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(db.maxOpen, 1);
+});
+
+test('catalog capacity on reopen does not promise a working new-study escape or bypass recovery', async t => {
+  const initial = activeSection([]), db = server(initial);
+  db.overrides.set('catalog', () => json({ error: 'neighborhood_preview_capacity_exceeded' }, 422));
+  const h = harness(t, db, initial); await h.settle();
+  assert.match(h.text(), /Retrying the same oversized study may reach the same limit/);
+  assert.equal(h.workspace(), undefined); assert.equal(h.adoption(), undefined); assert.equal(await h.controls.flush(), false);
+  assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
+  assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(db.calls[0].body.selection.pockets, []);
+  h.render({ ...h.props }); await h.settle(); assert.deepEqual(kinds(db), ['catalog']);
+  h.click('Reload saved choices'); await h.settle(); assert.deepEqual(kinds(db), ['catalog', 'read', 'catalog']);
+  assert.deepEqual(db.file(TARGET).section, initial); assert.equal(await h.controls.flush(), false);
+});
+
+test('settled preview capacity does not block explicit narrowing but preserves save and report quiescence', async t => {
+  const initial = activeSection([groupId(1), groupId(2)]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('preview', () => json({ error: 'neighborhood_preview_capacity_exceeded' }, 422));
+  const input = { accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId, contextRef: context(OLD),
+    selection: { revision: 9, pockets: [] }, include_map: true };
+  await assert.rejects(h.workspace().workspace.previewTransport(input, { signal: new AbortController().signal }),
+    error => error.workspaceCode === 'preview_capacity_exceeded' && error.status === 422);
+  await h.settle(); assert.equal(h.workspace().workspace.blockedReason ?? null, null);
+  assert.equal(await h.controls.flush(), true, 'The saved intent is flushed, not a promise that its preview succeeded');
+  assert.equal(h.adoption().props.workspaceRevision, initial.revision);
+  const held = deferred(); db.overrides.set('save', async (_call, respond) => { await held.promise; return respond(); });
+  h.select([]); await h.settle(); assert.equal(h.workspace().workspace.saving, true); assert.equal(h.adoption(), undefined);
+  const flush = h.controls.flush(); let finished = false; void flush.then(() => { finished = true; }); await h.settle();
+  assert.equal(finished, false); assert.deepEqual(db.file(TARGET).section, initial);
+  held.resolve(); assert.equal(await flush, true); await h.settle();
+  assert.deepEqual(h.workspace().workspace.selection.included_recorded_group_ids, []);
+  assert.equal(h.workspace().workspace.selection.revision, 10); assert.equal(h.adoption().props.workspaceRevision, 6);
+  h.controls.setReadOnly(true); await h.settle();
+  await assert.rejects(h.workspace().workspace.previewTransport(input, { signal: new AbortController().signal }), /read_only/);
+  h.workspace().workspace.onSelectionIntent([groupId(1)]); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'preview', 'save']); assert.equal(await h.controls.flush(), true);
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(db.maxOpen, 1);
+});
+
 for (const city of cityCatalog.cities) test(`installed ${city.name} study is explicit analytical intent, not a reference-camera action`, async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   const accepted = copy(db.file(TARGET).accepted), scope = cityChoice(city);

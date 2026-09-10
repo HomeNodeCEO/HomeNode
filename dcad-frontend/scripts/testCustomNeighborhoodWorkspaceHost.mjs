@@ -340,6 +340,26 @@ test('host read-only quiescence waits for the pending owned save and prevents an
   assert.equal(h.workspace().workspace.blockedReason ?? null, null);
 });
 
+test('read-only quiescence closes NEW preview/inspection admission before and after flush while existing lane reads settle', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const held = deferred(); db.overrides.set('preview', async (_call, respond) => { await held.promise; return respond(); });
+  const transport = h.workspace().workspace.previewTransport;
+  const input = { accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId, contextRef: context(OLD),
+    selection: { revision: 9, pockets: [] }, include_map: false };
+  const options = () => ({ signal: new AbortController().signal });
+  const admitted = transport(input, options()); await h.settle();
+  h.controls.setReadOnly(true);
+  await assert.rejects(transport(input, options()), /custom_workspace_read_only/);
+  let flushed = false; const pendingFlush = h.controls.flush().then(value => { flushed = true; return value; }); await h.settle();
+  assert.equal(flushed, false); assert.equal(db.calls.filter(call => call.kind === 'preview').length, 1);
+  held.resolve(); await admitted; assert.equal(await pendingFlush, true);
+  await assert.rejects(transport({ ...input, selection: { revision: 1, pockets: [] } }, options()), /custom_workspace_read_only/);
+  assert.equal(db.calls.filter(call => call.kind === 'preview').length, 1);
+  h.controls.setReadOnly(false); db.overrides.delete('preview');
+  await transport(input, options()); assert.equal(db.calls.filter(call => call.kind === 'preview').length, 2);
+  h.unmount(); await assert.rejects(transport(input, options()), /custom_workspace_read_only/);
+});
+
 test('failed fresh reload cannot report flush success from the previous ready lifecycle', async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   assert.equal(await h.controls.flush(), true);

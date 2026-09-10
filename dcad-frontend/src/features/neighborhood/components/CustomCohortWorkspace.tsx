@@ -64,6 +64,7 @@ function WorkspaceSession(props: Props) {
   const revision = props.workspace?.selection.revision ?? localRevision;
   const saving = props.workspace?.saving ?? false;
   const blockedReason = props.workspace?.blockedReason ?? null;
+  const inspectionsPaused = blockedReason === 'read_only';
   const selectionBlocked = saving || Boolean(blockedReason);
   const transport = props.workspace?.previewTransport ?? requestCustomCohortObservationPreview;
   const transportRef = useRef(transport);
@@ -197,8 +198,8 @@ function WorkspaceSession(props: Props) {
         onClick={() => { if (!selectionDisabled) setRetry(n => n + 1); }}>Retry preview</button>}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
         {group ? <CustomCohortParcelMap group={group} catalog={catalog} freshness={freshness}
-          inspectedPocketId={inspected} onInspectPocket={setInspected}
-          onInspectAccount={account => { if (catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
+          inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) setInspected(id); }}
+          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
           : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
         <aside className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
           <label className="block text-sm">Find a recorded group<input value={search} maxLength={200}
@@ -207,7 +208,8 @@ function WorkspaceSession(props: Props) {
             {groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase())).map(p =>
               <div key={p.id} className="flex items-start gap-2 rounded-lg border border-violet-100 p-2">
                 <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
-                <button type="button" className="min-w-0 flex-1 text-left text-sm" onClick={() => setInspected(p.id)}
+                <button type="button" className="min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
+                  onClick={() => { if (!inspectionsPaused) setInspected(p.id); }}
                   aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
                   <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
                   {reviewById.has(p.id) && <span className="mt-1 block text-xs">
@@ -228,7 +230,7 @@ function WorkspaceSession(props: Props) {
       </div>
       <CustomCohortStatistics group={group} freshness={freshness} />
       {selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
-        pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} />}
+        pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused} />}
     </>}
   </section>;
 }

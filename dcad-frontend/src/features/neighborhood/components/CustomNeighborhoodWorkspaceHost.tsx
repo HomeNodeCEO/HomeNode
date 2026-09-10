@@ -118,6 +118,11 @@ function HostSession(props: Props) {
   // switches file identity in response to an unrelated save/updated_at render.
   const [previewTransport] = useState(() => (input: CustomCohortPreviewRequest, options: { signal: AbortSignal }) => {
     const requests = lane.current;
+    // Quiescence must close read admission too: an inspector or a previously
+    // debounced preview must not acquire new locks after finalization flushed.
+    // Already admitted lane work remains owned and is awaited by flush().
+    if (!live.current || readonlyRef.current || lockedRef.current)
+      return Promise.reject(new Error('custom_workspace_read_only'));
     if (!requests || input.accountId !== initial.target.accountId || input.assignmentFileId !== initial.target.assignmentFileId)
       return Promise.reject(new Error('custom_workspace_target_changed'));
     return requests.run(signal => initial.api.preview(input, signal), options);

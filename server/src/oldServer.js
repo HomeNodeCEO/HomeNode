@@ -96,7 +96,9 @@ import { createApplicationStartupResources } from "./application/startupResource
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
 import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
+import { createCustomNeighborhoodConfiguration, createCustomNeighborhoodApplicationRouter } from "./application/customNeighborhoodComposition.js";
 
+const customNeighborhoodConfiguration = createCustomNeighborhoodConfiguration(process.env);
 const applicationAuthenticationPolicy = createApplicationAuthenticationPolicy();
 const webOidcVerifier = createOidcAccessTokenVerifier({
   issuer: process.env.OIDC_WEB_ISSUER || process.env.OIDC_ISSUER,
@@ -417,6 +419,8 @@ app.use(createAssignmentWorkfileMutationRouter({
   authenticationRequired: applicationAuthenticationRequired,
   objectStorage: sharedObjectStorage,
 }));
+
+app.use(createCustomNeighborhoodApplicationRouter({ pool, configuration: customNeighborhoodConfiguration }));
 
 app.use(createGeographyOperationsRouter({
   pool,

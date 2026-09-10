@@ -57,6 +57,7 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
   : node && typeof node === 'object' ? children(node).map(text).join('') : '';
 function harness(name = 'CustomCohortWorkspace') {
   const cells = [], effects = [], calls = [], catalogCalls = [], intents = [], timers = new Map();
+  const requestWaiters = new Map(), fingerprints = new Set();
   let cursor = 0, dirty = false, tree, props, serial = 0;
   const react = {
     useState(initial) { const i = cursor++; cells[i] ??= { value: typeof initial === 'function' ? initial() : initial };
@@ -68,7 +69,10 @@ function harness(name = 'CustomCohortWorkspace') {
       cells[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { cells[i].cleanup?.(); cells[i].cleanup = fn(); });
     } },
   };
-  const previewTransport = (request, options) => new Promise((resolve, reject) => calls.push({ request, ...options, resolve, reject }));
+  const previewTransport = (request, options) => new Promise((resolve, reject) => {
+    const call = { request, ...options, resolve, reject }, index = calls.length;
+    calls.push(call); requestWaiters.get(index)?.forEach(notify => notify(call)); requestWaiters.delete(index);
+  });
   const api = { requestCustomCohortObservationPreview: previewTransport,
     requestCustomCohortOperation: (...args) => { catalogCalls.push(args); return Promise.resolve(catalogResponse()); } };
   const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortPocketInspector'].map(key => [key, function Stub() {}]));
@@ -82,6 +86,10 @@ function harness(name = 'CustomCohortWorkspace') {
     if (key === '../customCohortPreviewApi') return api;
     if (key === '../customCohortPocketCatalog') return catalogHelpers;
     if (key === '../customCohortPreviewController') return { ...controller,
+      fingerprintCustomCohortSelection: value => {
+        const task = controller.fingerprintCustomCohortSelection(value); fingerprints.add(task);
+        void task.then(() => fingerprints.delete(task), () => fingerprints.delete(task)); return task;
+      },
       createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
   }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, id => timers.delete(id));
@@ -101,6 +109,17 @@ function harness(name = 'CustomCohortWorkspace') {
     click(label) { const node = walk(tree).find(node => node.type === 'button' && text(node) === label); assert.ok(node, label); node.props.onClick(); flush(); },
     check(label) { const node = walk(tree).find(node => node.type === 'input' && node.props['aria-label'] === label); assert.ok(node, label); node.props.onChange(); flush(); },
     async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); flush(); },
+    // WebCrypto uses asynchronous runtime work, not a fixed number of event-loop
+    // turns. Positive assertions wait for the actual injected transport call.
+    async waitForRequest(index) {
+      if (!calls[index]) await new Promise(resolve => {
+        const waiters = requestWaiters.get(index) ?? []; waiters.push(resolve); requestWaiters.set(index, waiters);
+      });
+      await this.drain(); return calls[index];
+    },
+    // Negative request assertions first await any real digest already started,
+    // so they cannot pass merely because a busy CI worker has not finished it.
+    async settleFingerprints() { await Promise.allSettled([...fingerprints]); await this.drain(); },
     async tick() { const list = [...timers.entries()].filter(([, t]) => t.delay === 250); list.forEach(([id, t]) => { timers.delete(id); t.fn(); }); await this.drain(); },
     async complete(index = calls.length - 1) { calls[index].resolve(response(calls[index].request)); await this.drain(); },
     async fail(index = calls.length - 1) { calls[index].reject(new Error('synthetic failure')); await this.drain(); },
@@ -277,11 +296,59 @@ test('recommended group inspection remains independent and fresh equivalent reco
   h.render(withRecommendation(h.props([]))); await h.tick();
   assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
 });
-test('inspector uses its injected transport once, retains independent selection and aborts on cleanup', async () => {
+test('inspector uses its injected transport once, retains independent selection and aborts on cleanup', { timeout: 10_000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); h.render({ input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport });
-  for (let i = 0; i < 5 && !h.calls.length; i++) { await new Promise(resolve => setImmediate(resolve)); await h.drain(); }
+  t.after(() => h.unmount()); await h.waitForRequest(0);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0].request.include_map, false);
   assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['B']); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.render({ ...h.propsNow, label: 'Beta label' }); await h.drain();
   assert.equal(h.calls.length, 1); h.unmount(); assert.equal(h.calls[0].signal.aborted, true);
+});
+
+test('read-only quiescence disables direct group/map inspection callbacks and preserves cached inspector identity', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
+  const paused = h.props(); paused.workspace.blockedReason = 'read_only'; h.render(paused);
+  const groupButton = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
+  assert.equal(groupButton.props.disabled, true); groupButton.props.onClick();
+  h.child('CustomCohortParcelMap').onInspectPocket(groupId(2));
+  h.child('CustomCohortParcelMap').onInspectAccount('C'); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 1);
+  h.render(h.props()); h.child('CustomCohortParcelMap').onInspectPocket(groupId(2)); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(2));
+  h.render(paused); assert.equal(h.child('CustomCohortPocketInspector').paused, true);
+  h.render(h.props()); assert.equal(h.child('CustomCohortPocketInspector').paused, false); assert.equal(h.calls.length, 1);
+});
+
+test('a paused transport failure can explicitly retry the unchanged saved selection after release without an implicit retry loop', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props([groupId(1)], 19)); await h.tick();
+  const paused = h.props([groupId(1)], 19); paused.workspace.blockedReason = 'read_only'; h.render(paused); await h.fail();
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Retry preview').props.disabled, true);
+  h.render(h.props([groupId(1)], 19)); await h.tick(); assert.equal(h.calls.length, 1, 'same selection does not retry by render');
+  h.click('Retry preview'); await h.drain(); await h.tick(); assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].request.selection.revision, 19); assert.equal(h.intents.length, 0); await h.complete();
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'current');
+});
+
+test('inspector pause prevents new requests; release resumes only unfinished inspection and preserves completed cached observations', { timeout: 10_000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: true };
+  h.render(props); await h.settleFingerprints(); assert.equal(h.calls.length, 0); assert.match(h.text(), /inspection is paused/);
+  h.render({ ...props, paused: false }); await h.waitForRequest(0); assert.equal(h.calls.length, 1);
+  h.render(props); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0); assert.equal(h.child('CustomCohortStatistics'), undefined);
+  h.render({ ...props, paused: false }); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
+  const completed = h.child('CustomCohortStatistics').group;
+  h.render(props); assert.equal(h.child('CustomCohortStatistics').group, completed); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
+  h.render({ ...props, paused: false }); await h.settleFingerprints(); assert.equal(h.calls.length, 2);
+  assert.equal(h.child('CustomCohortStatistics').group, completed); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+});
+
+test('an earlier inspector failure does not implicitly retry on unpause; explicit retry is disabled only while paused', { timeout: 10_000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: false };
+  h.render(props); await h.waitForRequest(0); await h.fail(0); assert.equal(h.calls.length, 1);
+  h.render({ ...props, paused: true }); h.click('Retry inspection'); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Retry inspection').props.disabled, true);
+  h.render(props); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
+  h.click('Retry inspection'); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
 });

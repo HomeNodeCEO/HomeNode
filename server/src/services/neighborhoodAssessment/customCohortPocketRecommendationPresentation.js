@@ -1,5 +1,6 @@
 import { canonicalAssessmentJson as json } from './contract.js';
 import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY } from './customCohortPocketRecommendation.js';
+import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
@@ -92,6 +93,15 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
     unavailable_factors: Object.fromEntries(['housing_type', 'proximity', 'sale_price'].map(key => [key, text(recommendation.unavailable_factors[key])])),
     limitations: recommendation.limitations.map(text),
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] } };
+  if (Object.hasOwn(recommendation, 'cad_recorded_evidence')) {
+    // The extension is current recorded evidence only. Old mapping2/3 payloads
+    // retain their exact bytes, and every scoring/selection field above stays
+    // independent of these descriptive categories.
+    result.cad_recorded_evidence = presentCustomCohortCadEvidence({ evidence: recommendation.cad_recorded_evidence,
+      expected: { context_ref: expected.context_ref, captured_at: recommendation.binding.captured_at },
+      pockets, member_count: all.member_count, in_discovery: result.subject.in_discovery,
+      maximumBytes: L.output_utf8_bytes - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"cad_recorded_evidence":') });
+  }
   check(Buffer.byteLength(JSON.stringify(result)) <= L.output_utf8_bytes, 'output_byte_limit');
   return freeze(result);
 }

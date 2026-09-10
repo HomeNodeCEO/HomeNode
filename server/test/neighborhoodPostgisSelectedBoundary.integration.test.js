@@ -43,7 +43,7 @@ test('PostGIS selected boundary: exact union, holes, full subject and strict sha
     if (!built.has(name)) {
       const source = await projectMetricTopologyFixture(pool, name);
       const value = await createNeighborhoodPostgisTopology(pool).build(source);
-      assert.equal(value.status, 'ready', `native topology ${name} must be ready before selection tests`);
+      assert.equal(value.status, 'ready', `native topology ${name} must be ready before selection tests; reasons=${JSON.stringify(value.incomplete_reasons)}`);
       built.set(name, { source, topology: value });
     }
     return built.get(name);

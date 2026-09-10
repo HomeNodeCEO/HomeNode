@@ -22,7 +22,7 @@ function reject(reason) {
   throw error;
 }
 
-function snapshotOf(input) {
+export function snapshotAssignmentSalesCsvBytes(input) {
   if (types.isProxy(input) || !types.isUint8Array(input)
     || Object.getPrototypeOf(input) !== Buffer.prototype || !Buffer.isBuffer(input)) reject('invalid_input');
   // Never invoke caller-supplied length/buffer/iterator/copy methods or enumerate
@@ -46,7 +46,7 @@ function snapshotOf(input) {
  * Cells are literal text, not spreadsheet expressions or authenticated sale facts.
  */
 export function parseAssignmentSalesCsv(input) {
-  const bytes = snapshotOf(input);
+  const bytes = snapshotAssignmentSalesCsvBytes(input);
   if (!isUtf8(bytes)) reject('invalid_utf8');
   if (bytes.includes(0)) reject('nul_byte');
   const length = bytes.length;

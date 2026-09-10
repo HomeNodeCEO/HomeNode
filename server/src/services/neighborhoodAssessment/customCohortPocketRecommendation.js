@@ -4,6 +4,7 @@ import { buildCustomCohortObservationPreview } from './customCohortObservationPr
 import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBaseline.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
+import { readCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -16,6 +17,9 @@ export const CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY = freeze({
   denominator: 'every_unique_account_in_group_including_unknowns',
   calibration: 'initial_review_heuristic_not_empirical_reliability', output_utf8_bytes: 48_000_000,
 });
+export const CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 = freeze({
+  ...CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY, id: 'custom-current-observation-review-v2', revision: 2,
+});
 const P = CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY;
 const KEYS = Object.keys(P.weights), UNASSIGNED = 'discovery:unassigned';
 const PHYSICAL = { gla: 'gla_sqft', age: 'year_built', site_size: 'site_area_sqft' };
@@ -24,6 +28,7 @@ const UNAVAILABLE = {
   proximity: 'comparable_property_distance_not_retained',
   sale_price: 'comparable_unadjusted_sale_consideration_not_established',
 };
+const UNAVAILABLE_V2 = { housing_type: UNAVAILABLE.housing_type, sale_price: UNAVAILABLE.sale_price };
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const rounded = n => Math.round(Math.max(0, Math.min(100, n)) * 10000) / 10000;
 function check(ok, reason) {
@@ -108,7 +113,7 @@ function aggregate(rows) {
  * source rights/eligibility. The owner must prepare/load/freshness-check first.
  * No I/O, automatic selection, report writes or supported-fact publication.
  */
-export function buildCustomCohortPocketRecommendation({ context_ref, retained_inputs: input, selection } = {}) {
+export function buildCustomCohortPocketRecommendation({ context_ref, retained_inputs: input, selection, recorded_proximity } = {}) {
   check(NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION === P.curve_methodology_version
     && KEYS.every(key => NEIGHBORHOOD_RELEVANCE_WEIGHTS[key] === P.weights[key]), 'curve_policy_changed');
   const intent = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: 1, active: {
@@ -127,13 +132,25 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   }
   const members = preview.all.stock.members;
   check(groupByAccount.size === members.length && members.every(row => groupByAccount.has(row.account_id)), 'catalog_roster_mismatch');
+  // Only the owner-internal retained-geometry derivation can issue this result.
+  // Omission deliberately preserves the complete installed v1 behavior/bytes.
+  const proximity = recorded_proximity === undefined ? null
+    : readCustomCohortRecordedProximity(recorded_proximity, { context_ref, retained_inputs: input });
+  const policy = proximity ? CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 : P;
+  const proximityRows = new Map((proximity?.accounts ?? []).map(row => [row.account_id, row]));
+  if (proximity) check(proximity.counts.accounts === members.length && (proximity.accounts === null
+    || (proximityRows.size === proximity.accounts.length && proximityRows.size === members.length
+      && members.every(row => proximityRows.has(row.account_id)))), 'proximity_roster_mismatch');
+  const maximumDistanceMiles = proximity ? Number(proximity.binding.radius_metres) / 1609.344 : undefined;
   const subjectAccount = preview.target.account_id, subjectStock = members.find(row => row.account_id === subjectAccount);
   const year = Number(preview.captured_at.slice(0, 4));
   check(Number.isInteger(year) && year >= 1600 && year <= 9999, 'capture_year');
   const subject = subjectObservations(input, subjectStock, year);
   const reference = Object.fromEntries(Object.entries(PHYSICAL).map(([key, field]) => [field, subject[key].value]));
   const candidateRows = members.map(row => ({ account_id: row.account_id, ...Object.fromEntries(Object.entries(PHYSICAL)
-    .map(([key, field]) => [field, observed(row.observations[field], key, year).value])) }));
+    .map(([key, field]) => [field, observed(row.observations[field], key, year).value])),
+  ...(proximity ? { distance_miles: proximityRows.get(row.account_id)?.state === 'observed'
+    ? proximityRows.get(row.account_id).distance_miles : null } : {}) }));
   // All captured accounts establish one fixed curve baseline; toggling groups
   // cannot silently alter a property's score. Ignore the legacy renormalized
   // total, legal-neighborhood protection, exclusions and confidence entirely.
@@ -141,8 +158,18 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   let outputBytes = 16000;
   const charge = value => { outputBytes += Buffer.byteLength(JSON.stringify(value)); check(outputBytes <= P.output_utf8_bytes, 'output_byte_limit'); return value; };
   const properties = members.map((row, index) => {
-    const scored = scoreNeighborhoodCandidate({ subject: reference, candidate: candidateRows[index], distributions });
+    const scored = scoreNeighborhoodCandidate({ subject: reference, candidate: candidateRows[index], distributions,
+      ...(proximity ? { maximumDistanceMiles } : {}) });
     const factors = Object.fromEntries(KEYS.map(key => {
+      if (key === 'proximity' && proximity) {
+        const observation = proximityRows.get(row.account_id);
+        let state = proximity.accounts === null ? 'proximity_unavailable'
+          : observation.state === 'observed' ? 'observed' : `candidate_${observation.state}`;
+        const score = scored.factors.proximity.score;
+        if (state === 'observed' && (!Number.isFinite(observation.distance_miles) || observation.distance_miles < 0
+          || !Number.isFinite(score) || score < 0 || score > 100)) state = 'calculation_unavailable';
+        return [key, { score: state === 'observed' ? score : null, state }];
+      }
       if (UNAVAILABLE[key]) return [key, { score: null, state: 'not_established' }];
       const candidate = observed(row.observations[PHYSICAL[key]], key, year);
       let state = subject[key].state !== 'observed' ? `subject_${subject[key].state}`
@@ -161,8 +188,8 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   const subjectGroup = catalog.subject_membership.assigned_pocket_id;
   const pockets = groups.map(group => {
     const result = aggregate(group.account_ids.map(id => byAccount.get(id)));
-    const meetsPolicy = result.member_count > 0 && result.similarity.known_weight_percent >= P.minimum_mean_known_weight_percent
-      && result.similarity.lower >= P.minimum_mean_lower_bound;
+    const meetsPolicy = result.member_count > 0 && result.similarity.known_weight_percent >= policy.minimum_mean_known_weight_percent
+      && result.similarity.lower >= policy.minimum_mean_lower_bound;
     return charge({ id: group.id, label: group.label, county: group.county, account_ids: [...group.account_ids],
       selected: included.has(group.id), contains_subject: group.account_ids.includes(subjectAccount),
       subject_group_review: group.id === subjectGroup, recorded_label_match_only: true,
@@ -173,7 +200,7 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   pockets.forEach((pocket, index) => { pocket.review_rank = index + 1; });
   const selected = properties.filter(row => row.selected);
   const result = {
-    recommendation_version: 1, policy: P, status: catalog.catalog_complete && subjectStock
+    recommendation_version: 1, policy, status: catalog.catalog_complete && subjectStock
       && subject.gla.state === 'observed' && subject.age.state === 'observed' ? 'recommendation_for_review' : 'insufficient_observations',
     basis: 'current_retained_observations', authority: 'not_established',
     binding: { context_ref: preview.context_ref, target: preview.target, selection_revision: intent.selection.revision,
@@ -183,7 +210,7 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
     properties, pockets, all: aggregate(properties), selected: { ...aggregate(selected), account_ids: selected.map(row => row.account_id) },
     recommended_recorded_group_ids: pockets.filter(pocket => pocket.suggested_for_review).map(pocket => pocket.id),
     coverage: { ...catalog.coverage, catalog_complete: catalog.catalog_complete, source_records_examined: preview.work.source_records },
-    unavailable_factors: UNAVAILABLE,
+    unavailable_factors: proximity ? UNAVAILABLE_V2 : UNAVAILABLE,
     limitations: ['current_observations_not_historical_housing_population', 'similarity_bounds_not_probability_confidence_or_reliability',
       'all_unique_accounts_count_equally_including_missing_invalid_conflicting', 'subject_group_review_does_not_force_selection_or_raise_score',
       'recorded_names_not_legal_neighborhood_boundaries', 'no_builder_hoa_phase_or_amenity_identity_inferred',
@@ -191,6 +218,13 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
       'no_automatic_inclusion_exclusion_or_report_apply', ...catalog.reasons],
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] },
   };
+  if (proximity) {
+    result.recorded_proximity = { proximity_version: proximity.proximity_version, basis: proximity.basis,
+      authority: proximity.authority, status: proximity.status, reason: proximity.reason,
+      radius_metres: proximity.binding.radius_metres, counts: { ...proximity.counts } };
+    result.limitations.push('proximity_is_recorded_parcel_location_not_home_or_driving_distance',
+      'multiple_or_invalid_recorded_locations_remain_unknown', 'proximity_curve_uses_retained_discovery_radius');
+  }
   const cad = buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups });
   if (cad !== null) result.cad_recorded_evidence = cad;
   charge({ all: result.all, selected: result.selected, subject: result.subject });

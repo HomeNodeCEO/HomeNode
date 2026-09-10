@@ -171,7 +171,17 @@ function WorkspaceSession(props: Props) {
           {recommendation.all.similarity.known_weight_percent === null ? 'unavailable' : `${recommendation.all.similarity.known_weight_percent.toFixed(1)}%`}.</p>
         <p className="text-xs opacity-80">These bounds retain uncertainty from missing data; they are not confidence or reliability scores.
           The fixed initial review policy uses GLA 40%, year-built similarity 30%, housing type 20%, and the remaining factors 10%.
-          Housing, comparable distance and verified sale consideration are not established here. The map still shows your current inclusion choices.</p>
+          {recommendation.recorded_proximity
+            ? ' Housing taxonomy and verified sale consideration are not established here. The map still shows your current inclusion choices.'
+            : ' Housing, comparable distance and verified sale consideration are not established here. The map still shows your current inclusion choices.'}</p>
+        {recommendation.recorded_proximity && <p className="text-xs opacity-80">
+          Recorded point proximity: {recommendation.all.factor_coverage.proximity.observed_count.toLocaleString('en-US')} observed /{' '}
+          {recommendation.all.member_count.toLocaleString('en-US')} captured accounts;{' '}
+          {recommendation.all.factor_coverage.proximity.unknown_count.toLocaleString('en-US')} unknown.
+          {' '}This compares the recorded subject centroid with a point on each retained parcel surface, not an entrance, route or full-property distance.
+          {' '}Multiple locations and invalid parcel geometry stay unknown; they are not replaced with a convenient parcel.
+          {recommendation.recorded_proximity.status === 'unavailable' && ' Recorded point proximity is unavailable for this captured study.'}
+        </p>}
         {recommendation.status === 'insufficient_observations' || !suggested.length
           ? <p className="text-sm">No usable suggested selection is available. Review groups manually; your saved choices have not changed.</p>
           : suggestionActive ? <p className="text-sm">The suggested selection is already active.</p>
@@ -219,6 +229,10 @@ function WorkspaceSession(props: Props) {
                     <span className="block opacity-75">Observed factor coverage {reviewById.get(p.id)!.similarity.known_weight_percent?.toFixed(1) ?? 'unavailable'}{reviewById.get(p.id)!.similarity.known_weight_percent === null ? '' : '%'}
                       {reviewById.get(p.id)!.suggested_for_review ? ' · Suggested' : ''}
                       {reviewById.get(p.id)!.subject_group_review ? ' · Subject group review' : ''}</span>
+                    {recommendation?.recorded_proximity && <span className="block opacity-75">
+                      Recorded point proximity: {reviewById.get(p.id)!.factor_coverage.proximity.observed_count.toLocaleString('en-US')} observed /{' '}
+                      {p.count.toLocaleString('en-US')} accounts; {reviewById.get(p.id)!.factor_coverage.proximity.unknown_count.toLocaleString('en-US')} unknown.
+                    </span>}
                   </span>}</button>
               </div>)}
           </div>

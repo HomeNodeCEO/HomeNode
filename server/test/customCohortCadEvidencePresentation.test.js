@@ -245,7 +245,8 @@ async function ownerFixture({ denyExposure, denyVisit = 1, changed = false } = {
     assert.equal(Object.hasOwn(purpose, 'source_projection'), false);
     assert.equal(options.retention, true);
     const visit = (visits.get(options.exposure) ?? 0) + 1; visits.set(options.exposure, visit);
-    policies.push({ exposure: options.exposure, read_count: reads.length });
+    policies.push({ exposure: options.exposure, read_count: reads.length,
+      commits: calls.filter(sql => sql === 'COMMIT').length, call_index: calls.length });
     const denied = options.exposure === denyExposure && visit === denyVisit;
     if (denied && !changed) return { allowed: false };
     return { allowed: true, ...retained.acquisition.captured_query_request.market_decision,
@@ -257,17 +258,31 @@ async function ownerFixture({ denyExposure, denyVisit = 1, changed = false } = {
   return { f, owner, request, calls, reads, releases, policies };
 }
 
+function assertReadOnlyProximityPhase(f, finalOutcome) {
+  const starts = f.calls.flatMap((sql, index) => sql.startsWith('BEGIN ') ? [index] : []);
+  assert.deepEqual(starts.map(index => f.calls[index]), ['BEGIN ISOLATION LEVEL READ COMMITTED',
+    'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY', 'BEGIN ISOLATION LEVEL READ COMMITTED']);
+  assert.deepEqual(f.calls.filter(sql => sql === 'COMMIT' || sql === 'ROLLBACK'), ['COMMIT', 'COMMIT', finalOutcome]);
+  const computation = f.calls.slice(starts[1], starts[2]);
+  assert.ok(computation.every(sql => /^(BEGIN |SET LOCAL |COMMIT$)/.test(sql)),
+    'the old fixture EWKB is unavailable; its extra read-only phase cannot reload current source or subject rows');
+  assert.deepEqual(f.policies.map(policy => policy.commits), [0, 0, ...f.policies.slice(2).map(() => 2)],
+    'initial authorization precedes the retained computation; final authorization follows its completed transaction');
+  for (const policy of f.policies.slice(2)) assert.ok(f.calls.slice(starts[2], policy.call_index)
+    .some(sql => sql.includes('custom-cohort-subject:sections')), 'fresh subject material is compared before each final grant');
+}
+
 test('actual owner mapping4 catalog addon requires both unchanged existing exposures at initial and final fences', async () => {
   const f = await ownerFixture(), result = await f.owner.catalog(f.request);
   assert.equal(result.recommendation.cad_recorded_evidence.mapping_version, 4);
   assert.deepEqual(f.policies.map(p => p.exposure), ['report_observation_catalog', 'report_observation_summary',
     'report_observation_catalog', 'report_observation_summary']);
-  assert.equal(f.calls.filter(sql => sql === 'COMMIT').length, 2);
+  assertReadOnlyProximityPhase(f, 'COMMIT');
   for (const source of f.f.input.retained_inputs.acquisition.capture_result.source_capture.sources) {
     const hash = createHash('sha256').update(json(source.payload)).digest('hex');
     assert.ok(f.reads.includes(hash), 'authorized success really reopens each retained source payload');
   }
-  assert.deepEqual(f.releases, [undefined, undefined]);
+  assert.deepEqual(f.releases, [undefined, undefined, undefined]);
 });
 
 for (const exposure of ['report_observation_catalog', 'report_observation_summary']) {
@@ -280,13 +295,13 @@ for (const exposure of ['report_observation_catalog', 'report_observation_summar
     assert.equal(f.reads.some(hash => sourceHashes.includes(hash)), false);
     assert.equal(f.calls.filter(sql => sql === 'COMMIT').length, 0);
     assert.equal(f.calls.filter(sql => sql === 'ROLLBACK').length, 1);
+    assert.ok(!f.calls.includes('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
     assert.deepEqual(f.releases, [undefined]);
   });
   for (const changed of [false, true]) test(`mapping4 ${exposure} final ${changed ? 'revision change' : 'revocation'} refuses the complete response`, async () => {
     const f = await ownerFixture({ denyExposure: exposure, denyVisit: 2, changed });
     await assert.rejects(f.owner.catalog(f.request), error => error.reason === (changed ? 'market_policy_changed' : 'market_data_access_denied'));
-    assert.equal(f.calls.filter(sql => sql === 'COMMIT').length, 1);
-    assert.equal(f.calls.filter(sql => sql === 'ROLLBACK').length, 1);
-    assert.deepEqual(f.releases, [undefined, undefined]);
+    assertReadOnlyProximityPhase(f, 'ROLLBACK');
+    assert.deepEqual(f.releases, [undefined, undefined, undefined]);
   });
 }

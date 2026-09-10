@@ -140,6 +140,7 @@ function HostSession(props: Props) {
           const guidance = typeof code === 'string' && Object.hasOwn(CAPTURE_GUIDANCE, code) ? CAPTURE_GUIDANCE[code] : null;
           setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. This capture has not applied anything to the report.`
             : guidance ? `${guidance} This capture has not applied anything to the report.`
+            : code === 'preview_capacity_exceeded' ? 'This captured study exceeds the preview capacity before its recorded groups can be loaded. Reload saved choices before resolving any pending capture. If the previous study reopens, set aside the pending capture before explicitly choosing a smaller study. Retrying the same oversized study may reach the same limit. This update has not applied anything to the report.'
             : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing. This update has not applied anything to the report.'); }
       }
       return false;

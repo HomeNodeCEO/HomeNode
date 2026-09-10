@@ -143,6 +143,46 @@ test('anonymous requests cannot parse/read source or reach the owner', async t =
   assert.equal(response.status, 401); assert.deepEqual(await response.json(), { error: 'authentication_required' });
   assert.equal(calls.length, 0);
 });
+for (const [action, method] of [['preview', 'present'], ['catalog', 'catalog'], ['members', 'inspect']]) {
+  test(`${action} distinguishes computed capacity from invalid input without returning partial data`, async t => {
+    let failure;
+    const { request } = await start(t, { methods: { [method]: async () => { throw failure; } } });
+    const errors = [
+      ...['output_bytes_limit', 'measurement_work_limit', 'member_work_limit']
+        .map(reason => new TypeError(`custom_cohort_observation_preview_${reason}`)),
+      Object.assign(new TypeError('custom_cohort_preview_presentation_output_bytes_limit'),
+        { code: 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID', reason: 'output_bytes_limit' }),
+    ];
+    for (const error of errors) {
+      failure = Object.assign(error, { detail: 'private SQL/source/member diagnostics', partial: { account_ids: ['private'] } });
+      const response = await request(action);
+      assert.equal(response.status, 422); assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(await response.json(), { error: 'neighborhood_preview_capacity_exceeded' });
+    }
+    for (const error of [
+      new TypeError('custom_cohort_observation_preview_pockets_limit'),
+      new TypeError('custom_cohort_observation_preview_pocket_accounts_limit'),
+      new TypeError('custom_cohort_observation_preview_pocket_membership_limit'),
+      new TypeError('custom_cohort_observation_preview_output_bytes_limit_extra'),
+      Object.assign(new TypeError('invalid presentation'),
+        { code: 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID', reason: 'denominator_mismatch' }),
+    ]) {
+      failure = error; const response = await request(action);
+      assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
+    }
+    failure = new Error('custom_cohort_observation_preview_output_bytes_limit');
+    const unknown = await request(action);
+    assert.equal(unknown.status, 500); assert.deepEqual(await unknown.json(), { error: 'neighborhood_request_failed' });
+    failure = Object.assign(errors[0], { reason: 'assignment_access_denied' });
+    const denied = await request(action);
+    assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'neighborhood_access_denied' });
+    failure = Object.assign(errors[0], { outcome_unknown: true });
+    const uncertain = await request(action);
+    assert.equal(uncertain.status, 409);
+    assert.deepEqual(await uncertain.json(), { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true });
+  });
+}
+
 test('cohort error responses hide SQL/policy details and distinguish uncertain commits', async t => {
   const reasons = [
     ['assignment_access_denied', 403, 'neighborhood_access_denied'],

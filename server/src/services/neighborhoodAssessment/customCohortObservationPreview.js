@@ -9,6 +9,8 @@ export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
   output_utf8_bytes: 32000000,
 });
 const L = CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS;
+const indexedPreviews = new WeakMap();
+const MEMBER_KINDS = ['stock', 'transactions', 'omitted_transactions', 'source_reported'];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
 const freeze = value => {
@@ -21,6 +23,44 @@ function fail(reason) { throw new TypeError(`custom_cohort_observation_preview_$
 function check(ok, reason) { if (!ok) fail(reason); }
 function bounded(value, maximum, field) {
   check(Array.isArray(value) && value.length <= maximum, `${field}_limit`); return value;
+}
+/** Representation identity only, never retained-source admission or authority.
+ * Legacy callers keep their existing status/scope checks. Compact views must
+ * originate here; reconstructed JSON or an arbitrary version flag is not one.
+ */
+export function isCustomCohortObservationPreview(value) {
+  return !!value && (value.preview_version === 1 || (value.preview_version === 2
+    && value.representation === 'indexed_members_v1' && indexedPreviews.has(value)));
+}
+
+/** Resolve only one owned population. Returned references are local, never an
+ * expanded copy attached to the compact serializable envelope. All original
+ * row fields (including private evidence) remain internal to authorized callers.
+ */
+export function customCohortObservationMembers(preview, population, kind) {
+  check(isCustomCohortObservationPreview(preview), 'unsupported_representation');
+  check(MEMBER_KINDS.includes(kind), 'member_kind');
+  const owned = preview.preview_version === 2 ? indexedPreviews.get(preview)
+    : new Set([preview.all, preview.selected, ...bounded(preview.pockets, L.pockets, 'pockets').map(pocket => pocket.result)]);
+  check(population && owned.has(population), 'population_ownership');
+  const tableKind = kind === 'omitted_transactions' ? 'transactions' : kind;
+  if (preview.preview_version === 1) return bounded(kind === 'omitted_transactions'
+    ? population.transactions.omitted : population[tableKind].members, L.source_records, 'population_members');
+  const table = bounded(preview.member_tables[tableKind], L.source_records, 'member_table');
+  const indices = bounded(kind === 'omitted_transactions' ? population.transactions.omitted_indices
+    : population[tableKind].member_indices, L.source_records, 'member_indices');
+  if (kind !== 'omitted_transactions') check(population[tableKind].member_count === indices.length, 'member_count_mismatch');
+  let prior = -1;
+  const rows = indices.map(index => {
+    check(Number.isSafeInteger(index) && index > prior && index < table.length, 'member_index'); prior = index;
+    const row = table[index];
+    check(row && (tableKind === 'stock' ? typeof row.account_id === 'string'
+      : tableKind === 'source_reported' ? typeof row.source_record_id === 'string'
+        : typeof row.canonical_transaction_id === 'string'), 'member_table_kind');
+    if (tableKind === 'transactions') check((row.disposition === 'in_period') === (kind === 'transactions'), 'member_disposition');
+    return row;
+  });
+  return Object.freeze(rows);
 }
 function text(value, field, maximum = 200) {
   check(typeof value === 'string' && value.length > 0 && value.length <= maximum
@@ -103,7 +143,19 @@ const GAPS = Object.freeze([
  * authority, historical truth, market eligibility, or a report-ready assessment.
  * No source reads, persistence, geometry parsing or partial/sampled results.
  */
-export function buildCustomCohortObservationPreview({ context_ref, retained_inputs: input, selection } = {}) {
+export function buildCustomCohortObservationPreview(args = {}) {
+  return buildObservationPreview(args, false);
+}
+
+/** Same observations/statistics, with a genuinely compact internal wire shape.
+ * Member tables are serialized once; populations store ordered table indices.
+ * No public API, capture version or retained fact meaning changes here.
+ */
+export function buildCustomCohortIndexedObservationPreview(args = {}) {
+  return buildObservationPreview(args, true);
+}
+
+function buildObservationPreview({ context_ref, retained_inputs: input, selection }, indexed) {
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(context_ref));
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(input?.acquisition?.capture_result?.query_complete === true && capture?.status === 'ready'
@@ -213,6 +265,12 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       observations: Object.fromEntries(Object.entries(sourceFields).map(([key, [field, policy]]) => [key, observation(rows.map(row => row.raw[field]), policy)])),
       capability_gaps: sorted(rows.flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) };
   });
+  const memberTables = indexed ? { stock, transactions: canonical, source_reported: sourceMembers } : null;
+  const ordinals = indexed ? new WeakMap() : null;
+  if (indexed) for (const rows of Object.values(memberTables)) rows.forEach((row, index) => {
+    ordinals.set(row, index); chargeOutput(row);
+  });
+  const indicesOf = rows => rows.map(row => ordinals.get(row));
   function distribution(members, getCell, label, unit) {
     meter('measurement', members.length);
     const cells = members.map(getCell), result = exactDistribution(cells.map(cell => cell.value));
@@ -235,31 +293,35 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
     // large package repeated through many overlapping pockets stays bounded.
     meter('member', [...accounts, ...considered, ...sources].reduce((n, row) => n + row.source_references.length
       + (row.associated_account_ids?.length ?? 0), 0));
-    for (const row of [...accounts, ...considered, ...sources]) chargeOutput(row);
+    if (!indexed) for (const row of [...accounts, ...considered, ...sources]) chargeOutput(row);
     const result = { id, account_ids: ids,
       stock: { definition: 'Selected retained parcel-backed accounts; current CAD observations, not proven housing stock at the effective date',
         member_unit: 'account', member_count: accounts.length, unique_account_count: accounts.length,
         parcel_object_count: accounts.reduce((n, row) => n + row.parcel_object_ids.length, 0),
         temporal_basis: 'current_mirror_observation', assessment_tax_year: null, housing_eligible_count: null,
-        members: accounts, metrics: Object.fromEntries(Object.entries(CAD).map(([key, [, , label, unit]]) =>
+        ...(indexed ? { member_indices: indicesOf(accounts) } : { members: accounts }),
+        metrics: Object.fromEntries(Object.entries(CAD).map(([key, [, , label, unit]]) =>
           [key, distribution(accounts, row => row.observations[key], label, unit)])) },
       transactions: { definition: 'In-period stored canonical transactions; associated accounts are observed identities, not verified economic-property membership',
         member_unit: 'canonical_transaction', member_count: events.length, observation_period: { ...period, date_basis: 'stored_canonical_closing_date' },
         unique_associated_account_count: new Set(events.flatMap(row => row.associated_account_ids)).size,
         unique_selected_associated_account_count: new Set(events.flatMap(row => row.associated_account_ids.filter(account => chosen.has(account)))).size,
         package_evidence_transaction_count: events.filter(row => row.multiple_parcel_evidence).length,
-        market_eligible_count: null, members: events,
-        omitted: considered.filter(row => row.disposition !== 'in_period'),
+        market_eligible_count: null, ...(indexed ? { member_indices: indicesOf(events),
+          omitted_indices: indicesOf(considered.filter(row => row.disposition !== 'in_period')) }
+          : { members: events, omitted: considered.filter(row => row.disposition !== 'in_period') }),
         metrics: { recorded_total_price: distribution(events, row => row.recorded_total_price,
           'Stored canonical total price; package totals remain whole and consideration/currency are unverified', null) } },
       source_reported: { definition: 'All-date retained MLS/source records associated with these accounts; one member per source record, not per sale or property',
         member_unit: 'source_record', member_count: sources.length, temporal_basis: 'all_dates_retained_source_rows',
         without_canonical_transaction_count: sources.filter(row => row.canonical_transaction_ids.length === 0).length,
-        members: sources, metrics: Object.fromEntries(Object.entries(sourceFields).map(([key, [, , label, unit]]) =>
+        ...(indexed ? { member_indices: indicesOf(sources) } : { members: sources }),
+        metrics: Object.fromEntries(Object.entries(sourceFields).map(([key, [, , label, unit]]) =>
           [key, distribution(sources, row => row.observations[key], label, unit)])) } };
-    // Members are charged incrementally above, including every occurrence in
-    // overlapping pockets. Only small aggregate metadata is encoded here.
-    chargeOutput({ ...result, stock: { ...result.stock, members: [] },
+    // V1 charges expanded member occurrences. The indexed wire shape actually
+    // contains indices instead, so charge every index plus all its metadata.
+    if (indexed) chargeOutput(result);
+    else chargeOutput({ ...result, stock: { ...result.stock, members: [] },
       transactions: { ...result.transactions, members: [], omitted: [] }, source_reported: { ...result.source_reported, members: [] } });
     return result;
   }
@@ -276,7 +338,9 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
   // Small top-level keys/notices and separators; this is a conservative output
   // ceiling, not a promise that a browser may display all private member rows.
   outputBytes += 8000; check(outputBytes <= L.output_utf8_bytes, 'output_bytes_limit');
-  return freeze({ preview_version: 1, status: 'observations_only', authority: 'not_established', context_ref: context,
+  const result = { preview_version: indexed ? 2 : 1,
+    ...(indexed ? { representation: 'indexed_members_v1', member_tables: memberTables } : {}),
+    status: 'observations_only', authority: 'not_established', context_ref: context,
     target: { ...input.subject.target }, effective_date: effectiveDate, observation_period: period,
     captured_at: input.acquisition.capture_result.captured_at, selection_revision: selection.revision,
     all, selected, pockets: pocketResults,
@@ -289,5 +353,19 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       market_trend: 'raw_price_distributions_do_not_establish_underlying_market_change',
       reliability: 'dispersion_and_capture_coverage_do_not_establish_reliability' },
     apply: { status: 'blocked', reasons: ['observation_preview_is_not_a_supported_neighborhood_assessment', ...GAPS] },
-    work: { source_records: sourceRecords, measurement_values: measurementWork, member_work: memberWork, output_utf8_bytes_bound: outputBytes } });
+    work: { source_records: sourceRecords, measurement_values: measurementWork, member_work: memberWork, output_utf8_bytes_bound: outputBytes } };
+  if (indexed) {
+    // Check the complete actual compact serialization as well as incremental
+    // construction. The margin covers growth of this bounded decimal counter.
+    result.work.output_utf8_bytes_bound = Math.max(outputBytes, Buffer.byteLength(JSON.stringify(result)) + 16);
+    check(result.work.output_utf8_bytes_bound <= L.output_utf8_bytes, 'output_bytes_limit');
+    freeze(result);
+    indexedPreviews.set(result, new Set([all, selected, ...pocketResults.map(pocket => pocket.result)]));
+    // Validate the emitted index grammar without constructing an expanded view.
+    for (const population of indexedPreviews.get(result)) for (const kind of MEMBER_KINDS) {
+      customCohortObservationMembers(result, population, kind);
+    }
+    return result;
+  }
+  return freeze(result);
 }

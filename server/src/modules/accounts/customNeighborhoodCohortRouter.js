@@ -12,6 +12,11 @@ const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'targe
   'report_policy_changed', 'report_proposal_changed', 'report_group_conflict', 'report_replacement_conflict']);
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
+const PREVIEW_CAPACITY_ERRORS = new Set([
+  'custom_cohort_observation_preview_output_bytes_limit',
+  'custom_cohort_observation_preview_measurement_work_limit',
+  'custom_cohort_observation_preview_member_work_limit',
+]);
 
 function invalid() { throw Object.assign(new Error('invalid_input'), { reason: 'invalid_input' }); }
 function bodyOf(body, required, optional = []) {
@@ -52,6 +57,13 @@ function publicFailure(error) {
     return [404, { error: 'neighborhood_context_unavailable' }];
   }
   if (CONFLICT_ERRORS.has(reason)) return [409, { error: `neighborhood_${reason}` }];
+  // These are computed output/work ceilings, not malformed selection input.
+  // Preserve the ceilings and return no partial rows or private diagnostics.
+  // Input pocket/member-count validation continues to return HTTP 400 below.
+  if (error instanceof TypeError && (PREVIEW_CAPACITY_ERRORS.has(error.message)
+    || (error.code === 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID' && reason === 'output_bytes_limit'))) {
+    return [422, { error: 'neighborhood_preview_capacity_exceeded' }];
+  }
   if (INPUT_ERRORS.has(reason) || error?.message === 'invalid_account_id'
     || /^custom_cohort_context_(invalid_|input_limit)/.test(error?.message ?? '')
     || error?.code === 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID'

@@ -23,7 +23,8 @@ import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInpu
 import { loadInstalledCustomCityDiscovery } from './customCityDiscovery.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
-import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
+import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
+  CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from './customCohortPocketCatalog.js';
@@ -712,7 +713,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // transaction; it never rereads source tables. Ordinary selection previews
     // and member inspection do not invoke this derivation or resend geometry.
     budget.check();
-    const preview = buildCustomCohortObservationPreview({ context_ref: input.contextRef,
+    // Public summaries/pages/catalogs consume a genuinely indexed internal
+    // view. Keep the raw internal preview API's v1 shape and ceiling unchanged.
+    const buildPreview = project ? buildCustomCohortIndexedObservationPreview : buildCustomCohortObservationPreview;
+    const preview = buildPreview({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
     budget.check();
     const parcelMap = includeMap ? buildCustomCohortParcelMap({ retained_inputs: loaded.retained.retained_inputs,

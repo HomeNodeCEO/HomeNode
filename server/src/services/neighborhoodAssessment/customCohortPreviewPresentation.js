@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
+import { isCustomCohortObservationPreview, customCohortObservationMembers } from './customCohortObservationPreview.js';
 
 export const CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS = Object.freeze({
   pockets: 128, pocket_memberships: 100000, population_members: 100000,
@@ -53,7 +54,7 @@ function strings(values) { return array(values, 64).map(value => text(value)); }
 
 export function customCohortPreviewBinding(preview, expected) {
   object(preview); object(expected);
-  check(preview.preview_version === 1 && preview.status === 'observations_only'
+  check(isCustomCohortObservationPreview(preview) && preview.status === 'observations_only'
     && preview.authority === 'not_established' && preview.apply?.status === 'blocked', 'unsupported_preview');
   const actual = prepareCustomCohortContextReference(canonicalAssessmentJson(preview.context_ref));
   const requested = prepareCustomCohortContextReference(canonicalAssessmentJson(expected.context_ref));
@@ -103,15 +104,15 @@ function distribution(metric, denominator) {
     ...counters, ...numbers, cod_interpretation: metric.cod_interpretation,
     display: Object.fromEntries(NUMBER_FIELDS.map(key => [key, displayed(numbers[key], unit, key)])) };
 }
-function memberArray(population, kind) {
-  return array(kind === 'omitted_transactions' ? population.transactions.omitted : population[kind].members);
+function memberArray(preview, population, kind) {
+  return array(customCohortObservationMembers(preview, population, kind));
 }
 function descriptor(group, kind, pocket_id) { return { group, ...(group === 'pocket' ? { pocket_id } : {}), kind }; }
-function summaryPopulation(population, group, pocket_id) {
+function summaryPopulation(preview, population, group, pocket_id) {
   object(population);
   const result = { id: text(population.id), account_count: count(array(population.account_ids, 50000).length) };
   for (const kind of ['stock', 'transactions', 'source_reported']) {
-    const p = object(population[kind]), members = memberArray(population, kind), n = count(p.member_count);
+    const p = object(population[kind]), members = memberArray(preview, population, kind), n = count(p.member_count);
     check(members.length === n, 'member_count_mismatch'); exactMetricKeys(p.metrics, METRICS[kind]);
     const base = { definition: text(p.definition), member_unit: text(p.member_unit), member_count: n,
       inspection: { population: descriptor(group, kind, pocket_id), total_count: n, maximum_page_size: L.page_members },
@@ -123,9 +124,9 @@ function summaryPopulation(population, group, pocket_id) {
       observation_period: { start_date: assessmentDate(p.observation_period.start_date), end_date: assessmentDate(p.observation_period.end_date), date_basis: text(p.observation_period.date_basis) },
       unique_associated_account_count: count(p.unique_associated_account_count), unique_selected_associated_account_count: count(p.unique_selected_associated_account_count),
       package_evidence_transaction_count: count(p.package_evidence_transaction_count), market_eligible_count: maybeCount(p.market_eligible_count),
-      omitted_count: memberArray(population, 'omitted_transactions').length,
+      omitted_count: memberArray(preview, population, 'omitted_transactions').length,
       omitted_inspection: { population: descriptor(group, 'omitted_transactions', pocket_id),
-        total_count: p.omitted.length, maximum_page_size: L.page_members } });
+        total_count: memberArray(preview, population, 'omitted_transactions').length, maximum_page_size: L.page_members } });
     result[kind] = base;
   }
   return result;
@@ -141,10 +142,10 @@ function boundedResult(value, maximum) {
  */
 export function presentCustomCohortPreview({ preview, expected } = {}) {
   const binding = bindingOf(preview, expected);
-  const all = summaryPopulation(preview.all, 'all'), selected = summaryPopulation(preview.selected, 'selected');
+  const all = summaryPopulation(preview, preview.all, 'all'), selected = summaryPopulation(preview, preview.selected, 'selected');
   const pockets = [...preview.pockets].sort((a, b) => compare(a.id, b.id)).map(pocket => ({
     id: text(pocket.id), label: text(pocket.label), disposition: oneOf(pocket.disposition, ['needs_review']),
-    overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(pocket.result, 'pocket', pocket.id),
+    overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(preview, pocket.result, 'pocket', pocket.id),
   }));
   return boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
     all, selected, pockets }, L.summary_utf8_bytes);
@@ -203,7 +204,7 @@ export function inspectCustomCohortPreviewMembers({ preview, expected, populatio
   object(page); check(Object.keys(page).length === 2 && Object.hasOwn(page, 'limit') && Object.hasOwn(page, 'after_member_id'), 'invalid_page');
   check(Number.isSafeInteger(page.limit) && page.limit > 0 && page.limit <= L.page_members, 'page_limit');
   check(page.after_member_id === null || (typeof page.after_member_id === 'string' && /^member:[a-f0-9]{64}$/.test(page.after_member_id)), 'invalid_cursor');
-  const rows = memberArray(resolved.population, resolved.kind), metricKind = resolved.kind === 'omitted_transactions' ? 'transactions' : resolved.kind;
+  const rows = memberArray(preview, resolved.population, resolved.kind), metricKind = resolved.kind === 'omitted_transactions' ? 'transactions' : resolved.kind;
   if (resolved.kind !== 'omitted_transactions') check(count(resolved.population[metricKind].member_count) === rows.length, 'member_count_mismatch');
   const identityKey = resolved.kind === 'stock' ? 'account_id' : resolved.kind === 'source_reported' ? 'source_record_id' : 'canonical_transaction_id';
   const ordered = rows.map(row => ({ key: text(row[identityKey], 400), row })).sort((a, b) => compare(a.key, b.key));

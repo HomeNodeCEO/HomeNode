@@ -1,5 +1,5 @@
 import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport, createCustomCohortMemberTransport,
-  createCustomWorkspaceSectionTransport } from './customCohortPreviewTransport';
+  createCustomWorkspaceSectionTransport, isCustomCohortPreviewCapacityError } from './customCohortPreviewTransport';
 import type { CustomCohortMemberTransport } from './customCohortPreviewTransport';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomWorkspaceCheckpoint,
   readCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
@@ -105,6 +105,16 @@ function editorKey(options: Options, bound: CustomWorkspaceTarget, io: CustomWor
   });
 }
 
+function observationRead<T>(signal: AbortSignal, task: () => Promise<T>): Promise<T> {
+  return safely(signal, async () => {
+    try { return await task(); }
+    catch (error) {
+      if (isCustomCohortPreviewCapacityError(error)) throw new WorkspaceApiError('preview_capacity_exceeded', 422);
+      throw error;
+    }
+  });
+}
+
 /** Inject the existing authenticated request and URL boundary; this module does
  * not import a session, grant source rights, retry requests, cache a workfile, or
  * mount production routes. The lifecycle/read/preview owner controls the finite
@@ -187,7 +197,7 @@ export function createCustomWorkspaceApi(options: Options) {
       });
     },
     catalog(input: CustomCohortPreviewInput, io: CustomWorkspaceOperationOptions) {
-      return safely(io.signal, async () => {
+      return observationRead(io.signal, async () => {
         const bound = identity(input.accountId, input.assignmentFileId);
         return cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true }, io);
@@ -196,10 +206,10 @@ export function createCustomWorkspaceApi(options: Options) {
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {
       // Preview already has a controller/route contract using exact int64 string
       // IDs. Do not apply the older generic workfile number limit to this view.
-      return safely(io.signal, () => preview(input, io));
+      return observationRead(io.signal, () => preview(input, io));
     },
     members(...[input, population, page, io]: Parameters<CustomCohortMemberTransport>) {
-      return safely(io.signal, () => members(input, population, page, io));
+      return observationRead(io.signal, () => members(input, population, page, io));
     },
     readReportEditor(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions) {
       return safely(io.signal, async () => {

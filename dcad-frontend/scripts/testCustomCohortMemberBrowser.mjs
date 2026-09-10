@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
@@ -86,6 +87,7 @@ function harness(f = fixture()) {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return requireRuntime(name);
     if (name === '../customCohortMemberPage') return members;
+    if (name === '../customCohortPreviewTransport') return previewTransportHelpers;
     assert.equal(name, '../customCohortPreviewController'); return { ...controller, fingerprintCustomCohortSelection(value) {
       const digest = controller.fingerprintCustomCohortSelection(value); digests.add(digest);
       void digest.then(() => digests.delete(digest), () => digests.delete(digest)); return digest;
@@ -133,6 +135,28 @@ test('mount is lazy, explicit opening uses exact selected count and equivalent p
   h.render({ ...h.props(), memberTransport: (...args) => h.transport(...args) }); await h.settle(); assert.equal(h.calls.length, 1);
   h.click('Hide records'); assert.doesNotMatch(h.text(), /CAD account A000/); h.click('Show records'); await h.settle();
   assert.equal(h.calls.length, 1); assert.match(h.text(), /CAD account A000/); h.unmount();
+});
+
+test('capacity refusal on Next retains the checked page without changing count or silently shortening the population', { timeout: 10000 }, async t => {
+  const h = harness(fixture({ accountCount: 51 })); t.after(() => h.unmount());
+  h.click('Show records'); await h.wait(0); await h.complete(0);
+  h.click('Next page'); await h.wait(1);
+  h.calls[1].reject(Object.assign(new Error('SECRET'), { status: 422, workspaceCode: 'preview_capacity_exceeded' })); await h.drain();
+  assert.match(h.text(), /Record inspection exceeds the preview capacity/);
+  assert.match(h.text(), /previous checked page is unchanged/); assert.match(h.text(), /records 1–50 of 51/);
+  assert.equal(h.nodes().filter(n => n.type === 'li').length, 50); assert.doesNotMatch(h.text(), /SECRET|CAD account A050/);
+  assert.equal(h.button('Next page').props.disabled, true); h.render({ ...h.props() }); await h.settle(); assert.equal(h.calls.length, 2);
+  h.render({ ...h.props(), paused: true }); h.click('Retry records', true); await h.settle(); assert.equal(h.calls.length, 2);
+  h.render(h.props()); h.click('Retry records'); await h.wait(2); assert.deepEqual(h.calls[2].page, h.calls[1].page);
+  await h.complete(2); assert.match(h.text(), /records 51–51 of 51/); assert.doesNotMatch(h.text(), /exceeds the preview capacity/);
+});
+test('first-page capacity refusal stays empty; late refusal cannot overwrite another population', { timeout: 10000 }, async t => {
+  const h = harness(); t.after(() => h.unmount()); h.click('Show records'); await h.wait(0);
+  h.calls[0].reject(Object.assign(new Error('SECRET'), { status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' })); await h.drain();
+  assert.match(h.text(), /No records have been substituted/); assert.equal(h.nodes().filter(n => n.type === 'li').length, 0);
+  h.click('Retry records'); await h.wait(1); h.population('transactions'); await h.wait(2); await h.complete(2);
+  const checked = h.text(); h.calls[1].reject(Object.assign(new Error('SECRET'), { status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' }));
+  await h.drain(); assert.equal(h.text(), checked); assert.doesNotMatch(h.text(), /exceeds the preview capacity/);
 });
 
 test('an explicit empty selection stays empty without querying all accounts or another population', async () => {

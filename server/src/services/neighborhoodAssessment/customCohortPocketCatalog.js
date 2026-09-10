@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
+import { isCustomCohortObservationPreview, customCohortObservationMembers } from './customCohortObservationPreview.js';
 
 export const CUSTOM_COHORT_POCKET_CATALOG_LIMITS = Object.freeze({
   accounts: 50000, source_records: 100000, source_chunks: 1000, pockets: 128,
@@ -44,7 +45,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
   check(capture?.status === 'ready' && input?.acquisition?.capture_result?.query_complete === true
     && input?.spatial?.query_complete === true, 'retained_capture_required');
   const mappingVersion = customCohortObservationMappingVersion(input.acquisition);
-  check(preview?.preview_version === 1 && preview.status === 'observations_only' && preview.authority === 'not_established'
+  check(isCustomCohortObservationPreview(preview) && preview.status === 'observations_only' && preview.authority === 'not_established'
     && preview.apply?.status === 'blocked' && Number.isSafeInteger(preview.selection_revision) && preview.selection_revision > 0, 'observation_preview_required');
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(preview.context_ref));
   const binding = { context_ref: context, selection_revision: preview.selection_revision };
@@ -59,7 +60,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
   }
   const roster = sorted(array(input.spatial.account_ids, L.accounts).map(account));
   check(roster.length === input.spatial.account_ids.length, 'duplicate_account');
-  const stock = array(preview.all.stock.members, L.accounts).map(row => account(row.account_id));
+  const stock = array(customCohortObservationMembers(preview, preview.all, 'stock'), L.accounts).map(row => account(row.account_id));
   check(preview.all.stock.member_count === roster.length && stock.length === roster.length && new Set(stock).size === stock.length
     && JSON.stringify(sorted(stock)) === JSON.stringify(roster)
     && JSON.stringify(sorted(array(preview.all.account_ids, L.accounts))) === JSON.stringify(roster), 'stock_roster_mismatch');

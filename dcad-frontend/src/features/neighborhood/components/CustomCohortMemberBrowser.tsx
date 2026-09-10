@@ -5,6 +5,7 @@ import { checkCustomCohortMemberPage, createCustomCohortMemberContinuation } fro
 import type { CheckedCustomCohortMemberPage, CustomCohortInspectedMember, CustomCohortMemberExpectation,
   CustomCohortMemberKind, CustomCohortMemberPageRequest } from '../customCohortMemberPage';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
+import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 
 interface Props {
   input: CustomCohortPreviewInput;
@@ -15,7 +16,7 @@ interface Props {
 type Row = Record<string, unknown>;
 type Continuation = ReturnType<typeof createCustomCohortMemberContinuation>;
 type Intent = { kind: CustomCohortMemberKind; index: number; page: CustomCohortMemberPageRequest; previous?: Continuation };
-type Status = 'idle' | 'loading' | 'ready' | 'failed' | 'interrupted';
+type Status = 'idle' | 'loading' | 'ready' | 'failed' | 'interrupted' | 'capacity_exceeded';
 const LIMIT = 50, MAX_PAGES = 2000;
 const LABELS = { stock: 'Current CAD accounts', source_reported: 'Source-reported records',
   transactions: 'In-period transaction observations', omitted_transactions: 'Omitted transaction observations' } as const;
@@ -103,7 +104,7 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
         cursors.current[intent.index] = { token: createCustomCohortMemberContinuation(checked), next: checked.page.next_after_member_id };
         cursors.current.length = intent.index + 1;
         setResult(checked); setStatus('ready');
-      } catch { if (current()) setStatus('failed'); }
+      } catch (error) { if (current()) setStatus(isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : 'failed'); }
       finally { clearTimeout(pending.timer); if (active.current === pending) {
         active.current = null; if (live.current && paused.current) setStatus('interrupted');
       } }
@@ -141,8 +142,9 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
       <p className="text-xs text-slate-600">CAD values describe the current retained mirror, not historical property condition. Source records are not additional canonical sales; their period eligibility is not established. Transaction totals may cover multiple accounts and are not verified property sale prices. Currency, coverage, eligibility and reliability are not established.</p>
       {disabled && <p role="status" className="text-xs text-amber-800">Record inspection is paused. Previously loaded records remain from the same captured summary; no new reads are admitted.</p>}
       {!disabled && busy && <p role="status" className="text-xs text-slate-600">Loading records{page ? ' — the previous page remains below' : ''}…</p>}
-      {(status === 'failed' || status === 'interrupted') && <div role="status" className="space-y-2 text-xs text-amber-800">
-        <p>{status === 'interrupted' ? 'The record request was interrupted.' : 'The record page could not be verified or loaded.'} {page ? 'The previous checked page is unchanged.' : 'No records have been substituted.'}</p>
+      {(status === 'failed' || status === 'interrupted' || status === 'capacity_exceeded') && <div role="status" className="space-y-2 text-xs text-amber-800">
+        <p>{status === 'capacity_exceeded' ? 'Record inspection exceeds the preview capacity for this group. Paging cannot reduce the full-summary calculation; try inspecting another recorded group.'
+          : status === 'interrupted' ? 'The record request was interrupted.' : 'The record page could not be verified or loaded.'} {page ? 'The previous checked page is unchanged.' : 'No records have been substituted.'}</p>
         <button type="button" className={button} disabled={disabled} onClick={() => { if (lastIntent.current) request(lastIntent.current); }}>Retry records</button>
       </div>}
       {population.total_count === 0 && <p className="text-xs text-slate-600">No records in this population. Other populations have not been substituted.</p>}

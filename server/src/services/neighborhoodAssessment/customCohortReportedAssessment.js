@@ -1,7 +1,8 @@
 import { assessmentEvidenceDigest as digest, buildNeighborhoodAssessment } from './contract.js';
 import { neighborhoodMemberContentDigest, neighborhoodMemberSetDigest, prepareNeighborhoodPublication } from './assessmentRepository.js';
 import { REPORTED_OBSERVATION_PROFILE, REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
-import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
+import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
+  customCohortObservationMembers } from './customCohortObservationPreview.js';
 import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { buildCustomCohortReportedSharedSales } from './customCohortReportedSharedSales.js';
@@ -99,9 +100,10 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
     .flatMap(id => groups.get(id).account_ids))].sort(compare);
   const pockets = selectedAccounts.length ? [{ id: 'reported-selected-accounts',
     label: 'Selected retained accounts', account_ids: selectedAccounts }] : [];
-  const preview = buildCustomCohortObservationPreview({ context_ref, retained_inputs: retained,
+  const preview = buildCustomCohortIndexedObservationPreview({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets } });
-  const selected = preview.selected.stock.members, period = { ...preview.observation_period, date_basis: 'closing_date' };
+  const selected = customCohortObservationMembers(preview, preview.selected, 'stock');
+  const period = { ...preview.observation_period, date_basis: 'closing_date' };
   const privateCapture = retained.private_sales?.capture;
   const privateSales = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
     context_ref, effective_date: effective, observation_period: preview.observation_period,

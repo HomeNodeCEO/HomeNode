@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
@@ -218,6 +219,7 @@ new Script(`(function(require,module,exports){${compiled}\n})`, { filename: file
   if (key === 'react' || key === 'react/jsx-runtime') return runtime(key);
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
   if (key === '../customCohortPreviewController') return controller;
+  if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortOperation() { requests++; assert.fail('No render-time request'); },
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
   assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector'].includes(key));

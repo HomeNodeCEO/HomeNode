@@ -1,4 +1,5 @@
 import test from 'node:test';
+import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
@@ -216,6 +217,7 @@ new Script(`(function(require,module,exports){${compiled}\n})`).runInThisContext
   if (key === '../customCohortCadEvidence') return cadHelpers;
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
   if (key === '../customCohortPreviewController') return controller;
+  if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortObservationPreview() { assert.fail('SSR must not fetch'); } };
   if (key === './CustomCohortStatistics' || key === './CustomCohortMemberBrowser') return { default: () => null, __esModule: true };
   assert.fail(`Unexpected Inspector import ${key}`);

@@ -42,6 +42,42 @@ function response(request, { map = request.include_map ? 'available' : 'omitted'
 }
 const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+test('capacity refusal keeps the exact previous coherent group stale; a changed empty selection recovers normally', async () => {
+  const h = harness(); h.controller.setSelection(input()); await h.tick(); await h.complete(0);
+  const old = h.controller.getState().group, enlarged = input(2, [pocket('all', ['A', 'B'])]);
+  h.controller.setSelection(enlarged); await h.tick();
+  await h.fail(1, Object.assign(new Error('SECRET'), { status: 422, workspaceCode: 'preview_capacity_exceeded' }));
+  const failed = h.controller.getState(); assert.equal(failed.error, 'capacity_exceeded');
+  assert.equal(failed.status, 'failed'); assert.equal(failed.freshness, 'stale'); assert.equal(failed.group, old);
+  assert.equal(failed.group.binding.selectionRevision, 1); assert.deepEqual(failed.requested, enlarged);
+  h.controller.setSelection(structuredClone(enlarged)); await h.tick(); assert.equal(h.calls.length, 2);
+  assert.equal(h.timers.size, 0); assert.equal(failed.apply, undefined); assert.equal(old.apply.status, 'blocked');
+  h.controller.setSelection(input(3, [])); await h.tick(); assert.equal(h.calls[2].request.include_map, false);
+  assert.equal(h.controller.getState().group, old); await h.complete(2);
+  const ready = h.controller.getState(); assert.equal(ready.freshness, 'current'); assert.equal(ready.error, null);
+  assert.equal(ready.group.binding.selectionRevision, 3); assert.equal(ready.group.summary.selected.stock.member_count, 0);
+  assert.ok(ready.group.parcel_map.geojson.features.every(feature => !feature.properties.selected)); h.controller.dispose();
+});
+test('raw exact 422 capacity is recognized but wrong status, message-only and unrelated failure are not', async () => {
+  for (const [error, expected] of [
+    [Object.assign(new Error('SECRET'), { status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' }), 'capacity_exceeded'],
+    [Object.assign(new Error('neighborhood_preview_capacity_exceeded'), { status: 422 }), 'request_failed'],
+    [Object.assign(new Error('SECRET'), { status: 400, errorCode: 'neighborhood_preview_capacity_exceeded' }), 'request_failed'],
+    [Object.assign(new Error('SECRET'), { status: 422, errorCode: 'neighborhood_preview_capacity_exceeded ' }), 'request_failed'],
+  ]) {
+    const h = harness(); h.controller.setSelection(input()); await h.tick(); await h.fail(0, error);
+    assert.equal(h.controller.getState().error, expected); assert.equal(h.controller.getState().group, null);
+    assert.equal(h.controller.getState().freshness, 'none'); h.controller.dispose();
+  }
+});
+test('late capacity response cannot replace a newer successful selection', async () => {
+  const h = harness(); h.controller.setSelection(input()); await h.tick();
+  h.controller.setSelection(input(2, [])); await h.tick(); await h.complete(1);
+  const current = h.controller.getState(); await h.fail(0, Object.assign(new Error('SECRET'), {
+    status: 422, errorCode: 'neighborhood_preview_capacity_exceeded' }));
+  assert.equal(h.controller.getState(), current); assert.equal(current.freshness, 'current'); h.controller.dispose();
+});
+
 test('independent inspection admits the exact bound summary without inventing map geometry', async () => {
   const request = { ...input(1, [pocket('inspection', ['B'])]), include_map: false };
   const digest = await fingerprintCustomCohortSelection(input(1, [pocket('inspection', ['B'])]));

@@ -8,6 +8,7 @@ import { buildCachedNeighborhoodInputs } from '../src/services/neighborhoodAsses
 import { summarizeNeighborhoodPopulations } from '../src/services/neighborhoodAssessment/statistics.js';
 import { neighborhoodMemberSetDigest, neighborhoodMemberContentDigest, prepareNeighborhoodPublication } from '../src/services/neighborhoodAssessment/assessmentRepository.js';
 import { supportedInputsFixture } from './fixtures/customCohortSupportedInputsFixture.js';
+import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography } from '../src/services/neighborhoodAssessment/customCohortReportGeography.js';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const identity = { assessment_id: 'a0000000-0000-4000-8000-000000000001', assessment_revision: 1,
@@ -285,4 +286,90 @@ test('oversize bounded record returns explicit whole-preparation capacity refusa
   const result = build(changed);
   assert.equal(result.assessment, null); assert.equal(result.publication_bundle, null); assert.equal(result.candidate, null);
   assert.ok(result.issues.some(i => i.code === 'report_preparation_capacity_exceeded'));
+});
+
+const manualPolygon = { type: 'Polygon', coordinates: [[[-96.85, 32.8], [-96.8, 32.8], [-96.8, 32.85], [-96.85, 32.8]],
+  [[-96.83, 32.81], [-96.82, 32.81], [-96.82, 32.82], [-96.83, 32.81]]] };
+function reportGeography(input, saved = { neighborhood_boundary_source: 'appraiser_defined_area_manual_v2',
+  neighborhood_boundary_geometry: manualPolygon, neighborhood_boundary_north: 'Recorded North Road' }, isValid = true) {
+  const text = JSON.stringify(saved), t = input.target;
+  const admitted = prepareCustomCohortReportGeography({ target: { organization_id: t.scope.organization_id, report_file_id: t.report_file_id,
+    assignment_file_id: String(t.custom_assignment_file_id), account_id: t.scope.account_id }, assignment_revision: 12,
+  captured_at: input.supported_inputs.binding.derived_at,
+  projection: { details_type: 'object', projected_utf8_bytes: Buffer.byteLength(text), projected_sha256: sha(text), projected_json: text } });
+  return completeCustomCohortReportGeography(admitted, admitted.geometry_for_validation ? {
+    is_valid: isValid, validation_reason: isValid ? 'Valid Geometry' : 'Synthetic invalid geometry', postgis_version: 'synthetic-query-result-3.4',
+  } : null);
+}
+
+test('optional manual geography changes no population, statistic, member proof, required counts or old source bytes', async () => {
+  const { input } = await sharedTamperFixture(); const before = build(input), supplied = reportGeography(input);
+  assert.equal(Object.hasOwn(before, 'report_geography'), false);
+  const result = build({ ...input, report_geography: supplied });
+  assert.equal(result.report_geography, supplied);
+  assert.deepEqual(result.assessment.geographic_neighborhood.geometry, manualPolygon);
+  assert.equal(result.assessment.geographic_neighborhood.cardinal_summaries.north, 'Recorded North Road');
+  assert.equal(result.assessment.geographic_neighborhood.cardinal_summaries.east, null);
+  assert.equal(result.assessment.geographic_neighborhood.status, 'incomplete');
+  assert.deepEqual(result.assessment.geographic_neighborhood.perimeter, []);
+  assert.equal(result.assessment.geographic_neighborhood.validation.valid, null);
+  assert.deepEqual(result.assessment.populations, before.assessment.populations);
+  assert.deepEqual(result.assessment.statistics, before.assessment.statistics);
+  assert.deepEqual(result.assessment.required_statistic_ids, before.assessment.required_statistic_ids);
+  assert.deepEqual(result.publication_bundle.members, before.publication_bundle.members);
+  assert.deepEqual(restoredStatistics(result), restoredStatistics(before));
+  const savedSources = new Map(result.publication_bundle.sources.map(s => [s.snapshot.id, s]));
+  for (const source of before.publication_bundle.sources) assert.deepEqual(savedSources.get(source.snapshot.id), source);
+  assert.equal(result.publication_bundle.sources.length, before.publication_bundle.sources.length + 1);
+  const added = result.publication_bundle.sources.find(s => s.payload.report_manual_geography_source_version === 1);
+  assert.equal(added.snapshot.historical_availability, 'unknown'); assert.equal(added.snapshot.valid_from, null);
+  assert.deepEqual(added.payload.saved_geography, supplied); assert.equal(added.payload.report_binding.target.editor_revision, 0);
+  assert.equal(result.candidate.status, 'incomplete'); assert.equal(result.apply.status, 'blocked'); frozen(result);
+});
+
+for (const source of ['appraiser_defined_area_manual_v1', 'neighborhood_boundary_engine_v6', 'sales_comparison_market_conditions']) {
+  test(`optional ${source} cannot populate report geography despite saved confirmation`, async () => {
+    const { input } = await sharedTamperFixture();
+    const supplied = reportGeography(input, { neighborhood_boundary_source: source,
+      neighborhood_boundary_geometry: manualPolygon, neighborhood_boundary_confirmed: true });
+    const result = build({ ...input, report_geography: supplied });
+    assert.equal(result.assessment.geographic_neighborhood.geometry, null);
+    assert.equal(result.report_geography.status, 'intent_unverified'); assert.equal(result.report_geography.oracle_observation, null);
+    assert.equal(result.candidate.status, 'incomplete');
+  });
+}
+
+test('native-invalid manual polygon remains exact source evidence, not report geometry or repaired shape', async () => {
+  const { input } = await sharedTamperFixture(); const supplied = reportGeography(input, undefined, false);
+  const result = build({ ...input, report_geography: supplied });
+  assert.equal(result.assessment.geographic_neighborhood.geometry, null); assert.equal(result.report_geography.status, 'invalid_topology');
+  const source = result.publication_bundle.sources.find(s => s.payload.report_manual_geography_source_version === 1);
+  assert.deepEqual(JSON.parse(source.payload.saved_geography.projection.projected_json).neighborhood_boundary_geometry, manualPolygon);
+  assert.equal(source.payload.saved_geography.oracle_observation.is_valid, false);
+});
+
+test('no reviewed computation still returns exact branded geography for owner inspection, without assessment or publication', async () => {
+  const { input } = await fixture({ saleCount: 0 }, false); const supplied = reportGeography(input);
+  const result = build({ ...input, report_geography: supplied });
+  assert.equal(result.report_geography, supplied); assert.equal(result.report_geography.status, 'manual_geometry_recorded');
+  assert.equal(result.assessment, null); assert.equal(result.publication_bundle, null); assert.equal(result.candidate, null);
+  assert.deepEqual(build({ ...input, report_geography: result.report_geography }), result);
+});
+
+test('cleared geography is distinct from absent, and neither falls back to a legacy or generated boundary', async () => {
+  const { input } = await sharedTamperFixture();
+  for (const [saved, status] of [[{}, 'absent'], [{ neighborhood_boundary_source: 'appraiser_defined_area_cleared', neighborhood_boundary_geometry: null }, 'cleared']]) {
+    const result = build({ ...input, report_geography: reportGeography(input, saved) });
+    assert.equal(result.report_geography.status, status); assert.equal(result.assessment.geographic_neighborhood.geometry, null);
+  }
+});
+
+test('optional arbitrary serialized geography cannot bypass module admission or exact report target', async () => {
+  const { input } = await sharedTamperFixture(), supplied = reportGeography(input);
+  assert.throws(() => build({ ...input, report_geography: structuredClone(supplied) }), error =>
+    error.code === 'CUSTOM_COHORT_REPORT_GEOGRAPHY_INVALID' && error.reason === 'completed_identity');
+  const other = structuredClone(input); other.target.custom_assignment_file_id = 42;
+  const foreign = reportGeography(other);
+  assert.throws(() => build({ ...input, report_geography: foreign }), error =>
+    error.code === 'CUSTOM_COHORT_REPORT_GEOGRAPHY_INVALID' && error.reason === 'report_binding');
 });

@@ -826,15 +826,19 @@ export default function NeighborhoodCharacteristicsContent({
       "neighborhood_boundary_label",
       origin === "cleared"
         ? "Appraiser-defined market area cleared"
-        : "Appraiser-edited market area",
+        : origin === "appraiser"
+          ? "Appraiser-edited market area"
+          : "Suggested market area (unverified)",
     );
     onAssignmentChange(
       "neighborhood_boundary_source",
       origin === "cleared"
         ? "appraiser_defined_area_cleared"
-        : "appraiser_defined_area_manual_v1",
+        : origin === "appraiser"
+          ? "appraiser_defined_area_manual_v2"
+          : "neighborhood_boundary_automatic_unverified_v1",
     );
-    onAssignmentChange("neighborhood_boundary_geometry", geometry);
+    onAssignmentChange("neighborhood_boundary_geometry", origin === "cleared" ? null : geometry);
     onAssignmentChange("neighborhood_boundary_saved_at", now);
     onAssignmentChange("neighborhood_boundary_confirmed", false);
     onAssignmentChange("neighborhood_boundary_confirmed_at", "");
@@ -849,7 +853,9 @@ export default function NeighborhoodCharacteristicsContent({
     setGeneratedBoundaryMessage(
       origin === "cleared"
         ? "The narrative boundary was cleared. The saved analytical discovery envelope and relevance pockets remain available for review."
-        : "Appraiser narrative boundary recorded. The three-mile analytical discovery population remains intact; Refresh Area Data recalculates the descriptive area fields for the edited polygon.",
+        : origin === "appraiser"
+          ? "Appraiser narrative boundary recorded. The three-mile analytical discovery population remains intact; Refresh Area Data recalculates the descriptive area fields for the edited polygon."
+          : "Suggested boundary restored without a matching saved generation assessment. It remains automatic and unverified; review it before use. The analytical discovery population and relevance pockets remain unchanged.",
     );
   }, [
     applyGeneratedBoundary,

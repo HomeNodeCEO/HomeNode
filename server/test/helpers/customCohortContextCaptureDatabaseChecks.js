@@ -579,6 +579,109 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       }
       assert.deepEqual(await protectedReviewedState(), editorBefore);
     }
+    // New manual narrative geometry is saved only on this owned synthetic
+    // assignment, never on the original coordinator fixture. Its marker and
+    // native validity do not represent adoption, licensure or report authority.
+    const boundaryFields = ['neighborhood_boundary_geometry', 'neighborhood_boundary_source', 'neighborhood_boundary_label',
+      'neighborhood_boundary_north', 'neighborhood_boundary_east', 'neighborhood_boundary_south', 'neighborhood_boundary_west',
+      'neighborhood_boundary_saved_at', 'neighborhood_boundary_confirmed', 'neighborhood_boundary_confirmed_at'];
+    const boundaryState = async () => {
+      const rows = await pool.query(`SELECT to_jsonb(a) AS value FROM app.assignment_files a
+        WHERE a.id=$1::bigint AND a.organization_id=$2 AND a.account_id=$3 AND a.created_by_user_id=$4`,
+      [reviewedAssignment, reviewedOrganization, account, reviewedActor]);
+      assert.equal(rows.rowCount, 1);
+      const history = await pool.query('SELECT to_jsonb(h) AS value FROM app.assignment_file_history h WHERE assignment_file_id=$1 ORDER BY id',
+        [reviewedAssignment]);
+      return { assignment: rows.rows[0].value, history: history.rows, protected: await protectedReviewedState() };
+    };
+    const boundaryBefore = await boundaryState(), originalDetails = boundaryBefore.assignment.assignment_details;
+    assert.ok(originalDetails && !Array.isArray(originalDetails));
+    assert.ok(boundaryFields.every(key => !Object.hasOwn(originalDetails, key)), 'this exact synthetic assignment has no prior saved boundary');
+    const boundaryId = randomUUID(), boundaryPolygon = { type: 'Polygon', coordinates: [
+      [[-96.71, 32.79], [-96.68, 32.79], [-96.68, 32.82], [-96.71, 32.82], [-96.71, 32.79]],
+      [[-96.708, 32.792], [-96.708, 32.796], [-96.704, 32.796], [-96.704, 32.792], [-96.708, 32.792]],
+    ] };
+    const boundaryDetails = { ...originalDetails, native_manual_boundary_fixture: boundaryId,
+      synthetic_non_boundary_detail: 'Unrelated synthetic detail must not enter the projection',
+      neighborhood_boundary_source: 'appraiser_defined_area_manual_v2', neighborhood_boundary_geometry: boundaryPolygon,
+      neighborhood_boundary_label: 'Synthetic native manual geometry; not adopted report evidence',
+      neighborhood_boundary_north: 'Literal synthetic north note' };
+    let currentDetails = originalDetails, currentAssignmentRevision = boundaryBefore.assignment.revision;
+    const replaceBoundary = async (details, revision = currentAssignmentRevision) => {
+      const result = await pool.query(`UPDATE app.assignment_files SET assignment_details=$6::jsonb,revision=$7
+        WHERE id=$1::bigint AND organization_id=$2 AND account_id=$3
+          AND revision=$4 AND assignment_details=$5::jsonb AND created_by_user_id=$8`,
+      [reviewedAssignment, reviewedOrganization, account, currentAssignmentRevision, JSON.stringify(currentDetails),
+        JSON.stringify(details), revision, reviewedActor]);
+      assert.equal(result.rowCount, 1, 'only the exact owned synthetic assignment state may be replaced');
+      currentDetails = details; currentAssignmentRevision = revision;
+    };
+    try {
+      await replaceBoundary(boundaryDetails);
+      const storedBoundary = await boundaryState(), boundaryCallsFrom = calls.length;
+      const manual = await reviewedOwner.prepareReviewedInputs(reviewedRequest), geo = manual.report_preparation.report_geography;
+      assert.equal(geo.status, 'manual_geometry_recorded'); assert.equal(geo.authority, 'not_established');
+      assert.deepEqual(geo.geometry, boundaryPolygon); assert.equal(geo.binding.assignment_revision, currentAssignmentRevision);
+      assert.equal(geo.binding.target.assignment_file_id, reviewedAssignment); assert.equal(geo.binding.target.account_id, account);
+      assert.equal(geo.oracle_observation.is_valid, true); assert.ok(geo.oracle_observation.postgis_version.length > 0);
+      assert.equal(geo.binding.projected_sha256, createHash('sha256').update(geo.projection.projected_json).digest('hex'));
+      assert.equal(geo.binding.projected_utf8_bytes, Buffer.byteLength(geo.projection.projected_json));
+      assert.deepEqual(JSON.parse(geo.projection.projected_json),
+        Object.fromEntries(boundaryFields.filter(key => Object.hasOwn(boundaryDetails, key)).map(key => [key, boundaryDetails[key]])));
+      assert.equal(geo.projection.projected_json.includes('synthetic_non_boundary_detail'), false);
+      assert.equal(geo.projection.projected_json.includes(boundaryId), false);
+      assert.equal(manual.report_preparation.assessment, null); assert.equal(manual.report_preparation.apply.status, 'blocked');
+      assert.equal(manual.supported_inputs.statistics, null); assert.deepEqual(manual.supported_inputs.selection, prepared.supported_inputs.selection);
+      assert.equal(calls.slice(boundaryCallsFrom).filter(sql => sql.includes('report-geography */')).length, 2);
+      assert.equal(calls.slice(boundaryCallsFrom).filter(sql => sql.includes('report-geography-topology')).length, 1);
+      assert.ok(!calls.slice(boundaryCallsFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)));
+      assert.deepEqual(await boundaryState(), storedBoundary);
+      checks.push('native saved manual Polygon retains holes, exact scoped ten-field SQL hash and actual PostGIS validity; unrelated details omitted and no computation/report writes');
+
+      const invalidPolygon = { type: 'Polygon', coordinates: [
+        [[-96.71, 32.79], [-96.68, 32.82], [-96.71, 32.82], [-96.68, 32.79], [-96.71, 32.79]],
+      ] };
+      for (const [fields, status, nativeQueries] of [
+        [{ ...boundaryDetails, neighborhood_boundary_geometry: invalidPolygon }, 'invalid_topology', 1],
+        [{ ...boundaryDetails, neighborhood_boundary_source: 'appraiser_defined_area_manual_v1' }, 'intent_unverified', 0],
+        [{ ...boundaryDetails, neighborhood_boundary_source: 'neighborhood_boundary_automatic_unverified_v1' }, 'intent_unverified', 0],
+        [{ ...boundaryDetails, neighborhood_boundary_source: 'appraiser_defined_area_cleared', neighborhood_boundary_geometry: null }, 'cleared', 0],
+      ]) {
+        await replaceBoundary(fields);
+        const from = calls.length, result = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
+        const resultGeo = result.report_preparation.report_geography;
+        assert.equal(resultGeo.status, status); assert.equal(resultGeo.geometry, null);
+        assert.equal(calls.slice(from).filter(sql => sql.includes('report-geography-topology')).length, nativeQueries);
+        if (nativeQueries) {
+          assert.equal(resultGeo.oracle_observation.is_valid, false);
+          assert.match(resultGeo.oracle_observation.validation_reason, /[Ss]elf-intersection/);
+          assert.deepEqual(JSON.parse(resultGeo.projection.projected_json).neighborhood_boundary_geometry, invalidPolygon);
+        } else assert.equal(resultGeo.oracle_observation, null);
+      }
+      await replaceBoundary(boundaryDetails);
+      assert.deepEqual(await boundaryState(), storedBoundary);
+      checks.push('native self-intersection remains invalid without repair; legacy/automatic/cleared saved geometry never invokes the topology oracle');
+
+      for (const mutation of [
+        { revision: currentAssignmentRevision + 1, details: boundaryDetails },
+        { revision: currentAssignmentRevision, details: { ...boundaryDetails, neighborhood_boundary_north: 'Changed synthetic north note' } },
+      ]) {
+        let changed = false;
+        const racing = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+          if (changed) return;
+          await replaceBoundary(mutation.details, mutation.revision); changed = true;
+        }), authorizeMarketData: reviewedPolicy });
+        try {
+          await assert.rejects(racing.prepareReviewedInputs(reviewedRequest), /report_geography_changed/);
+          assert.ok(changed, 'a real separately committed assignment writer must run after the initial read transaction');
+        } finally { await replaceBoundary(boundaryDetails, storedBoundary.assignment.revision); }
+        assert.deepEqual(await boundaryState(), storedBoundary);
+      }
+      checks.push('native final manual-boundary fence rejects separately committed assignment-revision and fixed-revision projection changes; exact owned state restored');
+    } finally {
+      await replaceBoundary(originalDetails, boundaryBefore.assignment.revision);
+      assert.deepEqual(await boundaryState(), boundaryBefore);
+    }
     // The callback below changes actual committed state after source/read locks
     // are released and before the owner begins its final response transaction.
     let commitMutation = false;

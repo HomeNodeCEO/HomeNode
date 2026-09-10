@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { buildCustomCohortReportPreparation } from '../src/services/neighborhoodAssessment/customCohortReportPreparation.js';
@@ -60,6 +61,13 @@ async function setup({ assignmentFileId = '41', reviewed = false, emptySelection
         assert.match(text, /FOR SHARE NOWAIT/); assert.deepEqual(values, [assignmentFileId, 'neighborhood_assessment']);
         return state.editorResponse ?? one(state.editor);
       }
+      if (text.includes('custom-cohort-capture:report-geography */')) {
+        assert.equal(values[0], assignmentFileId); assert.equal(values[1], target.account_id);
+        assert.equal(values[2].length, 10); assert.equal(values[3], 262144);
+        return one({ assignment_file_id: assignmentFileId, account_id: target.account_id, assignment_revision: 1,
+          details_type: 'object', projected_utf8_bytes: 2, projected_json: '{}',
+          projected_sha256: createHash('sha256').update('{}').digest('hex') });
+      }
       if (text.includes('custom-cohort-capture:time')) return one({ value: NOW });
       return f.base.client.query(text, values);
     } };
@@ -90,7 +98,8 @@ test('owner assembles the actual reviewed graph and real report candidate, hones
   assert.ok(report.assessment); assert.ok(report.publication_bundle); assert.ok(report.candidate);
   assert.equal(report.candidate.status, 'incomplete'); assert.deepEqual(report.candidate.suggestions, []);
   assert.deepEqual(report, buildCustomCohortReportPreparation({ supported_inputs: result.supported_inputs,
-    target: report.binding.target, preparation_identity: report.binding.preparation_identity }));
+    target: report.binding.target, preparation_identity: report.binding.preparation_identity,
+    report_geography: report.report_geography }));
   assert.equal(report.binding.target.custom_assignment_file_id, 41);
   assert.equal(report.binding.target.editor_revision, 3);
   assert.equal(result.workspace_section_revision, 19); assert.equal(result.supported_inputs.selection.revision, 7);

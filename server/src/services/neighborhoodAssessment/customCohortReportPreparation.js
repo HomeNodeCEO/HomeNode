@@ -6,6 +6,7 @@ import { neighborhoodMemberContentDigest, neighborhoodMemberSetDigest, prepareNe
 import { buildCustomNeighborhoodReportCandidate } from './customReportMapping.js';
 import { getCustomCohortSupportedInputsProfile } from './customCohortSupportedInputs.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
+import { customCohortReportGeographyForAssessment } from './customCohortReportGeography.js';
 
 export const CUSTOM_COHORT_REPORT_PREPARATION_LIMITS = Object.freeze({
   source_rows: 100000, members: 100000, source_payload_utf8_bytes: 32 * 1024 * 1024,
@@ -41,10 +42,11 @@ function check(ok, reason) {
     code: 'CUSTOM_COHORT_REPORT_PREPARATION_INVALID', reason,
   });
 }
-function closed(value, keys) {
+function closed(value, keys, optional = []) {
   check(value && !types.isProxy(value) && Object.getPrototypeOf(value) === Object.prototype, 'input_shape');
   const descriptors = Object.getOwnPropertyDescriptors(value);
-  check(Reflect.ownKeys(descriptors).length === keys.length && keys.every(key => descriptors[key]?.enumerable
+  const expected = [...keys, ...optional.filter(key => Object.hasOwn(descriptors, key))];
+  check(Reflect.ownKeys(descriptors).length === expected.length && expected.every(key => descriptors[key]?.enumerable
     && Object.hasOwn(descriptors[key], 'value')), 'input_shape');
 }
 function list(value, maximum = L.source_rows) { check(Array.isArray(value) && value.length <= maximum, 'input_limit'); return value; }
@@ -175,7 +177,7 @@ function computationSources(supported, target, binding) {
  * recomputation. A missing report geography remains missing in every result.
  */
 export function buildCustomCohortReportPreparation(input) {
-  closed(input, ['supported_inputs', 'target', 'preparation_identity']);
+  closed(input, ['supported_inputs', 'target', 'preparation_identity'], ['report_geography']);
   const { supported_inputs: supported, target: rawTarget, preparation_identity: rawIdentity } = input;
   closed(rawTarget, ['scope', 'report_file_id', 'custom_assignment_file_id', 'editor_revision', 'effective_date', 'data_cutoff']);
   closed(rawTarget.scope, SCOPE);
@@ -203,9 +205,13 @@ export function buildCustomCohortReportPreparation(input) {
       account_set_sha256: selection.account_set_sha256 }), 'selection_binding');
   const binding = { context_ref: copy(b.context_ref), review_generation: b.review_generation, review_state_sha256: b.review_state_sha256,
     selection_sha256: b.selection_sha256, derived_at: b.derived_at, target, preparation_identity: identity };
+  const suppliedGeography = Object.hasOwn(input, 'report_geography');
+  const reportGeography = suppliedGeography
+    ? customCohortReportGeographyForAssessment(input.report_geography, { target, binding }) : null;
   const output = (assessment, publication_bundle, candidate, extra = []) => freeze({
     report_preparation_version: 1, status: 'incomplete', authority: 'not_established', identity_status: 'unpublished_preparation',
     binding, assessment, publication_bundle, candidate,
+    ...(suppliedGeography ? { report_geography: input.report_geography } : {}),
     issues: sorted([...REASONS, ...extra]).map(code => ({ code })), apply: { status: 'blocked', reasons: [...REASONS, ...extra] },
   });
   if (target.editor_revision === 2147483647) return output(null, null, null, ['report_editor_revision_exhausted']);
@@ -320,20 +326,25 @@ export function buildCustomCohortReportPreparation(input) {
     scope: target.scope, effective_date: target.effective_date, data_cutoff: target.data_cutoff, generated_at: b.derived_at,
     observation_period: salePeriod, subject_facts: { housing_type: supported.subject_housing.code, support_basis: supported.support_basis,
       authority: 'not_established', physical_characteristics: 'unavailable_in_installed_profile' },
-    methodology: { version: VERSION, geometry_version: 'unavailable', configuration: { profile: CUSTOM_COHORT_REPORT_PREPARATION_PROFILE } },
-    source_snapshots: [...capture.source_snapshots, ...memberCaptures.map(c => c.sourceSnapshot), ...computedCapture.source_snapshots],
+    methodology: { version: VERSION, geometry_version: reportGeography ? 'saved-editor-manual-geography-v1' : 'unavailable',
+      configuration: { profile: CUSTOM_COHORT_REPORT_PREPARATION_PROFILE,
+        ...(reportGeography ? { manual_geography: 'saved_editor_assertion_native_validity_only_no_report_applicability' } : {}) } },
+    source_snapshots: [...capture.source_snapshots, ...memberCaptures.map(c => c.sourceSnapshot), ...computedCapture.source_snapshots,
+      ...(reportGeography ? [reportGeography.source_snapshot] : [])],
     discovery: { complete: null, reason: 'retained_query_completeness_not_geographic_neighborhood_or_provider_coverage' },
     selection: { revision: String(selection.revision), pocket_ids: [...selection.included_recorded_group_ids], overrides: [],
       housing_eligibility: 'retained_reviewer_reconstruction_not_adopted_report_facts' },
-    geographic_neighborhood: { status: 'incomplete', reasons: [REASONS[0]], revision: 'unavailable', crs: 'EPSG:4326', geometry: null, perimeter: [],
+    geographic_neighborhood: reportGeography?.geography ?? { status: 'incomplete', reasons: [REASONS[0]], revision: 'unavailable', crs: 'EPSG:4326', geometry: null, perimeter: [],
       validation: { valid: null, connected: null, contains_subject: null, engine: null, revision: null },
       cardinal_summaries: { north: null, east: null, south: null, west: null } },
     populations, statistics, required_population_ids: CUSTOM_COHORT_REPORT_PREPARATION_PROFILE.required_population_ids,
     required_statistic_ids: CUSTOM_COHORT_REPORT_PREPARATION_PROFILE.required_statistic_ids,
     development_evidence: { status: 'incomplete', reasons: ['development_evidence_not_established'] },
     diagnostics: { binding, original_statistics_source_refs: computedCapture.source_snapshots.map(s => s.id), original_computation_state: stats.state,
-      report_values: 'unavailable_no_report_source_period_support', source_authority: 'not_established', identity_status: 'unpublished_preparation' } });
-  const publication = prepareNeighborhoodPublication(assessment, members, [...capture.sources, ...memberCaptures.map(c => c.source), ...computedCapture.sources]);
+      report_values: 'unavailable_no_report_source_period_support', source_authority: 'not_established', identity_status: 'unpublished_preparation',
+      ...(reportGeography ? { manual_geography: reportGeography.diagnostic } : {}) } });
+  const publication = prepareNeighborhoodPublication(assessment, members, [...capture.sources, ...memberCaptures.map(c => c.source), ...computedCapture.sources,
+    ...(reportGeography ? [reportGeography.source] : [])]);
   const candidate = buildCustomNeighborhoodReportCandidate({ assessment: publication.assessment, target: { ...target,
     attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,
     workflow_type: 'custom_appraisal', uad_workfile_id: null, specification_release: null } });

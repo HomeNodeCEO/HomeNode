@@ -25,6 +25,8 @@ import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
+import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography,
+  CUSTOM_COHORT_REPORT_GEOGRAPHY_FIELDS, CUSTOM_COHORT_REPORT_GEOGRAPHY_LIMITS } from './customCohortReportGeography.js';
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from './customAcceptanceSnapshot.js';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS,
   readCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
@@ -157,6 +159,40 @@ async function reportEditorState(client, input) {
   if (!Number.isInteger(row.revision) || row.revision < 1 || row.revision > 2_147_483_647
     || typeof row.value_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.value_sha256)) fail('report_editor_unavailable');
   return { editor_revision: row.revision, value_sha256: row.value_sha256 };
+}
+
+async function reportGeographyState(client, input) {
+  // resolveTarget already holds this exact assignment row. Select only saved
+  // narrative-boundary fields, preserving missing keys versus explicit JSON null.
+  // Neither the account-level fallback nor unrelated client/contract data enters
+  // this capture. Meter the projection in PostgreSQL before sending any text.
+  const row = one(await client.query(`/* custom-cohort-capture:report-geography */
+    WITH projected AS MATERIALIZED (
+      SELECT id::text AS assignment_file_id,account_id,revision AS assignment_revision,
+        CASE WHEN assignment_details IS NULL THEN 'sql_null' ELSE jsonb_typeof(assignment_details) END AS details_type,
+        CASE WHEN jsonb_typeof(assignment_details)='object' THEN (
+          SELECT COALESCE(jsonb_object_agg(key,value),'{}'::jsonb)
+          FROM jsonb_each(CASE WHEN jsonb_typeof(assignment_details)='object' THEN assignment_details ELSE '{}'::jsonb END)
+          WHERE key=ANY($3::text[])) ELSE NULL END AS fields
+      FROM app.assignment_files WHERE id=$1::bigint AND account_id=$2
+    ) SELECT assignment_file_id,account_id,assignment_revision,details_type,
+      octet_length(fields::text) AS projected_utf8_bytes,
+      CASE WHEN octet_length(fields::text)<=$4::integer
+        THEN encode(sha256(convert_to(fields::text,'UTF8')),'hex') ELSE NULL END AS projected_sha256,
+      CASE WHEN octet_length(fields::text)<=$4::integer THEN fields::text ELSE NULL END AS projected_json
+    FROM projected`, [input.assignmentFileId, input.accountId, CUSTOM_COHORT_REPORT_GEOGRAPHY_FIELDS,
+    CUSTOM_COHORT_REPORT_GEOGRAPHY_LIMITS.projected_utf8_bytes]));
+  if (row.assignment_file_id !== input.assignmentFileId || row.account_id !== input.accountId) fail('report_geography_unavailable');
+  return { assignment_revision: row.assignment_revision, projection: { details_type: row.details_type,
+    projected_utf8_bytes: row.projected_utf8_bytes, projected_sha256: row.projected_sha256, projected_json: row.projected_json } };
+}
+async function reportGeometryTopology(client, geometry) {
+  // Only the pure module's bounded structural Polygon admission reaches PostGIS.
+  // Validate exactly those saved coordinates; never ST_MakeValid, snap or repair.
+  return one(await client.query(`/* custom-cohort-capture:report-geography-topology */
+    WITH supplied AS MATERIALIZED (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::jsonb),4326) AS geom)
+    SELECT ST_IsValid(geom) AS is_valid,ST_IsValidReason(geom) AS validation_reason,
+      postgis_lib_version() AS postgis_version FROM supplied`, [canonicalAssessmentJson(geometry)]));
 }
 
 function operationBudget(options = {}) {
@@ -549,7 +585,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       const millis = Date.parse(now);
       if (!Number.isFinite(millis)) fail('database_time_unavailable');
       const derivedAt = new Date(millis).toISOString();
-      return { target, scopeJson, workspace, review, retained, reportEditor, now, derivedAt };
+      let savedBoundary = null, reportGeography = null;
+      if (reportEditor !== null) {
+        savedBoundary = await reportGeographyState(client, input);
+        const admitted = prepareCustomCohortReportGeography({
+          target: { organization_id: target.organization_id, report_file_id: target.report_file_id,
+            assignment_file_id: input.assignmentFileId, account_id: input.accountId },
+          ...savedBoundary, captured_at: derivedAt });
+        const topology = admitted.geometry_for_validation === null ? null
+          : await reportGeometryTopology(client, admitted.geometry_for_validation);
+        reportGeography = completeCustomCohortReportGeography(admitted, topology);
+      }
+      return { target, scopeJson, workspace, review, retained, reportEditor, savedBoundary, reportGeography, now, derivedAt };
     });
     budget.check();
     const active = loaded.workspace.checkpoint.active;
@@ -572,13 +619,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
           editor_revision: loaded.reportEditor.editor_revision, effective_date: loaded.retained.retained.retained_inputs.subject.effective_date,
           data_cutoff: loaded.retained.retained.retained_inputs.subject.effective_date },
         preparation_identity: { assessment_id: randomUUID(), assessment_revision: 1,
-          attachment_id: randomUUID(), attachment_revision: 1 } });
+          attachment_id: randomUUID(), attachment_revision: 1 }, report_geography: loaded.reportGeography });
     budget.check();
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
       const workspace = await savedWorkspace(client, input);
       if (!same(workspace, loaded.workspace)) fail('workspace_changed');
       if (loaded.reportEditor !== null && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
+      if (loaded.savedBoundary !== null && !same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
         .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, loaded.scopeJson)

@@ -25,7 +25,12 @@ test("Custom Appraisal exposes a top-level save and waits for queued workfile ch
 
   assert.ok(saveStart >= 0 && saveEnd > saveStart, "the Custom Appraisal save path should be inspectable");
   assert.match(report, /aria-label="Save current Custom Appraisal changes now"/);
-  assert.match(savePath, /await marketWorkfileSaveQueueRef\.current/);
+  assert.match(savePath, /const marketQueue = marketWorkfileSaveQueueRef\.current/);
+  assert.match(savePath, /await marketQueue/);
+  assert.match(savePath, /marketWorkfileSaveQueueRef\.current !== marketQueue/,
+    "newly appended market saves must prevent an all-saved confirmation");
+  assert.ok(savePath.indexOf("await lease.flush()") < savePath.indexOf("await marketQueue"),
+    "the exact neighborhood workspace must settle before the other save queues");
   assert.match(savePath, /await saveAssignmentDetails\(\{ requireCompletion: false \}\)/);
   assert.match(savePath, /marketWorkfileSaveErrorRef\.current/, "a failed queued market save must block a false all-saved confirmation");
   assert.match(savePath, /All current changes are saved at/);

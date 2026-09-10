@@ -285,3 +285,53 @@ test('inspector uses its injected transport once, retains independent selection 
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.render({ ...h.propsNow, label: 'Beta label' }); await h.drain();
   assert.equal(h.calls.length, 1); h.unmount(); assert.equal(h.calls[0].signal.aborted, true);
 });
+
+test('read-only quiescence disables direct group/map inspection callbacks and preserves cached inspector identity', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props()); await h.tick(); await h.complete();
+  const paused = h.props(); paused.workspace.blockedReason = 'read_only'; h.render(paused);
+  const groupButton = h.nodes().find(n => n.type === 'button' && text(n).startsWith('Beta1 accounts'));
+  assert.equal(groupButton.props.disabled, true); groupButton.props.onClick();
+  h.child('CustomCohortParcelMap').onInspectPocket(groupId(2));
+  h.child('CustomCohortParcelMap').onInspectAccount('C'); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 1);
+  h.render(h.props()); h.child('CustomCohortParcelMap').onInspectPocket(groupId(2)); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(2));
+  h.render(paused); assert.equal(h.child('CustomCohortPocketInspector').paused, true);
+  h.render(h.props()); assert.equal(h.child('CustomCohortPocketInspector').paused, false); assert.equal(h.calls.length, 1);
+});
+
+test('a paused transport failure can explicitly retry the unchanged saved selection after release without an implicit retry loop', async t => {
+  const h = harness(); t.after(() => h.unmount()); h.render(h.props([groupId(1)], 19)); await h.tick();
+  const paused = h.props([groupId(1)], 19); paused.workspace.blockedReason = 'read_only'; h.render(paused); await h.fail();
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Retry preview').props.disabled, true);
+  h.render(h.props([groupId(1)], 19)); await h.tick(); assert.equal(h.calls.length, 1, 'same selection does not retry by render');
+  h.click('Retry preview'); await h.drain(); await h.tick(); assert.equal(h.calls.length, 2);
+  assert.equal(h.calls[1].request.selection.revision, 19); assert.equal(h.intents.length, 0); await h.complete();
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); assert.equal(h.child('CustomCohortParcelMap').freshness, 'current');
+});
+
+test('inspector pause prevents new requests; release resumes only unfinished inspection and preserves completed cached observations', async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: true };
+  h.render(props); await h.drain(); assert.equal(h.calls.length, 0); assert.match(h.text(), /inspection is paused/);
+  const drainDigest = async () => { for (let i = 0; i < 8; i++) { await new Promise(resolve => setImmediate(resolve)); await h.drain(); } };
+  h.render({ ...props, paused: false }); await drainDigest(); assert.equal(h.calls.length, 1);
+  h.render(props); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0); assert.equal(h.child('CustomCohortStatistics'), undefined);
+  h.render({ ...props, paused: false }); await drainDigest(); assert.equal(h.calls.length, 2); await h.complete(1);
+  const completed = h.child('CustomCohortStatistics').group;
+  h.render(props); assert.equal(h.child('CustomCohortStatistics').group, completed); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
+  h.render({ ...props, paused: false }); await drainDigest(); assert.equal(h.calls.length, 2);
+  assert.equal(h.child('CustomCohortStatistics').group, completed); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+});
+
+test('an earlier inspector failure does not implicitly retry on unpause; explicit retry is disabled only while paused', async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: false };
+  const digest = async () => { for (let i = 0; i < 8; i++) { await new Promise(resolve => setImmediate(resolve)); await h.drain(); } };
+  h.render(props); await digest(); await h.fail(); assert.equal(h.calls.length, 1);
+  h.render({ ...props, paused: true }); h.click('Retry inspection'); await digest(); assert.equal(h.calls.length, 1);
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Retry inspection').props.disabled, true);
+  h.render(props); await digest(); assert.equal(h.calls.length, 1);
+  h.click('Retry inspection'); await digest(); assert.equal(h.calls.length, 2); await h.complete();
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+});

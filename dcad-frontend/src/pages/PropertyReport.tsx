@@ -28,6 +28,8 @@ import {
 import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
 import { customNeighborhoodLegacyAllowed, type AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
+import { useCustomNeighborhoodReportBridge } from "@/features/neighborhood/useCustomNeighborhoodReportBridge";
+import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import {
   readMarketConditionsDraft,
   type MarketConditionsDraft,
@@ -90,6 +92,10 @@ const NeighborhoodCharacteristicsContent = lazy(
 );
 const CustomNeighborhoodAcceptedSummary = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedSummary"));
 const CustomNeighborhoodAcceptedOutline = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedOutline"));
+const CustomNeighborhoodWorkspaceHost = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodWorkspaceHost"));
+// Rollout requires the independently configured server/source owner as well.
+// This display gate is not authorization and stays off unless explicitly built on.
+const CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED = import.meta.env.VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true";
 const ListingsContractsSalesContent = lazy(
   () => import("@/components/ListingsContractsSalesContent"),
 );
@@ -156,6 +162,7 @@ function AddressHero({
   requestedAssignmentFileId?: number | null;
   onReload: () => Promise<void>;
 }) {
+  const applicationAuth = useApplicationAuth();
   const editorKeyForSave = useCallback((): string => {
     return requestEditorCredential("Enter the HomeNode editor key to save verified changes:");
   }, []);
@@ -170,7 +177,9 @@ function AddressHero({
   );
   const [assignmentDirty, setAssignmentDirty] = useState(false);
   const [assignmentSaveMessage, setAssignmentSaveMessage] = useState("");
-  const [savingAssignmentFile, setSavingAssignmentFile] = useState(false);
+  const [savingAssignmentChanges, setSavingAssignmentFile] = useState(false);
+  const [finalizingAssignmentFile, setFinalizingAssignmentFile] = useState<{ accountId: string; assignmentFileId: number } | null>(null);
+  const finalizationRequestRef = useRef<object | null>(null);
   const [assignmentAutosaveState, setAssignmentAutosaveState] =
     useState<CustomAppraisalAutosaveState>("idle");
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
@@ -341,6 +350,8 @@ function AddressHero({
     requestedAssignmentFileId,
     onSelectedFile: handleSelectedAssignmentFile,
   });
+  const savingAssignmentFile = savingAssignmentChanges || Boolean(finalizingAssignmentFile
+    && finalizingAssignmentFile.accountId === accountId && finalizingAssignmentFile.assignmentFileId === activeAssignmentFile?.id);
   const legacyNeighborhoodAllowed = customNeighborhoodLegacyAllowed(acceptedNeighborhood, accountId, activeAssignmentFile?.id);
   legacyNeighborhoodAllowedRef.current = legacyNeighborhoodAllowed;
   const currentAcceptedNeighborhood = acceptedNeighborhood && acceptedNeighborhood.accountId === accountId
@@ -473,6 +484,14 @@ function AddressHero({
   }, [accountId, detailLoaded, hydrateAssignmentDraft, resetProfileTracking, setAssignmentConflictKeys]);
 
   const address = displayValue(detail?.property_location?.address, "Property address unavailable");
+  const neighborhoodWorkspace = useCustomNeighborhoodReportBridge({
+    enabled: CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED,
+    accountId,
+    assignmentFileId: activeAssignmentFile?.id,
+    workfileStatus: activeAssignmentFile?.workfile?.status ?? null,
+    subjectLabel: address,
+    auth: applicationAuth,
+  });
   const streetAddress = address.split(",")[0].trim() || address;
   const city = displayValue(detail?.property_location?.city);
   const state = displayValue(detail?.property_location?.state, "TX");
@@ -1258,26 +1277,57 @@ function AddressHero({
       setAssignmentChooserOpen(true);
       return;
     }
-    if (currentFile.workfile?.status === "signed") {
-      setAssignmentSaveMessage("This signed appraisal is locked. Start another file to make changes.");
+    if (currentFile.workfile?.status === "signed" || currentFile.workfile?.status === "archived") {
+      setAssignmentSaveMessage("This appraisal is locked. Start another file to make changes.");
       return;
     }
-    setAssignmentSaveMessage("Saving all current changes…");
-    await marketWorkfileSaveQueueRef.current;
-    const marketSaveError = marketWorkfileSaveErrorRef.current;
-    if (assignmentDirtyRef.current) {
-      const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
-      if (assignmentSaved && marketSaveError) {
-        setAssignmentSaveMessage(`Shared report changes were saved, but ${marketSaveError}`);
+    const selectionGeneration = selectionGenerationRef.current;
+    const lease = neighborhoodWorkspace.beginSaveBarrier();
+    if (!lease) {
+      setAssignmentSaveMessage("Wait for the current save to finish, or reload the neighborhood workspace before saving everything.");
+      return;
+    }
+    const current = () => lease.isCurrent() && selectionGenerationRef.current === selectionGeneration
+      && activeAssignmentFileRef.current?.id === currentFile.id;
+    try {
+      setAssignmentSaveMessage("Saving all current changes…");
+      // This must precede BOTH the dirty-assignment early return and clean-save
+      // success. Exploration checkpoints never replace accepted report data.
+      const workspaceSaved = await lease.flush();
+      if (!current()) return;
+      if (!workspaceSaved) {
+        setAssignmentSaveMessage("Neighborhood choices are not confirmed saved. Reload that workspace before saving everything.");
+        return;
       }
-      return;
+      const marketQueue = marketWorkfileSaveQueueRef.current;
+      await marketQueue;
+      if (!current()) return;
+      if (marketWorkfileSaveQueueRef.current !== marketQueue) {
+        setAssignmentSaveMessage("Additional market changes are still saving. Save Everything again after they finish.");
+        return;
+      }
+      const marketSaveError = marketWorkfileSaveErrorRef.current;
+      if (assignmentDirtyRef.current) {
+        const assignmentSaved = await saveAssignmentDetails({ requireCompletion: false });
+        if (!current()) return;
+        if (assignmentSaved && marketWorkfileSaveQueueRef.current !== marketQueue) {
+          setAssignmentSaveMessage("Shared report changes were saved, but additional market changes are still saving. Save Everything again after they finish.");
+        } else if (assignmentSaved && marketWorkfileSaveErrorRef.current) {
+          setAssignmentSaveMessage(`Shared report changes were saved, but ${marketWorkfileSaveErrorRef.current}`);
+        }
+        return;
+      }
+      if (marketSaveError) {
+        setAssignmentSaveMessage(marketSaveError);
+        return;
+      }
+      const confirmedAt = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+      setAssignmentSaveMessage(`All current changes are saved at ${confirmedAt}.`);
+    } catch {
+      if (current()) setAssignmentSaveMessage("The complete save could not be confirmed. Review the save status and reload saved neighborhood choices before continuing.");
+    } finally {
+      lease.release();
     }
-    if (marketSaveError) {
-      setAssignmentSaveMessage(marketSaveError);
-      return;
-    }
-    const confirmedAt = new Date().toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
-    setAssignmentSaveMessage(`All current changes are saved at ${confirmedAt}.`);
   };
 
   const analyzeCurrentPropertyContext = () => runPropertyContextAnalysis({
@@ -1363,6 +1413,9 @@ function AddressHero({
 
   const finalizeCustomAppraisalFile = async () => {
     if (!accountId || !activeAssignmentFile) return;
+    const signingFile = activeAssignmentFile;
+    const selectionGeneration = selectionGenerationRef.current;
+    if (signingFile.workfile?.status === "signed" || signingFile.workfile?.status === "archived") return;
     const localBlockers = [
       ...assignmentValidationErrors(assignmentDraft),
       ...neighborhoodBoundaryReadinessErrors(assignmentDraft),
@@ -1383,15 +1436,45 @@ function AddressHero({
     }
     const editorKey = editorKeyForSave();
     if (!editorKey) return;
-    setSavingAssignmentFile(true);
+    const lease = neighborhoodWorkspace.beginSaveBarrier();
+    if (!lease) {
+      setAssignmentSaveMessage("Wait for the current save to finish, or reload the neighborhood workspace before finalizing.");
+      return;
+    }
+    const current = () => lease.isCurrent() && selectionGenerationRef.current === selectionGeneration
+      && activeAssignmentFileRef.current?.id === signingFile.id;
+    const draftAtStart = cloneEditorValue(assignmentDraftRef.current);
+    const marketQueue = marketWorkfileSaveQueueRef.current;
+    const readyToFinalize = () => {
+      if (!current()) return false;
+      if (assignmentDirtyRef.current || assignmentSaveInFlightRef.current
+        || !customAppraisalDraftsMatch(assignmentDraftRef.current, draftAtStart)
+        || activeAssignmentFileRef.current?.revision !== signingFile.revision
+        || marketWorkfileSaveQueueRef.current !== marketQueue || marketWorkfileSaveErrorRef.current) {
+        setAssignmentSaveMessage("Report changes occurred or are not confirmed saved. Save Everything, then run finalization again to review the current file.");
+        return false;
+      }
+      return true;
+    };
+    const finalizationRequest = {};
+    finalizationRequestRef.current = finalizationRequest;
+    setFinalizingAssignmentFile({ accountId, assignmentFileId: signingFile.id });
     try {
-      await marketWorkfileSaveQueueRef.current;
+      const workspaceSaved = await lease.flush();
+      if (!current()) return;
+      if (!workspaceSaved) {
+        setAssignmentSaveMessage("Cannot finalize while neighborhood choices need save recovery. Reload the workspace and try again.");
+        return;
+      }
+      await marketQueue;
+      if (!readyToFinalize()) return;
       setWorkfileStatusMessage("Running final E&O and source-data readiness checks...");
       const preflight = await getCustomAppraisalWorkfileReadiness(
         accountId,
-        activeAssignmentFile.id,
+        signingFile.id,
         editorKey,
       );
+      if (!readyToFinalize()) return;
       if (!preflight.readiness.ready) {
         setAssignmentSaveMessage(
           `Cannot finalize yet: ${preflight.readiness.blocker_messages.join(" ")}`,
@@ -1410,26 +1493,28 @@ function AddressHero({
         }
       }
       const confirmed = window.confirm(
-        `Finalize and lock ${activeAssignmentFile.file_number}? This creates the immutable signed snapshot. Future changes must be made in a new appraisal file.`,
+        `Finalize and lock ${signingFile.file_number}? This creates the immutable signed snapshot. Future changes must be made in a new appraisal file.`,
       );
       if (!confirmed) return;
       const signedBy = window.prompt(
         "Enter the appraiser name that is signing/finalizing this file:",
-        activeAssignmentFile.reviewer || "",
+        signingFile.reviewer || "",
       )?.trim();
-      if (!signedBy) return;
+      if (!signedBy || !readyToFinalize()) return;
       const response = await signCustomAppraisalWorkfile(
         accountId,
-        activeAssignmentFile.id,
+        signingFile.id,
         {
           signed_by: signedBy,
           acknowledged_warning_codes: warningCodes,
         },
         editorKey,
       );
+      if (!current()) return;
+      lease.retainReadOnly();
       const workfile = response.workfile;
       const updatedFile: AppraisalAssignmentFile = {
-        ...activeAssignmentFile,
+        ...signingFile,
         workfile: {
           key: workfile.workfile_key,
           canonical_file_name: workfile.canonical_file_name,
@@ -1439,6 +1524,7 @@ function AddressHero({
           updated_at: workfile.updated_at,
         },
       };
+      activeAssignmentFileRef.current = updatedFile;
       setActiveAssignmentFile(updatedFile);
       setAssignmentFiles((current) => current.map((file) =>
         file.id === updatedFile.id ? updatedFile : file
@@ -1447,9 +1533,10 @@ function AddressHero({
         `Signed and locked: ${workfile.canonical_file_name} · SHA-256 ${workfile.checksum_sha256 || "recorded"}`,
       );
       setAssignmentSaveMessage(
-        `Finalized ${activeAssignmentFile.file_number}. The signed snapshot is immutable.`,
+        `Finalized ${signingFile.file_number}. The signed snapshot is immutable.`,
       );
     } catch (error) {
+      if (!current()) return;
       const message = error instanceof Error
         ? error.message
         : "The appraisal file could not be finalized.";
@@ -1461,7 +1548,13 @@ function AddressHero({
             : message,
       );
     } finally {
-      setSavingAssignmentFile(false);
+      // Clear this operation's indicator even if its session was invalidated;
+      // never clear a newer finalization or an independent assignment save.
+      if (finalizationRequestRef.current === finalizationRequest) {
+        finalizationRequestRef.current = null;
+        setFinalizingAssignmentFile(null);
+      }
+      lease.release();
     }
   };
 
@@ -3141,6 +3234,26 @@ function AddressHero({
               </Suspense>
             </SummarySection>
           </DeferredReportSection>
+
+          {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED && (
+            <div className="order-3 print:hidden">
+              <SummarySection
+                title="Neighborhood Pocket Exploration"
+                subtitle="Saved review choices; separate from the accepted neighborhood report"
+              >
+                {neighborhoodWorkspace.message && <p role={neighborhoodWorkspace.status === "unavailable" ? "alert" : "status"}
+                  className="mb-3 text-sm">{neighborhoodWorkspace.message}</p>}
+                {neighborhoodWorkspace.status === "unavailable" && <button type="button"
+                  className="hn-action-secondary btn btn-sm normal-case"
+                  onClick={neighborhoodWorkspace.retry}>Reload neighborhood workspace</button>}
+                {/* Not deferred through beforeprint/prepare-report: printing must
+                    never create a capture. The bridge owns one exact session. */}
+                {neighborhoodWorkspace.hostProps && <Suspense fallback={<LazyReportContent label="saved neighborhood workspace" />}>
+                  <CustomNeighborhoodWorkspaceHost {...neighborhoodWorkspace.hostProps} />
+                </Suspense>}
+              </SummarySection>
+            </div>
+          )}
 
           <SummarySection
             title="CAD Values, Taxes, and Exemptions"

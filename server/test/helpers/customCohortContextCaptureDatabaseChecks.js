@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
+import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 
@@ -292,6 +293,38 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal(recovered.status, 'registered'); assert.equal(recovered.reused, true);
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_custom_cohort_contexts WHERE context_id=$1', [uncertain.operationId])).rows[0].count, 1);
     checks.push('actual durable COMMIT with simulated lost acknowledgment reopens once');
+
+    // The report bridge drains known same-page work before finalization. A
+    // different tab/writer still needs the real database fence, not a browser
+    // promise or an automatic retry. Exercise the actual section writer here.
+    for (const writer of ['assignment', 'workfile_section']) {
+      const contender = await pool.connect(), blocked = makeInput();
+      try {
+        await contender.query('BEGIN');
+        if (writer === 'assignment') await contender.query(`UPDATE app.assignment_files
+          SET updated_at=clock_timestamp() WHERE id=$1`, [assignment]);
+        else await saveCustomAppraisalWorkfileSectionInTransaction(contender, {
+          accountId: account, assignmentFileId: Number(assignment), sectionKey: 'neighborhood_characteristics',
+          expectedRevision: 0, sectionValue: { synthetic_pending_report_save: true }, saveReason: 'manual_save',
+          reviewer: 'Synthetic overlap reviewer',
+        });
+        const began = performance.now();
+        await assert.rejects(capture.capture(blocked), error => error.code === '55P03');
+        assert.ok(performance.now() - began < 1500, 'NOWAIT must precede the bounded statement timeout');
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.neighborhood_custom_cohort_contexts
+          WHERE context_id=$1`, [blocked.operationId])).rows[0].n, 0);
+        await contender.query('ROLLBACK');
+        const retry = await capture.capture(blocked);
+        assert.equal(retry.status, 'registered'); assert.equal(retry.reused, false);
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections
+          WHERE assignment_file_id=$1`, [assignment])).rows[0].n, 0, 'rolled-back report values remain absent');
+        assert.equal((await pool.query(`SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_section_history
+          WHERE assignment_file_id=$1`, [assignment])).rows[0].n, 0, 'rolled-back report history remains absent');
+      } finally {
+        try { await contender.query('ROLLBACK'); } finally { contender.release(); }
+      }
+    }
+    checks.push('actual assignment/section saves exclude concurrent capture; explicit retry after rollback registers without report/history writes');
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }

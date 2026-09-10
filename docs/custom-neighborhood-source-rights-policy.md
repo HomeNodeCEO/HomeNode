@@ -106,7 +106,9 @@ This module adds no context, publication or acceptance structures. Existing
 `customCohortContextCapture` capture/replay/present/inspect paths, exact context
 repository and retained-graph loader remain authoritative for their existing
 scope checks; the assessment publisher and atomic Custom acceptance writer are
-unchanged. Production factory/router wiring and owner provisioning are separate.
+unchanged. Default-disabled factory/router wiring is described in the
+[Custom Report bridge](custom-neighborhood-report-bridge.md); real owner
+provisioning and production activation remain separate.
 
 Focused verification: `node --test test/customNeighborhoodSourcePolicy.test.js`
 from `server`. Tests use explicitly synthetic owner grants, never production metadata.

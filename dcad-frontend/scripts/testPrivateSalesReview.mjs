@@ -304,7 +304,8 @@ test('rendered exclude/clear and exact notes are explicit commands, never receip
   h.click('Stage exclude row 2'); h.change('Review note for row 2', '<script>not evaluated</script>\n=1+1');
   h.click('Stage clear row 3'); assert.match(h.text(), /staged excluded/); assert.match(h.text(), /staged review cleared/); h.click('Save staged review');
   assert.deepEqual(saves[0].row_decisions.map(row => [row.decision, row.account_ids]), [['exclude', []], ['clear', []]]);
-  assert.match(saves[0].row_decisions[0].note, /<script>/); assert.doesNotMatch(h.html(), /<script>/); assert.match(h.html(), /&lt;script&gt;/);
+  assert.equal(saves[0].row_decisions[0].note, '<script>not evaluated</script>\n=1+1');
+  assert.equal(h.nodes().some(node => node.type === 'script'), false); assert.match(h.html(), /&lt;script&gt;/);
   assert.equal(JSON.stringify(f), before); h.click('Discard staged changes'); assert.equal(h.button('Save staged review').props.disabled, true);
 });
 test('rendered interpretation requires a declared name; explicit values never alias price/marketing fields', async t => {

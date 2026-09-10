@@ -12,6 +12,8 @@ import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
 import { CACHED_SALE_WITNESS_SQL } from './cachedSaleWitness.js';
 import { CACHED_WITNESS_MAPPING_VERSION, mapWitnessParcelRow, mapWitnessAccountRow,
   mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
+import { CACHED_CAD_EVIDENCE_MAPPING_VERSION, CACHED_CAD_EVIDENCE_FIELDS, mapCadEvidenceParcelRow,
+  mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 
 export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
@@ -144,6 +146,21 @@ const WITNESS_PROFILE=Object.freeze({ mappingVersion:CACHED_WITNESS_MAPPING_VERS
     transactions:mapWitnessSaleRow,sale_links:mapWitnessSaleLinkRow}),
 });
 
+// Separate fixed CAD-only projection. No source_attributes/raw_payload or MLS
+// witness columns; all joins, account bounds, ordering and sale SQL stay v2.
+const parcelParts=SQL.parcels.split('    FROM gis.dcad_parcels parcel');
+if (parcelParts.length!==2) throw new Error('neighborhood_cad_projection_anchor_changed');
+const CAD_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_CAD_EVIDENCE_MAPPING_VERSION,
+  tables:Object.freeze({ ...TABLES,parcels:[TABLES.parcels[0],
+    `${TABLES.parcels[1]} ${CACHED_CAD_EVIDENCE_FIELDS.join(' ')}`] }),
+  parcelsSql:`${parcelParts[0]},parcel.class_code,parcel.class_description,parcel.use_description,
+    parcel.structure_type,parcel.built_up
+    FROM gis.dcad_parcels parcel${parcelParts[1]}`,
+  transactionsSql:SQL.transactions,
+  mappers:Object.freeze({parcels:mapCadEvidenceParcelRow,accounts:mapCadEvidenceAccountRow,
+    transactions:mapCadEvidenceSaleRow,sale_links:mapCadEvidenceSaleLinkRow}),
+});
+
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
   if (!row || row.isolation!=='repeatable read' || row.read_only!=='on' || row.explicit_transaction!==true
@@ -259,6 +276,11 @@ export function createNeighborhoodCachedSourceReader(pool, { limits: overrides =
  * switched by adding this dormant factory; it requires its distinct capability. */
 export function createNeighborhoodSaleWitnessSourceReader(pool, { limits: overrides = {}, access } = {}) {
   return createSourceReader(pool,{limits:overrides,access},WITNESS_PROFILE);
+}
+/** Opt-in CAD-field evidence only. Existing producers/defaults remain mapping2;
+ * this factory accepts only its separately issued mapping4 capability. */
+export function createNeighborhoodCadEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},CAD_EVIDENCE_PROFILE);
 }
 function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
@@ -392,7 +414,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       const originRuns=new Set();
       let syncState=null;
       if (available('parcels')) {
-        await page('parcels',SQL.parcels,[request.account_ids,'-1',n],1,row => big(row.object_id),row => {
+        await page('parcels',profile.parcelsSql??SQL.parcels,[request.account_ids,'-1',n],1,row => big(row.object_id),row => {
           retain('parcels',`parcel:${big(row.object_id)}`,row);
           if (typeof row.sync_run_id==='string' && UUID.test(row.sync_run_id)) originRuns.add(row.sync_run_id);
           else missing.add('parcels:origin_run_unknown');

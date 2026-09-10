@@ -303,8 +303,9 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     || (study && !same(requestMetadata.observation_period, study.observation_period))
     || requestMetadata.effective_date !== context.effective_date || requestMetadata.knowledge_cutoff !== null) fail('operation_conflict');
   // Choose the source projection from its original immutable query metadata,
-  // never today's producer default. v3 cannot reopen under a narrower v2 grant.
-  if (compact.reader_version !== 'local-capture-v3' || ![1, 2, 3].includes(compact.mapping_version)
+  // never today's producer default. v3 cannot reopen under a narrower v2 grant;
+  // CAD-only v4 keeps the original market-data purpose without MLS witnesses.
+  if (compact.reader_version !== 'local-capture-v3' || ![1, 2, 3, 4].includes(compact.mapping_version)
     || !same(compact.scope, requestMetadata.scope) || compact.effective_date !== requestMetadata.effective_date
     || !same(compact.authorization?.target, requestMetadata.target)
     || !same(compact.authorization?.market_decision, requestMetadata.market_decision)) fail('operation_conflict');

@@ -156,8 +156,9 @@ function metadata(value) {
   exact(value.reader_version, 'local-capture-v3');
   // The query envelope is unchanged. Admit original v1 bytes as v1 and new
   // physical/housing/DOM projections as v2, or the separately authorized stored
-  // scalar-witness projection as v3; never relabel retained evidence.
-  if (![1, 2, 3].includes(value.mapping_version)) invalid('invalid_value');
+  // scalar-witness projection as v3, or the CAD-only field projection as v4;
+  // never relabel retained evidence or infer source meaning from its version.
+  if (![1, 2, 3, 4].includes(value.mapping_version)) invalid('invalid_value');
   shape(value.scope, ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']);
   for (const key of ['organization_id', 'appraisal_case_id', 'subject_snapshot_id']) uuid(value.scope[key]);
   sourceText(value.scope.account_id, 64, true);

@@ -229,14 +229,14 @@ test('pinned mapping-v1 query evidence remains byte-identical and replays as v1'
 });
 
 test('mapping version admission rejects strings, unknown versions and otherwise valid rehashed metadata', () => {
-  for (const mapping_version of [0, 4, -1, 1.5, '1', '2', '3', null]) {
+  for (const mapping_version of [0, 5, -1, 1.5, '1', '2', '3', '4', null]) {
     const fixture = createCohortLocalQueryEvidenceFixture({ metadata: { ...makeCohortLocalQueryMetadata(), mapping_version } });
     assert.deepEqual(prepareCohortLocalQueryEvidenceV1(fixture.inputJson), { status: 'invalid', reason: 'invalid_value' });
   }
 });
 
-test('mapping3 envelope admission is byte consistency only, not an acquisition or permission grant', () => {
-  const fixture = createCohortLocalQueryEvidenceFixture({ metadata: { ...makeCohortLocalQueryMetadata(), mapping_version: 3 } });
+for (const mapping_version of [3, 4]) test(`mapping${mapping_version} envelope admission is byte consistency only, not an acquisition or permission grant`, () => {
+  const fixture = createCohortLocalQueryEvidenceFixture({ metadata: { ...makeCohortLocalQueryMetadata(), mapping_version } });
   const result = prepareCohortLocalQueryEvidenceV1(fixture.inputJson);
   assert.equal(result.status, 'syntax_valid');
   assert.equal(result.authority, 'not_established');

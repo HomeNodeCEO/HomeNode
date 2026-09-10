@@ -101,7 +101,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
         check(++records <= L.source_records, 'input_limit');
         const mapped = record.data, raw = mapped?.raw_projection, normalized = mapped?.data;
         check(normalized?.cached_mapping_version === mappingVersion && raw && normalized.cached_projection_kind === (role === 'accounts' ? 'account' : 'parcel'),
-          mappingVersion === 2 ? 'mapping_v2_required' : 'mapping_v3_required');
+          `mapping_v${mappingVersion}_required`);
         const id = account(normalized.account_id); check(raw.account_id === id && accounts.has(id), 'cad_account_scope');
         const facts = accounts.get(id);
         if (role === 'accounts') {

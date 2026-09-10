@@ -6,7 +6,16 @@ import { createCustomCohortContextCapture } from '../../src/services/neighborhoo
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { createCustomCohortContextRepository } from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
-import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
+import { loadCustomCohortCaptureInputs, prepareCustomCohortCaptureInputs,
+  persistCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
+import { createCustomCohortSubjectRepository } from '../../src/services/neighborhoodAssessment/customCohortSubjectRepository.js';
+import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { captureNeighborhoodSpatialMembership } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { resolveNeighborhoodCachedTransactionClosure } from '../../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js';
+import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 } from '../../src/services/neighborhoodAssessment/selectorInputProfile.js';
+import { createTestCachedReadAccess } from '../fixtures/neighborhoodCachedReadAccessFixture.js';
 import { createCustomCohortDecisionEvidenceResolver } from '../../src/services/neighborhoodAssessment/customCohortDecisionEvidence.js';
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
@@ -536,7 +545,229 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].n, 0,
       'original capture assignment must remain untouched for the next native checkpoint helper');
     checks.push('native committed review generation change prevents stale prepared inputs; exact next generation reopens unknown review without statistics or report writes');
+    await checkCadEvidenceCapture(pool, checks);
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }
+}
+
+// Mapping4 is an explicitly installed test reader, never the owner's default
+// producer. All fixture identities are separate from CAPTURE-COORD-SUBJECT.
+async function checkCadEvidenceCapture(pool, checks) {
+  const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshotId = randomUUID(), reportId = randomUUID();
+  const operationId = randomUUID(), account = `CAPTURE-CAD4-${operationId.slice(0, 8)}`, other = `${account}-OTHER`;
+  const accountIds = [account, other].sort(), parcelIds = ['910001', '910002'], sourceId = '910010', saleId = '910100', linkId = '910011';
+  const hash = 'd'.repeat(64), period = { start_date: '2023-07-01', end_date: '2024-06-30' };
+  const columns = ['class_code', 'class_description', 'use_description', 'structure_type', 'built_up'];
+  const cadValues = [
+    { class_code: '1', class_description: 'SINGLE FAMILY RESIDENCES', use_description: 'Synthetic CAD4 use only',
+      structure_type: '  Literal structure label  ', built_up: true },
+    { class_code: null, class_description: null, use_description: null, structure_type: null, built_up: false },
+  ];
+  const sqls = [];
+  const observed = { async connect() {
+    const client = await pool.connect();
+    return { release: error => client.release(error), query(statement, values) {
+      sqls.push(typeof statement === 'string' ? statement : statement.text); return client.query(statement, values);
+    } };
+  } };
+  const tx = async (mode, execute) => {
+    const client = await observed.connect();
+    try {
+      await client.query(`BEGIN ISOLATION LEVEL ${mode}`);
+      await client.query("SET LOCAL timezone='UTC'; SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'");
+      const value = await execute(client); await client.query('COMMIT'); return value;
+    } catch (error) { await client.query('ROLLBACK'); throw error; }
+    finally { client.release(); }
+  };
+  const time = async client => (await client.query(`SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC',
+    'YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value`)).rows[0].value;
+  const syncBefore = await tx('READ COMMITTED', async client =>
+    (await client.query("SELECT to_jsonb(s) AS value FROM gis.source_sync_state s WHERE source_key='dcad_parcels'")).rows[0].value);
+  const countBefore = (await pool.query('SELECT count(*)::int AS n FROM gis.dcad_parcels')).rows[0].n;
+  assert.equal(syncBefore.row_count, countBefore, 'exact synthetic source count before adding isolated CAD4 rows');
+  assert.equal(syncBefore.status, 'current'); assert.ok(syncBefore.last_run_id);
+  let assignment, savedContext, originalAcquisition;
+  await tx('READ COMMITTED', async client => {
+    assert.equal((await client.query('SELECT object_id FROM gis.dcad_parcels WHERE object_id=ANY($1::bigint[])', [parcelIds])).rowCount, 0);
+    await client.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic CAD4 capture','Synthetic CAD4 capture')", [org]);
+    await client.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic CAD4 actor')", [actor, `${actor}@example.test`]);
+    for (const id of accountIds) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas','Synthetic CAD4 only','Synthetic','CAD4 Retained Plat')", [id]);
+    await client.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')", [caseId, org, account]);
+    const location = { account_id: account, latitude: 33.1005, longitude: -96.8995, source: 'dcad_parcel_query',
+      precision: 'parcel_centroid', status: 'matched', confidence: 'high', review_required: false, review_reason: null,
+      match_method: 'parcel_id', source_parcel_id: account, feature_count: 1, metadata: { address_agreement: true },
+      geocoded_at: '2020-01-01T00:00:00.000Z', source_updated_at: '2019-12-31T00:00:00.000Z' };
+    await client.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+      VALUES($1,$2,1,'2024-06-30',$3::jsonb)`, [snapshotId, caseId, JSON.stringify({ custom_property_snapshot: {
+      account: { account_id: account }, improvement: { living_area_sqft: 2100 }, location } })]);
+    assignment = (await client.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [org, account, `CAD4-${operationId}`, actor])).rows[0].id;
+    await client.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id,appraisal_case_id,subject_snapshot_id)
+      VALUES($1,$2,$3,'custom_appraisal',$4,$5,$6,$7)`, [reportId, org, account, `CAD4-${operationId}`, assignment, caseId, snapshotId]);
+    await client.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)', [assignment, `cad4-${operationId}`]);
+    for (const [index, id] of [account, other].entries()) await client.query(`INSERT INTO gis.dcad_parcels
+      (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,land_use_category,
+       classification_confidence,classification_review_reason,source_record_hash,sync_run_id,synced_at,geom)
+      VALUES($1,$2,2001,2100.125,8100,'one_unit','high',NULL,$3,$4,now(),
+        ST_Multi(ST_Translate(ST_GeomFromText('POLYGON((-96.9 33.1,-96.899 33.1,-96.899 33.101,-96.9 33.101,-96.9 33.1))',4326),$5,0)))`,
+    [parcelIds[index], id, hash, syncBefore.last_run_id, index * 0.005]);
+    await client.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type,source_record_hash,close_date,current_price,loaded_at)
+      VALUES($1,$2,'closed_sale',$3,'2024-03-01',310000,now())`, [sourceId, account, hash]);
+    await client.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price,source,loaded_at)
+      VALUES($1,$2,$3,'2024-03-01',310000,'Synthetic CAD4 only',now())`, [saleId, sourceId, account]);
+    await client.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved,loaded_at)
+      VALUES($1,$2,1,1,$3,true,now())`, [linkId, sourceId, account]);
+    assert.equal((await client.query(`UPDATE gis.source_sync_state SET row_count=$1
+      WHERE source_key='dcad_parcels' AND last_run_id=$2 AND row_count=$3`,
+    [countBefore + 2, syncBefore.last_run_id, countBefore])).rowCount, 1);
+  });
+  const auth = { userId: actor, organizations: [{ organizationId: org, roles: ['appraiser'] }] };
+  const scope = { organization_id: org, report_file_id: reportId, assignment_file_id: assignment, account_id: account }, scopeJson = json(scope);
+  const grant = { allowed: true, decision_id: 'synthetic_native_cad4_only', policy_revision: 'synthetic-cad4-v1' };
+  const policyPurposes = [];
+  const policy = async (_client, principal, context, purpose, options) => {
+    assert.equal(principal.userId, actor); assert.equal(context.scope.organization_id, org);
+    assert.equal(context.target.report_file_id, reportId); assert.equal(context.target.workflow_target_id, assignment);
+    assert.equal(purpose.event_date_scope, 'all_available_dates_for_seeded_transactions');
+    assert.equal(Object.hasOwn(purpose, 'source_projection'), false, 'CAD4 preserves the existing v2 MLS purpose');
+    assert.deepEqual(options, { retention: true, exposure: 'none' }); policyPurposes.push(purpose); return grant;
+  };
+  try {
+    const phaseOne = await tx('READ COMMITTED', async client => {
+      const subjects = createCustomCohortSubjectRepository(client, scopeJson), subjectRef = await subjects.capture();
+      const subject = await subjects.load(subjectRef), point = await subjects.loadRecordedPoint(subjectRef);
+      assert.equal(point.status, 'represented');
+      const study = { profile_id: NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, observation_period: period, knowledge_cutoff: null };
+      const body = { intent_version: 1, operation_id: operationId, actor_user_id: actor, subject_inputs: subjectRef,
+        target: subject.target, effective_date: subject.effective_date, study, created_at: await time(client) };
+      return { subject, subjectRef, point, study, intent: { body,
+        reference: await createNeighborhoodCohortBlobRepository(client, org).put(json(body)) } };
+    });
+    const context = { target: { report_file_id: reportId, workflow_type: 'custom_appraisal', workflow_target_id: assignment },
+      scope: { organization_id: org, appraisal_case_id: caseId, subject_snapshot_id: snapshotId, account_id: account }, effective_date: '2024-06-30' };
+    const read = () => tx('REPEATABLE READ READ ONLY', async client => {
+      const startedAt = await time(client), spatial = await captureNeighborhoodSpatialMembership(client, phaseOne.point.geometry_input);
+      assert.equal(spatial.status, 'captured'); assert.deepEqual(spatial.account_ids, accountIds);
+      const selector = prepareNeighborhoodSelectorInputV1({ profile_id: phaseOne.study.profile_id, ...context,
+        selection: { id: operationId, revision: 1, source_sha256: spatial.membership_sha256 }, geometry_input: phaseOne.point.geometry_input,
+        discovery: { radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
+        roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
+      assert.equal(selector.status, 'prepared');
+      const access = createTestCachedReadAccess({ ...context, selection: selector.selection, account_ids: spatial.account_ids,
+        observation_period: period, knowledge_cutoff: null }, { auth, accessFactory: createNeighborhoodCadEvidenceReadAccess,
+        authorizeMarketData: (principal, current, purpose) => policy(client, principal, current, purpose, { retention: true, exposure: 'none' }),
+        resolveTransactionClosure: async () => {
+          const closure = await resolveNeighborhoodCachedTransactionClosure(client,
+            { selected_account_ids: spatial.account_ids, source_revision: `native-cad4:${operationId}` }, { deadline: performance.now() + 30_000 });
+          assert.equal(closure.status, 'captured'); assert.deepEqual(closure.snapshot, spatial.snapshot); return closure.transaction_closure;
+        } });
+      const issued = await access.prepare();
+      const reader = createNeighborhoodCadEvidenceSourceReader({ connect() { assert.fail('native CAD4 caller transaction owns connection'); } },
+        { access: access.access, limits: { page_size: 1 } });
+      const result = await reader.captureInSnapshot(client, { ...issued.request, auth,
+        selection_grant: issued.selection_grant, market_grant: issued.market_grant }, { deadline: performance.now() + 30_000 });
+      return { spatial, selector, reader, result, startedAt, completedAt: await time(client) };
+    });
+    const present = (await pool.query(`SELECT attname FROM pg_attribute
+      WHERE attrelid='gis.dcad_parcels'::regclass AND attname=ANY($1::text[]) AND NOT attisdropped`, [columns])).rows.map(row => row.attname);
+    if (present.length === 0) {
+      const missing = await read();
+      assert.equal(missing.result.status, 'incomplete'); assert.equal(missing.result.query_complete, false);
+      assert.equal(missing.result.capabilities.parcels.state, 'unsupported_schema');
+      assert.deepEqual([...missing.result.capabilities.parcels.missing_columns].sort(), [...columns].sort());
+      checks.push('native CAD4 reader refuses missing CAD evidence columns; no successful reduced projection or relabeled mapping2 capture');
+      // This is only the synthetic schema created at the top of this helper.
+      await pool.query(`ALTER TABLE gis.dcad_parcels ADD COLUMN class_code text, ADD COLUMN class_description text,
+        ADD COLUMN use_description text, ADD COLUMN structure_type text, ADD COLUMN built_up boolean`);
+    } else assert.deepEqual(present.sort(), [...columns].sort(), 'synthetic CAD4 schema must contain all five columns together');
+    for (const [index, value] of cadValues.entries()) assert.equal((await pool.query(`UPDATE gis.dcad_parcels
+      SET class_code=$1,class_description=$2,use_description=$3,structure_type=$4,built_up=$5
+      WHERE object_id=$6 AND account_id=$7 AND source_record_hash=$8`,
+    [...columns.map(key => value[key]), parcelIds[index], [account, other][index], hash])).rowCount, 1);
+    const from = sqls.length, captured = await read();
+    assert.equal(captured.result.status, 'captured', JSON.stringify(captured.result.incomplete_reasons));
+    assert.equal(captured.result.query_complete, true); assert.deepEqual(captured.result.snapshot, captured.spatial.snapshot);
+    assert.ok(sqls.slice(from).some(sql => sql.includes('neighborhood-cache:parcels') && columns.every(key => sql.includes(key))),
+      'actual mapping4 parcel SQL must execute with all five fields');
+    assert.throws(() => consumeNeighborhoodCachedAcquisition(captured.reader, structuredClone(captured.result)), { code: 'NEIGHBORHOOD_ORIGINAL_CAPTURE_REQUIRED' });
+    originalAcquisition = consumeNeighborhoodCachedAcquisition(captured.reader, captured.result);
+    assert.equal(JSON.parse(originalAcquisition.compact_metadata_json).mapping_version, 4);
+    assert.deepEqual(policyPurposes.at(-1), describeNeighborhoodCachedMarketDataPurpose(originalAcquisition.captured_query_request));
+    assert.equal(Object.hasOwn(describeNeighborhoodCachedMarketDataPurpose(originalAcquisition.captured_query_request), 'source_projection'), false);
+    const sources = captured.result.source_capture.sources;
+    const parcelRows = sources.filter(source => source.payload.projection.definition.role === 'parcels').flatMap(source => source.payload.records);
+    assert.equal(parcelRows.length, 2);
+    for (const row of parcelRows) {
+      const index = parcelIds.indexOf(row.data.raw_projection.object_id); assert.ok(index >= 0);
+      assert.deepEqual(Object.fromEntries(columns.map(key => [key, row.data.raw_projection[key]])), cadValues[index]);
+      assert.equal(row.data.data.housing_type, null); assert.equal(row.data.data.historical_support, 'unknown');
+    }
+    for (const source of sources) {
+      assert.equal(source.payload.projection.definition.mapping_version, 4);
+      if (['parcels', 'accounts', 'transactions', 'sale_links'].includes(source.payload.projection.definition.role)) {
+        for (const row of source.payload.records) assert.equal(row.data.data.cached_mapping_version, 4);
+      }
+      if (source.payload.projection.definition.role === 'transactions') for (const row of source.payload.records) {
+        assert.equal(row.data.raw_projection.sale_price, '310000');
+        assert.equal(Object.hasOwn(row.data.raw_projection, 'source_raw_witness'), false);
+        assert.equal(row.data.data.market_eligible, null);
+      }
+    }
+    savedContext = await tx('READ COMMITTED', async client => {
+      assert.equal((await createCustomCohortSubjectRepository(client, scopeJson).compareCurrent(phaseOne.subjectRef)).status, 'matched');
+      const refs = await persistCustomCohortCaptureInputs(client, scopeJson, prepareCustomCohortCaptureInputs({
+        acquisition: originalAcquisition, spatial: captured.spatial, subject: phaseOne.subject, subject_reference: phaseOne.subjectRef,
+        selector: captured.selector, study: phaseOne.study, acquisition_intent: phaseOne.intent,
+        started_at: captured.startedAt, completed_at: captured.completedAt }));
+      return createCustomCohortContextRepository(client, scopeJson).put(json({ context_version: 1,
+        context_id: operationId, context_revision: '1', target: { ...context.target, ...context.scope, snapshot_version: phaseOne.subject.target.snapshot_version },
+        effective_date: context.effective_date, ...refs }));
+    });
+    checks.push('native original mapping4 RR/RO capture retains all five CAD literals and SQL NULL/false; unchanged v2 sales meaning; bounded full context retention commits');
+  } finally {
+    // Validate every exact synthetic target before deletion. No original account,
+    // source10/sale100/link11-12/parcel1-2, organization or report is changed.
+    await tx('READ COMMITTED', async client => {
+      assert.deepEqual((await client.query('SELECT object_id::text,account_id,source_record_hash FROM gis.dcad_parcels WHERE object_id=ANY($1::bigint[]) ORDER BY object_id', [parcelIds])).rows,
+        parcelIds.map((object_id, index) => ({ object_id, account_id: [account, other][index], source_record_hash: hash })));
+      assert.deepEqual((await client.query('SELECT id::text,primary_account_id,source_record_hash FROM core.sales_source_records WHERE id=$1', [sourceId])).rows,
+        [{ id: sourceId, primary_account_id: account, source_record_hash: hash }]);
+      assert.deepEqual((await client.query('SELECT id::text,source_record_id::text,account_id FROM core.sales WHERE id=$1', [saleId])).rows,
+        [{ id: saleId, source_record_id: sourceId, account_id: account }]);
+      assert.deepEqual((await client.query('SELECT id::text,source_record_id::text,account_id FROM core.sale_parcels WHERE id=$1', [linkId])).rows,
+        [{ id: linkId, source_record_id: sourceId, account_id: account }]);
+      assert.deepEqual((await client.query("SELECT to_jsonb(s) AS value FROM gis.source_sync_state s WHERE source_key='dcad_parcels'")).rows[0].value,
+        { ...syncBefore, row_count: countBefore + 2 });
+      for (const [sql, values, count] of [
+        ['DELETE FROM core.sale_parcels WHERE id=$1 AND source_record_id=$2 AND account_id=$3', [linkId, sourceId, account], 1],
+        ['DELETE FROM core.sales WHERE id=$1 AND source_record_id=$2 AND account_id=$3', [saleId, sourceId, account], 1],
+        ['DELETE FROM core.sales_source_records WHERE id=$1 AND primary_account_id=$2 AND source_record_hash=$3', [sourceId, account, hash], 1],
+        ['DELETE FROM gis.dcad_parcels WHERE object_id=ANY($1::bigint[]) AND account_id=ANY($2::text[]) AND source_record_hash=$3', [parcelIds, accountIds, hash], 2],
+      ]) assert.equal((await client.query(sql, values)).rowCount, count);
+      assert.equal((await client.query("UPDATE gis.source_sync_state SET row_count=$1 WHERE source_key='dcad_parcels' AND last_run_id=$2 AND row_count=$3",
+        [countBefore, syncBefore.last_run_id, countBefore + 2])).rowCount, 1);
+      assert.equal((await client.query('SELECT count(*)::int AS n FROM gis.dcad_parcels')).rows[0].n, countBefore);
+      assert.deepEqual((await client.query("SELECT to_jsonb(s) AS value FROM gis.source_sync_state s WHERE source_key='dcad_parcels'")).rows[0].value, syncBefore);
+    });
+  }
+  const reopened = await tx('READ COMMITTED', async client => {
+    const header = await createCustomCohortContextRepository(client, scopeJson).get(json(savedContext.context_ref));
+    return loadCustomCohortCaptureInputs(client, scopeJson,
+      Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
+  });
+  assert.deepEqual(reopened.retained_inputs.acquisition.capture_result, originalAcquisition.capture_result);
+  const owner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: policy }), from = sqls.length;
+  const replay = await owner.capture({ auth, accountId: account, assignmentFileId: assignment, operationId, observationPeriod: period });
+  assert.equal(replay.reused, true); assert.deepEqual(replay.context_ref, savedContext.context_ref);
+  const preview = await owner.preview({ auth, accountId: account, assignmentFileId: assignment, contextRef: savedContext.context_ref,
+    selection: { revision: 1, pockets: [{ id: 'native-cad4', label: 'Synthetic CAD4 retained stock', account_ids: accountIds }] } });
+  assert.equal(preview.preview.selected.stock.member_count, 2);
+  assert.equal(preview.preview.selected.stock.metrics.gla_sqft.median, 2100.125);
+  assert.equal(preview.preview.selected.transactions.metrics.recorded_total_price.median, 310000);
+  assert.equal(preview.parcel_map.status, 'available'); assert.equal(preview.apply.status, 'blocked');
+  assert.ok(!sqls.slice(from).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)), 'replay/preview must use retained originals after test source removal');
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].n, 0);
+  assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_neighborhood_acceptances WHERE assignment_file_id=$1', [assignment])).rows[0].n, 0);
+  checks.push('native mapping4 context reopens exact originals after owned source cleanup; default owner replays retained version4 without capture activation or report writes');
 }

@@ -22,6 +22,9 @@ import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTO
 import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
+import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
+import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS,
+  readCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -85,6 +88,18 @@ function reviewInputOf(input) {
     || admitted.command.target_ref.workflow_target_id !== identity.assignmentFileId) fail('invalid_review_command');
   return freeze({ ...identity, commandJson: input.commandJson, command: admitted.command });
 }
+function reviewedInputsInputOf(input) {
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'contextRef',
+    'expectedWorkspaceRevision', 'expectedReviewGeneration']);
+  const identity = identityOf(input);
+  const contextRef = prepareCustomCohortContextReference(canonicalAssessmentJson(input.contextRef));
+  const { expectedWorkspaceRevision, expectedReviewGeneration } = input;
+  if (!Number.isInteger(expectedWorkspaceRevision) || expectedWorkspaceRevision < 1
+    || expectedWorkspaceRevision > 2_147_483_647
+    || typeof expectedReviewGeneration !== 'string' || !/^(0|[1-9][0-9]{0,18})$/.test(expectedReviewGeneration)
+    || BigInt(expectedReviewGeneration) > 9223372036854775807n) fail('invalid_reviewed_input_revision');
+  return freeze({ ...identity, contextRef, expectedWorkspaceRevision, expectedReviewGeneration });
+}
 function one(result) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1) fail('target_unavailable');
   return result.rows[0];
@@ -94,6 +109,33 @@ async function databaseTime(client) {
     SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD"T"HH24:MI:SS.US"Z"') AS value`)).value;
   if (!TIMESTAMP.test(value ?? '')) fail('database_time_unavailable');
   return value;
+}
+
+async function savedWorkspace(client, input) {
+  // Existing saves/signing lock this parent before changing any section. Do not
+  // call getCustomAppraisalWorkfile: that can create rows and use another pool
+  // connection. Missing/invalid saved intent must never become broad defaults.
+  const file = await client.query(`/* custom-cohort-capture:workspace-parent */
+    SELECT assignment_file_id::text FROM app.custom_appraisal_workfiles
+    WHERE assignment_file_id=$1::bigint FOR SHARE NOWAIT`, [input.assignmentFileId]);
+  if (file?.rowCount !== 1 || file.rows?.length !== 1
+    || file.rows[0].assignment_file_id !== input.assignmentFileId) fail('workspace_unavailable');
+  const result = await client.query(`/* custom-cohort-capture:workspace */
+    SELECT revision, CASE WHEN octet_length(section_value::text) <= $3::integer
+      THEN section_value ELSE NULL END AS value
+    FROM app.custom_appraisal_workfile_sections
+    WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
+  [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION,
+    // JSONB's spaces are not the checkpoint's canonical representation. Bound
+    // transport generously, then apply the original exact canonical limit.
+    CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS.canonical_utf8_bytes * 2]);
+  if (result?.rowCount !== 1 || result.rows?.length !== 1) fail('workspace_unavailable');
+  const restored = readCustomNeighborhoodWorkspaceCheckpoint(result.rows[0]);
+  if (restored.status !== 'restored' || restored.checkpoint.active === null) fail('workspace_unavailable');
+  if (restored.section_revision !== input.expectedWorkspaceRevision
+    || !same(restored.checkpoint.active.context_ref, input.contextRef)) fail('workspace_changed');
+  if (restored.checkpoint.pending_capture !== null) fail('workspace_capture_pending');
+  return restored;
 }
 
 function operationBudget(options = {}) {
@@ -277,11 +319,13 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // Review persistence will reopen the original graph in this same transaction.
   // Keep its preceding rights check, without allocating/validating it twice.
   const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
-  return { context, retained, purpose, decision };
+  return { context, retained, purpose, decision, header: previous };
 }
 
 /** Executable, Custom-only acquisition owner. No HTTP route, current-head
- * change, eligible-cohort decision, calculation, Apply or signing occurs here.
+ * change, report publication, Apply or signing occurs here. The internal
+ * prepareReviewedInputs method computes exact retained/reviewed inputs only;
+ * no route may expose its source-bearing result under a retention-only grant.
  * The review method retains exact authenticated reviewer commands only; stored
  * observations/assertions do not become certified facts or accepted statistics.
  * authorizeMarketData is a required SERVER policy and must explicitly cover
@@ -458,6 +502,56 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       return freeze({ status: 'review_recorded', reused: saved.status === 'reused',
         context_ref: input.command.expected_context, decision_ref: saved.decision_ref,
         generation: saved.generation, authority: 'not_established' });
+    });
+  }, async prepareReviewedInputs(value, options = {}) {
+    const input = reviewedInputsInputOf(value), budget = operationBudget(options);
+    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, true, 'read');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      const workspace = await savedWorkspace(client, input);
+      const retained = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef,
+        input, authorizeMarketData, budget, study: workspace.checkpoint.active });
+      if ((await createCustomCohortSubjectRepository(client, scopeJson)
+        .compareCurrent(retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+      const review = await createCustomCohortReviewRepository(client, scopeJson)
+        .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
+      const now = await databaseTime(client);
+      // Normalize the actual owner clock to the source envelope's millisecond
+      // precision and retain the original reading separately. Never round up
+      // to invent a later instant; finer future evidence stays unavailable.
+      const millis = Date.parse(now);
+      if (!Number.isFinite(millis)) fail('database_time_unavailable');
+      const derivedAt = new Date(millis).toISOString();
+      return { target, scopeJson, workspace, review, retained, now, derivedAt };
+    });
+    budget.check();
+    const active = loaded.workspace.checkpoint.active;
+    const supported = buildCustomCohortSupportedInputs({
+      preparation_input: { context_header_json: loaded.retained.header.header_blob.canonical_json,
+        expected: { context_ref: input.contextRef, target: JSON.parse(loaded.scopeJson),
+          observation_period: active.observation_period },
+        retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection },
+      review_state: loaded.review, derived_at: loaded.derivedAt,
+    });
+    budget.check();
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
+      const workspace = await savedWorkspace(client, input);
+      if (!same(workspace, loaded.workspace)) fail('workspace_changed');
+      if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
+        .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
+      const review = await createCustomCohortReviewRepository(client, loaded.scopeJson)
+        .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
+      if (review.state_sha256 !== loaded.review.state_sha256) fail('review_state_changed');
+      const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
+        loaded.retained.context, loaded.retained.purpose, budget);
+      if (!same(decision, loaded.retained.decision)) fail('market_policy_changed');
+      // Internal source-bearing computation only, never a public presentation
+      // response or a publish/Apply authorization. No accepted section changes.
+      return Object.freeze({ status: 'prepared_reviewed_inputs', authority: 'not_established',
+        workspace_section_revision: workspace.section_revision, owner_clock_at: loaded.now,
+        subject_freshness: 'matched', supported_inputs: supported,
+        apply: Object.freeze({ status: 'blocked', reason: 'owner_adoption_and_publication_required' }) });
     });
   }, preview(value, options = {}) {
     return runPreview(value, options);

@@ -5,6 +5,10 @@ import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
+import { createCustomCohortContextRepository } from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
+import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
+import { createCustomCohortDecisionEvidenceResolver } from '../../src/services/neighborhoodAssessment/customCohortDecisionEvidence.js';
+import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 
@@ -325,6 +329,213 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       }
     }
     checks.push('actual assignment/section saves exclude concurrent capture; explicit retry after rollback registers without report/history writes');
+
+    // Keep the preceding fixture untouched: the later checkpoint helper expects
+    // its workspace section to be absent and locates its original actor exactly.
+    // This second organization/actor/assignment uses a separate case/snapshot, but the same
+    // real retained source rows. No source table or earlier report is rewritten.
+    const reviewedOrganization = randomUUID(), reviewedActor = randomUUID(), reviewedCase = randomUUID(), reviewedSnapshot = randomUUID(), reviewedReport = randomUUID();
+    await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic reviewed inputs','Synthetic reviewed inputs')", [reviewedOrganization]);
+    await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic reviewed inputs actor')",
+      [reviewedActor, `${reviewedActor}@example.test`]);
+    await pool.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')",
+      [reviewedCase, reviewedOrganization, account]);
+    await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+      SELECT $1,$2,1,effective_date,subject_data FROM app.appraisal_subject_snapshots WHERE id=$3`, [reviewedSnapshot, reviewedCase, snapshot]);
+    const reviewedAssignment = (await pool.query(`INSERT INTO app.assignment_files
+      (organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
+      VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [reviewedOrganization, account, `PREP-${randomUUID()}`, reviewedActor])).rows[0].id;
+    await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id,appraisal_case_id,subject_snapshot_id)
+      VALUES($1,$2,$3,'custom_appraisal',$4,$5,$6,$7)`, [reviewedReport, reviewedOrganization, account, `PREP-${randomUUID()}`,
+    reviewedAssignment, reviewedCase, reviewedSnapshot]);
+    await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)',
+      [reviewedAssignment, `reviewed-${randomUUID()}`]);
+    const reviewedAuth = { userId: reviewedActor, organizations: [{ organizationId: reviewedOrganization, roles: ['appraiser'] }] };
+    const reviewedTarget = { accountId: account, assignmentFileId: reviewedAssignment };
+    const reviewedExposures = [], reviewedGrant = { allowed: true, decision_id: 'synthetic_native_prepared_inputs_only', policy_revision: 'synthetic-preparation-v1' };
+    const reviewedPolicy = async (_client, principal, context, _purpose, options) => {
+      assert.equal(principal.userId, reviewedActor); assert.equal(context.target.workflow_target_id, reviewedAssignment);
+      assert.equal(context.scope.organization_id, reviewedOrganization);
+      assert.equal(options.retention, true); reviewedExposures.push(options.exposure); return reviewedGrant;
+    };
+    const reviewedOwner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: reviewedPolicy });
+    const reviewedCapture = await reviewedOwner.capture({ ...reviewedTarget, auth: reviewedAuth,
+      operationId: randomUUID(), observationPeriod: request.observationPeriod });
+    const reviewedRequest = { ...reviewedTarget, auth: reviewedAuth, contextRef: reviewedCapture.context_ref,
+      expectedWorkspaceRevision: 1, expectedReviewGeneration: '0' };
+    await assert.rejects(reviewedOwner.prepareReviewedInputs(reviewedRequest), /workspace_unavailable/);
+    const checkpoint = { workspace_version: 1, active: { context_ref: reviewedCapture.context_ref,
+      observation_period: request.observationPeriod, selection: { revision: 7, included_recorded_group_ids: [] } }, pending_capture: null };
+    const saveCheckpoint = async (value, revision) => {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const saved = await saveCustomAppraisalWorkfileSectionInTransaction(client, { ...reviewedTarget,
+          sectionKey: 'neighborhood_workspace', sectionValue: value, expectedRevision: revision,
+          saveReason: 'autosave', reviewer: reviewedActor });
+        await client.query('COMMIT'); return saved;
+      } catch (error) { await client.query('ROLLBACK'); throw error; }
+      finally { client.release(); }
+    };
+    assert.equal((await saveCheckpoint(checkpoint, 0)).revision, 1);
+    const protectedReviewedState = async () => {
+      const sections = await pool.query(`SELECT to_jsonb(s) AS value FROM app.custom_appraisal_workfile_sections s
+        WHERE assignment_file_id=$1 ORDER BY section_key`, [reviewedAssignment]);
+      const history = await pool.query(`SELECT to_jsonb(h) AS value FROM app.custom_appraisal_workfile_section_history h
+        WHERE assignment_file_id=$1 ORDER BY id`, [reviewedAssignment]);
+      const artifacts = (await pool.query(`SELECT
+        (SELECT count(*)::int FROM app.custom_neighborhood_acceptances WHERE assignment_file_id=$1) AS acceptances,
+        (SELECT count(*)::int FROM app.custom_appraisal_signed_snapshots WHERE assignment_file_id=$1) AS signatures,
+        (SELECT count(*)::int FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$2) AS retained_blobs,
+        (SELECT count(*)::int FROM app.neighborhood_custom_cohort_contexts WHERE assignment_file_id=$1) AS retained_contexts`,
+      [reviewedAssignment, reviewedOrganization])).rows[0];
+      return { sections: sections.rows, history: history.rows, artifacts };
+    };
+    const preparedBefore = await protectedReviewedState(), preparedFrom = calls.length, preparedExposures = reviewedExposures.length;
+    const prepared = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
+    assert.equal(prepared.status, 'prepared_reviewed_inputs'); assert.equal(prepared.workspace_section_revision, 1);
+    assert.equal(prepared.authority, 'not_established'); assert.equal(prepared.subject_freshness, 'matched');
+    assert.match(prepared.owner_clock_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
+    assert.equal(prepared.supported_inputs.binding.derived_at, new Date(prepared.owner_clock_at).toISOString());
+    assert.equal(prepared.supported_inputs.binding.review_generation, '0');
+    assert.equal(prepared.supported_inputs.coverage.review_head_count, 0);
+    assert.equal(prepared.supported_inputs.status, 'incomplete'); assert.equal(prepared.supported_inputs.statistics, null);
+    assert.equal(prepared.supported_inputs.assessment, null); assert.equal(prepared.supported_inputs.publication, null);
+    assert.deepEqual(prepared.supported_inputs.selection.account_ids, []);
+    assert.deepEqual(prepared.supported_inputs.selection.included_recorded_group_ids, []);
+    assert.equal(prepared.supported_inputs.selection.revision, 7);
+    assert.equal(prepared.apply.status, 'blocked'); assert.equal(prepared.supported_inputs.apply.status, 'blocked');
+    assert.deepEqual(reviewedExposures.slice(preparedExposures), ['none', 'none']);
+    assert.deepEqual(await protectedReviewedState(), preparedBefore);
+    assert.ok(!calls.slice(preparedFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)));
+    assert.ok(!calls.slice(preparedFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)));
+    checks.push('native reviewed-input owner loads saved empty selection7, exact generation0, DB clock and genuine incomplete support; no source reread or accepted/history writes');
+
+    for (const change of [{ expectedWorkspaceRevision: 2 }, { contextRef: { ...reviewedCapture.context_ref, context_id: randomUUID() } }]) {
+      await assert.rejects(reviewedOwner.prepareReviewedInputs({ ...reviewedRequest, ...change }), /workspace_changed/);
+    }
+    await assert.rejects(reviewedOwner.prepareReviewedInputs({ ...reviewedRequest, expectedReviewGeneration: '1' }), /generation_conflict/);
+    await assert.rejects(reviewedOwner.prepareReviewedInputs({ ...reviewedRequest, expectedReviewGeneration: '01' }), /invalid_reviewed_input_revision/);
+    const readonly = await reviewedOwner.prepareReviewedInputs({ ...reviewedRequest,
+      auth: { userId: reviewedActor, organizations: [{ organizationId: reviewedOrganization, roles: ['read_only'] }] } });
+    assert.equal(readonly.status, 'prepared_reviewed_inputs', 'the internal computation requests read, not write/sign permission');
+    await assert.rejects(reviewedOwner.prepareReviewedInputs({ ...reviewedRequest,
+      auth: { userId: reviewedActor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
+    const noSource = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => ({ allowed: false }) });
+    await assert.rejects(noSource.prepareReviewedInputs(reviewedRequest), /market_data_access_denied/);
+    for (const last of [{ allowed: false }, { ...reviewedGrant, policy_revision: 'changed-after-prepare' }]) {
+      let policyCount = 0;
+      const changed = createCustomCohortContextCapture({ pool: observed,
+        authorizeMarketData: async () => ++policyCount === 1 ? reviewedGrant : last });
+      await assert.rejects(changed.prepareReviewedInputs(reviewedRequest), last.allowed ? /market_policy_changed/ : /market_data_access_denied/);
+      assert.equal(policyCount, 2);
+    }
+    assert.deepEqual(await protectedReviewedState(), preparedBefore);
+    checks.push('native reviewed preparation enforces exact checkpoint/context/generation, permits authorized read-only inspection, denies foreign assignment/source access and rechecks source policy');
+
+    // Native schema forbids null whole sections; do not disable that constraint
+    // just to manufacture a state that the real store cannot contain.
+    await assert.rejects(pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value='null'::jsonb
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [reviewedAssignment]), error => error.code === '23514');
+    // Mutate only this isolated test assignment and restore exact saved bytes
+    // after each malformed/pending-state probe.
+    for (const value of [{}, { ...checkpoint, active: null }, { ...checkpoint, pending_capture: {
+      operation_id: randomUUID(), observation_period: request.observationPeriod } }]) {
+      try {
+        await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+          WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [reviewedAssignment, JSON.stringify(value)]);
+        await assert.rejects(reviewedOwner.prepareReviewedInputs(reviewedRequest), value?.pending_capture ? /workspace_capture_pending/ : /workspace_unavailable/);
+      } finally {
+        await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
+          WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace'`, [reviewedAssignment, JSON.stringify(checkpoint)]);
+      }
+    }
+    for (const status of ['signed', 'archived']) {
+      try {
+        await pool.query(`UPDATE app.custom_appraisal_workfiles SET status=$2,
+          signed_at=CASE WHEN $2='signed' THEN clock_timestamp() ELSE NULL END WHERE assignment_file_id=$1`, [reviewedAssignment, status]);
+        await assert.rejects(reviewedOwner.prepareReviewedInputs(reviewedRequest), /protected_workfile/);
+      } finally { await pool.query("UPDATE app.custom_appraisal_workfiles SET status='draft',signed_at=NULL WHERE assignment_file_id=$1", [reviewedAssignment]); }
+    }
+    const blocker = await pool.connect();
+    try {
+      await blocker.query('BEGIN');
+      await blocker.query('SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id=$1 FOR UPDATE', [reviewedAssignment]);
+      const began = performance.now();
+      await assert.rejects(reviewedOwner.prepareReviewedInputs(reviewedRequest), error => error.code === '55P03');
+      assert.ok(performance.now() - began < 1500);
+    } finally { await blocker.query('ROLLBACK'); blocker.release(); }
+    checks.push('native prepared-input read blocks missing/malformed/null-active/pending workspaces and protected files; schema refuses JSON-null sections; concurrent parent writer returns NOWAIT without retry');
+
+    const afterFirstCommit = execute => ({ async connect() {
+      const client = await pool.connect(); let done = false;
+      return { release: error => client.release(error), async query(config) {
+        const answer = await client.query(config);
+        if (config.text === 'COMMIT' && !done) { done = true; await execute(); }
+        return answer;
+      } };
+    } });
+    // The callback below changes actual committed state after source/read locks
+    // are released and before the owner begins its final response transaction.
+    let commitMutation = false;
+    const changingWorkspace = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+      if (commitMutation) return; commitMutation = true;
+      const next = structuredClone(checkpoint); next.active.selection.revision = 8;
+      await saveCheckpoint(next, 1);
+    }), authorizeMarketData: reviewedPolicy });
+    await assert.rejects(changingWorkspace.prepareReviewedInputs(reviewedRequest), /workspace_changed/);
+    reviewedRequest.expectedWorkspaceRevision = 2; checkpoint.active.selection.revision = 8;
+    assert.equal((await reviewedOwner.prepareReviewedInputs(reviewedRequest)).supported_inputs.selection.revision, 8);
+    const originalMaterial = (await pool.query('SELECT subject_data FROM app.appraisal_subject_snapshots WHERE id=$1', [reviewedSnapshot])).rows[0].subject_data;
+    let changedMaterial = false;
+    const changingSubject = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+      if (changedMaterial) return; changedMaterial = true;
+      await pool.query(`UPDATE app.appraisal_subject_snapshots
+        SET subject_data=jsonb_set(subject_data,'{custom_property_snapshot,improvement,living_area_sqft}','2999') WHERE id=$1`, [reviewedSnapshot]);
+    }), authorizeMarketData: reviewedPolicy });
+    try { await assert.rejects(changingSubject.prepareReviewedInputs(reviewedRequest), /subject_changed/); }
+    finally { await pool.query('UPDATE app.appraisal_subject_snapshots SET subject_data=$2::jsonb WHERE id=$1', [reviewedSnapshot, JSON.stringify(originalMaterial)]); }
+    checks.push('native final preparation rejects independently committed saved-selection and subject-material changes after its first transaction');
+
+    const scopeJson = json({ organization_id: reviewedOrganization, report_file_id: reviewedReport, assignment_file_id: reviewedAssignment, account_id: account });
+    const reviewClient = await pool.connect(); let command;
+    try {
+      await reviewClient.query('BEGIN');
+      const header = await createCustomCohortContextRepository(reviewClient, scopeJson).get(json(reviewedCapture.context_ref));
+      const retained = await loadCustomCohortCaptureInputs(reviewClient, scopeJson,
+        Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
+      const resolver = createCustomCohortDecisionEvidenceResolver({ context_header_json: header.header_blob.canonical_json,
+        expected: { context_ref: reviewedCapture.context_ref, target: JSON.parse(scopeJson), observation_period: request.observationPeriod },
+        retained_inputs: retained.retained_inputs, selection: checkpoint.active.selection });
+      const source = retained.retained_inputs.acquisition.capture_result.source_capture.sources.find(source => source.payload.projection.definition.role === 'transactions');
+      const record = source.payload.records[0], evidence = resolver.deriveEvidenceRef(source.id, record.record_id);
+      command = { version: 1, operation_id: randomUUID(), target_ref: resolver.binding.target_ref,
+        expected_context: resolver.binding.context_ref, study_ref: resolver.binding.study_ref,
+        expected_generation: '0', expected_predecessor: null, subject_ref: { kind: 'capture_candidate', key: record.record_id },
+        claim: { kind: 'sale_completion', qualifier: { basis: 'event' }, state: 'unknown', value: null,
+          unknown_reason: 'missing_evidence', decision_refs: [] }, evidence_refs: [evidence],
+        rationale: 'Synthetic native unknown review; not a supported closing assertion.' };
+      await reviewClient.query('COMMIT');
+    } catch (error) { await reviewClient.query('ROLLBACK'); throw error; }
+    finally { reviewClient.release(); }
+    let appended = false;
+    const changingReview = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+      if (appended) return; appended = true;
+      const saved = await reviewedOwner.review({ ...reviewedTarget, auth: reviewedAuth, commandJson: json(command) });
+      assert.equal(saved.generation, '1');
+    }), authorizeMarketData: reviewedPolicy });
+    await assert.rejects(changingReview.prepareReviewedInputs(reviewedRequest), /generation_conflict/);
+    reviewedRequest.expectedReviewGeneration = '1';
+    const reviewedState = await protectedReviewedState();
+    const reopenedInputs = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
+    assert.equal(reopenedInputs.supported_inputs.binding.review_generation, '1');
+    assert.equal(reopenedInputs.supported_inputs.coverage.review_head_count, 1);
+    assert.equal(reopenedInputs.supported_inputs.status, 'incomplete'); assert.equal(reopenedInputs.supported_inputs.statistics, null);
+    assert.deepEqual(reopenedInputs.supported_inputs.selection.account_ids, []);
+    assert.deepEqual(await protectedReviewedState(), reviewedState);
+    assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].n, 0,
+      'original capture assignment must remain untouched for the next native checkpoint helper');
+    checks.push('native committed review generation change prevents stale prepared inputs; exact next generation reopens unknown review without statistics or report writes');
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }

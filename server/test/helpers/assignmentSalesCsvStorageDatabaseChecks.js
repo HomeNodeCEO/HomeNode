@@ -310,13 +310,14 @@ export async function runAssignmentSalesCsvStorageDatabaseChecks(connectionStrin
     let matchingFixture;
     await ownedTransaction(async client => {
       matchingFixture = await prepareAssignmentSalesMatchCandidatesFixture((sql, values) => client.query(sql, values),
-        { databaseName: target.databaseName });
+        { databaseName: target.databaseName, remoteAddress: client.connection?.stream?.remoteAddress });
       await client.query('COMMIT'); // Retain only this new test database's synthetic cache fixtures.
     });
     let nativeMatching;
     await ownedTransaction(async client => {
       await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
-      nativeMatching = await runAssignmentSalesMatchCandidatesDatabaseChecks((sql, values) => client.query(sql, values), matchingFixture);
+      nativeMatching = await runAssignmentSalesMatchCandidatesDatabaseChecks((sql, values) => client.query(sql, values), matchingFixture,
+        { remoteAddress: client.connection?.stream?.remoteAddress });
     });
     const matchingContent = Buffer.from(['ListingId,CloseDate,ClosePrice,ParcelNumber,Address,City,County,PostalCode',
       `MATCH-1,2020-01-01,275000,${matchingFixture.accountId},${matchingFixture.addressKey},${matchingFixture.cityKey},Dallas,75001`,

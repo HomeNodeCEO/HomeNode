@@ -2,16 +2,38 @@ import assert from 'node:assert/strict';
 import { randomBytes } from 'node:crypto';
 import { readAssignmentSalesMatchCandidates, SALES_MATCH_CANDIDATE_SCHEMA_SQL } from '../../src/services/assignmentSalesCsv/matchCandidates.js';
 import { normalizedCountyAccountKey } from '../../src/services/salesReconciliation.js';
+import { checkedNeighborhoodDatabaseUrl, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 
-async function identity(query, databaseName, readOnly) {
+/** Pure test-only guard. Docker's published loopback port can report a private
+ * server bridge IP. That exception needs genuine isolated CI configuration and
+ * the actual checked-out client's loopback socket, never a fabricated address.
+ */
+export function verifyAssignmentSalesMatchFixtureIdentity(row, { databaseName, remoteAddress, environment = process.env }) {
+  assert.equal(typeof databaseName, 'string'); assert.match(databaseName, /^[a-z0-9_]+_test$/);
+  assert.equal(row?.database_name, databaseName);
+  if (['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(row?.server_address)) {
+    if (remoteAddress !== undefined) verifyNeighborhoodCiConnection(row, remoteAddress, databaseName);
+    return;
+  }
+  assert.equal(environment.NODE_ENV, 'test');
+  assert.equal(environment.CI, 'true');
+  assert.equal(environment.GITHUB_ACTIONS, 'true');
+  const parent = checkedNeighborhoodDatabaseUrl(environment.DATABASE_URL, environment.NODE_ENV);
+  // This is the exact random child naming contract of the existing bootstrap,
+  // not permission to run fixture DDL against the configured parent database.
+  assert.match(databaseName, /^neighborhood_[a-f0-9]{32}_test$/);
+  assert.notEqual(databaseName, parent.databaseName);
+  verifyNeighborhoodCiConnection(row, remoteAddress, databaseName);
+}
+
+async function identity(query, databaseName, readOnly, remoteAddress) {
   assert.equal(typeof query, 'function');
   assert.equal(typeof databaseName, 'string'); assert.match(databaseName, /^[a-z0-9_]+_test$/);
   const row = (await query(`SELECT pg_catalog.current_database() AS database_name,
     pg_catalog.host(pg_catalog.inet_server_addr()) AS server_address,
     pg_catalog.current_setting('transaction_read_only') AS read_only,
     pg_catalog.current_setting('transaction_isolation') AS isolation`)).rows[0];
-  assert.equal(row.database_name, databaseName);
-  assert.ok(['127.0.0.1', '::1', '::ffff:127.0.0.1'].includes(row.server_address));
+  verifyAssignmentSalesMatchFixtureIdentity(row, { databaseName, remoteAddress });
   assert.equal(row.read_only, readOnly ? 'on' : 'off');
   if (readOnly) assert.equal(row.isolation, 'repeatable read');
   // Prove an explicit caller-owned transaction rather than acquiring one here.
@@ -24,8 +46,8 @@ async function identity(query, databaseName, readOnly) {
  * The runner commits setup before giving its separate RR/RO owner connection
  * to the reader checks. No process, pool, database creation, DROP or cleanup.
  */
-export async function prepareAssignmentSalesMatchCandidatesFixture(query, { databaseName }) {
-  await identity(query, databaseName, false);
+export async function prepareAssignmentSalesMatchCandidatesFixture(query, { databaseName, remoteAddress }) {
+  await identity(query, databaseName, false, remoteAddress);
   // These optional production columns/tables are installed by the existing CAD
   // quality/address/reconciliation services, not the canonical UAD migrations.
   // Do not alter any existing values or substitute a different source schema.
@@ -92,8 +114,8 @@ export async function prepareAssignmentSalesMatchCandidatesFixture(query, { data
 /** Caller supplies its own fresh RR/RO connection after committing the above
  * synthetic setup. These are actual SQL results, not query-double claims.
  */
-export async function runAssignmentSalesMatchCandidatesDatabaseChecks(query, fixture) {
-  await identity(query, fixture.databaseName, true);
+export async function runAssignmentSalesMatchCandidatesDatabaseChecks(query, fixture, { remoteAddress } = {}) {
+  await identity(query, fixture.databaseName, true, remoteAddress);
   const metadata = (await query(SALES_MATCH_CANDIDATE_SCHEMA_SQL)).rows;
   assert.deepEqual(metadata.map(row => [row.slot, row.ready]), [['accounts', true], ['address', true], ['county', true]]);
   const identifier = (request_id, identifier, county_key = null) => ({ request_id, kind: 'identifier', identifier,

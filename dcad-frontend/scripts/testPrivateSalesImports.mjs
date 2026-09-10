@@ -6,6 +6,9 @@ import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import * as api from '../src/features/neighborhood/privateSalesImports.ts';
 import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentSalesCsv/prepare.js';
+import { proposeAssignmentSalesMatchPage } from '../../server/src/services/assignmentSalesCsv/matchProposals.js';
+import { createPreparedSalesDigest } from '../../server/src/services/assignmentSalesCsv/receiptIntegrity.js';
+import { checkPrivateSalesMatchProposals } from '../src/features/neighborhood/privateSalesMatchProposals.ts';
 
 const runtime = createRequire(new URL('../package.json', import.meta.url));
 const ts = runtime('typescript'), jsx = runtime('react/jsx-runtime');
@@ -32,6 +35,79 @@ function storage() {
     setItem: (key, value) => values.set(key, value), removeItem: key => values.delete(key) };
 }
 function client(request) { return api.createPrivateSalesImportsClient(TARGET, { request, urlFor: path => path }); }
+async function matchFixture({ source, candidates, after = 0, limit = 50 } = {}) {
+  const content = Buffer.from(source ?? 'ListingId,CloseDate,CurrentPrice,ClosePrice,ParcelNumber,City,County\nA,2020-01-01,250000,260000,00000000000000001,DALLAS,DALLAS\nB,2020-01-02,270000,280000,00000000000000002,DALLAS,DALLAS');
+  const prepared = prepareAssignmentSalesCsv(content), saved = { ...receipt(), source_sha256: hash(content), source_byte_length: content.length,
+    row_count: prepared.row_count, summary: prepared.summary, raw_headers: prepared.raw_headers, columns: prepared.columns };
+  const selected = prepared.rows.filter(row => row.source_row_number > after).slice(0, limit);
+  const owned = selected.map(row => ({ receipt_id: `50000000-0000-4000-8000-${String(row.source_row_number).padStart(12, '0')}`,
+    source_row_number: row.source_row_number, record_data: row }));
+  const batch = { batch_id: BATCH, source_sha256: saved.source_sha256, preparation_sha256: saved.preparation_sha256 };
+  const proposal = await proposeAssignmentSalesMatchPage({ batch, rows: owned }, { readCandidates: async ({ requests }) => ({
+    observed_at: '2026-09-10T12:00:00.123456789Z', results: requests.map(request => ({ request_id: request.request_id,
+      status: 'complete', candidates: candidates ?? [{ account_id: request.identifier, address: '123 SYNTHETIC ST', city: 'DALLAS', county: 'DALLAS', postal_code: '75001' }] })) }) });
+  const next = selected.length && selected.at(-1).source_row_number < saved.row_count + 1 ? selected.at(-1).source_row_number : null;
+  const context = { account_id: TARGET.accountId, assignment_file_id: '37', report_file_id: REPORT, next_after_row: next };
+  const { rows, lookups, ...header } = proposal, digest = createPreparedSalesDigest(); digest.add({ ...context, ...header });
+  for (const { record_data, ...identity } of owned) { digest.add(identity); digest.add(record_data); }
+  for (const row of rows) digest.add(row); for (const lookup of lookups) digest.add(lookup);
+  const result = { ...context, ...proposal, proposal_page_sha256: digest.digest() };
+  const page = { batch_id: BATCH, rows: owned.map(row => ({ ...row.record_data, receipt_id: row.receipt_id, persisted: true })), next_after_row: next };
+  return { receipt: saved, page, result, expected: { identity: TARGET, receipt: saved, page } };
+}
+
+test('real preparation/kernel proposals retain exact row identity and only current-observation status', async () => {
+  const f = await matchFixture(), before = structuredClone(f);
+  assert.deepEqual(checkPrivateSalesMatchProposals(f.result, f.expected), f.result);
+  assert.deepEqual(f.result.rows.map(row => row.proposed_account_ids), [['00000000000000001'], ['00000000000000002']]);
+  assert.equal(f.result.accepted, false); assert.equal(f.page.rows[0].values.current_price, '250000');
+  assert.equal(f.page.rows[0].values.close_price, '260000'); assert.deepEqual(f, before);
+});
+
+for (const [name, mutate] of [
+  ['account', value => { value.account_id = 'FOREIGN'; }], ['file', value => { value.assignment_file_id = '38'; }],
+  ['report', value => { value.report_file_id = ID; }], ['batch', value => { value.binding.batch_id = ID; }],
+  ['source hash', value => { value.binding.source_sha256 = 'b'.repeat(64); }],
+  ['preparation hash', value => { value.binding.preparation_sha256 = 'b'.repeat(64); }],
+  ['digest syntax', value => { value.proposal_page_sha256 = 'not-a-sha'; }], ['accepted page', value => { value.accepted = true; }],
+  ['accepted row', value => { value.rows[0].accepted = true; }], ['matching authority', value => { value.rows[0].matching_status = 'matched'; }],
+  ['ordinal', value => { value.rows[0].source_row_number++; }], ['row identity', value => { value.rows[0].receipt_id = ID; }],
+  ['dropped row', value => { value.rows.pop(); }], ['cursor', value => { value.next_after_row = 2; }],
+  ['issues', value => { value.rows[0].preparation_issues = ['changed']; }],
+  ['unobserved proposal', value => { value.rows[0].proposed_account_ids = ['FOREIGN']; }],
+  ['unknown lookup', value => { value.rows[0].lookup_ids = ['lookup:600']; }],
+  ['unavailable proposed lookup', value => { value.lookups[0].status = 'unavailable'; }],
+  ['sparse proposed IDs', value => { value.rows[0].proposed_account_ids = new Array(1); }],
+  ['unknown reason', value => { value.rows[0].reasons = ['grant_implied']; }],
+  ['invalid date', value => { value.observed_at = '2026-02-30T00:00:00Z'; }],
+  ['missing limitation', value => { value.limitations.pop(); }], ['source/private extra', value => { value.secret_notes = 'unexpected'; }],
+]) test(`match proposal display rejects ${name}`, async () => {
+  const f = await matchFixture(), changed = structuredClone(f.result); mutate(changed);
+  assert.throws(() => checkPrivateSalesMatchProposals(changed, f.expected), /private_sales_match_invalid_response/);
+});
+
+test('actual unresolved, review-required and empty rows are preserved, never automatically proposed', async () => {
+  for (const options of [{ candidates: [] }, { source: 'ListingId,CloseDate,CurrentPrice,ParcelNumber,County\nA,2020-01-01,1,bad,DALLAS' },
+    { source: 'ListingId,CloseDate,CurrentPrice\n,,' }]) {
+    const f = await matchFixture(options); checkPrivateSalesMatchProposals(f.result, f.expected);
+    assert.notEqual(f.result.rows[0].proposal_status, 'proposed'); assert.deepEqual(f.result.rows[0].proposed_account_ids, []);
+    assert.ok(f.result.rows[0].reasons.length); assert.equal(f.result.rows[0].review_required, true);
+  }
+});
+
+test('proposal client preserves explicit page cursor, GET-only transport and abort guards', async () => {
+  const first = await matchFixture({ limit: 1 }), second = await matchFixture({ after: 2, limit: 1 }), calls = [];
+  const service = client(async (url, init) => { calls.push({ url, init });
+    return json(new URL(url, 'https://synthetic.invalid').searchParams.get('after_row') === '0' ? first.result : second.result); });
+  assert.equal((await service.matchProposals(first.receipt, first.page, 0, 1, io())).next_after_row, 2);
+  assert.equal((await service.matchProposals(second.receipt, second.page, 2, 1, io())).next_after_row, null);
+  assert.equal(calls.length, 2); for (const call of calls) {
+    assert.ok(call.url.includes(`/${BATCH}/match-proposals?`)); assert.equal(call.init.method, undefined);
+    assert.equal(new URL(call.url, 'https://synthetic.invalid').searchParams.get('report_file_id'), REPORT);
+  }
+  const abort = new AbortController(); abort.abort();
+  await assert.rejects(service.matchProposals(first.receipt, first.page, 0, 1, { signal: abort.signal })); assert.equal(calls.length, 2);
+});
 test('actual server preparation row shape and exact receipt scope are admitted without analysis authority', () => {
   assert.deepEqual(api.checkPrivateSalesReceipt(receipt(), TARGET, REPORT, pending()), receipt());
   assert.deepEqual(api.checkPrivateSalesRows(rowPage(), receipt(), 0, 50), rowPage());
@@ -214,6 +290,51 @@ function fakeServer() {
       return json({ imports: saved ? [{ ...saved, integrity_status: 'count_checked' }] : [], next_before_batch_id: null });
     } };
 }
+async function matchServer(options = {}) {
+  const initial = await matchFixture(options), calls = []; let hold = null;
+  return { calls, set hold(value) { hold = value; }, async request(url, init) {
+    calls.push({ url, init }); const parsed = new URL(url, 'https://synthetic.invalid');
+    if (parsed.pathname.endsWith('/target')) return json({ account_id: TARGET.accountId, assignment_file_id: '37',
+      report_file_id: REPORT, workfile_status: 'draft', can_upload: true });
+    if (parsed.pathname.endsWith('/rows') || parsed.pathname.endsWith('/match-proposals')) {
+      const f = await matchFixture({ ...options, after: Number(parsed.searchParams.get('after_row')), limit: Number(parsed.searchParams.get('limit')) });
+      if (parsed.pathname.endsWith('/rows')) return json(f.page);
+      if (hold) await hold; return json(f.result);
+    }
+    return json({ imports: [{ ...initial.receipt, integrity_status: 'count_checked' }], next_before_batch_id: null });
+  } };
+}
+
+test('rendered proposals require explicit action, preserve saved rows and reset on page changes without auto matching', async t => {
+  const source = 'ListingId,CloseDate,CurrentPrice,ClosePrice,ParcelNumber,City,County\n' + Array.from({ length: 51 }, (_, i) =>
+    `S${i},2020-01-01,250000,260000,${String(i + 1).padStart(17, '0')},DALLAS,DALLAS`).join('\n');
+  const db = await matchServer({ source }), h = harness(t, db.request); h.open(); await h.settle();
+  assert.equal(db.calls.length, 2); assert.equal(h.button('Check account match proposals'), undefined);
+  h.click('View row receipts'); await h.settle(); assert.equal(db.calls.length, 3);
+  assert.doesNotMatch(h.text(), /Proposed account IDs:/); h.click('Check account match proposals'); await h.settle();
+  assert.match(h.text(), /Proposed account IDs: 00000000000000001/); assert.match(h.text(), /CurrentPrice is not ClosePrice/);
+  assert.match(h.text(), /persistent match review is not available/); assert.equal(h.button('Approve'), undefined);
+  const count = db.calls.length; h.render({ ...h.props, readOnly: true }); await h.settle(); assert.equal(db.calls.length, count);
+  h.click('Next rows'); await h.settle(); assert.doesNotMatch(h.text(), /Proposed account IDs:/);
+  assert.match(h.text(), /Source row 52:/); assert.equal(db.calls.filter(call => call.url.includes('/match-proposals?')).length, 1);
+  h.click('Check account match proposals'); await h.settle(); assert.match(h.text(), /Proposed account IDs: 00000000000000051/);
+  assert.equal(db.calls.at(-1).init.method, undefined); assert.equal(h.store.values.size, 0);
+});
+
+test('rendered unresolved proposals show reasons without approving or hiding original row receipts', async t => {
+  const db = await matchServer({ candidates: [] }), h = harness(t, db.request); h.open(); await h.settle();
+  h.click('View row receipts'); await h.settle(); h.click('Check account match proposals'); await h.settle();
+  assert.match(h.text(), /Account match: unresolved/); assert.match(h.text(), /no unique candidate/);
+  assert.doesNotMatch(h.text(), /Proposed account IDs:/); assert.match(h.text(), /Source row 2:/); assert.match(h.html(), /250000/);
+});
+
+test('match response from a disposed file/session is aborted and cannot repaint the next file', async t => {
+  const db = await matchServer(), h = harness(t, db.request); h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  let release; db.hold = new Promise(resolve => { release = resolve; }); h.click('Check account match proposals');
+  const old = db.calls.at(-1).init.signal; h.render({ ...h.props, assignmentFileId: 38, sessionKey: 'new-user-session' });
+  release(); await h.settle(); assert.equal(old.aborted, true); assert.doesNotMatch(h.text(), /Proposed account IDs:|Source row/);
+  assert.equal(h.button('Check account match proposals'), undefined);
+});
 test('rendered panel is closed/network-idle until opened; rerenders and StrictMode replay do not refetch', async t => {
   const db = fakeServer(), h = harness(t, db.request); h.strictReplay(); await h.settle(); assert.equal(db.calls.length, 0);
   assert.match(h.text(), /Private neighborhood sales/); h.open(); await h.settle(); assert.equal(db.calls.length, 2);

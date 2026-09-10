@@ -9,6 +9,8 @@ import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentS
 import { proposeAssignmentSalesMatchPage } from '../../server/src/services/assignmentSalesCsv/matchProposals.js';
 import { createPreparedSalesDigest } from '../../server/src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { checkPrivateSalesMatchProposals } from '../src/features/neighborhood/privateSalesMatchProposals.ts';
+import * as reviewApi from '../src/features/neighborhood/privateSalesReview.ts';
+import * as reviewPendingApi from '../src/features/neighborhood/privateSalesReviewPending.ts';
 
 const runtime = createRequire(new URL('../package.json', import.meta.url));
 const ts = runtime('typescript'), jsx = runtime('react/jsx-runtime');
@@ -249,7 +251,12 @@ function harness(t, request, store = storage(), timers = { setTimeout, clearTime
   };
   const source = readFileSync(new URL('../src/features/neighborhood/components/PrivateSalesImportsPanel.tsx', import.meta.url), 'utf8');
   const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
+  // The controlled review child has its own interaction tests. These tests
+  // exercise the real parent operation/transport lane through its public props.
+  const ReviewSlot = () => jsx.jsx('span', { children: 'Private sales review controls' });
   const module = { exports: {} }, imports = { react, 'react/jsx-runtime': jsx, '../privateSalesImports': api,
+    '../privateSalesReview': reviewApi, '../privateSalesReviewPending': reviewPendingApi,
+    './PrivateSalesReviewPanel': { default: ReviewSlot },
     '@/lib/api': { fetchWithApplicationAuthentication: request, makeUrl: (path, params) => {
       assert.equal(path.includes('?'), false, 'shared makeUrl receives path and params separately');
       const query = new URLSearchParams(params).toString(); return path + (query ? '?' + query : '');
@@ -271,6 +278,7 @@ function harness(t, request, store = storage(), timers = { setTimeout, clearTime
   return { store, get props() { return props; }, text: () => textOf(tree), html: () => renderToStaticMarkup(tree),
     render(next) { render(next); flush(); }, open() { tree.props.onToggle({ currentTarget: { open: true } }); flush(); },
     button(label) { return walk(tree).find(node => node.type === 'button' && textOf(node) === label); },
+    review() { return walk(tree).find(node => node.type === ReviewSlot)?.props; },
     click(label, direct = false) { const node = this.button(label); assert.ok(node, label); if (!direct) assert.equal(Boolean(node.props.disabled), false); node.props.onClick(); flush(); },
     file(value) { walk(tree).find(node => node.type === 'input').props.onChange({ currentTarget: { files: [value] } }); flush(); },
     async settle() { for (let i = 0; i < 25; i++) { await new Promise(resolve => setTimeout(resolve, 1)); flush(); } },
@@ -287,18 +295,89 @@ function fakeServer() {
       if (init.method === 'POST') { saved = receipt(new Headers(init.headers).get('idempotency-key')); if (loseAck) throw new Error('lost acknowledgement'); return json({ ...saved, replayed: false }); }
       if (path.includes('/operations/')) return saved ? json(saved) : json({}, 404);
       if (path.endsWith('/rows')) return json(rowPage());
+      if (path.endsWith('/reviews')) return json(emptyReviewState(saved ?? receipt(), rowPage()));
       return json({ imports: saved ? [{ ...saved, integrity_status: 'count_checked' }] : [], next_before_batch_id: null });
     } };
 }
+function emptyReviewState(saved, page) {
+  return { review_version: 1, account_id: saved.account_id, assignment_file_id: saved.assignment_file_id,
+    report_file_id: saved.report_file_id, batch_id: saved.batch_id, source_sha256: saved.source_sha256,
+    preparation_sha256: saved.preparation_sha256, revision: 0, last_review_id: null, source_interpretation: null,
+    source_review_id: null, row_decisions: [], next_after_row: page.next_after_row,
+    matching_status: 'reviewed_separately', analysis_status: 'not_evaluated' };
+}
+function reviewServer() {
+  const calls = []; let savedReview = null, loseAck = false, rejectNew = false, failReload = false;
+  const saved = receipt(), page = rowPage();
+  const source = { source_name: 'Synthetic review source', provenance_note: '', currency: null, living_area_unit: null,
+    site_area_unit: null, consideration_field: null, marketing_time_field: null, source_use_confirmed: false };
+  const command = () => ({ review_version: 1, expected_revision: 0, source_interpretation: source, row_decisions: [] });
+  return { calls, command, set loseAck(v) { loseAck = v; }, set rejectNew(v) { rejectNew = v; }, set failReload(v) { failReload = v; },
+    get savedReview() { return savedReview; }, async request(url, init) {
+      calls.push({ url, init }); const path = new URL(url, 'https://synthetic.invalid').pathname;
+      if (path.endsWith('/target')) return json({ account_id: TARGET.accountId, assignment_file_id: '37', report_file_id: REPORT,
+        workfile_status: 'draft', can_upload: true });
+      if (path.includes('/reviews/operations/')) return savedReview ? json(savedReview) : json({}, 404);
+      if (path.endsWith('/reviews')) {
+        if (init.method === 'POST') {
+          if (rejectNew) return json({ error: 'assignment_sales_import_revision_conflict' }, 409);
+          const body = JSON.parse(init.body), state = emptyReviewState(saved, page);
+          const { revision, last_review_id, source_interpretation, source_review_id, row_decisions, next_after_row, ...context } = state;
+          savedReview ??= { ...context, persisted: true, review_id: '50000000-0000-4000-8000-000000000001',
+            operation_id: new Headers(init.headers).get('idempotency-key'), revision: 1, previous_revision: 0,
+            actor_user_id: ID, recorded_at: '2026-09-10T01:00:00.000Z', command_sha256: 'c'.repeat(64),
+            payload_sha256: 'd'.repeat(64), command: body, replayed: false };
+          if (loseAck) throw new Error('synthetic lost acknowledgement');
+          return json(savedReview);
+        }
+        if (failReload) throw new Error('synthetic failed read');
+        return json({ ...emptyReviewState(saved, page), ...(savedReview ? { revision: 1, last_review_id: savedReview.review_id,
+          source_review_id: savedReview.review_id, source_interpretation: source } : {}) });
+      }
+      if (path.endsWith('/rows')) return json(page);
+      return json({ imports: [{ ...saved, integrity_status: 'count_checked' }], next_before_batch_id: null });
+    } };
+}
+
+test('parent review save needs committed receipt, retains lost-ack retry across session reload and recovers without second POST', async t => {
+  const db = reviewServer(), h = harness(t, db.request);
+  h.render({ ...h.props, sessionKey: ID }); h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  db.loseAck = true; h.review().onSave(db.command()); await h.settle();
+  assert.match(h.text(), /awaiting confirmation/); assert.equal(h.store.values.size, 1);
+  assert.equal(db.calls.filter(x => x.init.method === 'POST').length, 1);
+  h.render({ ...h.props, assignmentFileId: 38 }); h.render({ ...h.props, assignmentFileId: 37 });
+  h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  assert.match(h.text(), /awaiting confirmation/); h.click('Check saved review'); await h.settle();
+  assert.match(h.text(), /Review revision 1 is saved in PostgreSQL/); assert.equal(h.store.values.size, 0);
+  assert.equal(db.calls.filter(x => x.init.method === 'POST').length, 1); assert.equal(h.review().reviewState.revision, 1);
+});
+
+test('fresh explicit revision rejection releases only new pending review and blocks editing until reload', async t => {
+  const db = reviewServer(), h = harness(t, db.request);
+  h.render({ ...h.props, sessionKey: ID }); h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  db.rejectNew = true; h.review().onSave(db.command()); await h.settle();
+  assert.match(h.text(), /new review was not saved/); assert.equal(h.store.values.size, 0); assert.equal(h.review(), undefined);
+  h.click('Load review status'); await h.settle(); assert.equal(h.review().reviewState.revision, 0);
+});
+
+test('failed explicit review reload clears the editable old state; read-only direct callbacks cannot save', async t => {
+  const db = reviewServer(), h = harness(t, db.request);
+  h.render({ ...h.props, sessionKey: ID }); h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  const callback = h.review().onSave; h.render({ ...h.props, readOnly: true }); callback(db.command()); await h.settle();
+  assert.equal(db.calls.filter(x => x.init.method === 'POST').length, 0);
+  db.failReload = true; h.review().onReload(); await h.settle(); assert.equal(h.review(), undefined);
+  assert.equal(h.button('Load review status').props.disabled, false);
+});
 async function matchServer(options = {}) {
   const initial = await matchFixture(options), calls = []; let hold = null;
   return { calls, set hold(value) { hold = value; }, async request(url, init) {
     calls.push({ url, init }); const parsed = new URL(url, 'https://synthetic.invalid');
     if (parsed.pathname.endsWith('/target')) return json({ account_id: TARGET.accountId, assignment_file_id: '37',
       report_file_id: REPORT, workfile_status: 'draft', can_upload: true });
-    if (parsed.pathname.endsWith('/rows') || parsed.pathname.endsWith('/match-proposals')) {
+    if (parsed.pathname.endsWith('/rows') || parsed.pathname.endsWith('/match-proposals') || parsed.pathname.endsWith('/reviews')) {
       const f = await matchFixture({ ...options, after: Number(parsed.searchParams.get('after_row')), limit: Number(parsed.searchParams.get('limit')) });
       if (parsed.pathname.endsWith('/rows')) return json(f.page);
+      if (parsed.pathname.endsWith('/reviews')) return json(emptyReviewState(f.receipt, f.page));
       if (hold) await hold; return json(f.result);
     }
     return json({ imports: [{ ...initial.receipt, integrity_status: 'count_checked' }], next_before_batch_id: null });
@@ -310,10 +389,10 @@ test('rendered proposals require explicit action, preserve saved rows and reset 
     `S${i},2020-01-01,250000,260000,${String(i + 1).padStart(17, '0')},DALLAS,DALLAS`).join('\n');
   const db = await matchServer({ source }), h = harness(t, db.request); h.open(); await h.settle();
   assert.equal(db.calls.length, 2); assert.equal(h.button('Check account match proposals'), undefined);
-  h.click('View row receipts'); await h.settle(); assert.equal(db.calls.length, 3);
+  h.click('View row receipts'); await h.settle(); assert.equal(db.calls.length, 4);
   assert.doesNotMatch(h.text(), /Proposed account IDs:/); h.click('Check account match proposals'); await h.settle();
   assert.match(h.text(), /Proposed account IDs: 00000000000000001/); assert.match(h.text(), /CurrentPrice is not ClosePrice/);
-  assert.match(h.text(), /persistent match review is not available/); assert.equal(h.button('Approve'), undefined);
+  assert.match(h.text(), /review and analysis inclusion remain separate/); assert.equal(h.button('Approve'), undefined);
   const count = db.calls.length; h.render({ ...h.props, readOnly: true }); await h.settle(); assert.equal(db.calls.length, count);
   h.click('Next rows'); await h.settle(); assert.doesNotMatch(h.text(), /Proposed account IDs:/);
   assert.match(h.text(), /Source row 52:/); assert.equal(db.calls.filter(call => call.url.includes('/match-proposals?')).length, 1);

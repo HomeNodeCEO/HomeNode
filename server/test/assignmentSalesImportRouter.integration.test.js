@@ -17,6 +17,49 @@ const receipt = { batch_id: batchId, operation_id: operationId, persisted: true,
 const codeError = code => Object.assign(new Error('sensitive database or source details'), { code });
 const scope = { auth: identity, accountId: '001A-42', assignmentFileId: '7', reportFileId: reportId };
 
+const reviewCommand = { review_version: 1, expected_revision: 0, source_interpretation: null,
+  row_decisions: [{ receipt_id: operationId, source_row_number: 2, decision: 'exclude', account_ids: [], note: 'Duplicate source record' }] };
+const reviewPath = `${base}/${batchId}/reviews`;
+
+test('review route retains actor-bound operation and exact assignment scope without treating review as analysis Apply', async t => {
+  const f = await fixture(t);
+  const response = await f.request(reviewPath + query, { method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': operationId }, body: JSON.stringify(reviewCommand) });
+  assert.equal(response.status, 201);
+  assert.deepEqual(f.calls.map(call => call.name), ['authorizeAccess', 'appendReview']);
+  assert.deepEqual(f.calls[1].input, { ...scope, batchId, operationId, command: reviewCommand });
+  assert.equal(f.calls[0].permission, 'write');
+  assert.equal((await response.json()).analysis_status, 'not_evaluated');
+});
+
+test('review read and operation recovery use exact scope and permit no stray query fields', async t => {
+  const f = await fixture(t);
+  assert.equal((await f.request(reviewPath + query + '&after_row=3&limit=2')).status, 200);
+  assert.deepEqual(f.calls[0].input, { ...scope, batchId, afterRow: 3, limit: 2 });
+  assert.equal((await f.request(reviewPath + '/operations/' + operationId + query)).status, 200);
+  assert.deepEqual(f.calls[1].input, { ...scope, batchId, operationId });
+  await expectError(await f.request(reviewPath + query + '&approved=true'), 400, 'assignment_sales_import_invalid_input');
+});
+
+for (const code of ['revision_conflict', 'stale_match', 'read_only', 'operation_conflict']) {
+  test(`review returns fixed conflict without leaking details: ${code}`, async t => {
+    const f = await fixture(t, { services: { appendReview: () => { throw codeError(`assignment_sales_import_${code}`); } } });
+    await expectError(await f.request(reviewPath + query, { method: 'POST',
+      headers: { 'content-type': 'application/json', 'idempotency-key': operationId }, body: JSON.stringify(reviewCommand) }),
+    409, `assignment_sales_import_${code}`);
+  });
+}
+
+test('review denial never invokes writer; missing recovered operation remains not found', async t => {
+  const denied = await fixture(t, { services: { authorizeAccess: () => { throw codeError('assignment_sales_import_access_denied'); } } });
+  await expectError(await denied.request(reviewPath + query, { method: 'POST',
+    headers: { 'content-type': 'application/json', 'idempotency-key': operationId }, body: JSON.stringify(reviewCommand) }),
+  403, 'assignment_sales_import_access_denied');
+  assert.deepEqual(denied.calls.map(call => call.name), ['authorizeAccess']);
+  const missing = await fixture(t, { services: { getReviewOperation: () => null } });
+  await expectError(await missing.request(reviewPath + '/operations/' + operationId + query), 404, 'assignment_sales_import_not_found');
+});
+
 function headers(extra = {}) {
   return { 'content-type': 'text/csv', 'idempotency-key': operationId,
     'x-document-file-name': encodeURIComponent('Historical sales.csv'), ...extra };
@@ -43,6 +86,9 @@ async function fixture(context, { auth = identity, services = {}, mutateRequest,
     listRows: record('listRows', { batch_id: batchId, rows: [], next_after_row: null }),
     listImports: record('listImports', { imports: [], next_before_batch_id: null }),
     getMatchProposals: record('getMatchProposals', { rows: [], accepted: false, matching_status: 'proposal_only' }),
+    appendReview: record('appendReview', { ...receipt, review_version: 1 }),
+    getReviewState: record('getReviewState', { revision: 0, row_decisions: [] }),
+    getReviewOperation: record('getReviewOperation', { ...receipt, review_version: 1 }),
   };
   const app = express();
   app.set('query parser', queryParser);
@@ -74,7 +120,8 @@ async function expectError(response, status, code) {
 
 test('constructor requires the storage connection interface and every injected service', () => {
   assert.throws(() => createAssignmentSalesImportRouter(), /assignment_sales_import_pool_required/);
-  for (const name of ['authorizeAccess', 'commitImport', 'getImport', 'getTarget', 'listRows', 'listImports', 'getMatchProposals']) {
+  for (const name of ['authorizeAccess', 'commitImport', 'getImport', 'getTarget', 'listRows', 'listImports', 'getMatchProposals',
+    'appendReview', 'getReviewState', 'getReviewOperation']) {
     assert.throws(() => createAssignmentSalesImportRouter({ pool: { connect() {} }, [name]: null }),
       /assignment_sales_import_router_dependency_required/);
   }

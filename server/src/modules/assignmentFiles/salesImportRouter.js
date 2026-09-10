@@ -9,6 +9,8 @@ import {
   listAssignmentSalesImportRows,
   listAssignmentSalesImports,
 } from '../../services/assignmentSalesCsv/storage.js';
+import { appendAssignmentSalesImportReview, getAssignmentSalesImportReviewState,
+  getAssignmentSalesImportReviewByOperation } from '../../services/assignmentSalesCsv/reviewStorage.js';
 
 const BASE = '/api/accounts/:id/assignment-files/:assignmentFileId/sales-imports';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -20,6 +22,8 @@ const ERRORS = new Map([
   ['assignment_sales_import_not_found', 404],
   ['assignment_sales_import_read_only', 409],
   ['assignment_sales_import_operation_conflict', 409],
+  ['assignment_sales_import_revision_conflict', 409],
+  ['assignment_sales_import_stale_match', 409],
   ['assignment_sales_import_preparation_limit', 413],
   ['assignment_sales_import_unsupported_media_type', 415],
   ['assignment_sales_import_unsupported_encoding', 415],
@@ -102,9 +106,13 @@ export function createAssignmentSalesImportRouter({
   listRows = listAssignmentSalesImportRows,
   listImports = listAssignmentSalesImports,
   getMatchProposals = getAssignmentSalesImportMatchProposals,
+  appendReview = appendAssignmentSalesImportReview,
+  getReviewState = getAssignmentSalesImportReviewState,
+  getReviewOperation = getAssignmentSalesImportReviewByOperation,
 } = {}) {
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('assignment_sales_import_pool_required');
-  if ([authorizeAccess, commitImport, getImport, getTarget, listRows, listImports, getMatchProposals].some(fn => typeof fn !== 'function')) {
+  if ([authorizeAccess, commitImport, getImport, getTarget, listRows, listImports, getMatchProposals,
+    appendReview, getReviewState, getReviewOperation].some(fn => typeof fn !== 'function')) {
     throw new TypeError('assignment_sales_import_router_dependency_required');
   }
   const router = express.Router();
@@ -144,6 +152,35 @@ export function createAssignmentSalesImportRouter({
     const input = Object.freeze({ ...scope(req, ['after_row', 'limit']), batchId: uuid(req.params.batchId),
       afterRow: integer(req.query.after_row, 0, 0, 10001), limit: integer(req.query.limit, 50, 1, 100) });
     res.json(await getMatchProposals(pool, input));
+  }));
+
+  router.get(`${BASE}/:batchId/reviews`, action(async (req, res) => {
+    const input = Object.freeze({ ...scope(req, ['after_row', 'limit']), batchId: uuid(req.params.batchId),
+      afterRow: integer(req.query.after_row, 0, 0, 10001), limit: integer(req.query.limit, 50, 1, 100) });
+    res.json(await getReviewState(pool, input));
+  }));
+  router.get(`${BASE}/:batchId/reviews/operations/:operationId`, action(async (req, res) => {
+    const receipt = await getReviewOperation(pool, Object.freeze({ ...scope(req, []),
+      batchId: uuid(req.params.batchId), operationId: uuid(req.params.operationId) }));
+    if (receipt === null) fail('assignment_sales_import_not_found');
+    res.json(receipt);
+  }));
+  router.post(`${BASE}/:batchId/reviews`, async (req, res, next) => {
+    try {
+      const input = Object.freeze({ ...scope(req, []), batchId: uuid(req.params.batchId),
+        operationId: uuid(oneHeader(req, 'idempotency-key')) });
+      await authorizeAccess(pool, input, 'write');
+      if (!req.get('content-type') || !/^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i.test(oneHeader(req, 'content-type'))) {
+        fail('assignment_sales_import_unsupported_media_type');
+      }
+      const encoding = req.get('content-encoding');
+      if (encoding && encoding.toLowerCase() !== 'identity') fail('assignment_sales_import_unsupported_encoding');
+      res.locals[REQUEST_INPUT] = input;
+      next();
+    } catch (error) { errorResponse(error, res); }
+  }, express.json({ limit: 262144, inflate: false, strict: true }), action(async (req, res) => {
+    const receipt = await appendReview(pool, Object.freeze({ ...res.locals[REQUEST_INPUT], command: req.body }));
+    res.status(receipt.replayed ? 200 : 201).json(receipt);
   }));
 
   router.post(BASE, async (req, res, next) => {

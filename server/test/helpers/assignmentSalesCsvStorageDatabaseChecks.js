@@ -4,6 +4,7 @@ import { prepareAssignmentSalesCsv } from '../../src/services/assignmentSalesCsv
 import { serializePreparedSalesValue } from '../../src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { prepareAssignmentSalesMatchCandidatesFixture, runAssignmentSalesMatchCandidatesDatabaseChecks } from './assignmentSalesMatchCandidatesDatabaseChecks.js';
+import { runAssignmentSalesCsvReviewDatabaseChecks } from './assignmentSalesCsvReviewDatabaseChecks.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const headers = ['ListingId', 'CloseDate', 'CurrentPrice', 'Address'];
@@ -240,8 +241,13 @@ export async function runAssignmentSalesCsvStorageDatabaseChecks(connectionStrin
       await rejectsSql(`UPDATE ${relation} SET batch_id=batch_id WHERE batch_id=$1`, [receipt.batch_id], '55000');
       await rejectsSql(`DELETE FROM ${relation} WHERE batch_id=$1`, [receipt.batch_id], '55000');
     }
-    await rejectsSql('TRUNCATE app.assignment_sales_import_rows', [], '55000');
-    await rejectsSql('TRUNCATE app.assignment_sales_import_batches,app.assignment_sales_import_rows', [], '55000');
+    // Review references now reject incomplete TRUNCATE targets at PostgreSQL's
+    // FK gate, before the immutable trigger. Including every dependent table
+    // still reaches and proves the immutable trigger itself.
+    await rejectsSql('TRUNCATE app.assignment_sales_import_rows', [], '0A000');
+    await rejectsSql('TRUNCATE app.assignment_sales_import_batches,app.assignment_sales_import_rows', [], '0A000');
+    await rejectsSql(`TRUNCATE app.assignment_sales_import_batches,app.assignment_sales_import_rows,
+      app.assignment_sales_import_reviews,app.assignment_sales_import_review_rows`, [], '55000');
     await rejectsSql(`INSERT INTO app.assignment_sales_import_rows(batch_id,source_row_number,record_data)
       VALUES($1,9,'{"source_row_number":9}')`, [receipt.batch_id], '23514');
     await rejectsSql(`INSERT INTO app.assignment_sales_import_rows(batch_id,source_row_number,record_data)
@@ -345,7 +351,11 @@ export async function runAssignmentSalesCsvStorageDatabaseChecks(connectionStrin
     assert.deepEqual(await snapshotRows(), sourceBefore);
     assert.deepEqual(await protectedState(), protectedBefore);
     checks.push('actual indexed CAD candidate SQL and exact-owner proposal paging match native Dallas/Collin fixtures; duplicates and historical limitations retained, cross-tenant/assignment denied, original receipts/report untouched');
+    const nativeReviews = await runAssignmentSalesCsvReviewDatabaseChecks({ pool, databaseName: target.databaseName,
+      input: scope, batchId: matchingReceipt.batch_id, readerAuth: reader, otherActorAuth: assistant,
+      deniedAuths: [foreign, unassigned], siblingInput: sibling, ownedTransaction });
     return { checks, organizations: 2, assignment_targets: 4, original_rows: 7, multi_chunk_rows: 205,
-      immutable_synthetic_rows_retained: true, protected_report_unchanged: true, native_matching: nativeMatching };
+      immutable_synthetic_rows_retained: true, protected_report_unchanged: true, native_matching: nativeMatching,
+      native_reviews: nativeReviews };
   } finally { await pool.end(); }
 }

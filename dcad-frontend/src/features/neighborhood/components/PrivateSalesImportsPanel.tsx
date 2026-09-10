@@ -4,6 +4,12 @@ import { PRIVATE_SALES_MAX_BYTES, PrivateSalesError, createPrivateSalesImportsCl
   makePrivateSalesPending, readPrivateSalesPending, savePrivateSalesPending, clearPrivateSalesPending } from '../privateSalesImports';
 import type { PrivateSalesIdentity, PrivateSalesTarget, PrivateSalesReceipt, PrivateSalesPending, PrivateSalesRow, PrivateSalesIo } from '../privateSalesImports';
 import type { PrivateSalesMatchProposalPage } from '../privateSalesMatchProposals';
+import PrivateSalesReviewPanel from './PrivateSalesReviewPanel';
+import { preparePrivateSalesReviewForPage } from '../privateSalesReview';
+import type { PrivateSalesReviewCommand, PrivateSalesReviewState, PrivateSalesReviewReceipt } from '../privateSalesReview';
+import { makePrivateSalesReviewPending, readPrivateSalesReviewPending, savePrivateSalesReviewPending,
+  clearPrivateSalesReviewPending } from '../privateSalesReviewPending';
+import type { PrivateSalesReviewPending } from '../privateSalesReviewPending';
 
 export interface PrivateSalesImportsPanelProps extends PrivateSalesIdentity { readOnly: boolean; onBusyChange?: (busy: boolean) => void }
 const button = 'hn-action-secondary btn btn-sm normal-case';
@@ -40,6 +46,9 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
   const [file, setFile] = useState<File | null>(null), [selected, setSelected] = useState<PrivateSalesReceipt | null>(null);
   const [rows, setRows] = useState<PrivateSalesRow[]>([]), [nextRow, setNextRow] = useState<number | null>(null);
   const [proposals, setProposals] = useState<PrivateSalesMatchProposalPage | null>(null);
+  const [reviewState, setReviewState] = useState<PrivateSalesReviewState | null>(null);
+  const [reviewPending, setReviewPending] = useState<PrivateSalesReviewPending | null>(null);
+  const [reviewStorageInvalid, setReviewStorageInvalid] = useState(false);
   const rowPageRef = useRef<{ receipt: PrivateSalesReceipt; after: number;
     page: { batch_id: string; rows: PrivateSalesRow[]; next_after_row: number | null } } | null>(null);
   const alive = useRef(true), active = useRef<AbortController | null>(null), busyRef = useRef(false);
@@ -160,8 +169,69 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
     const result = await api.rows(receipt, after, 50, io);
     if (currentRun()) {
       rowPageRef.current = { receipt, after, page: result }; setProposals(null);
+      setReviewState(null); setReviewPending(null); setReviewStorageInvalid(false);
       setSelected(receipt); setRows(result.rows); setNextRow(result.next_after_row);
+      try { setReviewPending(readPrivateSalesReviewPending(sessionStorage, identity, receipt)); }
+      catch { setReviewStorageInvalid(true); }
+      const state = await api.reviews.get(receipt, result, after, 50, io);
+      if (currentRun()) setReviewState(state);
     }
+  });
+  const reloadReviews = () => run(async (io, currentRun) => {
+    const displayed = rowPageRef.current; if (!displayed) return;
+    setReviewState(null); setProposals(null);
+    const state = await api.reviews.get(displayed.receipt, displayed.page, displayed.after, 50, io);
+    if (currentRun() && rowPageRef.current === displayed) { setReviewState(state); setProposals(null); }
+  });
+  async function acknowledgeReview(saved: PrivateSalesReviewReceipt, receipt: PrivateSalesReceipt,
+    io: PrivateSalesIo, currentRun: () => boolean) {
+    if (!currentRun()) return;
+    if (saved.actor_user_id !== identity.sessionKey.toLowerCase()) throw new PrivateSalesError('invalid_response');
+    clearPrivateSalesReviewPending(sessionStorage, identity, receipt); setReviewPending(null); setProposals(null);
+    setNotice(`Review revision ${saved.revision} is saved in PostgreSQL. Original rows are unchanged; analysis inclusion is a separate step.`);
+    const displayed = rowPageRef.current;
+    if (displayed?.receipt.batch_id !== receipt.batch_id) return;
+    setReviewState(null);
+    const state = await api.reviews.get(receipt, displayed.page, displayed.after, 50, io);
+    if (currentRun() && rowPageRef.current === displayed) setReviewState(state);
+  }
+  const saveReview = (draft: PrivateSalesReviewCommand | null, retry = false) => run(async (io, currentRun) => {
+    const displayed = rowPageRef.current;
+    if (!displayed || current.current.readOnly || !current.current.target?.can_upload || reviewStorageInvalid) return;
+    const retained = readPrivateSalesReviewPending(sessionStorage, identity, displayed.receipt);
+    if ((!retry && retained) || (retry && !retained)) throw new PrivateSalesError('invalid_pending_review');
+    if (!retained && (!reviewState || !draft)) return;
+    const command = retained?.command ?? preparePrivateSalesReviewForPage(draft, reviewState!, identity,
+      displayed.receipt, displayed.page, proposals);
+    const operation = retained ?? makePrivateSalesReviewPending(identity, displayed.receipt, crypto.randomUUID(), command);
+    // Temporary bounded review command + operation metadata permit exact retry
+    // after a refresh. No CSV bytes/row evidence or authentication secrets are
+    // retained here; only a committed PostgreSQL receipt is displayed as saved.
+    savePrivateSalesReviewPending(sessionStorage, identity, displayed.receipt, operation);
+    setReviewPending(operation); writing.current = true;
+    if (!currentRun() || current.current.readOnly) return;
+    let saved: PrivateSalesReviewReceipt;
+    try {
+      saved = await api.reviews.save(displayed.receipt, operation.operation_id, command, io);
+    } catch (problem) {
+      if (!retained && currentRun() && problem instanceof PrivateSalesError
+        && ['input_rejected', 'review_conflict'].includes(problem.code)) {
+        clearPrivateSalesReviewPending(sessionStorage, identity, displayed.receipt); setReviewPending(null);
+        setReviewState(null); setProposals(null);
+        setError('The new review was not saved. Reload review status and refresh account proposals before correcting and retrying.');
+        return;
+      }
+      throw problem;
+    }
+    await acknowledgeReview(saved, displayed.receipt, io, currentRun);
+  });
+  const checkReview = () => run(async (io, currentRun) => {
+    const displayed = rowPageRef.current; if (!displayed) return;
+    const operation = readPrivateSalesReviewPending(sessionStorage, identity, displayed.receipt);
+    if (!operation) return;
+    const saved = await api.reviews.checkOperation(displayed.receipt, operation.operation_id, operation.command, io);
+    if (saved) await acknowledgeReview(saved, displayed.receipt, io, currentRun);
+    else if (currentRun()) setNotice('No committed review receipt was found yet. The operation is retained; retry uses exactly the same review.');
   });
   const showProposals = () => run(async (io, currentRun) => {
     const displayed = rowPageRef.current; if (!displayed) return;
@@ -208,11 +278,23 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
         onClick={() => void run((io, currentRun) => list(target.report_file_id, older, io, currentRun))}>Older uploads</button>}
       {selected && <section aria-label="Private CSV row receipts" className="space-y-2">
         <h4 className="font-medium">Rows from {selected.file_name}</h4>
-        <p className="text-sm">Account proposals use current CAD observations, not historical parcel membership. No match is approved or included in analysis.
+        <p className="text-sm">Account proposals use current CAD observations, not historical parcel membership. Proposals alone do not confirm identity or include sales in analysis.
           CurrentPrice is not ClosePrice; source interpretation, units and currency still require review.</p>
         <button type="button" className={button} disabled={busy} onClick={() => void showProposals()}>Check account match proposals</button>
         {proposals && <p className="text-xs">{proposals.observed_at ? `CAD observed at ${proposals.observed_at}.` : 'No supported account lookup was requested.'}
-          {' '}Proposal only; persistent match review is not available.</p>}
+          {' '}Account identity proposals only; review and analysis inclusion remain separate.</p>}
+        {reviewStorageInvalid && <p role="alert">Pending review recovery metadata is unavailable. New reviews are blocked to avoid replacing an unresolved operation.</p>}
+        {reviewPending && <div className="space-x-2 rounded border border-amber-300 p-2 text-sm">
+          <p>A review operation is awaiting confirmation. It has not been marked saved.</p>
+          <button type="button" className={button} disabled={busy || reviewStorageInvalid} onClick={() => void checkReview()}>Check saved review</button>
+          <button type="button" className={button} disabled={busy || props.readOnly || !target?.can_upload || reviewStorageInvalid}
+            onClick={() => void saveReview(null, true)}>Retry same review</button>
+        </div>}
+        {rowPageRef.current && reviewState ? <PrivateSalesReviewPanel identity={identity} receipt={selected}
+          page={rowPageRef.current.page} reviewState={reviewState} proposals={proposals}
+          readOnly={props.readOnly || !target?.can_upload || reviewStorageInvalid || reviewPending !== null}
+          busy={busy} onSave={command => void saveReview(command)} onReload={() => void reloadReviews()} />
+          : <button type="button" className={button} disabled={busy} onClick={() => void reloadReviews()}>Load review status</button>}
         {rows.length === 0 && <p className="text-sm">This saved file has no logical data rows.</p>}
         {rows.map(row => {
           const proposal = proposals?.rows.find(item => item.receipt_id === row.receipt_id);

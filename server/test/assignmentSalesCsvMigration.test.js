@@ -126,14 +126,14 @@ async function runnerFixture({ failMigration = false } = {}) {
 test('application runner applies the new migration transactionally and records its normalized checksum once', async () => {
   const fixture = await runnerFixture();
   const result = await applyMobileMigrations(fixture.pool, { logger: {} });
-  assert.deepEqual(result.at(-1), { migration_name: migrationName, status: 'applied' });
+  assert.deepEqual(result.find(row => row.migration_name === migrationName), { migration_name: migrationName, status: 'applied' });
   const index = fixture.calls.findIndex(({ sql }) => sql === migration);
   assert.equal(fixture.calls[index - 1].sql, 'BEGIN');
   assert.match(fixture.calls[index + 1].sql, /INSERT INTO app.schema_migrations/);
   assert.deepEqual(fixture.calls[index + 1].parameters, [migrationName, checksum(migration)]);
   assert.equal(fixture.calls[index + 2].sql, 'COMMIT');
   const second = await applyMobileMigrations(fixture.pool, { logger: {} });
-  assert.deepEqual(second.at(-1), { migration_name: migrationName, status: 'already_applied' });
+  assert.deepEqual(second.find(row => row.migration_name === migrationName), { migration_name: migrationName, status: 'already_applied' });
   assert.equal(fixture.calls.filter(({ sql }) => sql === migration).length, 1);
   assert.equal(fixture.released(), 2);
 });

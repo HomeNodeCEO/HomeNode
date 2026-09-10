@@ -18,7 +18,9 @@ import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMark
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
 import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInput,
-  prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
+  prepareNeighborhoodDiscoveryChoice, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY,
+  NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
+import { loadInstalledCustomCityDiscovery } from './customCityDiscovery.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
 import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
@@ -777,7 +779,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // Replay confirms durable registration only, not a new source read or
         // eligible cohort. No raw market evidence is returned here.
         return { replay: freeze({ status: 'registered', reused: true, context_ref: reference,
-          discovery: { radius_metres: retained.summary.radius_metres, parcel_count: retained.summary.parcel_count,
+          discovery: { ...(retained.summary.discovery ?? { radius_metres: retained.summary.radius_metres }), parcel_count: retained.summary.parcel_count,
             account_count: retained.summary.account_count }, source_query_complete: true, provider_coverage: 'not_established',
           unsupported_capabilities: retained.retained_inputs.acquisition.capture_result.unsupported_capabilities,
           ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) }) };
@@ -797,6 +799,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     });
     if (phaseOne.replay) return phaseOne.replay;
     const { scope, scopeJson, subject, subjectReference, point, intent } = phaseOne;
+    // A saved operation replays its retained original before consulting today's
+    // registry. A NEW city study accepts only an installed, dated local asset.
+    const city = input.discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
+      ? await loadInstalledCustomCityDiscovery(input.discovery) : null;
+    budget.check();
     const context = contextOf(subject);
     let purpose, decision;
     const read = await transaction(pool, 'REPEATABLE READ READ ONLY', budget, async client => {
@@ -812,11 +819,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           batchId: input.privateSalesImport.batch_id, expectedReviewRevision: input.privateSalesImport.expected_review_revision });
         privateSales = { capture, authorization: { decision_id: permission.decision_id, policy_revision: permission.policy_revision } };
       }
-      const spatial = captured(await captureNeighborhoodSpatialMembership(client, point.geometry_input, {}, input.discovery), 'spatial');
+      const spatial = captured(await captureNeighborhoodSpatialMembership(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial');
+      // Existing cached-source access requires the subject in the source roster.
+      // Never add an outside-city subject to claim complete polygon membership.
+      if (city && !spatial.account_ids.includes(scope.account_id)) fail('city_subject_outside_scope');
       const selector = prepareNeighborhoodSelectorInput({ profile_id: study.profile_id, ...context,
         selection: { id: input.operationId, revision: 1, source_sha256: spatial.membership_sha256 },
         geometry_input: point.geometry_input,
-        discovery: { radius_metres: spatial.radius_metres, distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
+        discovery: city ? { city: city.choice.city, parcel_predicate: NEIGHBORHOOD_CITY_PARCEL_PREDICATE }
+          : { radius_metres: spatial.radius_metres, distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
         roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
       if (selector.status !== 'prepared') fail('selector_incomplete', selector.reason);
       // New Custom captures retain the installed CAD-field projection (mapping4).
@@ -874,7 +885,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         effective_date: subject.effective_date, ...refs };
       const stored = await createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header));
       return freeze({ status: 'registered', reused: stored.status === 'reused', context_ref: stored.context_ref,
-        discovery: { radius_metres: read.spatial.radius_metres, parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
+        discovery: { ...(city ? city.choice : { radius_metres: read.spatial.radius_metres }),
+          parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
@@ -1144,15 +1156,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview }), preview, expected,
         });
-        if (!include) return { status: 'catalog', catalog };
+        const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
+        const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };
+        if (!include) return response;
         // Do not spend native work on an unresolved catalog or pretend current
         // parcel locations establish a retrospective housing population.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
-        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') return { status: 'catalog', catalog };
-        const recorded_proximity = await deriveProximity();
+        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') return response;
+        // A municipal polygon has no radius-calibrated proximity scale. Keep
+        // that factor unknown instead of borrowing an arbitrary ten-mile radius.
+        const recorded_proximity = city ? undefined : await deriveProximity();
         const recommendation = buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity });
-        return { status: 'catalog', catalog, ...(recommendation ? { recommendation } : {}) };
+        return { ...response, ...(recommendation ? { recommendation } : {}) };
       },
     });
   }, present(value, presentation = { includeMap: true }, options = {}) {

@@ -2,7 +2,7 @@ import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport, cr
   createCustomWorkspaceSectionTransport } from './customCohortPreviewTransport';
 import type { CustomCohortMemberTransport } from './customCohortPreviewTransport';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomWorkspaceCheckpoint,
-  readCustomWorkspaceCheckpoint } from './customWorkspaceCheckpoint';
+  readCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from './customWorkspaceLifecycle';
 import type { CustomCohortPreviewInput, CustomCohortPreviewRequest } from './customCohortPreviewController';
@@ -139,16 +139,30 @@ export function createCustomWorkspaceApi(options: Options) {
         let value: CustomWorkspaceCheckpoint;
         const selected = Object.hasOwn(input, 'privateSalesImport');
         const expanded = Object.hasOwn(input, 'discovery');
-        try { value = prepareCustomWorkspaceCheckpoint({ workspace_version: expanded ? 3 : selected ? 2 : 1, active: null,
+        try {
+          const discovery = expanded ? prepareCustomWorkspaceDiscovery(input.discovery) : undefined;
+          value = prepareCustomWorkspaceCheckpoint({ workspace_version: discovery?.profile_id === 'custom-city-polygon-v1' ? 4 : expanded ? 3 : selected ? 2 : 1, active: null,
           pending_capture: { operation_id: input.operationId, observation_period: input.observationPeriod,
             ...(selected ? { private_sales_import: input.privateSalesImport } : {}),
-            ...(expanded ? { discovery: input.discovery } : {}) } }); }
+            ...(expanded ? { discovery } : {}) } }); }
         catch { throw new WorkspaceApiError('invalid_input'); }
-        const response = object(await cohort(bound.accountId, 'capture', { assignment_file_id: bound.assignmentFileId,
-          operation_id: value.pending_capture!.operation_id, observation_period: value.pending_capture!.observation_period,
-          ...(selected ? { private_sales_import: value.pending_capture!.private_sales_import } : {}),
-          ...(expanded ? { discovery: value.pending_capture!.discovery } : {}) }, io));
-        requireThat(object(response.discovery).radius_metres === (value.pending_capture!.discovery?.radius_metres ?? '4828.032'),
+        let response: Record<string, unknown>;
+        try {
+          response = object(await cohort(bound.accountId, 'capture', { assignment_file_id: bound.assignmentFileId,
+            operation_id: value.pending_capture!.operation_id, observation_period: value.pending_capture!.observation_period,
+            ...(selected ? { private_sales_import: value.pending_capture!.private_sales_import } : {}),
+            ...(expanded ? { discovery: value.pending_capture!.discovery } : {}) }, io));
+        } catch (error) {
+          // Only these fixed city-capture refusals are user-facing. No raw server
+          // details, source paths or unknown error vocabulary leave this boundary.
+          if (value.pending_capture!.discovery?.profile_id === 'custom-city-polygon-v1'
+            && error instanceof Error && 'status' in error && error.status === 422) {
+            if (error.message === 'neighborhood_city_subject_outside_scope') throw new WorkspaceApiError('city_subject_outside_scope', 422);
+            if (error.message === 'neighborhood_city_source_unavailable') throw new WorkspaceApiError('city_source_unavailable', 422);
+          }
+          throw error;
+        }
+        requireThat(customWorkspaceCaptureDiscoveryMatches(object(response.discovery), value.pending_capture!.discovery),
           'capture_discovery_mismatch');
         return response;
       });

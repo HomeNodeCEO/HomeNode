@@ -20,9 +20,11 @@ import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAs
 export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery, recordedHousing = false }) {
   assert.equal(typeof recordedHousing, 'boolean');
   const choice = discovery === undefined ? null : prepareNeighborhoodDiscoveryChoice(discovery);
+  const city = choice?.profile_id === 'custom-city-polygon-v1';
   // The optional case adds a genuinely distant parcel, not a relabeled v1
   // capture. Keep this fixture bounded to its specified five-mile regression.
-  if (choice) assert.equal(choice.radius_metres, '8046.72');
+  if (choice && !city) assert.equal(choice.radius_metres, '8046.72');
+  if (city) assert.equal(choice.city.geoid, '4819000', 'This native fixture exercises only the installed Dallas study');
   assert.match(databaseName, /^[a-z][a-z0-9_]*_test$/);
   let client = await pool.connect(), effectiveDate;
   try {
@@ -51,7 +53,8 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     await client.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic reported owner','Synthetic reported owner')", [organization]);
     await client.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic reported reviewer')", [actor, `${actor}@example.test`]);
     for (const id of [account, other, linked]) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas','Synthetic only','Synthetic','Reported Native Plat')", [id]);
-    if (expandedAccount) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas','Synthetic four-mile parcel','Synthetic','Reported Native Plat')", [expandedAccount]);
+    if (expandedAccount) await client.query("INSERT INTO core.accounts(account_id,county,address,city,subdivision) VALUES($1,'Dallas',$2,'Synthetic','Reported Native Plat')",
+      [expandedAccount, city ? 'Synthetic city-study parcel' : 'Synthetic four-mile parcel']);
     await client.query('INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,$4)', [appraisalCase, organization, account, effectiveDate]);
     await client.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
       VALUES($1,$2,1,$3,$4::jsonb)`, [snapshot, appraisalCase, effectiveDate, JSON.stringify({ custom_property_snapshot: {
@@ -75,7 +78,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
         (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,source_record_hash,sync_run_id,synced_at,geom,class_code,class_description,structure_type)
         VALUES(3,$1,1990,4000,16000,$2,$3,now(),ST_Multi(ST_Buffer(ST_Project(
           ST_SetSRID(ST_MakePoint(-96.6995,32.8005),4326)::geography,$4::double precision,pi()/2),10)::geometry),$5,$6,$7)`,
-      [expandedAccount, 'b'.repeat(64), sync, 4 * 1609.344,
+      [expandedAccount, 'b'.repeat(64), sync, city ? -1000 : 4 * 1609.344,
         recordedHousing ? '1' : null, recordedHousing ? 'SINGLE FAMILY RESIDENCES  ' : null, recordedHousing ? 'ONE STORY' : null]);
       await client.query("UPDATE gis.source_sync_state SET row_count=3 WHERE source_key='dcad_parcels' AND last_run_id=$1", [sync]);
     }
@@ -116,19 +119,23 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     ...(choice ? { discovery: choice } : {}) });
   assert.equal(captured.status, 'registered');
   if (choice) {
-    assert.equal(captured.discovery.radius_metres, choice.radius_metres);
+    if (city) {
+      assert.deepEqual(captured.discovery, { ...choice, parcel_count: 3, account_count: 3 });
+      assert.equal(Object.hasOwn(captured.discovery, 'radius_metres'), false);
+    } else assert.equal(captured.discovery.radius_metres, choice.radius_metres);
     assert.equal(captured.discovery.account_count, 3);
     // A real ordinary capture over the same native rows must omit the parcel
     // that the five-mile study includes. Neither capture writes the report.
     const legacy = await owner.capture({ ...base, operationId: randomUUID(), observationPeriod: period });
-    assert.equal(legacy.discovery.radius_metres, '4828.032'); assert.equal(legacy.discovery.account_count, 2);
+    assert.equal(legacy.discovery.radius_metres, '4828.032'); assert.equal(legacy.discovery.account_count, city ? 3 : 2);
   }
   const catalog = await owner.catalog({ ...base, contextRef: captured.context_ref, selection: { revision: 1, pockets: [] } });
   assert.equal(catalog.catalog.catalog_complete, true);
+  if (city) assert.deepEqual(catalog.discovery, choice);
   const groupIds = catalog.catalog.pockets.map(value => value.id);
   if (catalog.catalog.unassigned.member_count) groupIds.push('discovery:unassigned');
   assert.ok(groupIds.length > 0);
-  const checkpoint = { workspace_version: choice ? 3 : 1, pending_capture: null, active: { context_ref: captured.context_ref,
+  const checkpoint = { workspace_version: city ? 4 : choice ? 3 : 1, pending_capture: null, active: { context_ref: captured.context_ref,
     observation_period: period, selection: { revision: 1, included_recorded_group_ids: groupIds },
     ...(choice ? { discovery: choice } : {}) } };
   client = await pool.connect();
@@ -153,7 +160,7 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   async function rejectChangedDiscovery(action, expectedState) {
     assert.ok(choice);
     const changed = { ...checkpoint, active: { ...checkpoint.active,
-      discovery: { ...choice, radius_metres: '16093.44' } } };
+      discovery: city ? { ...choice, city: { ...choice.city, vintage: '2025-01-01' } } : { ...choice, radius_metres: '16093.44' } } };
     const replace = async (value, expected) => {
       const result = await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET section_value=$2::jsonb
         WHERE assignment_file_id=$1 AND section_key='neighborhood_workspace' AND revision=1
@@ -171,7 +178,8 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const before = await protectedState();
   if (choice) {
     await rejectChangedDiscovery(() => owner.prepareReportedObservations(proposalInput()), before);
-    checks.push('a five-mile retained context cannot be relabeled by a saved ten-mile checkpoint before proposal; no publication writes');
+    checks.push(city ? 'a city retained context cannot be relabeled with another city asset vintage before proposal; no publication writes'
+      : 'a five-mile retained context cannot be relabeled by a saved ten-mile checkpoint before proposal; no publication writes');
   }
   for (const count of [1, 3, 4]) {
     resetPolicy(); denyAt = count; const from = calls.length;
@@ -290,11 +298,15 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
         ['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
       assert.deepEqual(retained.study.discovery, choice);
       assert.deepEqual(retained.acquisition_intent.body.study.discovery, choice);
-      assert.equal(retained.summary.radius_metres, choice.radius_metres);
+      if (city) {
+        assert.deepEqual(retained.summary.discovery, choice); assert.equal(Object.hasOwn(retained.summary, 'radius_metres'), false);
+        assert.equal(retained.retained_inputs.spatial.city_scope.asset_sha256, choice.city.asset_sha256);
+      } else assert.equal(retained.summary.radius_metres, choice.radius_metres);
       assert.deepEqual(retained.retained_inputs.selector.account_roster.account_ids, [account, other, expandedAccount].sort());
       await client.query('COMMIT');
     } catch (error) { await client.query('ROLLBACK'); throw error; } finally { client.release(); }
-    checks.push('fresh accepted reopen restores all five parts from the exact five-mile context, including the actual four-mile CAD account, counts, characteristics, boundary and source digests');
+    checks.push(city ? 'fresh accepted reopen restores all five parts from the exact retained city polygon, counts, characteristics, manual boundary and source digests'
+      : 'fresh accepted reopen restores all five parts from the exact five-mile context, including the actual four-mile CAD account, counts, characteristics, boundary and source digests');
   }
   assert.deepEqual(await protectedState(), committed);
   checks.push('real first Apply commits all five parts/history/receipt once; lost COMMIT acknowledgment recovers exact operation without duplicate writes; normal workfile reopen restores coherent v2 boundary/statistics');

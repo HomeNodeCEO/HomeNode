@@ -1,0 +1,3 @@
+# These original source bytes are hash-bound. Do not convert line endings.
+server/data/neighborhood-city-boundaries/** -text
+dcad-frontend/public/neighborhood-city-boundaries/** -text

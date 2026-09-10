@@ -12,6 +12,10 @@ import { privateSalesSummaryFixture } from './fixtures/customPrivateSalesSummary
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript'), jsx = requireRuntime('react/jsx-runtime');
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
+const cityCatalog = JSON.parse(readFileSync(new URL('../src/data/neighborhoodCityBoundaries.json', import.meta.url), 'utf8'));
+const cityChoice = city => ({ profile_id: 'custom-city-polygon-v1', city: {
+  geoid: city.geoid, vintage: cityCatalog.vintage, asset_sha256: city.sha256 } });
+const cityKey = discovery => `city:${discovery.city.geoid}:${discovery.city.vintage}:${discovery.city.asset_sha256}`;
 function compile(name, imports) {
   const path = fileURLToPath(new URL(`../src/features/neighborhood/${name}`, import.meta.url));
   const output = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
@@ -24,7 +28,8 @@ function compile(name, imports) {
   }, module, module.exports);
   return module.exports;
 }
-const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalogHelpers });
+const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalogHelpers,
+  './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery.ts', {}) });
 const lifecycle = compile('customWorkspaceLifecycle.ts', {
   './customWorkspaceCheckpoint': checkpoint, './customCohortPocketCatalog': catalogHelpers,
 });
@@ -59,11 +64,13 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), { stat
 /** Only the HTTP boundary is fake. Requests traverse the actual bounded JSON,
  * workfile identity/ACK checks, checkpoint lifecycle, and serialized lane. */
 function server(initialSection) {
-  const files = new Map(), privateContexts = new Map(), calls = [], overrides = new Map(); let open = 0, maxOpen = 0;
+  const files = new Map(), privateContexts = new Map(), cityContexts = new Map(), calls = [], overrides = new Map(); let open = 0, maxOpen = 0;
   const key = target => `${target.accountId}/${target.assignmentFileId}`;
   const install = (target, section) => files.set(key(target), { section: copy(section), status: 'draft',
     accepted: { revision: 7, value: { synthetic_accepted_report_marker: 'unchanged' } } });
   install(TARGET, initialSection);
+  if (initialSection?.value.active?.discovery?.profile_id === 'custom-city-polygon-v1')
+    cityContexts.set(initialSection.value.active.context_ref.context_id, copy(initialSection.value.active.discovery));
   const request = async (url, init) => {
     const match = /^\/api\/accounts\/([^/]+)\/(?:assignment-files\/([0-9]+)\/workfile(\/sections\/neighborhood_workspace)?|neighborhood-cohort\/(capture|catalog|preview|members))$/.exec(url);
     assert.ok(match, `Unexpected HTTP path ${url}`);
@@ -89,13 +96,16 @@ function server(initialSection) {
       }
       if (kind === 'capture') {
         if (body.private_sales_import) privateContexts.set(body.operation_id, copy(body));
+        if (body.discovery?.profile_id === 'custom-city-polygon-v1') cityContexts.set(body.operation_id, copy(body.discovery));
         return json({ status: 'registered', reused: false, context_ref: context(body.operation_id),
         source_query_complete: true, provider_coverage: 'not_established',
-        discovery: { account_count: 3, parcel_count: 3, radius_metres: body.discovery?.radius_metres ?? '4828.032' }, unsupported_capabilities: ['historical_characteristics'],
+        discovery: { account_count: 3, parcel_count: 3, ...(body.discovery?.profile_id === 'custom-city-polygon-v1'
+          ? copy(body.discovery) : { radius_metres: body.discovery?.radius_metres ?? '4828.032' }) }, unsupported_capabilities: ['historical_characteristics'],
         ...(body.private_sales_import ? { private_sales_import: body.private_sales_import } : {}) });
       }
       if (kind === 'catalog') {
         const result = catalog(account, body), captured = privateContexts.get(body.context_ref.context_id);
+        if (cityContexts.has(body.context_ref.context_id)) result.discovery = copy(cityContexts.get(body.context_ref.context_id));
         if (captured) {
           result.private_sales = privateSalesSummaryFixture({ input: { accountId: account, assignmentFileId: fileId,
             contextRef: body.context_ref, selection: body.selection }, privateSalesImport: captured.private_sales_import,
@@ -156,6 +166,7 @@ function harness(t, db, initialSection, overrides = {}) {
     react, 'react/jsx-runtime': jsx, '../customWorkspaceLifecycle': lifecycle,
     '../customWorkspaceRequestLane': lane, './CustomCohortWorkspace': { default: WorkspaceStub, __esModule: true },
     './CustomReportedObservationAdoption': { default: AdoptionStub, __esModule: true },
+    '../../../data/neighborhoodCityBoundaries.json': { default: cityCatalog, __esModule: true },
   }).default;
   const cleanup = () => { if (!fiber) return; fiber.cells.forEach(cell => cell?.cleanup?.()); fiber.live = false; fiber = null; };
   function render(next = props) {
@@ -192,6 +203,127 @@ function harness(t, db, initialSection, overrides = {}) {
   };
 }
 const kinds = db => db.calls.map(call => call.kind);
+
+for (const city of cityCatalog.cities) test(`installed ${city.name} study is explicit analytical intent, not a reference-camera action`, async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted), scope = cityChoice(city);
+  h.radius(cityKey(scope)); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog']); assert.match(h.html(), /Displayed study: 3-mile radius/);
+  assert.match(h.text(), /not mailing-city names or the map's reference control/);
+  h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'save', 'capture', 'catalog', 'save']);
+  assert.deepEqual(db.calls[1].body.value.active, initial.value.active); assert.equal(db.calls[1].body.value.workspace_version, 4);
+  assert.deepEqual(db.calls[2].body.discovery, scope); assert.equal(Object.hasOwn(db.calls[2].body.discovery, 'radius_metres'), false);
+  assert.deepEqual(db.file(TARGET).section.value.active.discovery, scope);
+  assert.match(h.text(), new RegExp(`Displayed study: ${city.name} city polygon`));
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(await h.controls.flush(), true); assert.equal(db.maxOpen, 1);
+  const saved = copy(db.file(TARGET).section); h.unmount();
+  const reopened = harness(t, db, saved); await reopened.settle();
+  assert.equal(kinds(db).at(-1), 'catalog'); assert.equal(db.calls.filter(c => c.kind === 'capture').length, 1);
+  assert.match(reopened.text(), new RegExp(`Displayed study: ${city.name} city polygon`));
+  assert.equal(await reopened.controls.flush(), true);
+});
+
+test('city -> three-mile study preserves old city until activation and retains explicit radius intent', async t => {
+  const city = cityCatalog.cities[0], initial = activeSection([]); initial.value.workspace_version = 4;
+  initial.value.active.discovery = cityChoice(city);
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  h.radius('3'); await h.settle(); assert.deepEqual(kinds(db), ['catalog']);
+  assert.match(h.text(), /Displayed study: Coppell city polygon/);
+  h.click('Capture a new 3-mile study'); await h.settle();
+  assert.equal(db.calls[1].body.value.workspace_version, 4); assert.deepEqual(db.calls[1].body.value.active, initial.value.active);
+  assert.deepEqual(db.calls[2].body.discovery, { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' });
+  assert.equal(db.file(TARGET).section.value.workspace_version, 3); assert.match(h.text(), /Displayed study: 3-mile radius/);
+  assert.equal(await h.controls.flush(), true);
+});
+
+test('failed city capture keeps the old map selection/report and resumes the exact pending city', async t => {
+  const initial = activeSection([]), city = cityCatalog.cities[1], scope = cityChoice(city);
+  const db = server(initial), h = harness(t, db, initial); await h.settle(); const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('capture', () => json({ error: 'capture_limit' }, 422));
+  h.radius(cityKey(scope)); h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
+  const pending = copy(db.file(TARGET).section.value.pending_capture);
+  assert.deepEqual(pending.discovery, scope); assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.equal(h.workspace().contextRef.context_id, OLD); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
+  assert.match(h.text(), /Displayed study: 3-mile radius/); assert.equal(await h.controls.flush(), false);
+  db.overrides.delete('capture'); h.click('Reload saved choices'); await h.settle();
+  h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(db.calls.filter(c => c.kind === 'capture').map(c => c.body.operation_id), [pending.operation_id, pending.operation_id]);
+  assert.match(h.text(), /Displayed study: Dallas city polygon/); assert.deepEqual(db.file(TARGET).accepted, accepted);
+  assert.equal(await h.controls.flush(), true);
+});
+
+test('historical saved city reopens without substituting current asset and cannot be used for new capture', async t => {
+  const initial = activeSection([]); initial.value.workspace_version = 4;
+  initial.value.active.discovery = { profile_id: 'custom-city-polygon-v1', city: {
+    geoid: cityCatalog.cities[0].geoid, vintage: '2001-01-01', asset_sha256: 'f'.repeat(64) } };
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog']); assert.match(h.text(), /Displayed study: City GEOID 4816612 city polygon \(2001-01-01\)/);
+  assert.match(h.text(), /retained; not installed for new capture/);
+  const start = h.button('Capture City GEOID 4816612 city polygon (2001-01-01) study'); assert.equal(start.props.disabled, true);
+  assert.equal(await h.controls.flush(), true);
+  h.radius(cityKey(cityChoice(cityCatalog.cities[0]))); await h.settle();
+  assert.equal(h.button('Capture Coppell city polygon (2026-01-01) study').props.disabled, false);
+  assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(db.file(TARGET).section, initial);
+});
+
+for (const [errorCode, expectedText] of [
+  ['neighborhood_city_subject_outside_scope', 'The subject is outside the selected city polygon.'],
+  ['neighborhood_city_source_unavailable', 'The selected city polygon is unavailable for capture.'],
+]) test(`known city refusal ${errorCode} reaches the Host with safe set-aside guidance and unchanged study`, async t => {
+  const initial = activeSection([]), city = cityCatalog.cities[0], db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('capture', () => json({ error: errorCode, detail: 'secret local source path' }, 422));
+  h.radius(cityKey(cityChoice(city))); h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
+  assert.ok(h.text().includes(expectedText)); assert.match(h.text(), /Reload saved choices, then use “Set aside pending capture”/);
+  assert.doesNotMatch(h.text(), /secret local source path|neighborhood_city_/);
+  assert.equal(h.workspace().contextRef.context_id, OLD); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active); assert.deepEqual(db.file(TARGET).accepted, accepted);
+  assert.equal(await h.controls.flush(), false); assert.equal(h.button('Set aside pending capture').props.disabled, true);
+  h.click('Reload saved choices'); await h.settle();
+  assert.equal(h.button('Set aside pending capture').props.disabled, false);
+  h.click('Set aside pending capture'); await h.settle();
+  assert.equal(db.file(TARGET).section.value.pending_capture, null); assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(await h.controls.flush(), true);
+  assert.equal(db.calls.filter(c => c.kind === 'capture').length, 1);
+});
+
+test('unknown city error remains generic and never displays raw server text', async t => {
+  const initial = activeSection([]), city = cityCatalog.cities[0], db = server(initial), h = harness(t, db, initial); await h.settle();
+  db.overrides.set('capture', () => json({ error: 'neighborhood_city_source_unavailable: secret local source path' }, 422));
+  h.radius(cityKey(cityChoice(city))); h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
+  assert.match(h.text(), /The neighborhood workspace could not finish updating/);
+  assert.doesNotMatch(h.text(), /secret local source path|selected city polygon is unavailable/);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+});
+
+test('catalog city hash mismatch on fresh reopen blocks workspace without requesting capture or defaults', async t => {
+  const initial = activeSection([]); initial.value.workspace_version = 4; initial.value.active.discovery = cityChoice(cityCatalog.cities[0]);
+  const db = server(initial); db.overrides.set('catalog', async (_call, respond) => {
+    const value = await respond().json(); value.discovery.city.asset_sha256 = 'f'.repeat(64); return json(value); });
+  const h = harness(t, db, initial); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog']); assert.equal(h.workspace(), undefined); assert.equal(await h.controls.flush(), false);
+  assert.match(h.html(), /role="alert"/); assert.deepEqual(db.file(TARGET).section, initial);
+});
+
+test('private CSV city capture uses the exact chosen polygon; save barrier still closes admission', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const scope = cityChoice(cityCatalog.cities[2]), reference = { batch_id: OLD, expected_review_revision: 7 };
+  h.radius(cityKey(scope)); h.controls.setReadOnly(true); await h.settle();
+  assert.equal(await h.controls.useReviewedSales(reference), false); assert.deepEqual(kinds(db), ['catalog']);
+  h.controls.setReadOnly(false); await h.settle(); assert.equal(await h.controls.useReviewedSales(reference), true); await h.settle();
+  const call = db.calls.find(c => c.kind === 'capture'); assert.deepEqual(call.body.discovery, scope);
+  assert.deepEqual(call.body.private_sales_import, reference); assert.equal(db.file(TARGET).section.value.workspace_version, 4);
+  assert.match(h.text(), /Displayed study: Duncanville city polygon/); assert.equal(db.maxOpen, 1); assert.equal(await h.controls.flush(), true);
+});
+
+test('changing local city options while an existing study rerenders does not reload or change saved scope', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  h.radius(cityKey(cityChoice(cityCatalog.cities[3])));
+  h.render({ ...h.props, initialSection: copy(initial), target: copy(TARGET) }); await h.settle();
+  assert.equal(h.button('Capture Garland city polygon (2026-01-01) study').props.disabled, false);
+  assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(db.file(TARGET).section, initial);
+});
 
 test('radius chooser is intent-only until capture and then persists the exact expanded study', async t => {
   const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();

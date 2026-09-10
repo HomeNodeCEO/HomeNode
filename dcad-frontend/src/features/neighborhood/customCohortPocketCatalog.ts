@@ -3,6 +3,8 @@ import { checkCustomCohortPocketRecommendation } from './customCohortPocketRecom
 import type { CheckedPocketRecommendation } from './customCohortPocketRecommendation';
 import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
+import { prepareCustomWorkspaceDiscovery } from './customWorkspaceDiscovery.ts';
+import type { CustomWorkspaceCityDiscovery } from './customWorkspaceDiscovery';
 
 export interface CheckedRecordedPocket {
   readonly id: string; readonly label: string; readonly county: string;
@@ -21,6 +23,7 @@ export interface CheckedPocketCatalog {
   readonly limitations: readonly string[];
   readonly recommendation?: CheckedPocketRecommendation | null;
   readonly private_sales?: CheckedPrivateSalesObservations;
+  readonly discovery?: CustomWorkspaceCityDiscovery;
 }
 const UNASSIGNED = 'discovery:unassigned';
 export const CUSTOM_COHORT_UNASSIGNED_GROUP = UNASSIGNED;
@@ -97,7 +100,12 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
     ? checkCustomCohortPocketRecommendation(response.recommendation, checked, binding.selection_sha256) : null;
   const privateSales = Object.hasOwn(response, 'private_sales')
     ? checkCustomCohortPrivateSales(response.private_sales, expected, text(binding.selection_sha256, 64)) : null;
-  return frozen({ ...checked, recommendation, ...(privateSales ? { private_sales: privateSales } : {}) });
+  const discovery = Object.hasOwn(response, 'discovery') ? prepareCustomWorkspaceDiscovery(response.discovery) : undefined;
+  ensure(!discovery || discovery.profile_id === 'custom-city-polygon-v1');
+  if (discovery && recommendation) ensure(recommendation.policy.revision === 3
+    && recommendation.evidence_mode === 'recorded_housing_only' && !recommendation.recorded_proximity);
+  return frozen({ ...checked, recommendation, ...(privateSales ? { private_sales: privateSales } : {}),
+    ...(discovery?.profile_id === 'custom-city-polygon-v1' ? { discovery } : {}) });
 }
 
 export function customCohortCatalogGroupIds(catalog: CheckedPocketCatalog): readonly string[] {

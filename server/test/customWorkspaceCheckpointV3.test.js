@@ -158,7 +158,7 @@ test('v3 keeps exact group capacity and section/selection revision guards', () =
   for (const revision of [0, '1', 2147483648]) assert.equal(read({ revision, value }).status, 'invalid');
   value.active.selection.revision = 0; invalid(value, 'selection.revision');
 });
-for (const version of [0, 4, '3', null]) test(`unsupported workspace version ${String(version)} remains invalid`, () => {
+for (const version of [0, 5, '3', null]) test(`unsupported workspace version ${String(version)} remains invalid`, () => {
   const value = fixture(); value.workspace_version = version; invalid(value, 'workspace_version');
 });
 

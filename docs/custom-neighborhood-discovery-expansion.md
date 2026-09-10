@@ -1,5 +1,7 @@
 # Custom neighborhood discovery expansion
 
+The radius behavior below remains supported. The subsequent [city-study extension](custom-neighborhood-city-study.md) adds a separate explicit polygon choice and checkpoint version 4; the dropdown is now labelled **Analytical study area**.
+
 ## Implemented behavior
 
 The Custom saved neighborhood workspace supports three-, five- and ten-mile analytical discovery. Changing **Study radius** changes only the next capture choice. It does not fetch a new roster, alter the displayed study, select pockets or apply report values until the appraiser explicitly starts a capture.

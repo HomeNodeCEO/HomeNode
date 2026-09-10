@@ -151,6 +151,7 @@ test('cohort error responses hide SQL/policy details and distinguish uncertain c
     ['subject_changed', 409, 'neighborhood_subject_changed'],
     ['market_policy_changed', 409, 'neighborhood_market_policy_changed'],
     ['source_incomplete', 422, 'neighborhood_source_unavailable'],
+    ['city_subject_outside_scope', 422, 'neighborhood_city_subject_outside_scope'],
     ['deadline_exceeded', 503, 'neighborhood_request_interrupted'],
     ['unknown_database_error', 500, 'neighborhood_request_failed'],
   ];
@@ -171,6 +172,18 @@ test('cohort error responses hide SQL/policy details and distinguish uncertain c
     assert.deepEqual(await invalidResponse.json(), { error: 'invalid_neighborhood_request' });
   }
 });
+test('unavailable installed city source has an actionable response without asset or filesystem details', async t => {
+  const { request } = await start(t, { methods: { capture() {
+    throw Object.assign(new TypeError('invalid_custom_city_discovery:installed_unavailable /private/path'), {
+      code: 'CUSTOM_CITY_DISCOVERY_INVALID', reason: 'installed_unavailable', asset_utf8: 'private original',
+    });
+  } } });
+  const response = await request('capture');
+  assert.equal(response.status, 422);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { error: 'neighborhood_city_source_unavailable' });
+});
+
 test('malformed and oversized JSON are bounded even after an existing parser', async t => {
   const direct = await start(t), alreadyParsed = await start(t, { parsed: true });
   assert.equal((await direct.request('preview', null, { body: '{broken' })).status, 400);

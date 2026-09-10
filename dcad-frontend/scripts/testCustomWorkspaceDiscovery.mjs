@@ -22,7 +22,8 @@ function compile(name, imports) {
   }, module, module.exports);
   return module.exports;
 }
-const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers });
+const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers,
+  './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery', {}) });
 const { prepareCustomWorkspaceCheckpoint: prepare, readCustomWorkspaceCheckpoint: read,
   prepareCustomWorkspaceDiscovery: prepareDiscovery } = checkpoint;
 const { createCustomWorkspaceLifecycle: createLifecycle } = compile('customWorkspaceLifecycle', {

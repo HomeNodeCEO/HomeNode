@@ -1,5 +1,7 @@
 # Custom neighborhood map references
 
+This reference layer remains view-only. The subsequent [city-study extension](custom-neighborhood-city-study.md) adds a separate explicit analytical polygon choice; it does not change what the map's reference control does.
+
 The Custom workspace keeps the captured parcel selection and its statistics as one coherent controller group. This view-only layer adds clearer interpretation without creating a second analysis or changing inclusion.
 
 ## Parcel colors and recorded labels

@@ -1,6 +1,11 @@
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
 import { customCohortCatalogGroupIds, selectionFromRecordedGroups } from './customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
+import { prepareCustomWorkspaceDiscovery, sameCustomWorkspaceDiscovery } from './customWorkspaceDiscovery.ts';
+import type { CustomWorkspaceDiscovery } from './customWorkspaceDiscovery';
+export { CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES, prepareCustomWorkspaceDiscovery,
+  customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceDiscovery.ts';
+export type { CustomWorkspaceDiscovery, CustomWorkspaceCityDiscovery, CustomWorkspaceRadiusDiscovery } from './customWorkspaceDiscovery';
 
 export const CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION = 'neighborhood_workspace';
 export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
@@ -11,11 +16,6 @@ export interface CustomWorkspaceObservationPeriod {
 }
 export interface CustomWorkspacePrivateSalesImport {
   readonly batch_id: string; readonly expected_review_revision: number;
-}
-export const CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES = Object.freeze(['4828.032', '8046.72', '16093.44'] as const);
-export interface CustomWorkspaceDiscovery {
-  readonly profile_id: 'custom-suburban-radius-v2';
-  readonly radius_metres: typeof CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES[number];
 }
 export interface CustomWorkspacePendingCapture {
   readonly operation_id: string; readonly observation_period: CustomWorkspaceObservationPeriod;
@@ -29,7 +29,7 @@ export interface CustomWorkspaceActiveCheckpoint {
   readonly discovery?: CustomWorkspaceDiscovery;
 }
 export interface CustomWorkspaceCheckpoint {
-  readonly workspace_version: 1 | 2 | 3;
+  readonly workspace_version: 1 | 2 | 3 | 4;
   readonly active: CustomWorkspaceActiveCheckpoint | null;
   readonly pending_capture: CustomWorkspacePendingCapture | null;
 }
@@ -98,19 +98,17 @@ function groups(value: unknown): readonly string[] {
 }
 function active(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']): CustomWorkspaceActiveCheckpoint | null {
   if (value === null) return null;
-  const record = closed(value, ['context_ref', 'observation_period', 'selection'], 'active', version === 3 ? ['discovery'] : []);
+  const record = closed(value, ['context_ref', 'observation_period', 'selection'], 'active', version >= 3 ? ['discovery'] : []);
   const selection = closed(record.selection, ['revision', 'included_recorded_group_ids'], 'selection');
   if (!Number.isSafeInteger(selection.revision) || Number(selection.revision) < 1) fail('selection.revision');
   return { context_ref: context(record.context_ref), observation_period: period(record.observation_period),
     selection: { revision: selection.revision as number, included_recorded_group_ids: groups(selection.included_recorded_group_ids) },
-    ...(Object.hasOwn(record, 'discovery') ? { discovery: prepareCustomWorkspaceDiscovery(record.discovery) } : {}) };
+    ...(Object.hasOwn(record, 'discovery') ? { discovery: discoveryForVersion(record.discovery, version) } : {}) };
 }
-/** An installed discovery choice only, never browser geometry or source authority. */
-export function prepareCustomWorkspaceDiscovery(value: unknown): CustomWorkspaceDiscovery {
-  const record = closed(value, ['profile_id', 'radius_metres'], 'discovery');
-  if (record.profile_id !== 'custom-suburban-radius-v2'
-    || !CUSTOM_WORKSPACE_DISCOVERY_RADII_METRES.some(radius => radius === record.radius_metres)) fail('discovery');
-  return Object.freeze({ profile_id: record.profile_id, radius_metres: record.radius_metres as CustomWorkspaceDiscovery['radius_metres'] });
+function discoveryForVersion(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']) {
+  const result = prepareCustomWorkspaceDiscovery(value);
+  if (version < 4 && result.profile_id === 'custom-city-polygon-v1') fail('discovery');
+  return result;
 }
 /** Exact saved review selection, not source rights or a request for latest. */
 export function prepareCustomWorkspacePrivateSalesImport(value: unknown): CustomWorkspacePrivateSalesImport {
@@ -123,11 +121,11 @@ export function prepareCustomWorkspacePrivateSalesImport(value: unknown): Custom
 function pending(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']): CustomWorkspaceCheckpoint['pending_capture'] {
   if (value === null) return null;
   const record = closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
-    ...(version === 3 ? ['discovery'] : [])], 'pending_capture', version === 3 ? ['private_sales_import'] : []);
+    ...(version >= 3 ? ['discovery'] : [])], 'pending_capture', version >= 3 ? ['private_sales_import'] : []);
   if (typeof record.operation_id !== 'string' || !UUID.test(record.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: record.operation_id, observation_period: period(record.observation_period),
     ...(Object.hasOwn(record, 'private_sales_import') ? { private_sales_import: prepareCustomWorkspacePrivateSalesImport(record.private_sales_import) } : {}),
-    ...(version === 3 ? { discovery: prepareCustomWorkspaceDiscovery(record.discovery) } : {}) };
+    ...(version >= 3 ? { discovery: discoveryForVersion(record.discovery, version) } : {}) };
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
@@ -137,7 +135,7 @@ function freeze<T>(value: T): T {
  * source bodies, authorization, or accepted report group can be smuggled in. */
 export function prepareCustomWorkspaceCheckpoint(value: unknown): CustomWorkspaceCheckpoint {
   const record = closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (record.workspace_version !== 1 && record.workspace_version !== 2 && record.workspace_version !== 3) fail('workspace_version');
+  if (record.workspace_version !== 1 && record.workspace_version !== 2 && record.workspace_version !== 3 && record.workspace_version !== 4) fail('workspace_version');
   const result: CustomWorkspaceCheckpoint = { workspace_version: record.workspace_version, active: active(record.active, record.workspace_version), pending_capture: pending(record.pending_capture, record.workspace_version) };
   const current = result.active, next = result.pending_capture;
   if (current && next && current.context_ref.context_id === next.operation_id
@@ -184,6 +182,8 @@ export function restoreCustomWorkspaceSelection(section: unknown, catalog: Check
     const expected = current.context_ref, actual = catalog.binding.context_ref;
     if (expected.context_id !== actual.context_id || expected.context_revision !== actual.context_revision
       || expected.context_sha256 !== actual.context_sha256) return invalid('catalog_context_mismatch');
+    if (!sameCustomWorkspaceDiscovery(current.discovery?.profile_id === 'custom-city-polygon-v1' ? current.discovery : undefined,
+      catalog.discovery)) return invalid('catalog_discovery_mismatch');
     const available = new Set(customCohortCatalogGroupIds(catalog));
     const included = current.selection.included_recorded_group_ids;
     if (included.some(id => !available.has(id))) return invalid('unknown_recorded_group');

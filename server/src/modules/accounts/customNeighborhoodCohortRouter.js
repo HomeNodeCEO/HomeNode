@@ -44,6 +44,8 @@ function publicFailure(error) {
   if (error?.type === 'entity.too.large' || error?.status === 413) return [413, { error: 'neighborhood_request_too_large' }];
   if (error?.type === 'entity.parse.failed') return [400, { error: 'invalid_neighborhood_request' }];
   const reason = error?.reason;
+  if (reason === 'city_subject_outside_scope') return [422, { error: 'neighborhood_city_subject_outside_scope' }];
+  if (error?.code === 'CUSTOM_CITY_DISCOVERY_INVALID') return [422, { error: 'neighborhood_city_source_unavailable' }];
   if (reason === 'authentication_required') return [401, { error: 'authentication_required' }];
   if (ACCESS_ERRORS.has(reason)) return [403, { error: 'neighborhood_access_denied' }];
   if (reason === 'context_unavailable' || reason === 'target_unavailable' || error?.message === 'account_not_found') {

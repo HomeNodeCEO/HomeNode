@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import * as discoveryHelpers from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint as serverPrepare,
   readCustomNeighborhoodWorkspaceCheckpoint as serverRead,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION as serverSection,
@@ -18,6 +19,7 @@ const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
 assert.equal((compiled.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0);
 const module = { exports: {} };
 new Script(`(function(require,module,exports){${compiled.outputText}\n})`, { filename: file }).runInThisContext()(name => {
+  if (name === './customWorkspaceDiscovery.ts') return discoveryHelpers;
   assert.equal(name, './customCohortPocketCatalog', 'checkpoint helpers cannot import persistence or authentication');
   return catalogHelpers;
 }, module, module.exports);
@@ -116,7 +118,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 4; }],
+  ['unsupported version', v => { v.workspace_version = 5; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],

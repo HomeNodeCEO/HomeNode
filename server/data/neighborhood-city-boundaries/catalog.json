@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "vintage": "2026-01-01",
+  "retrievedAt": "2026-09-08T00:11:18.680Z",
+  "sourceName": "U.S. Census Bureau — Incorporated Places",
+  "sourceUrl": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/4?f=pjson",
+  "sourceQuery": "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Places_CouSub_ConCity_SubMCD/MapServer/4/query?f=geojson&where=STATE%3D%2748%27+AND+BASENAME+IN+%28%27Garland%27%2C%27Duncanville%27%2C%27Coppell%27%2C%27Irving%27%2C%27Dallas%27%29&outFields=GEOID%2CSTATE%2CPLACE%2CNAME%2CBASENAME%2CAREALAND%2CAREAWATER&outSR=4326&returnGeometry=true&orderByFields=GEOID",
+  "sourceSha256": "5e563350dbd92db59e2e479c5b488a4c50297552ca38a9991137603ef63a68be",
+  "nativeValidationSha256": "f761ea3fedb4d542e99bb4013a3d5c9fc6e3b063500567a2a56baaf4f546243d",
+  "purpose": "Map reference only; not neighborhood selection, current annexation verification, zoning or citywide parcel/sales coverage",
+  "cities": [
+    {
+      "geoid": "4816612",
+      "name": "Coppell",
+      "bytes": 34614,
+      "sha256": "2a5a782b3b90886706c0d71cd9ab108d3f6639bc02c8c2780e5b3f639cde6853"
+    },
+    {
+      "geoid": "4819000",
+      "name": "Dallas",
+      "bytes": 630977,
+      "sha256": "0c30be3e248c4353d757730715c9b86aae10b268268a243bd7e4957ea21e6c4d"
+    },
+    {
+      "geoid": "4821628",
+      "name": "Duncanville",
+      "bytes": 12778,
+      "sha256": "111e73d969d16f9139246d7a68d9bf8cf01db614d8e5cb4a64001dd3dcf3d228"
+    },
+    {
+      "geoid": "4829000",
+      "name": "Garland",
+      "bytes": 237550,
+      "sha256": "fdb7ee399720d1b8125f8a5cf3f7661cf03d99a4bc2eb176316bfaa9e4697b77"
+    },
+    {
+      "geoid": "4837000",
+      "name": "Irving",
+      "bytes": 70447,
+      "sha256": "652ff66000786d94f9f11c56971372ad98d29e5351b0d130b44e5b1153b1e5cc"
+    }
+  ]
+}

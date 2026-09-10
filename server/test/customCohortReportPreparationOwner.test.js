@@ -5,6 +5,10 @@ import { performance } from 'node:perf_hooks';
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { buildCustomCohortReportPreparation } from '../src/services/neighborhoodAssessment/customCohortReportPreparation.js';
 import { buildCustomCohortSupportedInputs } from '../src/services/neighborhoodAssessment/customCohortSupportedInputs.js';
+import { buildCustomCohortObservationPreview } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
+import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAssessment/contract.js';
+import { customCohortRepositoryFixture } from './fixtures/customCohortRepositoryFixture.js';
+import { saleWitnessMeaningFixture } from './fixtures/customCohortSaleWitnessMeaningFixture.js';
 import { supportedInputsFixture } from './fixtures/customCohortSupportedInputsFixture.js';
 
 const NOW = '2026-09-09T12:00:00.123456Z', HASH = 'a'.repeat(64);
@@ -16,9 +20,9 @@ const mutationSql = /\b(?:INSERT\s+INTO|UPDATE\s+app\.|DELETE\s+FROM|CREATE\s+TA
  * small assignment identity is selected BEFORE original acquisition, not by
  * relabeling a retained graph. No PostgreSQL/MVCC or production-rights claim.
  */
-async function setup({ assignmentFileId = '41', reviewed = false, emptySelection = false,
+async function setup({ assignmentFileId = '41', effectiveDate, reviewed = false, emptySelection = false,
   editor = { revision: 3, value_sha256: HASH }, afterFirstCommit, policy } = {}) {
-  const f = await supportedInputsFixture({ assignmentFileId, saleCount: 1 });
+  const f = await supportedInputsFixture({ assignmentFileId, effectiveDate, saleCount: 1 });
   if (reviewed) await f.reviewAll();
   const adapter = await f.adapterInput(), target = f.input.retained_inputs.subject.target;
   const actor = f.input.retained_inputs.acquisition_intent.body.actor_user_id;
@@ -243,4 +247,138 @@ test('cancellation after the initial read COMMIT cannot deliver a partial candid
   await assert.rejects(f.owner.prepareReviewedInputs(f.request, { signal: controller.signal }), /cancelled/);
   assert.equal(f.state.connects, 1); assert.equal(f.state.calls.at(-1).text, 'COMMIT');
   assert.equal(f.state.releases.length, 1); f.unchanged();
+});
+
+test('optional pre-capture effective date leaves all default fixture and reconstructed inspection bytes unchanged', async () => {
+  const hash = value => createHash('sha256').update(json(value)).digest('hex');
+  // Captured before adding effectiveDate. These pin existing evidence/profile
+  // behavior, not an assertion of historical applicability or publication.
+  const repo = customCohortRepositoryFixture(), sale = await saleWitnessMeaningFixture(), supported = await supportedInputsFixture();
+  await supported.reviewAll();
+  assert.equal(hash(repo.state.input), '66e6312ca0f23742b861ae286143720cc89c186f1299fc22241ece6dd2682a51');
+  assert.equal(hash(sale.input), '04ef7f6c4cef434cde7eee982c3160e26f4ce66a77fed97d55f9030e44d60c92');
+  assert.equal(hash(supported.input), 'a0642d799e8de64f8f5db2eab1fb1af15a2fdeaf267b5945ac412c7109ed58e3');
+  assert.equal(hash(buildCustomCohortSupportedInputs(await supported.adapterInput())), '0a95ca7902bea4bb0bc8d8452d1ae4df87f561eb5f480245f4a144abca1e688d');
+  assert.deepEqual(customCohortRepositoryFixture({ effectiveDate: '2026-09-06' }).state.input, repo.state.input);
+  for (const effectiveDate of [null, '2024-02-30', '2024-6-30', '2024-06-30T00:00:00Z']) {
+    assert.throws(() => customCohortRepositoryFixture({ effectiveDate }), /invalid_neighborhood_assessment/);
+  }
+});
+
+function assertRetrospectiveBlock(result, fixture, effectiveDate = '2024-06-30') {
+  assert.equal(result.status, 'prepared_reviewed_inputs');
+  assert.equal(result.authority, 'not_established'); assert.equal(result.subject_freshness, 'matched');
+  assert.equal(result.workspace_section_revision, 19); assert.equal(result.owner_clock_at, NOW);
+  assert.equal(result.supported_inputs, null);
+  assert.deepEqual(result.apply, { status: 'blocked', reason: 'historical_stock_evidence_required' });
+  const report = result.report_preparation;
+  assert.equal(report.report_preparation_version, 1); assert.equal(report.status, 'incomplete');
+  assert.equal(report.authority, 'not_established'); assert.equal(report.assessment, null);
+  assert.equal(report.publication_bundle, null); assert.equal(report.candidate, null);
+  assert.equal(Object.hasOwn(report, 'binding'), false);
+  assert.deepEqual(report.issues, [{ code: 'historical_stock_evidence_required' }]);
+  assert.deepEqual(report.apply, { status: 'blocked', reasons: ['historical_stock_evidence_required'] });
+  assert.deepEqual(report.temporal_support, { status: 'historical_stock_evidence_required', effective_date: effectiveDate,
+    retained_capture_at: fixture.f.input.retained_inputs.acquisition.capture_result.captured_at,
+    stock_basis: 'current_mirror', historical_coverage: 'not_established' });
+  assert.equal(report.report_geography.status, 'absent');
+  assert.deepEqual(report.report_geography.subject_point_observation.retained_subject_binding.original_snapshot_row,
+    fixture.f.input.retained_inputs.subject.original_snapshot_row);
+  assert.equal(report.report_geography.authority, 'not_established');
+  assert.ok(Object.isFrozen(report)); assert.ok(Object.isFrozen(report.temporal_support));
+}
+
+test('reviewed retrospective context cannot compute supported stock/statistics or a report candidate from later current CAD', async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30' });
+  const retained = f.f.input.retained_inputs, before = json(f.f.input), beforeReview = json(f.adapter.review_state);
+  assert.equal(retained.subject.effective_date, '2024-06-30');
+  assert.equal(retained.subject.case_effective_date, '2024-06-30');
+  assert.equal(JSON.parse(retained.subject.original_snapshot.pg_row_json).effective_date, '2024-06-30');
+  assert.equal(JSON.parse(f.f.input.context_header_json).effective_date, '2024-06-30');
+  assert.equal(retained.acquisition.capture_result.captured_at, '2026-09-06T08:00:00.123Z');
+  // The old pure interpreter remains available for explicitly diagnostic replay;
+  // the real owner must not forward that output into report preparation.
+  assert.equal(buildCustomCohortSupportedInputs(f.adapter).status, 'computed');
+  const result = await f.owner.prepareReviewedInputs(f.request);
+  assertRetrospectiveBlock(result, f);
+  assert.equal(json(f.f.input), before); assert.equal(json(f.adapter.review_state), beforeReview);
+  assert.equal(f.state.policies.length, 2); assert.equal(f.state.calls.filter(c => c.text === 'COMMIT').length, 2);
+  assert.deepEqual(f.state.releases, [{ phase: 1, error: undefined }, { phase: 2, error: undefined }]);
+  f.unchanged();
+});
+
+test('unreviewed and explicitly empty retrospective workspaces remain inspectable without inventing zero supported populations', async () => {
+  for (const options of [{ reviewed: false }, { reviewed: true, emptySelection: true }]) {
+    const f = await setup({ effectiveDate: '2024-06-30', ...options }), before = json(f.state.workspace);
+    assertRetrospectiveBlock(await f.owner.prepareReviewedInputs(f.request), f);
+    assert.equal(json(f.state.workspace), before); f.unchanged();
+  }
+});
+
+test('an original same-capture-day context remains unchanged when reopened on a later owner day', async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2026-09-06' });
+  const retained = f.f.input.retained_inputs;
+  assert.equal(retained.subject.effective_date, retained.acquisition.capture_result.captured_at.slice(0, 10));
+  assert.ok(retained.subject.effective_date < NOW.slice(0, 10));
+  const result = await f.owner.prepareReviewedInputs(f.request);
+  assert.equal(result.supported_inputs.status, 'computed');
+  assert.ok(result.report_preparation.candidate); assert.equal(result.report_preparation.candidate.status, 'incomplete');
+  assert.equal(Object.hasOwn(result.report_preparation, 'temporal_support'), false);
+  assert.ok(result.report_preparation.assessment.statistics.every(statistic => statistic.value === null));
+  assert.ok(result.report_preparation.assessment.source_snapshots.every(source => source.historical_availability === 'unknown'));
+  assert.equal(result.apply.reason, 'owner_adoption_and_publication_required'); f.unchanged();
+});
+
+test('later-imported actual past sales remain in the exact observational population despite the stock report block', async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30' }), retained = f.f.input.retained_inputs;
+  const before = json(retained);
+  const preview = () => buildCustomCohortObservationPreview({ context_ref: f.request.contextRef, retained_inputs: retained,
+    selection: { revision: f.state.workspace.value.active.selection.revision, pockets: f.f.catalog.pockets.map(p => ({ id: p.id,
+      label: p.label, account_ids: p.account_ids })) } });
+  const observed = preview();
+  assert.equal(observed.effective_date, '2024-06-30'); assert.equal(observed.captured_at.slice(0, 10), '2026-09-06');
+  assert.equal(observed.all.transactions.member_count, 1); assert.equal(observed.selected.transactions.member_count, 1);
+  assert.equal(observed.all.transactions.members[0].sale_date, '2024-03-01');
+  assert.equal(observed.all.transactions.metrics.recorded_total_price.median, 275000);
+  assert.equal(observed.all.transactions.metrics.recorded_total_price.currency, null);
+  assert.equal(observed.all.source_reported.member_count, 1);
+  assert.equal(observed.all.stock.temporal_basis, 'current_mirror_observation');
+  assert.equal(observed.apply.status, 'blocked');
+  assertRetrospectiveBlock(await f.owner.prepareReviewedInputs(f.request), f);
+  assert.deepEqual(preview(), observed); assert.equal(json(retained), before); f.unchanged();
+});
+
+for (const [name, change, reason] of [
+  ['assignment access', ({ state }) => { state.assignment.assigned_appraiser_user_id = '90000000-0000-4000-8000-000000000009'; }, 'assignment_access_denied'],
+  ['workspace revision', ({ state }) => { state.workspace.revision++; }, 'workspace_changed'],
+  ['same-revision selection', ({ state }) => { state.workspace.value.active.selection.included_recorded_group_ids = []; }, 'workspace_changed'],
+  ['report snapshot identity', ({ state }) => { state.report.subject_snapshot_id = '90000000-0000-4000-8000-000000000009'; }, 'target_changed'],
+  ['retained subject material', ({ f }) => { f.base.f.state.input.sections[1].row.section_value.pg_text = '{"main_improvement":{"living_area_sqft":2500}}'; }, 'subject_changed'],
+  ['signed workfile', ({ f }) => { f.base.f.state.status = 'signed'; }, 'protected_workfile'],
+]) test(`retrospective report block still requires the final ${name} fence`, async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30', afterFirstCommit: change });
+  await assert.rejects(f.owner.prepareReviewedInputs(f.request), new RegExp(reason));
+  finalRollback(f.state); f.unchanged();
+});
+
+test('a real new review head prevents returning a stale retrospective block receipt', async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30', afterFirstCommit: async ({ f }) => { await f.housing(f.accountIds[0]); } });
+  await assert.rejects(f.owner.prepareReviewedInputs(f.request), /generation_conflict/);
+  finalRollback(f.state);
+});
+
+for (const final of [false, true]) test(`retrospective report block does not skip ${final ? 'final' : 'initial'} source authorization`, async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30',
+    policy: ({ visit, grant }) => visit === (final ? 2 : 1) ? { allowed: false } : { allowed: true, ...grant } });
+  await assert.rejects(f.owner.prepareReviewedInputs(f.request), /market_data_access_denied/);
+  if (final) finalRollback(f.state);
+  else assert.equal(f.state.connects, 1);
+  f.unchanged();
+});
+
+test('retrospective report block still rejects a changed final source decision', async () => {
+  const f = await setup({ reviewed: true, effectiveDate: '2024-06-30', policy: ({ visit, grant }) => ({ allowed: true, ...grant,
+    ...(visit === 2 ? { policy_revision: 'synthetic-changed-after-read' } : {}) }) });
+  await assert.rejects(f.owner.prepareReviewedInputs(f.request), /market_policy_changed/);
+  finalRollback(f.state); f.unchanged();
 });

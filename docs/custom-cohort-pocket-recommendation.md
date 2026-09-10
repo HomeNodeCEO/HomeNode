@@ -7,6 +7,15 @@ It is not an HTTP endpoint, a supported-fact issuer or a report acceptance write
 The caller still owns exact graph admission, organization/assignment authorization,
 source-use permission, current-subject checks and response projection.
 
+The actual optional catalog composer omits actionable recommendations when the
+current-mirror capture was taken after the appraisal's effective UTC day.
+Current observations/catalog inspection remain separate from historical report
+evidence. The pure diagnostic kernel is unchanged; its current-observation
+scores must not be presented as a retrospective recommendation. An earlier or
+same-day capture is not proof of coverage, and the existing source-period and
+report-readiness gates remain required. See the
+[effective-date requirement](custom-neighborhood-supported-inputs.md#effective-date-requirement).
+
 The kernel reuses the current-observation preview, recorded CAD group catalog and
 existing neighborhood factor curves. Every unique discovered account remains
 represented, including unknown/conflicting data and unassigned recorded groups.

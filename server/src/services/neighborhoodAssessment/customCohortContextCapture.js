@@ -24,6 +24,7 @@ import { buildCustomCohortPocketRecommendationPresentation } from './customCohor
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
+import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
 import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography,
   CUSTOM_COHORT_REPORT_GEOGRAPHY_FIELDS, CUSTOM_COHORT_REPORT_GEOGRAPHY_LIMITS } from './customCohortReportGeography.js';
@@ -616,14 +617,29 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
     });
     budget.check();
     const active = loaded.workspace.checkpoint.active;
-    const supported = buildCustomCohortSupportedInputs({
+    const temporalSupport = customCohortCurrentStockSupport({
+      effective_date: loaded.retained.retained.retained_inputs.subject.effective_date,
+      retained_capture_at: loaded.retained.retained.retained_inputs.acquisition.capture_result.captured_at,
+    });
+    const historicalBlocked = temporalSupport.status === 'historical_stock_evidence_required';
+    // Reviewer declarations cannot turn a later current-CAD mirror into dated
+    // historical stock. Keep retained inspection intact, but do not compute or
+    // prepare a report candidate from it. All final access/freshness fences below
+    // still run on this unavailable path, including saved geography and reviews.
+    const supported = historicalBlocked ? null : buildCustomCohortSupportedInputs({
       preparation_input: { context_header_json: loaded.retained.header.header_blob.canonical_json,
         expected: { context_ref: input.contextRef, target: JSON.parse(loaded.scopeJson),
           observation_period: active.observation_period },
         retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection },
       review_state: loaded.review, derived_at: loaded.derivedAt,
     });
-    const reportPreparation = loaded.reportEditor === null
+    const reportPreparation = historicalBlocked
+      ? freeze({ report_preparation_version: 1, status: 'incomplete', authority: 'not_established',
+        identity_status: 'unpublished_preparation', assessment: null, publication_bundle: null, candidate: null,
+        report_geography: loaded.reportGeography, temporal_support: temporalSupport,
+        issues: [{ code: 'historical_stock_evidence_required' }],
+        apply: { status: 'blocked', reasons: ['historical_stock_evidence_required'] } })
+      : loaded.reportEditor === null
       ? freeze({ report_preparation_version: 1, status: 'incomplete', authority: 'not_established',
         identity_status: 'unpublished_preparation', assessment: null, publication_bundle: null, candidate: null,
         issues: [{ code: 'unsupported_assignment_identity' }],
@@ -656,7 +672,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       return Object.freeze({ status: 'prepared_reviewed_inputs', authority: 'not_established',
         workspace_section_revision: workspace.section_revision, owner_clock_at: loaded.now,
         subject_freshness: 'matched', supported_inputs: supported, report_preparation: reportPreparation,
-        apply: Object.freeze({ status: 'blocked', reason: 'owner_adoption_and_publication_required' }) });
+        apply: Object.freeze({ status: 'blocked', reason: historicalBlocked
+          ? 'historical_stock_evidence_required' : 'owner_adoption_and_publication_required' }) });
     });
   }, preview(value, options = {}) {
     return runPreview(value, options);

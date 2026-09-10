@@ -23,8 +23,8 @@ const schema = [...readerText.match(/const TABLES = Object.freeze\(\{([\s\S]*?)\
 
 // Exercise the ACTUAL subject/spatial/source capture, persistence and reopen
 // contracts over bounded query fakes. Not native PostgreSQL/MVCC/rights evidence.
-export async function decisionEvidenceFixture({ parcelCount = 2, missingCounty = false, saleOverrides = {}, extraTransactions = [] } = {}) {
-  const f = customCohortRepositoryFixture(), t = f.state.input.target;
+export async function decisionEvidenceFixture({ parcelCount = 2, missingCounty = false, saleOverrides = {}, extraTransactions = [], effectiveDate } = {}) {
+  const f = customCohortRepositoryFixture({ effectiveDate }), t = f.state.input.target;
   const property = JSON.parse(f.state.input.snapshot.subject_data.pg_text).custom_property_snapshot;
   setPublic(f.state.input, { ...property, location: { account_id: t.account_id, longitude: -96.65, latitude: 32.91,
     source: 'dcad_parcel_query', precision: 'parcel_centroid', status: 'matched', confidence: 'high', review_required: false,

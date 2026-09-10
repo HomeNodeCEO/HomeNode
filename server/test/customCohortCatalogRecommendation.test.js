@@ -12,8 +12,8 @@ const CATALOG = 'report_observation_catalog', SUMMARY = 'report_observation_summ
 
 // Real retained loader/context/subject/presenters over scoped DB query fixtures.
 // No native locking, PostgreSQL isolation or actual provider authorization claim.
-async function setup() {
-  const f = await decisionEvidenceFixture(), header = prepareCustomCohortContextHeader(f.input.context_header_json);
+async function setup(options) {
+  const f = await decisionEvidenceFixture(options), header = prepareCustomCohortContextHeader(f.input.context_header_json);
   await f.store.put(f.input.context_header_json);
   const scope = f.input.expected.target, target = f.f.state.input.target;
   const actor = '80000000-0000-4000-8000-000000000001';
@@ -83,9 +83,27 @@ test('optional baseline uses both existing exposures before retained rows and af
   assert.ok(!state.calls.some(sql => /neighborhood-(cache|membership|closure):|\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
 });
 
-for (const deniedAt of [1, 2, 3, 4]) {
-  test(`denial at exposure check ${deniedAt} prevents optional output`, async () => {
-    const { service, input, state } = await setup();
+test('retrospective owner omits actionable recommendations but retains the exact catalog, selection and both policy fences', async () => {
+  const { service, input, state, f } = await setup({ effectiveDate: '2026-09-05' });
+  const retainedBefore = json(f.input.retained_inputs);
+  const ordinary = await service.catalog(input);
+  state.policies.length = 0;
+  const result = await service.catalog({ ...input, includeRecommendation: true });
+  assert.equal(Object.hasOwn(result, 'recommendation'), false);
+  assert.equal(json(result), json(ordinary));
+  assert.equal(result.catalog.catalog_complete, true);
+  assert.deepEqual(result.catalog.pockets.flatMap(p => p.account_ids).sort(), [...f.accountIds].sort());
+  assert.deepEqual(input.selection, { revision: 7, pockets: [] });
+  assert.equal(result.catalog.authority, 'not_established'); assert.equal(result.apply.status, 'blocked');
+  assert.deepEqual(state.policies.map(call => call.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
+  assert.equal(state.commits, 4); assert.equal(state.rollbacks, 0); assert.equal(state.releases.length, 4);
+  assert.equal(json(f.input.retained_inputs), retainedBefore);
+  assert.ok(!state.calls.some(sql => /neighborhood-(cache|membership|closure):|\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
+});
+
+for (const effectiveDate of ['2026-09-05', '2026-09-06']) for (const deniedAt of [1, 2, 3, 4]) {
+  test(`denial at exposure check ${deniedAt} prevents output for effective date ${effectiveDate}`, async () => {
+    const { service, input, state } = await setup({ effectiveDate });
     state.onPolicy = count => count === deniedAt ? { allowed: false } : { ...GRANT };
     await assert.rejects(service.catalog({ ...input, includeRecommendation: true }), /market_data_access_denied/);
     assert.equal(state.policies.length, deniedAt); assert.equal(state.rollbacks, 1);
@@ -93,9 +111,9 @@ for (const deniedAt of [1, 2, 3, 4]) {
   });
 }
 
-for (const changedAt of [2, 3, 4]) {
-  test(`policy revision mismatch at exposure check ${changedAt} prevents optional output`, async () => {
-    const { service, input, state } = await setup();
+for (const effectiveDate of ['2026-09-05', '2026-09-06']) for (const changedAt of [2, 3, 4]) {
+  test(`policy revision mismatch at exposure check ${changedAt} prevents output for effective date ${effectiveDate}`, async () => {
+    const { service, input, state } = await setup({ effectiveDate });
     state.onPolicy = count => ({ ...GRANT, policy_revision: count === changedAt ? 'changed' : GRANT.policy_revision });
     await assert.rejects(service.catalog({ ...input, includeRecommendation: true }), /market_policy_changed/);
     assert.equal(state.policies.length, changedAt); assert.equal(state.sourceReads > 0, changedAt > 2);
@@ -120,8 +138,8 @@ test('flag and selection are detached before policy await', async () => {
   assert.deepEqual(state.policies.map(call => call.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
 });
 
-for (const type of ['material', 'assignment']) test(`fresh ${type} change prevents recommendation delivery`, async () => {
-  const { service, input, state, f } = await setup();
+for (const effectiveDate of ['2026-09-05', '2026-09-06']) for (const type of ['material', 'assignment']) test(`fresh ${type} change prevents delivery for effective date ${effectiveDate}`, async () => {
+  const { service, input, state, f } = await setup({ effectiveDate });
   state.onCommit = count => {
     if (count !== 1) return;
     if (type === 'material') setSection(f.f.state.input, 1, '{"main_improvement":{"living_area_sqft":9999}}');
@@ -131,14 +149,14 @@ for (const type of ['material', 'assignment']) test(`fresh ${type} change preven
   assert.equal(state.policies.length, 2); assert.equal(state.rollbacks, 1);
 });
 
-test('pre-cancel, final summary cancellation and uncertain COMMIT never deliver recommendations', async () => {
-  const before = await setup(), controller = new AbortController(); controller.abort();
+for (const effectiveDate of ['2026-09-05', '2026-09-06']) test(`cancellation and uncertain COMMIT prevent delivery for effective date ${effectiveDate}`, async () => {
+  const before = await setup({ effectiveDate }), controller = new AbortController(); controller.abort();
   await assert.rejects(before.service.catalog({ ...before.input, includeRecommendation: true }, { signal: controller.signal }), /cancelled/);
   assert.equal(before.state.connects, 0);
-  const during = await setup(), final = new AbortController();
+  const during = await setup({ effectiveDate }), final = new AbortController();
   during.state.onPolicy = count => { if (count === 4) final.abort(); return { ...GRANT }; };
   await assert.rejects(during.service.catalog({ ...during.input, includeRecommendation: true }, { signal: final.signal }), /cancelled/);
-  const uncertain = await setup(); uncertain.state.onCommit = count => { if (count === 2) uncertain.state.failCommit = true; };
+  const uncertain = await setup({ effectiveDate }); uncertain.state.onCommit = count => { if (count === 2) uncertain.state.failCommit = true; };
   await assert.rejects(uncertain.service.catalog({ ...uncertain.input, includeRecommendation: true }), error => error.outcome_unknown === true);
   assert.ok(uncertain.state.releases.at(-1) instanceof Error);
 });

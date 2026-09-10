@@ -344,13 +344,18 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     // This second organization/actor/assignment uses a separate case/snapshot, but the same
     // real retained source rows. No source table or earlier report is rewritten.
     const reviewedOrganization = randomUUID(), reviewedActor = randomUUID(), reviewedCase = randomUUID(), reviewedSnapshot = randomUUID(), reviewedReport = randomUUID();
+    // Choose the current UTC effective day BEFORE original subject/source
+    // capture. The positive fixture must not claim current mirrors describe
+    // the former fixed 2024 valuation date. Never relabel retained captures.
+    const reviewedEffectiveDate = (await pool.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD') AS value")).rows[0].value;
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic reviewed inputs','Synthetic reviewed inputs')", [reviewedOrganization]);
     await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic reviewed inputs actor')",
       [reviewedActor, `${reviewedActor}@example.test`]);
-    await pool.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')",
-      [reviewedCase, reviewedOrganization, account]);
+    await pool.query('INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,$4::date)',
+      [reviewedCase, reviewedOrganization, account, reviewedEffectiveDate]);
     await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
-      SELECT $1,$2,1,effective_date,subject_data FROM app.appraisal_subject_snapshots WHERE id=$3`, [reviewedSnapshot, reviewedCase, snapshot]);
+      SELECT $1,$2,1,$4::date,subject_data FROM app.appraisal_subject_snapshots WHERE id=$3`,
+    [reviewedSnapshot, reviewedCase, snapshot, reviewedEffectiveDate]);
     const reviewedAssignment = (await pool.query(`INSERT INTO app.assignment_files
       (organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
       VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [reviewedOrganization, account, `PREP-${randomUUID()}`, reviewedActor])).rows[0].id;
@@ -402,6 +407,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     };
     const preparedBefore = await protectedReviewedState(), preparedFrom = calls.length, preparedExposures = reviewedExposures.length;
     const prepared = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
+    assert.ok(prepared.supported_inputs, 'positive fixture must be captured on its preselected UTC effective day; a midnight rollover requires a fresh run, not date relabeling');
     assert.equal(prepared.status, 'prepared_reviewed_inputs'); assert.equal(prepared.workspace_section_revision, 1);
     assert.equal(prepared.authority, 'not_established'); assert.equal(prepared.subject_freshness, 'matched');
     assert.match(prepared.owner_clock_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
@@ -826,10 +832,171 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal((await pool.query('SELECT count(*)::int AS n FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].n, 0,
       'original capture assignment must remain untouched for the next native checkpoint helper');
     checks.push('native committed review generation change prevents stale prepared inputs; exact next generation reopens unknown review without statistics or report writes');
+    await checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot: snapshot, observationPeriod: request.observationPeriod });
     await checkCadEvidenceCapture(pool, checks);
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }
+}
+
+// A different real capture with a valuation date chosen BEFORE acquisition.
+// This isolates retrospective refusal from the current-day positive fixture;
+// no original evidence/context/history bytes are rewritten to change dates.
+async function checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot, observationPeriod }) {
+  const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshot = randomUUID(), report = randomUUID();
+  const effectiveDate = (await pool.query("SELECT ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1)::text AS value")).rows[0].value;
+  const geometry = { type: 'Polygon', coordinates: [
+    [[-96.71, 32.79], [-96.68, 32.79], [-96.68, 32.82], [-96.71, 32.82], [-96.71, 32.79]],
+  ] };
+  const details = { neighborhood_boundary_source: 'appraiser_defined_area_manual_v2', neighborhood_boundary_geometry: geometry,
+    neighborhood_boundary_label: 'Synthetic retrospective fixture; not historical source evidence' };
+  await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic historical stock guard','Synthetic historical stock guard')", [org]);
+  await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic historical stock actor')", [actor, `${actor}@example.test`]);
+  await pool.query('INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,$4::date)',
+    [caseId, org, account, effectiveDate]);
+  await pool.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
+    SELECT $1,$2,1,$4::date,subject_data FROM app.appraisal_subject_snapshots WHERE id=$3`, [snapshot, caseId, sourceSnapshot, effectiveDate]);
+  const assignment = (await pool.query(`INSERT INTO app.assignment_files
+    (organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id,assignment_details)
+    VALUES($1,$2,$3,$4,$4,$5::jsonb) RETURNING id::text`, [org, account, `HIST-${randomUUID()}`, actor, JSON.stringify(details)])).rows[0].id;
+  await pool.query(`INSERT INTO app.report_files(id,organization_id,account_id,workflow_type,file_number,custom_assignment_file_id,appraisal_case_id,subject_snapshot_id)
+    VALUES($1,$2,$3,'custom_appraisal',$4,$5,$6,$7)`, [report, org, account, `HIST-${randomUUID()}`, assignment, caseId, snapshot]);
+  await pool.query('INSERT INTO app.custom_appraisal_workfiles(assignment_file_id,canonical_file_name) VALUES($1,$2)', [assignment, `historical-${randomUUID()}`]);
+  const auth = { userId: actor, organizations: [{ organizationId: org, roles: ['appraiser'] }] };
+  const target = { accountId: account, assignmentFileId: assignment };
+  const grant = { allowed: true, decision_id: 'synthetic_historical_stock_guard_only', policy_revision: 'synthetic-historical-v1' };
+  const makeOwner = ({ afterRead, decision } = {}) => {
+    const calls = []; let changed = false, policyCalls = 0;
+    const owner = createCustomCohortContextCapture({ pool: { async connect() {
+      const client = await pool.connect();
+      return { release: error => client.release(error), async query(config) {
+        calls.push(config.text); const answer = await client.query(config);
+        if (config.text === 'COMMIT' && afterRead && !changed) { changed = true; await afterRead(); }
+        return answer;
+      } };
+    } }, authorizeMarketData: async (_client, principal, context, _purpose, options) => {
+      assert.equal(principal.userId, actor); assert.equal(context.scope.organization_id, org);
+      assert.equal(context.target.workflow_target_id, assignment); assert.equal(options.retention, true);
+      policyCalls++; return decision ? decision(policyCalls) : grant;
+    } });
+    return { owner, calls, policyCount: () => policyCalls };
+  };
+  const base = makeOwner();
+  const captured = await base.owner.capture({ ...target, auth, operationId: randomUUID(), observationPeriod });
+  const checkpoint = { workspace_version: 1, pending_capture: null, active: { context_ref: captured.context_ref,
+    observation_period: observationPeriod, selection: { revision: 1, included_recorded_group_ids: [] } } };
+  const client = await pool.connect(); let retainedCaptureAt, command;
+  try {
+    await client.query('BEGIN');
+    const saved = await saveCustomAppraisalWorkfileSectionInTransaction(client, { ...target, sectionKey: 'neighborhood_workspace',
+      sectionValue: checkpoint, expectedRevision: 0, saveReason: 'autosave', reviewer: actor });
+    assert.equal(saved.revision, 1);
+    const scopeJson = json({ organization_id: org, report_file_id: report, assignment_file_id: assignment, account_id: account });
+    const header = await createCustomCohortContextRepository(client, scopeJson).get(json(captured.context_ref));
+    const loaded = await loadCustomCohortCaptureInputs(client, scopeJson,
+      Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
+    assert.equal(loaded.retained_inputs.subject.effective_date, effectiveDate);
+    retainedCaptureAt = loaded.retained_inputs.acquisition.capture_result.captured_at;
+    assert.ok(effectiveDate < retainedCaptureAt.slice(0, 10), 'actual retained capture must postdate the preselected valuation date');
+    const resolver = createCustomCohortDecisionEvidenceResolver({ context_header_json: header.header_blob.canonical_json,
+      expected: { context_ref: captured.context_ref, target: JSON.parse(scopeJson), observation_period: observationPeriod },
+      retained_inputs: loaded.retained_inputs, selection: checkpoint.active.selection });
+    const source = loaded.retained_inputs.acquisition.capture_result.source_capture.sources.find(s => s.payload.projection.definition.role === 'transactions');
+    const record = source.payload.records[0];
+    command = { version: 1, operation_id: randomUUID(), target_ref: resolver.binding.target_ref,
+      expected_context: resolver.binding.context_ref, study_ref: resolver.binding.study_ref,
+      expected_generation: '0', expected_predecessor: null, subject_ref: { kind: 'capture_candidate', key: record.record_id },
+      claim: { kind: 'sale_completion', qualifier: { basis: 'event' }, state: 'unknown', value: null,
+        unknown_reason: 'missing_evidence', decision_refs: [] }, evidence_refs: [resolver.deriveEvidenceRef(source.id, record.record_id)],
+      rationale: 'Synthetic retrospective unknown command; cannot supply historical stock evidence.' };
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+  finally { client.release(); }
+  const request = { ...target, auth, contextRef: captured.context_ref, expectedWorkspaceRevision: 1, expectedReviewGeneration: '0' };
+  const protectedState = async () => (await pool.query(`SELECT
+    (SELECT to_jsonb(a) FROM app.assignment_files a WHERE id=$1 AND organization_id=$2) AS assignment,
+    (SELECT to_jsonb(r) FROM app.report_files r WHERE id=$3 AND organization_id=$2) AS report,
+    (SELECT to_jsonb(s) FROM app.appraisal_subject_snapshots s WHERE id=$4 AND appraisal_case_id=$5) AS snapshot,
+    (SELECT to_jsonb(w) FROM app.custom_appraisal_workfiles w WHERE assignment_file_id=$1) AS workfile,
+    (SELECT jsonb_agg(to_jsonb(s) ORDER BY section_key) FROM app.custom_appraisal_workfile_sections s WHERE assignment_file_id=$1) AS sections,
+    (SELECT jsonb_agg(to_jsonb(h) ORDER BY id) FROM app.custom_appraisal_workfile_section_history h WHERE assignment_file_id=$1) AS history,
+    (SELECT count(*)::int FROM app.custom_neighborhood_acceptances WHERE assignment_file_id=$1) AS acceptances,
+    (SELECT count(*)::int FROM app.custom_appraisal_signed_snapshots WHERE assignment_file_id=$1) AS signatures,
+    (SELECT count(*)::int FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$2) AS blobs,
+    (SELECT count(*)::int FROM app.custom_neighborhood_review_commands WHERE organization_id=$2) AS reviews`,
+  [assignment, org, report, snapshot, caseId])).rows[0];
+  const before = await protectedState();
+  assert.equal(before.assignment.created_by_user_id, actor); assert.equal(before.workfile.status, 'draft');
+  assert.equal(before.acceptances, 0); assert.equal(before.signatures, 0);
+  const assertBlocked = result => {
+    assert.equal(result.status, 'prepared_reviewed_inputs'); assert.equal(result.subject_freshness, 'matched');
+    assert.equal(result.supported_inputs, null);
+    const preparation = result.report_preparation;
+    assert.equal(preparation.report_preparation_version, 1); assert.equal(preparation.status, 'incomplete');
+    assert.equal(preparation.authority, 'not_established'); assert.equal(preparation.identity_status, 'unpublished_preparation');
+    assert.equal(preparation.assessment, null); assert.equal(preparation.publication_bundle, null); assert.equal(preparation.candidate, null);
+    assert.deepEqual(preparation.temporal_support, { status: 'historical_stock_evidence_required', effective_date: effectiveDate,
+      retained_capture_at: retainedCaptureAt, stock_basis: 'current_mirror', historical_coverage: 'not_established' });
+    assert.deepEqual(preparation.issues, [{ code: 'historical_stock_evidence_required' }]);
+    assert.deepEqual(preparation.apply, { status: 'blocked', reasons: ['historical_stock_evidence_required'] });
+    assert.deepEqual(result.apply, { status: 'blocked', reason: 'historical_stock_evidence_required' });
+    assert.equal(preparation.report_geography.status, 'manual_geometry_recorded');
+    assert.deepEqual(preparation.report_geography.geometry, geometry);
+    assert.equal(preparation.report_geography.subject_point_observation.point.target.subject_snapshot_id, snapshot);
+  };
+  const first = makeOwner(); assertBlocked(await first.owner.prepareReviewedInputs(request));
+  assert.equal(first.policyCount(), 2);
+  assert.equal(first.calls.filter(sql => sql === 'COMMIT').length, 2);
+  assert.equal(first.calls.filter(sql => sql.includes('report-geography */')).length, 2);
+  assert.ok(!first.calls.some(sql => /neighborhood-(cache|membership|closure):|\b(?:INSERT INTO|UPDATE app\.|DELETE FROM)/i.test(sql)));
+  assert.deepEqual(await protectedState(), before);
+  assertBlocked(await base.owner.prepareReviewedInputs(request));
+  assert.deepEqual(await protectedState(), before);
+  checks.push('native retrospective current-mirror capture returns explicit historical-stock refusal and original manual geography, with no computation, candidate, source reread or report writes');
+
+  for (const final of [false, true]) {
+    const denied = makeOwner({ decision: n => n === (final ? 2 : 1) ? { allowed: false } : grant });
+    await assert.rejects(denied.owner.prepareReviewedInputs(request), /market_data_access_denied/);
+  }
+  const revoked = makeOwner({ decision: n => n === 2 ? { ...grant, policy_revision: 'synthetic-revoked-after-read' } : grant });
+  await assert.rejects(revoked.owner.prepareReviewedInputs(request), /market_policy_changed/);
+  await assert.rejects(base.owner.prepareReviewedInputs({ ...request,
+    auth: { userId: actor, organizations: [{ organizationId: randomUUID(), roles: ['organization_admin'] }] } }), /assignment_access_denied/);
+  const nextDetails = { ...details, neighborhood_boundary_north: 'Changed synthetic retrospective note' };
+  const nextSubject = structuredClone(before.snapshot.subject_data);
+  nextSubject.custom_property_snapshot.location.longitude = -96.6;
+  const editorFixture = JSON.stringify({ native_fixture: 'historical-editor-race-only', authoritative: false });
+  const probes = [
+    { reason: 'workspace_changed', mutate: ['UPDATE app.custom_appraisal_workfile_sections SET revision=2 WHERE assignment_file_id=$1 AND section_key=\'neighborhood_workspace\' AND revision=1', [assignment]],
+      restore: ['UPDATE app.custom_appraisal_workfile_sections SET revision=1 WHERE assignment_file_id=$1 AND section_key=\'neighborhood_workspace\' AND revision=2', [assignment]] },
+    { reason: 'report_editor_changed', mutate: [`INSERT INTO app.custom_appraisal_workfile_sections
+      (assignment_file_id,section_key,section_value,revision,updated_by) VALUES($1,'neighborhood_assessment',$2::jsonb,1,'Synthetic historical editor; not accepted')`,
+      [assignment, editorFixture]], restore: [`DELETE FROM app.custom_appraisal_workfile_sections
+      WHERE assignment_file_id=$1 AND section_key='neighborhood_assessment' AND section_value=$2::jsonb AND revision=1
+        AND updated_by='Synthetic historical editor; not accepted'`, [assignment, editorFixture]] },
+    { reason: 'report_geography_changed', mutate: ['UPDATE app.assignment_files SET assignment_details=$3::jsonb WHERE id=$1 AND organization_id=$2 AND assignment_details=$4::jsonb',
+      [assignment, org, JSON.stringify(nextDetails), JSON.stringify(details)]], restore: ['UPDATE app.assignment_files SET assignment_details=$3::jsonb WHERE id=$1 AND organization_id=$2 AND assignment_details=$4::jsonb',
+      [assignment, org, JSON.stringify(details), JSON.stringify(nextDetails)]] },
+    { reason: 'subject_changed', mutate: ['UPDATE app.appraisal_subject_snapshots SET subject_data=$3::jsonb WHERE id=$1 AND appraisal_case_id=$2 AND subject_data=$4::jsonb',
+      [snapshot, caseId, JSON.stringify(nextSubject), JSON.stringify(before.snapshot.subject_data)]], restore: ['UPDATE app.appraisal_subject_snapshots SET subject_data=$3::jsonb WHERE id=$1 AND appraisal_case_id=$2 AND subject_data=$4::jsonb',
+      [snapshot, caseId, JSON.stringify(before.snapshot.subject_data), JSON.stringify(nextSubject)]] },
+  ];
+  for (const probe of probes) {
+    let mutated = false;
+    const racing = makeOwner({ afterRead: async () => { assert.equal((await pool.query(...probe.mutate)).rowCount, 1); mutated = true; } });
+    try { await assert.rejects(racing.owner.prepareReviewedInputs(request), new RegExp(probe.reason)); assert.ok(mutated); }
+    finally { if (mutated) assert.equal((await pool.query(...probe.restore)).rowCount, 1); }
+    assert.deepEqual(await protectedState(), before);
+  }
+  const generation = makeOwner({ afterRead: async () => {
+    assert.equal((await base.owner.review({ ...target, auth, commandJson: json(command) })).generation, '1');
+  } });
+  await assert.rejects(generation.owner.prepareReviewedInputs(request), /generation_conflict/);
+  const afterReview = await protectedState(); assert.equal(afterReview.reviews, 1);
+  assert.deepEqual(afterReview.sections, before.sections); assert.deepEqual(afterReview.history, before.history);
+  assertBlocked(await base.owner.prepareReviewedInputs({ ...request, expectedReviewGeneration: '1' }));
+  assert.deepEqual(await protectedState(), afterReview);
+  checks.push('native historical refusal still enforces initial/final source rights, exact assignment, workspace/editor/geography/current subject and review-generation fences; explicit next-generation reopen remains blocked');
 }
 
 // Mapping4 is an explicitly installed test reader, never the owner's default

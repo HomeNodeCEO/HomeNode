@@ -29,6 +29,7 @@ import {
   type MarketAreaOrigin,
 } from '@/lib/marketAreaGeometry';
 import { makeNeighborhoodPocketFeatureCollection } from '@/lib/neighborhoodPocketMap';
+import NeighborhoodCityReferenceControl from '@/components/NeighborhoodCityReferenceControl';
 
 const MAPLIBRE_SCRIPT =
   'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
@@ -95,6 +96,11 @@ type MapInstance = {
     bounds: [BoundaryCoordinate, BoundaryCoordinate],
     options?: Record<string, unknown>,
   ) => void;
+  getCenter: () => { lng: number; lat: number };
+  getZoom: () => number;
+  getBearing: () => number;
+  getPitch: () => number;
+  jumpTo: (camera: { center: BoundaryCoordinate; zoom: number; bearing: number; pitch: number }) => void;
   resize: () => void;
   setPaintProperty: (layerId: string, property: string, value: unknown) => void;
   remove: () => void;
@@ -1144,6 +1150,10 @@ export default function MarketConditionsAnalysis({
   const [pocketInteractionMessage, setPocketInteractionMessage] = useState<string | null>(null);
   const mapContainerRef = useRef<HTMLDivElement | null>(null);
   const mapRef = useRef<MapInstance | null>(null);
+  const cityReferenceViewportRef = useRef(false);
+  const onCityReferenceViewChange = useCallback((active: boolean) => {
+    cityReferenceViewportRef.current = active;
+  }, []);
   const draftBoundaryRef = useRef<BoundaryCoordinate[]>([]);
   const boundaryDrawingRef = useRef(false);
   const initialCustomGeometryRef = useRef(customGeometry);
@@ -1799,7 +1809,9 @@ export default function MarketConditionsAnalysis({
         }
         mapRef.current.resize();
         updateBoundaryMap(mapRef.current, initialCustomGeometryRef.current);
-        fitMapToBoundary(mapRef.current, initialCustomGeometryRef.current);
+        if (!cityReferenceViewportRef.current) {
+          fitMapToBoundary(mapRef.current, initialCustomGeometryRef.current);
+        }
       });
     };
 
@@ -2621,6 +2633,13 @@ export default function MarketConditionsAnalysis({
                   )}
                 </div>
               )}
+            <NeighborhoodCityReferenceControl
+              key={`city-reference-${subjectAccountId || 'unfiled'}`}
+              map={mapReady ? mapRef.current : null}
+              subjectCity={studyContext?.city}
+              onViewChange={onCityReferenceViewChange}
+              onReturnToAnalysis={() => fitMapToBoundary(mapRef.current, initialCustomGeometryRef.current)}
+            />
             {customGeometry && (
               <div className="mt-3 flex flex-wrap items-center gap-3">
                 <span className="text-sm font-medium text-emerald-800">

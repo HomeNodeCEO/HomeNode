@@ -1,6 +1,6 @@
-import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
+import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION } from './customWorkspaceCheckpoint';
-import type { CustomWorkspaceCheckpoint, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
+import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
@@ -22,7 +22,7 @@ interface Options {
   save: (input: { target: CustomWorkspaceTarget; sectionKey: string; value: CustomWorkspaceCheckpoint; expectedRevision: number },
     options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   capture: (input: { target: CustomWorkspaceTarget; operationId: string; observationPeriod: CustomWorkspaceObservationPeriod;
-    privateSalesImport?: CustomWorkspacePrivateSalesImport },
+    privateSalesImport?: CustomWorkspacePrivateSalesImport; discovery?: CustomWorkspaceDiscovery },
     options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   catalog: (input: CustomCohortPreviewInput, options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   onChange: (state: CustomWorkspaceLifecycleState) => void;
@@ -141,15 +141,18 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     ready(await loadCatalog(active.context_ref, active.selection.revision, io));
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
-    const privateInput = pending.private_sales_import, version = privateInput ? 2 : 1;
+    const privateInput = pending.private_sales_import, discovery = pending.discovery, version = discovery ? 3 : privateInput ? 2 : 1;
     if (savePending) {
       stage('saving_pending', 'reload');
       await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), workspace_version: version, pending_capture: pending }), io);
     }
     stage('capturing', 'resume_pending');
     const response = object(await io(signal => options.capture({ target, operationId: pending.operation_id,
-      observationPeriod: pending.observation_period, ...(privateInput ? { privateSalesImport: privateInput } : {}) }, signal)));
+      observationPeriod: pending.observation_period, ...(privateInput ? { privateSalesImport: privateInput } : {}),
+      ...(discovery ? { discovery } : {}) }, signal)));
     requireThat(response.status === 'registered' && typeof response.reused === 'boolean' && response.source_query_complete === true, 'capture_response');
+    requireThat(response.discovery && Object.getPrototypeOf(response.discovery) === Object.prototype
+      && (response.discovery as Record<string, unknown>).radius_metres === (discovery?.radius_metres ?? '4828.032'), 'capture_discovery_mismatch');
     if (privateInput) {
       let echoed: CustomWorkspacePrivateSalesImport;
       try { echoed = prepareCustomWorkspacePrivateSalesImport(response.private_sales_import); }
@@ -157,7 +160,8 @@ export function createCustomWorkspaceLifecycle(options: Options) {
       requireThat(same(echoed, privateInput), 'capture_private_sales_mismatch');
     } else requireThat(!Object.hasOwn(response, 'private_sales_import'), 'capture_private_sales_mismatch');
     const draft = prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: { context_ref: response.context_ref,
-      observation_period: pending.observation_period, selection: { revision: 1, included_recorded_group_ids: [] } }, pending_capture: null });
+      observation_period: pending.observation_period, selection: { revision: 1, included_recorded_group_ids: [] },
+      ...(discovery ? { discovery } : {}) }, pending_capture: null });
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
@@ -176,17 +180,21 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     getState: () => state,
     isSettled: () => !busy && unsettled === 0,
     reopen: () => run('reopen', reopen),
-    start: (period: CustomWorkspaceObservationPeriod, privateSalesImport?: CustomWorkspacePrivateSalesImport) => run(null, async (io, stage) => {
+    start: (period: CustomWorkspaceObservationPeriod, privateSalesImport?: CustomWorkspacePrivateSalesImport,
+      discoveryChoice?: CustomWorkspaceDiscovery) => run(null, async (io, stage) => {
       requireThat(!state.checkpoint?.pending_capture, 'pending_capture_exists');
+      requireThat(!state.checkpoint?.active?.discovery || discoveryChoice !== undefined, 'discovery_required');
       // Validate dates before asking for an operation UUID; retries keep the UUID
       // even if an uncertain pending save is followed by a fresh absent read.
       const privateInput = privateSalesImport === undefined ? undefined : prepareCustomWorkspacePrivateSalesImport(privateSalesImport);
-      const version = privateInput ? 2 : 1;
+      const discovery = discoveryChoice === undefined ? undefined : prepareCustomWorkspaceDiscovery(discoveryChoice);
+      const version = discovery ? 3 : privateInput ? 2 : 1;
       const checked = prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: null, pending_capture: {
         operation_id: '00000001-0000-4000-8000-000000000001', observation_period: period,
-        ...(privateInput ? { private_sales_import: privateInput } : {}) } }).pending_capture!;
+        ...(privateInput ? { private_sales_import: privateInput } : {}), ...(discovery ? { discovery } : {}) } }).pending_capture!;
       requireThat(!attemptedPending || (same(attemptedPending.observation_period, checked.observation_period)
-        && same(attemptedPending.private_sales_import, checked.private_sales_import)), 'pending_recovery_required');
+        && same(attemptedPending.private_sales_import, checked.private_sales_import)
+        && same(attemptedPending.discovery, checked.discovery)), 'pending_recovery_required');
       attemptedPending ??= prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: null, pending_capture: {
         ...checked, operation_id: (options.operationId ?? (() => crypto.randomUUID()))() } }).pending_capture;
       await acquire(attemptedPending!, true, io, stage);
@@ -232,7 +240,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
         }
       }
       if (!attemptedClear && attemptedPending && active?.context_ref.context_id === attemptedPending.operation_id
-        && same(active.observation_period, attemptedPending.observation_period) && !state.checkpoint?.pending_capture
+        && same(active.observation_period, attemptedPending.observation_period) && same(active.discovery, attemptedPending.discovery) && !state.checkpoint?.pending_capture
         && (!attemptedPending.private_sales_import || same(active.context_ref, attemptedPrivateContext))) {
         attemptedPending = null; attemptedPrivateContext = null;
       }

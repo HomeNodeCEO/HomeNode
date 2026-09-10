@@ -3,7 +3,7 @@ import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport, cr
 import type { CustomCohortMemberTransport } from './customCohortPreviewTransport';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomWorkspaceCheckpoint,
   readCustomWorkspaceCheckpoint } from './customWorkspaceCheckpoint';
-import type { CustomWorkspaceCheckpoint, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
+import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from './customWorkspaceLifecycle';
 import type { CustomCohortPreviewInput, CustomCohortPreviewRequest } from './customCohortPreviewController';
 
@@ -132,19 +132,25 @@ export function createCustomWorkspaceApi(options: Options) {
       });
     },
     capture(input: { target: CustomWorkspaceTarget; operationId: string; observationPeriod: CustomWorkspaceObservationPeriod;
-      privateSalesImport?: CustomWorkspacePrivateSalesImport },
+      privateSalesImport?: CustomWorkspacePrivateSalesImport; discovery?: CustomWorkspaceDiscovery },
       io: CustomWorkspaceOperationOptions) {
       return safely(io.signal, async () => {
         const bound = target(input.target);
         let value: CustomWorkspaceCheckpoint;
         const selected = Object.hasOwn(input, 'privateSalesImport');
-        try { value = prepareCustomWorkspaceCheckpoint({ workspace_version: selected ? 2 : 1, active: null,
+        const expanded = Object.hasOwn(input, 'discovery');
+        try { value = prepareCustomWorkspaceCheckpoint({ workspace_version: expanded ? 3 : selected ? 2 : 1, active: null,
           pending_capture: { operation_id: input.operationId, observation_period: input.observationPeriod,
-            ...(selected ? { private_sales_import: input.privateSalesImport } : {}) } }); }
+            ...(selected ? { private_sales_import: input.privateSalesImport } : {}),
+            ...(expanded ? { discovery: input.discovery } : {}) } }); }
         catch { throw new WorkspaceApiError('invalid_input'); }
-        return cohort(bound.accountId, 'capture', { assignment_file_id: bound.assignmentFileId,
+        const response = object(await cohort(bound.accountId, 'capture', { assignment_file_id: bound.assignmentFileId,
           operation_id: value.pending_capture!.operation_id, observation_period: value.pending_capture!.observation_period,
-          ...(selected ? { private_sales_import: value.pending_capture!.private_sales_import } : {}) }, io);
+          ...(selected ? { private_sales_import: value.pending_capture!.private_sales_import } : {}),
+          ...(expanded ? { discovery: value.pending_capture!.discovery } : {}) }, io));
+        requireThat(object(response.discovery).radius_metres === (value.pending_capture!.discovery?.radius_metres ?? '4828.032'),
+          'capture_discovery_mismatch');
+        return response;
       });
     },
     catalog(input: CustomCohortPreviewInput, io: CustomWorkspaceOperationOptions) {

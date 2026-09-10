@@ -17,7 +17,8 @@ import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransaction
 import { createNeighborhoodCachedReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
 import { createNeighborhoodCachedSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
-import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInputV1 } from './selectorInputProfile.js';
+import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInput,
+  prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
 import { buildCustomCohortObservationPreview, CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
@@ -79,20 +80,28 @@ function inputOf(input) {
   // This is an internal service. The HTTP owner must supply its authenticated
   // principal separately from body fields; no body-auth or source-roster API.
   const hasPrivate = Object.hasOwn(input, 'privateSalesImport');
-  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId', 'observationPeriod', ...(hasPrivate ? ['privateSalesImport'] : [])]);
+  const hasDiscovery = Object.hasOwn(input, 'discovery');
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId', 'observationPeriod',
+    ...(hasPrivate ? ['privateSalesImport'] : []), ...(hasDiscovery ? ['discovery'] : [])]);
   const identity = identityOf(input), { operationId } = input;
   if (typeof operationId !== 'string' || !UUID.test(operationId)) fail('invalid_operation');
   exactKeys(input.observationPeriod, ['start_date', 'end_date']);
   const period = Object.fromEntries(Object.entries(input.observationPeriod).map(([key, value]) => [key, assessmentDate(value)]));
   if (period.start_date > period.end_date) fail('invalid_period');
   let privateSalesImport;
+  let discovery;
+  if (hasDiscovery) {
+    try { discovery = prepareNeighborhoodDiscoveryChoice(input.discovery); }
+    catch { fail('invalid_discovery'); }
+  }
   if (hasPrivate) {
     try {
       const purpose = customNeighborhoodPrivateSalesPurpose(input.privateSalesImport);
       privateSalesImport = { batch_id: purpose.batch_id, expected_review_revision: purpose.expected_review_revision };
     } catch { fail('invalid_private_sales_import'); }
   }
-  return freeze({ ...identity, operationId, observationPeriod: period, ...(hasPrivate ? { privateSalesImport } : {}) });
+  return freeze({ ...identity, operationId, observationPeriod: period,
+    ...(hasPrivate ? { privateSalesImport } : {}), ...(hasDiscovery ? { discovery } : {}) });
 }
 function previewInputOf(input) {
   exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'selection']);
@@ -494,6 +503,9 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   const metadata = { context, purpose, decision, privateAuthorization, header: previous };
   const beforeLoadResult = beforeLoad === null ? null : await beforeLoad(metadata);
   const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
+  // A checkpoint is editor intent, not authority to relabel a retained study.
+  // Check the discovery binding as well as its dates before report preparation.
+  if (study && retained && !same(study.discovery ?? null, retained.study.discovery ?? null)) fail('operation_conflict');
   return { ...metadata, retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
 
@@ -733,7 +745,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   return Object.freeze({ async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options);
     budget.check();
-    const study = freeze({ profile_id: NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
+    const study = freeze({ profile_id: input.discovery?.profile_id ?? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
+      ...(input.discovery ? { discovery: input.discovery } : {}),
       observation_period: input.observationPeriod, knowledge_cutoff: null });
     const phaseOne = await transaction(pool, 'READ COMMITTED', budget, async client => {
       const privateWorkfile = input.privateSalesImport ? await privateCaptureWorkfile(client, input) : null;
@@ -791,11 +804,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           batchId: input.privateSalesImport.batch_id, expectedReviewRevision: input.privateSalesImport.expected_review_revision });
         privateSales = { capture, authorization: { decision_id: permission.decision_id, policy_revision: permission.policy_revision } };
       }
-      const spatial = captured(await captureNeighborhoodSpatialMembership(client, point.geometry_input), 'spatial');
-      const selector = prepareNeighborhoodSelectorInputV1({ profile_id: study.profile_id, ...context,
+      const spatial = captured(await captureNeighborhoodSpatialMembership(client, point.geometry_input, {}, input.discovery), 'spatial');
+      const selector = prepareNeighborhoodSelectorInput({ profile_id: study.profile_id, ...context,
         selection: { id: input.operationId, revision: 1, source_sha256: spatial.membership_sha256 },
         geometry_input: point.geometry_input,
-        discovery: { radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
+        discovery: { radius_metres: spatial.radius_metres, distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
         roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
       if (selector.status !== 'prepared') fail('selector_incomplete', selector.reason);
       const access = createNeighborhoodCachedReadAccess({
@@ -849,7 +862,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         effective_date: subject.effective_date, ...refs };
       const stored = await createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header));
       return freeze({ status: 'registered', reused: stored.status === 'reused', context_ref: stored.context_ref,
-        discovery: { radius_metres: '4828.032', parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
+        discovery: { radius_metres: read.spatial.radius_metres, parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },
         source_query_complete: true, provider_coverage: 'not_established',
         unsupported_capabilities: read.result.unsupported_capabilities,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });

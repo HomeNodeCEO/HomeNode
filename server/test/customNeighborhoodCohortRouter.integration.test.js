@@ -58,6 +58,18 @@ test('capture forwards only the explicit private batch reference; omitted old re
   assert.equal(calls.length, 2);
 });
 
+test('capture forwards explicit discovery without altering old requests or source authority', async t => {
+  const { request, calls } = await start(t);
+  const discovery = { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' };
+  assert.equal((await request('capture', { ...bodies.capture, discovery })).status, 200);
+  assert.deepEqual(calls[0].args[0].discovery, discovery); assert.equal(calls[0].args[0].auth, auth);
+  assert.equal((await request('capture')).status, 200); assert.equal(Object.hasOwn(calls[1].args[0], 'discovery'), false);
+  assert.equal((await request('capture', { ...bodies.capture, discovery, geometry: {} })).status, 400);
+  const failed = await start(t, { methods: { capture() { throw Object.assign(new Error('internal'), { reason: 'invalid_discovery' }); } } });
+  const response = await failed.request('capture', { ...bodies.capture, discovery: {} });
+  assert.equal(response.status, 400); assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
+});
+
 for (const [code, status, error] of [
   ['assignment_sales_import_revision_conflict', 409, 'neighborhood_private_review_changed'],
   ['assignment_sales_import_capture_changed', 409, 'neighborhood_private_review_changed'],

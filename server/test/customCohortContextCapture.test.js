@@ -45,6 +45,19 @@ test('Custom capture honors pre-abort and expired aggregate deadline before conn
   await assert.rejects(setup().capture(input(), { signal: controller.signal }), /cancelled/);
   await assert.rejects(setup().capture(input(), { deadline: performance.now() }), /deadline_exceeded/);
 });
+
+test('Custom capture admits only exact installed discovery choices before connection', async () => {
+  const discovery = { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' };
+  for (const value of [null, {}, { ...discovery, radius_metres: 8046.72 }, { ...discovery, radius_metres: '8046.720' },
+    { ...discovery, radius_metres: '160934.4' }, { ...discovery, profile_id: 'city' },
+    { ...discovery, account_ids: [] }, { ...discovery, geometry: {} }]) {
+    await assert.rejects(setup().capture({ ...input(), discovery: value }), /invalid_discovery/);
+  }
+  for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
+    const controller = new AbortController(); controller.abort();
+    await assert.rejects(setup().capture({ ...input(), discovery: { ...discovery, radius_metres } }, { signal: controller.signal }), /cancelled/);
+  }
+});
 test('Custom capture releases a late checked-out client exactly once without starting a transaction', async () => {
   let finish, releases = 0, queries = 0;
   const capture = setup(() => new Promise(resolve => { finish = resolve; }));

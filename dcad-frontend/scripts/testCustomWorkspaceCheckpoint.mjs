@@ -116,7 +116,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 3; }],
+  ['unsupported version', v => { v.workspace_version = 4; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],

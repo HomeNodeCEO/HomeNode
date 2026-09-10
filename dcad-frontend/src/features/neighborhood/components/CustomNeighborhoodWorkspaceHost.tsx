@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCustomWorkspaceLifecycle } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceLifecycleState, CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
-import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from '../customWorkspaceCheckpoint';
+import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport, CustomWorkspaceDiscovery } from '../customWorkspaceCheckpoint';
 import { createCustomWorkspaceRequestLane } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
 import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
@@ -29,6 +29,10 @@ interface Props {
   onAccepted?: () => Promise<boolean>;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
+const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
+type RadiusMiles = keyof typeof RADII;
+const radiusMiles = (discovery?: CustomWorkspaceDiscovery): RadiusMiles =>
+  discovery?.radius_metres === RADII['10'] ? '10' : discovery?.radius_metres === RADII['5'] ? '5' : '3';
 
 /** Explicitly injected Custom-only host. A mounted caller must first obtain a
  * verified current account/file/session workfile read. No local browser draft,
@@ -49,6 +53,9 @@ function HostSession(props: Props) {
   const [lastReady, setLastReady] = useState<CustomWorkspaceLifecycleState | null>(null);
   const [start, setStart] = useState(initial.initialPeriod?.start_date ?? '');
   const [end, setEnd] = useState(initial.initialPeriod?.end_date ?? '');
+  const [radius, setRadius] = useState<RadiusMiles>('3');
+  const radiusRef = useRef<RadiusMiles>('3');
+  const radiusBinding = useRef<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const [locked, setLocked] = useState(false);
   const [actionPending, setActionPending] = useState(false);
@@ -69,6 +76,21 @@ function HostSession(props: Props) {
   const reloadAbort = useRef<AbortController | null>(null);
   const reportAbort = useRef<AbortController | null>(null);
   const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
+
+  function captureDiscovery(): CustomWorkspaceDiscovery | undefined {
+    // Omitted default requests retain their original v1 identity. Once a v3
+    // study is present, choosing three miles is an explicit v2 choice too.
+    if (radiusRef.current === '3' && owner.current?.getState().checkpoint?.workspace_version !== 3) return undefined;
+    return { profile_id: 'custom-suburban-radius-v2', radius_metres: RADII[radiusRef.current] };
+  }
+  function restoreRadius(next: CustomWorkspaceLifecycleState) {
+    const checkpoint = next.checkpoint;
+    const binding = checkpoint?.pending_capture?.operation_id ?? checkpoint?.active?.context_ref.context_id ?? null;
+    if (binding === radiusBinding.current) return;
+    radiusBinding.current = binding;
+    const miles = radiusMiles(checkpoint?.pending_capture?.discovery ?? checkpoint?.active?.discovery);
+    radiusRef.current = miles; setRadius(miles);
+  }
 
   // One owned action at a time, without reflecting per-request progress in the
   // page-wide assignment autosave state. Invalid/uncertain saves stay visible.
@@ -105,14 +127,14 @@ function HostSession(props: Props) {
       catalog: (input, options) => requests.run(({ signal }) => api.catalog(input, { ...options, signal }), options),
       onChange: next => {
         if (!live.current || generation.current !== epoch) return;
-        setState(next); if (next.status === 'ready' && next.catalog && next.selection) setLastReady(next);
+        restoreRadius(next); setState(next); if (next.status === 'ready' && next.catalog && next.selection) setLastReady(next);
       } });
-    owner.current = lifecycle; setState(lifecycle.getState());
+    owner.current = lifecycle; restoreRadius(lifecycle.getState()); setState(lifecycle.getState());
     initial.registerControls?.({ target: initial.target,
       useReviewedSales: reference => {
         if (!live.current || generation.current !== epoch || reportUncertainRef.current || reportRecoveryRef.current || !period.current.start_date || !period.current.end_date)
           return Promise.resolve(false);
-        return act(() => lifecycle.start(period.current, reference));
+        return act(() => lifecycle.start(period.current, reference, captureDiscovery()));
       },
       setReadOnly: value => { if (!live.current || generation.current !== epoch) return;
         readonlyRef.current = value; setReadOnly(value); },
@@ -232,9 +254,17 @@ function HostSession(props: Props) {
         disabled={busy} onChange={event => setStart(event.target.value)} /></label>
       <label className="text-sm">Observation end<input type="date" className="input input-bordered block" value={end}
         disabled={busy} onChange={event => setEnd(event.target.value)} /></label>
+      <label className="text-sm">Study radius<select className="select select-bordered block" value={radius}
+        disabled={busy || Boolean(explorationBlocked)} onChange={event => {
+          const choice = event.target.value;
+          if (choice !== '3' && choice !== '5' && choice !== '10') return;
+          radiusRef.current = choice; setRadius(choice);
+        }}>
+        <option value="3">3 miles — default</option><option value="5">5 miles</option><option value="10">10 miles</option>
+      </select></label>
       <button type="button" className={button} disabled={busy || !start || !end || Boolean(explorationBlocked)}
-        onClick={() => { if (!explorationBlocked) act(() => owner.current!.start({ start_date: start, end_date: end })); }}>
-        {active ? 'Capture a new 3-mile study' : 'Start 3-mile exploration'}</button>
+        onClick={() => { if (!explorationBlocked) act(() => owner.current!.start({ start_date: start, end_date: end }, undefined, captureDiscovery())); }}>
+        {active ? `Capture a new ${radius}-mile study` : `Start ${radius}-mile exploration`}</button>
       <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
         onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
@@ -245,6 +275,9 @@ function HostSession(props: Props) {
         title="Clear only this pending choice. Keep the previous study, source evidence, and accepted report."
         onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
     </div>
+    <p className="text-xs text-slate-600">{active ? `Displayed study: ${radiusMiles(active.discovery)}-mile radius. ` : ''}
+      Changing the radius only changes the next capture. All available records in the requested area are considered within the observation period;
+      capacity limits stop an incomplete capture instead of silently trimming it. Your accepted report changes only when you apply the complete reviewed group.</p>
     <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
       ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
         ? 'Neighborhood choices saved to this appraisal file.' : 'Neighborhood exploration has not changed the accepted report.'}</p>

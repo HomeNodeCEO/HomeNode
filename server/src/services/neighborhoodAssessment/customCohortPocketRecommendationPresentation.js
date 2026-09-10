@@ -1,5 +1,7 @@
 import { canonicalAssessmentJson as json } from './contract.js';
-import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY } from './customCohortPocketRecommendation.js';
+import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY,
+  CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 as POLICY_V2 } from './customCohortPocketRecommendation.js';
+import { CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS, CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS } from './customCohortRecordedProximity.js';
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 
@@ -44,6 +46,30 @@ function aggregate(value) {
     factor_coverage: coverage };
 }
 
+function proximitySummary(value, all, pockets) {
+  check(value && Object.keys(value).sort().join(',') === 'authority,basis,counts,proximity_version,radius_metres,reason,status'
+    && value.proximity_version === 1 && value.basis === CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS
+    && value.authority === 'not_established' && ['available', 'unavailable'].includes(value.status)
+    && ['4828.032', '8046.72', '16093.44'].includes(value.radius_metres), 'proximity');
+  check(value.status === 'available' ? value.reason === null : CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS.includes(value.reason), 'proximity_reason');
+  check(value.counts && Object.keys(value.counts).sort().join(',') === 'accounts,observed_accounts,parcels,unknown_accounts', 'proximity_counts');
+  const counts = Object.fromEntries(Object.entries(value.counts).map(([key, amount]) => [key, count(amount)]));
+  check(counts.accounts === all.member_count && counts.accounts <= 50_000 && counts.parcels <= 100_000
+    && counts.parcels >= counts.accounts && counts.observed_accounts + counts.unknown_accounts === counts.accounts, 'proximity_counts');
+  const states = all.factor_coverage.proximity.states;
+  check(counts.observed_accounts === (states.observed ?? 0) + (states.calculation_unavailable ?? 0), 'proximity_coverage');
+  if (value.status === 'unavailable') check(counts.observed_accounts === 0
+    && (states.proximity_unavailable ?? 0) === counts.accounts, 'proximity_coverage');
+  else check(counts.unknown_accounts === (states.candidate_multiple_locations ?? 0) + (states.candidate_invalid_geometry ?? 0), 'proximity_coverage');
+  const combined = {};
+  for (const pocket of pockets) for (const [state, amount] of Object.entries(pocket.factor_coverage.proximity.states)) {
+    combined[state] = (combined[state] ?? 0) + amount;
+  }
+  check(json(combined) === json(states), 'proximity_coverage');
+  return { proximity_version: 1, basis: value.basis, authority: 'not_established', status: value.status,
+    reason: value.reason, radius_metres: value.radius_metres, counts };
+}
+
 /** A compact full-discovery review baseline attached to an already bounded
  * catalog. Never expose per-property scores, raw subject material, member lists,
  * private target/source identities or selected-union calculations here. Rights,
@@ -53,7 +79,9 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
   check(recommendation?.recommendation_version === 1 && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
   check(catalog?.catalog_version === 1 && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
-  check(json(recommendation.policy) === json(POLICY), 'policy');
+  const v2 = recommendation.policy?.id === POLICY_V2.id, policy = v2 ? POLICY_V2 : POLICY;
+  check(json(recommendation.policy) === json(policy), 'policy');
+  check(Object.hasOwn(recommendation, 'recorded_proximity') === v2, 'proximity_version');
   check(json(recommendation.binding.context_ref) === json(expected.context_ref)
     && json(catalog.binding.context_ref) === json(expected.context_ref)
     && recommendation.binding.selection_revision === expected.selection_revision
@@ -88,12 +116,14 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
     basis: 'current_retained_observations', selection_scope: 'all_retained_discovery_accounts_independent_of_included_groups',
     authority: 'not_established', binding: JSON.parse(json(catalog.binding)),
     policy: Object.fromEntries(['id', 'revision', 'curve_methodology_version', 'weights', 'minimum_mean_lower_bound',
-      'minimum_mean_known_weight_percent', 'denominator', 'calibration'].map(key => [key, structuredClone(POLICY[key])])),
+      'minimum_mean_known_weight_percent', 'denominator', 'calibration'].map(key => [key, structuredClone(policy[key])])),
     subject: { in_discovery: flag(recommendation.subject.in_discovery), recorded_group_review_ids: [...subjectIds] },
     all, pockets, recommended_recorded_group_ids: [...ids],
-    unavailable_factors: Object.fromEntries(['housing_type', 'proximity', 'sale_price'].map(key => [key, text(recommendation.unavailable_factors[key])])),
+    unavailable_factors: Object.fromEntries((v2 ? ['housing_type', 'sale_price'] : ['housing_type', 'proximity', 'sale_price'])
+      .map(key => [key, text(recommendation.unavailable_factors[key])])),
     limitations: recommendation.limitations.map(text),
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] } };
+  if (v2) result.recorded_proximity = proximitySummary(recommendation.recorded_proximity, all, pockets);
   if (Object.hasOwn(recommendation, 'cad_recorded_evidence')) {
     // The extension is current recorded evidence only. Old mapping2/3 payloads
     // retain their exact bytes, and every scoring/selection field above stays
@@ -112,7 +142,7 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
  * named suggestions that contradict that public result. Authorization of both
  * existing exposures still happens before/after this helper in the owner.
  */
-export function buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs } = {}) {
+export function buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity } = {}) {
   check(catalog?.catalog_version === 1 && typeof catalog.catalog_complete === 'boolean'
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
   if (!catalog.catalog_complete) return null;
@@ -121,6 +151,7 @@ export function buildCustomCohortPocketRecommendationPresentation({ catalog, exp
   if (temporal.status === 'historical_stock_evidence_required') return null;
   return presentCustomCohortPocketRecommendation({ catalog, expected,
     recommendation: buildCustomCohortPocketRecommendation({ context_ref: expected.context_ref, retained_inputs,
-      selection: { revision: expected.selection_revision, included_recorded_group_ids: [] } }),
+      selection: { revision: expected.selection_revision, included_recorded_group_ids: [] },
+      ...(recorded_proximity === undefined ? {} : { recorded_proximity }) }),
   });
 }

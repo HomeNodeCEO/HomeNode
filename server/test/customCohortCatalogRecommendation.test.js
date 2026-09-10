@@ -49,7 +49,8 @@ async function setup(options) {
   }, release(error) { state.releases.push(error); } };
   const service = createCustomCohortContextCapture({ pool: { async connect() { state.connects++; return client; } },
     authorizeMarketData: async (boundedClient, auth, current, purpose, requested) => {
-      state.policies.push({ exposure: requested.exposure, sourceReads: state.sourceReads });
+      state.policies.push({ exposure: requested.exposure, sourceReads: state.sourceReads,
+        commits: state.commits, call_index: state.calls.length });
       assert.equal(requested.retention, true); assert.equal(auth.userId, actor);
       assert.equal(current.scope.organization_id, scope.organization_id);
       return state.onPolicy ? state.onPolicy(state.policies.length, requested.exposure, boundedClient) : { ...GRANT };
@@ -66,6 +67,7 @@ test('omitted/false recommendations preserve exact legacy catalog and only catal
   assert.equal(json(old), json(explicit)); assert.equal(Object.hasOwn(old, 'recommendation'), false);
   assert.deepEqual(state.policies.map(call => call.exposure), [CATALOG, CATALOG, CATALOG, CATALOG]);
   assert.equal(state.commits, 4); assert.equal(state.releases.length, 4);
+  assert.ok(!state.calls.includes('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
 });
 
 test('optional baseline uses both existing exposures before retained rows and after current-material check', async () => {
@@ -74,7 +76,18 @@ test('optional baseline uses both existing exposures before retained rows and af
   assert.deepEqual(state.policies.map(call => call.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
   assert.equal(state.policies[0].sourceReads, 0); assert.equal(state.policies[1].sourceReads, 0);
   assert.ok(state.policies[2].sourceReads > 0); assert.ok(state.policies[3].sourceReads > 0);
-  assert.equal(state.commits, 2); assert.equal(state.rollbacks, 0); assert.equal(state.releases.length, 2);
+  assert.equal(state.commits, 3); assert.equal(state.rollbacks, 0); assert.equal(state.releases.length, 3);
+  const starts = state.calls.flatMap((sql, index) => sql.startsWith('BEGIN ') ? [index] : []);
+  assert.deepEqual(starts.map(index => state.calls[index]), ['BEGIN ISOLATION LEVEL READ COMMITTED',
+    'BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY', 'BEGIN ISOLATION LEVEL READ COMMITTED']);
+  const computation = state.calls.slice(starts[1], starts[2]);
+  assert.equal(computation.at(-1), 'COMMIT');
+  assert.ok(computation.every(sql => /^(BEGIN |SET LOCAL |COMMIT$)/.test(sql)),
+    'this older fixture has unavailable EWKB: the extra read-only phase must not read mutable source tables');
+  assert.deepEqual(state.policies.map(call => call.commits), [0, 0, 2, 2],
+    'both initial grants precede computation; both final grants follow its committed read-only phase');
+  for (const policy of state.policies.slice(2)) assert.ok(state.calls.slice(starts[2], policy.call_index)
+    .some(sql => sql.includes('custom-cohort-subject:sections')), 'final grants still follow fresh material comparison');
   assert.equal(result.status, 'catalog'); assert.equal(result.subject_freshness, 'matched');
   assert.deepEqual(result.recommendation.binding, result.catalog.binding);
   assert.equal(result.recommendation.all.member_count, result.catalog.coverage.stock_member_count);
@@ -97,6 +110,7 @@ test('retrospective owner omits actionable recommendations but retains the exact
   assert.equal(result.catalog.authority, 'not_established'); assert.equal(result.apply.status, 'blocked');
   assert.deepEqual(state.policies.map(call => call.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
   assert.equal(state.commits, 4); assert.equal(state.rollbacks, 0); assert.equal(state.releases.length, 4);
+  assert.ok(!state.calls.includes('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
   assert.equal(json(f.input.retained_inputs), retainedBefore);
   assert.ok(!state.calls.some(sql => /neighborhood-(cache|membership|closure):|\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
 });
@@ -156,8 +170,12 @@ for (const effectiveDate of ['2026-09-05', '2026-09-06']) test(`cancellation and
   const during = await setup({ effectiveDate }), final = new AbortController();
   during.state.onPolicy = count => { if (count === 4) final.abort(); return { ...GRANT }; };
   await assert.rejects(during.service.catalog({ ...during.input, includeRecommendation: true }, { signal: final.signal }), /cancelled/);
-  const uncertain = await setup({ effectiveDate }); uncertain.state.onCommit = count => { if (count === 2) uncertain.state.failCommit = true; };
+  const uncertain = await setup({ effectiveDate }), finalCommit = effectiveDate === '2026-09-06' ? 3 : 2;
+  uncertain.state.onCommit = count => { if (count === finalCommit) uncertain.state.failCommit = true; };
   await assert.rejects(uncertain.service.catalog({ ...uncertain.input, includeRecommendation: true }), error => error.outcome_unknown === true);
+  assert.equal(uncertain.state.commits, finalCommit);
+  assert.deepEqual(uncertain.state.policies.map(call => call.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY],
+    'the lost acknowledgment is still injected after final authorization, not at the new middle commit');
   assert.ok(uncertain.state.releases.at(-1) instanceof Error);
 });
 

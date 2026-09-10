@@ -26,6 +26,7 @@ import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
+import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
@@ -703,9 +704,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         scopeJson, reference: input.contextRef, input, authorizeMarketData, authorizePrivateSales, budget, exposure, additionalExposures, privateSummary: true,
       }) };
     });
-    // All calculation/presentation happens outside the DB connection and before
-    // the final current authorization check. Selection-only updates need not
-    // decode/resend immutable geometry, nor disclose entire member arrays.
+    // Pure presentation happens outside the source-read connection and before
+    // the final authorization check. Only an explicitly requested recommendation
+    // may run bounded native computation over retained EWKB in a separate RO
+    // transaction; it never rereads source tables. Ordinary selection previews
+    // and member inspection do not invoke this derivation or resend geometry.
     budget.check();
     const preview = buildCustomCohortObservationPreview({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
@@ -714,7 +717,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] })
       : { status: 'omitted', reason: 'geometry_not_requested' };
     const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
-    const content = project ? project(preview, expected, parcelMap, loaded.retained.retained_inputs) : { preview, parcel_map: parcelMap };
+    const deriveProximity = () => transaction(pool, 'REPEATABLE READ READ ONLY', budget,
+      client => deriveCustomCohortRecordedProximity((sql, parameters) => client.query(sql, parameters),
+        { context_ref: input.contextRef, retained_inputs: loaded.retained.retained_inputs },
+        { deadline: budget.deadline, signal: budget.signal }));
+    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity)
+      : { preview, parcel_map: parcelMap };
     const privateCapture = loaded.retained.retained_inputs.private_sales?.capture;
     const privateObservations = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
       context_ref: input.contextRef, effective_date: loaded.context.effective_date,
@@ -1128,12 +1136,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include ? ['report_observation_summary'] : [],
       outputLimit: include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
-      project: (preview, expected, _parcelMap, retained_inputs) => {
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity) => {
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview }), preview, expected,
         });
         if (!include) return { status: 'catalog', catalog };
-        const recommendation = buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs });
+        // Do not spend native work on an unresolved catalog or pretend current
+        // parcel locations establish a retrospective housing population.
+        const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
+          retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
+        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') return { status: 'catalog', catalog };
+        const recorded_proximity = await deriveProximity();
+        const recommendation = buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity });
         return { status: 'catalog', catalog, ...(recommendation ? { recommendation } : {}) };
       },
     });

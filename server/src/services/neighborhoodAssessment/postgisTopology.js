@@ -477,7 +477,11 @@ export function createNeighborhoodPostgisTopology(pool, { limits: requested } = 
       client = await connect(pool, limits.connect_ms);
       begun = true;
       await query("begin", "BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY");
-      await query("settings", `SET LOCAL statement_timeout='${limits.statement_ms}ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'`);
+      // JSON/SRF cardinality estimates can price this small, bounded linework as
+      // a huge analytical plan. LLVM compilation can then consume the interactive
+      // query budget before geometry work starts. Keep execution interpreted for
+      // this transaction only; do not relax deadlines or change pooled defaults.
+      await query("settings", `SET LOCAL statement_timeout='${limits.statement_ms}ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL jit=off`);
       const versions = await query("versions", VERSION_SQL);
       if (versions.length !== 1) stop("unsupported_projection_policy");
       output.engine_versions = versionsOf(versions[0]);

@@ -100,6 +100,9 @@ test("mocked boundary: ready requires own preparation and PostGIS query, and pre
   assert.equal(Object.isFrozen(output.edges[0].source_parts[0]), true);
   assert.match(calls[0].text, /BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY/);
   assert.match(calls[1].text, /SET LOCAL statement_timeout='5000ms'/);
+  assert.match(calls[1].text, /SET LOCAL jit=off(?:;|$)/);
+  assert.doesNotMatch(calls[1].text, /SET\s+(?:SESSION\s+)?jit=/i);
+  assert.equal(calls[1].query_timeout, 6000, 'compilation avoidance does not enlarge the client budget');
   const query = calls.find(row => /:build/.test(row.text));
   const admissionQuery = calls.find(row => /:admission/.test(row.text));
   assert.match(admissionQuery.text, /ST_Transform/); assert.match(admissionQuery.text, /ST_DumpSegments/);

@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { randomUUID } from 'node:crypto';
 import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
 import { hasApplicationPermission } from '../../security/applicationAccess.js';
 import { authorizePublicCadastralCatalogRead } from '../../security/publicCadastralCatalog.js';
@@ -23,6 +24,8 @@ import { buildCustomCohortPocketRecommendationPresentation } from './customCohor
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
+import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
+import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from './customAcceptanceSnapshot.js';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS,
   readCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 
@@ -136,6 +139,24 @@ async function savedWorkspace(client, input) {
     || !same(restored.checkpoint.active.context_ref, input.contextRef)) fail('workspace_changed');
   if (restored.checkpoint.pending_capture !== null) fail('workspace_capture_pending');
   return restored;
+}
+
+async function reportEditorState(client, input) {
+  // The already-held workfile parent lock protects the absent-row case. Read
+  // the actual reserved section, NOT the workspace/checkpoint revision. Only a
+  // bounded hash crosses this boundary; existing accepted contents stay private.
+  const result = await client.query(`/* custom-cohort-capture:report-editor */
+    SELECT revision, CASE WHEN octet_length(section_value::text) <= 4000000
+      THEN encode(sha256(convert_to(section_value::text,'UTF8')),'hex') ELSE NULL END AS value_sha256
+    FROM app.custom_appraisal_workfile_sections
+    WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
+  [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION]);
+  if (result?.rowCount === 0 && result.rows?.length === 0) return { editor_revision: 0, value_sha256: null };
+  if (result?.rowCount !== 1 || result.rows?.length !== 1) fail('report_editor_unavailable');
+  const row = result.rows[0];
+  if (!Number.isInteger(row.revision) || row.revision < 1 || row.revision > 2_147_483_647
+    || typeof row.value_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(row.value_sha256)) fail('report_editor_unavailable');
+  return { editor_revision: row.revision, value_sha256: row.value_sha256 };
 }
 
 function operationBudget(options = {}) {
@@ -516,6 +537,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         .compareCurrent(retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, scopeJson)
         .getCurrent(canonicalAssessmentJson(input.contextRef), input.expectedReviewGeneration);
+      // The existing read-only preparation supports full bigint assignment IDs.
+      // The report attachment contract intentionally uses safe integers; do not
+      // coerce a larger ID or take away its existing evidence inspection path.
+      const reportEditor = BigInt(input.assignmentFileId) <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? await reportEditorState(client, input) : null;
       const now = await databaseTime(client);
       // Normalize the actual owner clock to the source envelope's millisecond
       // precision and retain the original reading separately. Never round up
@@ -523,7 +549,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       const millis = Date.parse(now);
       if (!Number.isFinite(millis)) fail('database_time_unavailable');
       const derivedAt = new Date(millis).toISOString();
-      return { target, scopeJson, workspace, review, retained, now, derivedAt };
+      return { target, scopeJson, workspace, review, retained, reportEditor, now, derivedAt };
     });
     budget.check();
     const active = loaded.workspace.checkpoint.active;
@@ -534,11 +560,25 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
         retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection },
       review_state: loaded.review, derived_at: loaded.derivedAt,
     });
+    const reportPreparation = loaded.reportEditor === null
+      ? freeze({ report_preparation_version: 1, status: 'incomplete', authority: 'not_established',
+        identity_status: 'unpublished_preparation', assessment: null, publication_bundle: null, candidate: null,
+        issues: [{ code: 'unsupported_assignment_identity' }],
+        apply: { status: 'blocked', reasons: ['unsupported_assignment_identity'] } })
+      : buildCustomCohortReportPreparation({ supported_inputs: supported,
+        target: { scope: { organization_id: loaded.target.organization_id, appraisal_case_id: loaded.target.appraisal_case_id,
+          subject_snapshot_id: loaded.target.subject_snapshot_id, account_id: loaded.target.account_id },
+          report_file_id: loaded.target.report_file_id, custom_assignment_file_id: Number(input.assignmentFileId),
+          editor_revision: loaded.reportEditor.editor_revision, effective_date: loaded.retained.retained.retained_inputs.subject.effective_date,
+          data_cutoff: loaded.retained.retained.retained_inputs.subject.effective_date },
+        preparation_identity: { assessment_id: randomUUID(), assessment_revision: 1,
+          attachment_id: randomUUID(), attachment_revision: 1 } });
     budget.check();
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
       const workspace = await savedWorkspace(client, input);
       if (!same(workspace, loaded.workspace)) fail('workspace_changed');
+      if (loaded.reportEditor !== null && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
         .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
       const review = await createCustomCohortReviewRepository(client, loaded.scopeJson)
@@ -551,7 +591,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData } =
       // response or a publish/Apply authorization. No accepted section changes.
       return Object.freeze({ status: 'prepared_reviewed_inputs', authority: 'not_established',
         workspace_section_revision: workspace.section_revision, owner_clock_at: loaded.now,
-        subject_freshness: 'matched', supported_inputs: supported,
+        subject_freshness: 'matched', supported_inputs: supported, report_preparation: reportPreparation,
         apply: Object.freeze({ status: 'blocked', reason: 'owner_adoption_and_publication_required' }) });
     });
   }, preview(value, options = {}) {

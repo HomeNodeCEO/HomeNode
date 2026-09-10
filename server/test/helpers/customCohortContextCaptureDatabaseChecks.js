@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
@@ -414,11 +414,20 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.deepEqual(prepared.supported_inputs.selection.included_recorded_group_ids, []);
     assert.equal(prepared.supported_inputs.selection.revision, 7);
     assert.equal(prepared.apply.status, 'blocked'); assert.equal(prepared.supported_inputs.apply.status, 'blocked');
+    assert.equal(prepared.report_preparation.status, 'incomplete');
+    assert.equal(prepared.report_preparation.identity_status, 'unpublished_preparation');
+    assert.equal(prepared.report_preparation.binding.target.editor_revision, 0,
+      'only the absent reserved report section supplies revision zero, not workspace1 or selection7');
+    assert.equal(prepared.report_preparation.binding.target.custom_assignment_file_id, Number(reviewedAssignment));
+    assert.deepEqual(prepared.report_preparation.binding.context_ref, reviewedCapture.context_ref);
+    assert.equal(prepared.report_preparation.assessment, null);
+    assert.equal(prepared.report_preparation.publication_bundle, null);
+    assert.equal(prepared.report_preparation.candidate, null);
     assert.deepEqual(reviewedExposures.slice(preparedExposures), ['none', 'none']);
     assert.deepEqual(await protectedReviewedState(), preparedBefore);
     assert.ok(!calls.slice(preparedFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)));
     assert.ok(!calls.slice(preparedFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)));
-    checks.push('native reviewed-input owner loads saved empty selection7, exact generation0, DB clock and genuine incomplete support; no source reread or accepted/history writes');
+    checks.push('native reviewed-input owner loads saved empty selection7, exact generation0, DB clock and absent report-editor0; genuine incomplete support without source reread or accepted/history writes');
 
     for (const change of [{ expectedWorkspaceRevision: 2 }, { contextRef: { ...reviewedCapture.context_ref, context_id: randomUUID() } }]) {
       await assert.rejects(reviewedOwner.prepareReviewedInputs({ ...reviewedRequest, ...change }), /workspace_changed/);
@@ -484,6 +493,92 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
         return answer;
       } };
     } });
+    // Direct SQL below is confined to an explicitly non-authoritative temporary
+    // row in this second synthetic assignment. It is not an accepted section,
+    // history entry or signature, and the exact original absence is restored.
+    const editorBefore = await protectedReviewedState();
+    const editorOwnership = await pool.query(`SELECT a.id::text FROM app.assignment_files a
+      JOIN app.report_files r ON r.custom_assignment_file_id=a.id AND r.organization_id=a.organization_id
+      JOIN app.custom_appraisal_workfiles w ON w.assignment_file_id=a.id
+      WHERE a.id=$1::bigint AND a.organization_id=$2 AND r.id=$3 AND a.account_id=$4 AND r.account_id=$4
+        AND a.created_by_user_id=$5 AND a.assigned_appraiser_user_id=$5
+        AND r.appraisal_case_id=$6 AND r.subject_snapshot_id=$7 AND r.workflow_type='custom_appraisal'
+        AND w.status='draft' AND w.signed_at IS NULL`,
+    [reviewedAssignment, reviewedOrganization, reviewedReport, account, reviewedActor, reviewedCase, reviewedSnapshot]);
+    assert.equal(editorOwnership.rowCount, 1); assert.equal(editorOwnership.rows[0].id, reviewedAssignment);
+    assert.ok(editorBefore.sections.every(row => row.value.section_key !== 'neighborhood_assessment'));
+    assert.equal(editorBefore.artifacts.acceptances, 0); assert.equal(editorBefore.artifacts.signatures, 0);
+    const editorLabel = 'Synthetic report-editor binding fixture; not accepted';
+    const editorValue = { native_fixture: 'report-editor-binding-only', fixture_id: randomUUID(), authoritative: false };
+    let editorInserted = false, editorRevision = 13, editorJson = JSON.stringify(editorValue);
+    const replaceEditorFixture = async (revision, value) => {
+      const nextJson = JSON.stringify(value);
+      const changed = await pool.query(`UPDATE app.custom_appraisal_workfile_sections SET revision=$5,section_value=$6::jsonb
+        WHERE assignment_file_id=$1::bigint AND section_key='neighborhood_assessment'
+          AND revision=$2 AND section_value=$3::jsonb AND updated_by=$4`,
+      [reviewedAssignment, editorRevision, editorJson, editorLabel, revision, nextJson]);
+      assert.equal(changed.rowCount, 1, 'only the exact owned temporary editor state may be changed');
+      editorRevision = revision; editorJson = nextJson;
+    };
+    try {
+      const inserted = await pool.query(`INSERT INTO app.custom_appraisal_workfile_sections
+        (assignment_file_id,section_key,section_value,revision,updated_by)
+        VALUES($1,'neighborhood_assessment',$2::jsonb,$3,$4)`, [reviewedAssignment, editorJson, editorRevision, editorLabel]);
+      editorInserted = inserted.rowCount === 1; assert.ok(editorInserted);
+      const editorProjection = (await pool.query(`SELECT revision,section_value::text AS stored_text,
+        CASE WHEN octet_length(section_value::text)<=4000000
+          THEN encode(sha256(convert_to(section_value::text,'UTF8')),'hex') ELSE NULL END AS value_sha256
+        FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_assessment'`,
+      [reviewedAssignment])).rows;
+      assert.equal(editorProjection.length, 1); assert.equal(editorProjection[0].revision, 13);
+      assert.equal(editorProjection[0].value_sha256,
+        createHash('sha256').update(editorProjection[0].stored_text, 'utf8').digest('hex'),
+        'native PostgreSQL hashes the actual stored JSON text, not a caller-provided digest');
+      const editorStored = await protectedReviewedState(), editorReadFrom = calls.length;
+      const withEditor = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
+      assert.equal(withEditor.report_preparation.binding.target.editor_revision, 13);
+      assert.equal(withEditor.workspace_section_revision, 1); assert.equal(withEditor.supported_inputs.selection.revision, 7);
+      assert.equal(withEditor.report_preparation.status, 'incomplete');
+      assert.equal(withEditor.report_preparation.authority, 'not_established');
+      assert.equal(withEditor.report_preparation.candidate, null); assert.equal(withEditor.report_preparation.apply.status, 'blocked');
+      assert.equal(calls.slice(editorReadFrom).filter(sql => sql.includes('custom-cohort-capture:report-editor')).length, 2);
+      assert.ok(!calls.slice(editorReadFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)));
+      assert.deepEqual(await protectedReviewedState(), editorStored);
+      checks.push('native report preparation binds reserved editor13 independently from workspace1/selection7; real SQL SHA256 projection and read-only incomplete result');
+
+      for (const mutation of [
+        { revision: 14, value: editorValue },
+        { revision: 13, value: { ...editorValue, changed_fixture_bytes: true } },
+      ]) {
+        let mutated = false;
+        const changingEditor = createCustomCohortContextCapture({ pool: afterFirstCommit(async () => {
+          if (mutated) return;
+          await replaceEditorFixture(mutation.revision, mutation.value); mutated = true;
+        }), authorizeMarketData: reviewedPolicy });
+        try {
+          await assert.rejects(changingEditor.prepareReviewedInputs(reviewedRequest), /report_editor_changed/);
+          assert.ok(mutated, 'the independent committed edit must occur between the owner read transactions');
+          const changedProjection = (await pool.query(`SELECT revision,
+            encode(sha256(convert_to(section_value::text,'UTF8')),'hex') AS value_sha256
+            FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1 AND section_key='neighborhood_assessment'`,
+          [reviewedAssignment])).rows[0];
+          assert.equal(changedProjection.revision, mutation.revision);
+          assert.equal(changedProjection.value_sha256 === editorProjection[0].value_sha256, mutation.revision === 14,
+            'revision-only and fixed-revision byte changes exercise independent final fences');
+        } finally { await replaceEditorFixture(13, editorValue); }
+        assert.deepEqual(await protectedReviewedState(), editorStored);
+      }
+      checks.push('native final report-editor fence rejects committed revision-only and same-revision JSON-hash changes; exact temporary state restored without report/history artifacts');
+    } finally {
+      if (editorInserted) {
+        const removed = await pool.query(`DELETE FROM app.custom_appraisal_workfile_sections
+          WHERE assignment_file_id=$1::bigint AND section_key='neighborhood_assessment'
+            AND revision=$2 AND section_value=$3::jsonb AND updated_by=$4`,
+        [reviewedAssignment, editorRevision, editorJson, editorLabel]);
+        assert.equal(removed.rowCount, 1, 'remove only the exact owned non-authoritative fixture row');
+      }
+      assert.deepEqual(await protectedReviewedState(), editorBefore);
+    }
     // The callback below changes actual committed state after source/read locks
     // are released and before the owner begins its final response transaction.
     let commitMutation = false;

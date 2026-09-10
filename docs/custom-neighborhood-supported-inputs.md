@@ -121,3 +121,8 @@ This method is internal and source-bearing. No HTTP route exposes it, and the
 existing internal-retention policy is not permission to disclose its contents.
 The subsequent publication/presentation owner must obtain the appropriate source
 exposure authorization and bind the coherent report group before offering Apply.
+
+The caller now also performs [internal report preparation](custom-neighborhood-report-preparation.md)
+from that same saved state before its final freshness checks. This adds an actual
+assessment/publication-bundle/candidate projection, not publication or acceptance.
+Missing report geography and source-period support remain explicit blockers.

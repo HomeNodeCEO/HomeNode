@@ -112,9 +112,17 @@ export async function runCustomCohortReviewDatabaseChecks(connectionString) {
       evidence_refs: [prepared.ref], rationale: 'Synthetic native retained-date reviewer command; not factual certification.', ...overrides });
     const repo = client => createCustomCohortReviewRepository(client, scopeJson);
     const append = (value, actor = fixture.actor_id, commit = true) => transaction(client => repo(client).append(json(value), actor), commit);
+    const current = (client, generation) => repo(client).getCurrent(json(captured.context_ref), String(generation));
     const totals = async () => (await pool.query(`SELECT
       (SELECT count(*)::int FROM app.custom_neighborhood_review_commands WHERE organization_id=$1) AS reviews,
       (SELECT count(*)::int FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1) AS blobs`, [scope.organization_id])).rows[0];
+    const emptyState = await transaction(client => current(client, 0));
+    assert.equal(emptyState.status, 'current'); assert.equal(emptyState.head_count, 0);
+    assert.deepEqual(emptyState.heads, []); assert.equal(emptyState.authority, 'not_established');
+    assert.equal(emptyState.durability, 'caller_transaction');
+    assert.deepEqual(emptyState.binding, { target: scope, context_ref: captured.context_ref, generation: '0' });
+    assert.match(emptyState.state_sha256, /^[a-f0-9]{64}$/);
+    assert.deepEqual(await transaction(client => current(client, 0)), emptyState);
     const firstCommand = command(0), first = await append(firstCommand);
     assert.equal(first.status, 'stored'); assert.equal(first.generation, '1'); assert.equal(first.authority, 'not_established');
     assert.equal(first.record.claim_observation.status, 'matched'); assert.equal(first.record.claim_observation.observed_date, prepared.date);
@@ -145,6 +153,32 @@ export async function runCustomCohortReviewDatabaseChecks(connectionString) {
     await assert.rejects(append(badRef), /evidence_reference_mismatch/);
     checks.push('independent per-fact predecessor and context generation, unknown correction, other-fact null predecessor, exact historical replay and changed command/actor/ref conflicts');
 
+    const thirdState = await transaction(client => current(client, 3));
+    assert.equal(thirdState.binding.generation, '3'); assert.equal(thirdState.head_count, 2);
+    assert.deepEqual(thirdState.heads.map(head => head.fact_key_sha256),
+      thirdState.heads.map(head => head.fact_key_sha256).toSorted());
+    const closingHead = thirdState.heads.find(head => head.record.command.claim.kind === 'closing_date');
+    assert.deepEqual(closingHead.decision_ref, replacement.decision_ref);
+    assert.equal(closingHead.record.command.claim.state, 'unknown');
+    assert.equal(closingHead.record.command.claim.unknown_reason, 'conflicting_evidence');
+    assert.equal(thirdState.heads.some(head => head.decision_ref.decision_id === firstCommand.operation_id), false);
+    assert.deepEqual(await transaction(client => current(client, 3)), thirdState);
+    assert.notEqual(thirdState.state_sha256, emptyState.state_sha256);
+    for (const wrongGeneration of [0, 2, 4]) {
+      await assert.rejects(transaction(client => current(client, wrongGeneration)), reason('generation_conflict'));
+    }
+    await transaction(async client => {
+      const foreign = createCustomCohortReviewRepository(client, json({ ...scope, account_id: 'CAPTURE-COORD-OTHER' }));
+      await assert.rejects(foreign.getCurrent(json(captured.context_ref), '3'), /target_not_found|missing_context/);
+      await assert.rejects(repo(client).getCurrent(json({ ...captured.context_ref, context_sha256: 'f'.repeat(64) }), '3'),
+        /missing_context|context_mismatch/);
+    });
+    await assert.rejects(transaction(client => current(client, 3), false, 'REPEATABLE READ'), reason('caller_transaction_required'));
+    const unownedRead = await pool.connect();
+    try { await assert.rejects(current(unownedRead, 3), sqlstate('25P01')); }
+    finally { unownedRead.release(); }
+    checks.push('exact current review snapshot is stable, target-bound and complete; latest unknown replaces older known; stale generations and unowned transactions fail closed');
+
     const conditions = code => ({ kind: 'material_condition', qualifier: { basis: 'condition', condition_code: code },
       state: 'unknown', value: null, unknown_reason: 'unreviewed_material_condition', decision_refs: [] });
     const a = await pool.connect(), b = await pool.connect();
@@ -152,11 +186,21 @@ export async function runCustomCohortReviewDatabaseChecks(connectionString) {
     const loserCommand = command(3, null, { claim: conditions('synthetic-b') });
     try {
       await begin(a); await begin(b);
+      assert.deepEqual(await current(a, 3), thirdState);
+      await assert.rejects(repo(b).append(json(winnerCommand), fixture.actor_id), sqlstate('55P03'));
+      assert.deepEqual(await current(a, 3), thirdState, 'shared context lock pins the entire review set until the outer transaction ends');
+      await a.query('ROLLBACK'); await b.query('ROLLBACK');
+      await begin(a); await begin(b);
       const winner = await repo(a).append(json(winnerCommand), fixture.actor_id); assert.equal(winner.generation, '4');
+      await assert.rejects(current(b, 3), sqlstate('55P03'));
       await assert.rejects(repo(b).append(json(loserCommand), fixture.actor_id), sqlstate('55P03'));
       await a.query('COMMIT'); await b.query('ROLLBACK');
     } finally { await a.query('ROLLBACK').catch(() => {}); await b.query('ROLLBACK').catch(() => {}); a.release(); b.release(); }
     await assert.rejects(append(loserCommand), reason('generation_conflict')); assert.equal((await totals()).reviews, 4);
+    const fourthState = await transaction(client => current(client, 4));
+    assert.equal(fourthState.head_count, 3); assert.notEqual(fourthState.state_sha256, thirdState.state_sha256);
+    await assert.rejects(transaction(client => current(client, 3)), reason('generation_conflict'));
+    checks.push('current review snapshot and real append exclude each other with NOWAIT; explicit retry observes the new generation without a mixed set');
     const rollbackCommand = command(4, null, { claim: conditions('synthetic-rollback') }), beforeRollback = await totals();
     await assert.rejects(append(command(4, null, { claim: { ...conditions('synthetic-stale-support'), decision_refs: [first.decision_ref] } })),
       reason('superseded_decision_reference'));
@@ -323,6 +367,39 @@ export async function runCustomCohortReviewDatabaseChecks(connectionString) {
     }
     checks.push('initial source denial also gates replay; final revocation or revision change rolls back the real tentative review and canonical blob with no successful COMMIT');
     assert.deepEqual(await totals(), afterOwner); assert.deepEqual(await protectedState(), before);
+    await transaction(async client => {
+      let predecessor = ownerReceipt.decision_ref;
+      const revisions = new Map();
+      for (let generation = 6; generation <= 11; generation++) {
+        const value = command(generation - 1, predecessor, generation % 2 === 0 ? {
+          claim: { ...firstCommand.claim, state: 'unknown', value: null, unknown_reason: 'conflicting_evidence' },
+        } : {});
+        const retained = await repo(client).append(json(value), fixture.actor_id);
+        assert.equal(retained.generation, String(generation));
+        revisions.set(generation, retained.decision_ref); predecessor = retained.decision_ref;
+        const snapshot = await current(client, generation);
+        assert.equal(snapshot.binding.generation, String(generation));
+        assert.equal(snapshot.head_count, 3);
+        const latestClosing = snapshot.heads.find(head => head.record.command.claim.kind === 'closing_date');
+        assert.deepEqual(latestClosing.decision_ref, predecessor, 'numeric ordering must pick revision10 ahead of9');
+        assert.equal(latestClosing.generation, String(generation));
+        assert.equal(latestClosing.record.command.claim.state, value.claim.state);
+      }
+      await assert.rejects(repo(client).append(json(command(9, revisions.get(9))), fixture.actor_id), reason('generation_conflict'));
+      await assert.rejects(repo(client).append(json(command(11, revisions.get(9))), fixture.actor_id), reason('predecessor_conflict'));
+      await assert.rejects(repo(client).append(json(command(11, null, {
+        claim: { ...conditions('synthetic-numeric-stale-support'), decision_refs: [revisions.get(9)] },
+      })), fixture.actor_id), reason('superseded_decision_reference'));
+      const supported = await repo(client).append(json(command(11, null, {
+        claim: { ...conditions('synthetic-numeric-current-support'), decision_refs: [revisions.get(11)] },
+      })), fixture.actor_id);
+      assert.equal(supported.generation, '12');
+      const snapshot = await current(client, 12);
+      assert.equal(snapshot.head_count, 4); assert.equal(snapshot.binding.generation, '12');
+      assert.deepEqual(snapshot.heads.find(head => head.record.command.claim.kind === 'closing_date').decision_ref, revisions.get(11));
+    });
+    assert.deepEqual(await totals(), afterOwner); assert.deepEqual(await protectedState(), before);
+    checks.push('actual PostgreSQL numeric ordering crosses revisions9/10/11/12 for context, same-fact and current snapshots; superseded support is rejected and outer rollback preserves prior durable state');
     assert.equal(pool.waitingCount, 0);
     checks.push('review retention does not change workspace/accepted sections, history, signatures, report or assignment rows');
     return { checks, fixture: { ...scope, context_ref: captured.context_ref },

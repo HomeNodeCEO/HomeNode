@@ -11,7 +11,9 @@ This Custom-only path lets an appraiser review and apply a saved manual outline 
 5. Review the proposed outline, counts and low/median/high observations, including unavailable measures. Select **Apply boundary and statistics together**. Geography, selection, populations, statistics and evidence are saved in one transaction with the existing acceptance history/receipt.
 6. The page reloads the checked accepted group from the database. PDF generation uses that group, not a new live query or browser draft.
 
-The first-adoption path refuses a different already-populated report group. Replacing an accepted group requires a separate explicit whole-group replacement workflow; do not bypass this by reporting occupied fields as empty. A missing current section with retained acceptance history is also a conflict, not a new empty file.
+The first-adoption path refuses a different already-populated report group. To revise an accepted Custom v2 group, explicitly prepare a replacement, review its predecessor revision and proposed observations, then replace the boundary and statistics together. Preparing or cancelling a replacement does not change the accepted report. The old accepted group and section-history version remain retained after successful replacement.
+
+Replacement is not a general overwrite permission: the owner must resolve the exact current acceptance and its complete five-part values/provenance at editor revision N. All five new parts advance together to N+1. A partial, foreign, altered, missing or non-v2 predecessor is a conflict, as is a missing current section with retained acceptance history. Existing v1 and UAD behavior is unchanged.
 
 ## What the data means
 
@@ -30,6 +32,12 @@ For retrospective appraisals, the existing current-stock guard remains in force:
 Contract v2 uses the existing assessment, member, source, job and attachment tables. The new migration adds explicit observation-unit branches without rewriting v1 rows. Legacy property counters stay NULL for v2, while exact account counts are reconciled against retained member arrays. UAD attachments reject this Custom-only profile.
 
 The browser sends identifiers, expected revisions and operation IDs, never computed report facts. Proposal/Apply retries retain their original UUIDs. A lost acknowledgement is not reported as success; unconfirmed Apply blocks exploration and Save Everything/signing until that same operation is resolved. A workspace-only reload cannot discard its retry identity. After a confirmed Apply, the barrier stays closed until the accepted report group is freshly read; a failed read offers reload-only recovery without a second Apply. An older initial file read cannot overwrite that newly accepted group. File/session switching invalidates old callbacks. Signed files are not overwritten.
+
+An explicit replacement proposal uses the existing immutable job payload's version 2 to retain the predecessor acceptance identity, operation ID, accepted revision, canonical section hash and server-resolved evidence. The SQL JSONB editor hash is a separate concurrency fence, not that canonical hash. The closed section and receipt remain version 1; no predecessor column or new history table is needed. A retry checks its own already-committed successor before asking whether the predecessor is still current. It cannot replay an older acceptance over a newer group, and competing replacements of the same revision cannot both commit.
+
+The additive request field is `replacement`. Preparation accepts `{kind: "accepted_custom_reported_group"}`. Apply requires that kind plus the exact server-returned `predecessor` containing `acceptance_id`, `operation_id`, `accepted_editor_revision` and `section_value_sha256`. Neither response includes this field for ordinary first adoption. The descriptor is a checked binding, not browser authority to supply replacement facts or an authorization decision.
+
+Separate proposal operations also have separate server-authored evidence bindings. Cancelling a review and preparing the same selection again must not collide with the previous immutable job merely because its source data and clock reading match. Retrying the same operation still reuses its exact retained proposal. This does not change repository deduplication rules or substitute a new timestamp for the real derivation time.
 
 ## Activation and verification
 

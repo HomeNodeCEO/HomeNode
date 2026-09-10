@@ -140,10 +140,10 @@ test('Apply acknowledgment is only the exact same operation/proposal/context and
   }
 });
 
-function fakeHttp() {
+function fakeHttp(editorRevision = 5) {
   const calls = [], overrides = new Map(), seen = new Set();
   const read = () => ({ ok: true, account_id: TARGET.accountId, workfile: { assignment_file_id: 125, status: 'draft',
-    sections: { neighborhood_workspace: { revision: 77, value: { synthetic: true } }, neighborhood_assessment: { revision: 5, value: { synthetic: 'not acceptance authority' } } } } });
+    sections: { neighborhood_workspace: { revision: 77, value: { synthetic: true } }, ...(editorRevision > 0 ? { neighborhood_assessment: { revision: editorRevision, value: { synthetic: 'not acceptance authority' } } } : {}) } } });
   const request = async (url, init) => {
     const kind = url.endsWith('/workfile') ? 'read' : url.split('/').at(-1), body = init.body ? JSON.parse(init.body) : null;
     const call = { url, init, kind, body }; calls.push(call);
@@ -208,7 +208,7 @@ const depsEqual = (a, b) => a && b && a.length === b.length && a.every((x, i) =>
 /** Deterministic hook dispatcher with real React elements and SSR, matching the
  * existing harness. Actual API/transport/lane run; HTTP is synthetic. Not a
  * browser or React concurrent-renderer scheduling claim. */
-function harness(t, server = fakeHttp(), overrides = {}) {
+function harness(t, server = fakeHttp(0), overrides = {}) {
   let fiber, cursor = 0, dirty = false, tree, props;
   const uncertainty = [], accepted = [], controls = [], lane = createCustomWorkspaceRequestLane();
   const react = {
@@ -252,7 +252,7 @@ const PREPARE = 'Prepare report group', APPLY = 'Apply boundary and statistics t
 async function prepared(t, server, props) { const h = harness(t, server, props); h.click(PREPARE); await h.settle(); assert.ok(h.button(APPLY)); return h; }
 
 test('rendered proposal is explicit, complete, includes exact boundary holes, every estimator and no automatic Apply', async t => {
-  const server = fakeHttp(), h = harness(t, server); assert.equal(server.calls.length, 0);
+  const server = fakeHttp(0), h = harness(t, server); assert.equal(server.calls.length, 0);
   h.click(PREPARE); await h.settle(); assert.deepEqual(server.calls.map(c => c.kind), ['read', 'reported-proposal']);
   const html = h.html(); for (const label of ['Low (type 7 quantile)', 'High (type 7 quantile)', 'Count', 'Median (not predominant)', 'Unavailable - unit_not_reviewed']) assert.ok(html.includes(label), label);
   assert.match(html, /9,007,199,254,740,993\.02/); assert.match(html, /title="9007199254740993\.0199999999999"/);
@@ -270,14 +270,14 @@ test('same-tick double prepare and Apply callbacks are single-flight and stale c
   assert.match(h.text(), /saved together and reopened/);
 });
 test('lost proposal ACK retries the exact UUID/editor/workspace identity without another editor read', async t => {
-  const server = fakeHttp(); let first = true;
+  const server = fakeHttp(0); let first = true;
   server.overrides.set('reported-proposal', (_call, respond) => { if (first) { first = false; throw new Error('synthetic lost ACK'); } return respond(); });
   const h = harness(t, server); h.click(PREPARE); await h.settle(); h.click('Retry report proposal'); await h.settle();
   const posts = server.calls.filter(c => c.kind === 'reported-proposal'); assert.equal(posts.length, 2); assert.deepEqual(posts[0].body, posts[1].body);
   assert.equal(server.calls.filter(c => c.kind === 'read').length, 1); assert.equal(h.uncertainty.length, 0);
 });
 test('lost durable Apply ACK keeps uncertainty and retries the identical operation until checked replay', async t => {
-  const server = fakeHttp(); let first = true;
+  const server = fakeHttp(0); let first = true;
   server.overrides.set('reported-apply', (_call, respond) => { const value = respond(); if (first) { first = false; throw new Error('lost acknowledgement'); } return value; });
   const h = await prepared(t, server); h.click(APPLY); await h.settle(); assert.deepEqual(h.uncertainty, [true]); assert.equal(h.accepted.length, 0);
   assert.equal(h.button('Reload this proposal').props.disabled, true); h.button('Reload this proposal').props.onClick(); await h.settle();
@@ -285,7 +285,7 @@ test('lost durable Apply ACK keeps uncertainty and retries the identical operati
   assert.deepEqual(posts[0].body, posts[1].body); assert.deepEqual(h.uncertainty, [true, true, false]); assert.equal(h.accepted.length, 1);
 });
 test('invalid Apply ACK does not clear host barrier, and onAccepted failure after valid ACK is not a failed save', async t => {
-  const server = fakeHttp(); let bad = true;
+  const server = fakeHttp(0); let bad = true;
   server.overrides.set('reported-apply', async (_call, respond) => { const body = await respond().json(); if (bad) { bad = false; body.accepted_editor_revision++; } return json(body); });
   const h = await prepared(t, server, { onAccepted: async () => { throw new Error('refresh failed'); } });
   h.click(APPLY); await h.settle(); assert.deepEqual(h.uncertainty, [true]); h.click('Retry same Apply request'); await h.settle();
@@ -307,7 +307,7 @@ test('known ACK retains the Save/Sign latch until its fresh read resolves; reloa
   assert.equal(h.server.calls.filter(c => c.kind === 'reported-apply').length, 1);
 });
 test('an aborted Apply response remains uncertain and never becomes an accepted UI update', async t => {
-  const server = fakeHttp(), held = deferred(); server.overrides.set('reported-apply', async (_call, respond) => { await held.promise; return respond(); });
+  const server = fakeHttp(0), held = deferred(); server.overrides.set('reported-apply', async (_call, respond) => { await held.promise; return respond(); });
   const h = await prepared(t, server); h.click(APPLY); await h.settle(); h.controls.at(-1).abort(); await h.settle();
   assert.deepEqual(h.uncertainty, [true]); held.resolve(); await h.settle(); assert.equal(h.accepted.length, 0);
   assert.deepEqual(h.uncertainty, [true]); assert.ok(h.button('Retry same Apply request'));
@@ -321,23 +321,23 @@ test('disabled controls also reject retained direct callbacks; ordinary rerender
 for (const [name, patch] of [['file', { target: { ...TARGET, assignmentFileId: '126' } }], ['session', { target: { ...TARGET, sessionKey: 'new-session' } }],
   ['context', { contextRef: { ...CONTEXT, context_id: uuid(9) } }], ['workspace', { workspaceRevision: 8 }]]) {
   test(`late proposal after ${name} change cannot populate the new owner or invoke its callbacks`, async t => {
-    const server = fakeHttp(), held = deferred(); server.overrides.set('reported-proposal', async (_call, respond) => { await held.promise; return respond(); });
+    const server = fakeHttp(0), held = deferred(); server.overrides.set('reported-proposal', async (_call, respond) => { await held.promise; return respond(); });
     const h = harness(t, server); h.click(PREPARE); await h.settle(); h.render({ ...h.props, ...patch }); held.resolve(); await h.settle();
     assert.ok(h.button(PREPARE)); assert.equal(h.button(APPLY), undefined); assert.equal(h.uncertainty.length, 0); assert.equal(h.accepted.length, 0);
   });
 }
 test('unmounted late Apply ACK neither clears another owner barrier nor calls onAccepted', async t => {
-  const server = fakeHttp(), held = deferred(); server.overrides.set('reported-apply', async (_call, respond) => { await held.promise; return respond(); });
+  const server = fakeHttp(0), held = deferred(); server.overrides.set('reported-apply', async (_call, respond) => { await held.promise; return respond(); });
   const h = await prepared(t, server); h.click(APPLY); await h.settle(); assert.deepEqual(h.uncertainty, [true]); h.unmount(); held.resolve(); await h.settle();
   assert.deepEqual(h.uncertainty, [true]); assert.equal(h.accepted.length, 0);
 });
 test('StrictMode effect replay ignores an earlier read generation without auto-recapture or duplicate requests', async t => {
-  const server = fakeHttp(), held = deferred(); server.overrides.set('read', async (_call, respond) => { await held.promise; return respond(); });
+  const server = fakeHttp(0), held = deferred(); server.overrides.set('read', async (_call, respond) => { await held.promise; return respond(); });
   const h = harness(t, server); h.strictReplay(); assert.equal(server.calls.length, 0); h.click(PREPARE); await h.settle(); h.strictReplay(); held.resolve(); await h.settle();
   assert.deepEqual(server.calls.map(c => c.kind), ['read']); assert.ok(h.button(PREPARE)); assert.equal(h.button(APPLY), undefined);
 });
 test('incomplete response shows reasons and no Apply button or success implication', async t => {
-  const server = fakeHttp(); server.overrides.set('reported-proposal', async (_call, respond) => { const value = await respond().json();
+  const server = fakeHttp(0); server.overrides.set('reported-proposal', async (_call, respond) => { const value = await respond().json();
     Object.assign(value, { status: 'incomplete', assessment: null, attachment_ref: null, issues: [{ code: 'historical_stock_evidence_required' }] }); return json(value); });
   const h = harness(t, server); h.click(PREPARE); await h.settle(); assert.equal(h.button(APPLY), undefined);
   assert.match(h.text(), /current CAD data cannot stand in for it/); assert.deepEqual(h.uncertainty, []);

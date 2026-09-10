@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { randomUUID } from 'node:crypto';
+import { types as utilTypes } from 'node:util';
 import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
 import { hasApplicationPermission } from '../../security/applicationAccess.js';
 import { customNeighborhoodPrivateSalesPurpose } from '../../security/customNeighborhoodPrivateSalesPolicy.js';
@@ -32,7 +33,8 @@ import { buildCustomCohortReportPreparation } from './customCohortReportPreparat
 import { buildCustomCohortReportedAssessment } from './customCohortReportedAssessment.js';
 import { createNeighborhoodAssessmentRepositoryInTransaction } from './assessmentRepository.js';
 import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
-import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply } from './customReportMapping.js';
+import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply,
+  prepareCustomNeighborhoodReportReplacement, CUSTOM_REPORTED_OBSERVATION_MAPPER_VERSION } from './customReportMapping.js';
 import { buildNeighborhoodApplicationReceipt } from './applicationGroup.js';
 import { getCustomNeighborhoodAcceptance } from './customAcceptanceRepository.js';
 import { saveCustomNeighborhoodAcceptanceInTransaction } from './customAcceptanceSave.js';
@@ -125,9 +127,11 @@ function reviewedInputsInputOf(input) {
   return freeze({ ...identity, contextRef, expectedWorkspaceRevision, expectedReviewGeneration });
 }
 function reportedInputOf(value, applying = false) {
+  if (utilTypes.isProxy(value)) fail('invalid_reported_input');
+  const replacing = value && Object.hasOwn(value, 'replacement');
   exactKeys(value, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'expectedWorkspaceRevision',
     'expectedEditorRevision', 'operationId', ...(applying ? ['proposalOperationId', 'attachmentId',
-      'attachmentRevision', 'bindingDigest', 'adopt'] : [])]);
+      'attachmentRevision', 'bindingDigest', 'adopt'] : []), ...(replacing ? ['replacement'] : [])]);
   const identity = identityOf(value);
   const input = { ...identity, contextRef: prepareCustomCohortContextReference(canonicalAssessmentJson(value.contextRef)),
     expectedWorkspaceRevision: value.expectedWorkspaceRevision, expectedEditorRevision: value.expectedEditorRevision,
@@ -144,6 +148,32 @@ function reportedInputOf(value, applying = false) {
       || typeof value.bindingDigest !== 'string' || !/^[a-f0-9]{64}$/.test(value.bindingDigest)) fail('invalid_reported_input');
     Object.assign(input, { proposalOperationId: value.proposalOperationId, attachmentId: value.attachmentId,
       attachmentRevision: value.attachmentRevision, bindingDigest: value.bindingDigest, adopt: true });
+  }
+  if (replacing) {
+    try {
+      const dataObject = (raw, keys) => {
+        if (!raw || utilTypes.isProxy(raw) || Object.getPrototypeOf(raw) !== Object.prototype) fail('invalid_reported_input');
+        const descriptors = Object.getOwnPropertyDescriptors(raw);
+        if (Reflect.ownKeys(descriptors).length !== keys.length
+          || !keys.every(key => Object.hasOwn(descriptors, key) && Object.hasOwn(descriptors[key], 'value')
+            && descriptors[key].enumerable)) fail('invalid_reported_input');
+        return Object.fromEntries(keys.map(key => [key, descriptors[key].value]));
+      };
+      const supplied = Object.getOwnPropertyDescriptor(value, 'replacement');
+      if (!supplied || !Object.hasOwn(supplied, 'value')) fail('invalid_reported_input');
+      const replacement = dataObject(supplied.value, applying ? ['kind', 'predecessor'] : ['kind']);
+      if (replacement.kind !== 'accepted_custom_reported_group') fail('invalid_reported_input');
+      if (applying) {
+        replacement.predecessor = dataObject(replacement.predecessor,
+          ['acceptance_id', 'operation_id', 'accepted_editor_revision', 'section_value_sha256']);
+        const p = replacement.predecessor;
+        if (typeof p.acceptance_id !== 'string' || !UUID.test(p.acceptance_id)
+          || typeof p.operation_id !== 'string' || !UUID.test(p.operation_id)
+          || !Number.isInteger(p.accepted_editor_revision) || p.accepted_editor_revision < 1 || p.accepted_editor_revision >= 2147483647
+          || typeof p.section_value_sha256 !== 'string' || !/^[a-f0-9]{64}$/.test(p.section_value_sha256)) fail('invalid_reported_input');
+      }
+      input.replacement = replacement;
+    } catch { fail('invalid_reported_input'); }
   }
   return freeze(input);
 }
@@ -512,7 +542,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   function reportRequest(input, target) {
     return { actor_user_id: input.auth.userId, target: Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])),
       context_ref: input.contextRef, workspace_section_revision: input.expectedWorkspaceRevision,
-      editor_revision: input.expectedEditorRevision, operation_id: input.proposalOperationId ?? input.operationId };
+      editor_revision: input.expectedEditorRevision, operation_id: input.proposalOperationId ?? input.operationId,
+      ...(input.replacement ? { replacement: { kind: input.replacement.kind } } : {}) };
   }
   function reportFences(loaded) {
     return { workspace_sha256: assessmentEvidenceDigest(loaded.workspace), editor: loaded.reportEditor,
@@ -520,11 +551,51 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         ...Object.fromEntries(Object.entries(loaded.savedBoundary.projection).filter(([key]) => key !== 'projected_json')) },
       subject_reference: loaded.retained.retained.subject_reference,
       market_decision: loaded.retained.decision, private_decision: loaded.retained.privateAuthorization?.decision ?? null,
-      report_decision: loaded.retained.beforeLoadResult };
+      report_decision: loaded.retained.beforeLoadResult,
+      ...(loaded.replacement ? { replacement: loaded.replacement.fence } : {}) };
   }
   const attachmentTarget = (target, id, revision) => ({ organizationId: target.organization_id,
     reportFileId: target.report_file_id, workflowType: 'custom_appraisal', workflowTargetId: Number(target.assignment_file_id),
     attachmentId: id, attachmentRevision: revision });
+  const publicReplacement = fence => ({ kind: 'accepted_custom_reported_group', predecessor: fence.predecessor });
+  async function reportedPredecessor(client, input, target) {
+    // The workfile/assignment/report locks are already held in that order. Read
+    // only the current operation pointer, then verify its immutable acceptance,
+    // attachment, complete section and exact history via the existing readers.
+    const rows = await client.query(`/* custom-cohort-capture:reported-predecessor */
+      SELECT revision,CASE WHEN octet_length(section_value::text)<=4000000
+        THEN section_value->>'operation_id' ELSE NULL END AS operation_id
+      FROM app.custom_appraisal_workfile_sections
+      WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
+    [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION]);
+    if (rows?.rowCount !== 1 || rows.rows?.length !== 1
+      || rows.rows[0].revision !== input.expectedEditorRevision
+      || typeof rows.rows[0].operation_id !== 'string' || !UUID.test(rows.rows[0].operation_id)) fail('report_replacement_conflict');
+    let accepted, stored;
+    try {
+      accepted = await getCustomNeighborhoodAcceptance(client, { organizationId: target.organization_id,
+        reportFileId: target.report_file_id, assignmentFileId: Number(input.assignmentFileId), operationId: rows.rows[0].operation_id });
+      if (!accepted) fail('report_replacement_conflict');
+      stored = await getNeighborhoodAttachment(client, attachmentTarget(target, accepted.attachmentId, accepted.attachmentRevision));
+    } catch (error) {
+      // Preserve query cancellation/busy and other database failures; only the
+      // existing integrity reader's fixed mismatch errors become this conflict.
+      if (typeof error.code === 'string' && error.code.startsWith('custom_neighborhood_acceptance_')) fail('report_replacement_conflict');
+      throw error;
+    }
+    const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'].map(key => [key, target[key]]));
+    if (!stored || stored.assessment.contract_version !== 2 || stored.attachment.mapper_version !== CUSTOM_REPORTED_OBSERVATION_MAPPER_VERSION
+      || !same(stored.assessment.scope, scope) || accepted.acceptedEditorRevision !== input.expectedEditorRevision) fail('report_replacement_conflict');
+    const descriptor = { acceptance_id: accepted.id, operation_id: accepted.operationId,
+      accepted_editor_revision: accepted.acceptedEditorRevision, section_value_sha256: accepted.snapshot.section_value_sha256 };
+    const fence = { predecessor: descriptor, section_history_id: accepted.sectionHistoryId,
+      attachment_id: accepted.attachmentId, attachment_revision: accepted.attachmentRevision,
+      application_identity_sha256: stored.attachment.application_identity_sha256,
+      receipt_digest_sha256: accepted.snapshot.receipt.receipt_digest_sha256 };
+    const existingValues = Object.values(accepted.snapshot.section_value.mapped_values).map(item => ({ ...item,
+      target_exists: true, populated: true, provenance_digest: accepted.snapshot.receipt.acceptance_manifest.provenance_digest }));
+    return { fence, stored, receipt: accepted.snapshot.receipt, existingValues };
+  }
   async function storedReportProposal(client, input, target) {
     const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
       .map(key => [key, target[key]]));
@@ -540,7 +611,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         AND r.operation_id=$5`, [...Object.values(scope), input.proposalOperationId ?? input.operationId]);
     if (rows?.rowCount === 0 && rows.rows?.length === 0) return null;
     const row = one(rows), payload = row.payload;
-    if (!payload || payload.proposal_version !== 1 || !same(payload.request, reportRequest(input, target))
+    if (!payload || payload.proposal_version !== (input.replacement ? 2 : 1) || !same(payload.request, reportRequest(input, target))
       || row.status !== 'succeeded' || !Number.isInteger(row.result_revision) || row.result_revision < 1
       || row.max_attempts !== 3 || row.operation_digest !== row.request_digest_sha256
       || assessmentEvidenceDigest({ scope, effective_date: row.effective_date, data_cutoff: row.data_cutoff,
@@ -549,6 +620,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (!stored || stored.assessment.contract_version !== 2 || stored.assessment.id !== row.assessment_id
       || stored.assessment.revision !== row.result_revision || stored.assessment.input_signature_sha256 !== row.input_signature_sha256
       || stored.attachment.editor_revision !== input.expectedEditorRevision) fail('operation_conflict');
+    if (input.replacement && (!payload.fences?.replacement
+      || (input.proposalOperationId && !same(input.replacement, publicReplacement(payload.fences.replacement))))) fail('report_replacement_conflict');
     return { payload, stored };
   }
   async function loadReported(client, input, budget, { allowSigned = false, geography = true } = {}) {
@@ -576,6 +649,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (!same(await savedWorkspace(client, input), loaded.workspace)) fail('workspace_changed');
     if (!editorAfterSave && !same(await reportEditorState(client, input), loaded.reportEditor)) fail('report_editor_changed');
     if (!same(await reportGeographyState(client, input), loaded.savedBoundary)) fail('report_geography_changed');
+    if (loaded.replacement && !acceptedReplay && !editorAfterSave
+      && !same((await reportedPredecessor(client, input, loaded.target)).fence, loaded.replacement.fence)) fail('report_replacement_conflict');
     if (!acceptedReplay && (await createCustomCohortSubjectRepository(client, loaded.scopeJson)
       .compareCurrent(loaded.retained.retained.subject_reference)).status !== 'matched') fail('subject_changed');
     const privateCapture = loaded.retained.retained.retained_inputs.private_sales?.capture;
@@ -591,6 +666,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId }, context_ref: input.contextRef,
       workspace_section_revision: input.expectedWorkspaceRevision, editor_revision: input.expectedEditorRevision,
       proposal_operation_id: input.operationId, reused,
+      ...(input.replacement ? { replacement: publicReplacement(loaded.replacement.fence) } : {}),
       attachment_ref: candidate?.status === 'ready' ? { attachment_id: candidate.attachment.attachment_id,
         attachment_revision: candidate.attachment.attachment_revision, binding_digest: candidate.attachment.binding_digest_sha256 } : null,
       assessment: assessment ? { contract_version: 2, assessment_id: assessment.id, revision: assessment.revision,
@@ -808,6 +884,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
       const data = await loadReported(client, input, budget);
       if (data.reportEditor.editor_revision !== input.expectedEditorRevision) fail('report_editor_changed');
+      if (input.replacement) data.replacement = await reportedPredecessor(client, input, data.target);
       const previous = await storedReportProposal(client, input, data.target);
       if (previous && !same(previous.payload.fences, reportFences(data))) fail('report_proposal_changed');
       await recheckReported(client, input, data, budget);
@@ -823,7 +900,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     budget.check();
     const prepared = buildCustomCohortReportedAssessment({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
-      preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt });
+      preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,
+      proposal_binding: { operation_id: input.operationId, actor_user_id: input.auth.userId,
+        expected_editor_revision: input.expectedEditorRevision } });
     // Rehearse the exact public shape before any publication writes. The final
     // published identity is checked again after its actual revision is assigned.
     if (prepared.status === 'ready') proposalResponse(input, loaded, prepared.candidate, prepared.assessment);
@@ -839,7 +918,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if (prepared.status !== 'ready') return proposalResponse(input, loaded, null, null, prepared.issues);
       const repository = createNeighborhoodAssessmentRepositoryInTransaction(client);
-      const payload = { proposal_version: 1, request: reportRequest(input, loaded.target), fences: reportFences(loaded),
+      const payload = { proposal_version: input.replacement ? 2 : 1, request: reportRequest(input, loaded.target), fences: reportFences(loaded),
         attachment: { id: identity.attachment_id, revision: identity.attachment_revision } };
       if (Buffer.byteLength(canonicalAssessmentJson(payload)) > 32000) fail('report_response_limit');
       const queued = await repository.enqueue(target.scope, { operation_id: input.operationId,
@@ -870,38 +949,52 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const acceptanceTarget = { organizationId: loaded.target.organization_id, reportFileId: loaded.target.report_file_id,
         assignmentFileId: Number(input.assignmentFileId), operationId: input.operationId };
       const accepted = await getCustomNeighborhoodAcceptance(client, acceptanceTarget);
-      const fences = reportFences(loaded);
       if (accepted) {
         if (accepted.actorUserId !== input.auth.userId || accepted.attachmentId !== input.attachmentId
           || accepted.attachmentRevision !== input.attachmentRevision
           || accepted.acceptedEditorRevision !== loaded.reportEditor.editor_revision) fail('operation_conflict');
         // The accepted operation itself advanced only the reserved editor. All
         // other proposal bindings, current rights and exact target still apply.
-        fences.editor = proposal.payload.fences.editor;
       } else {
         privateDraft(loaded.workfile);
         if (loaded.reportEditor.editor_revision !== input.expectedEditorRevision) fail('report_editor_changed');
-        // First adoption only. Occupied groups are never relabeled empty;
-        // explicit atomic replacement is a distinct subsequent product slice.
-        if (loaded.reportEditor.editor_revision !== 0) fail('report_group_conflict');
-        const history = one(await client.query(`/* custom-cohort-capture:reported-never-accepted */
-          SELECT EXISTS(SELECT 1 FROM app.custom_neighborhood_acceptances
-            WHERE assignment_file_id=$1::bigint) AS has_acceptance`, [input.assignmentFileId]));
-        // A removed reserved section must not erase immutable acceptance intent.
-        // The parent workfile lock serializes this check with actual acceptance.
-        if (history.has_acceptance !== false) fail('report_group_conflict');
+        if (input.replacement) {
+          loaded.replacement = await reportedPredecessor(client, input, loaded.target);
+          if (!same(input.replacement, publicReplacement(loaded.replacement.fence))) fail('report_replacement_conflict');
+        } else {
+          // Default first adoption retains its exact occupied/history refusal.
+          // Explicit replacement never reaches these empty-slot assumptions.
+          if (loaded.reportEditor.editor_revision !== 0) fail('report_group_conflict');
+          const history = one(await client.query(`/* custom-cohort-capture:reported-never-accepted */
+            SELECT EXISTS(SELECT 1 FROM app.custom_neighborhood_acceptances
+              WHERE assignment_file_id=$1::bigint) AS has_acceptance`, [input.assignmentFileId]));
+          if (history.has_acceptance !== false) fail('report_group_conflict');
+        }
+      }
+      const fences = reportFences(loaded);
+      if (accepted) {
+        fences.editor = proposal.payload.fences.editor;
+        // Replay belongs to the successor: its predecessor is now historical.
+        // The immutable proposal and exact echoed descriptor bind the old group;
+        // do not require it to be current again or overwrite the current successor.
+        if (input.replacement) fences.replacement = proposal.payload.fences.replacement;
       }
       if (!same(fences, proposal.payload.fences)) fail('report_proposal_changed');
       await recheckReported(client, input, loaded, budget, { acceptedReplay: Boolean(accepted) });
       let result = accepted;
       if (!accepted) {
         const stored = proposal.stored, attachment = stored.attachment;
-        const plan = prepareCustomNeighborhoodReportApply({ assessment: stored.assessment, target: attachment,
+        const planInput = { assessment: stored.assessment, target: attachment,
           current_application_identity_sha256: attachment.application_identity_sha256,
           current_editor_revision: loaded.reportEditor.editor_revision,
-          request: { selected_ids: stored.mappedSuggestions.map(item => item.id), binding_digest_sha256: input.bindingDigest },
-          existing_values: stored.mappedSuggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: false })) });
-        if (plan.status !== 'ready') fail('report_group_conflict');
+          request: { selected_ids: stored.mappedSuggestions.map(item => item.id), binding_digest_sha256: input.bindingDigest } };
+        const plan = input.replacement ? prepareCustomNeighborhoodReportReplacement({ ...planInput,
+          existing_values: loaded.replacement.existingValues,
+          predecessor: { assessment: loaded.replacement.stored.assessment, attachment: loaded.replacement.stored.attachment,
+            receipt: loaded.replacement.receipt } })
+          : prepareCustomNeighborhoodReportApply({ ...planInput,
+            existing_values: stored.mappedSuggestions.map(item => ({ target_key: item.target_key, target_exists: true, populated: false })) });
+        if (plan.status !== 'ready') fail(input.replacement ? 'report_replacement_conflict' : 'report_group_conflict');
         result = await saveCustomNeighborhoodAcceptanceInTransaction(client, { ...acceptanceTarget,
           actorUserId: input.auth.userId, attachmentId: input.attachmentId, attachmentRevision: input.attachmentRevision,
           receipt: buildNeighborhoodApplicationReceipt(plan, input.expectedEditorRevision + 1) });
@@ -909,7 +1002,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       await recheckReported(client, input, loaded, budget, { acceptedReplay: Boolean(accepted), editorAfterSave: !accepted });
       return freeze({ status: 'accepted', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
         context_ref: input.contextRef, operation_id: input.operationId, proposal_operation_id: input.proposalOperationId,
-        accepted_editor_revision: result.acceptedEditorRevision, reused: Boolean(accepted) });
+        accepted_editor_revision: result.acceptedEditorRevision, reused: Boolean(accepted),
+        ...(input.replacement ? { replacement: publicReplacement(proposal.payload.fences.replacement) } : {}) });
     });
   }, async prepareReviewedInputs(value, options = {}) {
     const input = reviewedInputsInputOf(value), budget = operationBudget(options);

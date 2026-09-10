@@ -100,7 +100,7 @@ for (const [name, mutate] of [
   ['status unknown', b => { b.workfile.status = 'approved'; }], ['status case changed', b => { b.workfile.status = 'SIGNED'; }],
   ['null checkpoint section', b => { b.workfile.sections[SECTION] = null; }],
   ['null checkpoint value', b => { b.workfile.sections[SECTION].value = null; }],
-  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 2; }],
+  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 3; }],
   ['zero checkpoint revision', b => { b.workfile.sections[SECTION].revision = 0; }],
   ['wrong section key', b => { b.workfile.sections[SECTION].key = 'neighborhood_assessment'; }],
   ['extra saved metrics', b => { b.workfile.sections[SECTION].value.active.statistics = []; }],
@@ -198,6 +198,38 @@ test('capture emits only exact target, pending operation and period; source resp
   assert.deepEqual(JSON.parse(f.requests[0].init.body), { assignment_file_id: '37', operation_id: OPERATION, observation_period: PERIOD });
   assert.equal(f.keys.length, 0); assert.equal(f.requests[0].init.headers['x-homenode-editor-key'], undefined);
 });
+
+test('explicit private capture sends only the pinned batch and review revision without latest or grants', async () => {
+  const privateSalesImport = { batch_id: OPERATION, expected_review_revision: 9 };
+  const result = { status: 'registered', reused: false, context_ref: CONTEXT, source_query_complete: true,
+    private_sales_import: copy(privateSalesImport) };
+  const f = fixture(result), pending = f.api.capture({ target: TARGET, operationId: OPERATION, observationPeriod: PERIOD, privateSalesImport }, io());
+  privateSalesImport.expected_review_revision = 10;
+  assert.deepEqual(await pending, result);
+  assert.deepEqual(JSON.parse(f.requests[0].init.body), { assignment_file_id: '37', operation_id: OPERATION,
+    observation_period: PERIOD, private_sales_import: { batch_id: OPERATION, expected_review_revision: 9 } });
+  assert.equal(f.keys.length, 0); assert.equal(f.requests.length, 1);
+});
+
+test('private checkpoint save/read preserves version2 intent exactly under existing section CAS', async () => {
+  const privateValue = { ...value(), workspace_version: 2,
+    pending_capture: { operation_id: OPERATION, observation_period: PERIOD, private_sales_import: { batch_id: OPERATION, expected_review_revision: 4 } } };
+  const saved = saveResponse(); saved.section.value = privateValue;
+  const f = fixture(saved), ack = await f.api.save({ ...saveInput(), value: privateValue }, io());
+  assert.deepEqual(ack.section.value, privateValue); assert.equal(JSON.parse(f.requests[0].init.body).expected_revision, 2);
+  const loaded = readResponse(); loaded.workfile.sections[SECTION].value = privateValue;
+  assert.deepEqual((await fixture(loaded).api.read(TARGET, io())).section.value, privateValue);
+});
+
+for (const selected of [undefined, null, {}, { batch_id: OPERATION, expected_review_revision: 0 },
+  { batch_id: OPERATION, expected_review_revision: '4' }, { batch_id: 'latest', expected_review_revision: 4 },
+  { batch_id: OPERATION, expected_review_revision: 4, grant: true }])
+  test(`present invalid private capture selector ${JSON.stringify(selected)} cannot become an ordinary capture`, async () => {
+    const f = fixture();
+    await assert.rejects(f.api.capture({ target: TARGET, operationId: OPERATION, observationPeriod: PERIOD, privateSalesImport: selected }, io()),
+      error => error.workspaceCode === 'invalid_input');
+    assert.equal(f.requests.length, 0); assert.equal(f.keys.length, 0);
+  });
 test('invalid operation or period cannot initiate capture', async () => {
   for (const changes of [{ operationId: 'bad' }, { observationPeriod: { ...PERIOD, end_date: '2023-02-29' } },
     { observationPeriod: { ...PERIOD, source: 'untrusted' } }]) {

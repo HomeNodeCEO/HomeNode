@@ -9,15 +9,22 @@ export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
 export interface CustomWorkspaceObservationPeriod {
   readonly start_date: string; readonly end_date: string;
 }
+export interface CustomWorkspacePrivateSalesImport {
+  readonly batch_id: string; readonly expected_review_revision: number;
+}
+export interface CustomWorkspacePendingCapture {
+  readonly operation_id: string; readonly observation_period: CustomWorkspaceObservationPeriod;
+  readonly private_sales_import?: CustomWorkspacePrivateSalesImport;
+}
 export interface CustomWorkspaceActiveCheckpoint {
   readonly context_ref: CustomCohortContextRef;
   readonly observation_period: CustomWorkspaceObservationPeriod;
   readonly selection: { readonly revision: number; readonly included_recorded_group_ids: readonly string[] };
 }
 export interface CustomWorkspaceCheckpoint {
-  readonly workspace_version: 1;
+  readonly workspace_version: 1 | 2;
   readonly active: CustomWorkspaceActiveCheckpoint | null;
-  readonly pending_capture: { readonly operation_id: string; readonly observation_period: CustomWorkspaceObservationPeriod } | null;
+  readonly pending_capture: CustomWorkspacePendingCapture | null;
 }
 type Absent = { readonly status: 'absent'; readonly section_revision: 0; readonly checkpoint: null };
 type Invalid = { readonly status: 'invalid'; readonly section_revision: null; readonly checkpoint: null; readonly reason: string };
@@ -31,6 +38,7 @@ export type CustomWorkspaceSelectionRestore = Absent | Invalid | {
   readonly active: CustomWorkspaceActiveCheckpoint; readonly selection: CustomCohortPreviewInput['selection'];
 };
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const BATCH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const RECORDED_GROUP = /^recorded-cad:[a-f0-9]{64}$/;
 const UNASSIGNED = 'discovery:unassigned';
@@ -89,11 +97,20 @@ function active(value: unknown): CustomWorkspaceActiveCheckpoint | null {
   return { context_ref: context(record.context_ref), observation_period: period(record.observation_period),
     selection: { revision: selection.revision as number, included_recorded_group_ids: groups(selection.included_recorded_group_ids) } };
 }
-function pending(value: unknown): CustomWorkspaceCheckpoint['pending_capture'] {
+/** Exact saved review selection, not source rights or a request for latest. */
+export function prepareCustomWorkspacePrivateSalesImport(value: unknown): CustomWorkspacePrivateSalesImport {
+  const record = closed(value, ['batch_id', 'expected_review_revision'], 'private_sales_import');
+  if (typeof record.batch_id !== 'string' || !BATCH_UUID.test(record.batch_id)
+    || !Number.isInteger(record.expected_review_revision) || Number(record.expected_review_revision) < 1
+    || Number(record.expected_review_revision) > 2147483647) fail('private_sales_import');
+  return Object.freeze({ batch_id: record.batch_id, expected_review_revision: record.expected_review_revision as number });
+}
+function pending(value: unknown, version: 1 | 2): CustomWorkspaceCheckpoint['pending_capture'] {
   if (value === null) return null;
-  const record = closed(value, ['operation_id', 'observation_period'], 'pending_capture');
+  const record = closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : [])], 'pending_capture');
   if (typeof record.operation_id !== 'string' || !UUID.test(record.operation_id)) fail('pending_capture.operation_id');
-  return { operation_id: record.operation_id, observation_period: period(record.observation_period) };
+  return { operation_id: record.operation_id, observation_period: period(record.observation_period),
+    ...(version === 2 ? { private_sales_import: prepareCustomWorkspacePrivateSalesImport(record.private_sales_import) } : {}) };
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
@@ -103,8 +120,8 @@ function freeze<T>(value: T): T {
  * source bodies, authorization, or accepted report group can be smuggled in. */
 export function prepareCustomWorkspaceCheckpoint(value: unknown): CustomWorkspaceCheckpoint {
   const record = closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (record.workspace_version !== 1) fail('workspace_version');
-  const result: CustomWorkspaceCheckpoint = { workspace_version: 1, active: active(record.active), pending_capture: pending(record.pending_capture) };
+  if (record.workspace_version !== 1 && record.workspace_version !== 2) fail('workspace_version');
+  const result: CustomWorkspaceCheckpoint = { workspace_version: record.workspace_version, active: active(record.active), pending_capture: pending(record.pending_capture, record.workspace_version) };
   const current = result.active, next = result.pending_capture;
   if (current && next && current.context_ref.context_id === next.operation_id
     && (current.observation_period.start_date !== next.observation_period.start_date

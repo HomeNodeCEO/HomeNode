@@ -306,11 +306,11 @@ function emptyReviewState(saved, page) {
     source_review_id: null, row_decisions: [], next_after_row: page.next_after_row,
     matching_status: 'reviewed_separately', analysis_status: 'not_evaluated' };
 }
-function reviewServer() {
+function reviewServer({ sourceUse = false } = {}) {
   const calls = []; let savedReview = null, loseAck = false, rejectNew = false, failReload = false;
   const saved = receipt(), page = rowPage();
   const source = { source_name: 'Synthetic review source', provenance_note: '', currency: null, living_area_unit: null,
-    site_area_unit: null, consideration_field: null, marketing_time_field: null, source_use_confirmed: false };
+    site_area_unit: null, consideration_field: null, marketing_time_field: null, source_use_confirmed: sourceUse };
   const command = () => ({ review_version: 1, expected_revision: 0, source_interpretation: source, row_decisions: [] });
   return { calls, command, set loseAck(v) { loseAck = v; }, set rejectNew(v) { rejectNew = v; }, set failReload(v) { failReload = v; },
     get savedReview() { return savedReview; }, async request(url, init) {
@@ -338,6 +338,18 @@ function reviewServer() {
       return json({ imports: [{ ...saved, integrity_status: 'count_checked' }], next_before_batch_id: null });
     } };
 }
+
+test('private source capture requires explicit saved review action and reports no accepted-report write', async t => {
+  const db = reviewServer({ sourceUse: true }), captures = [], h = harness(t, db.request);
+  h.render({ ...h.props, sessionKey: ID, onUseReviewedSales: async value => { captures.push(value); return true; } });
+  h.open(); await h.settle(); h.click('View row receipts'); await h.settle();
+  const label = 'Use saved CSV review in neighborhood analysis'; assert.equal(h.button(label).props.disabled, true);
+  h.review().onSave(db.command()); await h.settle(); assert.equal(captures.length, 0);
+  assert.equal(h.button(label).props.disabled, false); h.click(label); await h.settle();
+  assert.deepEqual(captures, [{ batch_id: receipt().batch_id, expected_review_revision: 1 }]);
+  assert.match(h.text(), /new neighborhood capture/); assert.match(h.text(), /accepted report has not changed/);
+  h.render({ ...h.props, readOnly: true }); h.click(label, true); await h.settle(); assert.equal(captures.length, 1);
+});
 
 test('parent review save needs committed receipt, retains lost-ack retry across session reload and recovers without second POST', async t => {
   const db = reviewServer(), h = harness(t, db.request);

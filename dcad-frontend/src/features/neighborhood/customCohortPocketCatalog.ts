@@ -1,6 +1,8 @@
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
 import { checkCustomCohortPocketRecommendation } from './customCohortPocketRecommendation.ts';
 import type { CheckedPocketRecommendation } from './customCohortPocketRecommendation';
+import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
+import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
 
 export interface CheckedRecordedPocket {
   readonly id: string; readonly label: string; readonly county: string;
@@ -18,6 +20,7 @@ export interface CheckedPocketCatalog {
     readonly status: string; readonly recorded_label_match_only: true };
   readonly limitations: readonly string[];
   readonly recommendation?: CheckedPocketRecommendation | null;
+  readonly private_sales?: CheckedPrivateSalesObservations;
 }
 const UNASSIGNED = 'discovery:unassigned';
 export const CUSTOM_COHORT_UNASSIGNED_GROUP = UNASSIGNED;
@@ -92,7 +95,9 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
     limitations: catalog.limitations.map(v => text(v, 200)) };
   const recommendation = Object.hasOwn(response, 'recommendation')
     ? checkCustomCohortPocketRecommendation(response.recommendation, checked, binding.selection_sha256) : null;
-  return frozen({ ...checked, recommendation });
+  const privateSales = Object.hasOwn(response, 'private_sales')
+    ? checkCustomCohortPrivateSales(response.private_sales, expected, text(binding.selection_sha256, 64)) : null;
+  return frozen({ ...checked, recommendation, ...(privateSales ? { private_sales: privateSales } : {}) });
 }
 
 export function customCohortCatalogGroupIds(catalog: CheckedPocketCatalog): readonly string[] {

@@ -78,6 +78,45 @@ test('pending-only capture preserves its exact UUID and study for repeatable ret
   assert.deepEqual(prepare(first), first);
 });
 
+test('v2 pins only explicit private batch/review intent; v1 bytes and active context shape are unchanged', () => {
+  const legacy = checkpoint(), legacyBytes = canonicalAssessmentJson(legacy), value = copy(legacy);
+  value.workspace_version = 2;
+  value.pending_capture.private_sales_import = { batch_id: NEXT_OPERATION, expected_review_revision: 2147483647 };
+  const before = copy(value), result = prepare(value);
+  assert.deepEqual(result, before); assert.deepEqual(result.active, legacy.active);
+  assert.equal(canonicalAssessmentJson(prepare(legacy)), legacyBytes);
+  assert.equal(Object.isFrozen(result.pending_capture.private_sales_import), true);
+  value.pending_capture.private_sales_import.expected_review_revision = 1;
+  assert.equal(result.pending_capture.private_sales_import.expected_review_revision, 2147483647);
+  const roundTrip = read({ revision: 7, value: JSON.parse(canonicalAssessmentJson(result)) });
+  assert.deepEqual(roundTrip.checkpoint, result);
+  assert.deepEqual(prepare({ ...before, pending_capture: null }), { ...before, pending_capture: null });
+  assert.equal(normalizeCustomAppraisalSectionValue(result), result);
+});
+
+for (const [name, selected] of [
+  ['missing', undefined], ['null', null], ['unknown version field', { batch_id: NEXT_OPERATION, expected_review_revision: 1, source_version: 1 }],
+  ['unreviewed', { batch_id: NEXT_OPERATION, expected_review_revision: 0 }],
+  ['negative revision', { batch_id: NEXT_OPERATION, expected_review_revision: -1 }],
+  ['string revision', { batch_id: NEXT_OPERATION, expected_review_revision: '1' }],
+  ['fractional revision', { batch_id: NEXT_OPERATION, expected_review_revision: 1.5 }],
+  ['overflow revision', { batch_id: NEXT_OPERATION, expected_review_revision: 2147483648 }],
+  ['non-UUID batch', { batch_id: 'latest', expected_review_revision: 1 }],
+  ['uppercase batch', { batch_id: 'aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa'.toUpperCase(), expected_review_revision: 1 }],
+  ['permission injection', { batch_id: NEXT_OPERATION, expected_review_revision: 1, source_use_confirmed: true }],
+]) test(`private checkpoint rejects ${name} rather than defaulting to latest or ordinary capture`, () => {
+  const value = checkpoint(); value.workspace_version = 2;
+  if (selected !== undefined) value.pending_capture.private_sales_import = selected;
+  invalid(value);
+});
+
+test('v1 cannot smuggle a private selector; v2 cannot retain raw rows or private selectors on active', () => {
+  const selector = { batch_id: NEXT_OPERATION, expected_review_revision: 2 };
+  const value = checkpoint(); value.pending_capture.private_sales_import = selector; invalid(value);
+  value.workspace_version = 2; value.active.private_sales_import = selector; invalid(value);
+  delete value.active.private_sales_import; value.pending_capture.private_sales_import.raw_rows = []; invalid(value);
+});
+
 test('old active context survives a different pending capture and changed observation period', () => {
   const value = checkpoint(), result = prepare(value);
   assert.deepEqual(result.active, value.active);
@@ -122,7 +161,7 @@ for (const [name, mutate] of [
 });
 
 for (const [name, mutate] of [
-  ['unknown version', c => { c.workspace_version = 2; }],
+  ['unknown version', c => { c.workspace_version = 3; }],
   ['missing active', c => { delete c.active; }],
   ['missing pending', c => { delete c.pending_capture; }],
   ['undefined pending', c => { c.pending_capture = undefined; }],

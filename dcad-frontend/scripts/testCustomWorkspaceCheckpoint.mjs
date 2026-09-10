@@ -60,6 +60,45 @@ test('browser contract constants and actual backend validator remain identical',
     assert.deepEqual(read(section(actualBackendValue)), serverRead(section(actualBackendValue)));
   }
 });
+
+test('v2 private capture intent has exact frontend/backend parity and leaves v1 unchanged', () => {
+  const legacy = fixture(), legacyJson = JSON.stringify(prepare(legacy));
+  const value = { ...fixture(), workspace_version: 2 };
+  value.pending_capture.private_sales_import = { batch_id: OTHER_UUID, expected_review_revision: 7 };
+  const before = structuredClone(value), actual = prepare(value);
+  assert.deepEqual(actual, serverPrepare(value)); assert.deepEqual(actual, before);
+  assert.deepEqual(read(section(actual)), serverRead(section(actual)));
+  assert.equal(Object.isFrozen(actual.pending_capture.private_sales_import), true);
+  assert.notEqual(actual.pending_capture.private_sales_import, value.pending_capture.private_sales_import);
+  assert.deepEqual(actual.active, legacy.active); assert.equal(JSON.stringify(prepare(legacy)), legacyJson);
+  assert.equal(Object.hasOwn(prepare(legacy).pending_capture, 'private_sales_import'), false);
+  const complete = { ...value, pending_capture: null };
+  assert.deepEqual(prepare(complete), serverPrepare(complete));
+  assert.equal(restore(section(complete), catalog()).status, 'restored');
+});
+
+for (const selected of [undefined, null, {}, { batch_id: OTHER_UUID, expected_review_revision: 0 },
+  { batch_id: OTHER_UUID, expected_review_revision: '1' }, { batch_id: OTHER_UUID, expected_review_revision: 1.5 },
+  { batch_id: OTHER_UUID, expected_review_revision: 2147483648 }, { batch_id: 'latest', expected_review_revision: 1 },
+  { batch_id: 'AAAAAAAA-AAAA-AAAA-AAAA-AAAAAAAAAAAA', expected_review_revision: 1 },
+  { batch_id: OTHER_UUID, expected_review_revision: 1, source_use_confirmed: true }])
+  test(`private checkpoint selector ${JSON.stringify(selected)} rejects identically without repair`, () => {
+    const value = { ...fixture(), workspace_version: 2 };
+    if (selected !== undefined) value.pending_capture.private_sales_import = selected;
+    assert.throws(() => prepare(value)); assert.throws(() => serverPrepare(value));
+    assert.deepEqual(read(section(value)), serverRead(section(value)));
+  });
+
+test('private review revision maximum and empty group selection survive exact section round-trip', () => {
+  const value = { ...fixture(), workspace_version: 2 };
+  value.pending_capture.private_sales_import = { batch_id: OTHER_UUID, expected_review_revision: 2147483647 };
+  value.active.selection.included_recorded_group_ids = [];
+  const checked = prepare(value), restored = restore(section(checked), catalog());
+  assert.deepEqual(restored.active.selection.included_recorded_group_ids, []);
+  assert.equal(restored.checkpoint.pending_capture.private_sales_import.expected_review_revision, 2147483647);
+  assert.deepEqual(checked, serverPrepare(value));
+  assert.throws(() => prepare({ ...value, workspace_version: 1 }));
+});
 test('only an absent section is absent; null, malformed and intentionally empty are distinct', () => {
   assert.deepEqual(read(undefined), { status: 'absent', section_revision: 0, checkpoint: null });
   for (const raw of [null, false, {}, [], fixture(), { revision: 1, value: null }, { value: fixture() }]) {
@@ -77,7 +116,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 2; }],
+  ['unsupported version', v => { v.workspace_version = 3; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],

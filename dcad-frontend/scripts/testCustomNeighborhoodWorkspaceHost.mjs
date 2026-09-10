@@ -7,6 +7,7 @@ import { fileURLToPath } from 'node:url';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as lane from '../src/features/neighborhood/customWorkspaceRequestLane.ts';
+import { privateSalesSummaryFixture } from './fixtures/customPrivateSalesSummaryFixture.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript'), jsx = requireRuntime('react/jsx-runtime');
@@ -58,7 +59,7 @@ const json = (value, status = 200) => new Response(JSON.stringify(value), { stat
 /** Only the HTTP boundary is fake. Requests traverse the actual bounded JSON,
  * workfile identity/ACK checks, checkpoint lifecycle, and serialized lane. */
 function server(initialSection) {
-  const files = new Map(), calls = [], overrides = new Map(); let open = 0, maxOpen = 0;
+  const files = new Map(), privateContexts = new Map(), calls = [], overrides = new Map(); let open = 0, maxOpen = 0;
   const key = target => `${target.accountId}/${target.assignmentFileId}`;
   const install = (target, section) => files.set(key(target), { section: copy(section), status: 'draft',
     accepted: { revision: 7, value: { synthetic_accepted_report_marker: 'unchanged' } } });
@@ -86,10 +87,23 @@ function server(initialSection) {
         file.section = { key: 'neighborhood_workspace', revision: body.expected_revision + 1, value: copy(body.value) };
         return json({ ok: true, account_id: account, assignment_file_id: Number(fileId), section: copy(file.section) });
       }
-      if (kind === 'capture') return json({ status: 'registered', reused: false, context_ref: context(body.operation_id),
+      if (kind === 'capture') {
+        if (body.private_sales_import) privateContexts.set(body.operation_id, copy(body));
+        return json({ status: 'registered', reused: false, context_ref: context(body.operation_id),
         source_query_complete: true, provider_coverage: 'not_established',
-        discovery: { account_count: 3, parcel_count: 3, radius_metres: '4828.032' }, unsupported_capabilities: ['historical_characteristics'] });
-      if (kind === 'catalog') return json(catalog(account, body));
+        discovery: { account_count: 3, parcel_count: 3, radius_metres: '4828.032' }, unsupported_capabilities: ['historical_characteristics'],
+        ...(body.private_sales_import ? { private_sales_import: body.private_sales_import } : {}) });
+      }
+      if (kind === 'catalog') {
+        const result = catalog(account, body), captured = privateContexts.get(body.context_ref.context_id);
+        if (captured) {
+          result.private_sales = privateSalesSummaryFixture({ input: { accountId: account, assignmentFileId: fileId,
+            contextRef: body.context_ref, selection: body.selection }, privateSalesImport: captured.private_sales_import,
+          period: captured.observation_period });
+          result.catalog.binding.selection_sha256 = result.private_sales.binding.selection_sha256;
+        }
+        return json(result);
+      }
       // The nested workspace's preview admission is tested independently. This
       // transport response never enters report state or the host checkpoint.
       return json({ status: 'preview', target: { account_id: account, assignment_file_id: fileId },
@@ -173,6 +187,20 @@ function harness(t, db, initialSection, overrides = {}) {
   };
 }
 const kinds = db => db.calls.map(call => call.kind);
+
+test('explicit private source action saves exact selector before capture and preserves accepted report', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const reference = { batch_id: '20000000-0000-4000-8000-000000000001', expected_review_revision: 3 };
+  const before = copy(db.file(TARGET).accepted), pending = h.controls.useReviewedSales(reference);
+  await h.settle(); assert.equal(await pending, true);
+  const capture = db.calls.find(call => call.kind === 'capture'); assert.deepEqual(capture.body.private_sales_import, reference);
+  const savedPending = db.calls.find(call => call.kind === 'save').body.value;
+  assert.equal(savedPending.workspace_version, 2); assert.deepEqual(savedPending.pending_capture.private_sales_import, reference);
+  assert.deepEqual(capture.body.observation_period, PERIOD); assert.deepEqual(db.file(TARGET).accepted, before);
+  assert.equal(await h.controls.flush(), true); assert.equal(db.maxOpen, 1);
+  const count = db.calls.length; h.controls.setReadOnly(true); await h.settle();
+  assert.equal(await h.controls.useReviewedSales(reference), false); assert.equal(db.calls.length, count);
+});
 
 test('rendered reopen preserves explicit empty selection without capture or save', async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
@@ -420,6 +448,39 @@ test('pending capture cannot bypass a failed fresh reload, including its direct 
   assert.equal(db.calls[4].body.operation_id, operation); assert.deepEqual(db.calls[4].body.observation_period, PERIOD);
   assert.equal(db.file(TARGET).section.value.active.context_ref.context_id, operation);
   assert.equal(h.workspace().workspace.blockedReason ?? null, null); assert.equal(await h.controls.flush(), true);
+});
+
+test('setting aside a pending source choice keeps exact previous study and accepted report', async t => {
+  const initial = activeSection([]), operation = '20000000-0000-4000-8000-000000000001';
+  initial.value.workspace_version = 2;
+  initial.value.pending_capture = { operation_id: operation, observation_period: copy(PERIOD),
+    private_sales_import: { batch_id: '20000000-0000-4000-8000-000000000002', expected_review_revision: 3 } };
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  h.click('Set aside pending capture'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'save', 'catalog']);
+  assert.equal(db.calls[1].body.expected_revision, initial.revision);
+  assert.equal(db.file(TARGET).section.value.pending_capture, null);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.deepEqual(db.file(TARGET).accepted, accepted);
+  assert.equal(h.button('Set aside pending capture'), undefined);
+  assert.equal(await h.controls.flush(), true);
+});
+
+test('pending clear lost ACK requires reload and blocks direct repeated clear', async t => {
+  const initial = activeSection([]);
+  initial.value.pending_capture = { operation_id: '20000000-0000-4000-8000-000000000001', observation_period: copy(PERIOD) };
+  const db = server(initial), h = harness(t, db, initial); await h.settle();
+  db.overrides.set('save', (_call, respond) => { respond(); throw new Error('synthetic lost clear ACK'); });
+  h.click('Set aside pending capture'); await h.settle();
+  assert.equal(db.file(TARGET).section.value.pending_capture, null);
+  assert.equal(await h.controls.flush(), false);
+  const retry = h.button('Set aside pending capture'); assert.equal(retry.props.disabled, true);
+  retry.props.onClick(); await h.settle(); assert.deepEqual(kinds(db), ['catalog', 'save']);
+  db.overrides.delete('save'); h.click('Reload saved choices'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'save', 'read', 'catalog']);
+  assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
+  assert.equal(await h.controls.flush(), true);
 });
 
 test('idle read-only host shows no request progress and can become editable without a request', async t => {

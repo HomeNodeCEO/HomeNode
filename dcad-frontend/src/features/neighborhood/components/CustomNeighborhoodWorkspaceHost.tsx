@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { createCustomWorkspaceLifecycle } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceLifecycleState, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
-import type { CustomWorkspaceObservationPeriod } from '../customWorkspaceCheckpoint';
+import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from '../customWorkspaceCheckpoint';
 import { createCustomWorkspaceRequestLane } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
 import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
@@ -15,6 +15,8 @@ export interface CustomNeighborhoodWorkspaceControls {
   /** The report host quiesces editing before readiness/signing and releases it
    * if signing fails. This does not grant signing authority. */
   setReadOnly: (value: boolean) => void;
+  /** Explicit new capture, using this host's displayed study period. */
+  useReviewedSales?: (reference: CustomWorkspacePrivateSalesImport) => Promise<boolean>;
 }
 interface Props {
   target: CustomWorkspaceTarget; subjectLabel: string; initialSection: unknown;
@@ -57,23 +59,27 @@ function HostSession(props: Props) {
   const live = useRef(false);
   const generation = useRef(0);
   const reloadAbort = useRef<AbortController | null>(null);
+  const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
 
   // One owned action at a time, without reflecting per-request progress in the
   // page-wide assignment autosave state. Invalid/uncertain saves stay visible.
   function act(action: () => Promise<unknown>) {
-    if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return;
+    if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return Promise.resolve(false);
     const epoch = generation.current;
     actionFailed.current = false; setMessage(null); setActionPending(true);
     const task = Promise.resolve().then(() => {
-      if (live.current && generation.current === epoch) return action();
+      if (live.current && generation.current === epoch) return action().then(() => true);
+      return false;
     }).catch(() => {
       if (live.current && generation.current === epoch) { actionFailed.current = true;
         setMessage('The neighborhood workspace could not finish updating. Reload its saved choices before continuing; your report has not changed.'); }
+      return false;
     }).finally(() => {
       if (currentAction.current === task) { currentAction.current = null;
         if (live.current && generation.current === epoch) setActionPending(false); }
     });
     currentAction.current = task;
+    return task;
   }
 
   useEffect(() => {
@@ -90,6 +96,11 @@ function HostSession(props: Props) {
       } });
     owner.current = lifecycle; setState(lifecycle.getState());
     initial.registerControls?.({ target: initial.target,
+      useReviewedSales: reference => {
+        if (!live.current || generation.current !== epoch || !period.current.start_date || !period.current.end_date)
+          return Promise.resolve(false);
+        return act(() => lifecycle.start(period.current, reference));
+      },
       setReadOnly: value => { if (!live.current || generation.current !== epoch) return;
         readonlyRef.current = value; setReadOnly(value); },
       flush: async () => {
@@ -165,6 +176,10 @@ function HostSession(props: Props) {
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
         disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
         onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}
+      {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
+        disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
+        title="Clear only this pending choice. Keep the previous study, source evidence, and accepted report."
+        onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
     </div>
     <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
       ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason

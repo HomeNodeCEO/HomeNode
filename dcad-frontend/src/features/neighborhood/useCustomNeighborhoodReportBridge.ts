@@ -8,6 +8,7 @@ import type { CustomWorkspaceApiRead } from './customWorkspaceApi';
 import type CustomNeighborhoodWorkspaceHost from './components/CustomNeighborhoodWorkspaceHost';
 import type { CustomNeighborhoodWorkspaceControls } from './components/CustomNeighborhoodWorkspaceHost';
 import type { CustomWorkspaceTarget } from './customWorkspaceLifecycle';
+import type { CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 
 export type CustomNeighborhoodReportHostProps = ComponentProps<typeof CustomNeighborhoodWorkspaceHost>;
 export interface CustomNeighborhoodReportBridgeInput {
@@ -25,6 +26,7 @@ type Status = 'inactive' | 'loading' | 'ready' | 'unavailable' | 'read_only';
 export interface CustomNeighborhoodReportBridge {
   status: Status; message: string | null; hostProps: CustomNeighborhoodReportHostProps | null;
   retry(): void;
+  useReviewedSales(reference: CustomWorkspacePrivateSalesImport): Promise<boolean>;
   /** Synchronous acquisition pauses the exact mounted workspace before the
    * caller awaits anything. Null is not a successful no-op when enabled. */
   beginSaveBarrier(): CustomNeighborhoodReportSaveLease | null;
@@ -190,5 +192,12 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
     workfileStatus: fileStatus === 'signed' || fileStatus === 'archived' ? fileStatus : result.status,
     api: runtime.api, registerControls: runtime.registerControls,
   } : null;
-  return { status: state.status, message: state.message, hostProps, retry, beginSaveBarrier };
+  const useReviewedSales = async (reference: CustomWorkspacePrivateSalesImport): Promise<boolean> => {
+    const controls = runtime.controls;
+    if (latest.current !== runtime || !runtime.live || !runtime.readSettled || !runtime.target || !controls
+      || !sameTarget(controls.target, runtime.target) || runtime.lease || runtime.retainedReadOnly || runtime.quarantined
+      || runtime.pendingFlush || fileStatus !== 'draft' || runtime.result?.status !== 'draft' || !controls.useReviewedSales) return false;
+    return controls.useReviewedSales(reference);
+  };
+  return { status: state.status, message: state.message, hostProps, retry, beginSaveBarrier, useReviewedSales };
 }

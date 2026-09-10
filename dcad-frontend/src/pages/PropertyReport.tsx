@@ -3237,13 +3237,13 @@ function AddressHero({
             && applicationAuth.ready && !applicationAuth.bootstrapError && applicationAuth.session?.user_id && (
             <div className="order-3 print:hidden">
               <Suspense fallback={null}>
-                {/* Private intake never feeds report statistics or the autosave
-                    loop. The collapsed panel performs no background requests. */}
+                {/* Explicit reviewed-source capture remains separate from report autosave. */}
                 <PrivateSalesImportsPanel accountId={accountId} assignmentFileId={activeAssignmentFile.id}
                   sessionKey={applicationAuth.session.user_id}
                   readOnly={activeAssignmentFile.workfile?.status !== "draft" || Boolean(finalizingAssignmentFile)
                     || Boolean(privateSalesSaveLock?.accountId === accountId && privateSalesSaveLock?.fileId === activeAssignmentFile.id)}
-                  onBusyChange={onPrivateSalesBusyChange} />
+                  onBusyChange={onPrivateSalesBusyChange}
+                  onUseReviewedSales={CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED ? neighborhoodWorkspace.useReviewedSales : undefined} />
               </Suspense>
             </div>
           )}

@@ -20,6 +20,7 @@ import { createCustomCohortDecisionEvidenceResolver } from '../../src/services/n
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
+import { runCustomCohortPrivateSalesDatabaseChecks } from './customCohortPrivateSalesDatabaseChecks.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -834,6 +835,8 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     checks.push('native committed review generation change prevents stale prepared inputs; exact next generation reopens unknown review without statistics or report writes');
     await checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot: snapshot, observationPeriod: request.observationPeriod });
     await checkCadEvidenceCapture(pool, checks);
+    checks.push(...(await runCustomCohortPrivateSalesDatabaseChecks({ pool, databaseName: target.databaseName,
+      account, sourceSnapshot: snapshot, observationPeriod: request.observationPeriod })).checks);
     assert.equal(pool.waitingCount, 0);
     return { checks };
   } finally { await pool.end(); }

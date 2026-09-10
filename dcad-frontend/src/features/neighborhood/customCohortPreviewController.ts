@@ -1,3 +1,6 @@
+import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
+import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
+
 /** Request lifecycle only: this never writes a workfile or authorizes report Apply.
  * The transport owner supplies the existing authenticated API boundary. */
 export interface CustomCohortContextRef {
@@ -33,6 +36,7 @@ export interface CustomCohortPreviewBinding {
 export interface CustomCohortPreviewGroup {
   readonly binding: CustomCohortPreviewBinding;
   readonly summary: Readonly<Record<string, Json>>;
+  readonly private_sales?: CheckedPrivateSalesObservations;
   readonly parcel_map: ParcelMap;
   readonly apply: { readonly status: 'blocked'; readonly reasons: readonly string[] };
 }
@@ -65,8 +69,9 @@ function object(value: unknown): RecordValue {
   ensure(value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype);
   return value as RecordValue;
 }
-function exact(value: unknown, keys: string[]): RecordValue {
-  const result = object(value); ensure(Object.keys(result).length === keys.length && keys.every(key => Object.hasOwn(result, key)));
+function exact(value: unknown, keys: string[], optional: string[] = []): RecordValue {
+  const result = object(value); ensure(Object.keys(result).every(key => keys.includes(key) || optional.includes(key))
+    && keys.every(key => Object.hasOwn(result, key)));
   return result;
 }
 function text(value: unknown, maximum: number): string {
@@ -205,7 +210,7 @@ function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
  * a second parcel geometry download. This never admits geometry or report Apply. */
 export function checkCustomCohortSummaryResponse(value: unknown, input: CustomCohortPreviewInput, hash: string) {
   prepare(input); ensure(HASH.test(hash));
-  const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply']);
+  const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply'], ['private_sales']);
   const target = exact(r.target, ['account_id', 'assignment_file_id']);
   ensure(r.status === 'preview' && r.subject_freshness === 'matched' && target.account_id === input.accountId
     && target.assignment_file_id === input.assignmentFileId && sameContext(context(r.context_ref), input.contextRef)
@@ -221,9 +226,16 @@ export function checkCustomCohortSummaryResponse(value: unknown, input: CustomCo
     && apply.reasons.length > 0 && apply.reasons.length <= 100 && Array.isArray(summaryApply.reasons)
     && summaryApply.reasons.length > 0 && summaryApply.reasons.length <= 100);
   apply.reasons.forEach(v => text(v, 200)); summaryApply.reasons.forEach(v => text(v, 200));
+  const privateSales = Object.hasOwn(r, 'private_sales') ? checkCustomCohortPrivateSales(r.private_sales, input, hash) : null;
+  if (privateSales) {
+    const period = exact(summary.observation_period, ['start_date', 'end_date']);
+    ensure(privateSales.effective_date === summary.effective_date && privateSales.observation_period.start_date === period.start_date
+      && privateSales.observation_period.end_date === period.end_date);
+  }
   return freeze({ binding: { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
     contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: hash },
-  summary: summary as Record<string, Json>, apply: { status: 'blocked' as const, reasons: [...apply.reasons] as string[] } });
+  summary: summary as Record<string, Json>, apply: { status: 'blocked' as const, reasons: [...apply.reasons] as string[] },
+  ...(privateSales ? { private_sales: privateSales } : {}) });
 }
 
 export async function fingerprintCustomCohortSelection(input: CustomCohortPreviewInput) {

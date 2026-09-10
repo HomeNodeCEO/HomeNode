@@ -46,6 +46,28 @@ test('cohort router requires actual display/inspection owner methods', () => {
   assert.throws(() => createCustomNeighborhoodCohortRouter({
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
 });
+
+test('capture forwards only the explicit private batch reference; omitted old requests stay unchanged', async t => {
+  const { request, calls } = await start(t);
+  const private_sales_import = { batch_id: '20000000-0000-4000-8000-000000000001', expected_review_revision: 3 };
+  assert.equal((await request('capture', { ...bodies.capture, private_sales_import })).status, 200);
+  assert.deepEqual(calls[0].args[0].privateSalesImport, private_sales_import);
+  assert.equal((await request('capture')).status, 200);
+  assert.equal(Object.hasOwn(calls[1].args[0], 'privateSalesImport'), false);
+  assert.equal((await request('capture', { ...bodies.capture, private_sales_import, source_rows: [] })).status, 400);
+  assert.equal(calls.length, 2);
+});
+
+for (const [code, status, error] of [
+  ['assignment_sales_import_revision_conflict', 409, 'neighborhood_private_review_changed'],
+  ['assignment_sales_import_capture_changed', 409, 'neighborhood_private_review_changed'],
+  ['assignment_sales_import_source_not_reviewed', 422, 'neighborhood_private_source_review_required'],
+  ['assignment_sales_import_source_use_not_confirmed', 422, 'neighborhood_private_source_review_required'],
+  ['assignment_sales_import_preparation_limit', 422, 'neighborhood_private_source_limit'],
+]) test(`private capture ${code} returns an actionable bounded response without private details`, async t => {
+  const { request } = await start(t, { methods: { capture() { throw Object.assign(new Error('private database details'), { code }); } } });
+  const response = await request('capture'); assert.equal(response.status, status); assert.deepEqual(await response.json(), { error });
+});
 test('cohort endpoints preserve exact IDs, principal and explicit empty selection', async t => {
   const { request, calls } = await start(t);
   for (const action of ['capture', 'preview', 'members', 'catalog']) {

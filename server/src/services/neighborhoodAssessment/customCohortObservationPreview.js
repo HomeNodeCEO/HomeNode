@@ -111,8 +111,10 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
   const mappingVersion = customCohortObservationMappingVersion(input.acquisition);
   // Mapping3 retains raw unit witnesses, but observation summaries still do not
   // interpret provider units or join historical GLA to a closing price.
-  const sourceFields = mappingVersion === 2 ? SOURCE : { ...SOURCE,
-    lot_size_area: ['source_lot_size_area', 'nonnegative', 'Source-reported lot area; units not verified', null] };
+  // CAD-only mapping4 keeps the v2 sales projection; it does not retain v3's
+  // raw unit witnesses merely because its numeric version is newer.
+  const sourceFields = mappingVersion === 3 ? { ...SOURCE,
+    lot_size_area: ['source_lot_size_area', 'nonnegative', 'Source-reported lot area; units not verified', null] } : SOURCE;
   const effectiveDate = assessmentDate(input.subject.effective_date, 'effective_date');
   const period = { start_date: assessmentDate(input.study.observation_period.start_date, 'start_date'),
     end_date: assessmentDate(input.study.observation_period.end_date, 'end_date') };
@@ -161,7 +163,7 @@ export function buildCustomCohortObservationPreview({ context_ref, retained_inpu
       check(!seen.has(key) && routes.has(refKey), 'source_routing'); seen.add(key);
       if (['parcels', 'accounts', 'transactions', 'sale_links'].includes(role)) {
         check(row.data?.data?.cached_mapping_version === mappingVersion && row.data.raw_projection
-          && Array.isArray(row.data.capability_gaps), mappingVersion === 2 ? 'mapping_v2_required' : 'mapping_v3_required');
+          && Array.isArray(row.data.capability_gaps), `mapping_v${mappingVersion}_required`);
       }
       roleRows.get(role).push({ raw: row.data.raw_projection ?? {}, data: row.data.data ?? row.data,
         capability_gaps: row.data.capability_gaps ?? [], source_references: [{ source_ref: source.id, record_id: row.record_id }] });

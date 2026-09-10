@@ -197,7 +197,7 @@ const purposeFor = (request, mappingVersion) => mappingVersion === 3
 /** Verify the ORIGINAL server-composition authority, not an injected verifier. */
 export function assertNeighborhoodCachedReadAccess(access, mappingVersion = 2) {
   if (!access || !authorities.has(access)) deny('authority_required');
-  if (![2, 3].includes(mappingVersion) || authorities.get(access).mappingVersion !== mappingVersion) deny('mapping_profile_mismatch');
+  if (![2, 3, 4].includes(mappingVersion) || authorities.get(access).mappingVersion !== mappingVersion) deny('mapping_profile_mismatch');
   return access;
 }
 
@@ -228,6 +228,13 @@ export function createNeighborhoodCachedReadAccess(options) {
  * expanded purpose; v2 capabilities cannot authorize this projection. */
 export function createNeighborhoodSaleWitnessReadAccess(options) {
   return createReadAccess(options, 3);
+}
+
+/** Independently bound CAD-field projection. Its market-data read scope is
+ * exactly v2: no new MLS fields, linked CAD accounts, or private overlays.
+ * This does not broaden a v2/v3 capability or any source-rights policy. */
+export function createNeighborhoodCadEvidenceReadAccess(options) {
+  return createReadAccess(options, 4);
 }
 
 function createReadAccess(options, mappingVersion) {

@@ -152,7 +152,7 @@ function untouched(f, blobCount) {
   assert.ok(!f.state.calls.some(({ sql }) => /(?:INSERT INTO|UPDATE|DELETE FROM) app\.(?:custom_appraisal_workfile|custom_neighborhood_acceptance|assignment_files|report_files)/i.test(sql)));
 }
 
-for (const mapping of [1, 2, 3]) test(`review authorizes retained mapping${mapping} before rows, independently of current mapping2 owner`, async () => {
+for (const mapping of [1, 2, 3, 4]) test(`review authorizes retained mapping${mapping} before rows, independently of current mapping2 owner`, async () => {
   const f = await fixture({ deniedRetainedMapping: mapping });
   f.state.onPolicy = () => ({ allowed: false });
   const before = f.f.f.state.db.size;

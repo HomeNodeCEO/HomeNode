@@ -57,6 +57,32 @@ function fixture(reply = readResponse(), editor = () => KEY) {
 const invalidResponse = error => error.workspaceCode === 'invalid_response' && error.message === 'custom_workspace_invalid_response';
 const invalidTarget = error => error.workspaceCode === 'invalid_target';
 
+test('member inspection uses the exact retained selection and cursor without obtaining an editor key', async () => {
+  const f = fixture({ status: 'members' }), input = previewInput(), options = io();
+  const population = { group: 'selected', kind: 'source_reported' }, page = { limit: 50, after_member_id: null };
+  assert.deepEqual(await f.api.members(input, population, page, options), { status: 'members' });
+  assert.equal(f.requests.length, 1); assert.equal(f.keys.length, 0);
+  const { url, init } = f.requests[0];
+  assert.equal(url, '/injected/api/accounts/000123_ABC/neighborhood-cohort/members');
+  assert.equal(init.method, 'POST'); assert.equal(init.signal, options.signal); assert.equal(init.cache, 'no-store');
+  assert.equal(init.headers['x-homenode-editor-key'], undefined);
+  assert.deepEqual(JSON.parse(init.body), { assignment_file_id: input.assignmentFileId,
+    context_ref: input.contextRef, selection: input.selection, population, page });
+});
+test('member inspection preserves exact int64 file IDs, aborts without request and sanitizes HTTP failure', async () => {
+  const input = { ...previewInput(), assignmentFileId: '9223372036854775807' };
+  const population = { group: 'selected', kind: 'stock' }, page = { limit: 50, after_member_id: 'member:' + 'a'.repeat(64) };
+  const f = fixture({ status: 'members' }); await f.api.members(input, population, page, io());
+  assert.equal(JSON.parse(f.requests[0].init.body).assignment_file_id, input.assignmentFileId);
+  const stopped = new AbortController(); stopped.abort();
+  await assert.rejects(f.api.members(input, population, page, { signal: stopped.signal }), { name: 'AbortError' });
+  assert.equal(f.requests.length, 1);
+  const denied = fixture(() => json({ error: 'private provider detail' }, 403));
+  await assert.rejects(denied.api.members(input, population, page, io()), error =>
+    error.message === 'custom_workspace_request_failed' && error.status === 403 && !error.cause);
+  assert.equal(denied.keys.length, 0);
+});
+
 test('actual GET envelope yields only a detached frozen target and prepared checkpoint; no cache is retained', async () => {
   let revision = 3;
   const f = fixture(() => { const body = readResponse(); body.workfile.sections[SECTION].revision = revision++; return json(body); });

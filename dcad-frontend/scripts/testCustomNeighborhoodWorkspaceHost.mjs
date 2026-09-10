@@ -65,7 +65,7 @@ function server(initialSection) {
     accepted: { revision: 7, value: { synthetic_accepted_report_marker: 'unchanged' } } });
   install(TARGET, initialSection);
   const request = async (url, init) => {
-    const match = /^\/api\/accounts\/([^/]+)\/(?:assignment-files\/([0-9]+)\/workfile(\/sections\/neighborhood_workspace)?|neighborhood-cohort\/(capture|catalog|preview))$/.exec(url);
+    const match = /^\/api\/accounts\/([^/]+)\/(?:assignment-files\/([0-9]+)\/workfile(\/sections\/neighborhood_workspace)?|neighborhood-cohort\/(capture|catalog|preview|members))$/.exec(url);
     assert.ok(match, `Unexpected HTTP path ${url}`);
     const account = decodeURIComponent(match[1]), body = init.body ? JSON.parse(init.body) : null;
     const fileId = match[2] ?? body.assignment_file_id, file = files.get(`${account}/${fileId}`);
@@ -190,6 +190,41 @@ function harness(t, db, initialSection, overrides = {}) {
   };
 }
 const kinds = db => db.calls.map(call => call.kind);
+
+test('member pages share the owned lane, preserve report data, and quiesce with Save Everything', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const before = copy(db.file(TARGET)), held = deferred();
+  db.overrides.set('members', async (_call, respond) => { await held.promise; return respond(); });
+  const member = h.workspace().workspace.memberTransport;
+  const input = { accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId,
+    contextRef: context(OLD), selection: { revision: 1, pockets: [] } };
+  const population = { group: 'selected', kind: 'stock' }, page = { limit: 50, after_member_id: null };
+  const options = () => ({ signal: new AbortController().signal });
+  const running = member(input, population, page, options()); await h.settle();
+  h.controls.setReadOnly(true); await h.settle();
+  await assert.rejects(member(input, population, page, options()), /custom_workspace_read_only/);
+  let finished = false; const flush = h.controls.flush().then(value => { finished = true; return value; });
+  await h.settle(); assert.equal(finished, false); assert.deepEqual(kinds(db), ['catalog', 'members']);
+  held.resolve(); await running; await h.settle(); assert.equal(await flush, true);
+  assert.equal(db.maxOpen, 1); assert.deepEqual(db.file(TARGET), before);
+  await assert.rejects(member(input, population, page, options()), /custom_workspace_read_only/);
+  h.controls.setReadOnly(false); await h.settle();
+  await assert.rejects(member({ ...input, assignmentFileId: '42' }, population, page, options()), /custom_workspace_target_changed/);
+  await assert.rejects(member({ ...input, contextRef: context('20000000-0000-4000-8000-000000000002') }, population, page, options()), /custom_workspace_context_changed/);
+  h.unmount(); await assert.rejects(member(input, population, page, options()), /custom_workspace_read_only/);
+  assert.deepEqual(kinds(db), ['catalog', 'members']);
+});
+
+test('member inspection cannot admit new work while a checkpoint save is pending', async t => {
+  const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const held = deferred(); db.overrides.set('save', async (_call, respond) => { await held.promise; return respond(); });
+  h.select([]); await h.settle();
+  await assert.rejects(h.workspace().workspace.memberTransport({ accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId,
+    contextRef: context(OLD), selection: { revision: 1, pockets: [] } }, { group: 'selected', kind: 'stock' },
+  { limit: 50, after_member_id: null }, { signal: new AbortController().signal }), /custom_workspace_read_only/);
+  assert.deepEqual(kinds(db), ['catalog', 'save']); held.resolve(); await h.settle();
+  assert.equal(await h.controls.flush(), true);
+});
 
 test('explicit private source action saves exact selector before capture and preserves accepted report', async t => {
   const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();

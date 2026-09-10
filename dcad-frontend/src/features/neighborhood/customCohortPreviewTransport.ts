@@ -1,4 +1,5 @@
-import type { CustomCohortPreviewRequest } from './customCohortPreviewController';
+import type { CustomCohortPreviewInput, CustomCohortPreviewRequest } from './customCohortPreviewController';
+import type { CustomCohortMemberPopulation, CustomCohortMemberPageRequest } from './customCohortMemberPage';
 
 interface Options {
   request: (url: string, init: RequestInit) => Promise<Response>;
@@ -111,6 +112,18 @@ export function createCustomCohortPreviewTransport(options: Options) {
       selection: input.selection, include_map: input.include_map }, { signal });
   };
 }
+
+/** Read-only member inspection uses the same authenticated, bounded transport.
+ * The inspector owns its finite deadline and validates the returned page against
+ * its exact checked summary. This never obtains an editor key or saves a choice. */
+export function createCustomCohortMemberTransport(options: Options) {
+  const post = createCustomCohortJsonTransport(options);
+  return (input: CustomCohortPreviewInput, population: CustomCohortMemberPopulation,
+    page: CustomCohortMemberPageRequest, io: { signal: AbortSignal }): Promise<unknown> =>
+    post(input.accountId, 'members', { assignment_file_id: input.assignmentFileId,
+      context_ref: input.contextRef, selection: input.selection, population, page }, io);
+}
+export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMemberTransport>;
 
 /** Shared bounded transport for the three read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */

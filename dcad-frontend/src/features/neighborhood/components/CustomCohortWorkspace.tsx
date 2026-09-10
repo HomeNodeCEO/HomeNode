@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortOperation } from '../customCohortPreviewApi';
 import { createCustomCohortPreviewController } from '../customCohortPreviewController';
 import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState } from '../customCohortPreviewController';
+import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
   CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
@@ -17,6 +18,7 @@ export interface CustomCohortControlledWorkspace {
   readonly onSelectionIntent: (ids: readonly string[]) => void;
   /** The host owns serialization with checkpoint saves and independent reads. */
   readonly previewTransport: typeof requestCustomCohortObservationPreview;
+  readonly memberTransport: CustomCohortMemberTransport;
 }
 interface Props {
   accountId: string; assignmentFileId: string; contextRef: CustomCohortContextRef;
@@ -230,7 +232,8 @@ function WorkspaceSession(props: Props) {
       </div>
       <CustomCohortStatistics group={group} freshness={freshness} />
       {selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
-        pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused} />}
+        pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
+        memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}
     </>}
   </section>;
 }

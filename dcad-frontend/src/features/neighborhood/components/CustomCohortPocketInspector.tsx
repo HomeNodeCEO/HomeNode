@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
-import { requestCustomCohortObservationPreview } from '../customCohortPreviewApi';
+import { requestCustomCohortObservationPreview, requestCustomCohortMembers } from '../customCohortPreviewApi';
+import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { checkCustomCohortSummaryResponse, fingerprintCustomCohortSelection } from '../customCohortPreviewController';
 import type { CustomCohortPreviewInput } from '../customCohortPreviewController';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
@@ -7,9 +8,11 @@ import { selectionFromRecordedGroups } from '../customCohortPocketCatalog';
 import { CUSTOM_CAD_FIELD_LABELS } from '../customCohortCadEvidence';
 import type { CheckedCadRecordedEvidence } from '../customCohortCadEvidence';
 import CustomCohortStatistics from './CustomCohortStatistics';
+import CustomCohortMemberBrowser from './CustomCohortMemberBrowser';
 
 interface Props { input: CustomCohortPreviewInput; catalog: CheckedPocketCatalog; pocketId: string; label: string;
-  previewTransport?: typeof requestCustomCohortObservationPreview; paused?: boolean }
+  previewTransport?: typeof requestCustomCohortObservationPreview; paused?: boolean;
+  memberTransport?: CustomCohortMemberTransport; membersPaused?: boolean }
 const amount = (value: number) => value.toLocaleString('en-US');
 const literalText = (value: string | boolean | null) => value === null ? 'null (missing)' : typeof value === 'string'
   ? `${JSON.stringify(value)}${value.trim() ? '' : ' (blank / missing)'}` : String(value);
@@ -89,6 +92,8 @@ function InspectorSession(props: Props) {
       <button type="button" className="hn-action-secondary btn btn-sm normal-case" disabled={paused}
         onClick={() => { if (!paused) setRetry(n => n + 1); }}>Retry inspection</button></div>}
     {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly />}
+    {group && <CustomCohortMemberBrowser input={input} group={group} paused={paused || props.membersPaused === true}
+      memberTransport={props.memberTransport ?? requestCustomCohortMembers} />}
     {cad && sameCadContext && <RecordedCadDetails evidence={cad} pocketId={props.pocketId} />}
   </section>;
 }

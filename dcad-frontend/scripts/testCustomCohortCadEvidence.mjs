@@ -217,7 +217,7 @@ new Script(`(function(require,module,exports){${compiled}\n})`).runInThisContext
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
   if (key === '../customCohortPreviewController') return controller;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortObservationPreview() { assert.fail('SSR must not fetch'); } };
-  if (key === './CustomCohortStatistics') return { default: () => null, __esModule: true };
+  if (key === './CustomCohortStatistics' || key === './CustomCohortMemberBrowser') return { default: () => null, __esModule: true };
   assert.fail(`Unexpected Inspector import ${key}`);
 }, module, module.exports);
 const render = (f, options = {}) => {

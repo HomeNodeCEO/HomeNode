@@ -1,5 +1,6 @@
-import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport,
+import { createCustomCohortJsonTransport, createCustomCohortPreviewTransport, createCustomCohortMemberTransport,
   createCustomWorkspaceSectionTransport } from './customCohortPreviewTransport';
+import type { CustomCohortMemberTransport } from './customCohortPreviewTransport';
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomWorkspaceCheckpoint,
   readCustomWorkspaceCheckpoint } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
@@ -99,6 +100,7 @@ export function createCustomWorkspaceApi(options: Options) {
   }
   const workfile = createCustomWorkspaceSectionTransport(options);
   const cohort = createCustomCohortJsonTransport(options), preview = createCustomCohortPreviewTransport(options);
+  const members = createCustomCohortMemberTransport(options);
   return Object.freeze({
     read(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions): Promise<CustomWorkspaceApiRead> {
       return safely(io.signal, async () => {
@@ -156,6 +158,9 @@ export function createCustomWorkspaceApi(options: Options) {
       // Preview already has a controller/route contract using exact int64 string
       // IDs. Do not apply the older generic workfile number limit to this view.
       return safely(io.signal, () => preview(input, io));
+    },
+    members(...[input, population, page, io]: Parameters<CustomCohortMemberTransport>) {
+      return safely(io.signal, () => members(input, population, page, io));
     },
     readReportEditor(input: CustomWorkspaceTarget, io: CustomWorkspaceOperationOptions) {
       return safely(io.signal, async () => {

@@ -145,7 +145,7 @@ export function createCustomWorkspaceApi(options: Options) {
       return safely(io.signal, async () => {
         const bound = identity(input.accountId, input.assignmentFileId);
         return cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
-          context_ref: input.contextRef, selection: input.selection }, io);
+          context_ref: input.contextRef, selection: input.selection, include_recommendation: true }, io);
       });
     },
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {

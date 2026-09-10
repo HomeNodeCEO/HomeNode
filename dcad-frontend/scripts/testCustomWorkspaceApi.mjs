@@ -215,6 +215,7 @@ for (const operation of ['catalog', 'preview']) {
     assert.equal(f.requests[0].url, `/injected/api/accounts/000123_ABC/neighborhood-cohort/${operation}`);
     const expected = { assignment_file_id: '37', context_ref: CONTEXT, selection: input.selection };
     if (operation === 'preview') expected.include_map = false;
+    else expected.include_recommendation = true;
     assert.deepEqual(JSON.parse(f.requests[0].init.body), expected);
     assert.equal(f.requests[0].init.signal, options.signal); assert.equal(f.requests[0].init.cache, 'no-store');
     assert.equal(f.keys.length, 0); assert.equal(f.requests[0].init.headers['x-homenode-editor-key'], undefined);

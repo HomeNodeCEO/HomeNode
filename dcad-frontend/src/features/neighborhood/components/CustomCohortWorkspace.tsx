@@ -28,6 +28,8 @@ const timer = { set: (fn: () => void, ms: number) => setTimeout(fn, ms),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 const idle: CustomCohortPreviewState = { status: 'idle', freshness: 'none', requested: null, group: null, error: null };
 const button = 'hn-action-secondary btn btn-sm normal-case';
+const boundsLabel = (value: { lower: number | null; upper: number | null }) => value.lower === null || value.upper === null
+  ? 'No comparable observations' : `${value.lower.toFixed(1)}–${value.upper.toFixed(1)} / 100`;
 
 /** Independent exploration only. Controlled intent never writes accepted report data.
  * A target, context or session change unmounts all request/map ownership. */
@@ -90,7 +92,7 @@ function WorkspaceSession(props: Props) {
     setCatalog(null); setCatalogError(null); controller.current?.setSelection(null);
     const timeout = setTimeout(() => { abort.abort(); if (active) setCatalogError('Loading the recorded groups timed out. Retry when ready.'); }, 65_000);
     void requestCustomCohortOperation(accountId, 'catalog', {
-      assignment_file_id: assignmentFileId, context_ref: contextRef, selection: input.selection,
+      assignment_file_id: assignmentFileId, context_ref: contextRef, selection: input.selection, include_recommendation: true,
     }, { signal: abort.signal }).then(value => {
       if (!active || abort.signal.aborted) return;
       const checked = checkCustomCohortPocketCatalog(value, input);
@@ -113,9 +115,12 @@ function WorkspaceSession(props: Props) {
     else { setIncluded(ids); setRevision(n => n + 1); }
   };
   const toggle = (id: string) => choose(included.includes(id) ? included.filter(value => value !== id) : [...included, id]);
+  const recommendation = desired ? catalog?.recommendation ?? null : null;
+  const reviewById = new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket]));
   const groups = catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
     ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP, label: 'Unassigned / conflicting recorded names',
-      county: 'Needs review', count: catalog.unassigned.member_count }] : [])] : [];
+      county: 'Needs review', count: catalog.unassigned.member_count }] : [])]
+    .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
   const selectedGroup = groups.find(p => p.id === inspected);
   const pending = preview.status === 'debouncing' || preview.status === 'loading';
   const requestMatches = useMemo(() => {
@@ -133,6 +138,9 @@ function WorkspaceSession(props: Props) {
   const group = desired ? preview.group : null;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
   const selectionDisabled = selectionBlocked || !desired;
+  const suggested = recommendation?.recommended_recorded_group_ids ?? [];
+  const suggestionActive = suggested.length === included.length && suggested.every(id => included.includes(id));
+  const suggestionDisabled = selectionDisabled || recommendation?.status !== 'recommendation_for_review' || !suggested.length || suggestionActive;
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -141,7 +149,7 @@ function WorkspaceSession(props: Props) {
       <span className="rounded-full border border-amber-300 px-3 py-1 text-xs">Preview only · report unchanged</span>
     </header>
     <p className="text-sm">Explore broad observations, then include or exclude recorded groups. These parcel shapes are not legal subdivision
-      or appraiser-defined neighborhood boundaries. Similarity, reliability and report-ready recommendations are not established by this preview.</p>
+      or appraiser-defined neighborhood boundaries. Current-observation similarity is for review only; reliability and report-ready eligibility are not established.</p>
     {!catalog && !catalogError && <p role="status">Loading recorded groups…</p>}
     {!controlled && catalogError && <div role="alert" className="space-y-2"><p>{catalogError}</p>
       <button type="button" className={button} onClick={() => setReload(n => n + 1)}>Retry group loading</button></div>}
@@ -149,6 +157,26 @@ function WorkspaceSession(props: Props) {
       {!desired && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
       {catalog.status === 'incomplete' && <p role="alert">The recorded-name catalog is incomplete. All discovered accounts remain in the unresolved group;
         no partial set of named groups has been substituted.</p>}
+      {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
+        <div className="flex flex-wrap items-start justify-between gap-3">
+          <div><h4 className="font-semibold">Recommended pockets for review</h4>
+            <p className="text-sm">{suggested.length.toLocaleString('en-US')} suggested recorded groups · Current observations only</p></div>
+          <button type="button" className={button} disabled={suggestionDisabled}
+            onClick={() => { if (!suggestionDisabled) choose(suggested); }}>Use suggested selection</button>
+        </div>
+        <p className="text-sm">Across all captured accounts: similarity bounds {boundsLabel(recommendation.all.similarity)} · Observed factor coverage{' '}
+          {recommendation.all.similarity.known_weight_percent === null ? 'unavailable' : `${recommendation.all.similarity.known_weight_percent.toFixed(1)}%`}.</p>
+        <p className="text-xs opacity-80">These bounds retain uncertainty from missing data; they are not confidence or reliability scores.
+          The fixed initial review policy uses GLA 40%, year-built similarity 30%, housing type 20%, and the remaining factors 10%.
+          Housing, comparable distance and verified sale consideration are not established here. The map still shows your current inclusion choices.</p>
+        {recommendation.status === 'insufficient_observations' || !suggested.length
+          ? <p className="text-sm">No usable suggested selection is available. Review groups manually; your saved choices have not changed.</p>
+          : suggestionActive ? <p className="text-sm">The suggested selection is already active.</p>
+            : <p className="text-sm">Using the suggestion replaces the exploration selection and saves it to this file. It does not change the accepted report.</p>}
+        {!recommendation.subject.in_discovery && <p className="text-sm">The subject is not in this captured roster. Review the discovery area before using recommendations.</p>}
+        {recommendation.subject.recorded_group_review_ids.some(id => !suggested.includes(id)) && <p className="text-sm">
+          The subject’s recorded group is flagged separately for review; it was not automatically added to the suggested set or given a higher score.</p>}
+      </section>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose(customCohortCatalogGroupIds(catalog))}>Include all observations</button>
         <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose([])}>Exclude all</button>
@@ -181,7 +209,13 @@ function WorkspaceSession(props: Props) {
                 <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
                 <button type="button" className="min-w-0 flex-1 text-left text-sm" onClick={() => setInspected(p.id)}
                   aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
-                  <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span></button>
+                  <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
+                  {reviewById.has(p.id) && <span className="mt-1 block text-xs">
+                    Review rank {reviewById.get(p.id)!.review_rank} · {boundsLabel(reviewById.get(p.id)!.similarity)}
+                    <span className="block opacity-75">Observed factor coverage {reviewById.get(p.id)!.similarity.known_weight_percent?.toFixed(1) ?? 'unavailable'}{reviewById.get(p.id)!.similarity.known_weight_percent === null ? '' : '%'}
+                      {reviewById.get(p.id)!.suggested_for_review ? ' · Suggested' : ''}
+                      {reviewById.get(p.id)!.subject_group_review ? ' · Subject group review' : ''}</span>
+                  </span>}</button>
               </div>)}
           </div>
           {selectedGroup && <div className="space-y-2 border-t border-violet-200 pt-3">

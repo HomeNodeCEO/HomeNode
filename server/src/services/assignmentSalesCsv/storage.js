@@ -4,6 +4,8 @@ import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
 import { snapshotAssignmentSalesCsvBytes } from './parse.js';
 import { prepareAssignmentSalesCsv } from './prepare.js';
 import { serializePreparedSalesValue, createPreparedSalesDigest, readStoredSalesRows } from './receiptIntegrity.js';
+import { proposeAssignmentSalesMatchPage } from './matchProposals.js';
+import { readAssignmentSalesMatchCandidates } from './matchCandidates.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_JSON_BYTES = 32 * 1024 * 1024;
@@ -266,6 +268,43 @@ export async function listAssignmentSalesImportRows(pool, input) {
       receipt_id: row.receipt_id, persisted: true, matching_status: 'not_evaluated', analysis_status: 'not_evaluated' }));
     return { batch_id: batchId, rows,
       next_after_row: page.hasMore ? rows.at(-1).source_row_number : null };
+  });
+}
+
+/** Read-only proposals from one exact saved page and one PostgreSQL snapshot.
+ * No intake receipt, account alias, shared sale or accepted capture is changed. */
+export async function getAssignmentSalesImportMatchProposals(pool, input) {
+  const scope = scopeOf(input, 'read'), batchId = uuid(input.batchId);
+  const limit = input.limit ?? 50, after = input.afterRow ?? 0;
+  if (!Number.isInteger(limit) || limit < 1 || limit > 100
+    || !Number.isInteger(after) || after < 0 || after > 10001) throw failure('invalid_input');
+  return transaction(pool, true, async query => {
+    const owner = await authorize(query, scope);
+    const found = await query(`/* assignment-sales:match-scope */ SELECT ${BATCH_COLUMNS}
+      FROM app.assignment_sales_import_batches b
+      WHERE b.batch_id=$1 AND b.organization_id=$2 AND b.report_file_id=$3 AND b.assignment_file_id=$4 AND b.account_id=$5`,
+    [batchId, owner.organization_id, scope.reportId, scope.assignmentId, scope.accountId]);
+    if (found.rows.length !== 1) throw failure('not_found');
+    const receipt = receiptOf(found.rows[0]);
+    if (receipt.preparation_profile !== 'private_sales_csv_preparation_v1' || receipt.preparation_version !== 1) {
+      throw failure('invalid_receipt');
+    }
+    const page = await readStoredSalesRows(query, batchId, after, limit);
+    const binding = { batch_id: batchId, source_sha256: receipt.source_sha256, preparation_sha256: receipt.preparation_sha256 };
+    const proposed = await proposeAssignmentSalesMatchPage({ batch: binding, rows: page.rows }, {
+      readCandidates: request => readAssignmentSalesMatchCandidates(query, request),
+    });
+    const { rows, lookups, ...header } = proposed;
+    const context = { account_id: scope.accountId, assignment_file_id: scope.assignmentId, report_file_id: scope.reportId,
+      next_after_row: page.hasMore ? page.rows.at(-1).source_row_number : null };
+    // Versioned length-framed canonical pieces bind original stored row data,
+    // the exact scope, and every current candidate observation. This is an
+    // observation receipt, not signing authority or a persisted match decision.
+    const digest = createPreparedSalesDigest(); digest.add({ ...context, ...header });
+    for (const { record_data, ...rowIdentity } of page.rows) { digest.add(rowIdentity); digest.add(record_data); }
+    for (const row of rows) digest.add(row);
+    for (const lookup of lookups) digest.add(lookup);
+    return { ...context, ...proposed, proposal_page_sha256: digest.digest() };
   });
 }
 

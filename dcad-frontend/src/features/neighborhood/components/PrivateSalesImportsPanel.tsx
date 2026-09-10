@@ -3,6 +3,7 @@ import { fetchWithApplicationAuthentication, makeUrl } from '@/lib/api';
 import { PRIVATE_SALES_MAX_BYTES, PrivateSalesError, createPrivateSalesImportsClient, privateSalesFileDigest,
   makePrivateSalesPending, readPrivateSalesPending, savePrivateSalesPending, clearPrivateSalesPending } from '../privateSalesImports';
 import type { PrivateSalesIdentity, PrivateSalesTarget, PrivateSalesReceipt, PrivateSalesPending, PrivateSalesRow, PrivateSalesIo } from '../privateSalesImports';
+import type { PrivateSalesMatchProposalPage } from '../privateSalesMatchProposals';
 
 export interface PrivateSalesImportsPanelProps extends PrivateSalesIdentity { readOnly: boolean; onBusyChange?: (busy: boolean) => void }
 const button = 'hn-action-secondary btn btn-sm normal-case';
@@ -38,6 +39,9 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
   const [imports, setImports] = useState<PrivateSalesReceipt[]>([]), [older, setOlder] = useState<string | null>(null);
   const [file, setFile] = useState<File | null>(null), [selected, setSelected] = useState<PrivateSalesReceipt | null>(null);
   const [rows, setRows] = useState<PrivateSalesRow[]>([]), [nextRow, setNextRow] = useState<number | null>(null);
+  const [proposals, setProposals] = useState<PrivateSalesMatchProposalPage | null>(null);
+  const rowPageRef = useRef<{ receipt: PrivateSalesReceipt; after: number;
+    page: { batch_id: string; rows: PrivateSalesRow[]; next_after_row: number | null } } | null>(null);
   const alive = useRef(true), active = useRef<AbortController | null>(null), busyRef = useRef(false);
   const writing = useRef(false);
   const busyCallback = useRef(props.onBusyChange); busyCallback.current = props.onBusyChange;
@@ -154,7 +158,20 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
   });
   const showRows = (receipt: PrivateSalesReceipt, after = 0) => run(async (io, currentRun) => {
     const result = await api.rows(receipt, after, 50, io);
-    if (currentRun()) { setSelected(receipt); setRows(result.rows); setNextRow(result.next_after_row); }
+    if (currentRun()) {
+      rowPageRef.current = { receipt, after, page: result }; setProposals(null);
+      setSelected(receipt); setRows(result.rows); setNextRow(result.next_after_row);
+    }
+  });
+  const showProposals = () => run(async (io, currentRun) => {
+    const displayed = rowPageRef.current; if (!displayed) return;
+    setProposals(null);
+    try {
+      const result = await api.matchProposals(displayed.receipt, displayed.page, displayed.after, 50, io);
+      if (currentRun() && rowPageRef.current === displayed) setProposals(result);
+    } catch {
+      if (currentRun()) setError('Account match proposals could not be loaded. Saved row receipts have not changed.');
+    }
   });
   const canWrite = loaded && !busy && !props.readOnly && target?.can_upload === true && !storageInvalid;
   return <details className="print:hidden rounded-lg border border-purple-200 bg-white/80 p-3" open={open}
@@ -191,9 +208,24 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
         onClick={() => void run((io, currentRun) => list(target.report_file_id, older, io, currentRun))}>Older uploads</button>}
       {selected && <section aria-label="Private CSV row receipts" className="space-y-2">
         <h4 className="font-medium">Rows from {selected.file_name}</h4>
+        <p className="text-sm">Account proposals use current CAD observations, not historical parcel membership. No match is approved or included in analysis.
+          CurrentPrice is not ClosePrice; source interpretation, units and currency still require review.</p>
+        <button type="button" className={button} disabled={busy} onClick={() => void showProposals()}>Check account match proposals</button>
+        {proposals && <p className="text-xs">{proposals.observed_at ? `CAD observed at ${proposals.observed_at}.` : 'No supported account lookup was requested.'}
+          {' '}Proposal only; persistent match review is not available.</p>}
         {rows.length === 0 && <p className="text-sm">This saved file has no logical data rows.</p>}
-        {rows.map(row => <details key={row.receipt_id} className="rounded border border-purple-100 p-2 text-sm">
-          <summary className="cursor-pointer">Source row {row.source_row_number}: {row.preparation_disposition.replaceAll('_', ' ')}</summary>
+        {rows.map(row => {
+          const proposal = proposals?.rows.find(item => item.receipt_id === row.receipt_id);
+          return <details key={row.receipt_id} className="rounded border border-purple-100 p-2 text-sm">
+          <summary className="cursor-pointer">Source row {row.source_row_number}: {row.preparation_disposition.replaceAll('_', ' ')}
+            {proposal && <span> — account proposal: {proposal.proposal_status.replaceAll('_', ' ')}
+              {proposal.proposed_account_ids.length > 0 ? ` (${proposal.proposed_account_ids.join(', ')})` : ''}</span>}</summary>
+          {proposal && <div className="my-2 rounded border border-purple-200 bg-purple-50 p-2">
+              <p>Account match: {proposal.proposal_status.replaceAll('_', ' ')}. Appraiser review is required.</p>
+              {proposal.proposed_account_ids.length > 0 && <p>Proposed account IDs: {proposal.proposed_account_ids.join(', ')}</p>}
+              {proposal.observed_candidate_account_ids.length > 0 && <p>Observed candidate IDs (not approved): {proposal.observed_candidate_account_ids.join(', ')}</p>}
+              {proposal.reasons.length > 0 && <p>Review reasons: {proposal.reasons.map(reason => reason.replaceAll('_', ' ')).join('; ')}</p>}
+            </div>}
           <p>{row.issues.length ? row.issues.join(' · ') : 'No preparation issues recorded; source interpretation is still not reviewed.'}</p>
           <dl>{row.raw_cells.map((value, index) => <div key={index} className="mt-1">
             <dt className="font-medium">{selected.raw_headers[index] ?? `Extra column ${index + 1}`}</dt>
@@ -201,7 +233,8 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
           </div>)}</dl>
           <details><summary className="cursor-pointer">Prepared observations (not verified analysis)</summary>
             <pre className="overflow-auto whitespace-pre-wrap break-words text-xs">{JSON.stringify(row.values, null, 2)}</pre></details>
-        </details>)}
+        </details>;
+        })}
         <div className="flex gap-2">
           <button type="button" className={button} disabled={busy} onClick={() => void showRows(selected)}>First rows</button>
           {nextRow !== null && <button type="button" className={button} disabled={busy}

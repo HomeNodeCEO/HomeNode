@@ -1,3 +1,5 @@
+import { checkPrivateSalesMatchProposals } from './privateSalesMatchProposals.ts';
+
 export const PRIVATE_SALES_MAX_BYTES = 8 * 1024 * 1024;
 const RESPONSE_BYTES = 8 * 1024 * 1024;
 const UUID = /^[a-f0-9]{8}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{4}-[a-f0-9]{12}$/;
@@ -262,6 +264,14 @@ export function createPrivateSalesImportsClient(identityInput: PrivateSalesIdent
       requireValue(integer(afterRow, 0, 10001) && integer(limit, 1, 100), 'invalid_cursor');
       return checkPrivateSalesRows(await call(scoped(receipt.report_file_id, '/' + receipt.batch_id + '/rows',
         { after_row: String(afterRow), limit: String(limit) }), {}, io), receipt, afterRow, limit);
+    },
+    async matchProposals(receipt: PrivateSalesReceipt, page: { batch_id: string; rows: PrivateSalesRow[]; next_after_row: number | null },
+      afterRow: number, limit: number, io: PrivateSalesIo) {
+      checkPrivateSalesReceipt(receipt, identity, receipt.report_file_id);
+      requireValue(integer(afterRow, 0, 10001) && integer(limit, 1, 100), 'invalid_cursor');
+      const expected = { identity, receipt: { ...receipt }, page: structuredClone(checkPrivateSalesRows(page, receipt, afterRow, limit)) };
+      return checkPrivateSalesMatchProposals(await call(scoped(receipt.report_file_id, '/' + receipt.batch_id + '/match-proposals',
+        { after_row: String(afterRow), limit: String(limit) }), {}, io), expected);
     },
   };
 }

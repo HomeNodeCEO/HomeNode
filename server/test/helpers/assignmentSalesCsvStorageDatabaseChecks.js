@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { prepareAssignmentSalesCsv } from '../../src/services/assignmentSalesCsv/prepare.js';
 import { serializePreparedSalesValue } from '../../src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
+import { prepareAssignmentSalesMatchCandidatesFixture, runAssignmentSalesMatchCandidatesDatabaseChecks } from './assignmentSalesMatchCandidatesDatabaseChecks.js';
 
 const hash = value => createHash('sha256').update(value).digest('hex');
 const headers = ['ListingId', 'CloseDate', 'CurrentPrice', 'Address'];
@@ -26,7 +27,7 @@ export async function runAssignmentSalesCsvStorageDatabaseChecks(connectionStrin
   const { default: pg } = await import('pg');
   const { commitAssignmentSalesImport: commit, getAssignmentSalesImportByOperation: get,
     listAssignmentSalesImportRows: page, getAssignmentSalesImportTarget: getTarget,
-    listAssignmentSalesImports: list } = await import('../../src/services/assignmentSalesCsv/storage.js');
+    listAssignmentSalesImports: list, getAssignmentSalesImportMatchProposals: propose } = await import('../../src/services/assignmentSalesCsv/storage.js');
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 5, connectionTimeoutMillis: 3000,
     statement_timeout: 10000, application_name: 'synthetic_assignment_sales_csv_native' });
   const checks = [];
@@ -306,7 +307,45 @@ export async function runAssignmentSalesCsvStorageDatabaseChecks(connectionStrin
     await assert.rejects(commit(pool, { ...request, ...inconsistentSignedScope, operationId: randomUUID() }), errorCode('assignment_sales_import_read_only'));
     assert.deepEqual(await protectedState(), originalProtected);
     checks.push('actual signing workfile lock serializes import; signed and draft-plus-snapshot metadata deny new imports, while exact signed-file read/replay remains authorized; protected report state is untouched');
+    let matchingFixture;
+    await ownedTransaction(async client => {
+      matchingFixture = await prepareAssignmentSalesMatchCandidatesFixture((sql, values) => client.query(sql, values),
+        { databaseName: target.databaseName, remoteAddress: client.connection?.stream?.remoteAddress });
+      await client.query('COMMIT'); // Retain only this new test database's synthetic cache fixtures.
+    });
+    let nativeMatching;
+    await ownedTransaction(async client => {
+      await client.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      nativeMatching = await runAssignmentSalesMatchCandidatesDatabaseChecks((sql, values) => client.query(sql, values), matchingFixture,
+        { remoteAddress: client.connection?.stream?.remoteAddress });
+    });
+    const matchingContent = Buffer.from(['ListingId,CloseDate,ClosePrice,ParcelNumber,Address,City,County,PostalCode',
+      `MATCH-1,2020-01-01,275000,${matchingFixture.accountId},${matchingFixture.addressKey},${matchingFixture.cityKey},Dallas,75001`,
+      `MATCH-1,2020-01-01,275000,${matchingFixture.accountId},${matchingFixture.addressKey},${matchingFixture.cityKey},Dallas,75001`,
+      `MATCH-2,2020-01-02,280000,${matchingFixture.nativeId},,,Collin,`,
+    ].join('\n'));
+    const matchingReceipt = await commit(pool, { ...scope, operationId: randomUUID(), fileName: 'synthetic-matching.csv', content: matchingContent });
+    const sourceBefore = await snapshotRows(), protectedBefore = await protectedState();
+    const observations = await propose(pool, { ...scope, batchId: matchingReceipt.batch_id, limit: 2 });
+    assert.equal(observations.account_id, scope.accountId); assert.equal(observations.report_file_id, scope.reportFileId);
+    assert.equal(observations.binding.preparation_sha256, matchingReceipt.preparation_sha256);
+    assert.equal(observations.rows.length, 2); assert.equal(observations.next_after_row, 3);
+    assert.deepEqual(observations.rows[0].proposed_account_ids, [matchingFixture.accountId]);
+    assert.equal(observations.rows[0].proposal_status, 'proposed');
+    assert.equal(observations.rows[1].proposal_status, 'review_required');
+    assert.ok(observations.rows[1].reasons.includes('duplicate_source_row'));
+    assert.equal(observations.accepted, false); assert.equal(observations.analysis_status, 'not_evaluated');
+    const lastObservation = await propose(pool, { ...scope, auth: reader, batchId: matchingReceipt.batch_id, afterRow: 3, limit: 2 });
+    assert.equal(lastObservation.rows.length, 1); assert.equal(lastObservation.next_after_row, null);
+    assert.deepEqual(lastObservation.rows[0].proposed_account_ids, [matchingFixture.collinAccountId]);
+    for (const denied of [{ ...scope, auth: foreign }, { ...scope, auth: unassigned }]) {
+      await assert.rejects(propose(pool, { ...denied, batchId: matchingReceipt.batch_id }), errorCode('assignment_sales_import_access_denied'));
+    }
+    await assert.rejects(propose(pool, { ...sibling, batchId: matchingReceipt.batch_id }), errorCode('assignment_sales_import_not_found'));
+    assert.deepEqual(await snapshotRows(), sourceBefore);
+    assert.deepEqual(await protectedState(), protectedBefore);
+    checks.push('actual indexed CAD candidate SQL and exact-owner proposal paging match native Dallas/Collin fixtures; duplicates and historical limitations retained, cross-tenant/assignment denied, original receipts/report untouched');
     return { checks, organizations: 2, assignment_targets: 4, original_rows: 7, multi_chunk_rows: 205,
-      immutable_synthetic_rows_retained: true, protected_report_unchanged: true };
+      immutable_synthetic_rows_retained: true, protected_report_unchanged: true, native_matching: nativeMatching };
   } finally { await pool.end(); }
 }

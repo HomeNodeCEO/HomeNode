@@ -42,6 +42,7 @@ async function fixture(context, { auth = identity, services = {}, mutateRequest,
       workfile_status: 'draft', can_upload: true }),
     listRows: record('listRows', { batch_id: batchId, rows: [], next_after_row: null }),
     listImports: record('listImports', { imports: [], next_before_batch_id: null }),
+    getMatchProposals: record('getMatchProposals', { rows: [], accepted: false, matching_status: 'proposal_only' }),
   };
   const app = express();
   app.set('query parser', queryParser);
@@ -73,7 +74,7 @@ async function expectError(response, status, code) {
 
 test('constructor requires the storage connection interface and every injected service', () => {
   assert.throws(() => createAssignmentSalesImportRouter(), /assignment_sales_import_pool_required/);
-  for (const name of ['authorizeAccess', 'commitImport', 'getImport', 'getTarget', 'listRows', 'listImports']) {
+  for (const name of ['authorizeAccess', 'commitImport', 'getImport', 'getTarget', 'listRows', 'listImports', 'getMatchProposals']) {
     assert.throws(() => createAssignmentSalesImportRouter({ pool: { connect() {} }, [name]: null }),
       /assignment_sales_import_router_dependency_required/);
   }
@@ -146,7 +147,8 @@ test('authorization must settle before compressed body validation or storage beg
 
 test('all endpoints require an authenticated user without a development-mode bypass', async t => {
   const f = await fixture(t, { auth: null });
-  for (const path of [base + query, `${base}/target`, `${base}/operations/${operationId}${query}`, `${base}/${batchId}/rows${query}`]) {
+  for (const path of [base + query, `${base}/target`, `${base}/operations/${operationId}${query}`, `${base}/${batchId}/rows${query}`,
+    `${base}/${batchId}/match-proposals${query}`]) {
     await expectError(await f.request(path), 401, 'authentication_required');
   }
   await expectError(await f.request(undefined, { method: 'POST', headers: headers(), body: csv }), 401, 'authentication_required');
@@ -162,6 +164,27 @@ test('target bootstrap passes only the existing account and assignment to its au
   assert.deepEqual(f.calls.map(call => call.name), ['getTarget']);
   assert.deepEqual(f.calls[0].input, { auth: identity, accountId: '001A-42', assignmentFileId: '7' });
   assert.ok(Object.isFrozen(f.calls[0].input));
+});
+
+test('matching proposals preserve exact report/batch/page scope and do not invoke a write service', async t => {
+  const f = await fixture(t);
+  const response = await f.request(`${base}/${batchId}/match-proposals${query}&after_row=51&limit=25`);
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(await response.json(), { rows: [], accepted: false, matching_status: 'proposal_only' });
+  assert.deepEqual(f.calls.map(call => call.name), ['getMatchProposals']);
+  assert.deepEqual(f.calls[0].input, { ...scope, batchId, afterRow: 51, limit: 25 });
+  assert.ok(Object.isFrozen(f.calls[0].input));
+});
+
+test('matching proposals reject invalid bounds, alternate scopes and hidden server errors', async t => {
+  const f = await fixture(t, { services: { getMatchProposals: () => { throw new Error('sensitive CAD source'); } } });
+  for (const suffix of ['&limit=0', '&limit=101', '&after_row=-1', '&after_row=10002', '&after_row[]=2',
+    '&organization_id=foreign', '&accepted=true', '&limit=5&limit=6']) {
+    await expectError(await f.request(`${base}/${batchId}/match-proposals${query}${suffix}`),
+      400, 'assignment_sales_import_invalid_input');
+  }
+  assert.equal(f.calls.length, 0);
+  await expectError(await f.request(`${base}/${batchId}/match-proposals${query}`), 500, 'assignment_sales_import_failed');
 });
 
 test('bootstrap cannot accept a caller-supplied report or arbitrary query scope', async t => {

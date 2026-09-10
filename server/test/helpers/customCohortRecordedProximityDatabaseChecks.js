@@ -12,9 +12,9 @@ import { buildCustomCohortPocketRecommendation } from '../../src/services/neighb
  * fixture. Reuse its current-date capture and accepted report; do not reset an
  * existing account, patch retained evidence or fabricate source authorization.
  * The tested catalog operations themselves must remain read-only. */
-export async function checkCustomCohortRecordedProximityDatabase({ pool, databaseName }) {
+export async function checkCustomCohortRecordedProximityDatabase({ pool, databaseName, recordedHousing = false }) {
   const fixture = await checkCustomCohortReportedProposalDatabase({ pool, databaseName,
-    discovery: { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' } });
+    discovery: { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' }, recordedHousing });
   const target = fixture.synthetic_target, contextRef = fixture.context_ref;
   const auth = { userId: target.actor_user_id, organizations: [{ organizationId: target.organization_id, roles: ['appraiser'] }] };
   const input = { auth, accountId: target.account_id, assignmentFileId: target.assignment_file_id,
@@ -50,7 +50,11 @@ export async function checkCustomCohortRecordedProximityDatabase({ pool, databas
   const base = { context_ref: contextRef, retained_inputs: retained,
     selection: { revision: 1, included_recorded_group_ids: [] } };
   const old = buildCustomCohortPocketRecommendation(base), next = buildCustomCohortPocketRecommendation({ ...base, recorded_proximity: measured });
-  assert.equal(old.policy.revision, 1); assert.equal(next.policy.revision, 2);
+  // New owner captures use mapping4. The retained v1/v2 outputs remain pinned
+  // by their original source fixtures in the pure recommendation tests.
+  assert.equal(old.policy.revision, 3); assert.equal(next.policy.revision, 3);
+  assert.equal(old.evidence_mode, 'recorded_housing_only');
+  assert.equal(next.evidence_mode, 'recorded_housing_and_proximity');
   assert.ok(Math.abs(next.all.similarity.known_weight_percent - old.all.similarity.known_weight_percent - 100 / 30) < .0002);
   assert.deepEqual(next.properties.map(row => row.factors.gla), old.properties.map(row => row.factors.gla));
   checks.push('actual native subject and four-mile representative parcel distances use retained EWKB; only proximity adds known weight');
@@ -80,7 +84,7 @@ export async function checkCustomCohortRecordedProximityDatabase({ pool, databas
     } });
   const start = calls.length;
   const catalog = await owner.catalog({ ...input, includeRecommendation: true });
-  assert.equal(catalog.recommendation.policy.revision, 2);
+  assert.equal(catalog.recommendation.policy.revision, 3);
   assert.deepEqual(catalog.recommendation.recorded_proximity.counts, measured.counts);
   assert.equal(catalog.recommendation.recorded_proximity.radius_metres, '8046.72');
   assert.equal(catalog.recommendation.all.factor_coverage.proximity.observed_count, 3);
@@ -92,7 +96,7 @@ export async function checkCustomCohortRecordedProximityDatabase({ pool, databas
     .test(sql.replace(/\bFOR UPDATE(?: NOWAIT)?\b/gi, ''))));
   assert.ok(calls.slice(start).includes('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
   assert.equal(await readState(), before);
-  checks.push('actual authorized catalog includes compact v2 proximity in an isolated read-only computation, without fresh source reads or report writes');
+  checks.push('actual authorized catalog includes compact recorded proximity in an isolated read-only computation, without fresh source reads or report writes');
 
   const changed = await owner.catalog({ ...input, includeRecommendation: true,
     selection: { revision: 2, pockets: catalog.catalog.pockets.map(pocket => ({ id: pocket.id, label: pocket.label, account_ids: pocket.account_ids })) } });
@@ -113,6 +117,20 @@ export async function checkCustomCohortRecordedProximityDatabase({ pool, databas
   assert.deepEqual(recovered.recommendation, catalog.recommendation);
   assert.equal(await readState(), before);
   checks.push('post-computation source revocation and genuine PostgreSQL timeout cannot publish a partial recommendation; fresh explicit retry succeeds with unchanged report');
+  if (recordedHousing) {
+    const housing = catalog.recommendation.recorded_housing;
+    assert.equal(housing.mapping_version, 4);
+    assert.equal(housing.subject.category, 'detached_single_family');
+    assert.equal(housing.subject.origin, 'current_subject_cad');
+    assert.deepEqual(housing.coverage, { account_count: 3, observed_count: 3, unknown_count: 0,
+      states: { observed: 3, missing: 0, unknown: 0, partial: 0, conflicting: 0 } });
+    assert.deepEqual(next.properties.map(row => row.factors.housing_type.score).sort((a, b) => a - b), [0, 100, 100]);
+    assert.equal(catalog.recommendation.all.factor_coverage.housing_type.observed_count, 3);
+    assert.equal(Object.hasOwn(housing, 'accounts'), false);
+    assert.equal(Object.hasOwn(housing, 'pockets'), false);
+    assert.equal(await readState(), before);
+    checks.push('new Custom owner mapping4 capture retains documented CAD categories; exact match/difference contributes only housing weight, no raw account lists escape and accepted group is unchanged');
+  }
   return { checks, fixture, native_proximity: { basis: measured.basis, counts: measured.counts, far_distance_miles: far.distance_miles },
     accepted_state_sha256: before };
 }

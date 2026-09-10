@@ -5,6 +5,7 @@ import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBaseline.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 import { readCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
+import { buildCustomCohortRecordedHousing } from './customCohortRecordedHousing.js';
 
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -20,6 +21,9 @@ export const CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY = freeze({
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 = freeze({
   ...CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY, id: 'custom-current-observation-review-v2', revision: 2,
 });
+export const CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V3 = freeze({
+  ...CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY, id: 'custom-current-observation-review-v3', revision: 3,
+});
 const P = CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY;
 const KEYS = Object.keys(P.weights), UNASSIGNED = 'discovery:unassigned';
 const PHYSICAL = { gla: 'gla_sqft', age: 'year_built', site_size: 'site_area_sqft' };
@@ -29,6 +33,7 @@ const UNAVAILABLE = {
   sale_price: 'comparable_unadjusted_sale_consideration_not_established',
 };
 const UNAVAILABLE_V2 = { housing_type: UNAVAILABLE.housing_type, sale_price: UNAVAILABLE.sale_price };
+const UNAVAILABLE_V3 = { proximity: UNAVAILABLE.proximity, sale_price: UNAVAILABLE.sale_price };
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const rounded = n => Math.round(Math.max(0, Math.min(100, n)) * 10000) / 10000;
 function check(ok, reason) {
@@ -136,7 +141,15 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   // Omission deliberately preserves the complete installed v1 behavior/bytes.
   const proximity = recorded_proximity === undefined ? null
     : readCustomCohortRecordedProximity(recorded_proximity, { context_ref, retained_inputs: input });
-  const policy = proximity ? CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 : P;
+  // The installed pure interpreter consumes these SAME checked members/groups;
+  // no caller-supplied taxonomy, supported flag, or fresh source lookup is used.
+  const housing = buildCustomCohortRecordedHousing({ retained_inputs: input, preview, groups });
+  const housingRows = new Map((housing?.accounts ?? []).map(row => [row.account_id, row]));
+  if (housing) check(housingRows.size === housing.accounts.length && housingRows.size === members.length
+    && members.every(row => housingRows.has(row.account_id)) && housing.coverage.account_count === members.length
+    && housing.coverage.observed_count + housing.coverage.unknown_count === members.length, 'housing_roster_mismatch');
+  const policy = housing ? CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V3
+    : proximity ? CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 : P;
   const proximityRows = new Map((proximity?.accounts ?? []).map(row => [row.account_id, row]));
   if (proximity) check(proximity.counts.accounts === members.length && (proximity.accounts === null
     || (proximityRows.size === proximity.accounts.length && proximityRows.size === members.length
@@ -161,6 +174,12 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
     const scored = scoreNeighborhoodCandidate({ subject: reference, candidate: candidateRows[index], distributions,
       ...(proximity ? { maximumDistanceMiles } : {}) });
     const factors = Object.fromEntries(KEYS.map(key => {
+      if (key === 'housing_type' && housing) {
+        const candidate = housingRows.get(row.account_id);
+        const state = housing.subject.state !== 'observed' ? `subject_${housing.subject.state}`
+          : candidate.state !== 'observed' ? `candidate_${candidate.state}` : 'observed';
+        return [key, { score: state === 'observed' ? (candidate.category === housing.subject.category ? 100 : 0) : null, state }];
+      }
       if (key === 'proximity' && proximity) {
         const observation = proximityRows.get(row.account_id);
         let state = proximity.accounts === null ? 'proximity_unavailable'
@@ -210,7 +229,8 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
     properties, pockets, all: aggregate(properties), selected: { ...aggregate(selected), account_ids: selected.map(row => row.account_id) },
     recommended_recorded_group_ids: pockets.filter(pocket => pocket.suggested_for_review).map(pocket => pocket.id),
     coverage: { ...catalog.coverage, catalog_complete: catalog.catalog_complete, source_records_examined: preview.work.source_records },
-    unavailable_factors: proximity ? UNAVAILABLE_V2 : UNAVAILABLE,
+    unavailable_factors: housing ? (proximity ? { sale_price: UNAVAILABLE.sale_price } : UNAVAILABLE_V3)
+      : proximity ? UNAVAILABLE_V2 : UNAVAILABLE,
     limitations: ['current_observations_not_historical_housing_population', 'similarity_bounds_not_probability_confidence_or_reliability',
       'all_unique_accounts_count_equally_including_missing_invalid_conflicting', 'subject_group_review_does_not_force_selection_or_raise_score',
       'recorded_names_not_legal_neighborhood_boundaries', 'no_builder_hoa_phase_or_amenity_identity_inferred',
@@ -218,6 +238,13 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
       'no_automatic_inclusion_exclusion_or_report_apply', ...catalog.reasons],
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] },
   };
+  if (housing) {
+    result.evidence_mode = proximity ? 'recorded_housing_and_proximity' : 'recorded_housing_only';
+    result.recorded_housing = { housing_version: housing.housing_version, mapping_version: housing.mapping_version,
+      profile: housing.profile, basis: housing.basis, authority: housing.authority,
+      subject: { ...housing.subject }, coverage: { ...housing.coverage, states: { ...housing.coverage.states } } };
+    result.limitations.push(...housing.limitations);
+  }
   if (proximity) {
     result.recorded_proximity = { proximity_version: proximity.proximity_version, basis: proximity.basis,
       authority: proximity.authority, status: proximity.status, reason: proximity.reason,

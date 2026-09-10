@@ -98,6 +98,11 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       'source evidence must retain the original snapshot price despite a concurrent committed change');
     assert.equal((await pool.query('SELECT sale_price::text AS price FROM core.sales WHERE id=100')).rows[0].price, '400000');
     assert.ok(saved.rows.some(row => row.canonical_utf8.includes(linked)), 'full one-hop identity evidence must survive retention');
+    assert.ok(saved.rows.some(row => row.canonical_utf8.includes('"mapping_version":4')),
+      'new Custom owner captures must use the installed CAD evidence projection');
+    assert.ok(calls.some(sql => sql.includes('neighborhood-cache:parcels')
+      && ['class_code', 'class_description', 'use_description', 'structure_type', 'built_up'].every(field => sql.includes(field))),
+    'the real source query must retain all five CAD fields, not relabel an older capture');
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].count, 0,
       'capture does not apply or rewrite report sections');
     checks.push('real three-phase capture; same-snapshot source price; complete original retention; no report writes');

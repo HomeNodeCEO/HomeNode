@@ -4,6 +4,19 @@ import type { CheckedCadRecordedEvidence } from './customCohortCadEvidence';
 
 const FACTORS = ['gla', 'age', 'housing_type', 'site_size', 'proximity', 'sale_price'] as const;
 type Factor = typeof FACTORS[number];
+const HOUSING_STATES = ['observed', 'missing', 'unknown', 'partial', 'conflicting'] as const;
+const HOUSING_CATEGORIES = ['detached_single_family', 'townhouse', 'condominium', 'duplex', 'apartment', 'mobile_home', 'manufactured_home'] as const;
+const HOUSING_PROFILE_SHA256 = '12871b3b6251f507a19b1ac20e45df07ace43f6d10654ee513f314ad830de391';
+type HousingState = typeof HOUSING_STATES[number];
+export interface CheckedRecordedHousing {
+  readonly housing_version: 1; readonly mapping_version: 4;
+  readonly profile: { readonly id: 'custom-recorded-housing-v1'; readonly revision: 1; readonly content_sha256: string };
+  readonly basis: 'retained_current_housing_observations'; readonly authority: 'not_established';
+  readonly subject: { readonly state: HousingState; readonly category: typeof HOUSING_CATEGORIES[number] | null;
+    readonly origin: 'saved_subject' | 'retained_subject_public' | 'current_subject_cad' };
+  readonly coverage: { readonly account_count: number; readonly observed_count: number; readonly unknown_count: number;
+    readonly states: Readonly<Record<HousingState, number>> };
+}
 interface Similarity { readonly lower: number | null; readonly upper: number | null; readonly known_weight_percent: number | null }
 interface Population {
   readonly member_count: number; readonly similarity: Similarity;
@@ -24,7 +37,7 @@ export interface CheckedRecordedProximity {
 }
 export interface CheckedPocketRecommendation {
   readonly status: 'recommendation_for_review' | 'insufficient_observations';
-  readonly policy: { readonly id: string; readonly revision: 1 | 2; readonly minimum_mean_lower_bound: number;
+  readonly policy: { readonly id: string; readonly revision: 1 | 2 | 3; readonly minimum_mean_lower_bound: number;
     readonly minimum_mean_known_weight_percent: number };
   readonly subject: { readonly in_discovery: boolean; readonly recorded_group_review_ids: readonly string[] };
   readonly pockets: readonly (Population & { readonly id: string; readonly review_rank: number;
@@ -35,6 +48,8 @@ export interface CheckedPocketRecommendation {
   readonly limitations: readonly string[];
   readonly cad_recorded_evidence?: CheckedCadRecordedEvidence;
   readonly recorded_proximity?: CheckedRecordedProximity;
+  readonly recorded_housing?: CheckedRecordedHousing;
+  readonly evidence_mode?: 'recorded_housing_only' | 'recorded_housing_and_proximity';
 }
 type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>;
 const WEIGHTS = { gla: .4, age: .3, housing_type: .2, site_size: 1 / 30, proximity: 1 / 30, sale_price: 1 / 30 };
@@ -43,6 +58,7 @@ const STATES = new Set(['observed', 'not_established', 'calculation_unavailable'
   'candidate_missing', 'candidate_invalid', 'candidate_conflicting']);
 const PROXIMITY_STATES = new Set(['observed', 'candidate_multiple_locations', 'candidate_invalid_geometry',
   'proximity_unavailable', 'calculation_unavailable']);
+const HOUSING_FACTOR_STATES = new Set(['observed', ...HOUSING_STATES.slice(1).flatMap(state => [`subject_${state}`, `candidate_${state}`])]);
 const ensure: (ok: unknown) => asserts ok = ok => { if (!ok) throw new TypeError('Invalid pocket recommendation'); };
 function object(value: unknown, keys: readonly string[]): Record<string, unknown> {
   ensure(value !== null && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype);
@@ -76,7 +92,7 @@ function ids(value: unknown): string[] {
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
 }
-function population(value: Record<string, unknown>, proximityV2 = false): Population {
+function population(value: Record<string, unknown>, proximityV2 = false, housingV3 = false): Population {
   const member_count = count(value.member_count), raw = object(value.similarity, ['lower', 'upper', 'known_weight_percent']);
   const similarity = member_count ? { lower: score(raw.lower), upper: score(raw.upper), known_weight_percent: score(raw.known_weight_percent) }
     : { lower: null, upper: null, known_weight_percent: null };
@@ -93,7 +109,8 @@ function population(value: Record<string, unknown>, proximityV2 = false): Popula
     const observed_count = count(c.observed_count), unknown_count = count(c.unknown_count);
     ensure(observed_count + unknown_count === member_count);
     ensure(c.states !== null && typeof c.states === 'object');
-    const allowedStates = proximityV2 && key === 'proximity' ? PROXIMITY_STATES : STATES;
+    const allowedStates = housingV3 && key === 'housing_type' ? HOUSING_FACTOR_STATES
+      : proximityV2 && key === 'proximity' ? PROXIMITY_STATES : STATES;
     const stateKeys = Object.keys(c.states); ensure(stateKeys.length <= allowedStates.size && stateKeys.every(state => allowedStates.has(state)));
     const states = Object.fromEntries(Object.entries(object(c.states, stateKeys)).map(([state, n]) => [state, count(n)]));
     ensure(Object.values(states).reduce((sum, n) => sum + n, 0) === member_count && (states.observed ?? 0) === observed_count);
@@ -116,8 +133,21 @@ function recordedProximity(value: unknown, all: Population, pockets: readonly Po
   ensure(Number.isSafeInteger(rawCounts.parcels) && Number(rawCounts.parcels) >= 0 && Number(rawCounts.parcels) <= 100_000);
   const parcels = Number(rawCounts.parcels);
   ensure(accounts === all.member_count && parcels >= accounts && observed_accounts + unknown_accounts === accounts);
-  // Every group includes its unknown members in the same denominator. Admit no
-  // contradictory global coverage or independently substituted mean scores.
+  validateAggregate(all, pockets);
+  const states = all.factor_coverage.proximity.states;
+  if (r.status === 'available') {
+    ensure((states.proximity_unavailable ?? 0) === 0
+      && observed_accounts === (states.observed ?? 0) + (states.calculation_unavailable ?? 0)
+      && unknown_accounts === (states.candidate_multiple_locations ?? 0) + (states.candidate_invalid_geometry ?? 0));
+  } else ensure(observed_accounts === 0 && unknown_accounts === accounts && (states.proximity_unavailable ?? 0) === accounts);
+  return { proximity_version: 1, basis: r.basis, authority: 'not_established', status: r.status,
+    reason: r.reason as CheckedRecordedProximity['reason'], radius_metres: r.radius_metres,
+    counts: { accounts, parcels, observed_accounts, unknown_accounts } };
+}
+
+function validateAggregate(all: Population, pockets: readonly Population[]) {
+  // Complete group denominators and means, independent of the selected union.
+  const accounts = all.member_count;
   ensure(pockets.reduce((sum, pocket) => sum + pocket.member_count, 0) === accounts);
   for (const factor of FACTORS) {
     const coverage = all.factor_coverage[factor], states: Record<string, number> = {};
@@ -135,15 +165,34 @@ function recordedProximity(value: unknown, all: Population, pockets: readonly Po
     ensure(all.member_lower_bound_range?.low === Math.min(...ranges.map(range => range.low))
       && all.member_lower_bound_range?.high === Math.max(...ranges.map(range => range.high)));
   }
-  const states = all.factor_coverage.proximity.states;
-  if (r.status === 'available') {
-    ensure((states.proximity_unavailable ?? 0) === 0
-      && observed_accounts === (states.observed ?? 0) + (states.calculation_unavailable ?? 0)
-      && unknown_accounts === (states.candidate_multiple_locations ?? 0) + (states.candidate_invalid_geometry ?? 0));
-  } else ensure(observed_accounts === 0 && unknown_accounts === accounts && (states.proximity_unavailable ?? 0) === accounts);
-  return { proximity_version: 1, basis: r.basis, authority: 'not_established', status: r.status,
-    reason: r.reason as CheckedRecordedProximity['reason'], radius_metres: r.radius_metres,
-    counts: { accounts, parcels, observed_accounts, unknown_accounts } };
+}
+
+function recordedHousing(value: unknown, all: Population, pockets: readonly Population[]): CheckedRecordedHousing {
+  const h = object(value, ['housing_version', 'mapping_version', 'profile', 'basis', 'authority', 'subject', 'coverage']);
+  ensure(h.housing_version === 1 && h.mapping_version === 4 && h.basis === 'retained_current_housing_observations' && h.authority === 'not_established');
+  const profile = object(h.profile, ['id', 'revision', 'content_sha256']);
+  ensure(profile.id === 'custom-recorded-housing-v1' && profile.revision === 1
+    && profile.content_sha256 === HOUSING_PROFILE_SHA256);
+  const subject = object(h.subject, ['state', 'category', 'origin']);
+  ensure(HOUSING_STATES.some(state => state === subject.state)
+    && (subject.state === 'observed' ? HOUSING_CATEGORIES.some(category => category === subject.category) : subject.category === null)
+    && ['saved_subject', 'retained_subject_public', 'current_subject_cad'].some(origin => origin === subject.origin));
+  const raw = object(h.coverage, ['account_count', 'observed_count', 'unknown_count', 'states']);
+  const account_count = count(raw.account_count), observed_count = count(raw.observed_count), unknown_count = count(raw.unknown_count);
+  const rawStates = object(raw.states, HOUSING_STATES), states = Object.fromEntries(HOUSING_STATES.map(state => [state, count(rawStates[state])])) as Record<HousingState, number>;
+  ensure(account_count === all.member_count && observed_count + unknown_count === account_count && states.observed === observed_count
+    && Object.values(states).reduce((sum, n) => sum + n, 0) === account_count);
+  validateAggregate(all, pockets);
+  const comparison = all.factor_coverage.housing_type;
+  if (subject.state === 'observed') {
+    ensure(comparison.observed_count === observed_count);
+    for (const state of HOUSING_STATES.slice(1)) ensure((comparison.states[`candidate_${state}`] ?? 0) === states[state]
+      && (comparison.states[`subject_${state}`] ?? 0) === 0);
+  } else ensure(comparison.observed_count === 0 && (comparison.states[`subject_${subject.state}`] ?? 0) === account_count);
+  return { housing_version: 1, mapping_version: 4, profile: { id: 'custom-recorded-housing-v1', revision: 1, content_sha256: profile.content_sha256 },
+    basis: 'retained_current_housing_observations', authority: 'not_established',
+    subject: { state: subject.state as HousingState, category: subject.category as CheckedRecordedHousing['subject']['category'],
+      origin: subject.origin as CheckedRecordedHousing['subject']['origin'] }, coverage: { account_count, observed_count, unknown_count, states } };
 }
 
 /** Static ALL-discovery recommendation only. Bind it to the same checked
@@ -152,9 +201,12 @@ function recordedProximity(value: unknown, all: Population, pockets: readonly Po
 export function checkCustomCohortPocketRecommendation(value: unknown, catalog: Catalog, selectionFingerprint: unknown): CheckedPocketRecommendation {
   const hasCadEvidence = value !== null && typeof value === 'object' && Object.hasOwn(value, 'cad_recorded_evidence');
   const hasProximity = value !== null && typeof value === 'object' && Object.hasOwn(value, 'recorded_proximity');
+  const hasHousing = value !== null && typeof value === 'object' && Object.hasOwn(value, 'recorded_housing');
+  const hasMode = value !== null && typeof value === 'object' && Object.hasOwn(value, 'evidence_mode');
   const r = object(value, ['presentation_version', 'recommendation_version', 'status', 'basis', 'selection_scope', 'authority',
     'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply',
-    ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : [])]);
+    ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : []),
+    ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : [])]);
   ensure(r.presentation_version === 1 && r.recommendation_version === 1
     && (r.status === 'recommendation_for_review' || r.status === 'insufficient_observations')
     && r.basis === 'current_retained_observations' && r.authority === 'not_established'
@@ -168,8 +220,12 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const p = object(r.policy, ['id', 'revision', 'curve_methodology_version', 'weights', 'minimum_mean_lower_bound',
     'minimum_mean_known_weight_percent', 'denominator', 'calibration']);
   const proximityV2 = p.id === 'custom-current-observation-review-v2' && p.revision === 2;
-  ensure(((p.id === 'custom-current-observation-review-v1' && p.revision === 1) || proximityV2)
-    && hasProximity === proximityV2 && p.curve_methodology_version === 6
+  const housingV3 = p.id === 'custom-current-observation-review-v3' && p.revision === 3;
+  const proximityEnabled = proximityV2 || (housingV3 && r.evidence_mode === 'recorded_housing_and_proximity');
+  ensure(((p.id === 'custom-current-observation-review-v1' && p.revision === 1) || proximityV2 || housingV3)
+    && hasHousing === housingV3 && hasMode === housingV3
+    && (!housingV3 || r.evidence_mode === 'recorded_housing_only' || r.evidence_mode === 'recorded_housing_and_proximity')
+    && hasProximity === proximityEnabled && p.curve_methodology_version === 6
     && p.minimum_mean_lower_bound === 55 && p.minimum_mean_known_weight_percent === 70
     && p.denominator === 'every_unique_account_in_group_including_unknowns'
     && p.calibration === 'initial_review_heuristic_not_empirical_reliability');
@@ -185,7 +241,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     const group = object(raw, ['id', 'member_count', 'review_rank', 'similarity', 'factor_coverage', 'member_lower_bound_range',
       'suggested_for_review', 'subject_group_review', 'contains_subject', 'meets_review_policy']);
     const id = text(group.id, 100), expected = known.get(id); ensure(expected && !seen.has(id)); seen.add(id);
-    const stats = population(group, proximityV2); ensure(stats.member_count === expected.count && group.review_rank === index + 1);
+    const stats = population(group, proximityEnabled, housingV3); ensure(stats.member_count === expected.count && group.review_rank === index + 1);
     const contains_subject = flag(group.contains_subject), subject_group_review = flag(group.subject_group_review);
     ensure(contains_subject === expected.subject && subject_group_review === (assigned === id));
     const meets_review_policy = flag(group.meets_review_policy);
@@ -197,9 +253,11 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   ensure(seen.size === known.size);
   const recommended = ids(r.recommended_recorded_group_ids), suggested = pockets.filter(group => group.suggested_for_review).map(group => group.id);
   ensure(recommended.length === suggested.length && recommended.every((id, index) => id === suggested[index]));
-  const all = population(object(r.all, ['member_count', 'similarity', 'factor_coverage', 'member_lower_bound_range']), proximityV2);
+  const all = population(object(r.all, ['member_count', 'similarity', 'factor_coverage', 'member_lower_bound_range']), proximityEnabled, housingV3);
   ensure(all.member_count === catalog.coverage.discovery_member_count);
-  const unavailable = object(r.unavailable_factors, proximityV2 ? ['housing_type', 'sale_price'] : ['housing_type', 'proximity', 'sale_price']);
+  const unavailableKeys = housingV3 ? (proximityEnabled ? ['sale_price'] : ['proximity', 'sale_price'])
+    : proximityV2 ? ['housing_type', 'sale_price'] : ['housing_type', 'proximity', 'sale_price'];
+  const unavailable = object(r.unavailable_factors, unavailableKeys);
   Object.values(unavailable).forEach(value => text(value));
   if (proximityV2) {
     ensure(unavailable.housing_type === 'comparable_current_housing_taxonomy_not_retained'
@@ -209,15 +267,25 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
       ensure(coverage.observed_count === 0 && (coverage.states.not_established ?? 0) === population.member_count);
     }
   }
+  if (housingV3) {
+    ensure(unavailable.sale_price === 'comparable_unadjusted_sale_consideration_not_established'
+      && (proximityEnabled || unavailable.proximity === 'comparable_property_distance_not_retained'));
+    for (const population of [all, ...pockets]) for (const key of unavailableKeys) {
+      const coverage = population.factor_coverage[key as Factor];
+      ensure(coverage.observed_count === 0 && (coverage.states.not_established ?? 0) === population.member_count);
+    }
+  }
   const apply = object(r.apply, ['status', 'reasons']); ensure(apply.status === 'blocked');
   array(apply.reasons, 64).forEach(value => text(value));
   const limitations = array(r.limitations, 64).map(value => text(value));
   const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog) : null;
-  const proximity = proximityV2 ? recordedProximity(r.recorded_proximity, all, pockets) : null;
+  const proximity = proximityEnabled ? recordedProximity(r.recorded_proximity, all, pockets) : null;
+  const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= 512_000);
-  return freeze({ status: r.status, policy: { id: proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',
-    revision: proximityV2 ? 2 : 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
+  return freeze({ status: r.status, policy: { id: housingV3 ? 'custom-current-observation-review-v3' : proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',
+    revision: housingV3 ? 3 : proximityV2 ? 2 : 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
     subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations,
-    ...(cad ? { cad_recorded_evidence: cad } : {}), ...(proximity ? { recorded_proximity: proximity } : {}) });
+    ...(cad ? { cad_recorded_evidence: cad } : {}), ...(proximity ? { recorded_proximity: proximity } : {}),
+    ...(housing ? { recorded_housing: housing, evidence_mode: r.evidence_mode as CheckedPocketRecommendation['evidence_mode'] } : {}) });
 }

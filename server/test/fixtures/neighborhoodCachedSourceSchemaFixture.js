@@ -8,6 +8,7 @@ export const NEIGHBORHOOD_CACHED_SOURCE_SCHEMA=`
   CREATE TABLE gis.dcad_parcels(object_id bigint PRIMARY KEY,account_id text,low_parcel_id text,
     residential_year_built integer,residential_area_sqft numeric,parcel_area_sqft numeric,current_market_value numeric,
     land_use_category text,classification_confidence text,classification_review_reason text,subdivision_name text,
+    class_code text,class_description text,use_description text,structure_type text,built_up boolean,
     source_record_hash text,source_updated_at timestamptz,sync_run_id uuid,synced_at timestamptz,geom geometry(MultiPolygon,4326));
   CREATE INDEX cache_fixture_parcel_account_idx ON gis.dcad_parcels(account_id);
   CREATE TABLE core.sales_source_records(id bigint PRIMARY KEY,source_name text,source_filename text,

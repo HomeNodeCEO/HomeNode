@@ -1,7 +1,10 @@
 import { canonicalAssessmentJson as json } from './contract.js';
 import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY,
-  CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 as POLICY_V2 } from './customCohortPocketRecommendation.js';
+  CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 as POLICY_V2,
+  CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V3 as POLICY_V3 } from './customCohortPocketRecommendation.js';
 import { CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS, CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS } from './customCohortRecordedProximity.js';
+import { CUSTOM_COHORT_RECORDED_HOUSING_PROFILE, CUSTOM_COHORT_RECORDED_HOUSING_BASIS,
+  CUSTOM_COHORT_RECORDED_HOUSING_STATES, CUSTOM_COHORT_RECORDED_HOUSING_CATEGORIES } from './customCohortRecordedHousing.js';
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 
@@ -70,6 +73,36 @@ function proximitySummary(value, all, pockets) {
     reason: value.reason, radius_metres: value.radius_metres, counts };
 }
 
+function housingSummary(value, all, pockets) {
+  check(value && Object.keys(value).sort().join(',') === 'authority,basis,coverage,housing_version,mapping_version,profile,subject'
+    && value.housing_version === 1 && value.mapping_version === 4
+    && value.basis === CUSTOM_COHORT_RECORDED_HOUSING_BASIS && value.authority === 'not_established'
+    && json(value.profile) === json(CUSTOM_COHORT_RECORDED_HOUSING_PROFILE), 'housing');
+  const subject = value.subject;
+  check(subject && Object.keys(subject).sort().join(',') === 'category,origin,state'
+    && CUSTOM_COHORT_RECORDED_HOUSING_STATES.includes(subject.state)
+    && ['saved_subject', 'retained_subject_public', 'current_subject_cad'].includes(subject.origin)
+    && (subject.state === 'observed' ? CUSTOM_COHORT_RECORDED_HOUSING_CATEGORIES.includes(subject.category)
+      : subject.category === null), 'housing_subject');
+  const coverage = value.coverage;
+  check(coverage && Object.keys(coverage).sort().join(',') === 'account_count,observed_count,states,unknown_count'
+    && coverage.states && Object.keys(coverage.states).sort().join(',') === [...CUSTOM_COHORT_RECORDED_HOUSING_STATES].sort().join(','), 'housing_coverage');
+  const states = Object.fromEntries(CUSTOM_COHORT_RECORDED_HOUSING_STATES.map(key => [key, count(coverage.states[key])]));
+  const accounts = count(coverage.account_count), observed = count(coverage.observed_count), unknown = count(coverage.unknown_count);
+  check(accounts === all.member_count && accounts <= 50_000 && observed + unknown === accounts
+    && states.observed === observed && Object.values(states).reduce((sum, n) => sum + n, 0) === accounts, 'housing_coverage');
+  const expectedStates = subject.state === 'observed'
+    ? Object.fromEntries(Object.entries(states).filter(([, n]) => n > 0).map(([key, n]) => [key === 'observed' ? key : `candidate_${key}`, n]))
+    : accounts ? { [`subject_${subject.state}`]: accounts } : {};
+  check(json(all.factor_coverage.housing_type.states) === json(expectedStates), 'housing_factor_coverage');
+  const combined = {};
+  for (const pocket of pockets) for (const [key, n] of Object.entries(pocket.factor_coverage.housing_type.states)) combined[key] = (combined[key] ?? 0) + n;
+  check(json(combined) === json(expectedStates), 'housing_factor_coverage');
+  return { housing_version: 1, mapping_version: 4, profile: structuredClone(CUSTOM_COHORT_RECORDED_HOUSING_PROFILE),
+    basis: value.basis, authority: 'not_established', subject: { ...subject },
+    coverage: { account_count: accounts, observed_count: observed, unknown_count: unknown, states } };
+}
+
 /** A compact full-discovery review baseline attached to an already bounded
  * catalog. Never expose per-property scores, raw subject material, member lists,
  * private target/source identities or selected-union calculations here. Rights,
@@ -79,9 +112,14 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
   check(recommendation?.recommendation_version === 1 && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
   check(catalog?.catalog_version === 1 && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
-  const v2 = recommendation.policy?.id === POLICY_V2.id, policy = v2 ? POLICY_V2 : POLICY;
+  const v2 = recommendation.policy?.id === POLICY_V2.id, v3 = recommendation.policy?.id === POLICY_V3.id;
+  const policy = v3 ? POLICY_V3 : v2 ? POLICY_V2 : POLICY;
   check(json(recommendation.policy) === json(policy), 'policy');
-  check(Object.hasOwn(recommendation, 'recorded_proximity') === v2, 'proximity_version');
+  check(Object.hasOwn(recommendation, 'recorded_housing') === v3
+    && Object.hasOwn(recommendation, 'evidence_mode') === v3, 'housing_version');
+  if (v3) check(['recorded_housing_only', 'recorded_housing_and_proximity'].includes(recommendation.evidence_mode), 'housing_mode');
+  const hasProximity = v2 || (v3 && recommendation.evidence_mode === 'recorded_housing_and_proximity');
+  check(Object.hasOwn(recommendation, 'recorded_proximity') === hasProximity, 'proximity_version');
   check(json(recommendation.binding.context_ref) === json(expected.context_ref)
     && json(catalog.binding.context_ref) === json(expected.context_ref)
     && recommendation.binding.selection_revision === expected.selection_revision
@@ -119,15 +157,32 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
       'minimum_mean_known_weight_percent', 'denominator', 'calibration'].map(key => [key, structuredClone(policy[key])])),
     subject: { in_discovery: flag(recommendation.subject.in_discovery), recorded_group_review_ids: [...subjectIds] },
     all, pockets, recommended_recorded_group_ids: [...ids],
-    unavailable_factors: Object.fromEntries((v2 ? ['housing_type', 'sale_price'] : ['housing_type', 'proximity', 'sale_price'])
+    unavailable_factors: Object.fromEntries((v3 ? (hasProximity ? ['sale_price'] : ['proximity', 'sale_price'])
+      : v2 ? ['housing_type', 'sale_price'] : ['housing_type', 'proximity', 'sale_price'])
       .map(key => [key, text(recommendation.unavailable_factors[key])])),
     limitations: recommendation.limitations.map(text),
     apply: { status: 'blocked', reasons: ['current_observation_recommendation_is_not_a_supported_assessment'] } };
-  if (v2) result.recorded_proximity = proximitySummary(recommendation.recorded_proximity, all, pockets);
+  if (hasProximity) result.recorded_proximity = proximitySummary(recommendation.recorded_proximity, all, pockets);
+  if (v3) {
+    result.evidence_mode = recommendation.evidence_mode;
+    result.recorded_housing = housingSummary(recommendation.recorded_housing, all, pockets);
+    const reasons = { proximity: 'comparable_property_distance_not_retained',
+      sale_price: 'comparable_unadjusted_sale_consideration_not_established' };
+    check(Object.keys(recommendation.unavailable_factors).sort().join(',') === Object.keys(result.unavailable_factors).sort().join(','), 'unavailable_factors');
+    for (const [key, reason] of Object.entries(result.unavailable_factors)) {
+      check(reason === reasons[key], 'unavailable_factors');
+      for (const population of [all, ...pockets]) {
+        const field = population.factor_coverage[key];
+        check(field.observed_count === 0 && field.unknown_count === population.member_count
+          && json(field.states) === json(population.member_count ? { not_established: population.member_count } : {}), 'unavailable_factor_coverage');
+      }
+    }
+  }
   if (Object.hasOwn(recommendation, 'cad_recorded_evidence')) {
     // The extension is current recorded evidence only. Old mapping2/3 payloads
     // retain their exact bytes, and every scoring/selection field above stays
-    // independent of these descriptive categories.
+    // independent of these descriptive distributions. V3's separately versioned
+    // housing interpreter must not relabel or replace the raw-literal baseline.
     result.cad_recorded_evidence = presentCustomCohortCadEvidence({ evidence: recommendation.cad_recorded_evidence,
       expected: { context_ref: expected.context_ref, captured_at: recommendation.binding.captured_at },
       pockets, member_count: all.member_count, in_discovery: result.subject.in_discovery,

@@ -20,9 +20,9 @@ const UUID = '40000000-0000-4000-8000-000000000001';
  * actual retained subject fixture, then performs a NEW installed spatial/read
  * acquisition and one-use handoff for each radius; never relabels old captures.
  * The fake distance bands deliberately add accounts at five and ten miles. */
-export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72', privateSales = false } = {}) {
+export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72', privateSales = false, city = null } = {}) {
   const base = await decisionEvidenceFixture(), previous = base.input.retained_inputs;
-  const discovery = prepareNeighborhoodDiscoveryChoice({ profile_id: 'custom-suburban-radius-v2', radius_metres: radius });
+  const discovery = prepareNeighborhoodDiscoveryChoice(city?.choice ?? { profile_id: 'custom-suburban-radius-v2', radius_metres: radius });
   const groups = Object.fromEntries(previous.acquisition.capture_result.source_capture.sources.map(source => [
     source.payload.projection.definition.role, source.payload.records.map(row => structuredClone(row.data.raw_projection ?? row.data))]));
   const spatialRows = structuredClone(previous.spatial.parcels);
@@ -32,7 +32,7 @@ export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72'
     groups.parcels.push({ ...groups.parcels[0], account_id, object_id });
     groups.accounts.push({ account_id, county: 'Dallas', subdivision: `Synthetic radius band ${index + 1}` });
   }
-  const size = radius === '4828.032' ? 2 : radius === '8046.72' ? 3 : 4;
+  const size = city ? 4 : radius === '4828.032' ? 2 : radius === '8046.72' ? 3 : 4;
   const parcels = spatialRows.slice(0, size), accounts = parcels.map(p => p.account_id).sort();
   const snapshot = previous.spatial.snapshot, queryCalls = [];
   const cacheClient = { release() { assert.fail('caller owns transaction'); }, async query(config) {
@@ -42,7 +42,13 @@ export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72'
       isolation: 'repeatable read', read_only: 'on', timezone: 'UTC', explicit_transaction: true,
       statement_ms: 5000, lock_ms: 1000, idle_ms: 10000 }] };
     if (tag === 'geometry-eligibility') return { rows: [] };
+    if (city && tag === 'city-geometry-eligibility') return { rows: [{ valid: true }] };
     if (config.text.includes('neighborhood-membership:parcels')) {
+      if (city) {
+        assert.deepEqual(JSON.parse(v[0]), city.geometry); assert.match(config.text, /ST_Intersects/);
+        return { rows: parcels.filter(p => v[1] === null || BigInt(p.object_id) > BigInt(v[1]))
+          .slice(0, v[2]).map(payload => ({ payload })) };
+      }
       assert.equal(v[4], radius); assert.match(config.text, /\$5::double precision, true/);
       return { rows: parcels.filter(p => v[2] === null || BigInt(p.object_id) > BigInt(v[2]))
         .slice(0, v[3]).map(payload => ({ payload })) };
@@ -65,12 +71,13 @@ export async function customCohortDiscoveryExpansionFixture({ radius = '8046.72'
     }
     return { rows: rows.map(payload => ({ payload, row_bytes: Buffer.byteLength(JSON.stringify(payload)) })) };
   } };
-  const spatial = await captureNeighborhoodSpatialMembership(cacheClient, previous.spatial.geometry_input, {}, discovery);
+  const spatial = await captureNeighborhoodSpatialMembership(cacheClient, previous.spatial.geometry_input, {}, discovery, city ?? undefined);
   assert.equal(spatial.status, 'captured');
   const selected = prepareNeighborhoodSelectorInput({ profile_id: discovery.profile_id,
     target: previous.selector.target, scope: previous.selector.scope, effective_date: previous.subject.effective_date,
     selection: { id: UUID, revision: 1, source_sha256: spatial.membership_sha256 }, geometry_input: spatial.geometry_input,
-    discovery: { ...previous.selector.query_input.definition.discovery, radius_metres: radius },
+    discovery: city ? { city: discovery.city, parcel_predicate: 'postgis_geometry_intersects_city_v1' }
+      : { ...previous.selector.query_input.definition.discovery, radius_metres: radius },
     roster: { complete: true, account_count: accounts.length, account_ids: accounts } });
   assert.equal(selected.status, 'prepared');
   const study = { profile_id: discovery.profile_id, discovery, observation_period: previous.study.observation_period, knowledge_cutoff: null };

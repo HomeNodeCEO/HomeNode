@@ -1,5 +1,5 @@
 import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
-  CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION } from './customWorkspaceCheckpoint';
+  CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
@@ -37,6 +37,8 @@ const object = (value: unknown): Record<string, unknown> => {
   return value as Record<string, unknown>;
 };
 const same = (a: unknown, b: unknown) => JSON.stringify(a) === JSON.stringify(b);
+const versionFor = (discovery?: CustomWorkspaceDiscovery, privateInput?: CustomWorkspacePrivateSalesImport) =>
+  discovery?.profile_id === 'custom-city-polygon-v1' ? 4 : discovery ? 3 : privateInput ? 2 : 1;
 const text = (value: unknown, maximum: number) => typeof value === 'string' && value.length > 0
   && value.length <= maximum && value.trim() === value && [...value].every(char => char.charCodeAt(0) >= 32 && char.charCodeAt(0) !== 127);
 
@@ -124,10 +126,12 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(saved.status === 'restored' && saved.section_revision === expected + 1 && same(saved.checkpoint, checked), 'save_ack_mismatch');
     emit({ checkpoint: saved.checkpoint, section_revision: saved.section_revision });
   }
-  async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO) {
+  async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO, discovery?: CustomWorkspaceDiscovery) {
     const input: CustomCohortPreviewInput = Object.freeze({ accountId: target.accountId, assignmentFileId: target.assignmentFileId,
       contextRef: ref, selection: Object.freeze({ revision, pockets: Object.freeze([]) }) });
-    return checkCustomCohortPocketCatalog(await io(signal => options.catalog(input, signal)), input);
+    const catalog = checkCustomCohortPocketCatalog(await io(signal => options.catalog(input, signal)), input);
+    requireThat(same(catalog.discovery, discovery?.profile_id === 'custom-city-polygon-v1' ? discovery : undefined), 'catalog_discovery_mismatch');
+    return catalog;
   }
   function ready(catalog: CheckedPocketCatalog) {
     const restored = restoreCustomWorkspaceSelection({ value: state.checkpoint, revision: state.section_revision }, catalog);
@@ -138,21 +142,22 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     const active = state.checkpoint?.active;
     if (!active) { emit({ status: state.checkpoint?.pending_capture ? 'pending' : 'idle', phase: null, error: null, recovery: null }); return; }
     stage('loading_active_catalog', 'reopen');
-    ready(await loadCatalog(active.context_ref, active.selection.revision, io));
+    ready(await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery));
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
-    const privateInput = pending.private_sales_import, discovery = pending.discovery, version = discovery ? 3 : privateInput ? 2 : 1;
+    const privateInput = pending.private_sales_import, discovery = pending.discovery, version = versionFor(discovery, privateInput);
     if (savePending) {
       stage('saving_pending', 'reload');
-      await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), workspace_version: version, pending_capture: pending }), io);
+      // An old city study remains valid while a new radius study is pending.
+      const pendingVersion = state.checkpoint?.active?.discovery?.profile_id === 'custom-city-polygon-v1' ? 4 : version;
+      await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), workspace_version: pendingVersion, pending_capture: pending }), io);
     }
     stage('capturing', 'resume_pending');
     const response = object(await io(signal => options.capture({ target, operationId: pending.operation_id,
       observationPeriod: pending.observation_period, ...(privateInput ? { privateSalesImport: privateInput } : {}),
       ...(discovery ? { discovery } : {}) }, signal)));
     requireThat(response.status === 'registered' && typeof response.reused === 'boolean' && response.source_query_complete === true, 'capture_response');
-    requireThat(response.discovery && Object.getPrototypeOf(response.discovery) === Object.prototype
-      && (response.discovery as Record<string, unknown>).radius_metres === (discovery?.radius_metres ?? '4828.032'), 'capture_discovery_mismatch');
+    requireThat(customWorkspaceCaptureDiscoveryMatches(response.discovery, discovery), 'capture_discovery_mismatch');
     if (privateInput) {
       let echoed: CustomWorkspacePrivateSalesImport;
       try { echoed = prepareCustomWorkspacePrivateSalesImport(response.private_sales_import); }
@@ -165,7 +170,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
-    const catalog = await loadCatalog(draft.active.context_ref, 1, io);
+    const catalog = await loadCatalog(draft.active.context_ref, 1, io, discovery);
     if (privateInput) {
       requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
         && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision
@@ -188,7 +193,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
       // even if an uncertain pending save is followed by a fresh absent read.
       const privateInput = privateSalesImport === undefined ? undefined : prepareCustomWorkspacePrivateSalesImport(privateSalesImport);
       const discovery = discoveryChoice === undefined ? undefined : prepareCustomWorkspaceDiscovery(discoveryChoice);
-      const version = discovery ? 3 : privateInput ? 2 : 1;
+      const version = versionFor(discovery, privateInput);
       const checked = prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: null, pending_capture: {
         operation_id: '00000001-0000-4000-8000-000000000001', observation_period: period,
         ...(privateInput ? { private_sales_import: privateInput } : {}), ...(discovery ? { discovery } : {}) } }).pending_capture!;

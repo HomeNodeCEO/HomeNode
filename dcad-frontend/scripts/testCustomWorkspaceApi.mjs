@@ -20,7 +20,8 @@ function compile(name, imports) {
   }, module, module.exports);
   return module.exports;
 }
-const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers });
+const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers,
+  './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery', {}) });
 const transport = compile('customCohortPreviewTransport', {});
 const { createCustomWorkspaceApi: create } = compile('customWorkspaceApi', {
   './customWorkspaceCheckpoint': checkpoint, './customCohortPreviewTransport': transport,
@@ -126,7 +127,7 @@ for (const [name, mutate] of [
   ['status unknown', b => { b.workfile.status = 'approved'; }], ['status case changed', b => { b.workfile.status = 'SIGNED'; }],
   ['null checkpoint section', b => { b.workfile.sections[SECTION] = null; }],
   ['null checkpoint value', b => { b.workfile.sections[SECTION].value = null; }],
-  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 4; }],
+  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 5; }],
   ['zero checkpoint revision', b => { b.workfile.sections[SECTION].revision = 0; }],
   ['wrong section key', b => { b.workfile.sections[SECTION].key = 'neighborhood_assessment'; }],
   ['extra saved metrics', b => { b.workfile.sections[SECTION].value.active.statistics = []; }],

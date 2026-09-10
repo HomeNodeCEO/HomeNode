@@ -2,7 +2,9 @@ import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { normalizePublicCadastralAccountId } from '../../security/publicCadastralCatalog.js';
 import { assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
-import { prepareNeighborhoodDiscoveryGeometryV1, prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
+import { prepareNeighborhoodDiscoveryGeometryV1, prepareNeighborhoodDiscoveryChoice,
+  NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY, NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
+import { validateRetainedCustomCityDiscovery } from './customCityDiscovery.js';
 
 const LIMITS = Object.freeze({ page_size: 500, parcels: 100000, accounts: 50000,
   bytes: 16777216, duration_ms: 15000, query_ms: 5000 });
@@ -39,6 +41,20 @@ FROM encoded ORDER BY object_id`;
 // Keep v1's SQL literal/parameter positions exactly unchanged. v2 adds only a
 // bounded numeric distance parameter; no caller expression or alternate predicate.
 const PAGE_SQL_V2 = PAGE_SQL.replace('4828.032, true', '$5::double precision, true');
+// Separate predicate/parameter domain: the envelope is an index prefilter,
+// never membership. Keep crossing/touching parcels whole, and preserve holes.
+const CITY_PAGE_SQL = PAGE_SQL
+  .replace('($3::bigint IS NULL OR object_id > $3::bigint)', '($2::bigint IS NULL OR object_id > $2::bigint)')
+  .replace(`ST_DWithin(geom::geography,
+      ST_SetSRID(ST_MakePoint($1::double precision, $2::double precision), 4326)::geography,
+      4828.032, true)`, `geom && ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
+    AND ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326))`)
+  .replace('LIMIT $4', 'LIMIT $3');
+const CITY_VALIDITY_SQL = `WITH city AS (
+  SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326) AS geom
+) SELECT (NOT ST_IsEmpty(geom) AND ST_IsValid(geom)
+  AND ST_GeometryType(geom) IN ('ST_Polygon','ST_MultiPolygon')
+  AND ST_SRID(geom)=4326 AND ST_NDims(geom)=2) AS valid FROM city`;
 
 class IncompleteMembership extends Error {}
 function incomplete(reason) { throw new IncompleteMembership(reason); }
@@ -75,8 +91,14 @@ function snapshotOf(rows) {
  * A complete result describes this cache snapshot ONLY; admission must still
  * establish full source coverage, original subject evidence and current access.
  */
-export async function captureNeighborhoodSpatialMembership(client, geometryInput, overrides = {}, discoveryChoice) {
+export async function captureNeighborhoodSpatialMembership(client, geometryInput, overrides = {}, discoveryChoice, cityInput) {
   const discovery = discoveryChoice === undefined ? null : prepareNeighborhoodDiscoveryChoice(discoveryChoice);
+  const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
+    ? validateRetainedCustomCityDiscovery(cityInput) : null;
+  if (city && canonicalAssessmentJson(city.choice) !== canonicalAssessmentJson(discovery)) {
+    throw new TypeError('spatial_city_binding_mismatch');
+  }
+  if (!city && cityInput !== undefined) throw new TypeError('spatial_city_scope_unexpected');
   const prepared = prepareNeighborhoodDiscoveryGeometryV1(geometryInput);
   if (prepared.status !== 'prepared') return prepared;
   if (!client || typeof client.query !== 'function') throw new TypeError('spatial_membership_client_required');
@@ -94,20 +116,29 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
   };
   try {
     const snapshot = snapshotOf(await query('snapshot', SNAPSHOT_SQL));
+    const cityGeometry = city ? JSON.stringify(city.geometry) : null;
+    if (city) {
+      const validity = await query('city-geometry-eligibility', CITY_VALIDITY_SQL, [cityGeometry]);
+      if (validity.length !== 1 || validity[0].valid !== true) incomplete('city_geometry_ineligible');
+    }
     // Do not silently discard invalid polygons and report the remainder as complete.
     // This conservative cache-wide gate is separate from provider-coverage admission.
     if ((await query('geometry-eligibility', INELIGIBLE_SQL)).length) incomplete('cached_geometry_ineligible');
     const parcels = [];
     const accounts = new Set();
-    const digest = createHash('sha256').update(discovery ? 'homenode-cached-spatial-membership-v2\n' : 'homenode-cached-spatial-membership-v1\n')
-      .update(canonicalAssessmentJson(discovery
+    const digest = createHash('sha256').update(city ? 'homenode-cached-spatial-membership-city-v1\n'
+      : discovery ? 'homenode-cached-spatial-membership-v2\n' : 'homenode-cached-spatial-membership-v1\n')
+      .update(canonicalAssessmentJson(city
+        ? { geometry_input: prepared.geometry_input, discovery, parcel_predicate: NEIGHBORHOOD_CITY_PARCEL_PREDICATE }
+        : discovery
         ? { geometry_input: prepared.geometry_input, discovery, distance_semantics: 'postgis_geography_spheroid_v1',
           parcel_predicate: 'all_intersecting_parcels' }
         : { geometry_input: prepared.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
     let cursor = null;
     while (true) {
-      const rows = await query('parcels', discovery ? PAGE_SQL_V2 : PAGE_SQL,
-        [...prepared.geometry_input.coordinates, cursor, limits.page_size + 1, ...(discovery ? [discovery.radius_metres] : [])]);
+      const rows = await query('parcels', city ? CITY_PAGE_SQL : discovery ? PAGE_SQL_V2 : PAGE_SQL,
+        city ? [cityGeometry, cursor, limits.page_size + 1]
+          : [...prepared.geometry_input.coordinates, cursor, limits.page_size + 1, ...(discovery ? [discovery.radius_metres] : [])]);
       if (rows.length > limits.page_size + 1) incomplete('database_page_invalid');
       for (const { payload } of rows.slice(0, limits.page_size)) {
         if (!payload) incomplete('row_bytes_limit');
@@ -137,7 +168,9 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
     const accountIds = [...accounts].sort();
     return freeze({ status: 'captured', query_complete: true, authority: 'not_established',
       source_coverage: 'not_established', geometry_input: prepared.geometry_input,
-      geometry_input_sha256: prepared.geometry_input_sha256, radius_metres: discovery?.radius_metres ?? '4828.032',
+      geometry_input_sha256: prepared.geometry_input_sha256,
+      ...(city ? { city_scope: { choice: city.choice, asset_utf8: city.asset_utf8, asset_sha256: city.asset_sha256, source: city.source } }
+        : { radius_metres: discovery?.radius_metres ?? '4828.032' }),
       ...(discovery ? { discovery } : {}),
       snapshot, parcels, account_ids: accountIds,
       account_ids_sha256: assessmentEvidenceDigest({ account_ids: accountIds }),

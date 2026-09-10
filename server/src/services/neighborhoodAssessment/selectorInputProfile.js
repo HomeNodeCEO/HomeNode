@@ -2,9 +2,12 @@ import { types as utilTypes } from 'node:util';
 import { normalizePublicCadastralAccountId } from '../../security/publicCadastralCatalog.js';
 import { NEIGHBORHOOD_CACHED_READ_ACCESS_LIMITS } from './cachedReadAccess.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
+import { prepareCustomCityDiscoveryChoice } from './customCityDiscovery.js';
 
 export const NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 = 'custom-simple-suburban-radius-v1';
 export const NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2 = 'custom-suburban-radius-v2';
+export const NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY = 'custom-city-polygon-v1';
+export const NEIGHBORHOOD_CITY_PARCEL_PREDICATE = 'postgis_geometry_intersects_city_v1';
 export const NEIGHBORHOOD_DISCOVERY_RADII_METRES = Object.freeze(['4828.032', '8046.72', '16093.44']);
 const AUTHORITY = 'not_established';
 const SCOPE = ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'];
@@ -104,6 +107,10 @@ function freeze(value) {
  * Absence is handled by the caller's unchanged v1 path, never defaulted here. */
 export function prepareNeighborhoodDiscoveryChoice(value) {
   try {
+    if (value && typeof value === 'object' && !utilTypes.isProxy(value)
+      && Object.getOwnPropertyDescriptor(value, 'profile_id')?.value === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY) {
+      return prepareCustomCityDiscoveryChoice(value);
+    }
     const choice = record(value, ['profile_id', 'radius_metres'], 'discovery');
     if (choice.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2
       || !NEIGHBORHOOD_DISCOVERY_RADII_METRES.includes(choice.radius_metres)) reject('discovery.unsupported');
@@ -139,8 +146,8 @@ export function prepareNeighborhoodSelectorInputV1(input) {
 }
 
 /** Dispatch installed discovery profiles without changing the legacy entry point.
- * Discovery retains the exact spheroid/intersecting-parcel semantics in either
- * version. Only the v2 profile permits an explicitly selected larger radius. */
+ * Radius profiles retain their exact semantics. City scope is a separate
+ * installed polygon identity, never an inferred radius or caller geometry. */
 export function prepareNeighborhoodSelectorInput(input) {
   return prepareSelectorInput(input, true);
 }
@@ -150,7 +157,8 @@ function prepareSelectorInput(input, allowV2) {
     input = record(input, ['profile_id', 'target', 'scope', 'effective_date', 'selection',
       'geometry_input', 'discovery', 'roster'], 'input');
     const v2 = allowV2 && input.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2;
-    if (!v2 && input.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1) reject('profile.unsupported', 'unsupported');
+    const city = allowV2 && input.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
+    if (!v2 && !city && input.profile_id !== NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1) reject('profile.unsupported', 'unsupported');
     input.target = record(input.target, TARGET, 'target');
     if (input.target.workflow_type !== 'custom_appraisal') reject('workflow.unsupported', 'unsupported');
     const target = { report_file_id: uuid(input.target.report_file_id, 'target.report_file_id'),
@@ -168,10 +176,19 @@ function prepareSelectorInput(input, allowV2) {
     const revision = input.selection.revision;
     const sourceHash = hash(input.selection.source_sha256, 'selection.source_sha256');
     const geometry = geometryOf(input.geometry_input);
-    input.discovery = record(input.discovery, Object.keys(DISCOVERY), 'discovery');
-    const discovery = { ...DISCOVERY, ...(v2 ? { radius_metres: input.discovery.radius_metres } : {}) };
-    if ((v2 && !NEIGHBORHOOD_DISCOVERY_RADII_METRES.includes(discovery.radius_metres))
-      || Object.keys(DISCOVERY).some(key => input.discovery[key] !== discovery[key])) reject('discovery.unsupported_semantics', 'unsupported');
+    input.discovery = record(input.discovery, city ? ['city', 'parcel_predicate'] : Object.keys(DISCOVERY), 'discovery');
+    let discovery;
+    if (city) {
+      let choice;
+      try { choice = prepareCustomCityDiscoveryChoice({ profile_id: input.profile_id, city: input.discovery.city }); }
+      catch { reject('discovery.unsupported_semantics', 'unsupported'); }
+      if (input.discovery.parcel_predicate !== NEIGHBORHOOD_CITY_PARCEL_PREDICATE) reject('discovery.unsupported_semantics', 'unsupported');
+      discovery = { city: choice.city, parcel_predicate: NEIGHBORHOOD_CITY_PARCEL_PREDICATE };
+    } else {
+      discovery = { ...DISCOVERY, ...(v2 ? { radius_metres: input.discovery.radius_metres } : {}) };
+      if ((v2 && !NEIGHBORHOOD_DISCOVERY_RADII_METRES.includes(discovery.radius_metres))
+        || Object.keys(DISCOVERY).some(key => input.discovery[key] !== discovery[key])) reject('discovery.unsupported_semantics', 'unsupported');
+    }
     input.roster = record(input.roster, ['complete', 'account_count', 'account_ids'], 'roster');
     if (input.roster.complete === false) reject('roster.incomplete', 'incomplete');
     if (input.roster.complete !== true) reject('roster.complete');
@@ -190,7 +207,7 @@ function prepareSelectorInput(input, allowV2) {
     // Hash the flat list, not 50k object entries: shared canonical JSON has a 100k-node ceiling.
     const rosterHash = assessmentEvidenceDigest({ account_ids: accounts });
     const geometryHash = assessmentEvidenceDigest(geometry);
-    const definition = { query_input_version: v2 ? 2 : 1, profile_id: input.profile_id,
+    const definition = { query_input_version: city ? 3 : v2 ? 2 : 1, profile_id: input.profile_id,
       target, scope, effective_date: effectiveDate,
       selection_ref: { id: selectionId, revision }, source_sha256: sourceHash,
       geometry_input: geometry, geometry_input_sha256: geometryHash, discovery,

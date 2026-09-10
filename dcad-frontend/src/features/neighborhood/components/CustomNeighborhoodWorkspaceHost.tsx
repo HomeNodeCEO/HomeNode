@@ -8,6 +8,7 @@ import type { CustomCohortPreviewRequest } from '../customCohortPreviewControlle
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import CustomCohortWorkspace from './CustomCohortWorkspace';
 import CustomReportedObservationAdoption from './CustomReportedObservationAdoption';
+import cityCatalog from '../../../data/neighborhoodCityBoundaries.json';
 
 export interface CustomNeighborhoodWorkspaceControls {
   readonly target: CustomWorkspaceTarget;
@@ -31,8 +32,14 @@ interface Props {
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
 type RadiusMiles = keyof typeof RADII;
-const radiusMiles = (discovery?: CustomWorkspaceDiscovery): RadiusMiles =>
-  discovery?.radius_metres === RADII['10'] ? '10' : discovery?.radius_metres === RADII['5'] ? '5' : '3';
+const scopeKey = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
+  ? `city:${discovery.city.geoid}:${discovery.city.vintage}:${discovery.city.asset_sha256}`
+  : discovery?.radius_metres === RADII['10'] ? '10' : discovery?.radius_metres === RADII['5'] ? '5' : '3';
+const CITIES = cityCatalog.cities.map(city => ({ name: city.name, discovery: { profile_id: 'custom-city-polygon-v1' as const,
+  city: { geoid: city.geoid, vintage: cityCatalog.vintage, asset_sha256: city.sha256 } } }));
+const scopeLabel = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
+  ? `${CITIES.find(entry => scopeKey(entry.discovery) === scopeKey(discovery))?.name ?? `City GEOID ${discovery.city.geoid}`} city polygon (${discovery.city.vintage})`
+  : `${scopeKey(discovery)}-mile radius`;
 
 /** Explicitly injected Custom-only host. A mounted caller must first obtain a
  * verified current account/file/session workfile read. No local browser draft,
@@ -53,9 +60,9 @@ function HostSession(props: Props) {
   const [lastReady, setLastReady] = useState<CustomWorkspaceLifecycleState | null>(null);
   const [start, setStart] = useState(initial.initialPeriod?.start_date ?? '');
   const [end, setEnd] = useState(initial.initialPeriod?.end_date ?? '');
-  const [radius, setRadius] = useState<RadiusMiles>('3');
-  const radiusRef = useRef<RadiusMiles>('3');
-  const radiusBinding = useRef<string | null>(null);
+  const [scope, setScope] = useState<CustomWorkspaceDiscovery | undefined>(undefined);
+  const scopeRef = useRef<CustomWorkspaceDiscovery | undefined>(undefined);
+  const scopeBinding = useRef<string | null>(null);
   const [readOnly, setReadOnly] = useState(false);
   const [locked, setLocked] = useState(false);
   const [actionPending, setActionPending] = useState(false);
@@ -78,18 +85,22 @@ function HostSession(props: Props) {
   const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
 
   function captureDiscovery(): CustomWorkspaceDiscovery | undefined {
-    // Omitted default requests retain their original v1 identity. Once a v3
-    // study is present, choosing three miles is an explicit v2 choice too.
-    if (radiusRef.current === '3' && owner.current?.getState().checkpoint?.workspace_version !== 3) return undefined;
-    return { profile_id: 'custom-suburban-radius-v2', radius_metres: RADII[radiusRef.current] };
+    const selected = scopeRef.current;
+    if (selected?.profile_id === 'custom-city-polygon-v1') {
+      if (!CITIES.some(entry => scopeKey(entry.discovery) === scopeKey(selected))) throw new Error('custom_workspace_city_not_installed');
+      return selected;
+    }
+    // Preserve omitted legacy three-mile requests; city -> radius stays explicit.
+    if (scopeKey(selected) === '3' && (owner.current?.getState().checkpoint?.workspace_version ?? 1) < 3) return undefined;
+    return selected ?? { profile_id: 'custom-suburban-radius-v2', radius_metres: RADII['3'] };
   }
-  function restoreRadius(next: CustomWorkspaceLifecycleState) {
+  function restoreScope(next: CustomWorkspaceLifecycleState) {
     const checkpoint = next.checkpoint;
     const binding = checkpoint?.pending_capture?.operation_id ?? checkpoint?.active?.context_ref.context_id ?? null;
-    if (binding === radiusBinding.current) return;
-    radiusBinding.current = binding;
-    const miles = radiusMiles(checkpoint?.pending_capture?.discovery ?? checkpoint?.active?.discovery);
-    radiusRef.current = miles; setRadius(miles);
+    if (binding === scopeBinding.current) return;
+    scopeBinding.current = binding;
+    const discovery = checkpoint?.pending_capture?.discovery ?? checkpoint?.active?.discovery;
+    scopeRef.current = discovery; setScope(discovery);
   }
 
   // One owned action at a time, without reflecting per-request progress in the
@@ -102,11 +113,15 @@ function HostSession(props: Props) {
     const task = Promise.resolve().then(() => {
       if (live.current && generation.current === epoch) return action().then(() => true);
       return false;
-    }).catch(() => {
+    }).catch(error => {
       if (live.current && generation.current === epoch) {
         if (report) { reportRecoveryRef.current = true; setReportRecovery(true); }
         else { actionFailed.current = true;
-          setMessage('The neighborhood workspace could not finish updating. Reload its saved choices before continuing; your report has not changed.'); }
+          const code = error instanceof Error && 'workspaceCode' in error ? error.workspaceCode : null;
+          const cityFailure = code === 'city_subject_outside_scope' ? 'The subject is outside the selected city polygon.'
+            : code === 'city_source_unavailable' ? 'The selected city polygon is unavailable for capture.' : null;
+          setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. Your previous study and accepted report are unchanged.`
+            : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing; your report has not changed.'); }
       }
       return false;
     }).finally(() => {
@@ -127,9 +142,9 @@ function HostSession(props: Props) {
       catalog: (input, options) => requests.run(({ signal }) => api.catalog(input, { ...options, signal }), options),
       onChange: next => {
         if (!live.current || generation.current !== epoch) return;
-        restoreRadius(next); setState(next); if (next.status === 'ready' && next.catalog && next.selection) setLastReady(next);
+        restoreScope(next); setState(next); if (next.status === 'ready' && next.catalog && next.selection) setLastReady(next);
       } });
-    owner.current = lifecycle; restoreRadius(lifecycle.getState()); setState(lifecycle.getState());
+    owner.current = lifecycle; restoreScope(lifecycle.getState()); setState(lifecycle.getState());
     initial.registerControls?.({ target: initial.target,
       useReviewedSales: reference => {
         if (!live.current || generation.current !== epoch || reportUncertainRef.current || reportRecoveryRef.current || !period.current.start_date || !period.current.end_date)
@@ -197,6 +212,7 @@ function HostSession(props: Props) {
     : state?.status !== 'ready' && state?.status !== 'idle' ? 'reload_required' : null;
   const explorationBlocked = blockedReason ?? (reportUncertain || reportRecovery ? 'reload_required' : null);
   const active = lastReady?.checkpoint?.active;
+  const installedScope = scope?.profile_id !== 'custom-city-polygon-v1' || CITIES.some(entry => scopeKey(entry.discovery) === scopeKey(scope));
   function reportOutcome(uncertain: boolean) {
     if (!live.current) return;
     reportUncertainRef.current = uncertain; setReportUncertain(uncertain);
@@ -254,17 +270,23 @@ function HostSession(props: Props) {
         disabled={busy} onChange={event => setStart(event.target.value)} /></label>
       <label className="text-sm">Observation end<input type="date" className="input input-bordered block" value={end}
         disabled={busy} onChange={event => setEnd(event.target.value)} /></label>
-      <label className="text-sm">Study radius<select className="select select-bordered block" value={radius}
+      <label className="text-sm">Analytical study area<select className="select select-bordered block" value={scopeKey(scope)}
         disabled={busy || Boolean(explorationBlocked)} onChange={event => {
-          const choice = event.target.value;
-          if (choice !== '3' && choice !== '5' && choice !== '10') return;
-          radiusRef.current = choice; setRadius(choice);
+          const key = event.target.value;
+          const choice = Object.hasOwn(RADII, key) ? { profile_id: 'custom-suburban-radius-v2' as const, radius_metres: RADII[key as RadiusMiles] }
+            : CITIES.find(entry => scopeKey(entry.discovery) === key)?.discovery;
+          if (!choice) return;
+          scopeRef.current = choice; setScope(choice);
         }}>
-        <option value="3">3 miles — default</option><option value="5">5 miles</option><option value="10">10 miles</option>
+        <optgroup label="Radius"><option value="3">3 miles — default</option><option value="5">5 miles</option><option value="10">10 miles</option></optgroup>
+        <optgroup label="Installed city polygons">{CITIES.map(entry => <option key={entry.discovery.city.geoid} value={scopeKey(entry.discovery)}>
+          {entry.name} — {entry.discovery.city.vintage} polygon</option>)}</optgroup>
+        {!installedScope && <option value={scopeKey(scope)} disabled>{scopeLabel(scope)} — retained; not installed for new capture</option>}
       </select></label>
-      <button type="button" className={button} disabled={busy || !start || !end || Boolean(explorationBlocked)}
+      <button type="button" className={button} disabled={busy || !start || !end || !installedScope || Boolean(explorationBlocked)}
         onClick={() => { if (!explorationBlocked) act(() => owner.current!.start({ start_date: start, end_date: end }, undefined, captureDiscovery())); }}>
-        {active ? `Capture a new ${radius}-mile study` : `Start ${radius}-mile exploration`}</button>
+        {scope?.profile_id === 'custom-city-polygon-v1' ? `Capture ${scopeLabel(scope)} study`
+          : active ? `Capture a new ${scopeKey(scope)}-mile study` : `Start ${scopeKey(scope)}-mile exploration`}</button>
       <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
         onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
@@ -275,8 +297,9 @@ function HostSession(props: Props) {
         title="Clear only this pending choice. Keep the previous study, source evidence, and accepted report."
         onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
     </div>
-    <p className="text-xs text-slate-600">{active ? `Displayed study: ${radiusMiles(active.discovery)}-mile radius. ` : ''}
-      Changing the radius only changes the next capture. All available records in the requested area are considered within the observation period;
+    <p className="text-xs text-slate-600">{active ? `Displayed study: ${scopeLabel(active.discovery)}. ` : ''}
+      Changing this choice only changes the next capture. City studies use the dated installed polygon, not mailing-city names or the map's reference control.
+      Complete cached membership is not proof of complete provider coverage. Available records in the requested area are considered within the observation period;
       capacity limits stop an incomplete capture instead of silently trimming it. Your accepted report changes only when you apply the complete reviewed group.</p>
     <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
       ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason

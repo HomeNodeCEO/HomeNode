@@ -20,7 +20,8 @@ function compile(name, imports, globals = {}) {
       module, module.exports, ...Object.values(globals));
   return module.exports;
 }
-const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalog });
+const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalog,
+  './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery.ts', {}) });
 const api = compile('customWorkspaceApi.ts', { './customCohortPreviewTransport': transport, './customWorkspaceCheckpoint': checkpoint });
 const copy = value => structuredClone(value);
 const period = { start_date: '2024-01-01', end_date: '2024-12-31' };

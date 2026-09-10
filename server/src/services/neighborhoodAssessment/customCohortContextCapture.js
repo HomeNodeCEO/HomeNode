@@ -14,9 +14,9 @@ import { createCustomCohortContextRepository } from './customCohortContextReposi
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembership } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
-import { createNeighborhoodCachedReadAccess, describeNeighborhoodCachedMarketDataPurpose,
+import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
-import { createNeighborhoodCachedSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
+import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInput,
   prepareNeighborhoodDiscoveryChoice } from './selectorInputProfile.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
@@ -819,7 +819,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         discovery: { radius_metres: spatial.radius_metres, distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
         roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
       if (selector.status !== 'prepared') fail('selector_incomplete', selector.reason);
-      const access = createNeighborhoodCachedReadAccess({
+      // New Custom captures retain the installed CAD-field projection (mapping4).
+      // Its market-data purpose and complete-sale closure are unchanged. Existing
+      // contexts reopen using their original mapping version; no recapture or
+      // retrospective relabeling is performed during read/retry.
+      const access = createNeighborhoodCadEvidenceReadAccess({
         resolveAuthorizedAssignment: async () => { assertTarget(await resolveTarget(client, input, false), subject.target); return context; },
         resolveTrustedSelection: async () => ({ ...selector.selection, account_ids: selector.account_roster.account_ids }),
         authorizeMarketData: async (auth, current, requestedPurpose) => {
@@ -837,7 +841,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
       const grants = await access.prepare(input.auth, { target: context.target,
         selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null });
-      const reader = createNeighborhoodCachedSourceReader(pool, { access });
+      const reader = createNeighborhoodCadEvidenceSourceReader(pool, { access });
       const result = captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
         selection_grant: grants.selection_grant, market_grant: grants.market_grant },
       { deadline: budget.deadline, signal: budget.signal }), 'source');

@@ -77,10 +77,17 @@ function verifyCounts(result) {
   assert.equal(result.pockets.reduce((sum, group) => sum + group.member_count, 0), result.all.member_count);
 }
 
-test('actual mapping4 capture/persist/reopen is consumed by recommendation without changing any prior result bytes', async () => {
+test('mapping4 housing recommendation preserves prior physical factors and exact literal baseline', async () => {
   const f = await actual(), before = JSON.stringify(f.input), calls = f.base.f.state.calls.length;
-  const result = kernel(f), { cad_recorded_evidence: evidence, ...old } = result;
-  assert.equal(hash(old), '8b523612b40fa3e49efdb0c51cbd4e0e20bd9da75091f10a52539e80b646a742');
+  const result = kernel(f), evidence = result.cad_recorded_evidence;
+  // Recorded from V before housing interpretation; only the mapping4 wrapper
+  // and new housing factor may change. Mapping2/3 full-byte goldens stay below.
+  assert.equal(hash(result.properties.map(({ account_id, factors }) => ({ account_id,
+    gla: factors.gla, age: factors.age, site_size: factors.site_size }))),
+  '640a32fba16c73de8ea06e3fffca9e042e6409151a0a82c58c92ec10b3a45311');
+  assert.equal(hash(evidence), '7309d3214adf0628b896d12bb9314836ecd1e5e7c2bdeb42a9654c36ac9b5692');
+  assert.equal(result.policy.revision, 3);
+  assert.equal(result.evidence_mode, 'recorded_housing_only');
   assert.deepEqual(evidence, baseline(argsOf(f))); verifyCounts(evidence);
   assert.equal(evidence.cad_baseline_version, 1); assert.equal(evidence.mapping_version, 4);
   assert.equal(evidence.binding.captured_at, result.binding.captured_at);
@@ -278,19 +285,26 @@ test('missing or accessor CAD fields reject without evaluating that accessor', a
   }
 });
 
-test('literal evidence changes and inclusion toggles cannot alter existing factor scores or the common CAD baseline', async () => {
+test('conflicting CAD labels remain unscored while other factors and the selection-independent baseline stay intact', async () => {
   const old = kernel(await actual()), changedFixture = await cadEvidenceFixture({ parcelOverrides: {
     class_code: '999', class_description: 'Condominium', use_description: 'Townhome', structure_type: 'Unknown', built_up: true,
   } });
   const changed = kernel(changedFixture);
-  for (const key of ['policy', 'properties', 'pockets', 'all', 'selected', 'recommended_recorded_group_ids', 'unavailable_factors', 'status']) {
+  for (const key of ['policy', 'recommended_recorded_group_ids', 'unavailable_factors', 'status']) {
     assert.deepEqual(changed[key], old[key], key);
+  }
+  assert.deepEqual(changed.all.similarity, old.all.similarity);
+  assert.deepEqual(changed.selected.similarity, old.selected.similarity);
+  for (const row of changed.properties) {
+    const prior = old.properties.find(value => value.account_id === row.account_id);
+    for (const key of ['gla', 'age', 'site_size', 'proximity', 'sale_price']) assert.deepEqual(row.factors[key], prior.factors[key]);
+    assert.deepEqual(row.factors.housing_type, { score: null, state: 'subject_conflicting' });
   }
   const empty = recommendation({ context_ref: changedFixture.input.expected.context_ref, retained_inputs: changedFixture.input.retained_inputs,
     selection: { revision: 77, included_recorded_group_ids: [] } });
   assert.deepEqual(empty.cad_recorded_evidence, changed.cad_recorded_evidence);
   assert.equal(empty.selected.member_count, 0);
-  for (const row of empty.properties) assert.deepEqual(row.factors.housing_type, { score: null, state: 'not_established' });
+  for (const row of empty.properties) assert.deepEqual(row.factors.housing_type, { score: null, state: 'subject_conflicting' });
 });
 
 test('bounded labels and exact maximum UTF8 literals are preserved without display truncation', async () => {

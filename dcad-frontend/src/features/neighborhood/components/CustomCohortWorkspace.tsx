@@ -32,6 +32,10 @@ const idle: CustomCohortPreviewState = { status: 'idle', freshness: 'none', requ
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const boundsLabel = (value: { lower: number | null; upper: number | null }) => value.lower === null || value.upper === null
   ? 'No comparable observations' : `${value.lower.toFixed(1)}–${value.upper.toFixed(1)} / 100`;
+const housingLabels = { detached_single_family: 'Detached single-family', townhouse: 'Townhouse', condominium: 'Condominium',
+  duplex: 'Duplex', apartment: 'Apartment', mobile_home: 'Mobile home', manufactured_home: 'Manufactured home' };
+const housingOrigins = { saved_subject: 'saved subject', retained_subject_public: 'retained public subject observation',
+  current_subject_cad: 'current retained subject CAD' };
 
 /** Independent exploration only. Controlled intent never writes accepted report data.
  * A target, context or session change unmounts all request/map ownership. */
@@ -171,7 +175,9 @@ function WorkspaceSession(props: Props) {
           {recommendation.all.similarity.known_weight_percent === null ? 'unavailable' : `${recommendation.all.similarity.known_weight_percent.toFixed(1)}%`}.</p>
         <p className="text-xs opacity-80">These bounds retain uncertainty from missing data; they are not confidence or reliability scores.
           The fixed initial review policy uses GLA 40%, year-built similarity 30%, housing type 20%, and the remaining factors 10%.
-          {recommendation.recorded_proximity
+          {recommendation.recorded_housing
+            ? ` Recorded housing categories are observations, not verified property classifications.${recommendation.recorded_proximity ? '' : ' Comparable distance is not established here.'} Verified sale consideration is not established here. The map still shows your current inclusion choices.`
+            : recommendation.recorded_proximity
             ? ' Housing taxonomy and verified sale consideration are not established here. The map still shows your current inclusion choices.'
             : ' Housing, comparable distance and verified sale consideration are not established here. The map still shows your current inclusion choices.'}</p>
         {recommendation.recorded_proximity && <p className="text-xs opacity-80">
@@ -182,6 +188,18 @@ function WorkspaceSession(props: Props) {
           {' '}Multiple locations and invalid parcel geometry stay unknown; they are not replaced with a convenient parcel.
           {recommendation.recorded_proximity.status === 'unavailable' && ' Recorded point proximity is unavailable for this captured study.'}
         </p>}
+        {recommendation.recorded_housing && <div className="space-y-1 text-xs opacity-80">
+          <p>Recorded housing observations: {recommendation.recorded_housing.coverage.observed_count.toLocaleString('en-US')} observed /{' '}
+            {recommendation.all.member_count.toLocaleString('en-US')} captured accounts;{' '}
+            {recommendation.recorded_housing.coverage.unknown_count.toLocaleString('en-US')} unknown.</p>
+          <p>Subject category: {recommendation.recorded_housing.subject.category
+            ? housingLabels[recommendation.recorded_housing.subject.category] : 'Unknown'} ({housingOrigins[recommendation.recorded_housing.subject.origin]}).
+            {' '}Housing comparison: {recommendation.all.factor_coverage.housing_type.observed_count.toLocaleString('en-US')} observed /{' '}
+            {recommendation.all.member_count.toLocaleString('en-US')} captured accounts;{' '}
+            {recommendation.all.factor_coverage.housing_type.unknown_count.toLocaleString('en-US')} unknown.</p>
+          <p>Only complete recorded categories are compared: an exact category match contributes to the fixed 20% housing weight; a different category does not.
+            {' '}Missing, unknown, partial and conflicting observations stay unscored. These are not verified housing classifications or historical stock evidence.</p>
+        </div>}
         {recommendation.status === 'insufficient_observations' || !suggested.length
           ? <p className="text-sm">No usable suggested selection is available. Review groups manually; your saved choices have not changed.</p>
           : suggestionActive ? <p className="text-sm">The suggested selection is already active.</p>
@@ -220,7 +238,9 @@ function WorkspaceSession(props: Props) {
             {groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase())).map(p =>
               <div key={p.id} className="flex items-start gap-2 rounded-lg border border-violet-100 p-2">
                 <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
-                <button type="button" className="min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
+                <button type="button" className="custom-cohort-pocket-card min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
+                  style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', justifyItems: 'stretch',
+                    alignItems: 'start', gap: '0.375rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}
                   onClick={() => { if (!inspectionsPaused) setInspected(p.id); }}
                   aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
                   <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
@@ -232,6 +252,10 @@ function WorkspaceSession(props: Props) {
                     {recommendation?.recorded_proximity && <span className="block opacity-75">
                       Recorded point proximity: {reviewById.get(p.id)!.factor_coverage.proximity.observed_count.toLocaleString('en-US')} observed /{' '}
                       {p.count.toLocaleString('en-US')} accounts; {reviewById.get(p.id)!.factor_coverage.proximity.unknown_count.toLocaleString('en-US')} unknown.
+                    </span>}
+                    {recommendation?.recorded_housing && <span className="block opacity-75">
+                      Recorded housing comparison: {reviewById.get(p.id)!.factor_coverage.housing_type.observed_count.toLocaleString('en-US')} observed /{' '}
+                      {p.count.toLocaleString('en-US')} accounts; {reviewById.get(p.id)!.factor_coverage.housing_type.unknown_count.toLocaleString('en-US')} unknown.
                     </span>}
                   </span>}</button>
               </div>)}

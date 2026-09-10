@@ -17,7 +17,8 @@ import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAs
  * fixture, not a production schema/rights oracle. The caller creates/guards the
  * child database. No connection creation, cleanup, external data or mocked SQL.
  */
-export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery }) {
+export async function checkCustomCohortReportedProposalDatabase({ pool, databaseName, discovery, recordedHousing = false }) {
+  assert.equal(typeof recordedHousing, 'boolean');
   const choice = discovery === undefined ? null : prepareNeighborhoodDiscoveryChoice(discovery);
   // The optional case adds a genuinely distant parcel, not a relabeled v1
   // capture. Keep this fixture bounded to its specified five-mile regression.
@@ -64,15 +65,18 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     await client.query("INSERT INTO gis.source_sync_runs(id,source_key,mode,status,started_at,completed_at) VALUES($1,'dcad_parcels','full','complete',now()-interval '1 second',now())", [sync]);
     await client.query("INSERT INTO gis.source_sync_state(source_key,status,row_count,last_run_id,last_success_at) VALUES('dcad_parcels','current',2,$1,now())", [sync]);
     for (const [index, id] of [account, other].entries()) await client.query(`INSERT INTO gis.dcad_parcels
-      (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,source_record_hash,sync_run_id,synced_at,geom)
-      VALUES($1,$2,2000,2000,8000,$3,$4,now(),ST_Multi(ST_Translate(ST_GeomFromText('POLYGON((-96.7 32.8,-96.699 32.8,-96.699 32.801,-96.7 32.801,-96.7 32.8))',4326),$5,0)))`,
-    [index + 1, id, hash, sync, index * 0.005]);
+      (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,source_record_hash,sync_run_id,synced_at,geom,class_code,class_description,structure_type)
+      VALUES($1,$2,2000,2000,8000,$3,$4,now(),ST_Multi(ST_Translate(ST_GeomFromText('POLYGON((-96.7 32.8,-96.699 32.8,-96.699 32.801,-96.7 32.801,-96.7 32.8))',4326),$5,0)),$6,$7,$8)`,
+    [index + 1, id, hash, sync, index * 0.005, recordedHousing ? (index ? '2' : '1') : null,
+      recordedHousing ? (index ? 'SFR - TOWNHOUSES  ' : 'SINGLE FAMILY RESIDENCES  ') : null,
+      recordedHousing ? (index ? 'TWO STORIES' : 'ONE STORY') : null]);
     if (expandedAccount) {
       await client.query(`INSERT INTO gis.dcad_parcels
-        (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,source_record_hash,sync_run_id,synced_at,geom)
+        (object_id,account_id,residential_year_built,residential_area_sqft,parcel_area_sqft,source_record_hash,sync_run_id,synced_at,geom,class_code,class_description,structure_type)
         VALUES(3,$1,1990,4000,16000,$2,$3,now(),ST_Multi(ST_Buffer(ST_Project(
-          ST_SetSRID(ST_MakePoint(-96.6995,32.8005),4326)::geography,$4::double precision,pi()/2),10)::geometry))`,
-      [expandedAccount, 'b'.repeat(64), sync, 4 * 1609.344]);
+          ST_SetSRID(ST_MakePoint(-96.6995,32.8005),4326)::geography,$4::double precision,pi()/2),10)::geometry),$5,$6,$7)`,
+      [expandedAccount, 'b'.repeat(64), sync, 4 * 1609.344,
+        recordedHousing ? '1' : null, recordedHousing ? 'SINGLE FAMILY RESIDENCES  ' : null, recordedHousing ? 'ONE STORY' : null]);
       await client.query("UPDATE gis.source_sync_state SET row_count=3 WHERE source_key='dcad_parcels' AND last_run_id=$1", [sync]);
     }
     await client.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type,source_record_hash,close_date,current_price,living_area,year_built,days_on_market,loaded_at)

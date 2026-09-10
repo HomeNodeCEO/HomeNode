@@ -56,8 +56,9 @@ explicit incomplete result, not a successful prefix of a larger population.
 This profile deliberately does not create report geography from a circle,
 parcel union, pocket hull or guessed cardinal road name. The owner can now supply
 an exact [saved manual outline](custom-neighborhood-manual-report-geography.md).
-That preserves genuine drawing intent and native validity observations, but does
-not establish named perimeter edges, subject containment or source applicability.
+That preserves genuine drawing intent, native validity and the relation to the
+exact retained subject centroid, but does not establish named perimeter edges,
+complete subject-parcel containment or source applicability.
 The geographic group therefore remains incomplete.
 
 Retained field-specific reviewer assertions also do not establish a whole

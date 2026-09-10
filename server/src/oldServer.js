@@ -58,6 +58,7 @@ import { createReportManualValuesRouter } from "./modules/accounts/reportManualV
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mutationRouter.js";
 import { createAssignmentDocumentRouter } from "./modules/assignmentFiles/documentRouter.js";
+import { createAssignmentSalesImportRouter } from "./modules/assignmentFiles/salesImportRouter.js";
 import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
 import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
 import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
@@ -571,6 +572,8 @@ app.use(createAssignmentDocumentRouter({
   authenticationRequired: applicationAuthenticationRequired,
   ocrProvider: documentOcrProvider,
 }));
+
+app.use(createAssignmentSalesImportRouter({ pool }));
 
 app.use(createSalesMediaRouter({ pool }));
 

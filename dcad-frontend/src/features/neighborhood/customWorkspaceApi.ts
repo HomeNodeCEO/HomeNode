@@ -27,6 +27,23 @@ class WorkspaceApiError extends Error {
     super(`custom_workspace_${code}`); this.workspaceCode = code; this.status = status;
   }
 }
+const CAPTURE_FAILURES = new Map<string, readonly [number, string]>([
+  ['authentication_required', [401, 'capture_authentication_required']],
+  ['neighborhood_access_denied', [403, 'capture_access_denied']],
+  ['custom_neighborhood_workspace_disabled', [503, 'capture_disabled']],
+  ['neighborhood_context_unavailable', [404, 'capture_context_unavailable']],
+  ['neighborhood_source_unavailable', [422, 'capture_source_unavailable']],
+  ['neighborhood_private_source_review_required', [422, 'capture_private_source_review_required']],
+  ['neighborhood_private_source_limit', [422, 'capture_private_source_limit']],
+  ['neighborhood_private_review_changed', [409, 'capture_private_review_changed']],
+  ['neighborhood_private_source_read_only', [409, 'capture_private_source_read_only']],
+  ['neighborhood_operation_conflict', [409, 'capture_operation_conflict']],
+  ['neighborhood_subject_changed', [409, 'capture_subject_changed']],
+  ['neighborhood_target_changed', [409, 'capture_target_changed']],
+  ['neighborhood_market_policy_changed', [409, 'capture_market_policy_changed']],
+  ['neighborhood_operation_outcome_unknown', [409, 'capture_outcome_unknown']],
+  ['neighborhood_request_interrupted', [503, 'capture_interrupted']],
+]);
 const requireThat: (ok: unknown, code: string) => asserts ok = (ok, code) => {
   if (!ok) throw new WorkspaceApiError(code);
 };
@@ -153,12 +170,14 @@ export function createCustomWorkspaceApi(options: Options) {
             ...(selected ? { private_sales_import: value.pending_capture!.private_sales_import } : {}),
             ...(expanded ? { discovery: value.pending_capture!.discovery } : {}) }, io));
         } catch (error) {
-          // Only these fixed city-capture refusals are user-facing. No raw server
-          // details, source paths or unknown error vocabulary leave this boundary.
-          if (value.pending_capture!.discovery?.profile_id === 'custom-city-polygon-v1'
-            && error instanceof Error && 'status' in error && error.status === 422) {
-            if (error.message === 'neighborhood_city_subject_outside_scope') throw new WorkspaceApiError('city_subject_outside_scope', 422);
-            if (error.message === 'neighborhood_city_source_unavailable') throw new WorkspaceApiError('city_source_unavailable', 422);
+          // Capture only: no report/section/preview error behavior is widened.
+          if (error instanceof Error && 'status' in error && 'errorCode' in error && typeof error.errorCode === 'string') {
+            const known = CAPTURE_FAILURES.get(error.errorCode);
+            if (known && error.status === known[0]) throw new WorkspaceApiError(known[1], known[0]);
+            if (value.pending_capture!.discovery?.profile_id === 'custom-city-polygon-v1' && error.status === 422) {
+              if (error.errorCode === 'neighborhood_city_subject_outside_scope') throw new WorkspaceApiError('city_subject_outside_scope', 422);
+              if (error.errorCode === 'neighborhood_city_source_unavailable') throw new WorkspaceApiError('city_source_unavailable', 422);
+            }
           }
           throw error;
         }

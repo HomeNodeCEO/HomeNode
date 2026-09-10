@@ -1,6 +1,7 @@
 import express from 'express';
 import { environmentFlag } from '../util/requestPerformance.js';
 import { createCustomNeighborhoodSourcePolicy } from '../security/customNeighborhoodSourcePolicy.js';
+import { authorizeCustomNeighborhoodPrivateSales } from '../security/customNeighborhoodPrivateSalesPolicy.js';
 import { jsonErrorHandler } from '../security/httpSecurity.js';
 import { createCustomCohortContextCapture } from '../services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomNeighborhoodCohortRouter } from '../modules/accounts/customNeighborhoodCohortRouter.js';
@@ -57,7 +58,8 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
       authorizeMarketData = createCustomNeighborhoodSourcePolicy(configuration.sourceProfile);
     } catch { throw invalidConfiguration(); }
     // Keep the installed owner's current mapping2 producer and real scoped policy.
-    cohortService = createCustomCohortContextCapture({ pool, authorizeMarketData });
+    cohortService = createCustomCohortContextCapture({ pool, authorizeMarketData,
+      authorizePrivateSales: authorizeCustomNeighborhoodPrivateSales });
   }
   const router = express.Router();
   // Global JSON errors precede authentication by existing application design.

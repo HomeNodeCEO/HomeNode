@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import { privateSalesSummaryFixture } from './fixtures/customPrivateSalesSummaryFixture.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
 function compile(name, imports) {
@@ -53,6 +54,10 @@ const drain = async () => { for (let i = 0; i < 24; i++) await Promise.resolve()
 function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000, onChange } = {}) {
   const calls = [], states = [], timers = new Map(); let clock = 100, timerId = 0, ids = 0, open = 0, maxOpen = 0;
   const db = { section: copy(initialSection) };
+  const privateBindings = new Map();
+  if (initialSection?.value?.pending_capture?.private_sales_import) {
+    const pending = initialSection.value.pending_capture; privateBindings.set(pending.operation_id, pending);
+  }
   const commit = input => {
     assert.equal(input.sectionKey, 'neighborhood_workspace');
     assert.deepEqual(input.target, TARGET);
@@ -62,6 +67,8 @@ function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000,
   };
   const invoke = async (kind, input, options, fn) => {
     calls.push({ kind, input: copy(input), signal: options.signal, deadline: options.deadline });
+    if (kind === 'capture' && input.privateSalesImport) privateBindings.set(input.operationId,
+      { private_sales_import: input.privateSalesImport, observation_period: input.observationPeriod });
     assert.ok(options.signal instanceof AbortSignal && Number.isFinite(options.deadline) && options.deadline > clock);
     open += 1; maxOpen = Math.max(maxOpen, open);
     try { return await fn(input, options); } finally { open -= 1; }
@@ -72,13 +79,199 @@ function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000,
     onChange: value => { states.push(value); onChange?.(value); },
     save: (input, options) => invoke('save', input, options, save ? (value, opts) => save(value, opts, commit) : commit),
     capture: (input, options) => invoke('capture', input, options, capture ?? captured),
-    catalog: (input, options) => invoke('catalog', input, options, loadCatalog ?? catalog),
+    catalog: (input, options) => invoke('catalog', input, options, loadCatalog ?? (request => {
+      const response = catalog(request), pending = privateBindings.get(request.contextRef.context_id);
+      if (pending) {
+        response.private_sales = privateSalesSummaryFixture({ input: request, privateSalesImport: pending.private_sales_import, period: pending.observation_period });
+        response.catalog.binding.selection_sha256 = response.private_sales.binding.selection_sha256;
+      }
+      return response;
+    })),
   });
   return { controller, db, calls, states, timers, get ids() { return ids; }, get maxOpen() { return maxOpen; },
     reload: () => controller.reload({ target: copy(TARGET), section: copy(db.section) }),
     expire() { clock += timeoutMs; for (const fn of [...timers.values()]) fn(); } };
 }
 const rejects = (promise, code) => assert.rejects(promise, error => error.workspaceCode === code);
+const PRIVATE = Object.freeze({ batch_id: '20000000-0000-4000-8000-000000000003', expected_review_revision: 7 });
+const privateCaptured = input => ({ ...captured(input), private_sales_import: copy(input.privateSalesImport) });
+
+const pendingSection = (active = true) => ({ revision: 6, value: { workspace_version: 2,
+  active: active ? activeSection().value.active : null,
+  pending_capture: { operation_id: OPERATION, observation_period: PERIOD, private_sales_import: PRIVATE } } });
+for (const [label, mutate] of [
+  ['missing', r => { delete r.private_sales; }],
+  ['wrong batch', r => { r.private_sales.binding.batch.batch_id = OLD; }],
+  ['newer review', r => { r.private_sales.binding.review.revision++; }],
+  ['other observation period', r => { r.private_sales.observation_period.start_date = '2022-01-01'; }],
+]) test(`private catalog ${label} never saves an active context even with correct capture echo`, async () => {
+  const h = harness({ capture: privateCaptured, loadCatalog(input) {
+    const result = catalog(input); result.private_sales = copy(privateSalesSummaryFixture({ input, privateSalesImport: PRIVATE, period: PERIOD }));
+    result.catalog.binding.selection_sha256 = result.private_sales.binding.selection_sha256; mutate(result); return result;
+  } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'catalog_private_sales_mismatch');
+  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1); assert.equal(h.controller.getState().recovery, 'resume_pending');
+});
+test('ordinary capture cannot silently activate a catalog carrying a private source', async () => {
+  const h = harness({ loadCatalog(input) { const result = catalog(input);
+    result.private_sales = privateSalesSummaryFixture({ input, privateSalesImport: PRIVATE, period: PERIOD });
+    result.catalog.binding.selection_sha256 = result.private_sales.binding.selection_sha256; return result; } });
+  await rejects(h.controller.start(PERIOD), 'catalog_private_sales_mismatch');
+  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1);
+});
+test('explicit set aside saves only pending=null by section CAS, preserving exact active selection and context', async () => {
+  const initial = pendingSection(), h = harness({ initialSection: initial });
+  const ready = await h.controller.setAsidePending();
+  assert.deepEqual(h.calls.map(c => c.kind), ['save', 'catalog']); assert.equal(h.calls[0].input.expectedRevision, 6);
+  assert.deepEqual(ready.checkpoint, { ...initial.value, pending_capture: null });
+  assert.deepEqual(ready.selection.pockets[0].account_ids, ['B']); assert.equal(ready.section_revision, 7);
+  assert.equal(ready.status, 'ready'); assert.equal(h.ids, 0); assert.equal(h.maxOpen, 1);
+});
+test('set aside with no active context returns idle and permits a later deliberate new source choice', async () => {
+  const h = harness({ initialSection: pendingSection(false), capture: privateCaptured });
+  assert.equal((await h.controller.setAsidePending()).status, 'idle');
+  const changed = { ...PRIVATE, expected_review_revision: 8 }; await h.controller.start(PERIOD, changed);
+  assert.deepEqual(h.calls.find(c => c.kind === 'capture').input.privateSalesImport, changed);
+});
+test('lost clear acknowledgement blocks all replacement intent until fresh exact saved-clear read', async () => {
+  let first = true; const h = harness({ initialSection: pendingSection(), capture: privateCaptured,
+    save(input, opts, commit) { const result = commit(input); if (first) { first = false; throw new Error('lost clear acknowledgement'); } return result; } });
+  await rejects(h.controller.setAsidePending(), 'operation_failed');
+  assert.equal(h.controller.getState().checkpoint.pending_capture.operation_id, OPERATION);
+  await rejects(h.controller.start(PERIOD, { ...PRIVATE, expected_review_revision: 8 }), 'recovery_required');
+  await rejects(h.controller.setAsidePending(), 'recovery_required');
+  await h.reload(); assert.equal(h.controller.getState().status, 'ready'); assert.equal(h.controller.getState().checkpoint.pending_capture, null);
+  await h.controller.start(PERIOD, { ...PRIVATE, expected_review_revision: 8 });
+  assert.equal(h.calls.filter(c => c.kind === 'capture').length, 1);
+});
+test('lost clear followed by fresh absent/older read cannot erase the unresolved capture identity', async () => {
+  const h = harness({ initialSection: pendingSection(), save() { throw new Error('unknown clear'); } });
+  await rejects(h.controller.setAsidePending(), 'operation_failed');
+  await h.controller.reload({ target: TARGET, section: undefined });
+  assert.equal(h.controller.getState().recovery, 'reload'); assert.equal(h.controller.getState().error, 'pending_clear_unconfirmed');
+  await rejects(h.controller.start(PERIOD), 'recovery_required'); await rejects(h.controller.resumePending(), 'recovery_required');
+  assert.equal(h.calls.length, 1); assert.equal(h.ids, 0);
+});
+test('fresh still-pending read permits explicit same-revision CAS clear retry, never an automatic one', async () => {
+  let first = true; const h = harness({ initialSection: pendingSection(), save(input, opts, commit) {
+    if (first) { first = false; throw new Error('unknown clear'); } return commit(input); } });
+  await rejects(h.controller.setAsidePending(), 'operation_failed'); await h.reload();
+  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1); assert.ok(h.controller.getState().checkpoint.pending_capture);
+  await h.controller.setAsidePending(); assert.equal(h.db.section.value.pending_capture, null);
+  assert.deepEqual(h.calls.filter(c => c.kind === 'save').map(c => c.input.expectedRevision), [6, 6]);
+});
+test('set aside refuses an inflight capture and an unacknowledged pending save before fresh reload', async () => {
+  const held = deferred(), h = harness({ initialSection: pendingSection(), capture: () => held.promise });
+  const capture = h.controller.resumePending(); await drain(); await rejects(h.controller.setAsidePending(), 'busy');
+  held.resolve(privateCaptured(h.calls[0].input)); await capture;
+  await rejects(h.controller.setAsidePending(), 'pending_capture_required');
+  const uncertain = harness({ save() { throw new Error('lost pending'); } });
+  await rejects(uncertain.controller.start(PERIOD, PRIVATE), 'operation_failed');
+  await rejects(uncertain.controller.setAsidePending(), 'recovery_required'); await uncertain.reload();
+  assert.equal(uncertain.controller.getState().recovery, 'resume_pending');
+});
+test('another tab active revision cannot be overwritten by set aside; disposal ignores late clear acknowledgement', async () => {
+  const h = harness({ initialSection: pendingSection() }); h.db.section = activeSection(); h.db.section.revision = 7;
+  await rejects(h.controller.setAsidePending(), 'operation_failed'); assert.deepEqual(h.db.section.value, activeSection().value);
+  const held = deferred(), late = harness({ initialSection: pendingSection(), save: async (input, opts, commit) => { await held.promise; return commit(input); } });
+  const operation = late.controller.setAsidePending(), rejected = rejects(operation, 'cancelled_or_timed_out'); await drain();
+  late.controller.dispose(); await rejected; const stateCount = late.states.length; held.resolve(); await drain();
+  assert.equal(late.states.length, stateCount); assert.equal(late.calls.length, 1); assert.equal(late.controller.getState().status, 'disposed');
+});
+
+test('private start saves version2 pending exact batch/review before capture and catalog; old active remains until completion', async () => {
+  const initial = activeSection(), held = deferred(); let first = true;
+  const selected = copy(PRIVATE), h = harness({ initialSection: initial, capture: privateCaptured,
+    save: async (input, options, commit) => { if (first) { first = false; await held.promise; } return commit(input); } });
+  const task = h.controller.start(PERIOD, selected); selected.expected_review_revision = 8; await drain();
+  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].input.value.workspace_version, 2);
+  assert.deepEqual(h.calls[0].input.value.active, initial.value.active);
+  assert.deepEqual(h.calls[0].input.value.pending_capture.private_sales_import, PRIVATE);
+  held.resolve(); const result = await task;
+  assert.deepEqual(h.calls.map(call => call.kind), ['save', 'capture', 'catalog', 'save']);
+  assert.deepEqual(h.calls[1].input.privateSalesImport, PRIVATE); assert.equal(h.calls[1].input.operationId, OPERATION);
+  assert.equal(result.checkpoint.workspace_version, 2); assert.equal(result.checkpoint.pending_capture, null);
+  assert.deepEqual(Object.keys(result.checkpoint.active).sort(), ['context_ref', 'observation_period', 'selection']);
+  assert.equal(h.maxOpen, 1); assert.equal(h.ids, 1);
+  await h.controller.setGroups([]); assert.deepEqual(h.controller.getState().selection.pockets, []);
+  assert.equal(h.db.section.value.workspace_version, 2);
+});
+
+test('stored private pending resumes same UUID/revision after a fresh lifecycle without generating an operation', async () => {
+  const value = { workspace_version: 2, active: null, pending_capture: { operation_id: OPERATION,
+    observation_period: PERIOD, private_sales_import: PRIVATE } };
+  const h = harness({ initialSection: { revision: 1, value }, capture: privateCaptured });
+  const ready = await h.controller.resumePending();
+  assert.deepEqual(h.calls.map(call => call.kind), ['capture', 'catalog', 'save']);
+  assert.deepEqual(h.calls[0].input, { target: TARGET, operationId: OPERATION, observationPeriod: PERIOD, privateSalesImport: PRIVATE });
+  assert.equal(h.ids, 0); assert.equal(ready.status, 'ready');
+  const reopened = harness({ initialSection: h.db.section }); await reopened.controller.reopen();
+  assert.deepEqual(reopened.calls.map(call => call.kind), ['catalog']); assert.equal(reopened.ids, 0);
+});
+
+test('uncertain private pending save preserves batch/revision and UUID even after fresh absent read', async () => {
+  let first = true; const h = harness({ capture: privateCaptured,
+    save(input, options, commit) { if (first) { first = false; throw new Error('synthetic pending save unknown'); } return commit(input); } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'operation_failed');
+  await h.reload(); assert.equal(h.controller.getState().recovery, 'resume_pending');
+  for (const changed of [undefined, { ...PRIVATE, expected_review_revision: 8 }, { ...PRIVATE, batch_id: OLD }])
+    await assert.rejects(h.controller.start(PERIOD, changed));
+  assert.equal(h.calls.length, 1); assert.equal(h.ids, 1);
+  await h.controller.resumePending(); assert.deepEqual(h.calls.find(call => call.kind === 'capture').input.privateSalesImport, PRIVATE);
+  assert.deepEqual(h.calls.filter(call => call.kind === 'save').slice(0, 2).map(call => call.input.value.pending_capture.private_sales_import), [PRIVATE, PRIVATE]);
+});
+
+test('private capture lost acknowledgement reuses exact saved tuple, not the current review revision', async () => {
+  let first = true; const h = harness({ capture(input) {
+    if (first) { first = false; throw new Error('synthetic capture commit lost acknowledgement'); }
+    return { ...privateCaptured(input), reused: true };
+  } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'operation_failed'); await h.controller.resumePending();
+  const captures = h.calls.filter(call => call.kind === 'capture'); assert.equal(captures.length, 2);
+  assert.deepEqual(captures[0].input, captures[1].input); assert.equal(h.ids, 1);
+});
+
+test('lost private active-save acknowledgement reconciles only the exact acknowledged immutable context', async () => {
+  let saves = 0; const h = harness({ capture: privateCaptured, save(input, options, commit) {
+    const result = commit(input); if (++saves === 2) throw new Error('synthetic active save unknown'); return result;
+  } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'operation_failed');
+  assert.equal((await h.reload()).status, 'ready'); assert.equal(h.calls.filter(call => call.kind === 'capture').length, 1);
+  assert.equal(h.ids, 1);
+});
+
+test('same UUID but no acknowledged private context cannot erase source uncertainty on active reload', async () => {
+  const h = harness({ capture: privateCaptured, save() { throw new Error('synthetic pending save unknown'); } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'operation_failed');
+  h.db.section = activeSection(); h.db.section.value.active.context_ref = context(OPERATION);
+  await h.reload(); assert.equal(h.controller.getState().recovery, 'resume_pending');
+  assert.equal(h.controller.getState().error, 'pending_save_unconfirmed'); assert.equal(h.calls.filter(call => call.kind === 'capture').length, 0);
+});
+
+for (const [name, mutate] of [
+  ['missing echo', result => { delete result.private_sales_import; }], ['null echo', result => { result.private_sales_import = null; }],
+  ['wrong batch', result => { result.private_sales_import.batch_id = OLD; }],
+  ['newer revision', result => { result.private_sales_import.expected_review_revision++; }],
+  ['string revision', result => { result.private_sales_import.expected_review_revision = '7'; }],
+  ['authority extra', result => { result.private_sales_import.source_use_confirmed = true; }],
+]) test(`private ${name} cannot be saved as active or acquire its catalog`, async () => {
+  const h = harness({ capture(input) { const result = privateCaptured(input); mutate(result); return result; } });
+  await rejects(h.controller.start(PERIOD, PRIVATE), 'capture_private_sales_mismatch');
+  assert.deepEqual(h.calls.map(call => call.kind), ['save', 'capture']);
+  assert.equal(h.db.section.value.active, null); assert.deepEqual(h.db.section.value.pending_capture.private_sales_import, PRIVATE);
+});
+
+test('ordinary capture never silently adopts an unexpected private source', async () => {
+  const h = harness({ capture: input => ({ ...captured(input), private_sales_import: PRIVATE }) });
+  await rejects(h.controller.start(PERIOD), 'capture_private_sales_mismatch'); assert.equal(h.calls.length, 2);
+});
+
+test('invalid private intent fails before UUID generation or database calls', async () => {
+  for (const selected of [null, {}, { ...PRIVATE, expected_review_revision: 0 }, { ...PRIVATE, expected_review_revision: '7' },
+    { ...PRIVATE, batch_id: 'latest' }, { ...PRIVATE, retained_rows: [] }]) {
+    const h = harness(); await assert.rejects(h.controller.start(PERIOD, selected)); assert.equal(h.ids, 0); assert.equal(h.calls.length, 0);
+  }
+});
 
 test('start persists pending before capture and exact catalog before default-all active save', async () => {
   const h = harness(), result = await h.controller.start(PERIOD);

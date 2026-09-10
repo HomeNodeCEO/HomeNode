@@ -269,3 +269,15 @@ test('automatic reads and host props introduce no print listener, guessed date, 
   assert.doesNotMatch(source, /addEventListener\(['"](?:beforeprint|homenode:prepare-report)|localStorage|new Date\(/);
   assert.doesNotMatch(source, /neighborhood_assessment|assignment_details|onAccepted|setAssignmentDraft|requestEditorCredential/);
 });
+
+test('private capture delegates only to current mounted draft controls and respects save/session barriers', async t => {
+  const h = harness(t); await h.settle(); const calls = [], old = h.view;
+  const reference = { batch_id: '20000000-0000-4000-8000-000000000001', expected_review_revision: 3 };
+  assert.equal(await old.useReviewedSales(reference), false);
+  const owner = h.mountControls(); owner.controls.useReviewedSales = async value => { calls.push(copy(value)); return true; };
+  assert.equal(await h.view.useReviewedSales(reference), true); assert.deepEqual(calls, [reference]);
+  const lease = h.view.beginSaveBarrier(); assert.ok(lease);
+  assert.equal(await h.view.useReviewedSales(reference), false); lease.release();
+  const changed = copy(h.props); changed.accountId = 'OTHER'; h.render(changed);
+  assert.equal(await old.useReviewedSales(reference), false); assert.equal(calls.length, 1);
+});

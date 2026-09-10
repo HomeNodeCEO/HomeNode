@@ -13,6 +13,7 @@ import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
+import { prepareCustomCohortPrivateSalesSupplement } from './customCohortPrivateSales.js';
 
 export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
   blobs: 4000, references: 12000, logical_utf8_bytes: 192_000_000, page_entries: 250,
@@ -105,12 +106,12 @@ function planBuilder() {
     return ref;
   };
   const add = (value, alreadyStored = false, hasReferenceEdges = true) => text(json(value), alreadyStored, hasReferenceEdges);
-  const pages = (kind, entries, maximum) => {
+  const pages = (kind, entries, maximum, hasReferenceEdges = true) => {
     array(entries, maximum);
     const refs = []; let batch = [], size = 200;
     const flush = () => {
       refs.push({ page_index: String(refs.length), entry_count: String(batch.length),
-        page: add({ collection_version: 1, kind, page_index: String(refs.length), entries: batch }) });
+        page: add({ collection_version: 1, kind, page_index: String(refs.length), entries: batch }, false, hasReferenceEdges) });
       batch = []; size = 200;
     };
     for (const entry of entries) {
@@ -220,7 +221,9 @@ function validateSources(capture, request, compact) {
  * checks preserve and bind bytes; they cannot manufacture original provenance,
  * source eligibility, permission or a current context from caller hashes. */
 export function prepareCustomCohortCaptureInputs(input) {
-  closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at']);
+  const hasPrivate = Object.hasOwn(input, 'private_sales');
+  closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at',
+    ...(hasPrivate ? ['private_sales'] : [])]);
   const { acquisition, spatial, subject, subject_reference: subjectRef, selector, study, acquisition_intent: intent } = input;
   closed(acquisition, ['version', 'provenance', 'authority', 'captured_query_request', 'compact_metadata_json', 'capture_result']);
   check(acquisition.version === 1 && acquisition.provenance === 'original_cached_reader_invocation' && acquisition.authority === 'not_established');
@@ -247,13 +250,29 @@ export function prepareCustomCohortCaptureInputs(input) {
   check(study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 && study.knowledge_cutoff === null
     && request.knowledge_cutoff === null && same(study.observation_period, request.observation_period));
   closed(intent, ['reference', 'body']);
-  closed(intent.body, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at']);
-  check(intent.body.intent_version === 1 && UUID.test(intent.body.operation_id) && typeof intent.body.actor_user_id === 'string'
+  closed(intent.body, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at',
+    ...(hasPrivate ? ['private_sales_import'] : [])]);
+  check(intent.body.intent_version === (hasPrivate ? 2 : 1) && UUID.test(intent.body.operation_id) && typeof intent.body.actor_user_id === 'string'
     && intent.body.actor_user_id.trim().length > 0 && intent.body.actor_user_id.length <= 200
     && same(intent.body.subject_inputs, subjectRef) && same(intent.body.target, subject.target)
     && intent.body.effective_date === subject.effective_date && same(intent.body.study, study));
   check(same(b.add(intent.body, true), reference(intent.reference)));
   check(timestamp(intent.body.created_at) <= timestamp(input.started_at) && input.started_at <= timestamp(input.completed_at), 'chronology_mismatch');
+  let privateDirectory = null;
+  if (hasPrivate) {
+    closed(input.private_sales, ['capture', 'authorization']);
+    const supplement = prepareCustomCohortPrivateSalesSupplement(input.private_sales.capture);
+    const authorization = input.private_sales.authorization;
+    closed(authorization, ['decision_id', 'policy_revision']);
+    check(['decision_id', 'policy_revision'].every(key => typeof authorization[key] === 'string'
+      && authorization[key].length > 0 && authorization[key].length <= 1000), 'private_authorization_invalid');
+    check(same(supplement.target, scope) && same(intent.body.private_sales_import, {
+      batch_id: supplement.batch.batch_id, expected_review_revision: supplement.review.revision }), 'private_binding_mismatch');
+    check(input.started_at <= timestamp(supplement.captured_at) && supplement.captured_at <= input.completed_at, 'chronology_mismatch');
+    privateDirectory = { metadata: b.add(omit(supplement, ['rows'])), authorization: b.add(authorization),
+      // Raw CSV cells are evidence, never edges in the content-addressed graph.
+      rows: b.pages('private_sales_rows', supplement.rows, 10000, false) };
+  }
   const compact = JSON.parse(acquisition.compact_metadata_json);
   check(input.started_at <= timestamp(compact.capture_observed_at) && compact.capture_observed_at <= input.completed_at
     && timestamp(spatial.snapshot.transaction_started_at) <= input.started_at, 'chronology_mismatch');
@@ -286,7 +305,7 @@ export function prepareCustomCohortCaptureInputs(input) {
   const studyInput = b.add({ study_input_version: 1, usage: 'retained_custom_study_settings', target: subject.target,
     effective_date: subject.effective_date, settings: study, source_semantics: compact.semantics, eligibility: 'not_established' });
   const capture = result.source_capture;
-  const selectionInput = b.add({ selection_input_version: 1, usage: 'retained_original_custom_capture_inputs',
+  const selectionInput = b.add({ selection_input_version: hasPrivate ? 2 : 1, usage: 'retained_original_custom_capture_inputs',
     subject_inputs: subjectRef, acquisition_intent: intent.reference, started_at: input.started_at, completed_at: input.completed_at,
     query_inputs: queryRef, compact_metadata: b.text(acquisition.compact_metadata_json),
     acquisition_metadata: b.add(omit(acquisition, ['captured_query_request', 'compact_metadata_json', 'capture_result'])),
@@ -305,7 +324,8 @@ export function prepareCustomCohortCaptureInputs(input) {
       payloads: b.pages('source_payloads', capture.sources.map(source => ({ id: source.id, payload: b.add(source.payload, false, false) })), L.source_chunks),
       snapshots: b.pages('source_snapshots', capture.source_snapshots, L.source_chunks),
       routing: b.pages('source_routing', capture.references.map(route => ({ ...omit(route, ['record_sources']),
-        record_sources: b.pages(`routing_${route.capture_id}`, route.record_sources, L.source_records) })), 32) } });
+        record_sources: b.pages(`routing_${route.capture_id}`, route.record_sources, L.source_records) })), 32) },
+    ...(hasPrivate ? { private_sales: privateDirectory } : {}) });
   const refs = { snapshot_evidence: subject.snapshot_evidence, subject_dependencies: subjectDependencies,
     selection_input: selectionInput, study_input: studyInput };
   for (const ref of Object.values(refs)) b.ref(ref);
@@ -376,7 +396,8 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
     check(entries.length === Number(manifest.entry_count), 'invalid_directory'); return entries;
   };
   const selection = await read(refs.selection_input), studyBlob = await read(refs.study_input);
-  check(selection.selection_input_version === 1 && selection.usage === 'retained_original_custom_capture_inputs');
+  check([1, 2].includes(selection.selection_input_version) && selection.usage === 'retained_original_custom_capture_inputs');
+  check(Object.hasOwn(selection, 'private_sales') === (selection.selection_input_version === 2), 'private_binding_mismatch');
   await read(refs.snapshot_evidence);
   const dependencies = await read(refs.subject_dependencies);
   closed(dependencies, ['subject_dependencies_version', 'usage', 'subject_inputs', 'material_input', 'material_profile', 'recorded_point']);
@@ -421,6 +442,12 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
       account_roster: { ...await read(selection.selector.roster_metadata), account_ids: await pages(selection.selector.account_ids, 'selector_accounts', L.accounts) } },
     study: studyBlob.settings, acquisition_intent: { reference: selection.acquisition_intent, body: await read(selection.acquisition_intent) },
     started_at: selection.started_at, completed_at: selection.completed_at };
+  if (selection.selection_input_version === 2) {
+    closed(selection.private_sales, ['metadata', 'authorization', 'rows']);
+    input.private_sales = { capture: { ...await read(selection.private_sales.metadata),
+      rows: await pages(selection.private_sales.rows, 'private_sales_rows', 10000) },
+    authorization: await read(selection.private_sales.authorization) };
+  }
   const checked = prepareCustomCohortCaptureInputs(input);
   check(same(checked.refs, refs), 'stored_graph_mismatch');
   check(await transaction(client) === started, 'caller_transaction_required');

@@ -1,7 +1,8 @@
 import type { CustomCohortPreviewGroup, CustomCohortPreviewState } from '../customCohortPreviewController';
+import CustomCohortPrivateSalesStatistics from './CustomCohortPrivateSalesStatistics';
 
 interface Props {
-  group: Pick<CustomCohortPreviewGroup, 'binding' | 'summary'> | null;
+  group: Pick<CustomCohortPreviewGroup, 'binding' | 'summary' | 'private_sales'> | null;
   freshness: CustomCohortPreviewState['freshness'];
   pocketId?: string | null;
   selectedOnly?: boolean;
@@ -88,6 +89,7 @@ export default function CustomCohortStatistics({ group, freshness, pocketId, sel
     </div>
     {pocketId && (pocket ? <Population value={pocket.result} title={`Inspected group: ${text(pocket.label)}`} />
       : <p role="status" className="rounded-lg border border-amber-200 p-3 text-sm">This group's statistics are not part of the displayed result. Inspect it separately; inclusion has not been changed.</p>)}
+    {group.private_sales && <CustomCohortPrivateSalesStatistics observations={group.private_sales} freshness={freshness} selectedOnly={selectedOnly} />}
     <p className="text-xs text-slate-600">Median is a descriptive midpoint, not a supported predominant value. COD describes dispersion, not reliability. Similarity, housing eligibility, market eligibility, trends, and report readiness have not been established. Missing values remain unavailable. This preview cannot be applied to the report.</p>
   </section>;
 }

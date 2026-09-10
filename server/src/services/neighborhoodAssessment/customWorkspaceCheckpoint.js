@@ -10,6 +10,7 @@ export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
 });
 const UNASSIGNED = 'discovery:unassigned';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const BATCH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const RECORDED_GROUP = /^recorded-cad:[a-f0-9]{64}$/;
 const LIMITS = CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS;
 
@@ -67,11 +68,19 @@ function active(value) {
   return { context_ref: context(value.context_ref), observation_period: period(value.observation_period),
     selection: { revision: value.selection.revision, included_recorded_group_ids: groups(value.selection.included_recorded_group_ids) } };
 }
-function pending(value) {
+function privateSalesImport(value) {
+  closed(value, ['batch_id', 'expected_review_revision'], 'private_sales_import');
+  if (typeof value.batch_id !== 'string' || !BATCH_UUID.test(value.batch_id)
+    || !Number.isInteger(value.expected_review_revision) || value.expected_review_revision < 1
+    || value.expected_review_revision > 2147483647) fail('private_sales_import');
+  return { batch_id: value.batch_id, expected_review_revision: value.expected_review_revision };
+}
+function pending(value, version) {
   if (value === null) return null;
-  closed(value, ['operation_id', 'observation_period'], 'pending_capture');
+  closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : [])], 'pending_capture');
   if (typeof value.operation_id !== 'string' || !UUID.test(value.operation_id)) fail('pending_capture.operation_id');
-  return { operation_id: value.operation_id, observation_period: period(value.observation_period) };
+  return { operation_id: value.operation_id, observation_period: period(value.observation_period),
+    ...(version === 2 ? { private_sales_import: privateSalesImport(value.private_sales_import) } : {}) };
 }
 function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -86,8 +95,8 @@ function freeze(value) {
  */
 export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
   closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (value.workspace_version !== 1) fail('workspace_version');
-  const result = { workspace_version: 1, active: active(value.active), pending_capture: pending(value.pending_capture) };
+  if (value.workspace_version !== 1 && value.workspace_version !== 2) fail('workspace_version');
+  const result = { workspace_version: value.workspace_version, active: active(value.active), pending_capture: pending(value.pending_capture, value.workspace_version) };
   // Actual capture registers context_id = operationId and rejects changed study
   // on UUID replay. A pending retry may overlap active only for that same study.
   const current = result.active, next = result.pending_capture;

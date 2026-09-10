@@ -1,6 +1,6 @@
-import { prepareCustomWorkspaceCheckpoint, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
+import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION } from './customWorkspaceCheckpoint';
-import type { CustomWorkspaceCheckpoint, CustomWorkspaceObservationPeriod } from './customWorkspaceCheckpoint';
+import type { CustomWorkspaceCheckpoint, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
@@ -21,7 +21,8 @@ interface Options {
   target: CustomWorkspaceTarget; initialSection: unknown;
   save: (input: { target: CustomWorkspaceTarget; sectionKey: string; value: CustomWorkspaceCheckpoint; expectedRevision: number },
     options: CustomWorkspaceOperationOptions) => Promise<unknown>;
-  capture: (input: { target: CustomWorkspaceTarget; operationId: string; observationPeriod: CustomWorkspaceObservationPeriod },
+  capture: (input: { target: CustomWorkspaceTarget; operationId: string; observationPeriod: CustomWorkspaceObservationPeriod;
+    privateSalesImport?: CustomWorkspacePrivateSalesImport },
     options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   catalog: (input: CustomCohortPreviewInput, options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   onChange: (state: CustomWorkspaceLifecycleState) => void;
@@ -57,6 +58,8 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
   let busy = false, disposed = false, unsettled = 0, abort: AbortController | null = null;
   let attemptedPending: CustomWorkspaceCheckpoint['pending_capture'] = null;
+  let attemptedPrivateContext: CustomCohortContextRef | null = null;
+  let attemptedClear: { expectedRevision: number; value: CustomWorkspaceCheckpoint } | null = null;
   let state: CustomWorkspaceLifecycleState = Object.freeze({ target, status: 'idle', phase: null, operation_pending: false,
     section_revision: 0, checkpoint: null, catalog: null, selection: null, error: null, recovery: null });
   function emit(patch: Partial<CustomWorkspaceLifecycleState>) {
@@ -138,42 +141,73 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     ready(await loadCatalog(active.context_ref, active.selection.revision, io));
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
+    const privateInput = pending.private_sales_import, version = privateInput ? 2 : 1;
     if (savePending) {
       stage('saving_pending', 'reload');
-      await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), pending_capture: pending }), io);
+      await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), workspace_version: version, pending_capture: pending }), io);
     }
     stage('capturing', 'resume_pending');
     const response = object(await io(signal => options.capture({ target, operationId: pending.operation_id,
-      observationPeriod: pending.observation_period }, signal)));
+      observationPeriod: pending.observation_period, ...(privateInput ? { privateSalesImport: privateInput } : {}) }, signal)));
     requireThat(response.status === 'registered' && typeof response.reused === 'boolean' && response.source_query_complete === true, 'capture_response');
-    const draft = prepareCustomWorkspaceCheckpoint({ workspace_version: 1, active: { context_ref: response.context_ref,
+    if (privateInput) {
+      let echoed: CustomWorkspacePrivateSalesImport;
+      try { echoed = prepareCustomWorkspacePrivateSalesImport(response.private_sales_import); }
+      catch { throw fault('capture_private_sales_mismatch'); }
+      requireThat(same(echoed, privateInput), 'capture_private_sales_mismatch');
+    } else requireThat(!Object.hasOwn(response, 'private_sales_import'), 'capture_private_sales_mismatch');
+    const draft = prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: { context_ref: response.context_ref,
       observation_period: pending.observation_period, selection: { revision: 1, included_recorded_group_ids: [] } }, pending_capture: null });
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
+    if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
     const catalog = await loadCatalog(draft.active.context_ref, 1, io);
+    if (privateInput) {
+      requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
+        && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision
+        && catalog.private_sales.observation_period.start_date === pending.observation_period.start_date
+        && catalog.private_sales.observation_period.end_date === pending.observation_period.end_date, 'catalog_private_sales_mismatch');
+    } else requireThat(!catalog.private_sales, 'catalog_private_sales_mismatch');
     const value = prepareCustomWorkspaceCheckpoint({ ...draft, active: { ...draft.active,
       selection: { revision: 1, included_recorded_group_ids: customCohortCatalogGroupIds(catalog) } } });
-    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; ready(catalog);
+    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog);
   }
   return Object.freeze({
     getState: () => state,
     isSettled: () => !busy && unsettled === 0,
     reopen: () => run('reopen', reopen),
-    start: (period: CustomWorkspaceObservationPeriod) => run(null, async (io, stage) => {
+    start: (period: CustomWorkspaceObservationPeriod, privateSalesImport?: CustomWorkspacePrivateSalesImport) => run(null, async (io, stage) => {
       requireThat(!state.checkpoint?.pending_capture, 'pending_capture_exists');
       // Validate dates before asking for an operation UUID; retries keep the UUID
       // even if an uncertain pending save is followed by a fresh absent read.
-      const checked = prepareCustomWorkspaceCheckpoint({ workspace_version: 1, active: null, pending_capture: {
-        operation_id: '00000001-0000-4000-8000-000000000001', observation_period: period } }).pending_capture!;
-      requireThat(!attemptedPending || same(attemptedPending.observation_period, checked.observation_period), 'pending_recovery_required');
-      attemptedPending ??= prepareCustomWorkspaceCheckpoint({ workspace_version: 1, active: null, pending_capture: {
-        operation_id: (options.operationId ?? (() => crypto.randomUUID()))(), observation_period: checked.observation_period } }).pending_capture;
+      const privateInput = privateSalesImport === undefined ? undefined : prepareCustomWorkspacePrivateSalesImport(privateSalesImport);
+      const version = privateInput ? 2 : 1;
+      const checked = prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: null, pending_capture: {
+        operation_id: '00000001-0000-4000-8000-000000000001', observation_period: period,
+        ...(privateInput ? { private_sales_import: privateInput } : {}) } }).pending_capture!;
+      requireThat(!attemptedPending || (same(attemptedPending.observation_period, checked.observation_period)
+        && same(attemptedPending.private_sales_import, checked.private_sales_import)), 'pending_recovery_required');
+      attemptedPending ??= prepareCustomWorkspaceCheckpoint({ workspace_version: version, active: null, pending_capture: {
+        ...checked, operation_id: (options.operationId ?? (() => crypto.randomUUID()))() } }).pending_capture;
       await acquire(attemptedPending!, true, io, stage);
     }),
     resumePending: () => run('resume_pending', async (io, stage) => {
       const pending = state.checkpoint?.pending_capture ?? attemptedPending;
       requireThat(pending, 'pending_capture_required');
       await acquire(pending, !state.checkpoint?.pending_capture, io, stage);
+    }),
+    // This deselects a pending intent, not its immutable source/context. The
+    // original capture may have committed. A lost clear ACK requires fresh read.
+    setAsidePending: () => run(state.recovery === 'reload' ? null : state.recovery, async (io, stage) => {
+      const pending = state.checkpoint?.pending_capture ?? attemptedPending;
+      requireThat(pending && state.section_revision !== null && !attemptedClear, 'pending_capture_required');
+      const value = prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), pending_capture: null });
+      stage('setting_aside_pending', 'reload');
+      attemptedPending ??= pending;
+      attemptedClear = { expectedRevision: state.section_revision, value };
+      await persist(value, io);
+      attemptedClear = null; attemptedPending = null; attemptedPrivateContext = null;
+      await reopen(io, stage);
     }),
     setGroups: (ids: readonly string[]) => run(null, async (io, stage) => {
       const current = state.checkpoint, catalog = state.catalog;
@@ -188,10 +222,24 @@ export function createCustomWorkspaceLifecycle(options: Options) {
         && value.target.assignmentFileId === target.assignmentFileId && value.target.sessionKey === target.sessionKey, 'reload_target_mismatch');
       if (!adopt(value.section)) return;
       const active = state.checkpoint?.active;
-      if (attemptedPending && active?.context_ref.context_id === attemptedPending.operation_id
-        && same(active.observation_period, attemptedPending.observation_period) && !state.checkpoint?.pending_capture) attemptedPending = null;
+      if (attemptedClear && state.section_revision !== null) {
+        if (state.section_revision > attemptedClear.expectedRevision && same(state.checkpoint, attemptedClear.value)) {
+          attemptedClear = null; attemptedPending = null; attemptedPrivateContext = null;
+        } else if (state.checkpoint?.pending_capture && state.section_revision >= attemptedClear.expectedRevision) {
+          // A fresh saved pending state can be explicitly resumed or set aside
+          // again under its revision; do not claim the earlier clear failed.
+          attemptedClear = null;
+        }
+      }
+      if (!attemptedClear && attemptedPending && active?.context_ref.context_id === attemptedPending.operation_id
+        && same(active.observation_period, attemptedPending.observation_period) && !state.checkpoint?.pending_capture
+        && (!attemptedPending.private_sales_import || same(active.context_ref, attemptedPrivateContext))) {
+        attemptedPending = null; attemptedPrivateContext = null;
+      }
       await reopen(io, stage);
-      if (attemptedPending && !state.checkpoint?.pending_capture) {
+      if (attemptedClear) {
+        emit({ status: 'error', recovery: 'reload', error: 'pending_clear_unconfirmed' });
+      } else if (attemptedPending && !state.checkpoint?.pending_capture) {
         emit({ status: 'error', recovery: 'resume_pending', error: 'pending_save_unconfirmed' });
       }
     }, true),

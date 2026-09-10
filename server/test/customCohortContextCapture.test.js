@@ -32,6 +32,14 @@ test('Custom capture rejects absent authentication, invalid UUIDs and periods be
   await assert.rejects(setup().capture({ ...input(), operationId: 'not-a-uuid' }), /invalid_operation/);
   await assert.rejects(setup().capture({ ...input(), observationPeriod: { start_date: '2024-07-01', end_date: '2024-06-30' } }), /invalid_period/);
 });
+
+test('private capture selection is exact and reviewed, with no implicit latest or browser payload', async () => {
+  const base = { batch_id: '20000000-0000-4000-8000-000000000001', expected_review_revision: 1 };
+  for (const privateSalesImport of [null, {}, { ...base, expected_review_revision: 0 },
+    { ...base, expected_review_revision: '1' }, { ...base, latest: true }, { ...base, rows: [] }]) {
+    await assert.rejects(setup().capture({ ...input(), privateSalesImport }), /invalid_private_sales_import/);
+  }
+});
 test('Custom capture honors pre-abort and expired aggregate deadline before connection', async () => {
   const controller = new AbortController(); controller.abort();
   await assert.rejects(setup().capture(input(), { signal: controller.signal }), /cancelled/);

@@ -14,6 +14,8 @@ import { prepareNeighborhoodSelectorInputV1 } from '../src/services/neighborhood
 import { customCohortRepositoryFixture, customCohortScopeOf } from './fixtures/customCohortRepositoryFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { setPublic } from './fixtures/neighborhoodCustomMaterialInputsFixture.js';
+import { prepareAssignmentSalesCsv } from '../src/services/assignmentSalesCsv/prepare.js';
+import { digestPreparedSalesParts } from '../src/services/assignmentSalesCsv/receiptIntegrity.js';
 
 const NOW = '2026-09-06T08:00:00.123456Z', MS = '2026-09-06T08:00:00.123Z';
 const RUN = '60000000-0000-4000-8000-000000000001';
@@ -119,6 +121,50 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
   f.state.calls.length = 0;
   return { ...f, input, scope, scopeJson, store, reader };
 }
+
+async function privateFixture() {
+  const f = await fixture();
+  const source = prepareAssignmentSalesCsv(Buffer.from('ListingId,CloseDate,ClosePrice,ParcelNumber,MlsStatus,LivingArea\nPRIVATE1,2024-03-01,275000,R-001,Closed,1800'));
+  const { rows, ...header } = source;
+  const capture = { private_sales_capture_version: 1, profile_id: 'assignment-private-reviewed-sales-v1', target: f.scope,
+    batch: { batch_id: '20000000-0000-4000-8000-000000000001', source_sha256: source.source_sha256, preparation_sha256: digestPreparedSalesParts(header, rows) },
+    review: { revision: 1, head_review_id: '30000000-0000-4000-8000-000000000001', source_review_id: '30000000-0000-4000-8000-000000000001' },
+    source_interpretation: { source_name: 'Synthetic private source', provenance_note: '', currency: 'USD', living_area_unit: 'sqft', site_area_unit: null,
+      consideration_field: 'close_price', marketing_time_field: null, source_use_confirmed: true }, captured_at: NOW,
+    rows: rows.map(record_data => ({ receipt_id: '40000000-0000-4000-8000-000000000001', source_row_number: record_data.source_row_number, record_data,
+      review: { review_id: '30000000-0000-4000-8000-000000000001', revision: 1, decision: 'confirm_proposed_match', account_ids: ['R-001'], note: '' } })) };
+  const original = f.input;
+  const body = { ...original.acquisition_intent.body, intent_version: 2,
+    private_sales_import: { batch_id: capture.batch.batch_id, expected_review_revision: 1 } };
+  f.input = { ...original, acquisition_intent: { body, reference: await f.store.put(json(body)) },
+    private_sales: { capture, authorization: { decision_id: 'synthetic-private', policy_revision: 'synthetic-private-v1' } } };
+  return { ...f, original };
+}
+
+test('private selection v2 retains original shared acquisition unchanged and reopens the exact CSV/review', async () => {
+  const f = await privateFixture(), before = JSON.stringify(f.input);
+  const old = prepare(f.original), next = prepare(f.input);
+  assert.notDeepEqual(next.refs.selection_input, old.refs.selection_input);
+  for (const key of ['snapshot_evidence', 'subject_dependencies', 'study_input']) assert.deepEqual(next.refs[key], old.refs[key]);
+  const refs = await persist(f.client, f.scopeJson, next), reopened = await load(f.client, f.scopeJson, refs);
+  assert.deepEqual(reopened.retained_inputs, f.input);
+  assert.deepEqual(reopened.retained_inputs.acquisition, f.original.acquisition);
+  assert.equal(JSON.stringify(f.input), before);
+  const directory = JSON.parse(await f.store.get(refs.selection_input.content_sha256, refs.selection_input.canonical_utf8_bytes));
+  assert.equal(directory.selection_input_version, 2); assert.ok(directory.private_sales.rows);
+});
+
+for (const [label, mutate] of [
+  ['different batch', i => { i.acquisition_intent.body.private_sales_import.batch_id = '50000000-0000-4000-8000-000000000001'; }],
+  ['different review', i => { i.private_sales.capture.review.revision = 2; }],
+  ['different target', i => { i.private_sales.capture.target.account_id = 'R-FOREIGN'; }],
+  ['future capture', i => { i.private_sales.capture.captured_at = '2026-09-07T08:00:00.123456Z'; }],
+  ['empty authorization', i => { i.private_sales.authorization.policy_revision = ''; }],
+  ['omitted supplement', i => { delete i.private_sales; }],
+]) test(`private capture graph refuses ${label} without writing`, async () => {
+  const f = await privateFixture(), changed = structuredClone(f.input); mutate(changed);
+  const calls = f.state.calls.length; assert.throws(() => prepare(changed)); assert.equal(f.state.calls.length, calls);
+});
 
 test('original mapping3 retains and reopens its own exact witnesses, metadata and explicit policy without upgrading v2', async () => {
   const f = await fixture({ mappingVersion: 3 }), before = JSON.stringify(f.input);

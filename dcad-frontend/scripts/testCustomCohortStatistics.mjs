@@ -9,6 +9,7 @@ import { presentCustomCohortPreview } from '../../server/src/services/neighborho
 import { buildCachedSourceCaptures } from '../../server/src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow } from '../../server/src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from '../../server/test/fixtures/customCohortContextFixture.js';
+import * as privateSales from '../src/features/neighborhood/customCohortPrivateSales.ts';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript'), React = requireRuntime('react');
@@ -19,6 +20,15 @@ const code = ts.transpileModule(readFileSync(file, 'utf8'), {
 }).outputText;
 const module = { exports: {} };
 new Script(`(function(require,module,exports){${code}\n})`, { filename: file }).runInThisContext()(name => {
+  if (name === './CustomCohortPrivateSalesStatistics') {
+    const child = { exports: {} }, childCode = ts.transpileModule(readFileSync(new URL('../src/features/neighborhood/components/CustomCohortPrivateSalesStatistics.tsx', import.meta.url), 'utf8'), {
+      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    }).outputText;
+    new Script(`(function(require,module,exports){${childCode}\n})`).runInThisContext()(dependency => {
+      if (dependency === '../customCohortPrivateSales') return privateSales;
+      assert.equal(dependency, 'react/jsx-runtime'); return requireRuntime(dependency);
+    }, child, child.exports); return child.exports;
+  }
   assert.equal(name, 'react/jsx-runtime', 'the statistics component has no side-effect dependency'); return requireRuntime(name);
 }, module, module.exports);
 const Component = module.exports.default;

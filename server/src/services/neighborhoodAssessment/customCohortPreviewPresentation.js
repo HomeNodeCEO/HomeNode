@@ -51,7 +51,7 @@ function displayed(value, unit, field) {
 }
 function strings(values) { return array(values, 64).map(value => text(value)); }
 
-function bindingOf(preview, expected) {
+export function customCohortPreviewBinding(preview, expected) {
   object(preview); object(expected);
   check(preview.preview_version === 1 && preview.status === 'observations_only'
     && preview.authority === 'not_established' && preview.apply?.status === 'blocked', 'unsupported_preview');
@@ -73,6 +73,7 @@ function bindingOf(preview, expected) {
   const selection_sha256 = hash(JSON.stringify({ pockets, revision: preview.selection_revision }));
   return { context_ref: actual, selection_revision: preview.selection_revision, selection_sha256 };
 }
+const bindingOf = customCohortPreviewBinding;
 function header(preview, binding) {
   const period = { start_date: assessmentDate(preview.observation_period.start_date), end_date: assessmentDate(preview.observation_period.end_date) };
   check(period.start_date <= period.end_date, 'invalid_period');

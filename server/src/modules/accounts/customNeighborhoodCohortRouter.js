@@ -5,9 +5,9 @@ const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
 const FILE_ID = /^[1-9]\d{0,18}$/;
 const INPUT_ERRORS = new Set(['invalid_input', 'invalid_account', 'invalid_assignment',
-  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date']);
+  'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import']);
 const ACCESS_ERRORS = new Set(['assignment_access_denied', 'market_data_access_denied']);
-const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed']);
+const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'target_changed', 'market_policy_changed', 'private_source_read_only']);
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
 
@@ -24,9 +24,16 @@ function bodyOf(body, required, optional = []) {
   return body;
 }
 function publicFailure(error) {
+  if (error?.outcome_unknown) return [409, { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true }];
+  if (['assignment_sales_import_revision_conflict', 'assignment_sales_import_capture_changed'].includes(error?.code)) {
+    return [409, { error: 'neighborhood_private_review_changed' }];
+  }
+  if (['assignment_sales_import_source_not_reviewed', 'assignment_sales_import_source_use_not_confirmed'].includes(error?.code)) {
+    return [422, { error: 'neighborhood_private_source_review_required' }];
+  }
+  if (error?.code === 'assignment_sales_import_preparation_limit') return [422, { error: 'neighborhood_private_source_limit' }];
   if (error?.reason === 'catalog_transport_limit') return [422, { error: 'neighborhood_catalog_incomplete',
     reason: 'catalog_response_byte_limit', membership_returned: false }];
-  if (error?.outcome_unknown) return [409, { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true }];
   if (error?.type === 'entity.too.large' || error?.status === 413) return [413, { error: 'neighborhood_request_too_large' }];
   if (error?.type === 'entity.parse.failed') return [400, { error: 'invalid_neighborhood_request' }];
   const reason = error?.reason;
@@ -107,7 +114,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
     });
   }
   route('capture', ['assignment_file_id', 'operation_id', 'observation_period'], (identity, body, options) =>
-    cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period }, options));
+    cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period,
+      ...(Object.hasOwn(body, 'private_sales_import') ? { privateSalesImport: body.private_sales_import } : {}) }, options), ['private_sales_import']);
   route('preview', ['assignment_file_id', 'context_ref', 'selection', 'include_map'], (identity, body, options) => {
     if (typeof body.include_map !== 'boolean') invalid();
     return cohortService.present({ ...identity, contextRef: body.context_ref, selection: body.selection },

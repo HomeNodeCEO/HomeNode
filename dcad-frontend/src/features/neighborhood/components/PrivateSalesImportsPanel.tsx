@@ -10,8 +10,12 @@ import type { PrivateSalesReviewCommand, PrivateSalesReviewState, PrivateSalesRe
 import { makePrivateSalesReviewPending, readPrivateSalesReviewPending, savePrivateSalesReviewPending,
   clearPrivateSalesReviewPending } from '../privateSalesReviewPending';
 import type { PrivateSalesReviewPending } from '../privateSalesReviewPending';
+import type { CustomWorkspacePrivateSalesImport } from '../customWorkspaceCheckpoint';
 
-export interface PrivateSalesImportsPanelProps extends PrivateSalesIdentity { readOnly: boolean; onBusyChange?: (busy: boolean) => void }
+export interface PrivateSalesImportsPanelProps extends PrivateSalesIdentity {
+  readOnly: boolean; onBusyChange?: (busy: boolean) => void;
+  onUseReviewedSales?: (reference: CustomWorkspacePrivateSalesImport) => Promise<boolean>;
+}
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const message = (error: unknown) => error instanceof PrivateSalesError && error.code === 'wrong_file'
   ? 'Choose the same file name and exact file contents to retry this pending upload.'
@@ -56,18 +60,20 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
   const busyCallback = useRef(props.onBusyChange); busyCallback.current = props.onBusyChange;
   const current = useRef({ readOnly: props.readOnly, target, pending, storageInvalid });
   current.current = { readOnly: props.readOnly, target, pending, storageInvalid };
+  const captureChoice = useRef({ reviewState, reviewPending, reviewStorageInvalid, use: props.onUseReviewedSales });
+  captureChoice.current = { reviewState, reviewPending, reviewStorageInvalid, use: props.onUseReviewedSales };
   useEffect(() => { alive.current = true; return () => {
     alive.current = false; active.current?.abort();
     if (busyRef.current) { busyRef.current = false; busyCallback.current?.(false); }
   }; }, []);
   useEffect(() => { if (props.readOnly && writing.current) active.current?.abort(); }, [props.readOnly]);
   const live = (controller: AbortController) => alive.current && active.current === controller && !controller.signal.aborted;
-  async function run(work: (io: PrivateSalesIo, currentRun: () => boolean) => Promise<void>) {
+  async function run(work: (io: PrivateSalesIo, currentRun: () => boolean) => Promise<void>, timeoutMs = 45000) {
     if (!alive.current || busyRef.current) return;
     const controller = new AbortController(); active.current = controller; busyRef.current = true;
     busyCallback.current?.(true);
     setBusy(true); setError(''); setNotice('');
-    const timeout = setTimeout(() => controller.abort(), 45000);
+    const timeout = setTimeout(() => controller.abort(), timeoutMs);
     let interrupted: (() => void) | undefined;
     try {
       // File.arrayBuffer and hashing cannot themselves be canceled. Release the
@@ -244,6 +250,17 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
     }
   });
   const canWrite = loaded && !busy && !props.readOnly && target?.can_upload === true && !storageInvalid;
+  const captureReviewedSales = () => run(async (_io, currentRun) => {
+    const displayed = rowPageRef.current, choice = captureChoice.current, review = choice.reviewState;
+    if (!displayed || !review || review.revision < 1 || review.source_interpretation?.source_use_confirmed !== true
+      || review.batch_id !== displayed.receipt.batch_id || current.current.readOnly || !current.current.target?.can_upload
+      || choice.reviewPending || choice.reviewStorageInvalid || !choice.use) return;
+    const completed = await choice.use({ batch_id: displayed.receipt.batch_id, expected_review_revision: review.revision });
+    if (currentRun()) {
+      if (completed) setNotice('This saved CSV review is now retained in the new neighborhood capture. Review its private-source observations in Neighborhood Pocket Exploration; the accepted report has not changed.');
+      else setError('The neighborhood capture was not confirmed. Check its study dates, source permissions and saved pending operation in Neighborhood Pocket Exploration before retrying.');
+    }
+  }, 180000);
   return <details className="print:hidden rounded-lg border border-purple-200 bg-white/80 p-3" open={open}
     onToggle={event => setOpen(event.currentTarget.open)}>
     <summary className="cursor-pointer font-semibold text-purple-900">Private neighborhood sales (CSV)</summary>
@@ -295,6 +312,13 @@ function PanelSession(props: PrivateSalesImportsPanelProps) {
           readOnly={props.readOnly || !target?.can_upload || reviewStorageInvalid || reviewPending !== null}
           busy={busy} onSave={command => void saveReview(command)} onReload={() => void reloadReviews()} />
           : <button type="button" className={button} disabled={busy} onClick={() => void reloadReviews()}>Load review status</button>}
+        {props.onUseReviewedSales && <div className="rounded border border-purple-200 p-2 text-sm">
+          <button type="button" className="hn-action-primary btn btn-sm normal-case"
+            disabled={!canWrite || !reviewState || reviewState.revision < 1 || reviewState.source_interpretation?.source_use_confirmed !== true
+              || reviewPending !== null || reviewStorageInvalid}
+            onClick={() => void captureReviewedSales()}>Use saved CSV review in neighborhood analysis</button>
+          <p className="mt-1 text-xs">Uses the saved review revision and the study dates shown in Neighborhood Pocket Exploration. Unsaved review edits are not included. Starts a new capture; it does not replace the accepted report.</p>
+        </div>}
         {rows.length === 0 && <p className="text-sm">This saved file has no logical data rows.</p>}
         {rows.map(row => {
           const proposal = proposals?.rows.find(item => item.receipt_id === row.receipt_id);

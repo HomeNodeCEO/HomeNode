@@ -753,6 +753,41 @@ test('PostGIS topology: independent source linework, real noding, exact enclosur
       assert.equal(audit.ambiguous_pair_count, 1);
       assert.equal(audit.ambiguity_guard_rejects, true, 'every pair of matched original primitives must have exact positive-length interior support');
     });
+    await t.test('bounded topology disables JIT only inside its actual read-only transaction', async () => {
+      const input = await projectMetricTopologyFixture(pool, 'square');
+      const client = await pool.connect();
+      let released = 0, releaseError, observed, before;
+      try {
+        before = (await client.query('SHOW jit')).rows[0].jit;
+        await client.query('SET jit=on');
+        const instrumented = { async connect() { return {
+          release(error) { released++; releaseError = error; },
+          async query(config) {
+            const result = await client.query(config);
+            if (config.text.includes('/* neighborhood-topology:settings */')) {
+              observed = (await client.query(`SELECT current_setting('jit') AS jit,
+                current_setting('transaction_read_only') AS read_only,
+                current_setting('statement_timeout') AS statement_timeout`)).rows[0];
+            }
+            return result;
+          },
+        }; } };
+        const result = await createNeighborhoodPostgisTopology(instrumented).build(input);
+        assertReady(result, 'square');
+        assert.deepEqual(observed, { jit: 'off', read_only: 'on', statement_timeout: '5s' });
+        assert.equal(released, 1); assert.equal(releaseError, undefined);
+        assert.equal(client.getTransactionStatus(), 'I');
+        assert.equal((await client.query('SHOW jit')).rows[0].jit, 'on', 'COMMIT restores the caller session setting');
+      } finally {
+        try {
+          if (['T', 'E'].includes(client.getTransactionStatus())) await client.query('ROLLBACK');
+          if (before !== undefined) await client.query("SELECT set_config('jit',$1,false)", [before]);
+        } catch (error) {
+          releaseError = error;
+          throw error;
+        } finally { client.release(releaseError); }
+      }
+    });
     await t.test('four supplied square sides form exactly one10000m² face, four nodes and four edges', async () => {
       const result = await build('square'); assertReady(result, 'square');
       for (const row of [...result.cells, ...result.edges, ...result.nodes]) assert.equal(row.metric_srid, 26914);

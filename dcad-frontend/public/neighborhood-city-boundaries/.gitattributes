@@ -1,0 +1,3 @@
+# These versioned public assets are validated against exact byte lengths/SHA-256.
+# Do not let platform checkout conversion change their retained source bytes.
+*.geojson -text

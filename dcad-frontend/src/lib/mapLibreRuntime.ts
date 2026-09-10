@@ -5,6 +5,7 @@ const SCRIPT = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
 const STYLE = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
 
 export interface ParcelMapClick {
+  readonly point?: { readonly x: number; readonly y: number };
   readonly features?: readonly { readonly properties?: Readonly<Record<string, unknown>> }[];
 }
 export interface ParcelMapRuntimeInstance {
@@ -15,10 +16,18 @@ export interface ParcelMapRuntimeInstance {
   };
   addSource: (id: string, source: Record<string, unknown>) => void;
   getSource: (id: string) => { setData: (data: unknown) => void } | undefined;
+  getLayer: (id: string) => unknown;
+  queryRenderedFeatures: (point: { readonly x: number; readonly y: number }, options: { layers: string[] }) =>
+    readonly { readonly properties?: Readonly<Record<string, unknown>> }[];
   addLayer: (layer: Record<string, unknown>) => void;
   setFeatureState: (feature: { source: string; id: string }, state: Record<string, unknown>) => void;
   getCanvas: () => { style: { cursor: string } };
   fitBounds: (bounds: [[number, number], [number, number]], options: Record<string, unknown>) => void;
+  getCenter: () => { lng: number; lat: number };
+  getZoom: () => number;
+  getBearing: () => number;
+  getPitch: () => number;
+  jumpTo: (camera: { center: [number, number]; zoom: number; bearing: number; pitch: number }) => void;
   resize: () => void;
   remove: () => void;
 }

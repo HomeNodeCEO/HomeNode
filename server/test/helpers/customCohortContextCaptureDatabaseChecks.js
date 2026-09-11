@@ -69,13 +69,18 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const makeInput = () => ({ auth, accountId: account, assignmentFileId: assignment, operationId: randomUUID(),
       observationPeriod: { start_date: '2023-07-01', end_date: '2024-06-30' } });
     const calls = [];
-    let loseCommit = false, commits = 0;
+    let loseCommit = false, commits = 0, activeCaptureConnections = 0, preparationConnectionSample;
     const observed = { async connect() {
       const client = await pool.connect();
-      return { release: error => client.release(error), async query(config) {
+      activeCaptureConnections++;
+      return { release: error => { activeCaptureConnections--; return client.release(error); }, async query(config) {
         calls.push(config.text);
         const result = await client.query(config);
-        if (config.text === 'COMMIT' && ++commits === 3 && loseCommit) throw new Error('synthetic_lost_commit_ack');
+        if (config.text === 'COMMIT') {
+          commits++;
+          if (commits === 2) preparationConnectionSample = new Promise(resolve => setImmediate(() => resolve(activeCaptureConnections)));
+          if (commits === 3 && loseCommit) throw new Error('synthetic_lost_commit_ack');
+        }
         return result;
       } };
     } };
@@ -91,6 +96,8 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const request = makeInput();
     const result = await capture.capture(request);
     assert.equal(result.status, 'registered'); assert.equal(result.reused, false); assert.equal(policyCalls, 2);
+    assert.equal(await preparationConnectionSample, 0, 'pure preparation yields with no checked-out database connection');
+    assert.equal(activeCaptureConnections, 0);
     assert.equal(result.discovery.radius_metres, '4828.032'); assert.equal(result.discovery.account_count, 2);
     assert.equal(result.provider_coverage, 'not_established');
     assert.ok(result.unsupported_capabilities.includes('historical_characteristics'));

@@ -21,7 +21,7 @@ import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInpu
   prepareNeighborhoodDiscoveryChoice, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY,
   NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
 import { loadInstalledCustomCityDiscovery } from './customCityDiscovery.js';
-import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs,
+import { prepareCustomCohortCaptureInputsBatched, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
 import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
@@ -341,14 +341,22 @@ async function connect(pool, budget) {
 async function transaction(pool, mode, budget, execute) {
   budget.check();
   const raw = await connect(pool, budget);
-  let open = false, closed = false, discard = null, commitAttempted = false;
+  let open = false, closed = false, discard = null, connectionError = null, commitAttempted = false;
+  // A checked-out pg client can emit a socket/idle-timeout error while pure
+  // work runs between queries. Own that event until release; never allow an
+  // unhandled EventEmitter error to terminate the web process.
+  const connectionFailed = error => { connectionError ||= error; discard ||= error; };
+  raw.on?.('error', connectionFailed);
   const client = Object.freeze({
     query: async (sql, values) => {
       if (closed) fail('closed_operation');
+      // A failed statement still permits the owner's savepoint cleanup; a
+      // socket error does not. Both cause this connection to be discarded.
+      if (connectionError) throw connectionError;
       budget.check();
       const config = typeof sql === 'string' ? { text: sql, values } : { ...sql };
       config.query_timeout = Math.min(config.query_timeout ?? LIMITS.query_ms, budget.remaining(LIMITS.query_ms));
-      try { const result = await raw.query(config); budget.check(); return result; }
+      try { const result = await raw.query(config); if (connectionError) throw connectionError; budget.check(); return result; }
       catch (error) { discard = error; throw error; }
     },
     release() { fail('transaction_owner_required'); },
@@ -358,6 +366,7 @@ async function transaction(pool, mode, budget, execute) {
     await client.query(`BEGIN ISOLATION LEVEL ${mode}`);
     await client.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL timezone='UTC'; SET LOCAL jit=off");
     const result = await execute(client);
+    if (discard) throw discard;
     budget.check(); commitAttempted = true;
     await client.query('COMMIT'); open = false;
     return result;
@@ -380,6 +389,7 @@ async function transaction(pool, mode, budget, execute) {
       if (commitAttempted) throw Object.assign(releaseError, { outcome_unknown: true });
       throw releaseError;
     }
+    finally { raw.off?.('error', connectionFailed); }
   }
 }
 
@@ -864,6 +874,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (!same(result.snapshot, spatial.snapshot)) fail('snapshot_changed');
       return { spatial, selector, reader, result, privateSales, startedAt, completedAt: await databaseTime(client) };
     });
+    // Pure original-evidence preparation owns no connection or database locks.
+    // The source read has committed; registration below still takes fresh locks
+    // and rechecks the subject, assignment, rights and private CSV review before
+    // any prepared evidence/context is persisted. Never hold an idle write
+    // transaction while encoding a dense area's evidence graph.
+    budget.check();
+    const acquisition = consumeNeighborhoodCachedAcquisition(read.reader, read.result);
+    const prepared = await prepareCustomCohortCaptureInputsBatched({ acquisition, spatial: read.spatial, subject,
+      subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
+      started_at: read.startedAt, completed_at: read.completedAt,
+      ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       if (read.privateSales) privateDraft(await privateCaptureWorkfile(client, input));
       assertTarget(await resolveTarget(client, input, true), subject.target);
@@ -878,11 +899,6 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         await recheckAssignmentSalesCsvCapture(client.query.bind(client), read.privateSales.capture);
       }
       budget.check();
-      const acquisition = consumeNeighborhoodCachedAcquisition(read.reader, read.result);
-      const prepared = prepareCustomCohortCaptureInputs({ acquisition, spatial: read.spatial, subject,
-        subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
-        started_at: read.startedAt, completed_at: read.completedAt,
-        ...(read.privateSales ? { private_sales: read.privateSales } : {}) });
       const refs = await persistCustomCohortCaptureInputs(client, scopeJson, prepared);
       budget.check();
       const header = { context_version: 1, context_id: input.operationId, context_revision: '1',

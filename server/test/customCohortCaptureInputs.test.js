@@ -150,6 +150,17 @@ test('batched preparation honors cancellation before publishing any preparation 
   assert.equal(f.state.calls.length, calls);
 });
 
+test('lazy prepared payloads cannot change while waiting for persistence', async () => {
+  const f = await fixture({ mappingVersion: 4, cadText: 'Original synthetic CAD text' });
+  const expected = prepare(f.input), actual = await prepareBatched(f.input);
+  assert.deepEqual(actual, expected);
+  assert.throws(() => { f.input.spatial.parcels[0].account_id = 'CHANGED'; }, TypeError);
+  assert.throws(() => { f.input.acquisition.capture_result.source_capture.sources[0].payload.records.length = 0; }, TypeError);
+  const refs = await persist(f.client, f.scopeJson, actual);
+  assert.deepEqual(refs, expected.refs);
+  assert.deepEqual((await load(f.client, f.scopeJson, refs)).retained_inputs, f.input);
+});
+
 test('dense evidence capacity measurement (opt-in, synthetic query/storage fakes only)', {
   skip: process.env.HOMENODE_DENSE_CAPTURE_BENCHMARK !== '1', timeout: 240_000,
 }, async t => {

@@ -17,6 +17,18 @@ increase a Render plan, or make a partial source capture usable.
   retained-graph validation. Abort/deadline checks surround asynchronous yields;
   no partial capture or preparation is returned. Preparation seals its internal
   original input before yielding, preventing mutation between validation steps.
+- Batched preparation retains immutable values and encodes one blob at a time
+  for persistence. Reopen caches at most 4 MB of small metadata, rather than every
+  full source payload, and does not recompute a source hash already validated in
+  the same sealed graph. Complete per-blob, mapping and graph checks remain.
+- New capture preparation runs after the read connection is released and before
+  final registration locks. Registration still checks current assignment,
+  subject, market rights and private-CSV review. Native coverage verifies that
+  asynchronous preparation has zero checked-out connections.
+- Reopen validates within its caller-owned read transaction, with periodic
+  identity checks through that same bounded client during CPU work. The Custom
+  transaction owner also handles checked-out socket errors and discards failed
+  clients instead of letting an unhandled event terminate the web process.
 - Dense budgets are installed code, not browser parameters or source grants.
   Per-row SQL transport, per-blob validation, scoped source capabilities and
   original-only handoffs remain required. Retained evidence retains its original
@@ -53,16 +65,38 @@ with reopened data, unlike independent production requests.
 Nevertheless, this does not establish safe operation on a 512 MB web instance.
 Do not activate the larger factory merely because these tests pass.
 
+### Follow-up optimization measurements
+
+After removing retained text copies, the same fake-store workload measured
+45.8 s and 703,720 KiB peak RSS: about 18% less elapsed time and 10% less peak RSS.
+It retained the same counts and evidence graph. This comparison precedes the
+additional page-level yield and connection-check changes.
+
+The separate opt-in native helper `neighborhoodDenseCaptureMemoryChecks.js`
+uses a new migrated loopback test database and independent capture/reopen
+processes. A successful run with a 384 MiB V8 old-space ceiling retained all
+38,347 parcels and 38,106 accounts, including 116,621 source records. The source
+reader accounted for 101,902,518 bytes. Native capture/preparation/persistence
+completed in 37.2 s at 315,148 KiB peak RSS; fresh reopen completed in 19.1 s at
+341,352 KiB. Maximum event-loop delays were 368 ms and 196 ms respectively.
+
+These are synthetic CAD/MLS records, not live data or production CPU performance.
+An earlier fixture with deliberately longer repeated CAD descriptions correctly
+hit the source byte ceiling. An earlier fresh-reopen run exposed the idle
+transaction timeout; the bounded identity-check fix made the subsequent run pass.
+No resource ceiling or membership was relaxed to hide either failure.
+
+An isolated process fitting does not prove enough remaining memory for the full
+web server, simultaneous requests, map/statistics generation or city-wide studies.
+
 ## Required before activation
 
-1. Measure complete dense native capture, durable retention and a separate fresh
-   reopen on realistic CAD wrapper sizes, including event-loop lag and peak RSS.
-2. Reduce peak retained copies or isolate heavy processing in a bounded worker.
-   Bound concurrent captures independently of ordinary web requests.
-3. Keep CPU preparation from holding database locks/idle transactions beyond
-   their timeout. Move pure work outside lock-holding registration where possible,
-   then retain the existing final subject, policy and assignment freshness fences.
-   Yielding the event loop alone does not keep a PostgreSQL transaction alive.
+1. Extend the native measurements to the complete loaded web service and actual
+   source-size distribution, including maps/statistics and concurrent requests.
+2. Bound concurrent heavy requests independently of ordinary web requests. Use
+   a separate bounded worker if measured web-server headroom is insufficient.
+3. Preserve the newly tested preparation/transaction split and bounded reopen
+   checks; verify contention and cancellation at realistic concurrency.
 4. Verify all per-statement and aggregate deadlines, late connection cleanup,
    cancellation and resource refusal without changing source membership.
 5. Wire the dense mode only after those checks, then test the full live three-mile

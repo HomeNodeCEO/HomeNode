@@ -58,8 +58,8 @@ interface Options {
   onChange?: (state: CustomCohortPreviewState) => void;
 }
 const L = { pockets: 128, accounts: 50_000, memberships: 100_000, selectionBytes: 3_900_000,
-  summaryBytes: 2_000_000, summaryNodes: 150_000, mapBytes: 17_000_000, mapNodes: 1_500_000,
-  features: 100_000, coordinates: 250_000 };
+  summaryBytes: 2_000_000, summaryNodes: 150_000, mapBytes: 24_001_024, mapNodes: 3_500_000,
+  features: 100_000, coordinates: 500_000, geojsonBytes: 24_000_000 };
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMANTICS = 'current_observed_cached_parcels_not_legal_subdivision_boundary';
@@ -192,7 +192,7 @@ function mapOf(value: unknown, selected: Set<string>): ParcelMap {
   }
   ensure(accounts.size <= L.accounts && [...selected].every(id => accounts.has(id))
     && counts.parcels === features.size && counts.accounts === accounts.size && counts.selected_accounts === selected.size
-    && counts.coordinates === coordinates && Number(counts.geojson_bytes) <= 16_000_000 && Number(counts.geometry_bytes) <= 16_000_000);
+    && counts.coordinates === coordinates && Number(counts.geojson_bytes) <= L.geojsonBytes && Number(counts.geometry_bytes) <= 16_000_000);
   return freeze(map as unknown as AvailableMap);
 }
 function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
@@ -203,7 +203,7 @@ function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
     return feature.properties.selected === include ? feature
       : freeze({ ...feature, properties: { ...feature.properties, selected: include } });
   });
-  ensure([...selected].every(id => represented.has(id)) && map.counts.geojson_bytes + byteChange <= 16_000_000);
+  ensure([...selected].every(id => represented.has(id)) && map.counts.geojson_bytes + byteChange <= L.geojsonBytes);
   return freeze({ ...map, geojson: { ...map.geojson, features },
     counts: { ...map.counts, selected_accounts: selected.size, geojson_bytes: map.counts.geojson_bytes + byteChange } });
 }

@@ -5,7 +5,9 @@ import { setImmediate as yieldToRequests } from 'node:timers/promises';
 export const CUSTOM_COHORT_PARCEL_MAP_LIMITS = Object.freeze({
   parcels: 100_000, source_chunks: 1_000, source_records: 100_000,
   geometry_bytes: 1_000_000, total_geometry_bytes: 16_000_000,
-  coordinates: 250_000, geojson_bytes: 16_000_000,
+  // Dense captured suburbs need more vertices, not simplified/truncated rings.
+  // Keep byte, feature, source and per-geometry guards independently bounded.
+  coordinates: 500_000, geojson_bytes: 24_000_000,
 });
 const SEMANTICS = 'current_observed_cached_parcels_not_legal_subdivision_boundary';
 const HASH = /^[0-9a-f]{64}$/;

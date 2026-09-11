@@ -34,6 +34,15 @@ test('catalog/member/capture operations share cancellation and smaller response 
   }
 });
 
+test('dense map preview has a bounded 27MB envelope, not an unbounded download', async () => {
+  let cancelled = false;
+  const transport = createCustomCohortPreviewTransport({ urlFor: p => p,
+    request: async () => responseStream(stream([encoded(`"${'x'.repeat(27_000_000)}"`)], {
+      onCancel: () => { cancelled = true; }, hanging: true })) });
+  await assert.rejects(transport(input(), { signal: new AbortController().signal }), /too large/);
+  assert.equal(cancelled, true);
+});
+
 test('generic cohort transport refuses arbitrary operation paths before network access', async () => {
   const transport = createCustomCohortJsonTransport({ urlFor: () => { throw new Error('must not route'); }, request: async () => json({}) });
   await assert.rejects(transport('R-1', '../admin', {}, { signal: new AbortController().signal }), /Invalid neighborhood request/);
@@ -76,20 +85,20 @@ test('streaming JSON preserves UTF-8 codepoints split across network chunks', as
   assert.deepEqual(await h.run(), { label: 'Élément 🌳' });
 });
 test('oversized declared success response is cancelled without reading the body', async () => {
-  let cancelled = 0; const h = harness(async () => responseStream(stream([], { hanging: true, onCancel: () => cancelled++ }), { 'content-length': '18000001' }));
+  let cancelled = 0; const h = harness(async () => responseStream(stream([], { hanging: true, onCancel: () => cancelled++ }), { 'content-length': '27000001' }));
   await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
 });
 test('actual decoded bytes are capped even when content-length is missing or false', async () => {
   for (const headers of [{}, { 'content-length': '1' }]) {
     let cancelled = 0;
-    const h = harness(async () => responseStream(stream([encoded('"'), new Uint8Array(18_000_000).fill(65)],
+    const h = harness(async () => responseStream(stream([encoded('"'), new Uint8Array(27_000_000).fill(65)],
       { hanging: true, onCancel: () => cancelled++ }), headers));
     await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
   }
 });
-test('the 18MB limit is applied to UTF-8 bytes, not character count', async () => {
+test('the 27MB preview limit is applied to UTF-8 bytes, not character count', async () => {
   let cancelled = 0;
-  const h = harness(async () => responseStream(stream([encoded(`"${'界'.repeat(6_000_000)}"`)], { hanging: true, onCancel: () => cancelled++ })));
+  const h = harness(async () => responseStream(stream([encoded(`"${'界'.repeat(9_000_000)}"`)], { hanging: true, onCancel: () => cancelled++ })));
   await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
 });
 test('non-JSON success responses are cancelled without exposing HTML', async () => {

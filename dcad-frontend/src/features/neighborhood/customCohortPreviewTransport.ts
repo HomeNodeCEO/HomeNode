@@ -7,6 +7,9 @@ interface Options {
 }
 const REQUEST_BYTES = 4_000_000;
 const RESPONSE_BYTES = 18_000_000;
+// Exact parcel geometry (24MB) plus the unchanged 2MB summary and envelope.
+// This applies only to map previews; catalog/member/request limits stay intact.
+const MAP_PREVIEW_RESPONSE_BYTES = 27_000_000;
 const ERROR_BYTES = 16_000;
 const STREAM_CHUNKS = 65_536;
 const encoder = new TextEncoder();
@@ -154,7 +157,7 @@ export function createCustomCohortJsonTransport(options: Options) {
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
     if (encoder.encode(body).length > REQUEST_BYTES) throw new Error('Neighborhood preview selection is too large');
     return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
-      operation === 'preview' ? RESPONSE_BYTES : REQUEST_BYTES, signal);
+      operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES : REQUEST_BYTES, signal);
   };
 }
 

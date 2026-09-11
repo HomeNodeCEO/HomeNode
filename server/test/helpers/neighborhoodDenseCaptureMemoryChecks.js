@@ -59,18 +59,28 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         stage('statistics');
         const parcel_map = await buildCustomCohortParcelMapBatched({ retained_inputs: opened.retained_inputs, selected_account_ids: account_ids });
         assert.equal(parcel_map.status, 'available', parcel_map.reason); assert.equal(parcel_map.counts.parcels, retained.summary.parcel_count);
+        assert.equal(parcel_map.counts.coordinates, retained.summary.parcel_count * 11);
+        assert.ok(parcel_map.counts.geojson_bytes > 16_000_000, 'exercise dense geometry above the former display cap');
         assert.equal(preview.all.stock.member_count, account_ids.length); assert.equal(preview.selected.stock.member_count, account_ids.length);
         const summary = presentCustomCohortPreview({ preview, expected: { context_ref, selection_revision: 1 } });
         const bytes = Buffer.byteLength(JSON.stringify({ summary, parcel_map }));
         stage('presented'); result = { ...result, preview_bytes: bytes, preview_counts: {
           all_accounts: preview.all.stock.member_count, selected_accounts: preview.selected.stock.member_count,
           all_transactions: preview.all.transactions.member_count, mapped_parcels: parcel_map.counts.parcels,
+          coordinates: parcel_map.counts.coordinates, geojson_bytes: parcel_map.counts.geojson_bytes,
           internal_bytes_bound: preview.work.output_utf8_bytes_bound } };
       }
     } else {
       await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA); // Refuses an existing GIS schema.
       const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshotId = randomUUID(), reportId = randomUUID(), run = randomUUID(), operation = randomUUID();
       const account = 'DENSE-000000', parcelCount = 38_347, accountCount = 38_106;
+      // Ten-edge native-valid rings with realistic coordinate precision: the
+      // old five-point rectangles under-tested dense retained map size.
+      const ring = Array.from({ length: 10 }, (_, i) => {
+        const angle = i * Math.PI / 5;
+        return `${-96.71234567890123 + Math.cos(angle) * .00002} ${32.81234567890123 + Math.sin(angle) * .00002}`;
+      });
+      const geometry = `POLYGON((${[...ring, ring[0]].join(',')}))`;
       await tx('READ COMMITTED', async client => {
         await client.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic dense area','Synthetic dense area')", [org]);
         await client.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic actor')", [actor, `${actor}@example.test`]);
@@ -96,8 +106,8 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
           land_use_category,classification_confidence,class_code,class_description,use_description,structure_type,built_up,source_record_hash,sync_run_id,synced_at,geom)
           SELECT n+1,'DENSE-'||lpad((n%$2::int)::text,6,'0'),1950+n%60,1200+n%1500,6000+n%1000,250000+n,
             'one_unit','high','1','SINGLE FAMILY RESIDENCES',repeat('Synthetic retained source. ',3),'Synthetic literal',true,repeat('a',64),$3,now(),
-            ST_Multi(ST_Translate(ST_GeomFromText('POLYGON((-96.7 32.8,-96.69995 32.8,-96.69995 32.80005,-96.7 32.80005,-96.7 32.8))',4326),(n%200)*0.0001,(n/200)*0.0001))
-          FROM generate_series(0,$1::int-1) n`, [parcelCount, accountCount, run]);
+            ST_Multi(ST_Translate(ST_GeomFromText($4,4326),(n%200)*0.0001,(n/200)*0.0001))
+          FROM generate_series(0,$1::int-1) n`, [parcelCount, accountCount, run, geometry]);
         await client.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type,source_record_hash,close_date,current_price,loaded_at)
           SELECT n+1,'DENSE-'||lpad(n::text,6,'0'),'closed_sale',repeat('b',64),'2024-03-01',250000+n,now()
           FROM generate_series(0,$1::int-1) n WHERE n%37=0`, [accountCount]);

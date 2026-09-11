@@ -23,7 +23,7 @@ export interface CustomCohortMapPresentation {
   readonly unlabelled_group_ids: readonly string[];
 }
 export const CUSTOM_COHORT_MAP_PRESENTATION_LIMITS = Object.freeze({ groups: 128, accounts: 50000, parcels: 100000,
-  coordinates: 250000, outputBytes: 512000 });
+  coordinates: 500000, outputBytes: 512000 });
 const L = CUSTOM_COHORT_MAP_PRESENTATION_LIMITS, encoder = new TextEncoder();
 const check: (ok: unknown) => asserts ok = ok => { if (!ok) throw new TypeError('invalid_custom_cohort_map_presentation'); };
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;

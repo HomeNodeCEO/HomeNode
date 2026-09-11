@@ -9,6 +9,7 @@ import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS = 'recorded_subject_centroid_to_retained_parcel_point_on_surface';
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_LIMITS = Object.freeze({ batch_parcels: 64,
   batch_utf8_bytes: 2_100_000, output_utf8_bytes: 32_000_000,
+  coordinates: 250_000, geojson_bytes: 16_000_000,
   parcels: CUSTOM_COHORT_PARCEL_MAP_LIMITS.parcels, maximum_distance_metres: 20_100_000 });
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS = Object.freeze(['subject_point_unavailable',
   'retained_map_unavailable', 'retained_binding_mismatch', 'capacity_exceeded', 'native_query_failed', 'native_result_invalid']);
@@ -103,6 +104,10 @@ function admitted(input) {
   const map = buildCustomCohortParcelMap({ retained_inputs: input });
   if (map.status !== 'available') return { counts, point, radius,
     reason: map.reason === 'capacity_exceeded' ? 'capacity_exceeded' : 'retained_map_unavailable' };
+  // Display capacity is not permission to increase native recommendation work.
+  if (map.counts.coordinates > L.coordinates || map.counts.geojson_bytes > L.geojson_bytes) {
+    return { counts, point, radius, reason: 'capacity_exceeded' };
+  }
   const components = new Map(map.geojson.features.map(row => [row.properties.object_id,
     row.geometry.type === 'Polygon' ? 1 : row.geometry.coordinates.length]));
   const wanted = new Set(components.keys()), raw = new Map();

@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
 import { normalizePublicCadastralAccountId } from '../../security/publicCadastralCatalog.js';
 import { assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
@@ -8,6 +8,10 @@ import { validateRetainedCustomCityDiscovery } from './customCityDiscovery.js';
 
 const LIMITS = Object.freeze({ page_size: 500, parcels: 100000, accounts: 50000,
   bytes: 16777216, duration_ms: 15000, query_ms: 5000 });
+// One-time streamed acquisition budgets for cold cache + validation of a full
+// dense suburban roster. Individual SQL calls remain <=5s and the coordinator's
+// 60s aggregate deadline still bounds all spatial/source/persistence stages.
+const STREAM_LIMITS = Object.freeze({ ...LIMITS, duration_ms: 30000 });
 const HASH = /^[0-9a-f]{64}$/;
 const SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
   current_setting('transaction_read_only') AS read_only,
@@ -41,6 +45,14 @@ FROM encoded ORDER BY object_id`;
 // Keep v1's SQL literal/parameter positions exactly unchanged. v2 adds only a
 // bounded numeric distance parameter; no caller expression or alternate predicate.
 const PAGE_SQL_V2 = PAGE_SQL.replace('4828.032, true', '$5::double precision, true');
+// A non-holdable portal evaluates radius membership once, in bounded FETCHes.
+// Remove only keyset pagination/sorting; keep the exact spheroid predicate and
+// metered payload. Canonical object-id ordering is restored before hashing.
+const STREAM_SQL = PAGE_SQL
+  .replace('($3::bigint IS NULL OR object_id > $3::bigint)', 'true')
+  .replace('ORDER BY object_id LIMIT $4', '')
+  .replace('FROM encoded ORDER BY object_id', 'FROM encoded');
+const STREAM_SQL_V2 = STREAM_SQL.replace('4828.032, true', '$3::double precision, true');
 // Separate predicate/parameter domain: the envelope is an index prefilter,
 // never membership. Keep crossing/touching parcels whole, and preserve holes.
 const CITY_PAGE_SQL = PAGE_SQL
@@ -62,12 +74,12 @@ function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 }
-function limitsOf(overrides) {
+function limitsOf(overrides, profile = LIMITS) {
   if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)
     || Object.keys(overrides).some(key => !Object.hasOwn(LIMITS, key))) throw new TypeError('invalid_spatial_membership_limits');
-  const result = { ...LIMITS, ...overrides };
+  const result = { ...profile, ...overrides };
   for (const key of Object.keys(LIMITS)) {
-    if (!Number.isSafeInteger(result[key]) || result[key] < 1 || result[key] > LIMITS[key]) {
+    if (!Number.isSafeInteger(result[key]) || result[key] < 1 || result[key] > profile[key]) {
       throw new TypeError('invalid_spatial_membership_limits');
     }
   }
@@ -92,6 +104,16 @@ function snapshotOf(rows) {
  * establish full source coverage, original subject evidence and current access.
  */
 export async function captureNeighborhoodSpatialMembership(client, geometryInput, overrides = {}, discoveryChoice, cityInput) {
+  return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, false);
+}
+
+/** One-pass radius acquisition for the live Custom coordinator. City membership
+ * keeps its existing indexed keyset reader. No source/cap/predicate changes. */
+export async function captureNeighborhoodSpatialMembershipStream(client, geometryInput, overrides = {}, discoveryChoice, cityInput) {
+  return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, true);
+}
+
+async function captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, streamRadius) {
   const discovery = discoveryChoice === undefined ? null : prepareNeighborhoodDiscoveryChoice(discoveryChoice);
   const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
     ? validateRetainedCustomCityDiscovery(cityInput) : null;
@@ -102,7 +124,9 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
   const prepared = prepareNeighborhoodDiscoveryGeometryV1(geometryInput);
   if (prepared.status !== 'prepared') return prepared;
   if (!client || typeof client.query !== 'function') throw new TypeError('spatial_membership_client_required');
-  const limits = limitsOf(overrides);
+  const streaming = streamRadius && !city;
+  const limits = limitsOf(overrides, streaming ? STREAM_LIMITS : LIMITS);
+  let portal = null;
   const started = performance.now();
   const counts = { queries: 0, parcels: 0, accounts: 0, bytes: 0 };
   const check = () => { if (performance.now() - started > limits.duration_ms) incomplete('duration_limit'); };
@@ -135,17 +159,29 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
           parcel_predicate: 'all_intersecting_parcels' }
         : { geometry_input: prepared.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
     let cursor = null;
+    const objectIds = streaming ? new Set() : null;
+    if (streaming) {
+      // Generated identifier only, never caller text. NO HOLD keeps this portal
+      // tied to the exact caller-owned snapshot and rollback lifecycle.
+      portal = `nh_membership_${randomUUID().replaceAll('-', '')}`;
+      await query('parcels-open', `DECLARE ${portal} NO SCROLL CURSOR FOR ${discovery ? STREAM_SQL_V2 : STREAM_SQL}`,
+        [...prepared.geometry_input.coordinates, ...(discovery ? [discovery.radius_metres] : [])]);
+    }
     while (true) {
-      const rows = await query('parcels', city ? CITY_PAGE_SQL : discovery ? PAGE_SQL_V2 : PAGE_SQL,
+      const rows = streaming
+        ? await query('parcels-fetch', `FETCH FORWARD ${limits.page_size} FROM ${portal}`)
+        : await query('parcels', city ? CITY_PAGE_SQL : discovery ? PAGE_SQL_V2 : PAGE_SQL,
         city ? [cityGeometry, cursor, limits.page_size + 1]
           : [...prepared.geometry_input.coordinates, cursor, limits.page_size + 1, ...(discovery ? [discovery.radius_metres] : [])]);
-      if (rows.length > limits.page_size + 1) incomplete('database_page_invalid');
+      if (rows.length > limits.page_size + (streaming ? 0 : 1)) incomplete('database_page_invalid');
       for (const { payload } of rows.slice(0, limits.page_size)) {
         if (!payload) incomplete('row_bytes_limit');
         const { object_id: objectId, account_id: accountId } = payload;
         if (typeof objectId !== 'string' || !/^-?(?:0|[1-9]\d*)$/.test(objectId)
           || BigInt(objectId) < -9223372036854775808n || BigInt(objectId) > 9223372036854775807n
-          || (cursor !== null && BigInt(objectId) <= BigInt(cursor))) incomplete('parcel_order_invalid');
+          || (!streaming && cursor !== null && BigInt(objectId) <= BigInt(cursor))
+          || objectIds?.has(objectId)) incomplete('parcel_order_invalid');
+        objectIds?.add(objectId);
         if (typeof accountId !== 'string' || !accountId.length || accountId.length > 64
           || accountId.trim() !== accountId || /[\u0000-\u001f\u007f]/.test(accountId)
           || normalizePublicCadastralAccountId(accountId) !== accountId) incomplete('parcel_account_unresolved');
@@ -158,10 +194,17 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
         if (counts.parcels > limits.parcels) incomplete('parcel_limit');
         if (counts.accounts > limits.accounts) incomplete('account_limit');
         if (counts.bytes > limits.bytes) incomplete('byte_limit');
-        digest.update(json).update('\n'); parcels.push(payload); cursor = objectId;
+        if (!streaming) digest.update(json).update('\n');
+        parcels.push(payload); cursor = objectId;
         check();
       }
-      if (rows.length <= limits.page_size) break;
+      if (streaming ? rows.length < limits.page_size : rows.length <= limits.page_size) break;
+    }
+    if (portal) {
+      const name = portal; portal = null;
+      await query('parcels-close', `CLOSE ${name}`);
+      parcels.sort((a, b) => BigInt(a.object_id) < BigInt(b.object_id) ? -1 : 1);
+      for (const parcel of parcels) { digest.update(canonicalAssessmentJson(parcel)).update('\n'); check(); }
     }
     const finalSnapshot = snapshotOf(await query('snapshot-end', SNAPSHOT_SQL));
     if (canonicalAssessmentJson(finalSnapshot) !== canonicalAssessmentJson(snapshot)) incomplete('transaction_changed');
@@ -176,6 +219,14 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
       account_ids_sha256: assessmentEvidenceDigest({ account_ids: accountIds }),
       membership_sha256: digest.digest('hex'), counts });
   } catch (error) {
+    if (portal) {
+      // A failed transaction may refuse CLOSE. The documented caller still
+      // rolls back/releases; never hide the original failure or return rows.
+      counts.queries += 1;
+      try { await client.query({ text: `/* neighborhood-membership:parcels-close */ CLOSE ${portal}`,
+        values: [], query_timeout: Math.min(limits.query_ms, 1000) }); } catch { /* caller rollback owns cleanup */ }
+      portal = null;
+    }
     if (error instanceof TypeError && error.message === 'invalid_neighborhood_assessment:json_bytes') {
       return freeze({ status: 'incomplete', query_complete: false, authority: 'not_established',
         source_coverage: 'not_established', reason: 'account_roster_canonical_byte_limit', counts });

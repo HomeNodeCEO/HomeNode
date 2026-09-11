@@ -4,7 +4,18 @@ import { createRequire } from 'node:module';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL,
   verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { ensurePropertyContextSchema } from '../../src/services/propertyContextStore.js';
-import { captureNeighborhoodSpatialMembership } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { captureNeighborhoodSpatialMembership as keyset, captureNeighborhoodSpatialMembershipStream as stream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+
+async function captureNeighborhoodSpatialMembership(...args) {
+  const reference = await keyset(...args), result = await stream(...args);
+  // On failure, diagnostic work counts may differ with scan order; neither
+  // reader publishes a roster. Completed memberships/counts must match exactly.
+  const semantic = value => { const { counts, ...rest } = value;
+    return value.status === 'captured' ? { ...rest, counts: { ...counts, queries: 0 } } : rest; };
+  assert.deepEqual(semantic(result), semantic(reference), 'stream and reference must retain exact membership/evidence');
+  assert.equal((await args[0].query("SELECT count(*)::int AS n FROM pg_cursors WHERE name LIKE 'nh_membership_%'")).rows[0].n, 0);
+  return result;
+}
 
 export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionString) {
   const checked = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
@@ -46,6 +57,10 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     assert.equal(original.status, 'captured');
     assert.deepEqual(original.parcels.map(row => row.object_id), ['1', '2', '4', '5']);
     assert.deepEqual(original.account_ids, ['0001', '0004', '0005']);
+    for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
+      assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
+        { profile_id: 'custom-suburban-radius-v2', radius_metres })).status, 'captured');
+    }
     // These writes use a separate connection while the original read transaction stays open.
     await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_Translate(geom,1,0) WHERE object_id=1`);
     await pool.query('DELETE FROM gis.dcad_parcels WHERE object_id=2');
@@ -84,7 +99,8 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     assert.equal(noTransaction.reason, 'repeatable_read_read_only_transaction_required');
     return { status: 'passed', checks: ['polygon_not_centroid', 'duplicate_account_parcels', 'keyset_pagination',
       'same_snapshot_add_move_delete', 'fresh_snapshot_change_detection', 'overflow_incomplete',
-      'invalid_geometry_incomplete', 'transaction_required', 'malformed_account_incomplete'], original_membership_sha256: original.membership_sha256,
+      'invalid_geometry_incomplete', 'transaction_required', 'malformed_account_incomplete',
+      'one_pass_reference_parity', 'all_radius_versions', 'portals_closed'], original_membership_sha256: original.membership_sha256,
     fresh_membership_sha256: fresh.membership_sha256, authority: 'not_established' };
   } finally {
     if (reader) {

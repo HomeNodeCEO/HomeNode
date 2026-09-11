@@ -12,7 +12,7 @@ import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepo
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { captureNeighborhoodSpatialMembership } from './cachedSpatialMembership.js';
+import { captureNeighborhoodSpatialMembershipStream } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
@@ -355,7 +355,7 @@ async function transaction(pool, mode, budget, execute) {
   try {
     open = true; // BEGIN timeout leaves uncertain state too.
     await client.query(`BEGIN ISOLATION LEVEL ${mode}`);
-    await client.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL timezone='UTC'");
+    await client.query("SET LOCAL statement_timeout='5000ms'; SET LOCAL lock_timeout='1000ms'; SET LOCAL idle_in_transaction_session_timeout='10000ms'; SET LOCAL timezone='UTC'; SET LOCAL jit=off");
     const result = await execute(client);
     budget.check(); commitAttempted = true;
     await client.query('COMMIT'); open = false;
@@ -823,7 +823,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           batchId: input.privateSalesImport.batch_id, expectedReviewRevision: input.privateSalesImport.expected_review_revision });
         privateSales = { capture, authorization: { decision_id: permission.decision_id, policy_revision: permission.policy_revision } };
       }
-      const spatial = captured(await captureNeighborhoodSpatialMembership(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial');
+      const spatial = captured(await captureNeighborhoodSpatialMembershipStream(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial');
       // Existing cached-source access requires the subject in the source roster.
       // Never add an outside-city subject to claim complete polygon membership.
       if (city && !spatial.account_ids.includes(scope.account_id)) fail('city_subject_outside_scope');

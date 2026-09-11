@@ -145,6 +145,30 @@ Do not activate a larger capture solely because a single synthetic run fits.
 
 ## Deployment acceptance and rollback
 
+### Dense-radius cursor plan follow-up
+
+The first live activation attempt stopped in spatial membership (not the source
+byte budget) after 30.8 seconds, at 29,000 parcels. An isolated read-only probe
+at the saved subject point reproduced the same limit: 30.4 seconds were spent
+in database FETCH calls, with about 0.3 seconds elsewhere. PostgreSQL chose a
+plain Index Scan of the existing geography index. Changing only the cursor's
+planner preference selected a Bitmap Heap Scan using that same index and
+completed all 38,337 parcels / 38,096 accounts in 10.6 seconds. A separate probe
+restoring the caller setting immediately after DECLARE still completed the
+same counts in 14.1 seconds. These are individual live read-only measurements,
+not throughput guarantees; the earlier synthetic/parcel-point counts differ
+from this saved subject point and must not be substituted for it.
+
+The radius streamer now saves `enable_indexscan`, uses transaction-local `off`
+only while declaring its cursor, and restores the exact prior value before
+FETCH. Bitmap index access remains available. Keyset/city readers, other source
+queries, pool/session settings, predicates, deadlines, counts and evidence hashes
+are unchanged. If SQL fails, the existing caller-owned rollback resets LOCAL
+settings; the original database error remains authoritative. Native differential
+tests verify identical complete membership and restoration of both on/off states.
+This narrow measured workaround follows PostgreSQL's distinction between plain
+and bitmap scan planning; see [query-planning options](https://www.postgresql.org/docs/current/runtime-config-query.html).
+
 1. Confirm the approved 2 GB / 1 CPU deployment before releasing the Custom
    factory switch. The native coordinator test asserts that new captures retain
    the exact installed dense budget and that the legacy factory stays unchanged.

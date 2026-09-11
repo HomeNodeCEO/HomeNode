@@ -7,7 +7,10 @@ import { ensurePropertyContextSchema } from '../../src/services/propertyContextS
 import { captureNeighborhoodSpatialMembership as keyset, captureNeighborhoodSpatialMembershipStream as stream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 
 async function captureNeighborhoodSpatialMembership(...args) {
+  const planner = (await args[0].query('SHOW enable_indexscan')).rows[0].enable_indexscan;
   const reference = await keyset(...args), result = await stream(...args);
+  assert.equal((await args[0].query('SHOW enable_indexscan')).rows[0].enable_indexscan, planner,
+    'streamed acquisition must restore the caller planner setting');
   // On failure, diagnostic work counts may differ with scan order; neither
   // reader publishes a roster. Completed memberships/counts must match exactly.
   const semantic = value => { const { counts, ...rest } = value;
@@ -57,6 +60,10 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     assert.equal(original.status, 'captured');
     assert.deepEqual(original.parcels.map(row => row.object_id), ['1', '2', '4', '5']);
     assert.deepEqual(original.account_ids, ['0001', '0004', '0005']);
+    await reader.query('SET LOCAL enable_indexscan=off');
+    assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).status, 'captured');
+    assert.equal((await reader.query('SHOW enable_indexscan')).rows[0].enable_indexscan, 'off');
+    await reader.query('SET LOCAL enable_indexscan=on');
     for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
       assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
         { profile_id: 'custom-suburban-radius-v2', radius_metres })).status, 'captured');

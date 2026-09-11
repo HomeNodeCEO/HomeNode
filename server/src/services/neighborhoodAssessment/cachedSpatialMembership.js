@@ -161,11 +161,23 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
     let cursor = null;
     const objectIds = streaming ? new Set() : null;
     if (streaming) {
+      // Measured dense radius cursors are much faster with bitmap access to the
+      // same geography index than a plain Index Scan's repeated heap visits.
+      // Scope the planner preference to DECLARE only. Restore the caller's
+      // exact setting before FETCH or any subsequent source query. A failed
+      // statement belongs to the caller's rollback, which also resets SET LOCAL.
+      const settings = await query('cursor-plan-read', "SELECT current_setting('enable_indexscan') AS enable_indexscan");
+      const previous = settings[0]?.enable_indexscan;
+      if (settings.length !== 1 || !['on', 'off'].includes(previous)) incomplete('cursor_plan_setting_unavailable');
+      await query('cursor-plan-start', 'SET LOCAL enable_indexscan=off');
       // Generated identifier only, never caller text. NO HOLD keeps this portal
       // tied to the exact caller-owned snapshot and rollback lifecycle.
       portal = `nh_membership_${randomUUID().replaceAll('-', '')}`;
       await query('parcels-open', `DECLARE ${portal} NO SCROLL CURSOR FOR ${discovery ? STREAM_SQL_V2 : STREAM_SQL}`,
         [...prepared.geometry_input.coordinates, ...(discovery ? [discovery.radius_metres] : [])]);
+      const restored = await query('cursor-plan-restore',
+        "SELECT set_config('enable_indexscan', $1, true) AS enable_indexscan", [previous]);
+      if (restored.length !== 1 || restored[0].enable_indexscan !== previous) incomplete('cursor_plan_setting_unavailable');
     }
     while (true) {
       const rows = streaming

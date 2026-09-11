@@ -11,7 +11,7 @@ const parcel = (id, account = `000${id}`) => ({ object_id: String(id), account_i
   source_record_hash: 'b'.repeat(64), geometry_sha256: 'c'.repeat(64), sync_run_id: 'sync-one',
   synced_at: '2026-09-08T15:00:00.123456Z', source_updated_at: null });
 function clientFor(rows, options = {}) {
-  let offset = 0, portal = null;
+  let offset = 0, portal = null, planner = options.planner ?? 'on';
   const calls = [];
   return { calls, async query(call) {
     calls.push(call);
@@ -20,7 +20,15 @@ function clientFor(rows, options = {}) {
     if (tag === 'snapshot') return { rows: [options.snapshot ?? snapshot] };
     if (tag === 'snapshot-end') return { rows: [options.end ?? snapshot] };
     if (tag === 'geometry-eligibility') return { rows: options.invalidGeometry ? [{}] : [] };
+    if (tag === 'cursor-plan-read') return { rows: [{ enable_indexscan: planner }] };
+    if (tag === 'cursor-plan-start') { assert.match(call.text, /SET LOCAL enable_indexscan=off$/); planner = 'off'; return { rows: [] }; }
+    if (tag === 'cursor-plan-restore') {
+      assert.match(call.text, /set_config\('enable_indexscan', \$1, true\)/);
+      assert.deepEqual(call.values, [options.planner ?? 'on']); planner = call.values[0];
+      return { rows: [{ enable_indexscan: planner }] };
+    }
     if (tag === 'parcels-open') {
+      assert.equal(planner, 'off', 'only cursor planning uses the scoped preference');
       portal = /DECLARE (nh_membership_[a-f0-9]{32}) NO SCROLL CURSOR FOR/.exec(call.text)?.[1];
       assert.ok(portal); assert.doesNotMatch(call.text, /WITH HOLD|ORDER BY|LIMIT|object_id >/);
       assert.match(call.text, /ST_DWithin\(geom::geography,/);
@@ -31,6 +39,7 @@ function clientFor(rows, options = {}) {
       return { rows: [] };
     }
     if (tag === 'parcels-fetch') {
+      assert.equal(planner, options.planner ?? 'on', 'caller planner preference is restored before the first fetch');
       const amount = Number(/FETCH FORWARD (\d+) FROM/.exec(call.text)?.[1]);
       assert.ok(portal && call.text.endsWith(portal)); assert.ok(amount > 0 && amount <= 500);
       if (options.delay) await new Promise(resolve => setTimeout(resolve, options.delay));
@@ -93,6 +102,32 @@ test('database fetch failure propagates after bounded portal cleanup', async () 
   await assert.rejects(stream(c, geometry), /database failure/);
   const cleanup = c.calls.at(-1); assert.ok(cleanup.text.includes(':parcels-close')); assert.ok(cleanup.query_timeout <= 1000);
   assert.ok(!c.calls.some(q => /\b(?:BEGIN|COMMIT|ROLLBACK)\b/.test(q.text)));
+});
+
+test('cursor planning restores both caller settings and never changes the legacy reader', async () => {
+  for (const planner of ['on', 'off']) {
+    const client = clientFor([parcel(1)], { planner });
+    assert.equal((await stream(client, geometry)).status, 'captured');
+    const tags = client.calls.map(call => /neighborhood-membership:([^* ]+)/.exec(call.text)?.[1]);
+    assert.ok(tags.indexOf('cursor-plan-start') < tags.indexOf('parcels-open'));
+    assert.ok(tags.indexOf('parcels-open') < tags.indexOf('cursor-plan-restore'));
+    assert.ok(tags.indexOf('cursor-plan-restore') < tags.indexOf('parcels-fetch'));
+  }
+  const legacy = clientFor([parcel(1)]);
+  assert.equal((await keyset(legacy, geometry)).status, 'captured');
+  assert.ok(!legacy.calls.some(call => call.text.includes('cursor-plan-')));
+});
+
+test('failed cursor planning/restoration never fetches a partial roster or masks the database error', async () => {
+  for (const throwOn of ['cursor-plan-read', 'cursor-plan-start', 'parcels-open', 'cursor-plan-restore']) {
+    const client = clientFor([parcel(1)], { throwOn });
+    await assert.rejects(stream(client, geometry), /database failure/);
+    assert.ok(!client.calls.some(call => call.text.includes(':parcels-fetch')));
+    assert.ok(!client.calls.some(call => /\b(?:BEGIN|COMMIT|ROLLBACK)\b/.test(call.text)));
+  }
+  const unknown = clientFor([], { planner: 'unexpected' });
+  assert.equal((await stream(unknown, geometry)).reason, 'cursor_plan_setting_unavailable');
+  assert.ok(!unknown.calls.some(call => call.text.includes(':cursor-plan-start')));
 });
 test('invalid cache or snapshot refuses acquisition before opening a cursor', async () => {
   for (const options of [{ invalidGeometry: true }, { snapshot: { ...snapshot, read_only: 'off' } }]) {

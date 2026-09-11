@@ -237,7 +237,7 @@ async function ownerFixture({ denyExposure, denyVisit = 1, changed = false } = {
       if (text.includes('custom-cohort-context:transaction')) return row({ transaction_id: '123456789' });
       if (text.includes('custom-cohort-context:target')) return row({ id: t.report_file_id });
       if (text.includes('custom-cohort-context:read')) return row(contextRow);
-      if (text.includes('neighborhood-cohort-blob:read')) reads.push(values[1]);
+      if (text.includes('neighborhood-cohort-blob:read')) reads.push(...(Array.isArray(values[1]) ? values[1] : [values[1]]));
       return f.base.client.query(text, values);
     },
   }; } }, authorizeMarketData: async (_client, _auth, context, purpose, options) => {

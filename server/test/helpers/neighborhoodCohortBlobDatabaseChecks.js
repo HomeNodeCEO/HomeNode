@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
-import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobRepository as repository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobRepository as repository,
+  recheckNeighborhoodCohortBlob as recheck } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 
 // Called only inside the existing isolated, URL/socket-verified CI child DB
 // suite. Never bootstrap a database or connect using a production environment.
@@ -25,6 +26,12 @@ export async function checkNeighborhoodCohortBlobDatabase(pool) {
     ref = await own.put(text);
     assert.equal(await own.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
     assert.equal(await foreign.get(ref.content_sha256, ref.canonical_utf8_bytes), null);
+    const missing = prepare('{"not_stored":true}');
+    const preparedRead = await own.getPreparedBatch([missing, ref]);
+    assert.equal(preparedRead[0], null); assert.equal(preparedRead[1].canonicalJson, text);
+    assert.equal(recheck(text, preparedRead[1].reference), preparedRead[1].reference);
+    assert.deepEqual(await foreign.getPreparedBatch([ref]), [null]);
+    assert.equal((await own.getPrepared(ref.content_sha256, ref.canonical_utf8_bytes)).canonicalJson, text);
     assert.deepEqual(await own.put(text), ref);
     assert.deepEqual(await foreign.put(text), ref);
     assert.equal((await client.query('SELECT count(*)::int AS count FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id IN ($1,$2)', [organization, other])).rows[0].count, 2);
@@ -52,6 +59,8 @@ export async function checkNeighborhoodCohortBlobDatabase(pool) {
     await client.query(insert, [organization, claimed.content_sha256, Buffer.byteLength(wrong), wrong]);
     await assert.rejects(own.put('{"actual":true}'), /neighborhood_cohort_blob_storage_conflict/);
     await assert.rejects(own.get(claimed.content_sha256, claimed.canonical_utf8_bytes), /neighborhood_cohort_blob_storage_conflict/);
+    await assert.rejects(own.getPreparedBatch([ref, claimed]), /neighborhood_cohort_blob_storage_conflict/);
+    await assert.rejects(own.getPrepared(claimed.content_sha256, claimed.canonical_utf8_bytes), /neighborhood_cohort_blob_storage_conflict/);
     assert.equal(await own.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
   } finally {
     try { await client.query('ROLLBACK'); } finally { client.release(); }

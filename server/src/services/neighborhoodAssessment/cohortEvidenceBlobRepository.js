@@ -44,7 +44,16 @@ export function prepareNeighborhoodCohortBlobReference(hash, bytes) {
   return Object.freeze({ content_sha256: hash, canonical_utf8_bytes: bytes });
 }
 
-function checkedRow(result, expected, expectedText) {
+/** Reuse only an actual in-process representation receipt for identical bytes.
+ * This is neither a stored-read receipt nor permission to disclose evidence. */
+export function recheckNeighborhoodCohortBlob(canonicalJson, reference) {
+  if (!validatedReferences.has(reference) || typeof canonicalJson !== 'string'
+    || String(Buffer.byteLength(canonicalJson, 'utf8')) !== reference.canonical_utf8_bytes
+    || createHash('sha256').update(canonicalJson, 'utf8').digest('hex') !== reference.content_sha256) fail('invalid_representation_receipt');
+  return reference;
+}
+
+function checkedRow(result, expected, expectedText, preparedRead = false) {
   if (!result || result.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1 ||
       !result.rows[0] || typeof result.rows[0] !== 'object') fail('storage_conflict');
   const row = result.rows[0];
@@ -57,6 +66,7 @@ function checkedRow(result, expected, expectedText) {
   try { actual = prepareNeighborhoodCohortBlob(row.canonical_utf8); }
   catch { fail('storage_conflict'); }
   if (actual.content_sha256 !== expected.content_sha256 || actual.canonical_utf8_bytes !== expected.canonical_utf8_bytes) fail('storage_conflict');
+  if (preparedRead) return Object.freeze({ canonicalJson: row.canonical_utf8, reference: actual });
   return row.canonical_utf8;
 }
 
@@ -136,6 +146,46 @@ export function createNeighborhoodCohortBlobRepository(client, organizationId) {
       const found = await find(expected);
       if (found?.rowCount === 0 && Array.isArray(found.rows) && found.rows.length === 0) return null;
       return checkedRow(found, expected);
+    },
+    /** Fresh scoped read with full original validation. The optional receipt
+     * lets the same operation recheck reconstructed bytes without scanning the
+     * identical representation again; independent reads always validate fully. */
+    async getPrepared(contentSha256, canonicalUtf8Bytes) {
+      const expected = prepareNeighborhoodCohortBlobReference(contentSha256, canonicalUtf8Bytes);
+      const found = await find(expected);
+      if (found?.rowCount === 0 && Array.isArray(found.rows) && found.rows.length === 0) return null;
+      return checkedRow(found, expected, undefined, true);
+    },
+    /** Bounded fresh reads, not a cache. Return caller order, including explicit
+     * missing entries; every returned original gets the same full validation. */
+    async getPreparedBatch(references) {
+      if (!Array.isArray(references) || !references.length
+        || references.length > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) fail('invalid_read_batch');
+      const captured = [], expected = new Map(); let bytes = 0;
+      for (let i = 0; i < references.length; i++) {
+        if (!Object.hasOwn(references, i)) fail('invalid_read_batch');
+        const ref = prepareNeighborhoodCohortBlobReference(references[i]?.content_sha256, references[i]?.canonical_utf8_bytes);
+        bytes += Number(ref.canonical_utf8_bytes);
+        if (bytes > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes || expected.has(ref.content_sha256)) fail('invalid_read_batch');
+        captured.push(ref); expected.set(ref.content_sha256, ref);
+      }
+      // Bound transferred bytes by the validated request even if stored metadata
+      // or text was corrupted. A mismatch becomes a conflict, not a partial read.
+      const found = await query(`/* neighborhood-cohort-blob:read-batch */
+        SELECT b.content_sha256, b.canonical_utf8_bytes::text,
+          CASE WHEN b.canonical_utf8_bytes=input.bytes AND octet_length(b.canonical_utf8)=input.bytes
+            THEN b.canonical_utf8 ELSE NULL END AS canonical_utf8
+        FROM unnest($2::text[], $3::integer[]) AS input(hash, bytes)
+        JOIN app.neighborhood_cohort_evidence_blobs b ON b.organization_id=$1 AND b.content_sha256=input.hash`,
+      [organization, captured.map(ref => ref.content_sha256), captured.map(ref => Number(ref.canonical_utf8_bytes))]);
+      if (!found || !Array.isArray(found.rows) || found.rowCount !== found.rows.length) fail('storage_conflict');
+      const values = new Map();
+      for (const row of found.rows) {
+        const ref = expected.get(row?.content_sha256);
+        if (!ref || values.has(ref.content_sha256)) fail('storage_conflict');
+        values.set(ref.content_sha256, checkedRow({ rows: [row], rowCount: 1 }, ref, undefined, true));
+      }
+      return Object.freeze(captured.map(ref => values.get(ref.content_sha256) ?? null));
     },
   });
 }

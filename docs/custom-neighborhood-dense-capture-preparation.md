@@ -247,3 +247,19 @@ must still be verified against the real source distribution after deployment.
 
 No historical characteristics, provider coverage, MLS rights, eligibility or
 statistical validity are established by increasing processing capacity.
+
+### Live phase observability
+
+The first PR730 live retry still exhausted the effective 119-second aggregate
+deadline. To isolate the remaining real-data cost, captures emit six fixed
+operational phase timings: subject, spatial, source, preparation, retention and
+registration. Each event contains only phase/outcome and integer elapsed times;
+no identifiers, errors, SQL, source records or request payloads are logged. A
+phase can emit once per capture, and logger failures cannot alter recovery.
+Registration timing is not itself proof of COMMIT or accepted report Apply.
+
+When an in-flight driver query rejects at the owner's aggregate deadline, the
+owner checks its own clock/signal before reporting the failure. The actual driver
+error still causes connection discard. Existing unknown-COMMIT handling has
+priority; this does not permit a blind retry or suppress an earlier SQL failure.
+Ordinary query limits, access checks and accepted-report behavior are unchanged.

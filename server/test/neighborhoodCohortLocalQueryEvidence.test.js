@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { prepareCohortLocalQueryEvidenceV1 } from "../src/services/neighborhoodAssessment/cohortEvidenceContract.js";
 import { canonicalAssessmentJson } from "../src/services/neighborhoodAssessment/contract.js";
+import { DENSE_CAD_CACHE_READER_LIMITS } from "../src/services/neighborhoodAssessment/denseCadCapturePolicy.js";
 import {
   COHORT_LOCAL_QUERY_FIXTURE_ACCOUNTS, cohortFixtureSha256, cohortFixtureQueryHash,
   createCohortLocalQueryEvidenceFixture, makeCohortLocalQueryMetadata,
@@ -57,6 +58,19 @@ function changedMetadata(change, options = {}) {
   change(metadata);
   return createCohortLocalQueryEvidenceFixture({ metadata, ...options });
 }
+
+test('only installed CAD mapping4 admits declared dense budgets; bytes are not source authority', () => {
+  assertAccepted(changedMetadata(m => { m.mapping_version = 4; m.limits = { ...DENSE_CAD_CACHE_READER_LIMITS }; }));
+  for (const version of [1, 2, 3]) {
+    const fixture = changedMetadata(m => { m.mapping_version = version; m.limits = { ...DENSE_CAD_CACHE_READER_LIMITS }; });
+    assertFailure(prepare(fixture.bundle));
+  }
+  for (const key of Object.keys(DENSE_CAD_CACHE_READER_LIMITS)) {
+    const fixture = changedMetadata(m => { m.mapping_version = 4; m.limits = { ...DENSE_CAD_CACHE_READER_LIMITS,
+      [key]: DENSE_CAD_CACHE_READER_LIMITS[key] + 1 }; });
+    assertFailure(prepare(fixture.bundle));
+  }
+});
 
 function appendBlob(fixture, blob, copies = 1) {
   const bundle = copy(fixture.bundle);

@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { mapWitnessParcelRow, mapWitnessAccountRow, mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
 import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
@@ -19,9 +20,9 @@ import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
 import { prepareCustomCohortPrivateSalesSupplement } from './customCohortPrivateSales.js';
 
 export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
-  blobs: 4000, references: 12000, logical_utf8_bytes: 192_000_000, page_entries: 250,
+  blobs: 4000, references: 12000, logical_utf8_bytes: 512_000_000, page_entries: 250,
   page_utf8_bytes: 1_300_000, spatial_parcels: 100_000, accounts: 50_000,
-  source_chunks: 1000, source_records: 100_000, closure_records: 100_000,
+  source_chunks: 1000, source_records: 200_000, closure_records: 100_000,
 });
 const L = CUSTOM_COHORT_CAPTURE_INPUT_LIMITS;
 const preparedPlans = new WeakMap();
@@ -128,7 +129,7 @@ function planBuilder() {
   };
   return { ...budget, pending, existing, text, add, pages };
 }
-function validateSpatial(spatial, point, discovery) {
+function* validateSpatial(spatial, point, discovery) {
   const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
   check(spatial.status === 'captured' && spatial.query_complete === true && spatial.authority === 'not_established'
     && spatial.source_coverage === 'not_established');
@@ -147,7 +148,9 @@ function validateSpatial(spatial, point, discovery) {
       distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' }
       : { geometry_input: point.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
   const ids = new Set(); let cursor = null, bytes = 0;
+  let batch = 0;
   for (const row of array(spatial.parcels, L.spatial_parcels)) {
+    if (++batch % 125 === 0) yield;
     closed(row, ['object_id', 'account_id', 'source_record_hash', 'sync_run_id', 'synced_at', 'source_updated_at', 'geometry_sha256']);
     check(typeof row.object_id === 'string' && /^-?(?:0|[1-9]\d*)$/.test(row.object_id)
       && BigInt(row.object_id) >= -9223372036854775808n && BigInt(row.object_id) <= 9223372036854775807n
@@ -164,7 +167,7 @@ function validateSpatial(spatial, point, discovery) {
     && spatial.account_ids_sha256 === assessmentEvidenceDigest({ account_ids: spatial.account_ids })
     && spatial.membership_sha256 === digest.digest('hex'));
 }
-function validateSources(capture, request, compact) {
+function* validateSources(capture, request, compact) {
   check(capture.status === 'ready' && same(capture.scope, request.scope));
   array(capture.sources, L.source_chunks); array(capture.source_snapshots, L.source_chunks);
   check(capture.sources.length === capture.source_snapshots.length);
@@ -172,6 +175,7 @@ function validateSources(capture, request, compact) {
   check(snapshots.size === capture.sources.length);
   const groups = new Map(), ids = new Set(); let records = 0;
   for (const source of capture.sources) {
+    yield;
     closed(source, ['id', 'payload']);
     const p = source.payload;
     closed(p, ['schema_version', 'scope', 'upstream', 'projection', 'metadata', 'partition', 'records']);
@@ -202,7 +206,9 @@ function validateSources(capture, request, compact) {
     for (const [index, p] of chunks.entries()) {
       check(p.partition.index === index && p.partition.count === chunks.length && same(omit(p, ['partition', 'records']), header));
       const sourceId = `${captureId}:${blob(json(p)).content_sha256}`; sourceRefs.push(sourceId);
+      let batch = 0;
       for (const row of p.records) {
+        if (++batch % 125 === 0) yield;
         closed(row, ['record_id', 'data']);
         if (compact.mapping_version === 3 || compact.mapping_version === 4) {
           const mapper = (compact.mapping_version === 3 ? WITNESS_MAPPERS : CAD_EVIDENCE_MAPPERS)[p.projection.definition.role];
@@ -216,7 +222,11 @@ function validateSources(capture, request, compact) {
       }
     }
     const digest = createHash('sha256').update(json({ ...compact, selection_sha256: request.query_hash, selected_account_count: request.account_ids.length }));
-    for (const row of all) digest.update(json(row)).update('\n');
+    let batch = 0;
+    for (const row of all) {
+      digest.update(json(row)).update('\n');
+      if (++batch % 125 === 0) yield;
+    }
     check(first.upstream.upstream_content_sha256 === digest.digest('hex') && first.upstream.row_count === all.length
       && first.projection.input_row_count === all.length && first.projection.output_record_count === all.length
       && first.upstream.complete === true && first.projection.complete === true);
@@ -235,6 +245,29 @@ function validateSources(capture, request, compact) {
  * checks preserve and bind bytes; they cannot manufacture original provenance,
  * source eligibility, permission or a current context from caller hashes. */
 export function prepareCustomCohortCaptureInputs(input) {
+  const iterator = prepareInputBatches(input); let step;
+  do { step = iterator.next(); } while (!step.done);
+  return step.value;
+}
+
+// Same complete validation and evidence graph as synchronous preparation, with
+// request processing opportunities between bounded source-record work batches.
+export async function prepareCustomCohortCaptureInputsBatched(input, { check = () => {} } = {}) {
+  // This private API receives the owner's original handoff or reconstructed
+  // retained input. Seal it before yielding so another task cannot rewrite an
+  // already-validated descendant while the evidence graph is being assembled.
+  check(); freeze(input); check();
+  const iterator = prepareInputBatches(input);
+  try {
+    while (true) {
+      check(); const step = iterator.next(); check();
+      if (step.done) return step.value;
+      await yieldToRequests(); check();
+    }
+  } finally { iterator.return(); }
+}
+
+function* prepareInputBatches(input) {
   const hasPrivate = Object.hasOwn(input, 'private_sales');
   closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at',
     ...(hasPrivate ? ['private_sales'] : [])]);
@@ -257,7 +290,7 @@ export function prepareCustomCohortCaptureInputs(input) {
     && (!discovery || discovery.profile_id === study.profile_id)
     && study.knowledge_cutoff === null && request.knowledge_cutoff === null
     && same(study.observation_period, request.observation_period));
-  validateSpatial(spatial, point, discovery);
+  yield* validateSpatial(spatial, point, discovery);
   const expectedScope = pick(subject.target, ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']);
   const target = { report_file_id: scope.report_file_id, workflow_type: 'custom_appraisal', workflow_target_id: scope.assignment_file_id };
   check(same(request.target, target) && same(request.scope, expectedScope) && same(result.scope, expectedScope)
@@ -310,7 +343,7 @@ export function prepareCustomCohortCaptureInputs(input) {
   check(same(compact.authorization.transaction_closure, { version: closure.version, source_revision: closure.source_revision,
     closure_sha256: closure.closure_sha256, transaction_count: closure.transactions.length, link_count: closure.links.length,
     legacy_sale_count: closure.legacy.length, account_count: closure.closure_account_ids.length, source_record_count: closure.source_record_ids.length }));
-  validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact);
+  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact);
   // Mirror the existing retained-query index exactly; persist still calls its
   // actual repository. This preflight prevents late index/wrapper overflow.
   const evidence = query.evidence;
@@ -326,6 +359,11 @@ export function prepareCustomCohortCaptureInputs(input) {
   const studyInput = b.add({ study_input_version: 1, usage: 'retained_custom_study_settings', target: subject.target,
     effective_date: subject.effective_date, settings: study, source_semantics: compact.semantics, eligibility: 'not_established' });
   const capture = result.source_capture;
+  const sourcePayloads = [];
+  for (const source of capture.sources) {
+    sourcePayloads.push({ id: source.id, payload: b.add(source.payload, false, false) });
+    yield;
+  }
   const selectionInput = b.add({ selection_input_version: hasPrivate ? 2 : 1, usage: 'retained_original_custom_capture_inputs',
     subject_inputs: subjectRef, acquisition_intent: intent.reference, started_at: input.started_at, completed_at: input.completed_at,
     query_inputs: queryRef, compact_metadata: b.text(acquisition.compact_metadata_json),
@@ -342,7 +380,7 @@ export function prepareCustomCohortCaptureInputs(input) {
     sources: { metadata: b.add(omit(capture, ['sources', 'source_snapshots', 'references'])),
       // Original source values are DATA, not this storage graph's reference
       // language. A quality flag with ref-shaped keys must survive literally.
-      payloads: b.pages('source_payloads', capture.sources.map(source => ({ id: source.id, payload: b.add(source.payload, false, false) })), L.source_chunks),
+      payloads: b.pages('source_payloads', sourcePayloads, L.source_chunks),
       snapshots: b.pages('source_snapshots', capture.source_snapshots, L.source_chunks),
       routing: b.pages('source_routing', capture.references.map(route => ({ ...omit(route, ['record_sources']),
         record_sources: b.pages(`routing_${route.capture_id}`, route.record_sources, L.source_records) })), 32) },
@@ -470,7 +508,7 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
       rows: await pages(selection.private_sales.rows, 'private_sales_rows', 10000) },
     authorization: await read(selection.private_sales.authorization) };
   }
-  const checked = prepareCustomCohortCaptureInputs(input);
+  const checked = await prepareCustomCohortCaptureInputsBatched(input);
   check(same(checked.refs, refs), 'stored_graph_mismatch');
   check(await transaction(client) === started, 'caller_transaction_required');
   return freeze({ status: 'retained', authority: 'not_established', refs: checked.refs,

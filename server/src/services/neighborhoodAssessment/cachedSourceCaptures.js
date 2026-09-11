@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { assessmentDate, canonicalAssessmentJson } from "./contract.js";
 
 export const CACHED_SOURCE_CAPTURE_LIMITS = Object.freeze({
@@ -12,6 +13,13 @@ export const CACHED_SOURCE_CAPTURE_LIMITS = Object.freeze({
   envelope_bytes: 64_000,
   envelope_nodes: 10_000,
   records_per_chunk: 1000,
+});
+
+// Explicit dense-CAD construction only. Defaults and all per-row/chunk limits
+// stay unchanged. This is not authorization or proof of a safe deployed capacity.
+export const DENSE_CAD_SOURCE_CAPTURE_LIMITS = Object.freeze({
+  ...CACHED_SOURCE_CAPTURE_LIMITS, input_records: 200_000,
+  input_bytes: 144_000_000, output_bytes: 160_000_000,
 });
 
 const SCOPE_KEYS = ["organization_id", "appraisal_case_id", "subject_snapshot_id", "account_id"];
@@ -107,12 +115,12 @@ function encoded(value, maximumNodes, maximumBytes) {
   return { json, bytes, nodes };
 }
 
-function upstreamSource(value, captureScope) {
+function upstreamSource(value, captureScope, maximumRecords = CACHED_SOURCE_CAPTURE_LIMITS.input_records) {
   object(value, "upstream");
   if (!["absent", "present_empty", "populated", "truncated"].includes(value.state)) invalid("upstream.state");
   if (![true, false, null].includes(value.complete)) invalid("upstream.complete");
   const rowCount = count(value.row_count, "upstream.row_count");
-  if (rowCount > CACHED_SOURCE_CAPTURE_LIMITS.input_records) limit("upstream.row_count");
+  if (rowCount > maximumRecords) limit("upstream.row_count");
   if ((["absent", "present_empty"].includes(value.state) && rowCount !== 0)
       || (value.state === "populated" && rowCount === 0)
       || (["absent", "truncated"].includes(value.state) && value.complete === true)) invalid("upstream.state_count");
@@ -187,10 +195,53 @@ function projection(value, upstream, suppliedRecords) {
  * fact periods require explicit reconstructed support. A ready result means
  * capture completeness only, not historical or statistical eligibility.
  */
-export function buildCachedSourceCaptures({ scope, captures }) {
+export function buildCachedSourceCaptures(input) {
+  const iterator = captureChunks(input, CACHED_SOURCE_CAPTURE_LIMITS, false);
+  let step;
+  do { step = iterator.next(); } while (!step.done);
+  return step.value;
+}
+
+// Frozen original reader data can be shared safely by source chunks instead of
+// retaining another full parsed copy of the CAD wrappers. Reject mutable graphs,
+// accessors and non-JSON prototypes before yielding to other requests.
+function requireFrozenGraph(value) {
+  const seen = new WeakSet(); let nodes = 0;
+  const visit = (item, depth) => {
+    if (++nodes > 20_000_000 || depth > 35) limit('frozen_graph');
+    if (!item || typeof item !== 'object') return;
+    if (seen.has(item)) return;
+    if (!Object.isFrozen(item) || (!Array.isArray(item) && Object.getPrototypeOf(item) !== Object.prototype)) invalid('frozen_input_required');
+    seen.add(item);
+    for (const key of Object.keys(item)) {
+      const descriptor = Object.getOwnPropertyDescriptor(item, key);
+      if (!descriptor || !Object.hasOwn(descriptor, 'value')) invalid('frozen_input_required');
+      visit(descriptor.value, depth + 1);
+    }
+  };
+  visit(value, 0);
+}
+
+/** Internal opt-in construction for immutable CAD acquisitions. Work yields
+ * between bounded batches; cancellation/deadlines are checked before and after
+ * every yield. Nothing usable is returned until the complete capture succeeds.
+ * It does not query, persist, authorize, apply, or change default reader limits. */
+export async function buildFrozenCadSourceCaptures(input, { check = () => {} } = {}) {
+  check(); requireFrozenGraph(input); check();
+  const iterator = captureChunks(input, DENSE_CAD_SOURCE_CAPTURE_LIMITS, true);
+  try {
+    while (true) {
+      check(); const step = iterator.next(); check();
+      if (step.done) return step.value;
+      await yieldToRequests(); check();
+    }
+  } finally { iterator.return(); }
+}
+
+function* captureChunks({ scope, captures }, limits, reuseFrozen) {
   const captureScope = scoped(scope, "scope");
   if (!Array.isArray(captures) || !captures.length) invalid("captures");
-  if (captures.length > CACHED_SOURCE_CAPTURE_LIMITS.input_captures) limit("input_captures");
+  if (captures.length > limits.input_captures) limit("input_captures");
   const sourceSnapshots = [];
   const sources = [];
   const references = [];
@@ -211,11 +262,11 @@ export function buildCachedSourceCaptures({ scope, captures }) {
   }).sort((a, b) => compare(a.metadata.id, b.metadata.id));
 
   for (const { capture, metadata } of ordered) {
-    const upstream = upstreamSource(capture.upstream, captureScope);
+    const upstream = upstreamSource(capture.upstream, captureScope, limits.input_records);
     if (metadata.observed_at < upstream.captured_at) invalid("metadata.observed_before_upstream_capture");
     if (!Array.isArray(capture.records)) invalid("records");
     totalRecords += capture.records.length;
-    if (totalRecords > CACHED_SOURCE_CAPTURE_LIMITS.input_records) limit("input_records");
+    if (totalRecords > limits.input_records) limit("input_records");
     const selected = projection(capture.projection, upstream, capture.records.length);
     const reasons = [];
     if (upstream.state === "absent") reasons.push("source_absent");
@@ -236,12 +287,15 @@ export function buildCachedSourceCaptures({ scope, captures }) {
     references.push(routing);
 
     const envelope = { schema_version: 1, scope: captureScope, upstream, projection: selected, metadata,
-      partition: { index: 999, count: 1000, record_count: CACHED_SOURCE_CAPTURE_LIMITS.input_records }, records: [] };
+      partition: { index: 999, count: 1000, record_count: limits.input_records }, records: [] };
     const envelopeSize = encoded(envelope, CACHED_SOURCE_CAPTURE_LIMITS.envelope_nodes,
       CACHED_SOURCE_CAPTURE_LIMITS.envelope_bytes);
     inputBytes += envelopeSize.bytes;
-    if (inputBytes > CACHED_SOURCE_CAPTURE_LIMITS.input_bytes) limit("input_bytes");
+    if (inputBytes > limits.input_bytes) limit("input_bytes");
     const recordIds = new Set();
+    // Sort references, not a second complete JSON encoding of every source row.
+    // Keep only the current bounded chunk's serialized work. The default path
+    // detaches records; the opt-in path reuses only verified immutable data.
     const records = [];
     for (const row of capture.records) {
       object(row, "record");
@@ -249,42 +303,41 @@ export function buildCachedSourceCaptures({ scope, captures }) {
       object(row.data, "record.data");
       if (recordIds.has(recordId)) invalid("duplicate_record_id");
       recordIds.add(recordId);
-      const value = encoded({ record_id: recordId, data: row.data },
-        CACHED_SOURCE_CAPTURE_LIMITS.payload_nodes - envelopeSize.nodes,
-        CACHED_SOURCE_CAPTURE_LIMITS.payload_bytes - envelopeSize.bytes);
-      inputBytes += value.bytes;
-      if (inputBytes > CACHED_SOURCE_CAPTURE_LIMITS.input_bytes) limit("input_bytes");
-      if (usable) records.push({ record_id: recordId, ...value });
+      records.push({ record_id: recordId, data: row.data });
     }
-    if (!usable) continue;
     records.sort((a, b) => compare(a.record_id, b.record_id));
     const chunks = [];
     let chunk = [];
     let bytes = envelopeSize.bytes;
     let nodes = envelopeSize.nodes;
+    let batchRecords = 0;
     for (const record of records) {
+      const value = encoded(record,
+        CACHED_SOURCE_CAPTURE_LIMITS.payload_nodes - envelopeSize.nodes,
+        CACHED_SOURCE_CAPTURE_LIMITS.payload_bytes - envelopeSize.bytes);
+      inputBytes += value.bytes;
+      if (inputBytes > limits.input_bytes) limit("input_bytes");
+      if (++batchRecords % 125 === 0) yield;
+      if (!usable) continue;
       if (chunk.length && (chunk.length >= CACHED_SOURCE_CAPTURE_LIMITS.records_per_chunk
-          || bytes + record.bytes + 1 > CACHED_SOURCE_CAPTURE_LIMITS.payload_bytes
-          || nodes + record.nodes > CACHED_SOURCE_CAPTURE_LIMITS.payload_nodes)) {
+          || bytes + value.bytes + 1 > CACHED_SOURCE_CAPTURE_LIMITS.payload_bytes
+          || nodes + value.nodes > CACHED_SOURCE_CAPTURE_LIMITS.payload_nodes)) {
         chunks.push(chunk); chunk = []; bytes = envelopeSize.bytes; nodes = envelopeSize.nodes;
       }
-      bytes += record.bytes + (chunk.length ? 1 : 0);
-      nodes += record.nodes;
-      chunk.push(record);
+      bytes += value.bytes + (chunk.length ? 1 : 0);
+      nodes += value.nodes;
+      chunk.push(reuseFrozen ? Object.freeze(record) : JSON.parse(value.json));
     }
+    if (!usable) continue;
     if (chunk.length || !chunks.length) chunks.push(chunk);
     if (sources.length + chunks.length > CACHED_SOURCE_CAPTURE_LIMITS.output_captures) limit("output_captures");
 
     for (const [index, members] of chunks.entries()) {
       const payload = { ...envelope, partition: { index, count: chunks.length, record_count: members.length },
-        records: members.map(member => {
-          const record = JSON.parse(member.json);
-          member.json = null;
-          return record;
-        }) };
+        records: members };
       const canonical = canonicalAssessmentJson(payload);
       outputBytes += Buffer.byteLength(canonical, "utf8");
-      if (outputBytes > CACHED_SOURCE_CAPTURE_LIMITS.output_bytes) limit("output_bytes");
+      if (outputBytes > limits.output_bytes) limit("output_bytes");
       const digest = createHash("sha256").update(canonical).digest("hex");
       const sourceId = `${metadata.id}:${digest}`;
       const { id: _captureId, ...snapshotMetadata } = metadata;
@@ -293,6 +346,7 @@ export function buildCachedSourceCaptures({ scope, captures }) {
       sources.push({ id: sourceId, payload });
       routing.source_refs.push(sourceId);
       for (const member of members) routing.record_sources.push({ record_id: member.record_id, source_ref: sourceId });
+      yield;
     }
   }
   return deepFreeze({

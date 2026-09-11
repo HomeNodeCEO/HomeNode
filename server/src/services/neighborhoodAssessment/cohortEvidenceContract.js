@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { assertNeighborhoodJsonbStorage } from './jsonbStorage.js';
+import { DENSE_CAD_CACHE_READER_LIMITS } from './denseCadCapturePolicy.js';
 
 // Dormant local-capture-v3 byte-consistency profile. These are admission limits,
 // not measured memory/time guarantees or a source/authorization capability.
@@ -172,7 +173,9 @@ function metadata(value) {
   exact(value.selection_method, 'exact_selected_accounts_all_source_links_no_event_filter');
   exact(value.provider_coverage, 'unknown');
   shape(value.limits, Object.keys(READER_LIMITS));
-  for (const [key, maximum] of Object.entries(READER_LIMITS)) integer(value.limits[key], 1, maximum);
+  // Old bytes retain their exact declared budget; only installed CAD mapping4
+  // can declare the larger budget. This is byte admission, never source access.
+  for (const [key, maximum] of Object.entries(value.mapping_version === 4 ? DENSE_CAD_CACHE_READER_LIMITS : READER_LIMITS)) integer(value.limits[key], 1, maximum);
   shape(value.capabilities, Object.keys(RELATIONS));
   for (const [key, relation] of Object.entries(RELATIONS)) {
     const capability = value.capabilities[key];

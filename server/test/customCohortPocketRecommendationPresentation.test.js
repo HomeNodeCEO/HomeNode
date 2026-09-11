@@ -10,8 +10,8 @@ import { decisionEvidenceFixture } from './fixtures/customCohortDecisionEvidence
 import { saleWitnessMeaningFixture } from './fixtures/customCohortSaleWitnessMeaningFixture.js';
 
 const base = decisionEvidenceFixture();
-test('dense catalog does not rank an arbitrary128-group prefix or enlarge recommendation work', () => {
-  const catalog = { catalog_version: 2, catalog_complete: true, authority: 'not_established', apply: { status: 'blocked' },
+test('incomplete dense catalog does not rank an arbitrary128-group prefix', () => {
+  const catalog = { catalog_version: 2, catalog_complete: false, authority: 'not_established', apply: { status: 'blocked' },
     pockets: Array.from({ length: 887 }, (_, i) => ({ id: `recorded-cad:${i}` })) };
   assert.equal(compose({ catalog }), null, 'dense ranking returns before requiring source/native observations');
 });

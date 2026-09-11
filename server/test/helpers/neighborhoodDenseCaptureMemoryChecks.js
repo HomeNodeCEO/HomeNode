@@ -20,13 +20,15 @@ import { presentCustomCohortPreview } from '../../src/services/neighborhoodAsses
 import { buildCustomCohortSelectionCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCohortOpeningSelection, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
+import { buildCustomCohortPocketRecommendationBatched } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
+import { presentCustomCohortPocketRecommendation } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
 export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {} }) {
   const target = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
-  assert.ok(['capture', 'reopen', 'preview', 'opening'].includes(phase));
+  assert.ok(['capture', 'reopen', 'preview', 'opening', 'recommendation'].includes(phase));
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 2, connectionTimeoutMillis: 3000,
     statement_timeout: 5000, application_name: 'synthetic_dense_capture_memory' });
   const stages = [], started = performance.now(), delay = monitorEventLoopDelay({ resolution: 10 });
@@ -54,12 +56,12 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
       const opened = await tx('REPEATABLE READ READ ONLY', client => loadCustomCohortCaptureInputs(client, json(retained.scope), retained.refs));
       assert.deepEqual(opened.summary, retained.summary); assert.deepEqual(opened.refs, retained.refs);
       stage('reopened'); result = { summary: opened.summary };
-      if (phase === 'preview' || phase === 'opening') {
+      if (phase === 'preview' || phase === 'opening' || phase === 'recommendation') {
         const context_ref = { context_id: randomUUID(), context_revision: '1', context_sha256: 'a'.repeat(64) };
         const account_ids = opened.retained_inputs.spatial.account_ids;
         let selection = { revision: 1, pockets: [{ id: 'synthetic-all', label: 'Synthetic complete area', account_ids }] };
-        let openingCatalog;
-        if (phase === 'opening') {
+        let openingCatalog, recommendation;
+        if (phase === 'opening' || phase === 'recommendation') {
           const empty = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs,
             selection: { revision: 1, pockets: [] } });
           openingCatalog = presentCustomCohortPocketCatalog({ catalog: buildCustomCohortPocketCatalog({
@@ -68,6 +70,21 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
           const ids = [...openingCatalog.pockets.map(p => p.id), ...(openingCatalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
           selection = customCohortOpeningSelection(openingCatalog, ids, 1);
           stage('opening_catalog');
+          if (phase === 'recommendation') {
+            // Performance-only CURRENT observation diagnostic. This intentionally
+            // does not invoke the historical report/recommendation owner or claim
+            // that these later synthetic CAD observations apply retrospectively.
+            const diagnostic = await buildCustomCohortPocketRecommendationBatched({ context_ref,
+              retained_inputs: opened.retained_inputs, catalog_version: 2, observation_preview: empty,
+              selection: { revision: 1, included_recorded_group_ids: [] } });
+            recommendation = presentCustomCohortPocketRecommendation({ recommendation: diagnostic, catalog: openingCatalog,
+              expected: { context_ref, selection_revision: 1 } });
+            assert.equal(recommendation.pockets.length, openingCatalog.pockets.length + (openingCatalog.unassigned.member_count ? 1 : 0));
+            assert.equal(recommendation.all.member_count, account_ids.length);
+            result.recommendation = { groups: recommendation.pockets.length, accounts: recommendation.all.member_count,
+              bytes: Buffer.byteLength(JSON.stringify(recommendation)), apply: recommendation.apply.status };
+            stage('full_roster_recommendation');
+          }
         }
         const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs, selection });
         stage('statistics');
@@ -82,7 +99,7 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         assert.equal(preview.all.stock.member_count, account_ids.length); assert.equal(preview.selected.stock.member_count, account_ids.length);
         const summary = presentCustomCohortPreview({ preview, expected: { context_ref, selection_revision: 1 } });
         const bytes = Buffer.byteLength(JSON.stringify(openingCatalog
-          ? { catalog: openingCatalog, initial_preview: { summary, parcel_map } } : { summary, parcel_map }));
+          ? { catalog: openingCatalog, ...(recommendation ? { recommendation } : {}), initial_preview: { summary, parcel_map } } : { summary, parcel_map }));
         if (openingCatalog) assert.ok(bytes <= CUSTOM_COHORT_OPENING_RESPONSE_BYTES);
         stage('presented'); result = { ...result, preview_bytes: bytes, preview_counts: {
           all_accounts: preview.all.stock.member_count, selected_accounts: preview.selected.stock.member_count,

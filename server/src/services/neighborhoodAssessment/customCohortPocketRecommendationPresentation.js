@@ -1,5 +1,5 @@
 import { canonicalAssessmentJson as json } from './contract.js';
-import { buildCustomCohortPocketRecommendation, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY,
+import { buildCustomCohortPocketRecommendation, buildCustomCohortPocketRecommendationBatched, CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY as POLICY,
   CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 as POLICY_V2,
   CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V3 as POLICY_V3 } from './customCohortPocketRecommendation.js';
 import { CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS, CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS } from './customCohortRecordedProximity.js';
@@ -7,10 +7,12 @@ import { CUSTOM_COHORT_RECORDED_HOUSING_PROFILE, CUSTOM_COHORT_RECORDED_HOUSING_
   CUSTOM_COHORT_RECORDED_HOUSING_STATES, CUSTOM_COHORT_RECORDED_HOUSING_CATEGORIES } from './customCohortRecordedHousing.js';
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
+import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
 const L = CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS;
+export const CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES = 2_500_000;
 const FACTORS = Object.keys(POLICY.weights), UNASSIGNED = 'discovery:unassigned';
 const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -108,10 +110,15 @@ function housingSummary(value, all, pockets) {
  * private target/source identities or selected-union calculations here. Rights,
  * exact retained loading and final freshness checks remain with the owner.
  */
-export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected } = {}) {
-  check(recommendation?.recommendation_version === 1 && recommendation.authority === 'not_established'
+export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected, maximumBytes } = {}) {
+  const version = recommendation?.recommendation_version;
+  check([1, 2].includes(version) && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
   check([1, 2].includes(catalog?.catalog_version) && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
+  check(version !== 2 || catalog.catalog_version === 2, 'catalog_version');
+  const byteLimit = maximumBytes ?? (version === 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes);
+  check(Number.isSafeInteger(byteLimit) && byteLimit >= 0
+    && byteLimit <= (version === 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes), 'byte_limit');
   const v2 = recommendation.policy?.id === POLICY_V2.id, v3 = recommendation.policy?.id === POLICY_V3.id;
   const policy = v3 ? POLICY_V3 : v2 ? POLICY_V2 : POLICY;
   check(json(recommendation.policy) === json(policy), 'policy');
@@ -128,7 +135,7 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
   check(recommendation.selection.included_recorded_group_ids.length === 0, 'full_discovery_baseline_required');
   const groups = new Map(catalog.pockets.map(group => [group.id, group.member_count]));
   if (catalog.unassigned.member_count) groups.set(UNASSIGNED, catalog.unassigned.member_count);
-  check(Array.isArray(recommendation.pockets) && recommendation.pockets.length <= L.pockets
+  check(Array.isArray(recommendation.pockets) && recommendation.pockets.length <= customCohortCatalogGroupLimit(version) + 1
     && recommendation.pockets.length === groups.size, 'groups');
   const seen = new Set(), ranks = new Set();
   const pockets = recommendation.pockets.map(pocket => {
@@ -150,7 +157,7 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
   const subjectIds = recommendation.subject.recorded_group_review_ids;
   check(Array.isArray(subjectIds) && subjectIds.length <= 1 && subjectIds.every(id => groups.has(id)), 'subject');
   check(Array.isArray(recommendation.limitations) && recommendation.limitations.length <= 64, 'limitations');
-  const result = { presentation_version: 1, recommendation_version: 1, status: recommendation.status,
+  const result = { presentation_version: version, recommendation_version: version, status: recommendation.status,
     basis: 'current_retained_observations', selection_scope: 'all_retained_discovery_accounts_independent_of_included_groups',
     authority: 'not_established', binding: JSON.parse(json(catalog.binding)),
     policy: Object.fromEntries(['id', 'revision', 'curve_methodology_version', 'weights', 'minimum_mean_lower_bound',
@@ -179,16 +186,17 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
     }
   }
   if (Object.hasOwn(recommendation, 'cad_recorded_evidence')) {
+    check(Buffer.byteLength(JSON.stringify(result)) + 32 < byteLimit, 'output_byte_limit');
     // The extension is current recorded evidence only. Old mapping2/3 payloads
     // retain their exact bytes, and every scoring/selection field above stays
     // independent of these descriptive distributions. V3's separately versioned
     // housing interpreter must not relabel or replace the raw-literal baseline.
     result.cad_recorded_evidence = presentCustomCohortCadEvidence({ evidence: recommendation.cad_recorded_evidence,
       expected: { context_ref: expected.context_ref, captured_at: recommendation.binding.captured_at },
-      pockets, member_count: all.member_count, in_discovery: result.subject.in_discovery,
-      maximumBytes: L.output_utf8_bytes - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"cad_recorded_evidence":') });
+      pockets, member_count: all.member_count, in_discovery: result.subject.in_discovery, catalog_version: version,
+      maximumBytes: byteLimit - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"cad_recorded_evidence":') });
   }
-  check(Buffer.byteLength(JSON.stringify(result)) <= L.output_utf8_bytes, 'output_byte_limit');
+  check(Buffer.byteLength(JSON.stringify(result)) <= byteLimit, 'output_byte_limit');
   return freeze(result);
 }
 
@@ -197,18 +205,34 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
  * named suggestions that contradict that public result. Authorization of both
  * existing exposures still happens before/after this helper in the owner.
  */
-export function buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity } = {}) {
+function compositionAllowed({ catalog, retained_inputs }) {
   check([1, 2].includes(catalog?.catalog_version) && typeof catalog.catalog_complete === 'boolean'
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
-  // Dense catalogs support exact inspection and selection, not a silently
-  // enlarged recommendation/native-work budget. No arbitrary prefix is ranked.
-  if (!catalog.catalog_complete || catalog.pockets.length > 128) return null;
+  if (!catalog.catalog_complete) return false;
   const temporal = customCohortCurrentStockSupport({ effective_date: retained_inputs?.subject?.effective_date,
     retained_capture_at: retained_inputs?.acquisition?.capture_result?.captured_at });
-  if (temporal.status === 'historical_stock_evidence_required') return null;
-  return presentCustomCohortPocketRecommendation({ catalog, expected,
-    recommendation: buildCustomCohortPocketRecommendation({ context_ref: expected.context_ref, retained_inputs,
-      selection: { revision: expected.selection_revision, included_recorded_group_ids: [] },
-      ...(recorded_proximity === undefined ? {} : { recorded_proximity }) }),
-  });
+  return temporal.status !== 'historical_stock_evidence_required';
+}
+function kernelArgs({ catalog, expected, retained_inputs, recorded_proximity, observation_preview }) {
+  return { context_ref: expected.context_ref, retained_inputs, catalog_version: catalog.catalog_version,
+    selection: { revision: expected.selection_revision, included_recorded_group_ids: [] },
+    ...(catalog.catalog_version === 2 && observation_preview ? { observation_preview } : {}),
+    ...(recorded_proximity === undefined ? {} : { recorded_proximity }) };
+}
+function compose(args, recommendation) {
+  try { return presentCustomCohortPocketRecommendation({ ...args, recommendation }); }
+  catch (error) {
+    // The entire optional recommendation is omitted, never a ranked prefix.
+    // Invalid bindings/denominators still fail; only explicit byte exhaustion is optional.
+    if (args.catalog.catalog_version === 2 && error.reason === 'output_byte_limit') return null;
+    throw error;
+  }
+}
+export function buildCustomCohortPocketRecommendationPresentation(args = {}) {
+  if (!compositionAllowed(args)) return null;
+  return compose(args, buildCustomCohortPocketRecommendation(kernelArgs(args)));
+}
+export async function buildCustomCohortPocketRecommendationPresentationBatched(args = {}, options = {}) {
+  if (!compositionAllowed(args)) return null;
+  return compose(args, await buildCustomCohortPocketRecommendationBatched(kernelArgs(args), options));
 }

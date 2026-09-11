@@ -51,7 +51,8 @@ export interface CheckedPocketRecommendation {
   readonly recorded_housing?: CheckedRecordedHousing;
   readonly evidence_mode?: 'recorded_housing_only' | 'recorded_housing_and_proximity';
 }
-type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>;
+type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>
+  & Partial<Pick<CheckedPocketCatalog, 'catalog_version'>>;
 const WEIGHTS = { gla: .4, age: .3, housing_type: .2, site_size: 1 / 30, proximity: 1 / 30, sale_price: 1 / 30 };
 const STATES = new Set(['observed', 'not_established', 'calculation_unavailable',
   'subject_missing', 'subject_invalid', 'subject_conflicting', 'subject_json_null', 'subject_ambiguous_rows',
@@ -86,8 +87,8 @@ function array(value: unknown, maximum: number): unknown[] {
 function count(value: unknown): number { ensure(Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 50_000); return Number(value); }
 function score(value: unknown): number { ensure(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100); return value; }
 function flag(value: unknown): boolean { ensure(typeof value === 'boolean'); return value; }
-function ids(value: unknown): string[] {
-  const result = array(value, 129).map(id => text(id, 100)); ensure(new Set(result).size === result.length); return result;
+function ids(value: unknown, maximum = 129): string[] {
+  const result = array(value, maximum).map(id => text(id, 100)); ensure(new Set(result).size === result.length); return result;
 }
 function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
@@ -207,7 +208,9 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply',
     ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : []),
     ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : [])]);
-  ensure(r.presentation_version === 1 && r.recommendation_version === 1
+  const dense = r.presentation_version === 2;
+  ensure((dense ? r.recommendation_version === 2 && catalog.catalog_version === 2
+    : r.presentation_version === 1 && r.recommendation_version === 1)
     && (r.status === 'recommendation_for_review' || r.status === 'insufficient_observations')
     && r.basis === 'current_retained_observations' && r.authority === 'not_established'
     && r.selection_scope === 'all_retained_discovery_accounts_independent_of_included_groups');
@@ -237,7 +240,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   ensure(in_discovery === [...known.values()].some(group => group.subject));
   const subjectIds = ids(subject.recorded_group_review_ids), assigned = catalog.subject_membership.assigned_pocket_id;
   ensure(subjectIds.length === (assigned ? 1 : 0) && (!assigned || subjectIds[0] === assigned));
-  const seen = new Set<string>(), pockets = array(r.pockets, 129).map((raw, index) => {
+  const seen = new Set<string>(), pockets = array(r.pockets, dense ? 1025 : 129).map((raw, index) => {
     const group = object(raw, ['id', 'member_count', 'review_rank', 'similarity', 'factor_coverage', 'member_lower_bound_range',
       'suggested_for_review', 'subject_group_review', 'contains_subject', 'meets_review_policy']);
     const id = text(group.id, 100), expected = known.get(id); ensure(expected && !seen.has(id)); seen.add(id);
@@ -251,7 +254,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     return { ...stats, id, review_rank: index + 1, contains_subject, subject_group_review, meets_review_policy, suggested_for_review };
   });
   ensure(seen.size === known.size);
-  const recommended = ids(r.recommended_recorded_group_ids), suggested = pockets.filter(group => group.suggested_for_review).map(group => group.id);
+  const recommended = ids(r.recommended_recorded_group_ids, dense ? 1025 : 129), suggested = pockets.filter(group => group.suggested_for_review).map(group => group.id);
   ensure(recommended.length === suggested.length && recommended.every((id, index) => id === suggested[index]));
   const all = population(object(r.all, ['member_count', 'similarity', 'factor_coverage', 'member_lower_bound_range']), proximityEnabled, housingV3);
   ensure(all.member_count === catalog.coverage.discovery_member_count);
@@ -278,11 +281,11 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const apply = object(r.apply, ['status', 'reasons']); ensure(apply.status === 'blocked');
   array(apply.reasons, 64).forEach(value => text(value));
   const limitations = array(r.limitations, 64).map(value => text(value));
-  const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog) : null;
+  const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog, dense ? 2 : 1) : null;
   const proximity = proximityEnabled ? recordedProximity(r.recorded_proximity, all, pockets) : null;
   const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
   // The closed, bounded structure has now been checked before serialization.
-  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= 512_000);
+  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (dense ? 2_500_000 : 512_000));
   return freeze({ status: r.status, policy: { id: housingV3 ? 'custom-current-observation-review-v3' : proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',
     revision: housingV3 ? 3 : proximityV2 ? 2 : 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
     subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations,

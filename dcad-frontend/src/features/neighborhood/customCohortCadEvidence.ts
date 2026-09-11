@@ -132,7 +132,8 @@ function summary(value: Record<string, unknown>, expectedCount: number, subject:
 
 /** Optional, exact-context current CAD observations only. This is not a housing
  * dictionary, a similarity factor, legal boundary, historical fact or Apply grant. */
-export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog): CheckedCadRecordedEvidence {
+export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, catalogVersion: 1 | 2 = 1): CheckedCadRecordedEvidence {
+  const groupLimit = catalogVersion === 2 ? 1025 : 129;
   ensure(value !== null && typeof value === 'object');
   const descriptor = Object.getOwnPropertyDescriptor(value, 'status');
   ensure(descriptor?.enumerable && Object.hasOwn(descriptor, 'value'));
@@ -153,7 +154,7 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog): 
   const binding = { context_ref: { ...catalog.binding.context_ref }, captured_at };
   if (!available) {
     ensure(v.reason === 'presentation_byte_limit' && count(v.member_count, 50_000) === catalog.coverage.discovery_member_count
-      && count(v.pocket_count, 129) === known.size);
+      && count(v.pocket_count, groupLimit) === known.size);
     return { cad_baseline_version: 1, mapping_version: 4, status: 'details_unavailable', reason: 'presentation_byte_limit',
       binding, member_count: catalog.coverage.discovery_member_count, pocket_count: known.size };
   }
@@ -172,7 +173,7 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog): 
   const subject = { in_discovery: s.in_discovery, county_state: state(s.county_state), fields };
   if (!inDiscovery) ensure(subject.county_state === 'missing');
   const all = summary(object(v.all, ['member_count', 'fields']), catalog.coverage.discovery_member_count, subject);
-  const seen = new Set<string>(), pockets = array(v.pockets, 129).map(raw => {
+  const seen = new Set<string>(), pockets = array(v.pockets, groupLimit).map(raw => {
     const p = object(raw, ['id', 'member_count', 'fields']), id = text(p.id, 100), expected = known.get(id);
     ensure(expected !== undefined && !seen.has(id)); seen.add(id); return { id, ...summary(p, expected, subject) };
   });
@@ -196,6 +197,6 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog): 
   }
   const limitations = array(v.limitations, LIMITATIONS.length);
   ensure(limitations.length === LIMITATIONS.length && limitations.every((item, i) => item === LIMITATIONS[i]));
-  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= 512_000);
+  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (catalogVersion === 2 ? 2_500_000 : 512_000));
   return { cad_baseline_version: 1, mapping_version: 4, status: 'available', reason: null, binding, subject, all, pockets };
 }

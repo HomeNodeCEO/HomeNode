@@ -1,7 +1,9 @@
 import { buildNeighborhoodRelevanceDistributions, scoreNeighborhoodCandidate,
   NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION, NEIGHBORHOOD_RELEVANCE_WEIGHTS } from '../neighborhoodRelevance.js';
-import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
-import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
+import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
+  customCohortObservationMembers, isCustomCohortObservationPreview } from './customCohortObservationPreview.js';
+import { buildCustomCohortPocketCatalog, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBaseline.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 import { readCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
@@ -118,15 +120,40 @@ function aggregate(rows) {
  * source rights/eligibility. The owner must prepare/load/freshness-check first.
  * No I/O, automatic selection, report writes or supported-fact publication.
  */
-export function buildCustomCohortPocketRecommendation({ context_ref, retained_inputs: input, selection, recorded_proximity } = {}) {
+export function buildCustomCohortPocketRecommendation(args = {}) {
+  const batches = recommendationBatches(args);
+  let step = batches.next();
+  while (!step.done) step = batches.next();
+  return step.value;
+}
+
+/** Same deterministic kernel with cooperative yields; no background cache or
+ * additional source read. The owner keeps its deadline and final policy fences. */
+export async function buildCustomCohortPocketRecommendationBatched(args = {}, { checkBudget = () => {} } = {}) {
+  const batches = recommendationBatches(args);
+  checkBudget();
+  let step = batches.next();
+  while (!step.done) { await yieldToRequests(); checkBudget(); step = batches.next(); }
+  checkBudget(); return step.value;
+}
+
+function* recommendationBatches({ context_ref, retained_inputs: input, selection, recorded_proximity,
+  catalog_version = 1, observation_preview } = {}) {
+  customCohortCatalogGroupLimit(catalog_version);
   check(NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION === P.curve_methodology_version
     && KEYS.every(key => NEIGHBORHOOD_RELEVANCE_WEIGHTS[key] === P.weights[key]), 'curve_policy_changed');
-  const intent = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: 1, active: {
+  const intent = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: catalog_version === 2 ? 5 : 1, active: {
     context_ref, observation_period: input?.study?.observation_period, selection,
   }, pending_capture: null }).active;
-  const preview = buildCustomCohortObservationPreview({ context_ref: intent.context_ref, retained_inputs: input,
+  check(observation_preview === undefined || catalog_version === 2, 'preview_version');
+  const preview = observation_preview ?? (catalog_version === 2
+    ? buildCustomCohortIndexedObservationPreview : buildCustomCohortObservationPreview)({ context_ref: intent.context_ref, retained_inputs: input,
     selection: { revision: intent.selection.revision, pockets: [] } });
-  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: input, preview });
+  check(isCustomCohortObservationPreview(preview)
+    && JSON.stringify(preview.context_ref) === JSON.stringify(intent.context_ref)
+    && preview.selection_revision === intent.selection.revision, 'preview_binding');
+  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: input, preview, catalog_version });
+  yield;
   const groups = [...catalog.pockets, ...(catalog.unassigned.member_count ? [{ id: UNASSIGNED, label: 'Unassigned recorded group',
     county: null, account_ids: catalog.unassigned.account_ids, member_count: catalog.unassigned.member_count }] : [])];
   const groupIds = new Set(groups.map(group => group.id)), included = new Set(intent.selection.included_recorded_group_ids);
@@ -135,7 +162,7 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   for (const group of groups) for (const id of group.account_ids) {
     check(!groupByAccount.has(id), 'overlapping_catalog_accounts'); groupByAccount.set(id, group.id);
   }
-  const members = preview.all.stock.members;
+  const members = customCohortObservationMembers(preview, preview.all, 'stock');
   check(groupByAccount.size === members.length && members.every(row => groupByAccount.has(row.account_id)), 'catalog_roster_mismatch');
   // Only the owner-internal retained-geometry derivation can issue this result.
   // Omission deliberately preserves the complete installed v1 behavior/bytes.
@@ -143,7 +170,8 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
     : readCustomCohortRecordedProximity(recorded_proximity, { context_ref, retained_inputs: input });
   // The installed pure interpreter consumes these SAME checked members/groups;
   // no caller-supplied taxonomy, supported flag, or fresh source lookup is used.
-  const housing = buildCustomCohortRecordedHousing({ retained_inputs: input, preview, groups });
+  const housing = buildCustomCohortRecordedHousing({ retained_inputs: input, preview, groups, catalog_version });
+  yield;
   const housingRows = new Map((housing?.accounts ?? []).map(row => [row.account_id, row]));
   if (housing) check(housingRows.size === housing.accounts.length && housingRows.size === members.length
     && members.every(row => housingRows.has(row.account_id)) && housing.coverage.account_count === members.length
@@ -170,7 +198,9 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   const distributions = buildNeighborhoodRelevanceDistributions(reference, candidateRows);
   let outputBytes = 16000;
   const charge = value => { outputBytes += Buffer.byteLength(JSON.stringify(value)); check(outputBytes <= P.output_utf8_bytes, 'output_byte_limit'); return value; };
-  const properties = members.map((row, index) => {
+  const properties = [];
+  for (const [index, row] of members.entries()) {
+    if (index % 125 === 0) yield;
     const scored = scoreNeighborhoodCandidate({ subject: reference, candidate: candidateRows[index], distributions,
       ...(proximity ? { maximumDistanceMiles } : {}) });
     const factors = Object.fromEntries(KEYS.map(key => {
@@ -198,11 +228,11 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
       return [key, { score: state === 'observed' ? score : null, state }];
     }));
     const groupId = groupByAccount.get(row.account_id);
-    return charge({ account_id: row.account_id, recorded_group_id: groupId, is_subject: row.account_id === subjectAccount,
+    properties.push(charge({ account_id: row.account_id, recorded_group_id: groupId, is_subject: row.account_id === subjectAccount,
       selected: included.has(groupId), similarity: bounds(factors), factors,
       partially_observed_factors: Object.entries(PHYSICAL).filter(([, field]) => row.observations[field].state === 'observed'
-        && row.observations[field].missing_record_count > 0).map(([key]) => key) });
-  });
+        && row.observations[field].missing_record_count > 0).map(([key]) => key) }));
+  }
   const byAccount = new Map(properties.map(row => [row.account_id, row]));
   const subjectGroup = catalog.subject_membership.assigned_pocket_id;
   const pockets = groups.map(group => {
@@ -219,7 +249,7 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
   pockets.forEach((pocket, index) => { pocket.review_rank = index + 1; });
   const selected = properties.filter(row => row.selected);
   const result = {
-    recommendation_version: 1, policy, status: catalog.catalog_complete && subjectStock
+    recommendation_version: catalog_version, policy, status: catalog.catalog_complete && subjectStock
       && subject.gla.state === 'observed' && subject.age.state === 'observed' ? 'recommendation_for_review' : 'insufficient_observations',
     basis: 'current_retained_observations', authority: 'not_established',
     binding: { context_ref: preview.context_ref, target: preview.target, selection_revision: intent.selection.revision,
@@ -252,7 +282,8 @@ export function buildCustomCohortPocketRecommendation({ context_ref, retained_in
     result.limitations.push('proximity_is_recorded_parcel_location_not_home_or_driving_distance',
       'multiple_or_invalid_recorded_locations_remain_unknown', 'proximity_curve_uses_retained_discovery_radius');
   }
-  const cad = buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups });
+  yield;
+  const cad = buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups, catalog_version });
   if (cad !== null) result.cad_recorded_evidence = cad;
   charge({ all: result.all, selected: result.selected, subject: result.subject });
   // Incremental checks limit construction. Count the COMPLETE final envelope as

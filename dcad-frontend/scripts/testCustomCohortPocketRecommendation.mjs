@@ -6,6 +6,36 @@ import { decisionEvidenceFixture } from '../../server/test/fixtures/customCohort
 import { buildCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { presentCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { buildCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { buildCustomCohortIndexedObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
+import { recommendationFixture } from '../../server/test/fixtures/customCohortDenseRecommendationFixture.js';
+
+test('all 887 ranked groups cross the real server/browser boundary; corrupt dense responses fail closed', () => {
+  const accounts = Array.from({ length: 887 }, (_, i) => `A${String(i).padStart(5, '0')}`);
+  const f = recommendationFixture({ accounts, subject: accounts[0], mapping4: true });
+  const expected = { context_ref: f.context_ref, selection_revision: 1 };
+  const preview = buildCustomCohortIndexedObservationPreview({ ...f, selection: { revision: 1, pockets: [] } });
+  const catalog = presentCustomCohortPocketCatalog({ preview, expected,
+    catalog: buildCustomCohortPocketCatalog({ retained_inputs: f.retained_inputs, preview, catalog_version: 2 }) });
+  const recommendation = presentCustomCohortPocketRecommendation({ catalog, expected,
+    recommendation: buildCustomCohortPocketRecommendation({ ...f, catalog_version: 2, observation_preview: preview }) });
+  const target = f.retained_inputs.subject.target;
+  const input = { accountId: target.account_id, assignmentFileId: target.assignment_file_id,
+    contextRef: f.context_ref, selection: { revision: 1, pockets: [] } };
+  const response = { status: 'catalog', target: { account_id: target.account_id, assignment_file_id: target.assignment_file_id },
+    context_ref: f.context_ref, selection_revision: 1, subject_freshness: 'matched', catalog, recommendation, apply: { status: 'blocked' } };
+  const checked = checkCatalog(response, input);
+  assert.equal(checked.recommendation.pockets.length, 887);
+  assert.equal(checked.recommendation.all.member_count, 887);
+  assert.deepEqual(checked.recommendation.recommended_recorded_group_ids, recommendation.recommended_recorded_group_ids);
+  for (const mutate of [r => r.recommendation.pockets.pop(), r => r.recommendation.pockets.reverse(),
+    r => { r.recommendation.pockets[886].member_count++; }, r => { r.catalog.catalog_version = 1; },
+    r => { r.recommendation.presentation_version = 1; }, r => { r.recommendation.recommendation_version = 1; },
+    r => { r.recommendation.binding.selection_revision++; }]) {
+    const bad = structuredClone(response); mutate(bad); assert.throws(() => checkCatalog(bad, input));
+  }
+  assert.deepEqual(input.selection, { revision: 1, pockets: [] });
+});
 
 const original = decisionEvidenceFixture();
 async function fixture() {

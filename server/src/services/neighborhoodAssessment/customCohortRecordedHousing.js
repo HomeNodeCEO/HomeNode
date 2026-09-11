@@ -1,8 +1,10 @@
 import { createHash } from 'node:crypto';
+import { customCohortObservationMembers, isCustomCohortObservationPreview } from './customCohortObservationPreview.js';
+import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { isProxy } from 'node:util/types';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -98,12 +100,14 @@ function id(value, maximum = 100) { check(typeof value === 'string' && value.len
  */
 export function buildCustomCohortRecordedHousing(args = {}) {
   object(args); const input = get(args, 'retained_inputs'), acquisition = get(input, 'acquisition');
+  const groupLimit = customCohortCatalogGroupLimit(get(args, 'catalog_version', true) ?? 1) + 1;
+  const recordLimit = groupLimit > L.groups ? customCohortObservationRecordLimit(acquisition) : L.source_records;
   const metadata = get(acquisition, 'compact_metadata_json', true);
   if (customCohortObservationMappingVersion(metadata === undefined ? {} : { compact_metadata_json: metadata }) !== 4) return null;
   const preview = get(args, 'preview'), groups = get(args, 'groups'), subject = get(input, 'subject');
   const captureResult = get(acquisition, 'capture_result'), capture = get(captureResult, 'source_capture');
   check(get(capture, 'status') === 'ready' && get(captureResult, 'query_complete') === true
-    && get(preview, 'preview_version') === 1 && get(preview, 'status') === 'observations_only'
+    && isCustomCohortObservationPreview(preview) && get(preview, 'status') === 'observations_only'
     && get(preview, 'authority') === 'not_established' && get(get(preview, 'apply'), 'status') === 'blocked', 'observation_preview_required');
   const capturedAt = get(preview, 'captured_at');
   check(typeof capturedAt === 'string' && capturedAt === get(captureResult, 'captured_at')
@@ -116,12 +120,12 @@ export function buildCustomCohortRecordedHousing(args = {}) {
   const identities = value => list(value, L.source_chunks).map(row => `${id(get(row, 'id'), 200)}\n${id(get(row, 'content_sha256'))}`).sort(compare);
   check(JSON.stringify(identities(get(capture, 'source_snapshots'))) === JSON.stringify(identities(get(preview, 'source_snapshots'))), 'preview_capture_mismatch');
   const stock = get(get(preview, 'all'), 'stock'), spatial = get(input, 'spatial');
-  const roster = list(get(stock, 'members'), L.accounts).map(row => id(get(row, 'account_id'))).sort(compare);
+  const roster = list(customCohortObservationMembers(preview, get(preview, 'all'), 'stock'), L.accounts).map(row => id(get(row, 'account_id'))).sort(compare);
   check(new Set(roster).size === roster.length && get(stock, 'member_count') === roster.length
     && JSON.stringify(roster) === JSON.stringify(list(get(spatial, 'account_ids'), L.accounts).map(value => id(value)).sort(compare)), 'stock_roster_mismatch');
   const members = new Map(roster.map(account => [account, { counties: [], parcels: [] }]));
   const partition = new Set(), groupIds = new Set();
-  const orderedGroups = list(groups, L.groups).map(group => {
+  const orderedGroups = list(groups, groupLimit).map(group => {
     const groupId = id(get(group, 'id'), 200), accounts = list(get(group, 'account_ids'), L.accounts).map(value => id(value));
     check(!groupIds.has(groupId), 'group_identity'); groupIds.add(groupId);
     for (const account of accounts) { check(members.has(account) && !partition.has(account), 'group_partition'); partition.add(account); }
@@ -151,7 +155,7 @@ export function buildCustomCohortRecordedHousing(args = {}) {
     if (!['accounts', 'parcels'].includes(role)) continue;
     roles.add(role);
     for (const record of list(get(payload, 'records'), L.source_records)) {
-      check(++recordCount <= L.source_records, 'source_record_limit');
+      check(++recordCount <= recordLimit, 'source_record_limit');
       const key = `${role}\n${id(get(record, 'record_id'), 1000)}`;
       check(!seen.has(key), 'duplicate_source_record'); seen.add(key);
       const mapped = get(record, 'data'), raw = get(mapped, 'raw_projection'), normalized = get(mapped, 'data');

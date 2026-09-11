@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createCustomWorkspaceLifecycle } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceLifecycleState, CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport, CustomWorkspaceDiscovery } from '../customWorkspaceCheckpoint';
-import { createCustomWorkspaceRequestLane } from '../customWorkspaceRequestLane';
+import { createCustomWorkspaceRequestLane, CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
 import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
@@ -160,7 +160,8 @@ function HostSession(props: Props) {
     const api = initial.api;
     const lifecycle = createCustomWorkspaceLifecycle({ target: initial.target, initialSection: initial.initialSection,
       save: (input, options) => requests.run(({ signal }) => api.save(input, { ...options, signal }), options),
-      capture: (input, options) => requests.run(({ signal }) => api.capture(input, { ...options, signal }), options),
+      capture: (input, options) => requests.run(({ signal }) => api.capture(input, { ...options, signal }),
+        { ...options, timeoutMs: CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS }),
       catalog: (input, options) => requests.run(({ signal }) => api.catalog(input, { ...options, signal }), options),
       onChange: next => {
         if (!live.current || generation.current !== epoch) return;

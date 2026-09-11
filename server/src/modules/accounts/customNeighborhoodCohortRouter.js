@@ -1,7 +1,8 @@
 import express from 'express';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
-import { customCohortExecutionGate, CUSTOM_COHORT_EXECUTION_LIMITS } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
+import { customCohortExecutionGate } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
+import { CUSTOM_COHORT_OPERATION_LIMITS } from '../../services/neighborhoodAssessment/customCohortOperationLimits.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -107,7 +108,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
       return parse(req, res, next);
     }, async (req, res) => {
       const controller = new AbortController();
-      const deadline = performance.now() + CUSTOM_COHORT_EXECUTION_LIMITS.duration_ms;
+      const deadline = performance.now() + (action === 'capture'
+        ? CUSTOM_COHORT_OPERATION_LIMITS.capture_duration_ms : CUSTOM_COHORT_OPERATION_LIMITS.duration_ms);
       let releaseExecution;
       const abort = () => controller.abort();
       const closed = () => { if (!res.writableFinished) abort(); };

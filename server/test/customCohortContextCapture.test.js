@@ -63,6 +63,28 @@ test('Custom capture honors pre-abort and expired aggregate deadline before conn
   await assert.rejects(setup().capture(input(), { deadline: performance.now() }), /deadline_exceeded/);
 });
 
+test('large capture has a bounded two-minute aggregate but respects earlier caller deadlines', async t => {
+  let clock = 10_000;
+  t.mock.method(performance, 'now', () => clock);
+  for (const scenario of [
+    { elapsed: 70_000, reason: 'target_unavailable' },
+    { elapsed: 120_001, reason: 'deadline_exceeded' },
+    { elapsed: 70_000, deadline: 70_000, reason: 'deadline_exceeded' },
+    { elapsed: 120_001, deadline: 250_000, reason: 'deadline_exceeded' },
+  ]) {
+    clock = 10_000; const calls = [], releases = [];
+    const capture = setup(async () => ({ async query(config) {
+      calls.push(config);
+      if (config.text.startsWith('BEGIN')) clock += scenario.elapsed;
+      return { rows: [], rowCount: 0 };
+    }, release(error) { releases.push(error); } }));
+    await assert.rejects(capture.capture(input(), scenario.deadline ? { deadline: scenario.deadline } : {}),
+      new RegExp(scenario.reason));
+    assert.equal(releases.length, 1); assert.ok(!calls.some(call => call.text === 'COMMIT'));
+    assert.ok(calls.every(call => call.query_timeout > 0 && call.query_timeout <= 6000));
+  }
+});
+
 test('Custom capture admits only exact installed discovery choices before connection', async () => {
   const discovery = { profile_id: 'custom-suburban-radius-v2', radius_metres: '8046.72' };
   for (const value of [null, {}, { ...discovery, radius_metres: 8046.72 }, { ...discovery, radius_metres: '8046.720' },

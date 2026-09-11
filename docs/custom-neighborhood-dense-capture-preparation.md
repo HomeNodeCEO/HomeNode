@@ -195,5 +195,24 @@ already saved captures can still reopen. Rollback must not truncate, relabel or
 delete those captures. Processing-budget failures remain explicit and atomic;
 larger radii and whole-city selections are not guaranteed to fit these limits.
 
+### Aggregate deadline after spatial-plan correction
+
+The first live resumed Hardy capture passed spatial discovery but exhausted the
+old coordinator deadline at 59.018 seconds (60 seconds minus cleanup reserve).
+Its source reader had counted 111,535 records / 103,974,724 bytes across 335
+queries. A query-owner rejection masked that deadline as source unavailability;
+the reader now classifies its own expired clock or cancellation signal when SQL
+rejects, without exposing driver details or trusting arbitrary error text.
+
+Only initial capture gets a 120-second aggregate server budget, including gate
+queue time and the existing cleanup reserve. Earlier caller deadlines still win.
+The browser capture request has 125 seconds of bounded transport grace. Saves,
+catalogs, previews and other requests keep their existing budgets. Source reads
+still have their independent 60-second/128 MB/200k-record ceiling, SQL statements
+remain at five seconds, and one heavy operation/four queued operations remain
+the process-wide limit. A deadline never authorizes partial persistence or an
+automatic retry: explicit recovery keeps the saved operation UUID. These bounds
+enable measured larger captures; they do not promise instant initial acquisition.
+
 No historical characteristics, provider coverage, MLS rights, eligibility or
 statistical validity are established by increasing processing capacity.

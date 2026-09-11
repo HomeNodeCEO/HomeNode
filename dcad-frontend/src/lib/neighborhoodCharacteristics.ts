@@ -134,9 +134,42 @@ export type NeighborhoodRepresentativenessFactor = {
   label: string;
   salesPredominant: number;
   propertyPredominant: number;
-  deviationPercent: number;
-  similarityScore: number;
+  deviationPercent: number | null;
+  similarityScore: number | null;
+  comparisonNote: string;
 };
+
+// Legacy fields can contain elapsed ages (land-use profile) or calendar years
+// (pocket statistics). Do not rewrite saved evidence or divide by a calendar
+// year: that gives deceptively tiny deviations. Mixed/unknown units stay unscored.
+export function neighborhoodAgeBasis(details: AssignmentDetailsPayload | null | undefined, all = false) {
+  const prefix = all ? 'neighborhood_all_age' : 'neighborhood_age';
+  const values = ['low', 'high', 'predominant'].map(suffix =>
+    numericValue(details?.[`${prefix}_${suffix}` as keyof AssignmentDetailsPayload]))
+    .filter((value): value is number => value !== null);
+  if (!values.length) return 'unknown';
+  if (values.every(value => value >= 1600 && value <= 9999)) return 'year_built';
+  if (values.every(value => value >= 0 && value < 500)) return 'age';
+  return 'unknown';
+}
+
+export function neighborhoodRangeLabel(row: { label: string; low: string }, details: AssignmentDetailsPayload) {
+  if (!/_age_low$/.test(row.low)) return row.label;
+  const basis = neighborhoodAgeBasis(details, row.low.startsWith('neighborhood_all_'));
+  return basis === 'year_built' ? 'Year Built' : basis === 'age' ? 'Age (years)' : 'Age / Year Built (review)';
+}
+
+export function formatNeighborhoodRangeValue(value: unknown, row: { label: string; low: string }) {
+  const number = numericValue(value);
+  if (number === null) return 'Not reported';
+  const age = /_age_low$/.test(row.low);
+  const perFoot = /Sq\. Ft\./.test(row.label);
+  return new Intl.NumberFormat('en-US', {
+    useGrouping: !age,
+    minimumFractionDigits: perFoot ? 2 : 0,
+    maximumFractionDigits: perFoot ? 2 : age ? 1 : 2,
+  }).format(number);
+}
 
 export type NeighborhoodRepresentativeness = {
   score: number | null;
@@ -154,10 +187,23 @@ export function calculateNeighborhoodRepresentativeness(
     ['age', 'Age', 'neighborhood_age_predominant', 'neighborhood_all_age_predominant'],
     ['living_area', 'GLA', 'neighborhood_gla_predominant', 'neighborhood_all_gla_predominant'],
   ] as const;
-  const factors = comparisons.flatMap(([key, label, salesField, propertyField]) => {
+  const factors = comparisons.flatMap<NeighborhoodRepresentativenessFactor>(([key, label, salesField, propertyField]) => {
     const salesPredominant = numericValue(details?.[salesField]);
     const propertyPredominant = numericValue(details?.[propertyField]);
-    if (salesPredominant === null || propertyPredominant === null || propertyPredominant <= 0) return [];
+    if (salesPredominant === null || propertyPredominant === null || salesPredominant < 0 || propertyPredominant < 0) return [];
+    if (key === 'age') {
+      const salesBasis = neighborhoodAgeBasis(details), propertyBasis = neighborhoodAgeBasis(details, true);
+      if (salesBasis !== 'age' || propertyBasis !== 'age') {
+        const bothYears = salesBasis === 'year_built' && propertyBasis === 'year_built';
+        return [{ key, label: bothYears ? 'Year Built' : 'Age / Year Built', salesPredominant, propertyPredominant,
+          deviationPercent: null, similarityScore: null,
+          comparisonNote: bothYears
+            ? `Median gap: ${Math.abs(salesPredominant - propertyPredominant)} years. Calendar years are not percentage-scored; a matching median does not establish a matching age distribution.`
+            : 'Age and year-built units need review before scoring. This measure is excluded from the overall median comparison.',
+        } satisfies NeighborhoodRepresentativenessFactor];
+      }
+    }
+    if (propertyPredominant === 0) return [];
     const deviationPercent = Math.abs(salesPredominant - propertyPredominant) / propertyPredominant * 100;
     return [{
       key,
@@ -166,18 +212,23 @@ export function calculateNeighborhoodRepresentativeness(
       propertyPredominant,
       deviationPercent: Math.round(deviationPercent * 10) / 10,
       similarityScore: Math.round(Math.max(0, 100 - deviationPercent) * 10) / 10,
+      comparisonNote: 'Comparison of medians only, not the range or distribution of individual properties.',
     } satisfies NeighborhoodRepresentativenessFactor];
   });
-  if (factors.length < 3) {
+  const scored = factors.filter((factor): factor is NeighborhoodRepresentativenessFactor & { similarityScore: number; deviationPercent: number } =>
+    factor.similarityScore !== null && factor.deviationPercent !== null);
+  const qualification = ' Matching medians do not mean individual properties are alike or that their ranges and distributions match.';
+  const ageNote = factors.find(factor => factor.key === 'age' && factor.similarityScore === null)?.comparisonNote;
+  if (scored.length < 3) {
     return {
       score: null,
       label: 'Insufficient data',
       factors,
-      narrative: 'At least three matched predominant characteristics are required before the sales sample can be compared with the full neighborhood housing stock.',
+      narrative: `At least three comparable predominant characteristics are required for an overall median comparison.${ageNote ? ` ${ageNote}` : ''}${qualification}`,
     };
   }
   const score = Math.round(
-    factors.reduce((sum, factor) => sum + factor.similarityScore, 0) / factors.length * 10,
+    scored.reduce((sum, factor) => sum + factor.similarityScore, 0) / scored.length * 10,
   ) / 10;
   const label = score >= 90
     ? 'Highly representative'
@@ -186,14 +237,14 @@ export function calculateNeighborhoodRepresentativeness(
       : score >= 65
         ? 'Moderately representative'
         : 'Limited representation';
-  const largestDeviation = factors.reduce((largest, factor) => (
+  const largestDeviation = scored.reduce((largest, factor) => (
     factor.deviationPercent > largest.deviationPercent ? factor : largest
   ));
   return {
     score,
     label,
     factors,
-    narrative: `${label}: the sales-only predominant characteristics are ${score.toFixed(1)}% similar to the complete one-unit neighborhood profile across ${factors.length} available measures. ${largestDeviation.label} has the largest median deviation at ${largestDeviation.deviationPercent.toFixed(1)}%.`,
+    narrative: `Median comparison only: the sales-only predominant characteristics have a ${score.toFixed(1)}% median match across ${scored.length} scored measures. ${largestDeviation.label} has the largest median deviation at ${largestDeviation.deviationPercent.toFixed(1)}%.${ageNote ? ` ${ageNote}` : ''}${qualification}`,
   };
 }
 

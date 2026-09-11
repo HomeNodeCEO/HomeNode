@@ -2154,9 +2154,10 @@ export default function MarketConditionsAnalysis({
                 Study geography and related CAD parcels
               </h3>
               <p className={`${embedded ? 'mt-0.5 text-xs' : 'mt-1 text-sm'} max-w-4xl text-slate-600`}>
-                Verify same-address CAD parcels or supply a reviewable city,
-                ZIP, and study center. This does not change or merge stored
-                property records.
+                Location troubleshooting: check CAD accounts sharing the subject address,
+                or correct the city, ZIP, and map center used by the market studies.
+                This does not select neighborhood pockets, change ownership, or merge
+                property records. Leave it unchanged when the subject location is correct.
               </p>
             </div>
             <div className="flex flex-wrap gap-2">

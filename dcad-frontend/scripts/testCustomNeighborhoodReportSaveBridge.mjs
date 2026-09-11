@@ -252,6 +252,8 @@ test('the exploration host is a single print-hidden sibling, not a DeferredRepor
     ts.forEachChild(node, child => walk(child, [...ancestors, node]));
   }
   walk(ast); assert.equal(hosts.length, 1);
+  assert.ok(hosts[0].at(-1).getStart(ast) < source.indexOf('label="Neighborhood Characteristics"'),
+    'exploration precedes the neighborhood section and its appraiser-defined map');
   const jsxAncestors = hosts[0].filter(ts.isJsxElement);
   assert.equal(jsxAncestors.some(node => node.openingElement.tagName.getText(ast) === 'DeferredReportSection'), false);
   assert.ok(jsxAncestors.some(node => node.openingElement.attributes.getText(ast).includes('print:hidden')));

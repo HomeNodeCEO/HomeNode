@@ -3146,6 +3146,26 @@ function AddressHero({
             </div>
           </SummarySection>
 
+          {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED && (
+            <div className="order-3 print:hidden">
+              <SummarySection
+                title="Neighborhood Pocket Exploration"
+                subtitle="Saved review choices; separate from the accepted neighborhood report"
+              >
+                {neighborhoodWorkspace.message && <p role={neighborhoodWorkspace.status === "unavailable" ? "alert" : "status"}
+                  className="mb-3 text-sm">{neighborhoodWorkspace.message}</p>}
+                {neighborhoodWorkspace.status === "unavailable" && <button type="button"
+                  className="hn-action-secondary btn btn-sm normal-case"
+                  onClick={neighborhoodWorkspace.retry}>Reload neighborhood workspace</button>}
+                {/* Not deferred through beforeprint/prepare-report: printing must
+                    never create a capture. The bridge owns one exact session. */}
+                {neighborhoodWorkspace.hostProps && <Suspense fallback={<LazyReportContent label="saved neighborhood workspace" />}>
+                  <CustomNeighborhoodWorkspaceHost {...neighborhoodWorkspace.hostProps} />
+                </Suspense>}
+              </SummarySection>
+            </div>
+          )}
+
           <DeferredReportSection
             label="Neighborhood Characteristics"
             className="order-3"
@@ -3218,26 +3238,6 @@ function AddressHero({
               </Suspense>
             </SummarySection>
           </DeferredReportSection>
-
-          {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED && (
-            <div className="order-3 print:hidden">
-              <SummarySection
-                title="Neighborhood Pocket Exploration"
-                subtitle="Saved review choices; separate from the accepted neighborhood report"
-              >
-                {neighborhoodWorkspace.message && <p role={neighborhoodWorkspace.status === "unavailable" ? "alert" : "status"}
-                  className="mb-3 text-sm">{neighborhoodWorkspace.message}</p>}
-                {neighborhoodWorkspace.status === "unavailable" && <button type="button"
-                  className="hn-action-secondary btn btn-sm normal-case"
-                  onClick={neighborhoodWorkspace.retry}>Reload neighborhood workspace</button>}
-                {/* Not deferred through beforeprint/prepare-report: printing must
-                    never create a capture. The bridge owns one exact session. */}
-                {neighborhoodWorkspace.hostProps && <Suspense fallback={<LazyReportContent label="saved neighborhood workspace" />}>
-                  <CustomNeighborhoodWorkspaceHost {...neighborhoodWorkspace.hostProps} />
-                </Suspense>}
-              </SummarySection>
-            </div>
-          )}
 
           {detailLoaded && accountId && activeAssignmentFile?.account_id === accountId
             && applicationAuth.ready && !applicationAuth.bootstrapError && applicationAuth.session?.user_id && (

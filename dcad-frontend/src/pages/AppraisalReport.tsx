@@ -33,6 +33,8 @@ import {
   neighborhoodBoundaryReadinessErrors,
   neighborhoodLandUseTotal,
   NEIGHBORHOOD_ALL_PROPERTY_ROWS,
+  formatNeighborhoodRangeValue,
+  neighborhoodRangeLabel,
   NEIGHBORHOOD_CITY_AVERAGE_ROWS,
   NEIGHBORHOOD_LAND_USE_FIELDS,
   NEIGHBORHOOD_RANGE_ROWS,
@@ -1448,10 +1450,10 @@ export default function AppraisalReport() {
                     <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Median</th></tr></thead>
                     <tbody>
                       {NEIGHBORHOOD_RANGE_ROWS.map((row) => {
-                        const formatter = row.format === "money" ? money : count;
+                        const formatter = (value: unknown) => `${row.format === "money" && formatNeighborhoodRangeValue(value, row) !== "Not reported" ? "$" : ""}${formatNeighborhoodRangeValue(value, row)}`;
                         return (
                           <tr key={row.label}>
-                            <td>{row.label}</td>
+                            <td>{neighborhoodRangeLabel(row, neighborhoodDetails)}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
@@ -1469,10 +1471,10 @@ export default function AppraisalReport() {
                     <thead><tr><th>Measure</th><th className="numeric">Low</th><th className="numeric">High</th><th className="numeric">Median</th></tr></thead>
                     <tbody>
                       {NEIGHBORHOOD_ALL_PROPERTY_ROWS.map((row) => {
-                        const formatter = row.format === "money" ? money : count;
+                        const formatter = (value: unknown) => `${row.format === "money" && formatNeighborhoodRangeValue(value, row) !== "Not reported" ? "$" : ""}${formatNeighborhoodRangeValue(value, row)}`;
                         return (
                           <tr key={row.label}>
-                            <td>{row.label}</td>
+                            <td>{neighborhoodRangeLabel(row, neighborhoodDetails)}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.low])}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.high])}</td>
                             <td className="numeric">{formatter(neighborhoodDetails[row.predominant])}</td>
@@ -1487,7 +1489,7 @@ export default function AppraisalReport() {
             <div className="report-note" style={{ marginTop: 8 }}>
               <strong>Sales Sample Representativeness: {neighborhoodRepresentativeness.score === null ? "Pending" : `${neighborhoodRepresentativeness.score.toFixed(1)}%`} — {neighborhoodRepresentativeness.label}</strong>
               <div style={{ marginTop: 4 }}>{neighborhoodRepresentativeness.narrative}</div>
-              <div style={{ marginTop: 4 }}>The score equally compares predominant value/price, value/price per square foot, age, and GLA. CAD market values and MLS sale prices have different valuation bases; the result is a descriptive reasonableness check subject to appraiser review.</div>
+              <div style={{ marginTop: 4 }}>This equally weighted median comparison does not test the range or distribution of individual properties. Calendar year-built values are not percentage-scored. CAD market values and MLS sale prices have different valuation bases; the result is a descriptive check subject to appraiser review.</div>
             </div>
           </section>
 

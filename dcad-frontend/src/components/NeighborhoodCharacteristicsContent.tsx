@@ -14,6 +14,8 @@ import {
 import type { MarketConditionsDraft } from "@/lib/marketConditionsDraft";
 import {
   calculateNeighborhoodRepresentativeness,
+  formatNeighborhoodRangeValue,
+  neighborhoodRangeLabel,
   hasSavedNeighborhoodLandUseProfile,
   neighborhoodBoundaryReadinessErrors,
   neighborhoodSelectionStatisticsPatch,
@@ -109,21 +111,12 @@ function NeighborhoodRangeGrid({
       </div>
       {rows.map((row) => (
         <div key={row.label} className="grid grid-cols-[1.2fr_1fr_1fr_1fr] items-center gap-2 border-b border-slate-100 py-1 last:border-0">
-          <div className="text-xs font-medium text-slate-800">{row.label}</div>
+          <div className="text-xs font-medium text-slate-800">{neighborhoodRangeLabel(row, assignment)}</div>
           {[row.low, row.high, row.predominant].map((field) => {
             const isMoney = row.format === "money";
             const isPricePerSquareFoot = /Sq\. Ft\./.test(row.label);
             const value = parseNumber(assignment[field]);
-            const formattedValue = value === null
-              ? "Not reported"
-              : new Intl.NumberFormat("en-US", {
-                  minimumFractionDigits: isPricePerSquareFoot ? 2 : 0,
-                  maximumFractionDigits: isPricePerSquareFoot
-                    ? 2
-                    : row.label === "Age"
-                      ? 0
-                      : 2,
-                }).format(value);
+            const formattedValue = formatNeighborhoodRangeValue(assignment[field], row);
             return (
               <div
                 key={field}
@@ -1346,7 +1339,7 @@ export default function NeighborhoodCharacteristicsContent({
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div>
                 <h4 className="text-sm font-semibold text-slate-900">Sales Sample Representativeness</h4>
-                <p className="mt-0.5 text-xs text-slate-600">Equal-weight comparison of predominant sale price/value, price/value per square foot, age, and GLA.</p>
+                <p className="mt-0.5 text-xs text-slate-600">Median comparison only: sale price/value, price/value per square foot, elapsed age where comparable, and GLA. Year built is shown as a gap in years, not a percentage.</p>
               </div>
               <span className="rounded-full bg-white px-3 py-1 text-sm font-bold text-slate-900 shadow-sm">
                 {representativeness.score === null ? "Pending" : `${representativeness.score.toFixed(1)}%`} · {representativeness.label}
@@ -1356,8 +1349,10 @@ export default function NeighborhoodCharacteristicsContent({
               {representativeness.factors.map((factor) => (
                 <div key={factor.key} className="rounded-lg border border-white/80 bg-white p-2">
                   <div className="text-[10px] font-semibold uppercase tracking-wide text-slate-500">{factor.label}</div>
-                  <div className="mt-0.5 text-sm font-bold text-slate-900">{factor.similarityScore.toFixed(1)}% similar</div>
-                  <div className="text-[10px] text-slate-500">{factor.deviationPercent.toFixed(1)}% median deviation</div>
+                  <div className="mt-0.5 text-sm font-bold text-slate-900">{factor.similarityScore === null ? "Not percentage-scored" : `${factor.similarityScore.toFixed(1)}% median match`}</div>
+                  <div className="text-[10px] text-slate-600">Sales median: {formatNeighborhoodRangeValue(factor.salesPredominant, { label: factor.label, low: factor.key === 'age' ? 'neighborhood_age_low' : '' })} · All-property median: {formatNeighborhoodRangeValue(factor.propertyPredominant, { label: factor.label, low: factor.key === 'age' ? 'neighborhood_all_age_low' : '' })}</div>
+                  {factor.deviationPercent !== null && <div className="text-[10px] text-slate-500">{factor.deviationPercent.toFixed(1)}% median deviation</div>}
+                  <p className="mt-1 text-[10px] text-slate-500">{factor.comparisonNote}</p>
                 </div>
               ))}
             </div>

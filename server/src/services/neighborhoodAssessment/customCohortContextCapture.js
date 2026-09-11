@@ -16,7 +16,7 @@ import { captureNeighborhoodSpatialMembershipStream } from './cachedSpatialMembe
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
-import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
+import { createNeighborhoodDenseCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInput,
   prepareNeighborhoodDiscoveryChoice, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY,
   NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
@@ -867,7 +867,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
       const grants = await access.prepare(input.auth, { target: context.target,
         selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null });
-      const reader = createNeighborhoodCadEvidenceSourceReader(pool, { access });
+      const reader = createNeighborhoodDenseCadEvidenceSourceReader(pool, { access });
       const result = captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
         selection_grant: grants.selection_grant, market_grant: grants.market_grant },
       { deadline: budget.deadline, signal: budget.signal }), 'source');

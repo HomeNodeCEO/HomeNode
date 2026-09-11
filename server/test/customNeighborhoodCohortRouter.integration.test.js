@@ -17,7 +17,7 @@ const bodies = {
   members: { assignment_file_id: assignment, context_ref: contextRef, selection,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } },
 };
-async function start(t, { principal = auth, methods = {}, parsed = false } = {}) {
+async function start(t, { principal = auth, methods = {}, parsed = false, logger } = {}) {
   const calls = [], fallthroughErrors = [];
   const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog'].map(name => [name, methods[name] ?? (async (...args) => {
     calls.push({ name, args }); return { status: name, marker: 'compact-only' };
@@ -26,7 +26,7 @@ async function start(t, { principal = auth, methods = {}, parsed = false } = {})
   const app = express();
   app.use((req, _res, next) => { req.mobileAuth = principal; next(); });
   if (parsed) app.use(express.json({ limit: 10_000_000 }));
-  app.use(createCustomNeighborhoodCohortRouter({ cohortService: service }));
+  app.use(createCustomNeighborhoodCohortRouter({ cohortService: service, logger }));
   app.post('/api/unrelated-report', (_req, res) => res.json({ owner: 'unrelated-report' }));
   app.use((error, req, res, _next) => {
     fallthroughErrors.push({ error, path: req.path });
@@ -222,6 +222,35 @@ test('unavailable installed city source has an actionable response without asset
   assert.equal(response.status, 422);
   assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.deepEqual(await response.json(), { error: 'neighborhood_city_source_unavailable' });
+});
+
+for (const [detail, status, code, category] of [
+  ['byte_limit', 422, 'neighborhood_capture_capacity_exceeded', 'capacity'],
+  ['duration_limit', 503, 'neighborhood_request_interrupted', 'interrupted'],
+  ['source_query_unavailable', 422, 'neighborhood_source_unavailable', 'unavailable'],
+]) test(`capture ${detail} is classified without exposing private diagnostics`, async t => {
+  const logs = [];
+  const fail = () => { throw Object.assign(new Error('SECRET SQL'), {
+    code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'source_incomplete', detail: [detail],
+    capture_counts: { records: 12, account_id: 'SECRET' },
+  }); };
+  const { request } = await start(t, { logger: { warn: (...values) => logs.push(values) },
+    methods: { capture: fail, present: fail } });
+  const response = await request('capture');
+  assert.equal(response.status, status); assert.deepEqual(await response.json(), { error: code });
+  assert.deepEqual(logs, [['[neighborhood] capture refused', {
+    stage: 'source', category, checks: [detail], counts: { records: 12 },
+  }]]);
+  await request('preview'); assert.equal(logs.length, 1, 'non-capture routes do not log capture metadata');
+});
+test('a failed diagnostics sink cannot change capture recovery', async t => {
+  const { request } = await start(t, { logger: { warn() { throw new Error('sink unavailable'); } },
+    methods: { capture() { throw Object.assign(new Error('private'), {
+      code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'source_incomplete', detail: 'byte_limit',
+    }); } } });
+  const response = await request('capture');
+  assert.equal(response.status, 422);
+  assert.deepEqual(await response.json(), { error: 'neighborhood_capture_capacity_exceeded' });
 });
 
 test('malformed and oversized JSON are bounded even after an existing parser', async t => {

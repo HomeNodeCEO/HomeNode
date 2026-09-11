@@ -33,6 +33,7 @@ const CAPTURE_FAILURES = new Map<string, readonly [number, string]>([
   ['custom_neighborhood_workspace_disabled', [503, 'capture_disabled']],
   ['neighborhood_context_unavailable', [404, 'capture_context_unavailable']],
   ['neighborhood_source_unavailable', [422, 'capture_source_unavailable']],
+  ['neighborhood_capture_capacity_exceeded', [422, 'capture_capacity_exceeded']],
   ['neighborhood_private_source_review_required', [422, 'capture_private_source_review_required']],
   ['neighborhood_private_source_limit', [422, 'capture_private_source_limit']],
   ['neighborhood_private_review_changed', [409, 'capture_private_review_changed']],

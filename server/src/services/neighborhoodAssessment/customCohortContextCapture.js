@@ -59,9 +59,10 @@ const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
-function fail(reason, detail) {
+function fail(reason, detail, captureCounts) {
   throw Object.assign(new Error(`custom_cohort_capture_${reason}`), {
     code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason, ...(detail ? { detail } : {}),
+    ...(captureCounts ? { capture_counts: captureCounts } : {}),
   });
 }
 function exactKeys(value, keys) {
@@ -444,7 +445,7 @@ async function boundedPolicy(policy, client, auth, context, purpose, budget, exp
 }
 function captured(value, stage) {
   if (value?.status !== 'captured' || value.query_complete !== true) fail(`${stage}_incomplete`,
-    value?.reason ?? value?.incomplete_reasons ?? 'unavailable');
+    value?.reason ?? value?.incomplete_reasons ?? 'unavailable', value?.counts);
   return value;
 }
 

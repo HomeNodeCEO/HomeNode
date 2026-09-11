@@ -36,6 +36,7 @@ const CAPTURE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
   capture_disabled: 'Neighborhood capture is currently disabled in this environment. Contact your administrator, then reload saved choices before resuming the same saved capture.',
   capture_context_unavailable: 'The saved capture target is unavailable. Reload this appraisal file and its saved choices before continuing.',
   capture_source_unavailable: 'Required recorded source data is unavailable or exceeds capture limits. Reload saved choices before resuming the same saved capture or setting it aside.',
+  capture_capacity_exceeded: 'The complete study exceeds the current processing capacity. No properties were trimmed and no partial results were applied. Reload saved choices to keep or set aside this pending capture; repeating it unchanged will not resolve a size limit.',
   capture_private_source_review_required: 'The selected private-sales source needs its source-use review completed. Then reload saved choices and set aside the pending capture before choosing the reviewed revision.',
   capture_private_source_limit: 'The selected private-sales source exceeds the capture limits. Reload saved choices, then set aside the pending capture before choosing a smaller reviewed source.',
   capture_private_review_changed: 'The selected private-sales review changed. Reload saved choices, then set aside the pending capture before choosing the updated review.',

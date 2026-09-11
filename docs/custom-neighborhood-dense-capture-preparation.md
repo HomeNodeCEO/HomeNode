@@ -1,8 +1,15 @@
-# Dense Custom neighborhood evidence: preparation, not activation
+# Dense Custom neighborhood evidence: bounded activation
 
-This slice prepares a larger loader. It does **not** enable it in the Custom
-capture coordinator, change the default mapping2/3/4 readers, deploy a worker,
-increase a Render plan, or make a partial source capture usable.
+New Custom captures now use the installed dense CAD factory. Existing captures
+reopen from their original evidence and declared budgets; the default mapping2/3/4
+reader factories remain unchanged. This is not a worker deployment, source grant,
+historical eligibility change, or permission to use a partial source capture.
+
+The activation deployment requires one 2 GB / 1 CPU web instance (or separately
+validated greater capacity), retaining the one-active-operation gate described
+below. The prior 512 MB deployment is not an approved dense-capture target. The
+Render capacity upgrade is an operator action, not an environment-variable or
+infrastructure mutation performed by this code. No autoscaling change is needed.
 
 ## Changes
 
@@ -112,7 +119,7 @@ A subsequent private loopback harness loaded the real `oldServer.js` application
 and its normal startup schema checks in the same process as native evidence work.
 Only synthetic migrated test databases and the harness-owned web listener were
 reachable. These measurements are not an authenticated production HTTP capture
-or a live data benchmark; the dense factory remains unconnected to production.
+or a live data benchmark; they were recorded before Custom activation.
 
 - Full-service capture retained all 38,347 parcels / 38,106 accounts / 116,621
   source records. Elapsed time was 39.3 s including startup/fixture work; peak RSS
@@ -136,21 +143,33 @@ for simultaneous photos/PDFs and a larger real-world source-size distribution.
 No photo-upload/PDF concurrency or production capacity guarantee is claimed.
 Do not activate a larger capture solely because a single synthetic run fits.
 
-## Required before activation
+## Deployment acceptance and rollback
 
-1. Verify the actual source-size distribution and photo/PDF concurrency on the
-   intended deployment capacity. Full-service synthetic capture and repeated
-   map/statistics tests are complete, but do not replace this check.
-2. Keep the installed process-wide gate. Obtain an explicit capacity decision:
-   a larger web instance or a separate bounded worker before dense activation.
+1. Confirm the approved 2 GB / 1 CPU deployment before releasing the Custom
+   factory switch. The native coordinator test asserts that new captures retain
+   the exact installed dense budget and that the legacy factory stays unchanged.
+2. Keep the installed process-wide gate. Use a larger web instance or a separate
+   bounded worker before further increases; do not revert capacity to 512 MB
+   while dense captures or their retained previews remain in use.
    Multiple instances each have their own gate and total database load still
    needs a deployment-level bound.
 3. Preserve the newly tested preparation/transaction split and bounded reopen
    checks; verify contention and cancellation at realistic concurrency.
 4. Verify all per-statement and aggregate deadlines, late connection cleanup,
    cancellation and resource refusal without changing source membership.
-5. Wire the dense mode only after those checks, then test the full live three-mile
-   study, pocket preview, coherent boundary/statistics Apply and fresh reopen.
+5. Test the full live three-mile study, pocket preview and fresh reopen alongside
+   ordinary photo/document reads on the intended capacity. Record actual counts,
+   timings and resource refusals. The prior synthetic measurements do not prove
+   a production source-size distribution or concurrent photo-upload/PDF capacity.
+6. Coherent boundary/statistics Apply still requires all existing eligibility,
+   date-support, source-rights and review gates. Do not Apply a retrospective
+   current-mirror capture just to complete a capacity test.
+
+Rollback of new dense capture activation is the single Custom coordinator factory
+selection. Keep retained dense evidence support and its original limits intact so
+already saved captures can still reopen. Rollback must not truncate, relabel or
+delete those captures. Processing-budget failures remain explicit and atomic;
+larger radii and whole-city selections are not guaranteed to fit these limits.
 
 No historical characteristics, provider coverage, MLS rights, eligibility or
 statistical validity are established by increasing processing capacity.

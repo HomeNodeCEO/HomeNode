@@ -14,6 +14,7 @@ import { captureNeighborhoodSpatialMembership } from '../../src/services/neighbo
 import { resolveNeighborhoodCachedTransactionClosure } from '../../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceSourceReader, createNeighborhoodDenseCadEvidenceSourceReader,
   consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { DENSE_CAD_CACHE_READER_LIMITS } from '../../src/services/neighborhoodAssessment/denseCadCapturePolicy.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 } from '../../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { createTestCachedReadAccess } from '../fixtures/neighborhoodCachedReadAccessFixture.js';
@@ -108,6 +109,11 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.ok(saved.rows.some(row => row.canonical_utf8.includes(linked)), 'full one-hop identity evidence must survive retention');
     assert.ok(saved.rows.some(row => row.canonical_utf8.includes('"mapping_version":4')),
       'new Custom owner captures must use the installed CAD evidence projection');
+    const retainedSourceMetadata = saved.rows.map(row => JSON.parse(row.canonical_utf8))
+      .filter(value => value?.mapping_version === 4 && value.limits);
+    assert.ok(retainedSourceMetadata.length > 0, 'the original source budget must be retained');
+    for (const metadata of retainedSourceMetadata) assert.deepEqual(metadata.limits, DENSE_CAD_CACHE_READER_LIMITS,
+      'new Custom captures must use the installed dense budget, not browser-supplied limits');
     assert.ok(calls.some(sql => sql.includes('neighborhood-cache:parcels')
       && ['class_code', 'class_description', 'use_description', 'structure_type', 'built_up'].every(field => sql.includes(field))),
     'the real source query must retain all five CAD fields, not relabel an older capture');
@@ -1162,12 +1168,14 @@ async function checkCadEvidenceCapture(pool, checks) {
     }
     assert.equal(dense.result.counts.records, captured.result.counts.records);
     assert.equal(dense.result.counts.bytes, captured.result.counts.bytes);
-    checks.push('native opt-in dense CAD reader preserves all six original record sets, scope and caller-owned snapshot; default owner remains unchanged');
+    checks.push('native dense CAD reader preserves all six original record sets, scope and caller-owned snapshot; legacy reader remains available');
     assert.ok(sqls.slice(from).some(sql => sql.includes('neighborhood-cache:parcels') && columns.every(key => sql.includes(key))),
       'actual mapping4 parcel SQL must execute with all five fields');
     assert.throws(() => consumeNeighborhoodCachedAcquisition(captured.reader, structuredClone(captured.result)), { code: 'NEIGHBORHOOD_ORIGINAL_CAPTURE_REQUIRED' });
     originalAcquisition = consumeNeighborhoodCachedAcquisition(captured.reader, captured.result);
     assert.equal(JSON.parse(originalAcquisition.compact_metadata_json).mapping_version, 4);
+    assert.equal(JSON.parse(originalAcquisition.compact_metadata_json).limits.records, 100_000,
+      'activating Custom dense captures must not change the legacy CAD reader budget');
     assert.deepEqual(policyPurposes.at(-1), describeNeighborhoodCachedMarketDataPurpose(originalAcquisition.captured_query_request));
     assert.equal(Object.hasOwn(describeNeighborhoodCachedMarketDataPurpose(originalAcquisition.captured_query_request), 'source_projection'), false);
     const sources = captured.result.source_capture.sources;

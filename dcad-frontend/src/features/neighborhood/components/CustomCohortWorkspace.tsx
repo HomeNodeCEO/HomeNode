@@ -179,7 +179,8 @@ function WorkspaceSession(props: Props) {
         no partial set of named groups has been substituted.</p>}
       {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
         All {catalog.pockets.length.toLocaleString('en-US')} recorded groups are available for inspection and inclusion.
-        Automatic ranking is unavailable at this catalog size; no subset was ranked or omitted. The page list is paginated, not the map or selected statistics.</p>}
+        Automatic ranking is unavailable for this retained study; historical applicability and complete recommendation capacity are required.
+        No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.</p>}
       {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h4 className="font-semibold">Recommended pockets for review</h4>

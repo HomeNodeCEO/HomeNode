@@ -33,7 +33,8 @@ import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
   CUSTOM_COHORT_DENSE_CATALOG_VERSION } from './customCohortPocketCatalog.js';
-import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
+import { buildCustomCohortPocketRecommendationPresentationBatched,
+  CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES } from './customCohortPocketRecommendationPresentation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
 import { createCustomCohortReviewRepository } from './customCohortReviewRepository.js';
@@ -776,7 +777,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       return result;
     };
-    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening)
+    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening, budget.check)
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
@@ -791,7 +792,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (!same(permitted, loaded.decision)) fail('market_policy_changed');
       }
       await recheckPrivatePolicy(client, input, loaded, budget, [...new Set([exposure, ...additionalExposures, 'report_observation_summary'])]);
-      const response = envelope({ ...content, ...(privatePresentation ? { private_sales: privatePresentation } : {}) });
+      let response = envelope({ ...content, ...(privatePresentation ? { private_sales: privatePresentation } : {}) });
+      if (content.recommendation?.presentation_version === 2) {
+        const { initial_preview: _opening, ...catalogWithPrivateSales } = response;
+        if (Buffer.byteLength(JSON.stringify(catalogWithPrivateSales)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
+          // Final envelope accounting includes private-source summaries and owner
+          // metadata. Keep the exact catalog/opening; omit only the whole optional
+          // recommendation, never a subset of its groups or a private observation.
+          const { recommendation: _recommendation, ...withoutRecommendation } = response;
+          response = withoutRecommendation;
+        }
+      }
       if (Object.hasOwn(content, 'initial_preview')) {
         const { initial_preview: _opening, ...catalogOnly } = response;
         if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) fail('catalog_transport_limit');
@@ -1215,7 +1226,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
-      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening) => {
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget) => {
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: CUSTOM_COHORT_DENSE_CATALOG_VERSION }), preview, expected,
         });
@@ -1227,12 +1238,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // parcel locations establish a retrospective housing population.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
-        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required'
-          || catalog.pockets.length > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.pockets) return response;
+        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') return response;
         // A municipal polygon has no radius-calibrated proximity scale. Keep
         // that factor unknown instead of borrowing an arbitrary ten-mile radius.
         const recorded_proximity = city ? undefined : await deriveProximity();
-        const recommendation = buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity });
+        const maximumBytes = Math.max(0, Math.min(CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES,
+          CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
+            - Buffer.byteLength(JSON.stringify({ ...response, initial_preview: undefined })) - 10_000));
+        const recommendation = await buildCustomCohortPocketRecommendationPresentationBatched({ catalog, expected,
+          retained_inputs, recorded_proximity, observation_preview: preview, maximumBytes }, { checkBudget });
         return { ...response, ...(recommendation ? { recommendation } : {}) };
       },
     });

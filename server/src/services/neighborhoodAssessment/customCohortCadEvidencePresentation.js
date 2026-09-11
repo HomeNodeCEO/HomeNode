@@ -1,4 +1,5 @@
 import { canonicalAssessmentJson as json } from './contract.js';
+import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { CUSTOM_COHORT_CURRENT_CAD_BASELINE_FIELDS as LABELS,
   CUSTOM_COHORT_CURRENT_CAD_BASELINE_LIMITS as LIMITS,
   CUSTOM_COHORT_CURRENT_CAD_BASELINE_LIMITATIONS as LIMITATIONS } from './customCohortCurrentCadBaseline.js';
@@ -108,7 +109,8 @@ function summary(value, memberCount, subject, id) {
  * lists, never a convenient prefix of properties or categories. The owning
  * recommendation keeps its complete original counts/ranks in every case.
  */
-export function presentCustomCohortCadEvidence({ evidence, expected, pockets, member_count, in_discovery, maximumBytes } = {}) {
+export function presentCustomCohortCadEvidence({ evidence, expected, pockets, member_count, in_discovery, maximumBytes, catalog_version = 1 } = {}) {
+  const groupLimit = customCohortCatalogGroupLimit(catalog_version) + 1;
   object(evidence, ['cad_baseline_version', 'mapping_version', 'basis', 'authority', 'binding', 'comparison_basis',
     'temporal_basis', 'subject', 'all', 'pockets', 'limitations']);
   check(evidence.cad_baseline_version === 1 && evidence.mapping_version === 4
@@ -137,7 +139,7 @@ export function presentCustomCohortCadEvidence({ evidence, expected, pockets, me
   check(in_discovery || subject.county_state === 'missing', 'subject');
   const all = summary(evidence.all, member_count, subject), byId = new Map(pockets.map(pocket => [pocket.id, pocket.member_count]));
   check(byId.size === pockets.length, 'groups');
-  const seen = new Set(), summaries = array(evidence.pockets, LIMITS.groups).map(pocket => {
+  const seen = new Set(), summaries = array(evidence.pockets, groupLimit).map(pocket => {
     const descriptor = pocket && Object.getOwnPropertyDescriptor(pocket, 'id');
     check(descriptor && Object.hasOwn(descriptor, 'value') && byId.has(descriptor.value) && !seen.has(descriptor.value), 'groups');
     seen.add(descriptor.value); return summary(pocket, byId.get(descriptor.value), subject, descriptor.value);
@@ -162,7 +164,7 @@ export function presentCustomCohortCadEvidence({ evidence, expected, pockets, me
     binding: { context_ref: JSON.parse(json(expected.context_ref)), captured_at: expected.captured_at },
     comparison_basis: evidence.comparison_basis, temporal_basis: evidence.temporal_basis };
   const result = { ...metadata, status: 'available', reason: null, subject, all, pockets: summaries, limitations: [...LIMITATIONS] };
-  check(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= 512_000, 'byte_budget');
+  check(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= (catalog_version === 2 ? 2_500_000 : 512_000), 'byte_budget');
   if (bytes(result) > maximumBytes) for (const population of [all, ...summaries]) {
     for (const field of Object.values(population.fields)) if (field.distribution.status === 'complete') {
       Object.assign(field.distribution, { status: 'details_unavailable', reason: 'presentation_byte_limit', entries: null });

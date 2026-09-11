@@ -1,4 +1,6 @@
-import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { customCohortObservationMembers, isCustomCohortObservationPreview } from './customCohortObservationPreview.js';
+import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 
 export const CUSTOM_COHORT_CURRENT_CAD_BASELINE_LIMITS = Object.freeze({
   accounts: 50000, source_records: 100000, source_chunks: 1000, groups: 129,
@@ -44,12 +46,14 @@ function state(value) {
  * verifier nor a source/housing/temporal authority. No numeric cells, scores,
  * weights, rankings, eligibility, selection or report facts are recalculated.
  */
-export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups } = {}) {
+export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups, catalog_version = 1 } = {}) {
+  const groupLimit = customCohortCatalogGroupLimit(catalog_version) + 1;
+  const recordLimit = catalog_version === 2 ? customCohortObservationRecordLimit(input?.acquisition) : L.source_records;
   const mapping = customCohortObservationMappingVersion(input?.acquisition);
   if (mapping !== 4) return null;
   const capture = input.acquisition.capture_result?.source_capture;
   check(capture?.status === 'ready' && input.acquisition.capture_result.query_complete === true
-    && preview?.preview_version === 1 && preview.status === 'observations_only'
+    && isCustomCohortObservationPreview(preview) && preview.status === 'observations_only'
     && preview.authority === 'not_established' && preview.apply?.status === 'blocked', 'observation_preview_required');
   check(preview.captured_at === input.acquisition.capture_result.captured_at
     && preview.effective_date === input.subject.effective_date, 'preview_capture_mismatch');
@@ -58,12 +62,12 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
   }
   const identities = snapshots => list(snapshots, L.source_chunks).map(row => `${row.id}\n${row.content_sha256}`).sort(compare);
   check(JSON.stringify(identities(capture.source_snapshots)) === JSON.stringify(identities(preview.source_snapshots)), 'preview_capture_mismatch');
-  const roster = list(preview.all?.stock?.members, L.accounts).map(row => account(row.account_id));
+  const roster = list(customCohortObservationMembers(preview, preview.all, 'stock'), L.accounts).map(row => account(row.account_id));
   check(new Set(roster).size === roster.length && preview.all.stock.member_count === roster.length
     && JSON.stringify([...roster].sort(compare)) === JSON.stringify([...list(input.spatial.account_ids, L.accounts)].sort(compare)), 'stock_roster_mismatch');
   const members = new Map(roster.map(id => [id, { county: cell(), fields: Object.fromEntries(FIELDS.map(field => [field, cell()])) }]));
   const partition = new Set(), groupIds = new Set();
-  const orderedGroups = list(groups, L.groups).map(group => {
+  const orderedGroups = list(groups, groupLimit).map(group => {
     check(typeof group.id === 'string' && group.id.length > 0 && group.id.length <= 200 && !groupIds.has(group.id), 'group_identity');
     groupIds.add(group.id);
     const ids = list(group.account_ids, L.accounts).map(account);
@@ -99,7 +103,7 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
     if (!['accounts', 'parcels'].includes(role)) continue;
     roles.add(role);
     for (const record of list(source.payload.records, L.source_records)) {
-      check(++records <= L.source_records, 'source_record_limit');
+      check(++records <= recordLimit, 'source_record_limit');
       const key = `${role}\n${record.record_id}`;
       check(!seen.has(key), 'duplicate_source_record'); seen.add(key);
       const mapped = record.data, raw = mapped?.raw_projection, normalized = mapped?.data;

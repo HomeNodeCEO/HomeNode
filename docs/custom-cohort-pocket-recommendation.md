@@ -1,5 +1,9 @@
 # Current-observation pocket recommendation
 
+The versioned dense-catalog extension is documented in
+[Complete-roster recommendations](custom-neighborhood-dense-recommendations.md).
+It retains this policy while supporting the complete v2 recorded-group catalog.
+
 `buildCustomCohortPocketRecommendation({ context_ref, retained_inputs, selection })`
 is an internal diagnostic consumer of the existing owner-loaded retained capture.
 `selection` is the saved checkpoint shape: `{ revision, included_recorded_group_ids }`.

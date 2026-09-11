@@ -5,7 +5,7 @@ import { prepareCustomCohortContextHeader, prepareCustomCohortContextScope } fro
 import { prepareCustomCohortCaptureInputs, CUSTOM_COHORT_CAPTURE_INPUT_LIMITS } from './customCohortCaptureInputs.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
-import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { buildCustomCohortSelectionCatalog, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 
 export const CUSTOM_COHORT_ASSESSMENT_PREPARATION_LIMITS = Object.freeze({
   input_nodes: 2_000_000, input_depth: 40,
@@ -86,12 +86,15 @@ function counts(all, chosen = null) {
  */
 export function prepareCustomCohortAssessmentPreparation(input) {
   plainData(input);
-  closed(input, ['context_header_json', 'expected', 'retained_inputs', 'selection']);
+  closed(input, ['context_header_json', 'expected', 'retained_inputs', 'selection',
+    ...(Object.hasOwn(input, 'catalog_version') ? ['catalog_version'] : [])]);
+  const catalogVersion = Object.hasOwn(input, 'catalog_version') ? input.catalog_version : 1;
+  customCohortCatalogGroupLimit(catalogVersion);
   closed(input.expected, ['context_ref', 'target', 'observation_period']);
   const { expected, retained_inputs: retained } = input;
   const header = prepareCustomCohortContextHeader(input.context_header_json);
   const target = prepareCustomCohortContextScope(json(expected.target));
-  const active = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: 1,
+  const active = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: catalogVersion === 2 ? 5 : 1,
     active: { context_ref: expected.context_ref, observation_period: expected.observation_period, selection: input.selection },
     pending_capture: null }).active;
   check(same(header.context_ref, active.context_ref), 'context_mismatch');
@@ -116,7 +119,7 @@ export function prepareCustomCohortAssessmentPreparation(input) {
   // statistic or assign a package's whole price to individual selected parcels.
   const preview = buildCustomCohortObservationPreview({ context_ref: active.context_ref,
     retained_inputs: retained, selection: { revision: active.selection.revision, pockets: [] } });
-  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: retained, preview });
+  const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview, catalog_version: catalogVersion });
   const groups = new Map(catalog.pockets.map(pocket => [pocket.id, pocket.account_ids]));
   if (catalog.unassigned.member_count > 0) groups.set(UNASSIGNED, catalog.unassigned.account_ids);
   const selected = new Set();
@@ -144,6 +147,6 @@ export function prepareCustomCohortAssessmentPreparation(input) {
       ...(selected.size ? [] : ['empty_selection']), ...(catalog.catalog_complete ? [] : ['recorded_group_catalog_incomplete']),
       ...preview.support_gaps] },
   };
-  check(Buffer.byteLength(json(result)) <= L.output_utf8_bytes, 'output_limit');
+  check(Buffer.byteLength(json(result)) <= (catalogVersion === 2 ? 131_072 : L.output_utf8_bytes), 'output_limit');
   return freeze(result);
 }

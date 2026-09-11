@@ -111,7 +111,7 @@ function housingSummary(value, all, pockets) {
 export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected } = {}) {
   check(recommendation?.recommendation_version === 1 && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
-  check(catalog?.catalog_version === 1 && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
+  check([1, 2].includes(catalog?.catalog_version) && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
   const v2 = recommendation.policy?.id === POLICY_V2.id, v3 = recommendation.policy?.id === POLICY_V3.id;
   const policy = v3 ? POLICY_V3 : v2 ? POLICY_V2 : POLICY;
   check(json(recommendation.policy) === json(policy), 'policy');
@@ -198,9 +198,11 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
  * existing exposures still happens before/after this helper in the owner.
  */
 export function buildCustomCohortPocketRecommendationPresentation({ catalog, expected, retained_inputs, recorded_proximity } = {}) {
-  check(catalog?.catalog_version === 1 && typeof catalog.catalog_complete === 'boolean'
+  check([1, 2].includes(catalog?.catalog_version) && typeof catalog.catalog_complete === 'boolean'
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
-  if (!catalog.catalog_complete) return null;
+  // Dense catalogs support exact inspection and selection, not a silently
+  // enlarged recommendation/native-work budget. No arbitrary prefix is ranked.
+  if (!catalog.catalog_complete || catalog.pockets.length > 128) return null;
   const temporal = customCohortCurrentStockSupport({ effective_date: retained_inputs?.subject?.effective_date,
     retained_capture_at: retained_inputs?.acquisition?.capture_result?.captured_at });
   if (temporal.status === 'historical_stock_evidence_required') return null;

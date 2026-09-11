@@ -56,7 +56,7 @@ async function setup({ assignmentFileId = '41', effectiveDate, reviewed = false,
         assert.match(text, /FOR SHARE NOWAIT/); return one({ assignment_file_id: assignmentFileId });
       }
       if (text.includes('custom-cohort-capture:workspace */')) {
-        assert.deepEqual(values, [assignmentFileId, 'neighborhood_workspace', 65_536]);
+        assert.deepEqual(values, [assignmentFileId, 'neighborhood_workspace', 262_144]);
         assert.match(text, /FOR SHARE NOWAIT/); return one(state.workspace);
       }
       if (text.includes('custom-cohort-capture:report-editor')) {
@@ -114,6 +114,18 @@ test('owner assembles the actual reviewed graph and real report candidate, hones
   assert.equal(report.binding.review_state_sha256, result.supported_inputs.binding.review_state_sha256);
   assert.equal(result.apply.status, 'blocked'); assert.ok(Object.isFrozen(report));
   assert.equal(f.state.policies.length, 2); assert.equal(f.state.calls.filter(c => c.text === 'COMMIT').length, 2);
+  f.unchanged();
+});
+
+test('owner derives v2 catalog interpretation from saved v5 checkpoint, not a caller-provided request flag', async () => {
+  const f = await setup({ reviewed: true });
+  f.state.workspace.value.workspace_version = 5;
+  const actual = await f.owner.prepareReviewedInputs(f.request);
+  const input = await f.f.adapterInput();
+  input.preparation_input.selection = structuredClone(f.state.workspace.value.active.selection);
+  input.preparation_input.catalog_version = 2; input.derived_at = actual.supported_inputs.binding.derived_at;
+  assert.deepEqual(actual.supported_inputs, buildCustomCohortSupportedInputs(input));
+  await assert.rejects(f.owner.prepareReviewedInputs({ ...f.request, catalog_version: 2 }));
   f.unchanged();
 });
 

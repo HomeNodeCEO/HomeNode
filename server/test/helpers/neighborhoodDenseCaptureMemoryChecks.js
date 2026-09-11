@@ -17,6 +17,7 @@ import { canonicalAssessmentJson as json } from '../../src/services/neighborhood
 import { buildCustomCohortIndexedObservationPreviewBatched } from '../../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCustomCohortParcelMapBatched } from '../../src/services/neighborhoodAssessment/customCohortParcelMap.js';
 import { presentCustomCohortPreview } from '../../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
+import { buildCustomCohortSelectionCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
@@ -57,6 +58,10 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         const selection = { revision: 1, pockets: [{ id: 'synthetic-all', label: 'Synthetic complete area', account_ids }] };
         const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs, selection });
         stage('statistics');
+        const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: opened.retained_inputs, preview, catalog_version: 2 });
+        assert.equal(catalog.catalog_complete, true); assert.equal(catalog.pockets.length, 887);
+        assert.deepEqual([...catalog.pockets.flatMap(p => p.account_ids), ...catalog.unassigned.account_ids].sort(), [...account_ids].sort());
+        stage('catalog');
         const parcel_map = await buildCustomCohortParcelMapBatched({ retained_inputs: opened.retained_inputs, selected_account_ids: account_ids });
         assert.equal(parcel_map.status, 'available', parcel_map.reason); assert.equal(parcel_map.counts.parcels, retained.summary.parcel_count);
         assert.equal(parcel_map.counts.coordinates, retained.summary.parcel_count * 11);
@@ -68,6 +73,7 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
           all_accounts: preview.all.stock.member_count, selected_accounts: preview.selected.stock.member_count,
           all_transactions: preview.all.transactions.member_count, mapped_parcels: parcel_map.counts.parcels,
           coordinates: parcel_map.counts.coordinates, geojson_bytes: parcel_map.counts.geojson_bytes,
+          recorded_groups: catalog.pockets.length, catalog_bytes: Buffer.byteLength(JSON.stringify(catalog)),
           internal_bytes_bound: preview.work.output_utf8_bytes_bound } };
       }
     } else {
@@ -85,7 +91,7 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         await client.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic dense area','Synthetic dense area')", [org]);
         await client.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic actor')", [actor, `${actor}@example.test`]);
         await client.query(`INSERT INTO core.accounts(account_id,county,address,city,subdivision)
-          SELECT 'DENSE-'||lpad(n::text,6,'0'),'Dallas','Synthetic address '||n,'Synthetic','Synthetic Plat '||(n%20)
+          SELECT 'DENSE-'||lpad(n::text,6,'0'),'Dallas','Synthetic address '||n,'Synthetic','Synthetic Plat '||(n%887)
           FROM generate_series(0,$1::int-1) n`, [accountCount]);
         await client.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')", [caseId, org, account]);
         const location = { account_id: account, latitude: 32.8, longitude: -96.7, source: 'dcad_parcel_query', precision: 'parcel_centroid',

@@ -297,10 +297,59 @@ running, so these are bounded synthetic acceptance measurements, not a direct
 throughput comparison. Native proximity recommendation work retains its prior
 250k-coordinate/16MB guard independently from the larger display budget.
 
-The separate recorded-name catalog still has its original 128-group guard.
-Expanding it requires a versioned saved-selection compatibility change: an old
-over-limit catalog represented the whole roster as unresolved, so simply raising
-the catalog limit would reinterpret an existing saved unresolved selection.
-Do not change that catalog limit or report selection meaning as part of this
-map-only slice. The measured retained study contains 887 consistent name groups;
-its saved observations remain complete while that follow-up is developed.
+The map-only slice was deployed and the same retained live study reopened with
+all 38,096 accounts and 1,601 in-period transactions, without another acquisition.
+Its map and statistics advanced together. The later-current-CAD historical-stock
+warning remains; no accepted report was changed by this display verification.
+
+### Versioned dense recorded-name catalog
+
+The workspace now requests catalog v2, admitting up to 1,024 recorded-name
+groups. Pure legacy consumers still default to v1/128. Both keep the original
+50k account, 100k CAD source-record, 4,096 raw-variant and public-response byte
+guards. An over-limit catalog remains the WHOLE unresolved roster, never a
+clipped prefix. Names are county/recorded-label groups, not verified legal
+subdivision, HOA, phase, builder or competitive-market identities.
+
+Checkpoint v5 supports 1,024 named IDs plus unresolved within 128 KiB, including
+the matching section-save/ACK transport. Versions 1–4 retain their exact former
+grammar and 32 KiB/128-name limits. The existing 850k workfile-section ceiling,
+authorization, signing locks, CAS and source-use policy are unchanged.
+
+An old dense catalog represented every account as `discovery:unassigned`.
+Before showing a v2 selection, the browser upgrades that old single included
+group to all new groups (or preserves an explicitly empty selection). It saves
+v5 and a new selection revision using the existing section CAS, then verifies
+the exact target, revision and value acknowledgement. Unknown legacy named IDs,
+changed contexts or uncertain acknowledgements fail closed and require a fresh
+reload; no partial migration or replacement capture occurs. New captures save
+v5 once a v2 catalog has been checked. A pending capture never discards the old
+active checkpoint. No accepted report values are migrated.
+
+Report/preparation owners derive the catalog version from the validated saved
+checkpoint, not request input. V2 member resolution uses the same public catalog
+projection the appraiser saw, including response-byte fallback semantics. The
+selection is always one exact account union, avoiding redundant per-group
+statistics and preserving all selected members. Legacy report replay remains
+on v1. Existing temporal, source, geography, revision and permission fences stay
+in place. Deploy the compatible server and frontend together. After v5 saves
+exist, do not roll back to a pre-v5 reader or erase saved checkpoints; use a
+compatible forward fix or an explicitly reviewed data-preserving migration.
+
+The group list renders 50 rows per page and searches the entire catalog. Map
+click inspection works for off-page groups. Labels can cover all 1,024 groups
+within a separate 2MB output budget, using actual retained exterior vertices;
+they do not infer subdivision perimeters. Pagination never filters map or
+statistical membership. Full-catalog automatic ranking remains capped at its
+previous 128 groups and is explicitly unavailable for larger catalogs; neither
+a top128 sample nor extra native proximity work is substituted.
+
+Validation includes 887/1,024/1,025-group catalogs, legacy fallback and explicit
+empty selection migration, lost/wrong save ACKs, repeated reopen, v5 transport,
+1,024 long map labels, paginated component interaction and real retained 887-group
+report/preparation result parity. A synthetic full-web run with 38,347 parcels,
+38,106 accounts, 887 groups and 421,817 vertices completed capture in 53.5 seconds
+and reopen/catalog/map in 39.1 seconds. Catalog output was 966,497 bytes; peak preview
+RSS was 456,652 KiB. All 378 capture/236 preview ordinary probes succeeded; preview
+p99 was 658 ms and maximum 1.39 seconds while other local tests ran. These are local
+bounded-work measurements, not a production latency guarantee.

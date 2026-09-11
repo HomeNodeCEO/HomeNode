@@ -9,6 +9,12 @@ export const CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION = 'neighborhood_workspace';
 export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
   canonical_utf8_bytes: 32_768, group_ids: 129, recorded_group_ids: 128,
 });
+export const CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
+  canonical_utf8_bytes: 131_072, group_ids: 1025, recorded_group_ids: 1024,
+});
+export function customWorkspaceCatalogVersion(checkpoint) {
+  return checkpoint.workspace_version === 5 ? 2 : 1;
+}
 const UNASSIGNED = 'discovery:unassigned';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const BATCH_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
@@ -46,8 +52,9 @@ function context(value) {
   try { return prepareCustomCohortContextReference(canonicalAssessmentJson(value)); }
   catch { fail('context_ref'); }
 }
-function groups(value) {
-  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > LIMITS.group_ids) fail('group_ids');
+function groups(value, version) {
+  const limits = version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > limits.group_ids) fail('group_ids');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== value.length + 1) fail('group_ids');
   const result = [], seen = new Set(); let recorded = 0;
@@ -56,7 +63,7 @@ function groups(value) {
     if (!descriptor?.enumerable || !Object.hasOwn(descriptor, 'value')) fail('group_ids');
     const id = descriptor.value;
     if (typeof id !== 'string' || (id !== UNASSIGNED && !RECORDED_GROUP.test(id)) || seen.has(id)) fail('group_ids');
-    if (id !== UNASSIGNED && ++recorded > LIMITS.recorded_group_ids) fail('group_ids');
+    if (id !== UNASSIGNED && ++recorded > limits.recorded_group_ids) fail('group_ids');
     seen.add(id); result.push(id);
   }
   return result; // Preserve explicit [] and order; never deduplicate or truncate.
@@ -81,7 +88,7 @@ function active(value, version) {
   closed(value.selection, ['revision', 'included_recorded_group_ids'], 'selection');
   if (!Number.isSafeInteger(value.selection.revision) || value.selection.revision < 1) fail('selection.revision');
   return { context_ref: context(value.context_ref), observation_period: period(value.observation_period),
-    selection: { revision: value.selection.revision, included_recorded_group_ids: groups(value.selection.included_recorded_group_ids) },
+    selection: { revision: value.selection.revision, included_recorded_group_ids: groups(value.selection.included_recorded_group_ids, version) },
     ...(version >= 3 && Object.hasOwn(value, 'discovery') ? { discovery: discovery(value.discovery, version) } : {}) };
 }
 function privateSalesImport(value) {
@@ -94,12 +101,13 @@ function privateSalesImport(value) {
 function pending(value, version) {
   if (value === null) return null;
   closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
-    ...(version >= 3 ? ['discovery'] : [])], 'pending_capture', version >= 3 ? ['private_sales_import'] : []);
+    ...(version === 3 || version === 4 ? ['discovery'] : [])], 'pending_capture',
+  version === 5 ? ['private_sales_import', 'discovery'] : version >= 3 ? ['private_sales_import'] : []);
   if (typeof value.operation_id !== 'string' || !UUID.test(value.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: value.operation_id, observation_period: period(value.observation_period),
     ...(version === 2 || (version >= 3 && Object.hasOwn(value, 'private_sales_import'))
       ? { private_sales_import: privateSalesImport(value.private_sales_import) } : {}),
-    ...(version >= 3 ? { discovery: discovery(value.discovery, version) } : {}) };
+    ...(version >= 3 && Object.hasOwn(value, 'discovery') ? { discovery: discovery(value.discovery, version) } : {}) };
 }
 function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -114,7 +122,7 @@ function freeze(value) {
  */
 export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
   closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (![1, 2, 3, 4].includes(value.workspace_version)) fail('workspace_version');
+  if (![1, 2, 3, 4, 5].includes(value.workspace_version)) fail('workspace_version');
   const result = { workspace_version: value.workspace_version, active: active(value.active, value.workspace_version),
     pending_capture: pending(value.pending_capture, value.workspace_version) };
   // Actual capture registers context_id = operationId and rejects changed study
@@ -125,7 +133,8 @@ export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
       || current.observation_period.end_date !== next.observation_period.end_date)) fail('operation_study_conflict');
   if (current && next && current.context_ref.context_id === next.operation_id
     && canonicalAssessmentJson(current.discovery ?? null) !== canonicalAssessmentJson(next.discovery ?? null)) fail('operation_discovery_conflict');
-  if (Buffer.byteLength(canonicalAssessmentJson(result), 'utf8') > LIMITS.canonical_utf8_bytes) fail('checkpoint_bytes');
+  const limits = result.workspace_version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  if (Buffer.byteLength(canonicalAssessmentJson(result), 'utf8') > limits.canonical_utf8_bytes) fail('checkpoint_bytes');
   normalizeCustomAppraisalSectionValue(result); // Rehearse the actual store's bound, without changing it.
   return freeze(result);
 }

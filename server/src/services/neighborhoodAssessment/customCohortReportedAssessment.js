@@ -3,7 +3,7 @@ import { neighborhoodMemberContentDigest, neighborhoodMemberSetDigest, prepareNe
 import { REPORTED_OBSERVATION_PROFILE, REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
 import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
-import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { buildCustomCohortReportedSharedSales } from './customCohortReportedSharedSales.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
@@ -65,7 +65,7 @@ function proposalBinding(value, target) {
  * economic-property inference, temporal promotion, or report writes occur here.
  */
 export function buildCustomCohortReportedAssessment({ context_ref, retained_inputs, selection, target,
-  preparation_identity: identity, report_geography, derived_at, proposal_binding }) {
+  preparation_identity: identity, report_geography, derived_at, proposal_binding, catalog_version = 1 }) {
   // Distinguish independently authorized proposal operations without changing
   // their observations or inventing a later clock. This is audit identity, not
   // source truth, report rights or reviewer licensure. Omission preserves the
@@ -86,15 +86,14 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
     && new Set(selection.included_recorded_group_ids).size === selection.included_recorded_group_ids.length, 'selection');
   const discovery = buildCustomCohortObservationPreview({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets: [] } });
-  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: retained, preview: discovery });
+  const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview: discovery, catalog_version });
   check(catalog.catalog_complete === true, 'catalog_incomplete');
   const groups = new Map(catalog.pockets.map(group => [group.id, group]));
   if (catalog.unassigned.member_count) groups.set('discovery:unassigned', { id: 'discovery:unassigned',
     label: 'Unassigned retained accounts', account_ids: catalog.unassigned.account_ids });
   check(selection.included_recorded_group_ids.every(id => groups.has(id)), 'selection_membership');
-  // Catalog labels allow 512 UTF-8 bytes and saved intent allows 128 named
-  // groups plus unassigned. The numeric preview's presentation pockets have
-  // narrower bounds. Compute the exact union, not 129 redundant per-group
+  // Versioned catalogs can contain more named groups than the numeric preview's
+  // presentation-pocket budget. Compute the exact union, not redundant per-group
   // previews; retain every original group ID separately in report selection.
   const selectedAccounts = [...new Set(selection.included_recorded_group_ids
     .flatMap(id => groups.get(id).account_ids))].sort(compare);

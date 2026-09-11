@@ -3,7 +3,7 @@ import { types } from 'node:util';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { createCustomCohortDecisionEvidenceResolver } from './customCohortDecisionEvidence.js';
 import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
-import { buildCustomCohortPocketCatalog } from './customCohortPocketCatalog.js';
+import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { neighborhoodMemberSetDigest } from './assessmentRepository.js';
 import { buildCachedNeighborhoodInputs } from './cachedRecords.js';
 import { summarizeNeighborhoodPopulations } from './statistics.js';
@@ -183,7 +183,7 @@ export function buildCustomCohortSupportedInputs(input) {
   const reviews = readState(state, p.expected, resolver);
   const preview = buildCustomCohortObservationPreview({ context_ref: p.expected.context_ref,
     retained_inputs: retained, selection: { revision: p.selection.revision, pockets: [] } });
-  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: retained, preview });
+  const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview, catalog_version: p.catalog_version ?? 1 });
   const groups = new Map(catalog.pockets.map(group => [group.id, group.account_ids]));
   if (catalog.unassigned.member_count) groups.set('discovery:unassigned', catalog.unassigned.account_ids);
   const selected = sorted(p.selection.included_recorded_group_ids.flatMap(id => groups.get(id)));

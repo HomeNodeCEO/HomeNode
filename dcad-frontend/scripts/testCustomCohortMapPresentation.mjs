@@ -24,7 +24,7 @@ const feature = (id, account, geometry = { type: 'Polygon', coordinates: [square
 function fixture() {
   const pockets = [{ id: ALPHA, label: '  Recorded élm / same name  ', county: 'Dallas', account_ids: ['A', 'B'], member_count: 2 },
     { id: BETA, label: '  Recorded élm / same name  ', county: 'Collin', account_ids: ['C'], member_count: 1 }];
-  const catalog = { status: 'review_only', binding: { context_ref: copy(context), selection_revision: 1 }, pockets,
+  const catalog = { catalog_version: 1, status: 'review_only', binding: { context_ref: copy(context), selection_revision: 1 }, pockets,
     unassigned: { account_ids: ['D'], member_count: 1, reason_counts: [] },
     coverage: { discovery_member_count: 4, assigned_account_count: 3, unassigned_account_count: 1 },
     subject_membership: { account_id: 'A', assigned_pocket_id: ALPHA, status: 'assigned', recorded_label_match_only: true }, limitations: [],
@@ -193,6 +193,24 @@ test('membership, geometry and output work are bounded; no clipped group prefix 
   largest.catalog.unassigned = { account_ids: [], member_count: 0 }; largest.catalog.coverage = { discovery_member_count: 128, assigned_account_count: 128, unassigned_account_count: 0 };
   largest.group.parcel_map.geojson.features = largest.catalog.pockets.map((p, i) => feature(i + 1, p.account_ids[0]));
   const result = build(largest); assert.equal(result.labels.features.length, 128); assert.ok(Buffer.byteLength(JSON.stringify(result)) <= LIMITS.outputBytes);
+});
+
+test('v2 labels all1024 long recorded names on exact parcels; v1 and oversized catalogs cannot bypass their bounds', () => {
+  const f = fixture(); f.catalog.catalog_version = 2; f.catalog.recommendation = null;
+  f.catalog.pockets = Array.from({ length: 1024 }, (_, i) => ({ id: `recorded-cad:${i.toString(16).padStart(64, '0')}`,
+    label: 'é'.repeat(256), county: 'é'.repeat(256), account_ids: [`A${i}`], member_count: 1 }));
+  f.catalog.unassigned = { account_ids: [], member_count: 0 };
+  f.catalog.coverage = { discovery_member_count: 1024, assigned_account_count: 1024, unassigned_account_count: 0 };
+  f.group.parcel_map.geojson.features = f.catalog.pockets.map((p, i) => feature(i + 1, p.account_ids[0]));
+  const before = JSON.stringify(f.group.parcel_map.geojson), result = build(f);
+  assert.equal(result.status, 'available'); assert.equal(result.labels.features.length, 1024);
+  assert.equal(result.unlabelled_group_ids.length, 0); result.labels.features.forEach(l => pointOnOriginal(l, f));
+  assert.equal(JSON.stringify(f.group.parcel_map.geojson), before);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) > 512000);
+  assert.ok(Buffer.byteLength(JSON.stringify(result)) <= LIMITS.outputBytes);
+  assert.ok(Object.values(result.scoresByGroup).every(s => s.status === 'unknown'));
+  assert.throws(() => build({ ...f, catalog: { ...f.catalog, catalog_version: 1 } }));
+  f.catalog.pockets.push({ ...f.catalog.pockets[0], id: 'recorded-cad:extra' }); assert.throws(() => build(f));
 });
 test('accessors in consumed fields or array elements are not executed', () => {
   for (const mutate of [f => Object.defineProperty(f.catalog.pockets[0], 'label', { enumerable: true, get() { assert.fail('getter executed'); } }),

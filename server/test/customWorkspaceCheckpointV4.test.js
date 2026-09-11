@@ -195,7 +195,7 @@ test('v4 retains private-import exact revision, operation UUID, group and sectio
   value.pending_capture.operation_id = OPERATION;
   for (const revision of [0, '1', 2147483648]) assert.equal(read({ revision, value }).status, 'invalid');
 });
-for (const version of [0, 5, '4', null]) test(`v4 does not admit unsupported version ${String(version)}`, () => {
+for (const version of [0, 6, '4', null]) test(`v4 does not admit unsupported version ${String(version)}`, () => {
   const value = fixture(); value.workspace_version = version; invalid(value, 'workspace_version');
 });
 

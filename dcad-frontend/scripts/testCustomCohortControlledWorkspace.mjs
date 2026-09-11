@@ -29,6 +29,14 @@ function catalogResponse() {
     } };
 }
 const catalog = catalogHelpers.checkCustomCohortPocketCatalog(catalogResponse(), input);
+function denseCatalog() {
+  const r = catalogResponse(), c = r.catalog; c.catalog_version = 2;
+  c.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i + 1), label: `Dense group ${i}`, county: 'Dallas',
+    account_ids: [i === 0 ? 'A' : `Account${i}`], member_count: 1, disposition: 'needs_review' }));
+  c.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+  c.coverage = { discovery_member_count: 887, assigned_account_count: 887, unassigned_account_count: 0 };
+  return catalogHelpers.checkCustomCohortPocketCatalog(r, input);
+}
 function withRecommendation(props, { suggested = [groupId(2)], status = 'recommendation_for_review' } = {}) {
   const rows = [groupId(2), groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP].map((id, index) => ({
     id, member_count: 1, review_rank: index + 1, contains_subject: id === groupId(1), subject_group_review: id === groupId(1),
@@ -137,6 +145,26 @@ test('controlled restored empty selection stays empty and makes no catalog read'
   assert.deepEqual(h.calls[0].request.selection, { revision: 7, pockets: [] }); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.checked === false)); h.unmount();
+});
+
+test('dense list pages50 groups while map selection and Include all retain887; map inspection can open an off-page group', async () => {
+  const h = harness(), dense = denseCatalog(), all = catalogHelpers.customCohortCatalogGroupIds(dense);
+  const props = h.props(all); props.workspace.catalog = dense;
+  h.render(props); await h.tick(); await h.waitForRequest(0);
+  assert.equal(h.calls[0].request.selection.pockets[0].account_ids.length, 887);
+  const checkboxes = () => h.nodes().filter(n => n.type === 'input' && n.props.type === 'checkbox');
+  assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 1 of 18/);
+  h.click('Next groups'); assert.equal(checkboxes().length, 50); assert.match(h.text(), /Page 2 of 18/);
+  h.click('Include all observations'); assert.deepEqual(h.intents.at(-1), all);
+  await h.complete();
+  h.child('CustomCohortParcelMap').onInspectPocket(groupId(887)); h.render(props);
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(887));
+  const search = h.nodes().find(n => n.type === 'input' && n.props.maxLength === 200);
+  search.props.onChange({ target: { value: 'Dense group 886' } }); h.render(props);
+  assert.equal(checkboxes().length, 1); assert.equal(checkboxes()[0].props['aria-label'], 'Include Dense group 886');
+  assert.equal(h.calls.length, 1, 'paging/search/inspection does not refetch main statistics');
+  h.check('Include Dense group 886'); assert.equal(h.intents.at(-1).length, 886);
+  assert.ok(!h.intents.at(-1).includes(groupId(887))); h.unmount();
 });
 
 test('capacity refusal preserves stale map and stats, and narrowing stays an explicit save-gated intent', async t => {

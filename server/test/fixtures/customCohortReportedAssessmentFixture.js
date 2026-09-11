@@ -20,8 +20,8 @@ const uuid = n => `bbbbbbbb-bbbb-4bbb-8bbb-${String(n).padStart(12, '0')}`;
 // A NEW original acquisition over synthetic SQL rows, not edits to retained
 // projections/hashes. Reuse the real subject and run actual spatial capture,
 // mapping2 reader, one-use consume, persistence and verified reopen again.
-async function captureRecordedLabels(base, labels) {
-  assert.ok(Array.isArray(labels) && labels.length > 0 && labels.length <= 129);
+async function captureRecordedLabels(base, labels, catalogVersion) {
+  assert.ok(Array.isArray(labels) && labels.length > 0 && labels.length <= 1024);
   const old = base.input.retained_inputs, owner = base.base, subject = old.subject;
   const point = await owner.f.repo.loadRecordedPoint(old.subject_reference);
   const ids = [subject.target.account_id, ...labels.slice(1).map((_, i) => `SYNTHETIC-GROUP-${String(i + 1).padStart(3, '0')}`)];
@@ -83,15 +83,15 @@ async function captureRecordedLabels(base, labels) {
   const header = prepareCustomCohortContextHeader(json({ ...oldHeader.body, ...refs }));
   const preview = buildCustomCohortObservationPreview({ context_ref: header.context_ref, retained_inputs: reopened.retained_inputs,
     selection: { revision: 1, pockets: [] } });
-  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: reopened.retained_inputs, preview });
+  const catalog = buildCustomCohortPocketCatalog({ retained_inputs: reopened.retained_inputs, preview, catalog_version: catalogVersion });
   assert.equal(catalog.catalog_complete, true);
-  return { retained_inputs: reopened.retained_inputs, context_ref: header.context_ref, catalog,
+  return { retained_inputs: reopened.retained_inputs, context_ref: header.context_ref, context_header_json: header.header_blob.canonical_json, catalog,
     group_ids: [...catalog.pockets.map(p => p.id), ...(catalog.unassigned.member_count ? ['discovery:unassigned'] : [])] };
 }
 export async function customCohortReportedAssessmentFixture({ privateRows = null, emptySelection = false,
-  geographyChanges = {}, oracleChanges = {}, effectiveDate = '2026-09-10', recordedLabels = null } = {}) {
+  geographyChanges = {}, oracleChanges = {}, effectiveDate = '2026-09-10', recordedLabels = null, catalogVersion = 1 } = {}) {
   const base = await supportedInputsFixture({ assignmentFileId: '41', effectiveDate });
-  const recorded = recordedLabels === null ? null : await captureRecordedLabels(base, recordedLabels);
+  const recorded = recordedLabels === null ? null : await captureRecordedLabels(base, recordedLabels, catalogVersion);
   const original = recorded?.retained_inputs ?? base.input.retained_inputs;
   const retained = structuredClone(original), subject = retained.subject.target;
   const target = { scope: Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
@@ -138,5 +138,5 @@ export async function customCohortReportedAssessmentFixture({ privateRows = null
   return { base, ...(recorded ? { recorded } : {}), input: { context_ref: recorded?.context_ref ?? base.input.expected.context_ref, retained_inputs: retained,
     selection: { revision: 1, included_recorded_group_ids: emptySelection ? [] : [...(recorded?.group_ids ?? base.input.selection.included_recorded_group_ids)] },
     target, preparation_identity: { assessment_id: uuid(1), assessment_revision: 1, attachment_id: uuid(2), attachment_revision: 1 },
-    report_geography: geography, derived_at: derivedAt } };
+    report_geography: geography, derived_at: derivedAt, ...(catalogVersion === 2 ? { catalog_version: 2 } : {}) } };
 }

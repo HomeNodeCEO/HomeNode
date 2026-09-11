@@ -1,5 +1,12 @@
 # Custom neighborhood workspace checkpoint v1
 
+**Current compatibility note:** this document specifies the preserved v1
+format. New dense catalogs use checkpoint v5 (1,024 named groups plus unresolved,
+128 KiB), with a CAS-verified upgrade that preserves old whole-roster choices.
+Versions 1–4 retain their original bounds and semantics. See
+[dense catalog compatibility](custom-neighborhood-dense-capture-preparation.md#versioned-dense-recorded-name-catalog)
+for migration, report-owner resolution and rollback requirements.
+
 `server/src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js` defines
 compact editor intent for the **existing** `neighborhood_workspace` workfile
 section. It adds no table, route, database access, write, source-policy change or

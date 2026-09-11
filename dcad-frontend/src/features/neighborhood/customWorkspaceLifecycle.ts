@@ -1,4 +1,4 @@
-import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection,
+import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection, upgradeCustomWorkspaceCatalogCheckpoint,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './customCohortPocketCatalog';
@@ -142,14 +142,21 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     const active = state.checkpoint?.active;
     if (!active) { emit({ status: state.checkpoint?.pending_capture ? 'pending' : 'idle', phase: null, error: null, recovery: null }); return; }
     stage('loading_active_catalog', 'reopen');
-    ready(await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery));
+    const catalog = await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery);
+    const upgraded = upgradeCustomWorkspaceCatalogCheckpoint({ value: state.checkpoint, revision: state.section_revision }, catalog);
+    if (upgraded) {
+      stage('upgrading_catalog_checkpoint', 'reload');
+      await persist(upgraded, io);
+    }
+    ready(catalog);
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
     const privateInput = pending.private_sales_import, discovery = pending.discovery, version = versionFor(discovery, privateInput);
     if (savePending) {
       stage('saving_pending', 'reload');
       // An old city study remains valid while a new radius study is pending.
-      const pendingVersion = state.checkpoint?.active?.discovery?.profile_id === 'custom-city-polygon-v1' ? 4 : version;
+      const pendingVersion = state.checkpoint?.workspace_version === 5 ? 5
+        : state.checkpoint?.active?.discovery?.profile_id === 'custom-city-polygon-v1' ? 4 : version;
       await persist(prepareCustomWorkspaceCheckpoint({ ...(state.checkpoint ?? EMPTY), workspace_version: pendingVersion, pending_capture: pending }), io);
     }
     stage('capturing', 'resume_pending');
@@ -177,7 +184,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
         && catalog.private_sales.observation_period.start_date === pending.observation_period.start_date
         && catalog.private_sales.observation_period.end_date === pending.observation_period.end_date, 'catalog_private_sales_mismatch');
     } else requireThat(!catalog.private_sales, 'catalog_private_sales_mismatch');
-    const value = prepareCustomWorkspaceCheckpoint({ ...draft, active: { ...draft.active,
+    const value = prepareCustomWorkspaceCheckpoint({ ...draft, workspace_version: catalog.catalog_version === 2 ? 5 : draft.workspace_version, active: { ...draft.active,
       selection: { revision: 1, included_recorded_group_ids: customCohortCatalogGroupIds(catalog) } } });
     stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog);
   }

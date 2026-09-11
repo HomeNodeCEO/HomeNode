@@ -1,5 +1,12 @@
 # Custom recorded-pocket exploration workspace
 
+**Dense workspace update:** the integrated host now supports catalog v2/1,024
+recorded groups with v5 saved intent. The visible list pages 50 rows and searches
+all groups; map/selected-statistical membership remains complete. Large catalogs
+do not trigger a partial top-128 automatic recommendation. See
+[dense catalog compatibility](custom-neighborhood-dense-capture-preparation.md#versioned-dense-recorded-name-catalog).
+The original slice description below documents the independent surface.
+
 `CustomCohortWorkspace` is an independent controlled exploration surface. Its
 inputs are exact account/file identity, a retained context reference, a session
 identity key, subject label and an explicit enabled flag. The production report

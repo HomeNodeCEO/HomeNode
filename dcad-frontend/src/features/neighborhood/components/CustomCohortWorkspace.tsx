@@ -63,6 +63,7 @@ function WorkspaceSession(props: Props) {
   const [retry, setRetry] = useState(0);
   const [inspected, setInspected] = useState<string | null>(null);
   const [search, setSearch] = useState('');
+  const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
   const controller = useRef<ReturnType<typeof createCustomCohortPreviewController> | null>(null);
   const controlled = props.workspace !== undefined;
@@ -132,6 +133,10 @@ function WorkspaceSession(props: Props) {
       county: 'Needs review', count: catalog.unassigned.member_count }] : [])]
     .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
   const selectedGroup = groups.find(p => p.id === inspected);
+  const filteredGroups = groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase()));
+  const pageSize = 50, pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
+  const currentPage = Math.min(groupPage, pageCount - 1);
+  const visibleGroups = filteredGroups.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
   const pending = preview.status === 'debouncing' || preview.status === 'loading';
   const requestMatches = useMemo(() => {
     const requested = preview.requested?.selection, selected = desired?.selection;
@@ -167,6 +172,9 @@ function WorkspaceSession(props: Props) {
       {!desired && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
       {catalog.status === 'incomplete' && <p role="alert">The recorded-name catalog is incomplete. All discovered accounts remain in the unresolved group;
         no partial set of named groups has been substituted.</p>}
+      {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
+        All {catalog.pockets.length.toLocaleString('en-US')} recorded groups are available for inspection and inclusion.
+        Automatic ranking is unavailable at this catalog size; no subset was ranked or omitted. The page list is paginated, not the map or selected statistics.</p>}
       {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h4 className="font-semibold">Recommended pockets for review</h4>
@@ -237,9 +245,9 @@ function WorkspaceSession(props: Props) {
           : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
         <aside className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
           <label className="block text-sm">Find a recorded group<input value={search} maxLength={200}
-            onChange={event => setSearch(event.target.value)} className="input input-bordered mt-1 w-full" /></label>
+            onChange={event => { setSearch(event.target.value); setGroupPage(0); }} className="input input-bordered mt-1 w-full" /></label>
           <div className="max-h-80 space-y-2 overflow-auto">
-            {groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase())).map(p =>
+            {visibleGroups.map(p =>
               <div key={p.id} className="flex items-start gap-2 rounded-lg border border-violet-100 p-2">
                 <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
                 <button type="button" className="custom-cohort-pocket-card min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
@@ -264,6 +272,11 @@ function WorkspaceSession(props: Props) {
                   </span>}</button>
               </div>)}
           </div>
+          {filteredGroups.length > pageSize && <nav aria-label="Recorded group pages" className="flex flex-wrap items-center justify-between gap-2 text-xs">
+            <button type="button" className={button} disabled={currentPage === 0} onClick={() => setGroupPage(currentPage - 1)}>Previous groups</button>
+            <span>Page {currentPage + 1} of {pageCount} · {filteredGroups.length.toLocaleString('en-US')} groups</span>
+            <button type="button" className={button} disabled={currentPage === pageCount - 1} onClick={() => setGroupPage(currentPage + 1)}>Next groups</button>
+          </nav>}
           {selectedGroup && <div className="space-y-2 border-t border-violet-200 pt-3">
             <h4 className="font-semibold">{selectedGroup.label}</h4><p className="text-sm">{selectedGroup.count.toLocaleString('en-US')} retained accounts.
               Recorded-name grouping requires review; builder, HOA dues, amenities and legal phases are not inferred.</p>

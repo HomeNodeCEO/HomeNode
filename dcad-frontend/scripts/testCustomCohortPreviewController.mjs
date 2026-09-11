@@ -146,6 +146,52 @@ function harness(options = {}) {
   };
 }
 
+test('opening response validates and publishes map/statistics together without a second request', async () => {
+  const request = input(), value = response({ ...request, include_map: true });
+  const h = harness({ initialResponse: { input: request, value } });
+  h.controller.setSelection(request); await h.tick();
+  assert.equal(h.calls.length, 0); assert.equal(h.controller.getState().status, 'ready');
+  const group = h.controller.getState().group;
+  assert.equal(group.summary.selected.stock.member_count, 1);
+  assert.equal(group.parcel_map.counts.selected_accounts, 1);
+  value.summary.selected.stock.member_count = 99;
+  assert.equal(group.summary.selected.stock.member_count, 1);
+  h.controller.setSelection(input(2, [])); await h.tick();
+  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].request.include_map, false);
+  await h.complete(0); assert.equal(h.controller.getState().group.parcel_map.counts.selected_accounts, 0);
+  h.controller.dispose();
+});
+
+for (const [label, mutate] of [
+  ['fingerprint', v => { v.summary.binding.selection_sha256 = 'b'.repeat(64); }],
+  ['target', v => { v.target.assignment_file_id = '5'; }],
+  ['revision', v => { v.selection_revision++; }],
+  ['geometry selection', v => { v.parcel_map.geojson.features[0].properties.selected = false; }],
+  ['missing map', v => { delete v.parcel_map; }],
+]) test(`opening ${label} mismatch cannot publish either map or statistics`, async () => {
+  const request = input(), value = response({ ...request, include_map: true }); mutate(value);
+  const h = harness({ initialResponse: { input: request, value } });
+  h.controller.setSelection(request); await h.tick();
+  assert.equal(h.calls.length, 0); assert.equal(h.controller.getState().error, 'invalid_response');
+  assert.equal(h.controller.getState().group, null); h.controller.dispose();
+});
+
+test('a changed target or selection cannot reuse the opening response', async () => {
+  for (const change of [v => { v.accountId = 'OTHER'; }, v => { v.selection.revision++; }, v => { v.selection.pockets = []; }]) {
+    const original = input(), current = input(); change(current);
+    const h = harness({ initialResponse: { input: original, value: response({ ...original, include_map: true }) } });
+    h.controller.setSelection(current); await h.tick(); assert.equal(h.calls.length, 1);
+    assert.deepEqual(h.calls[0].request.selection, current.selection); h.controller.dispose();
+  }
+});
+
+test('clearing the controller discards the opening response; explicit retry starts fresh', async () => {
+  const request = input(), opening = { input: request, value: response({ ...request, include_map: true }) };
+  const h = harness({ initialResponse: opening }); h.controller.setSelection(null);
+  h.controller.setSelection(request); await h.tick(); assert.equal(h.calls.length, 1); h.controller.dispose();
+  const retry = harness(); retry.controller.setSelection(request); await retry.tick(); assert.equal(retry.calls.length, 1); retry.controller.dispose();
+});
+
 test('rapid pocket edits debounce into one request for the settled, detached selection', async () => {
   const h = harness(), last = input(3, [pocket('z', ['B']), pocket('a', ['A'])]);
   h.controller.setSelection(input()); h.controller.setSelection(input(2)); h.controller.setSelection(last);

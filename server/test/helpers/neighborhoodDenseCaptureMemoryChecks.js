@@ -18,13 +18,15 @@ import { buildCustomCohortIndexedObservationPreviewBatched } from '../../src/ser
 import { buildCustomCohortParcelMapBatched } from '../../src/services/neighborhoodAssessment/customCohortParcelMap.js';
 import { presentCustomCohortPreview } from '../../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { buildCustomCohortSelectionCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { customCohortOpeningSelection, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
 export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {} }) {
   const target = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
-  assert.ok(['capture', 'reopen', 'preview'].includes(phase));
+  assert.ok(['capture', 'reopen', 'preview', 'opening'].includes(phase));
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 2, connectionTimeoutMillis: 3000,
     statement_timeout: 5000, application_name: 'synthetic_dense_capture_memory' });
   const stages = [], started = performance.now(), delay = monitorEventLoopDelay({ resolution: 10 });
@@ -52,10 +54,21 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
       const opened = await tx('REPEATABLE READ READ ONLY', client => loadCustomCohortCaptureInputs(client, json(retained.scope), retained.refs));
       assert.deepEqual(opened.summary, retained.summary); assert.deepEqual(opened.refs, retained.refs);
       stage('reopened'); result = { summary: opened.summary };
-      if (phase === 'preview') {
+      if (phase === 'preview' || phase === 'opening') {
         const context_ref = { context_id: randomUUID(), context_revision: '1', context_sha256: 'a'.repeat(64) };
         const account_ids = opened.retained_inputs.spatial.account_ids;
-        const selection = { revision: 1, pockets: [{ id: 'synthetic-all', label: 'Synthetic complete area', account_ids }] };
+        let selection = { revision: 1, pockets: [{ id: 'synthetic-all', label: 'Synthetic complete area', account_ids }] };
+        let openingCatalog;
+        if (phase === 'opening') {
+          const empty = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs,
+            selection: { revision: 1, pockets: [] } });
+          openingCatalog = presentCustomCohortPocketCatalog({ catalog: buildCustomCohortPocketCatalog({
+            retained_inputs: opened.retained_inputs, preview: empty, catalog_version: 2 }), preview: empty,
+            expected: { context_ref, selection_revision: 1 } });
+          const ids = [...openingCatalog.pockets.map(p => p.id), ...(openingCatalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
+          selection = customCohortOpeningSelection(openingCatalog, ids, 1);
+          stage('opening_catalog');
+        }
         const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs, selection });
         stage('statistics');
         const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: opened.retained_inputs, preview, catalog_version: 2 });
@@ -68,7 +81,9 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         assert.ok(parcel_map.counts.geojson_bytes > 16_000_000, 'exercise dense geometry above the former display cap');
         assert.equal(preview.all.stock.member_count, account_ids.length); assert.equal(preview.selected.stock.member_count, account_ids.length);
         const summary = presentCustomCohortPreview({ preview, expected: { context_ref, selection_revision: 1 } });
-        const bytes = Buffer.byteLength(JSON.stringify({ summary, parcel_map }));
+        const bytes = Buffer.byteLength(JSON.stringify(openingCatalog
+          ? { catalog: openingCatalog, initial_preview: { summary, parcel_map } } : { summary, parcel_map }));
+        if (openingCatalog) assert.ok(bytes <= CUSTOM_COHORT_OPENING_RESPONSE_BYTES);
         stage('presented'); result = { ...result, preview_bytes: bytes, preview_counts: {
           all_accounts: preview.all.stock.member_count, selected_accounts: preview.selected.stock.member_count,
           all_transactions: preview.all.transactions.member_count, mapped_parcels: parcel_map.counts.parcels,

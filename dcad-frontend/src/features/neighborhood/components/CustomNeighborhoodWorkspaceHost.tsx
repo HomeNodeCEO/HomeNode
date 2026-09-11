@@ -333,6 +333,7 @@ function HostSession(props: Props) {
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
       workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport, memberTransport,
+        initialPreview: lastReady.initial_preview,
         onSelectionIntent: ids => { if (!explorationBlocked) act(() => owner.current!.setGroups(ids)); } }} />}
     {active && state?.status === 'ready' && state.section_revision !== null && <CustomReportedObservationAdoption
       key={JSON.stringify([active.context_ref, state.section_revision, reportEpoch])}

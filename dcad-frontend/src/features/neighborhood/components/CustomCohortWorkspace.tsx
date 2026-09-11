@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortOperation } from '../customCohortPreviewApi';
 import { createCustomCohortPreviewController } from '../customCohortPreviewController';
-import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState } from '../customCohortPreviewController';
+import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewState, CustomCohortInitialResponse } from '../customCohortPreviewController';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
@@ -20,6 +20,7 @@ export interface CustomCohortControlledWorkspace {
   /** The host owns serialization with checkpoint saves and independent reads. */
   readonly previewTransport: typeof requestCustomCohortObservationPreview;
   readonly memberTransport: CustomCohortMemberTransport;
+  readonly initialPreview?: CustomCohortInitialResponse | null;
 }
 interface Props {
   accountId: string; assignmentFileId: string; contextRef: CustomCohortContextRef;
@@ -76,6 +77,9 @@ function WorkspaceSession(props: Props) {
   const selectionBlocked = saving || Boolean(blockedReason);
   const transport = props.workspace?.previewTransport ?? requestCustomCohortObservationPreview;
   const transportRef = useRef(transport);
+  // Stable through selection saves; a fresh explicit reopen supplies a new
+  // response and resets this owner even if the context/revision stayed equal.
+  const openingPreview = props.workspace?.initialPreview;
   transportRef.current = transport;
   const desired = useMemo(() => {
     if (!catalog) return null;
@@ -90,10 +94,11 @@ function WorkspaceSession(props: Props) {
   useEffect(() => {
     let active = true;
     const owner = createCustomCohortPreviewController({ transport: (request, options) => transportRef.current(request, options), timer,
+      initialResponse: retry === 0 ? openingPreview : null,
       onChange: next => { if (active) setPreview(next); } });
     controller.current = owner;
     return () => { active = false; owner.dispose(); controller.current = null; };
-  }, [retry]);
+  }, [openingPreview, retry]);
 
   useEffect(() => {
     if (controlled) return;

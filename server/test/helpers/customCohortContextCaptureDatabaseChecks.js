@@ -234,6 +234,14 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       assert.equal(catalogResponse.status, 200); assert.equal(catalogResponse.headers.get('cache-control'), 'no-store');
       const catalogText = await catalogResponse.text(); assert.ok(Buffer.byteLength(catalogText) <= 4_000_000);
       assert.deepEqual(JSON.parse(catalogText), catalog);
+      const initial_preview_groups = [...catalog.catalog.pockets.map(p => p.id),
+        ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
+      const { customCohortOpeningSelection } = await import('../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js');
+      const expectedOpening = await capture.present({ ...previewRequest,
+        selection: customCohortOpeningSelection(catalog.catalog, initial_preview_groups, body.selection.revision) });
+      const openingResponse = await post('catalog', { ...body, initial_preview_groups });
+      assert.equal(openingResponse.status, 200); assert.equal(openingResponse.headers.get('cache-control'), 'no-store');
+      assert.deepEqual((await openingResponse.json()).initial_preview, expectedOpening);
       for (const key of ['raw_projection', 'source_record_id', 'source_ref', 'raw_label_variants', 'market_decision']) {
         assert.ok(!catalogText.includes(`"${key}":`), key);
       }

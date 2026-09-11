@@ -34,6 +34,20 @@ test('catalog/member/capture operations share cancellation and smaller response 
   }
 });
 
+test('only explicit catalog opening accepts the combined envelope, still capped at 31MB', async () => {
+  const payload = { initial_preview_groups: [] }, signal = new AbortController().signal;
+  const transport = createCustomCohortJsonTransport({ urlFor: p => p,
+    request: async () => json({ initial_preview: { synthetic: 'x'.repeat(4_100_000) } }) });
+  assert.equal((await transport('A', 'catalog', payload, { signal })).initial_preview.synthetic.length, 4_100_000);
+  for (const operation of ['members', 'capture']) await assert.rejects(transport('A', operation, payload, { signal }), /too large/);
+  await assert.rejects(transport('A', 'catalog', {}, { signal }), /too large/);
+  let cancelled = false;
+  const oversized = createCustomCohortJsonTransport({ urlFor: p => p,
+    request: async () => responseStream(stream([encoded(`"${'x'.repeat(31_000_000)}"`)], {
+      onCancel: () => { cancelled = true; }, hanging: true })) });
+  await assert.rejects(oversized('A', 'catalog', payload, { signal }), /too large/); assert.equal(cancelled, true);
+});
+
 test('dense map preview has a bounded 27MB envelope, not an unbounded download', async () => {
   let cancelled = false;
   const transport = createCustomCohortPreviewTransport({ urlFor: p => p,

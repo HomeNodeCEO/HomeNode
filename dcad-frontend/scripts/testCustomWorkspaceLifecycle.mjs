@@ -103,8 +103,39 @@ function denseCatalog(input) {
   c.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i + 1), disposition: 'needs_review', label: `Group ${i}`,
     county: 'Dallas', account_ids: [i === 0 ? 'SUBJECT' : `A${i}`], member_count: 1 }));
   c.coverage = { discovery_member_count: 888, assigned_account_count: 887, unassigned_account_count: 1 };
+  // This lifecycle fixture is opaque; full map/summary admission is tested by
+  // the preview controller using real producer output and corruptions.
+  if (Object.hasOwn(input, 'initialPreviewGroups')) result.initial_preview = { fixture: 'opening' };
   return result;
 }
+
+for (const ids of [[groupId(1), groupId(2), 'discovery:unassigned'], []]) test(`v5 reopens the exact ${ids.length}-group selection in one read without saving`, async () => {
+  const initialSection = legacyDenseSection(ids); initialSection.value.workspace_version = 5;
+  const h = harness({ initialSection, loadCatalog: denseCatalog });
+  const state = await h.controller.reopen();
+  assert.deepEqual(h.calls.map(c => c.kind), ['catalog']);
+  assert.deepEqual(h.calls[0].input.initialPreviewGroups, ids);
+  assert.deepEqual(state.initial_preview.input.selection, state.selection);
+  assert.equal(state.initial_preview.value.fixture, 'opening');
+  const opening = state.initial_preview;
+  await h.controller.setGroups([groupId(3)]);
+  assert.equal(h.controller.getState().initial_preview, opening, 'selection saves do not restart the opening controller');
+  await h.reload();
+  assert.notEqual(h.controller.getState().initial_preview, opening, 'explicit fresh reload supplies a new opening response');
+  assert.deepEqual(h.calls.at(-1).input.initialPreviewGroups, [groupId(3)]);
+  assert.deepEqual(h.db.section.value.active.selection.included_recorded_group_ids, [groupId(3)]);
+  h.controller.dispose(); assert.equal(h.controller.getState().initial_preview, null);
+});
+
+test('v5 refuses a missing opening response; legacy requests keep the independent preview path', async () => {
+  const initialSection = legacyDenseSection([]); initialSection.value.workspace_version = 5;
+  const h = harness({ initialSection, loadCatalog: input => { const result = denseCatalog(input); delete result.initial_preview; return result; } });
+  await rejects(h.controller.reopen(), 'opening_preview_missing');
+  assert.equal(h.controller.getState().catalog, null); assert.equal(h.controller.getState().initial_preview, null);
+  const legacy = harness({ initialSection: activeSection() });
+  const state = await legacy.controller.reopen(); assert.equal(state.initial_preview, null);
+  assert.equal(Object.hasOwn(legacy.calls[0].input, 'initialPreviewGroups'), false);
+});
 function legacyDenseSection(included = ['discovery:unassigned']) {
   const s = activeSection(); s.value.active.selection.included_recorded_group_ids = included; return s;
 }

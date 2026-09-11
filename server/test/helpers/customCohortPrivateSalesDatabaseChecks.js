@@ -278,6 +278,20 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   assert.deepEqual(await protectedState(), baseline);
   checks.push('native retained private summary preserves historical closing prices and separate CurrentPrice; future/unreviewed/empty/rejected rows excluded explicitly; no fresh source read');
 
+  const openingCatalog = await owner.catalog(previewInput);
+  const openingGroups = [...openingCatalog.catalog.pockets.map(p => p.id),
+    ...(openingCatalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
+  const { customCohortOpeningSelection } = await import('../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js');
+  for (const ids of [openingGroups, []]) {
+    const selection = customCohortOpeningSelection(openingCatalog.catalog, ids, previewInput.selection.revision);
+    const separate = await owner.present({ ...previewInput, selection });
+    const opening = await owner.catalog({ ...previewInput, initialPreviewGroups: ids });
+    assert.deepEqual(opening.initial_preview, separate);
+    assert.equal(opening.initial_preview.private_sales.binding.selection_sha256, opening.initial_preview.summary.binding.selection_sha256);
+    assert.deepEqual(await protectedState(), baseline);
+  }
+  checks.push('native opening combines exact catalog/map/private/shared statistics with independent-preview parity for all and empty selections; no report/source mutation');
+
   await transaction('READ COMMITTED', client => saveCustomAppraisalWorkfileSectionInTransaction(client, {
     accountId: account, assignmentFileId: Number(assignment), sectionKey: 'neighborhood_workspace', expectedRevision: 0,
     sectionValue: { workspace_version: 2, active: { context_ref: registered.context_ref,

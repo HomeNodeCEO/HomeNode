@@ -248,7 +248,8 @@ test('charges the aggregate coordinate budget across every feature, without retu
   const ring = Array.from({ length: 30_000 }, (_, i) => [-96 + (i % 2) * 0.001, 32]);
   ring[ring.length - 1] = ring[0];
   const bytes = polygon([ring]);
-  const input = fixture(Array.from({ length: 9 }, (_, i) => ({ id: String(i + 1), account: 'R-001', bytes })));
+  const count = Math.floor(LIMITS.coordinates / ring.length) + 1;
+  const input = fixture(Array.from({ length: count }, (_, i) => ({ id: String(i + 1), account: 'R-001', bytes })));
   expectUnavailable(map(input), 'capacity_exceeded');
 });
 

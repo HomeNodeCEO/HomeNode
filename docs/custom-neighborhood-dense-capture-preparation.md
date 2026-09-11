@@ -263,3 +263,44 @@ owner checks its own clock/signal before reporting the failure. The actual drive
 error still causes connection discard. Existing unknown-COMMIT handling has
 priority; this does not permit a blind retry or suppress an earlier SQL failure.
 Ordinary query limits, access checks and accepted-report behavior are unchanged.
+
+### Complete dense parcel display
+
+The instrumented production capture subsequently committed successfully in
+112.984 seconds: 38,337 parcels, 38,096 accounts and 1,601 in-period transaction
+observations. Its saved catalog reopened in 49.876 seconds. Initial acquisition
+is therefore working on the approved capacity, but is not instant and remains
+close to the aggregate deadline. This is not full neighborhood/report acceptance.
+
+A read-only audit of that exact retained context measured 411,659 coordinates,
+7,583,936 EWKB bytes and 17,714,334 GeoJSON bytes. The previous 250k-coordinate /
+16MB-GeoJSON display ceiling refused the whole map correctly; no captured rows
+were missing. Parcel display now admits up to 500k coordinates and 24MB GeoJSON.
+The independent 16MB total EWKB, 1MB per geometry, 100k parcel and 50k account
+guards are unchanged. Every original ring, hole, part, identifier and hash is
+preserved; no simplification, sample, fallback circle or partial map is returned.
+
+Browser geometry admission and label traversal match the new coordinate limit.
+Only the map-preview transport allows a 27MB response envelope (24MB geometry,
+the unchanged 2MB summary and framing). Other transport and request limits stay
+unchanged. Geometry is reused on selection-only changes, and map and statistics
+still advance as one checked revision. Tests exercise an actual producer through
+transport and controller with 450k coordinates, unchanged geometry after edits,
+and complete refusal above the independently enforced byte/coordinate bounds.
+The native full-web memory fixture now uses ten-edge polygons (421,817 vertices)
+instead of tiny five-point rectangles to reflect real dense map payloads.
+It completed capture in 61.7 seconds and reopen/preview in 41.3 seconds with all
+38,347 parcels, 38,106 accounts and 1,030 transactions. The resulting map was
+23.5MB, with peak RSS about 451 MiB. Concurrent ordinary web probes had zero
+failures (408 during capture, 248 during preview). Other local suites were also
+running, so these are bounded synthetic acceptance measurements, not a direct
+throughput comparison. Native proximity recommendation work retains its prior
+250k-coordinate/16MB guard independently from the larger display budget.
+
+The separate recorded-name catalog still has its original 128-group guard.
+Expanding it requires a versioned saved-selection compatibility change: an old
+over-limit catalog represented the whole roster as unresolved, so simply raising
+the catalog limit would reinterpret an existing saved unresolved selection.
+Do not change that catalog limit or report selection meaning as part of this
+map-only slice. The measured retained study contains 887 consistent name groups;
+its saved observations remain complete while that follow-up is developed.

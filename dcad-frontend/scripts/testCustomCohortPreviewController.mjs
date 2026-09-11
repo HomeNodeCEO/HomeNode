@@ -42,6 +42,42 @@ function response(request, { map = request.include_map ? 'available' : 'omitted'
 }
 const drain = async () => { for (let i = 0; i < 12; i++) await Promise.resolve(); };
 
+test('dense exact geometry crosses producer/transport/controller guards and is reused for selection edits', async () => {
+  const coordinates = 25_000, bytes = Buffer.alloc(17 + coordinates * 16);
+  bytes[0] = 1; bytes.writeUInt32LE(0x20000003, 1); bytes.writeUInt32LE(4326, 5);
+  bytes.writeUInt32LE(1, 9); bytes.writeUInt32LE(coordinates, 13);
+  for (let i = 0; i < coordinates; i++) {
+    const angle = (i === coordinates - 1 ? 0 : i) * 2 * Math.PI / (coordinates - 1);
+    bytes.writeDoubleLE(-96.71234567890123 + Math.cos(angle) * .0001, 17 + i * 16);
+    bytes.writeDoubleLE(32.81234567890123 + Math.sin(angle) * .0001, 25 + i * 16);
+  }
+  const parcels = Array.from({ length: 18 }, (_, i) => ({ object_id: String(i + 1), account_id: 'A',
+    source_record_hash: 'a'.repeat(64), stored_geometry_ewkb: bytes.toString('hex') }));
+  const retained_inputs = { spatial: { status: 'captured', query_complete: true, account_ids: ['A'],
+    parcels: parcels.map(p => ({ object_id: p.object_id, account_id: 'A', source_record_hash: p.source_record_hash, geometry_sha256: hash(bytes) })) },
+  acquisition: { capture_result: { status: 'captured', query_complete: true, source_capture: { status: 'ready',
+    sources: [{ payload: { projection: { definition: { role: 'parcels' } }, records: parcels.map(p => ({
+      record_id: `parcel:${p.object_id}`, data: mapCachedParcelRow(p) })) } }] } } } };
+  const parcel_map = buildCustomCohortParcelMap({ retained_inputs });
+  assert.equal(parcel_map.status, 'available'); assert.equal(parcel_map.counts.coordinates, 450_000);
+  assert.ok(parcel_map.counts.geojson_bytes > 16_000_000 && parcel_map.counts.geojson_bytes < 24_000_000);
+  const { createCustomCohortPreviewTransport } = await import('../src/features/neighborhood/customCohortPreviewTransport.ts');
+  const h = harness(); h.controller.setSelection(input()); await h.tick();
+  const value = response(h.calls[0].request); value.parcel_map = parcel_map;
+  const transport = createCustomCohortPreviewTransport({ urlFor: p => p,
+    request: async () => new Response(JSON.stringify(value), { headers: { 'content-type': 'application/json' } }) });
+  await h.complete(0, await transport(h.calls[0].request, { signal: h.calls[0].signal }));
+  const accepted = h.controller.getState(); assert.equal(accepted.status, 'ready');
+  assert.equal(accepted.group.parcel_map.counts.coordinates, 450_000);
+  assert.deepEqual(accepted.group.parcel_map.geojson.features[17].geometry, parcel_map.geojson.features[17].geometry);
+  h.controller.setSelection(input(2, [])); await h.tick(); assert.equal(h.calls[1].request.include_map, false);
+  await h.complete(1); const changed = h.controller.getState(); assert.equal(changed.status, 'ready');
+  assert.equal(changed.group.parcel_map.counts.coordinates, 450_000);
+  assert.equal(changed.group.parcel_map.counts.selected_accounts, 0);
+  assert.equal(changed.group.parcel_map.geojson.features[17].geometry, accepted.group.parcel_map.geojson.features[17].geometry);
+  h.controller.dispose();
+});
+
 test('capacity refusal keeps the exact previous coherent group stale; a changed empty selection recovers normally', async () => {
   const h = harness(); h.controller.setSelection(input()); await h.tick(); await h.complete(0);
   const old = h.controller.getState().group, enlarged = input(2, [pocket('all', ['A', 'B'])]);

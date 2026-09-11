@@ -10,6 +10,14 @@ export const CUSTOM_COHORT_POCKET_CATALOG_LIMITS = Object.freeze({
   public_output_utf8_bytes: 3990000, transport_output_utf8_bytes: 4000000,
 });
 const L = CUSTOM_COHORT_POCKET_CATALOG_LIMITS;
+// Keep v1 replay semantics: its unresolved group can represent the entire
+// discovery roster after 128 names. Only explicitly versioned owners use v2.
+export const CUSTOM_COHORT_DENSE_CATALOG_VERSION = 2;
+export const CUSTOM_COHORT_DENSE_CATALOG_GROUP_LIMIT = 1024;
+export function customCohortCatalogGroupLimit(version = 1) {
+  check(version === 1 || version === 2, 'catalog_version');
+  return version === 2 ? CUSTOM_COHORT_DENSE_CATALOG_GROUP_LIMIT : L.pockets;
+}
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
 const freeze = value => {
@@ -40,7 +48,8 @@ const LIMITATIONS = Object.freeze([
  * checks belong to the owner. A catalog ID is a county/name key, not authority,
  * legal identity, geography, a competitive recommendation or report readiness.
  */
-export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview } = {}) {
+export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview, catalog_version = 1 } = {}) {
+  const groupLimit = customCohortCatalogGroupLimit(catalog_version);
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(capture?.status === 'ready' && input?.acquisition?.capture_result?.query_complete === true
     && input?.spatial?.query_complete === true, 'retained_capture_required');
@@ -65,7 +74,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
     && JSON.stringify(sorted(stock)) === JSON.stringify(roster)
     && JSON.stringify(sorted(array(preview.all.account_ids, L.accounts))) === JSON.stringify(roster), 'stock_roster_mismatch');
   const subjectAccount = input.subject.target.account_id, rosterSet = new Set(roster);
-  const header = { catalog_version: 1, binding, basis: 'retained_discovery_accounts_and_current_cad_recorded_labels',
+  const header = { catalog_version, binding, basis: 'retained_discovery_accounts_and_current_cad_recorded_labels',
     authority: 'not_established', geography: null, limitations: [...LIMITATIONS],
     apply: { status: 'blocked', reasons: ['recorded_label_catalog_is_not_a_supported_assessment'] } };
   const subjectMembership = (status, assigned_pocket_id = null) => ({ account_id: subjectAccount,
@@ -137,7 +146,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
       if (countyUsable) for (const name of names) {
         const groupId = `recorded-cad:${hash({ county: counties[0], label: name })}`;
         if (!groups.has(groupId)) {
-          if (groups.size >= L.pockets) throw new CatalogLimit('pocket_count_limit');
+          if (groups.size >= groupLimit) throw new CatalogLimit('pocket_count_limit');
           groups.set(groupId, { id: groupId, normalized_county: counties[0], normalized_label: name,
             raw_label_variants: new Set(), raw_county_variants: new Set(), account_ids: [], conflict_ids: new Set(),
             invalid_ids: new Set(), unassigned_ids: new Set(), partial_ids: new Set() });
@@ -201,7 +210,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
  * All membership is returned once; byte overflow never clips a group/roster.
  */
 export function presentCustomCohortPocketCatalog({ catalog, preview, expected } = {}) {
-  check(catalog?.catalog_version === 1 && ['review_only', 'incomplete'].includes(catalog.status)
+  check([1, 2].includes(catalog?.catalog_version) && ['review_only', 'incomplete'].includes(catalog.status)
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog_required');
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(expected?.context_ref));
   check(canonicalAssessmentJson(catalog.binding.context_ref) === canonicalAssessmentJson(context)
@@ -218,7 +227,7 @@ export function presentCustomCohortPocketCatalog({ catalog, preview, expected } 
     selection_sha256: hash({ pockets, revision: expected.selection_revision }) };
   const fields = (value, names) => Object.fromEntries(names.filter(key => Object.hasOwn(value, key)).map(key => [key, value[key]]));
   const result = {
-    catalog_version: 1, binding, basis: catalog.basis, status: catalog.status, reasons: [...catalog.reasons],
+    catalog_version: catalog.catalog_version, binding, basis: catalog.basis, status: catalog.status, reasons: [...catalog.reasons],
     catalog_complete: catalog.catalog_complete, discovered_group_count: catalog.discovered_group_count,
     authority: 'not_established', geography: null, limitations: [...catalog.limitations],
     apply: { status: 'blocked', reasons: [...catalog.apply.reasons] },
@@ -261,4 +270,13 @@ export function presentCustomCohortPocketCatalog({ catalog, preview, expected } 
   throw Object.assign(new Error('custom_cohort_pocket_catalog_transport_limit'), {
     code: 'CUSTOM_COHORT_POCKET_CATALOG_LIMIT', reason: 'catalog_transport_limit',
   });
+}
+
+/** v2 saved selection must resolve against the SAME complete public catalog the
+ * appraiser saw, including a whole-roster response-byte fallback. Legacy pure
+ * consumers retain v1 semantics; no current-source query or grant occurs here. */
+export function buildCustomCohortSelectionCatalog(input) {
+  const catalog = buildCustomCohortPocketCatalog(input);
+  return catalog.catalog_version === 1 ? catalog : presentCustomCohortPocketCatalog({ catalog, preview: input.preview,
+    expected: { context_ref: input.preview.context_ref, selection_revision: input.preview.selection_revision } });
 }

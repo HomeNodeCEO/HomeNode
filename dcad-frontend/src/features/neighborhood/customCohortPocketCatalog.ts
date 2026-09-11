@@ -11,6 +11,7 @@ export interface CheckedRecordedPocket {
   readonly account_ids: readonly string[]; readonly member_count: number;
 }
 export interface CheckedPocketCatalog {
+  readonly catalog_version: 1 | 2;
   readonly status: 'review_only' | 'incomplete';
   readonly binding: { readonly context_ref: CustomCohortContextRef; readonly selection_revision: number };
   readonly pockets: readonly CheckedRecordedPocket[];
@@ -55,9 +56,9 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
     && response.selection_revision === expected.selection.revision && object(response.apply).status === 'blocked');
   sameContext(response.context_ref, expected.contextRef);
   const binding = object(catalog.binding); sameContext(binding.context_ref, expected.contextRef);
-  ensure(binding.selection_revision === expected.selection.revision && catalog.catalog_version === 1
+  ensure(binding.selection_revision === expected.selection.revision && (catalog.catalog_version === 1 || catalog.catalog_version === 2)
     && ['review_only', 'incomplete'].includes(String(catalog.status)) && object(catalog.apply).status === 'blocked');
-  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= 128);
+  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 2 ? 1024 : 128));
   const ids = new Set<string>(), accounts = new Set<string>();
   const members = (value: unknown): readonly string[] => {
     ensure(Array.isArray(value) && value.length <= 50_000);
@@ -89,7 +90,7 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
   const assignedId = subject.assigned_pocket_id as string | null;
   if (assignedId !== null) ensure(pockets.find(p => p.id === assignedId)?.account_ids.includes(subjectAccount));
   ensure(Array.isArray(catalog.limitations) && catalog.limitations.length <= 64);
-  const checked = { status: catalog.status as CheckedPocketCatalog['status'],
+  const checked = { catalog_version: catalog.catalog_version as 1 | 2, status: catalog.status as CheckedPocketCatalog['status'],
     binding: { context_ref: { ...expected.contextRef }, selection_revision: expected.selection.revision }, pockets,
     unassigned: { account_ids: unassignedAccounts, member_count: unassignedAccounts.length, reason_counts },
     coverage: { discovery_member_count: accounts.size, assigned_account_count: assigned, unassigned_account_count: unassignedAccounts.length },
@@ -112,7 +113,7 @@ export function customCohortCatalogGroupIds(catalog: CheckedPocketCatalog): read
   return [...catalog.pockets.map(p => p.id), ...(catalog.unassigned.member_count ? [UNASSIGNED] : [])];
 }
 
-/** One exact selected union avoids truncating a 128-group catalog plus unresolved
+/** One exact selected union avoids truncating a versioned catalog plus unresolved
  * observations. Individual group inspection is a separate, explicit request. */
 export function selectionFromRecordedGroups(catalog: CheckedPocketCatalog, included: readonly string[], revision: number) {
   ensure(Number.isSafeInteger(revision) && revision > 0 && new Set(included).size === included.length);

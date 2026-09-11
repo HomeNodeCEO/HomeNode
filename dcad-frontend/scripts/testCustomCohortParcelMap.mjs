@@ -32,7 +32,7 @@ function fixture() {
       features: ['A', 'B', 'C'].map((account_id, i) => ({ type: 'Feature', id: `gis.dcad_parcels:${i + 1}`,
         properties: { object_id: String(i + 1), account_id, selected: i !== 1 },
         geometry: i === 2 ? { type: 'MultiPolygon', coordinates: [polygon(-96.8).coordinates, polygon(-96.79).coordinates] } : polygon(-97 + i / 10) })) } } };
-  const catalog = { status: 'review_only', binding: { context_ref: contextRef, selection_revision: 1 },
+  const catalog = { catalog_version: 1, status: 'review_only', binding: { context_ref: contextRef, selection_revision: 1 },
     pockets: [{ id: 'recorded-cad:alpha', label: 'Alpha', county: 'Dallas', account_ids: ['A'], member_count: 1 },
       { id: 'recorded-cad:beta', label: 'Beta', county: 'Dallas', account_ids: ['B'], member_count: 1 }],
     unassigned: { account_ids: ['C'], member_count: 1, reason_counts: [] },

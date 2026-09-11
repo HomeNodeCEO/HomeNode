@@ -65,3 +65,20 @@ test('checkpoint acknowledgement is byte bounded and rejects non-JSON, invalid U
     await assert.rejects(h.transport.save('R-1','17',input(),{signal:signal()})); assert.equal(h.calls.length,1);
   }
 });
+
+test('v5 serializes all1025 group IDs and admits its larger ACK without changing v1 transport bounds', async () => {
+  const value = { workspace_version: 5, active: { context_ref: {
+    context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) },
+  observation_period: { start_date: '2025-01-01', end_date: '2026-01-01' }, selection: { revision: 3,
+    included_recorded_group_ids: [...Array.from({ length: 1024 }, (_, i) => `recorded-cad:${i.toString(16).padStart(64, '0')}`), 'discovery:unassigned'] } }, pending_capture: null };
+  assert.ok(Buffer.byteLength(JSON.stringify(value)) > 65536);
+  const h = harness(async (_url, init) => json({ ok: true, section: { value: JSON.parse(init.body).value, revision: 5 } }));
+  const result = await h.transport.save('R-1', '17', { ...input(), value }, { signal: signal() });
+  assert.deepEqual(result.section.value, value); assert.deepEqual(JSON.parse(h.calls[0].init.body).value, value);
+  const old = harness(); assert.throws(() => old.transport.save('R-1', '17', { ...input(), value: { ...value, workspace_version: 1 } }, { signal: signal() }));
+  assert.equal(old.calls.length, 0);
+  const huge = harness(); assert.throws(() => huge.transport.save('R-1', '17', { ...input(), value: { workspace_version: 5, text: '€'.repeat(45000) } }, { signal: signal() }));
+  assert.equal(huge.calls.length, 0);
+  const oversizedAck = harness(async () => json({ padding: 'x'.repeat(262144) }));
+  await assert.rejects(oversizedAck.transport.save('R-1', '17', { ...input(), value }, { signal: signal() }));
+});

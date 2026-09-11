@@ -187,12 +187,19 @@ export function createCustomWorkspaceSectionTransport(options: Options) {
         || typeof input.editorKey !== 'string' || !input.editorKey || input.editorKey.length > 4096
         || /[\r\n]/.test(input.editorKey)) throw new Error('Invalid custom workspace save');
       const value = JSON.stringify(input.value);
-      if (typeof value !== 'string' || encoder.encode(value).length > 32_768) throw new Error('Invalid custom workspace checkpoint size');
+      // API admission has validated the closed checkpoint. Read the version
+      // from its serialized bytes so getters/mutation cannot select a different
+      // limit than the exact value submitted; this grants no save authority.
+      if (typeof value !== 'string') throw new Error('Invalid custom workspace checkpoint size');
+      const valueBytes = encoder.encode(value).length;
+      if (valueBytes > 131_072) throw new Error('Invalid custom workspace checkpoint size');
+      const checkpointLimit = JSON.parse(value)?.workspace_version === 5 ? 131_072 : 32_768;
+      if (valueBytes > checkpointLimit) throw new Error('Invalid custom workspace checkpoint size');
       // Serialize once before awaiting authentication/network; caller mutations
       // cannot change the value paired with this expected revision.
       const body = `{"value":${value},"expected_revision":${input.expectedRevision},"save_reason":"autosave"}`;
       return jsonRequest(options, `${endpoint}/sections/neighborhood_workspace`, { method: 'PUT',
-        headers: { 'content-type': 'application/json', 'x-homenode-editor-key': input.editorKey }, body }, 65_536, signal);
+        headers: { 'content-type': 'application/json', 'x-homenode-editor-key': input.editorKey }, body }, checkpointLimit * 2, signal);
     },
   });
 }

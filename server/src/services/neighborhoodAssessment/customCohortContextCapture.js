@@ -29,7 +29,8 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
-import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from './customCohortPocketCatalog.js';
+import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
+  CUSTOM_COHORT_DENSE_CATALOG_VERSION } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { prepareCohortDecisionCommandV1 } from './cohortDecisionCommand.js';
@@ -48,8 +49,8 @@ import { saveCustomNeighborhoodAcceptanceInTransaction } from './customAcceptanc
 import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography,
   CUSTOM_COHORT_REPORT_GEOGRAPHY_FIELDS, CUSTOM_COHORT_REPORT_GEOGRAPHY_LIMITS } from './customCohortReportGeography.js';
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from './customAcceptanceSnapshot.js';
-import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS,
-  readCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
+import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS,
+  readCustomNeighborhoodWorkspaceCheckpoint, customWorkspaceCatalogVersion } from './customWorkspaceCheckpoint.js';
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
@@ -220,8 +221,8 @@ async function savedWorkspace(client, input) {
     WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
   [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION,
     // JSONB's spaces are not the checkpoint's canonical representation. Bound
-    // transport generously, then apply the original exact canonical limit.
-    CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS.canonical_utf8_bytes * 2]);
+    // transport generously, then apply each saved version's exact canonical limit.
+    CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS.canonical_utf8_bytes * 2]);
   if (result?.rowCount !== 1 || result.rows?.length !== 1) fail('workspace_unavailable');
   const restored = readCustomNeighborhoodWorkspaceCheckpoint(result.rows[0]);
   if (restored.status !== 'restored' || restored.checkpoint.active === null) fail('workspace_unavailable');
@@ -971,6 +972,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     budget.check();
     const prepared = buildCustomCohortReportedAssessment({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
+      catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint),
       preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,
       proposal_binding: { operation_id: input.operationId, actor_user_id: input.auth.userId,
         expected_editor_revision: input.expectedEditorRevision } });
@@ -1128,7 +1130,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       preparation_input: { context_header_json: loaded.retained.header.header_blob.canonical_json,
         expected: { context_ref: input.contextRef, target: JSON.parse(loaded.scopeJson),
           observation_period: active.observation_period },
-        retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection },
+        retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection,
+        catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint) },
       review_state: loaded.review, derived_at: loaded.derivedAt,
     });
     const reportPreparation = historicalBlocked
@@ -1188,7 +1191,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       outputLimit: include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity) => {
         const catalog = presentCustomCohortPocketCatalog({
-          catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview }), preview, expected,
+          catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: CUSTOM_COHORT_DENSE_CATALOG_VERSION }), preview, expected,
         });
         const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
         const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };
@@ -1197,7 +1200,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // parcel locations establish a retrospective housing population.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
-        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') return response;
+        if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required'
+          || catalog.pockets.length > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.pockets) return response;
         // A municipal polygon has no radius-calibrated proximity scale. Keep
         // that factor unknown instead of borrowing an arbitrary ten-mile radius.
         const recorded_proximity = city ? undefined : await deriveProximity();

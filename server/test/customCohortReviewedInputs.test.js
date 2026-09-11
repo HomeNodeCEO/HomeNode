@@ -34,7 +34,7 @@ function setup({ checkpoint, parent = true, assigned = ACTOR, org = ORG } = {}) 
         if (sql.includes('custom-cohort-capture:workspace */')) {
           assert.match(sql, /CASE WHEN octet_length\(section_value::text\)/);
           assert.match(sql, /FOR SHARE NOWAIT/);
-          assert.deepEqual(config.values, [input().assignmentFileId, 'neighborhood_workspace', 65_536]);
+          assert.deepEqual(config.values, [input().assignmentFileId, 'neighborhood_workspace', 262_144]);
           return one(checkpoint);
         }
         assert.fail(`Unexpected source read or write: ${sql}`);

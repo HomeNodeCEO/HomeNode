@@ -52,7 +52,7 @@ function catalog(input) {
 }
 const deferred = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const drain = async () => { for (let i = 0; i < 24; i++) await Promise.resolve(); };
-function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000, onChange } = {}) {
+function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000, onChange, operationId } = {}) {
   const calls = [], states = [], timers = new Map(); let clock = 100, timerId = 0, ids = 0, open = 0, maxOpen = 0;
   const db = { section: copy(initialSection) };
   const privateBindings = new Map();
@@ -76,7 +76,7 @@ function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000,
   };
   const controller = create({ target: copy(TARGET), initialSection, timeoutMs, now: () => clock,
     timer: { set(fn) { timers.set(++timerId, fn); return timerId; }, clear(id) { timers.delete(id); } },
-    operationId: () => { ids += 1; return OPERATION; },
+    operationId: () => { ids += 1; return operationId ? operationId(ids) : OPERATION; },
     onChange: value => { states.push(value); onChange?.(value); },
     save: (input, options) => invoke('save', input, options, save ? (value, opts) => save(value, opts, commit) : commit),
     capture: (input, options) => invoke('capture', input, options, capture ?? captured),
@@ -96,6 +96,72 @@ function harness({ initialSection, save, capture, loadCatalog, timeoutMs = 1000,
 const rejects = (promise, code) => assert.rejects(promise, error => error.workspaceCode === code);
 const PRIVATE = Object.freeze({ batch_id: '20000000-0000-4000-8000-000000000003', expected_review_revision: 7 });
 const privateCaptured = input => ({ ...captured(input), private_sales_import: copy(input.privateSalesImport) });
+
+function denseCatalog(input) {
+  const result = catalog(input), c = result.catalog;
+  c.catalog_version = 2;
+  c.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i + 1), disposition: 'needs_review', label: `Group ${i}`,
+    county: 'Dallas', account_ids: [i === 0 ? 'SUBJECT' : `A${i}`], member_count: 1 }));
+  c.coverage = { discovery_member_count: 888, assigned_account_count: 887, unassigned_account_count: 1 };
+  return result;
+}
+function legacyDenseSection(included = ['discovery:unassigned']) {
+  const s = activeSection(); s.value.active.selection.included_recorded_group_ids = included; return s;
+}
+test('dense catalog upgrade is CAS-saved before any ready preview, never recaptures or loses members', async () => {
+  const held = deferred(); let saves = 0;
+  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog,
+    save: async (input, opts, commit) => { if (++saves === 1) await held.promise; return commit(input); } });
+  const reopening = h.controller.reopen(); await drain();
+  assert.equal(h.controller.getState().phase, 'upgrading_catalog_checkpoint');
+  assert.equal(h.controller.getState().selection, null); assert.ok(!h.states.some(s => s.status === 'ready'));
+  held.resolve(); await reopening;
+  assert.deepEqual(h.calls.map(c => c.kind), ['catalog', 'save']); assert.equal(h.ids, 0);
+  assert.equal(h.db.section.revision, 6); assert.equal(h.db.section.value.workspace_version, 5);
+  assert.equal(h.db.section.value.active.selection.revision, 10);
+  assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+  await h.reload(); assert.equal(saves, 1); assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+  await h.controller.setGroups([groupId(1)]);
+  assert.deepEqual(h.controller.getState().selection.pockets[0].account_ids, ['SUBJECT']);
+  await h.reload(); assert.deepEqual(h.controller.getState().selection.pockets[0].account_ids, ['SUBJECT']);
+});
+test('dense upgrade preserves explicit exclusion of all, and rejects impossible legacy named selections', async () => {
+  const empty = harness({ initialSection: legacyDenseSection([]), loadCatalog: denseCatalog }); await empty.controller.reopen();
+  assert.deepEqual(empty.controller.getState().selection.pockets, []); assert.equal(empty.db.section.value.workspace_version, 5);
+  const bad = harness({ initialSection: activeSection(), loadCatalog: denseCatalog });
+  await rejects(bad.controller.reopen(), 'operation_failed');
+  assert.deepEqual(bad.calls.map(c => c.kind), ['catalog']); assert.equal(bad.controller.getState().selection, null);
+});
+test('uncertain dense upgrade ACK requires fresh reload; a committed upgrade is never replayed or called failed', async () => {
+  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog, save(input, opts, commit) {
+    commit(input); throw new Error('lost ACK');
+  } });
+  await rejects(h.controller.reopen(), 'operation_failed');
+  assert.equal(h.controller.getState().recovery, 'reload'); assert.equal(h.controller.getState().selection, null);
+  await rejects(h.controller.reopen(), 'recovery_required');
+  await h.reload(); assert.equal(h.controller.getState().status, 'ready');
+  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1); assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+});
+for (const badAck of ['target', 'revision', 'value']) test(`dense upgrade rejects wrong ${badAck} ACK before preview`, async () => {
+  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog, save(input, opts, commit) {
+    const ack = commit(input);
+    if (badAck === 'target') ack.assignmentFileId = '1';
+    if (badAck === 'revision') ack.section.revision++;
+    if (badAck === 'value') ack.section.value.active.selection.included_recorded_group_ids = [];
+    return ack;
+  } });
+  await assert.rejects(h.controller.reopen()); assert.equal(h.controller.getState().recovery, 'reload');
+  assert.equal(h.controller.getState().selection, null); assert.ok(!h.states.some(s => s.status === 'ready'));
+});
+test('new dense capture writes v5 and preserves it while the next radius capture is pending', async () => {
+  let captures = 0;
+  const h = harness({ loadCatalog: denseCatalog, operationId: n => n === 1 ? OPERATION : OLD,
+    capture(input) { if (++captures > 1) throw new Error('offline'); return captured(input); } });
+  await h.controller.start(PERIOD); assert.equal(h.db.section.value.workspace_version, 5);
+  assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+  await rejects(h.controller.start(PERIOD, undefined, { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' }), 'operation_failed');
+  assert.equal(h.db.section.value.workspace_version, 5); assert.equal(h.db.section.value.active.selection.included_recorded_group_ids.length, 888);
+});
 
 const pendingSection = (active = true) => ({ revision: 6, value: { workspace_version: 2,
   active: active ? activeSection().value.active : null,

@@ -37,7 +37,7 @@ function fixture() {
 }
 const section = (value = fixture()) => ({ key: sectionKey, value, revision: 13, updated_by: 'reviewer', updated_at: '2026-09-09T12:00:00Z' });
 function catalog() {
-  return { status: 'review_only', binding: { context_ref: fixture().active.context_ref, selection_revision: 1 },
+  return { catalog_version: 1, status: 'review_only', binding: { context_ref: fixture().active.context_ref, selection_revision: 1 },
     pockets: [{ id: groupId(1), label: 'Alpha', county: 'Dallas', account_ids: ['R-1'], member_count: 1 },
       { id: groupId(2), label: 'Beta', county: 'Dallas', account_ids: ['00002'], member_count: 1 }],
     unassigned: { account_ids: ['unknown-account'], member_count: 1, reason_counts: [] },
@@ -53,6 +53,54 @@ const validValues = () => {
     included_recorded_group_ids: [...Array.from({ length: 128 }, (_, i) => groupId(i)), UNASSIGNED] };
   return [fixture(), activeOnly, pendingOnly, empty, sameOperation, largest, { workspace_version: 1, active: null, pending_capture: null }];
 };
+
+test('v5 admits 1024 exact recorded IDs plus unresolved with frontend/backend parity; legacy bounds stay unchanged', () => {
+  const value = fixture(); value.workspace_version = 5;
+  value.active.selection.included_recorded_group_ids = [...Array.from({ length: 1024 }, (_, i) => groupId(i)), UNASSIGNED];
+  const before = structuredClone(value), backend = serverPrepare(value);
+  assert.deepEqual(prepare(value), backend); assert.deepEqual(read(section(value)), serverRead(section(value)));
+  assert.deepEqual(value, before); assert.equal(backend.active.selection.included_recorded_group_ids.length, 1025);
+  assert.ok(Buffer.byteLength(JSON.stringify(backend)) > serverLimits.canonical_utf8_bytes);
+  for (const version of [1, 2, 3, 4]) {
+    const old = { ...value, workspace_version: version, pending_capture: null };
+    assert.throws(() => prepare(old)); assert.throws(() => serverPrepare(old));
+  }
+  value.active.selection.included_recorded_group_ids.push(groupId(1024));
+  assert.throws(() => prepare(value)); assert.throws(() => serverPrepare(value));
+});
+
+test('v5 preserves optional legacy/radius/city pending intent; no fabricated discovery is needed for upgrade', () => {
+  const radius = { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' };
+  const city = { profile_id: 'custom-city-polygon-v1', city: { geoid: '4829000', vintage: '2025-01-01', asset_sha256: 'b'.repeat(64) } };
+  for (const pending of [fixture().pending_capture, { ...fixture().pending_capture, discovery: radius },
+    { ...fixture().pending_capture, discovery: city, private_sales_import: { batch_id: OTHER_UUID, expected_review_revision: 3 } }]) {
+    const value = { ...fixture(), workspace_version: 5, pending_capture: pending };
+    assert.deepEqual(prepare(value), serverPrepare(value));
+  }
+});
+
+test('legacy whole-unresolved migration retains ALL dense members and explicit empty selection, never a partial named prefix', () => {
+  const dense = catalog(); dense.catalog_version = 2;
+  dense.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i), label: `Group ${i}`, county: 'Dallas', account_ids: [`A${i}`], member_count: 1 }));
+  const upgrade = module.exports.upgradeCustomWorkspaceCatalogCheckpoint;
+  for (const included of [[UNASSIGNED], []]) {
+    const value = fixture(); value.pending_capture = null; value.active.selection.included_recorded_group_ids = included;
+    assert.equal(restore(section(value), dense).reason, 'catalog_version_mismatch');
+    const next = upgrade(section(value), dense);
+    assert.equal(next.workspace_version, 5); assert.equal(next.active.selection.revision, 8);
+    assert.deepEqual(prepare(next), serverPrepare(next));
+    const restored = restore(section(next), dense); assert.equal(restored.status, 'restored');
+    assert.deepEqual(restored.selection.pockets.flatMap(p => p.account_ids).sort(), included.length
+      ? [...dense.pockets.flatMap(p => p.account_ids), ...dense.unassigned.account_ids].sort() : []);
+    assert.equal(upgrade(section(next), dense), null);
+    assert.equal(restore(section(next), catalog()).reason, 'catalog_version_mismatch');
+  }
+  const bad = fixture(); bad.pending_capture = null;
+  assert.throws(() => upgrade(section(bad), dense), /Invalid custom/);
+  bad.active.selection.included_recorded_group_ids = [UNASSIGNED];
+  dense.binding.context_ref = { ...dense.binding.context_ref, context_id: OTHER_UUID };
+  assert.throws(() => upgrade(section(bad), dense), /Invalid custom/);
+});
 
 test('browser contract constants and actual backend validator remain identical', () => {
   assert.equal(sectionKey, serverSection); assert.deepEqual(limits, serverLimits);
@@ -118,7 +166,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 5; }],
+  ['unsupported version', v => { v.workspace_version = 6; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],

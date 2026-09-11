@@ -10,6 +10,11 @@ import { decisionEvidenceFixture } from './fixtures/customCohortDecisionEvidence
 import { saleWitnessMeaningFixture } from './fixtures/customCohortSaleWitnessMeaningFixture.js';
 
 const base = decisionEvidenceFixture();
+test('dense catalog does not rank an arbitrary128-group prefix or enlarge recommendation work', () => {
+  const catalog = { catalog_version: 2, catalog_complete: true, authority: 'not_established', apply: { status: 'blocked' },
+    pockets: Array.from({ length: 887 }, (_, i) => ({ id: `recorded-cad:${i}` })) };
+  assert.equal(compose({ catalog }), null, 'dense ranking returns before requiring source/native observations');
+});
 function inputs(fixture, selection = { revision: 7, pockets: [] }) {
   const retained_inputs = fixture.input.retained_inputs, context_ref = fixture.input.expected.context_ref;
   const preview = buildCustomCohortObservationPreview({ retained_inputs, context_ref, selection });

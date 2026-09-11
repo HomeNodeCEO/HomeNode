@@ -22,8 +22,8 @@ export interface CustomCohortMapPresentation {
   readonly labels: { readonly type: 'FeatureCollection'; readonly features: readonly CustomCohortMapLabel[] };
   readonly unlabelled_group_ids: readonly string[];
 }
-export const CUSTOM_COHORT_MAP_PRESENTATION_LIMITS = Object.freeze({ groups: 128, accounts: 50000, parcels: 100000,
-  coordinates: 500000, outputBytes: 512000 });
+export const CUSTOM_COHORT_MAP_PRESENTATION_LIMITS = Object.freeze({ groups: 1024, accounts: 50000, parcels: 100000,
+  coordinates: 500000, outputBytes: 2_000_000 });
 const L = CUSTOM_COHORT_MAP_PRESENTATION_LIMITS, encoder = new TextEncoder();
 const check: (ok: unknown) => asserts ok = ok => { if (!ok) throw new TypeError('invalid_custom_cohort_map_presentation'); };
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -102,7 +102,8 @@ function coordinateBefore(a: readonly number[], b: readonly number[]): boolean {
 export function buildCustomCohortMapPresentation({ catalog, group }: {
   readonly catalog: CheckedPocketCatalog; readonly group: CustomCohortPreviewGroup;
 }): CustomCohortMapPresentation {
-  const pockets = array(field(catalog, 'pockets'), L.groups), pocketIds: string[] = [];
+  const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2);
+  const pockets = array(field(catalog, 'pockets'), version === 2 ? L.groups : 128), pocketIds: string[] = [];
   const groupBinding = field(group, 'binding'), catalogBinding = field(catalog, 'binding');
   const subject = text(field(field(catalog, 'subject_membership'), 'account_id'), 100);
   if (context(field(groupBinding, 'contextRef')) !== context(field(catalogBinding, 'context_ref'))

@@ -180,6 +180,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     await pool.query("UPDATE core.accounts SET subdivision='Live Changed Label' WHERE account_id=$1", [other]);
     const catalogFrom = calls.length, exposureFrom = exposures.length;
     const catalog = await capture.catalog(previewRequest);
+    assert.equal(catalog.catalog.catalog_version, 2, 'new workspace catalog uses explicit dense version, not legacy replay semantics');
     assert.equal(catalog.status, 'catalog'); assert.equal(catalog.subject_freshness, 'matched');
     assert.deepEqual(catalog.target, display.target);
     assert.deepEqual(catalog.catalog.binding, display.summary.binding);

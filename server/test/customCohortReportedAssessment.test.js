@@ -4,6 +4,7 @@ import { buildCustomCohortReportedAssessment as build } from '../src/services/ne
 import { customCohortReportedAssessmentFixture as fixture } from './fixtures/customCohortReportedAssessmentFixture.js';
 import { neighborhoodMemberSetDigest } from '../src/services/neighborhoodAssessment/assessmentRepository.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from '../src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js';
+import { prepareCustomCohortAssessmentPreparation } from '../src/services/neighborhoodAssessment/customCohortAssessmentPreparation.js';
 
 test('actual retained CAD graph and explicit saved manual geometry produce one v2 report candidate', async () => {
   const { input } = await fixture(), result = build(input);
@@ -15,6 +16,37 @@ test('actual retained CAD graph and explicit saved manual geometry produce one v
   assert.equal(result.assessment.statistics.find(s => s.id === 'selected-shared-source-records:reported_current_price:median').value, null);
   assert.ok(result.assessment.source_snapshots.every(s => s.valid_from === null && s.historical_availability === 'unknown'));
   assert.equal(result.assessment.geographic_neighborhood.perimeter.length, 4);
+});
+
+test('887 retained named groups survive v5 checkpoint, preparation, report statistics and subset selection without truncation', async () => {
+  const { input, recorded } = await fixture({ catalogVersion: 2,
+    recordedLabels: Array.from({ length: 887 }, (_, i) => `Dense Recorded ${String(i).padStart(4, '0')}`) });
+  const checkpoint = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: 5, pending_capture: null, active: {
+    context_ref: input.context_ref, observation_period: input.retained_inputs.study.observation_period, selection: input.selection } });
+  assert.equal(checkpoint.active.selection.included_recorded_group_ids.length, 887);
+  const preparation = { context_header_json: recorded.context_header_json, expected: { context_ref: input.context_ref,
+    target: { organization_id: input.target.scope.organization_id, report_file_id: input.target.report_file_id,
+      assignment_file_id: '41', account_id: input.target.scope.account_id }, observation_period: input.retained_inputs.study.observation_period },
+    retained_inputs: input.retained_inputs, selection: input.selection, catalog_version: 2 };
+  const diagnostic = prepareCustomCohortAssessmentPreparation(preparation);
+  assert.equal(diagnostic.selection_resolution.selected_account_count, 887);
+  assert.equal(diagnostic.selection_resolution.catalog_complete, true);
+  assert.throws(() => prepareCustomCohortAssessmentPreparation({ ...preparation, catalog_version: 1 }), /group_ids/);
+  const result = build(input);
+  assert.equal(result.status, 'ready', JSON.stringify(result.issues));
+  const population = result.assessment.populations.find(p => p.id === 'selected-cad-accounts');
+  assert.equal(population.member_count, 887); assert.equal(result.assessment.selection.pocket_ids.length, 887);
+  assert.ok(result.assessment.statistics.filter(s => s.population_id === population.id).every(s => s.denominator_count === 887));
+  assert.equal(result.binding.selected_account_set_sha256, neighborhoodMemberSetDigest(input.retained_inputs.spatial.account_ids));
+  assert.throws(() => build({ ...input, catalog_version: 1 }), /catalog_incomplete/);
+  const ids = input.selection.included_recorded_group_ids.slice(0, 440);
+  const subset = build({ ...input, selection: { revision: 2, included_recorded_group_ids: ids } });
+  assert.equal(subset.assessment.populations.find(p => p.id === population.id).member_count, 440);
+  assert.deepEqual(subset.assessment.selection.pocket_ids, [...ids].sort());
+});
+
+test('v2 interpretation leaves an existing small report result byte-for-byte unchanged', async () => {
+  const { input } = await fixture(); assert.deepEqual(build({ ...input, catalog_version: 2 }), build(input));
 });
 
 test('private real CSV values survive as exact labeled source-record statistics, including zero DOM', async () => {

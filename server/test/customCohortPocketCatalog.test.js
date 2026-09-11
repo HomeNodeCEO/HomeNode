@@ -57,6 +57,29 @@ function args(options = {}) {
   return { retained_inputs: input.retained_inputs, preview: preview(input) };
 }
 
+for (const size of [887, 1024, 1025]) test(`versioned dense catalog preserves all ${size} recorded groups or the entire unresolved roster`, () => {
+  const accounts = Array.from({ length: size }, (_, i) => `A${i}`);
+  const input = args({ accounts, sales: [], accountRows: accounts.map((account_id, i) => ({ account_id, county: 'Dallas', subdivision: `Group ${i}` })),
+    parcels: accounts.map((id, i) => parcel(i + 1, id, { subdivision_name: `Group ${i}` })) });
+  const old = build(input), dense = build({ ...input, catalog_version: 2 });
+  assert.equal(old.catalog_version, 1); assert.equal(old.catalog_complete, false);
+  assert.deepEqual(old.unassigned.account_ids, [...accounts].sort());
+  assert.equal(dense.catalog_version, 2); assert.equal(dense.catalog_complete, size <= 1024);
+  assert.equal(dense.pockets.length, size <= 1024 ? size : 0);
+  const members = [...dense.pockets.flatMap(p => p.account_ids), ...dense.unassigned.account_ids].sort();
+  assert.deepEqual(members, [...accounts].sort());
+  const publicCatalog = present({ catalog: dense, preview: input.preview, expected: { context_ref, selection_revision: 1 } });
+  assert.equal(publicCatalog.catalog_version, 2); assert.equal(publicCatalog.catalog_complete, size <= 1024);
+  assert.deepEqual([...publicCatalog.pockets.flatMap(p => p.account_ids), ...publicCatalog.unassigned.account_ids].sort(), members);
+  assert.ok(Buffer.byteLength(JSON.stringify(publicCatalog)) <= LIMITS.public_output_utf8_bytes);
+});
+
+test('catalog version is explicit and smaller v2 catalogs preserve every v1 group identity and member', () => {
+  const input = args(), old = build(input), dense = build({ ...input, catalog_version: 2 });
+  assert.deepEqual({ ...dense, catalog_version: 1 }, old);
+  for (const version of [0, 3, '2', null]) assert.throws(() => build({ ...input, catalog_version: version }), /catalog_version/);
+});
+
 test('actual G mappings produce a review-only recorded-name group with complete member union', () => {
   const result = catalog();
   assert.equal(result.status, 'review_only'); assert.equal(result.catalog_complete, true);

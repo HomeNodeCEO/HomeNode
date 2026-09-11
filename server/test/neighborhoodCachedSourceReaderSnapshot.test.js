@@ -273,3 +273,21 @@ test('caller deadline/cancellation can stop before SQL or after a bounded in-fli
   assertIncomplete(await limited.reader.captureInSnapshot(limited.client,limited.input,{deadline:performance.now()+15}),'duration_limit',limited.reader);
   assert.ok(limited.calls.every(call=>call.query_timeout>0 && call.query_timeout<=15)); assertOwned(limited);
 });
+
+test('an owner query rejection at the shared deadline stays interrupted, not source unavailable', async t => {
+  let clock = 1000;
+  t.mock.method(performance, 'now', () => clock);
+  for (const cancellation of [false, true]) {
+    clock = 1000; const controller = new AbortController();
+    const db = await fixture({ intercept: ({ tag }) => {
+      if (tag === 'parcels') {
+        if (cancellation) controller.abort(); else clock = 3000;
+        throw new Error('PRIVATE OWNER/DRIVER DETAILS');
+      }
+    } });
+    const result = await db.reader.captureInSnapshot(db.client, db.input, { deadline: 2000, signal: controller.signal });
+    assertIncomplete(result, cancellation ? 'capture_cancelled' : 'duration_limit', db.reader);
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE OWNER/);
+    assert.equal(db.calls.at(-1).tag, 'parcels'); assertOwned(db);
+  }
+});

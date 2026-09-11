@@ -48,6 +48,20 @@ test('cohort router requires actual display/inspection owner methods', () => {
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
 });
 
+test('only capture receives two minutes; ordinary cohort actions keep one minute', async t => {
+  const { request, calls } = await start(t);
+  for (const action of ['capture', 'preview', 'catalog', 'members']) {
+    const before = performance.now();
+    assert.equal((await request(action)).status, 200);
+    const options = calls.at(-1).args.at(-1), expected = action === 'capture' ? 120_000 : 60_000;
+    assert.ok(options.signal instanceof AbortSignal);
+    assert.ok(options.deadline >= before + expected);
+    assert.ok(options.deadline <= performance.now() + expected);
+  }
+  assert.equal((await request('capture', { ...bodies.capture, deadline: 999999999 })).status, 400);
+  assert.equal(calls.length, 4);
+});
+
 test('saturated cohort execution does not consume ordinary route capacity or expose data', async t => {
   const o = () => ({ signal: new AbortController().signal, deadline: performance.now() + 5000 });
   const held = await customCohortExecutionGate.acquire(o());

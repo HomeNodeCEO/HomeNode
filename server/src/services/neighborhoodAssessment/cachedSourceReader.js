@@ -544,7 +544,14 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (began) { try { await client.query({ text:'ROLLBACK',query_timeout:limits.statement_ms+1000 }); }
         catch { releaseError=new Error('neighborhood_cache_rollback_failed'); } }
       if (INTERNAL_INVALID.has(error)) invalidFailure=error;
-      else primaryFailure=failedCapture([INTERNAL_INCOMPLETE.get(error)||'source_query_unavailable']);
+      else {
+        // The transaction owner also checks the shared deadline around SQL.
+        // When it rejects first, classify from our own clock/signal instead of
+        // misreporting an expired/cancelled operation as missing source data.
+        let cause=error;
+        try { check(); } catch (interrupted) { cause=interrupted; }
+        primaryFailure=failedCapture([INTERNAL_INCOMPLETE.get(cause)||'source_query_unavailable']);
+      }
     } finally {
       // Each acquired client is released exactly once; a secondary cleanup error
       // must not expose driver details or replace an already classified failure.

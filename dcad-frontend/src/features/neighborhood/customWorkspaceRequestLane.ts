@@ -1,4 +1,9 @@
 type RequestOptions = { signal: AbortSignal };
+type RunOptions = RequestOptions & { timeoutMs?: number };
+// Five seconds of transport/cleanup grace beyond the server's capture-only
+// two-minute budget. Saves, catalogs and previews keep the ordinary timeout.
+export const CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS = 125_000;
+const validTimeout = (value: number) => Number.isSafeInteger(value) && value > 0 && value <= 180_000;
 interface Options {
   timeoutMs?: number;
   timer?: { set: (fn: () => void, ms: number) => unknown; clear: (handle: unknown) => void };
@@ -7,7 +12,7 @@ const cancelled = () => new DOMException('Neighborhood workspace request cancell
 const failure = (reason: string) => new Error(`custom_workspace_lane_${reason}`);
 interface Entry {
   work: (options: RequestOptions) => Promise<unknown>;
-  signal: AbortSignal; resolve: (value: unknown) => void; reject: (error: unknown) => void;
+  signal: AbortSignal; timeoutMs: number; resolve: (value: unknown) => void; reject: (error: unknown) => void;
   onAbort: () => void; delivered: boolean;
 }
 
@@ -20,7 +25,7 @@ interface Entry {
  */
 export function createCustomWorkspaceRequestLane(options: Options = {}) {
   const timeoutMs = options.timeoutMs ?? 65_000;
-  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > 180_000) throw failure('invalid_timeout');
+  if (!validTimeout(timeoutMs)) throw failure('invalid_timeout');
   const timer = options.timer ?? { set: (fn: () => void, ms: number) => setTimeout(fn, ms),
     clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
   const queue: Entry[] = [];
@@ -53,7 +58,7 @@ export function createCustomWorkspaceRequestLane(options: Options = {}) {
       for (const waiter of waiters) waiter.reject(failure('recovery_required')); waiters.clear();
       // Keep active until the actual injected operation settles, even if that
       // adapter ignores abort. Its late response cannot become a successful UI.
-    }, timeoutMs);
+    }, entry.timeoutMs);
     void Promise.resolve().then(() => {
       if (closed || controller.signal.aborted) throw cancelled();
       return entry.work({ signal: controller.signal });
@@ -66,12 +71,13 @@ export function createCustomWorkspaceRequestLane(options: Options = {}) {
     });
   }
   return Object.freeze({
-    run<T>(work: (value: RequestOptions) => Promise<T>, { signal }: RequestOptions): Promise<T> {
+    run<T>(work: (value: RequestOptions) => Promise<T>, { signal, timeoutMs: requestTimeout = timeoutMs }: RunOptions): Promise<T> {
       if (closed || uncertain) return Promise.reject(failure(closed ? 'disposed' : 'recovery_required'));
+      if (!validTimeout(requestTimeout)) return Promise.reject(failure('invalid_timeout'));
       if (signal.aborted) return Promise.reject(cancelled());
       if (queue.length >= 8) return Promise.reject(failure('queue_full'));
       return new Promise<T>((resolve, reject) => {
-        const entry: Entry = { work, signal, resolve: value => resolve(value as T), reject, delivered: false, onAbort: () => {} };
+        const entry: Entry = { work, signal, timeoutMs: requestTimeout, resolve: value => resolve(value as T), reject, delivered: false, onAbort: () => {} };
         entry.onAbort = () => {
           const index = queue.indexOf(entry); if (index >= 0) queue.splice(index, 1);
           deliver(entry, false, cancelled()); notify();

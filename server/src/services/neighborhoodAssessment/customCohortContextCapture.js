@@ -1,4 +1,5 @@
 import { performance } from 'node:perf_hooks';
+import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
 import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
@@ -53,7 +54,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const TARGET_FIELDS = ['organization_id', 'report_file_id', 'assignment_file_id', 'account_id'];
 const DEPENDENCIES = ['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'];
-const LIMITS = Object.freeze({ duration_ms: 60_000, connect_ms: 3000, query_ms: 6000, cleanup_ms: 1000 });
+const LIMITS = Object.freeze({ ...CUSTOM_COHORT_OPERATION_LIMITS, connect_ms: 3000, query_ms: 6000, cleanup_ms: 1000 });
 const same = (a, b) => canonicalAssessmentJson(a) === canonicalAssessmentJson(b);
 const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -297,12 +298,12 @@ async function reportGeometryTopology(client, geometry, point) {
     [canonicalAssessmentJson(geometry), point?.coordinates[0] ?? null, point?.coordinates[1] ?? null]));
 }
 
-function operationBudget(options = {}) {
+function operationBudget(options = {}, durationMs = LIMITS.duration_ms) {
   if (!options || Object.getPrototypeOf(options) !== Object.prototype
     || Object.keys(options).some(key => !['signal', 'deadline'].includes(key))
     || (options.signal !== undefined && !(options.signal instanceof AbortSignal))
     || (options.deadline !== undefined && !Number.isFinite(options.deadline))) fail('invalid_options');
-  const finalDeadline = Math.min(performance.now() + LIMITS.duration_ms, options.deadline ?? Infinity);
+  const finalDeadline = Math.min(performance.now() + durationMs, options.deadline ?? Infinity);
   const deadline = finalDeadline - LIMITS.cleanup_ms;
   const check = () => {
     if (options.signal?.aborted) fail('cancelled');
@@ -768,7 +769,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     });
   }
   return Object.freeze({ async capture(value, options = {}) {
-    const input = inputOf(value), budget = operationBudget(options);
+    const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);
     budget.check();
     const study = freeze({ profile_id: input.discovery?.profile_id ?? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
       ...(input.discovery ? { discovery: input.discovery } : {}),

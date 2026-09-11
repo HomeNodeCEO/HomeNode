@@ -2,8 +2,10 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader,
-  createNeighborhoodSaleWitnessSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
-import { createNeighborhoodSaleWitnessReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
+  createNeighborhoodSaleWitnessSourceReader, createNeighborhoodCadEvidenceSourceReader,
+  createNeighborhoodDenseCadEvidenceSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { CACHED_CAD_EVIDENCE_FIELDS } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
@@ -127,6 +129,25 @@ function fake(options = {}) {
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+test('dense CAD account batches preserve the complete mapping4 record sets and scope', async () => {
+  const ids = [SUBJECT, ...Array.from({ length: 2100 }, (_, n) => `CAD-${String(n).padStart(5, '0')}`)].sort();
+  const data = { catalog: [...CATALOG, ...CACHED_CAD_EVIDENCE_FIELDS.map(column => ({relation:'gis.dcad_parcels',column}))],
+    parcels: ids.map((account_id, n) => ({ ...parcel(String(ids.length-n),account_id),
+      class_code: 'A1', class_description: 'Single family', use_description: 'Residential', structure_type: null, built_up: true })),
+    accounts: ids.map(account_id => ({ account_id, county: 'Dallas', subdivision: 'Synthetic subdivision' })) };
+  const base = fake({ readerFactory:createNeighborhoodCadEvidenceSourceReader, accessFactory:createNeighborhoodCadEvidenceReadAccess, data });
+  const dense = fake({ readerFactory:createNeighborhoodDenseCadEvidenceSourceReader, accessFactory:createNeighborhoodCadEvidenceReadAccess, data });
+  const original = await base.reader.capture(request({account_ids:ids}));
+  const result = await dense.reader.capture(request({account_ids:ids}));
+  assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
+  assert.equal(original.status,'captured',JSON.stringify(original.incomplete_reasons));
+  for (const role of ['selection','parcels','accounts','transactions','sale_links','gis_sync']) assert.deepEqual(records(result,role),records(original,role));
+  for (const call of dense.calls.filter(call => ['parcels','accounts'].includes(call.tag))) assert.ok(call.values[0].length<=1000);
+  assert.equal(result.counts.records,original.counts.records);
+  assert.equal(result.counts.bytes,original.counts.bytes);
+  assert.equal(dense.releases.length,1);
+});
 
 const emptyWitness=() => ({witness_version:1,root_state:'object',root_json_type:'object',
   fields:Object.fromEntries(CACHED_SALE_WITNESS_FIELDS.map(key => [key,{state:'absent',json_type:null,value_text:null,utf8_bytes:null}]))});

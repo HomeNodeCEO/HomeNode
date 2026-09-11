@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 
 export const CUSTOM_COHORT_PARCEL_MAP_LIMITS = Object.freeze({
   parcels: 100_000, source_chunks: 1_000, source_records: 100_000,
@@ -111,22 +113,26 @@ function rosterOf(spatial, selected) {
   return { parcels, accounts, selected: selectedSet };
 }
 
-function parcelRows(input, roster) {
+function* parcelRows(input, roster) {
   const capture = input.acquisition?.capture_result;
   if (capture?.status !== 'captured' || capture.query_complete !== true
     || capture.source_capture?.status !== 'ready' || !Array.isArray(capture.source_capture.sources)) unavailable('invalid_retained_inputs');
   const sources = capture.source_capture.sources;
   if (sources.length > LIMITS.source_chunks) unavailable('capacity_exceeded');
   const rows = new Map();
+  let sourceRecordLimit;
+  try { sourceRecordLimit = customCohortObservationRecordLimit(input.acquisition); }
+  catch { unavailable('invalid_retained_inputs'); }
   let sourceRecords = 0, parcelRole = false;
   for (const source of sources) {
     const payload = source?.payload;
     if (!object(payload) || !Array.isArray(payload.records)) unavailable('invalid_retained_inputs');
     sourceRecords += payload.records.length;
-    if (sourceRecords > LIMITS.source_records) unavailable('capacity_exceeded');
+    if (sourceRecords > sourceRecordLimit) unavailable('capacity_exceeded');
     if (payload.projection?.definition?.role !== 'parcels') continue;
     parcelRole = true;
     for (const record of payload.records) {
+      if (rows.size % 125 === 0) yield;
       const raw = record?.data?.raw_projection;
       if (!object(raw) || !objectId(raw.object_id) || !roster.accounts.has(raw.account_id)) unavailable('invalid_retained_inputs');
       // G reads all parcel rows for the discovery accounts. An account can have
@@ -154,15 +160,29 @@ function parcelRows(input, roster) {
  * Failure always returns geojson:null, never a partially displayed discovery.
  */
 export function buildCustomCohortParcelMap(options = {}) {
+  const iterator = parcelMapBatches(options);
+  while (true) { const step = iterator.next(); if (step.done) return step.value; }
+}
+
+export async function buildCustomCohortParcelMapBatched(options, { check = () => {} } = {}) {
+  check(); freeze(options); check();
+  const iterator = parcelMapBatches(options);
+  try {
+    while (true) { check(); const step = iterator.next(); check(); if (step.done) return step.value; await yieldToRequests(); }
+  } finally { iterator.return(); }
+}
+
+function* parcelMapBatches(options) {
   try {
     if (!object(options)) unavailable('invalid_retained_inputs');
     const { retained_inputs: input, selected_account_ids: selected } = options;
     if (!object(input)) unavailable('invalid_retained_inputs');
-    const roster = rosterOf(input.spatial, selected), rows = parcelRows(input, roster);
+    const roster = rosterOf(input.spatial, selected), rows = yield* parcelRows(input, roster);
     const budget = { geometry_bytes: 0, coordinates: 0 };
     const geojson = { type: 'FeatureCollection', features: [] };
     let jsonBytes = Buffer.byteLength(JSON.stringify(geojson));
     for (const [id, parcel] of roster.parcels) {
+      if (geojson.features.length % 125 === 0) yield;
       const hex = rows.get(id).stored_geometry_ewkb;
       if (typeof hex !== 'string' || !hex.length) unavailable('missing_parcel_geometry');
       if (hex.length > LIMITS.geometry_bytes * 2) unavailable('capacity_exceeded');

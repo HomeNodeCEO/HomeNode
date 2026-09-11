@@ -12,7 +12,8 @@ import { createCustomCohortSubjectRepository } from '../../src/services/neighbor
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { captureNeighborhoodSpatialMembership } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from '../../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js';
-import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCadEvidenceSourceReader, createNeighborhoodDenseCadEvidenceSourceReader,
+  consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 } from '../../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { createTestCachedReadAccess } from '../fixtures/neighborhoodCachedReadAccessFixture.js';
@@ -68,13 +69,18 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const makeInput = () => ({ auth, accountId: account, assignmentFileId: assignment, operationId: randomUUID(),
       observationPeriod: { start_date: '2023-07-01', end_date: '2024-06-30' } });
     const calls = [];
-    let loseCommit = false, commits = 0;
+    let loseCommit = false, commits = 0, activeCaptureConnections = 0, preparationConnectionSample;
     const observed = { async connect() {
       const client = await pool.connect();
-      return { release: error => client.release(error), async query(config) {
+      activeCaptureConnections++;
+      return { release: error => { activeCaptureConnections--; return client.release(error); }, async query(config) {
         calls.push(config.text);
         const result = await client.query(config);
-        if (config.text === 'COMMIT' && ++commits === 3 && loseCommit) throw new Error('synthetic_lost_commit_ack');
+        if (config.text === 'COMMIT') {
+          commits++;
+          if (commits === 2) preparationConnectionSample = new Promise(resolve => setImmediate(() => resolve(activeCaptureConnections)));
+          if (commits === 3 && loseCommit) throw new Error('synthetic_lost_commit_ack');
+        }
         return result;
       } };
     } };
@@ -90,6 +96,8 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const request = makeInput();
     const result = await capture.capture(request);
     assert.equal(result.status, 'registered'); assert.equal(result.reused, false); assert.equal(policyCalls, 2);
+    assert.equal(await preparationConnectionSample, 0, 'pure preparation yields with no checked-out database connection');
+    assert.equal(activeCaptureConnections, 0);
     assert.equal(result.discovery.radius_metres, '4828.032'); assert.equal(result.discovery.account_count, 2);
     assert.equal(result.provider_coverage, 'not_established');
     assert.ok(result.unsupported_capabilities.includes('historical_characteristics'));
@@ -1102,7 +1110,7 @@ async function checkCadEvidenceCapture(pool, checks) {
     });
     const context = { target: { report_file_id: reportId, workflow_type: 'custom_appraisal', workflow_target_id: assignment },
       scope: { organization_id: org, appraisal_case_id: caseId, subject_snapshot_id: snapshotId, account_id: account }, effective_date: '2024-06-30' };
-    const read = () => tx('REPEATABLE READ READ ONLY', async client => {
+    const read = (factory = createNeighborhoodCadEvidenceSourceReader) => tx('REPEATABLE READ READ ONLY', async client => {
       const startedAt = await time(client), spatial = await captureNeighborhoodSpatialMembership(client, phaseOne.point.geometry_input);
       assert.equal(spatial.status, 'captured'); assert.deepEqual(spatial.account_ids, accountIds);
       const selector = prepareNeighborhoodSelectorInputV1({ profile_id: phaseOne.study.profile_id, ...context,
@@ -1119,7 +1127,7 @@ async function checkCadEvidenceCapture(pool, checks) {
           assert.equal(closure.status, 'captured'); assert.deepEqual(closure.snapshot, spatial.snapshot); return closure.transaction_closure;
         } });
       const issued = await access.prepare();
-      const reader = createNeighborhoodCadEvidenceSourceReader({ connect() { assert.fail('native CAD4 caller transaction owns connection'); } },
+      const reader = factory({ connect() { assert.fail('native CAD4 caller transaction owns connection'); } },
         { access: access.access, limits: { page_size: 1 } });
       const result = await reader.captureInSnapshot(client, { ...issued.request, auth,
         selection_grant: issued.selection_grant, market_grant: issued.market_grant }, { deadline: performance.now() + 30_000 });
@@ -1144,6 +1152,17 @@ async function checkCadEvidenceCapture(pool, checks) {
     const from = sqls.length, captured = await read();
     assert.equal(captured.result.status, 'captured', JSON.stringify(captured.result.incomplete_reasons));
     assert.equal(captured.result.query_complete, true); assert.deepEqual(captured.result.snapshot, captured.spatial.snapshot);
+    const dense = await read(createNeighborhoodDenseCadEvidenceSourceReader);
+    assert.equal(dense.result.status, 'captured', JSON.stringify(dense.result.incomplete_reasons));
+    assert.deepEqual(dense.result.snapshot, dense.spatial.snapshot);
+    for (const role of ['selection', 'parcels', 'accounts', 'transactions', 'sale_links', 'gis_sync']) {
+      const rows = result => result.source_capture.sources.filter(s => s.payload.projection.definition.role === role)
+        .flatMap(s => s.payload.records);
+      assert.deepEqual(rows(dense.result), rows(captured.result), `native dense ${role} retains the same original rows`);
+    }
+    assert.equal(dense.result.counts.records, captured.result.counts.records);
+    assert.equal(dense.result.counts.bytes, captured.result.counts.bytes);
+    checks.push('native opt-in dense CAD reader preserves all six original record sets, scope and caller-owned snapshot; default owner remains unchanged');
     assert.ok(sqls.slice(from).some(sql => sql.includes('neighborhood-cache:parcels') && columns.every(key => sql.includes(key))),
       'actual mapping4 parcel SQL must execute with all five fields');
     assert.throws(() => consumeNeighborhoodCachedAcquisition(captured.reader, structuredClone(captured.result)), { code: 'NEIGHBORHOOD_ORIGINAL_CAPTURE_REQUIRED' });

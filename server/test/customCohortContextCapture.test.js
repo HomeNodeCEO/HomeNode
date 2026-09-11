@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { performance } from 'node:perf_hooks';
+import { EventEmitter } from 'node:events';
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 
 const input = () => ({ auth: { userId: '80000000-0000-4000-8000-000000000001', organizations: [] },
@@ -10,6 +11,22 @@ const input = () => ({ auth: { userId: '80000000-0000-4000-8000-000000000001', o
 function setup(connect = () => { throw new Error('must not connect'); }) {
   return createCustomCohortContextCapture({ pool: { connect }, authorizeMarketData: () => assert.fail('must not authorize') });
 }
+
+test('checked-out connection errors fail safely and release once instead of crashing the process', async () => {
+  for (const failureAt of ['BEGIN', 'SET LOCAL', '/* custom-cohort-capture:assignment */']) {
+    const client = new EventEmitter(), error = new Error('synthetic connection ended'), calls = [], releases = [];
+    client.query = async ({ text }) => {
+      calls.push(text);
+      if (text.startsWith(failureAt)) client.emit('error', error);
+      return { rowCount: 0, rows: [] };
+    };
+    client.release = reason => releases.push(reason);
+    await assert.rejects(setup(async () => client).capture(input()), error);
+    assert.deepEqual(releases, [error]); assert.equal(client.listenerCount('error'), 0);
+    assert.equal(calls.at(-1).startsWith(failureAt), true);
+    assert.ok(!calls.includes('COMMIT'));
+  }
+});
 
 test('Custom capture requires an explicit server market policy, without default grant', () => {
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);

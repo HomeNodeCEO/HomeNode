@@ -378,6 +378,7 @@ for (const [status, errorCode, guidance] of [
   [409, 'neighborhood_market_policy_changed', 'Source access changed during capture'],
   [409, 'neighborhood_operation_outcome_unknown', 'recover the same saved operation. Do not start another capture'],
   [503, 'neighborhood_request_interrupted', 'retry the same saved operation'],
+  [503, 'neighborhood_service_busy', 'do not start a duplicate capture'],
 ]) test(`capture refusal ${status}/${errorCode} shows fixed guidance while preserving pending operation and old display`, async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   db.overrides.set('capture', () => {

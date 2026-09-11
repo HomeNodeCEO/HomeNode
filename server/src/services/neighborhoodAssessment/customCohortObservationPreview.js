@@ -1,7 +1,8 @@
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { exactDistribution, finiteNumberOrNull } from './statistics.js';
-import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 
 export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
   source_chunks: 1000, source_records: 100000, accounts: 50000, pockets: 128,
@@ -155,12 +156,53 @@ export function buildCustomCohortIndexedObservationPreview(args = {}) {
   return buildObservationPreview(args, true);
 }
 
-function buildObservationPreview({ context_ref, retained_inputs: input, selection }, indexed) {
+function buildObservationPreview(args, indexed) {
+  const iterator = observationBatches(args, indexed);
+  while (true) { const step = iterator.next(); if (step.done) return step.value; }
+}
+
+export async function buildCustomCohortIndexedObservationPreviewBatched(args, { check = () => {} } = {}) {
+  // Do not mistake a shallow-frozen parent for immutable descendants. This
+  // private owner input must be fully sealed before the first asynchronous yield.
+  const seen = new WeakSet();
+  const seal = value => {
+    if (value && typeof value === 'object' && !seen.has(value)) {
+      seen.add(value); Object.values(value).forEach(seal); Object.freeze(value);
+    }
+  };
+  check(); seal(args); check();
+  const iterator = observationBatches(args, true);
+  try {
+    while (true) { check(); const step = iterator.next(); check(); if (step.done) return step.value; await yieldToRequests(); }
+  } finally { iterator.return(); }
+}
+
+function* observationBatches({ context_ref, retained_inputs: input, selection }, indexed) {
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(context_ref));
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(input?.acquisition?.capture_result?.query_complete === true && capture?.status === 'ready'
     && input?.spatial?.query_complete === true, 'retained_capture_required');
   const mappingVersion = customCohortObservationMappingVersion(input.acquisition);
+  const sourceRecordLimit = indexed ? customCohortObservationRecordLimit(input.acquisition) : L.source_records;
+  // Dense internal tables are never the public HTTP payload; summary/member
+  // transports retain their own smaller ceilings. Keep raw v1 unchanged.
+  const outputByteLimit = indexed && sourceRecordLimit > L.source_records ? 64_000_000 : L.output_utf8_bytes;
+  // Repeated exact cells (not merely matching rounded numbers) may share their
+  // immutable representation. The cache is per operation, bounded, and includes
+  // the full ordered raw inputs and policy; provenance remains on each member.
+  const cells = new Map(); let cellKeyBytes = 0;
+  const observe = (values, policy = 'nonnegative') => {
+    if (!indexed || values.length > 125 || !values.every(value => value == null
+      || (typeof value === 'string' && value.length <= 256)
+      || (typeof value === 'number' && Number.isFinite(value) && !Object.is(value, -0)))) return observation(values, policy);
+    const key = `${policy}\n${JSON.stringify(values)}`, bytes = Buffer.byteLength(key);
+    if (cells.has(key)) return cells.get(key);
+    const value = observation(values, policy);
+    if (bytes <= 1024 && cells.size < 8192 && cellKeyBytes + bytes <= 2_000_000) {
+      cells.set(key, freeze(value)); cellKeyBytes += bytes;
+    }
+    return value;
+  };
   // Mapping3 retains raw unit witnesses, but observation summaries still do not
   // interpret provider units or join historical GLA to a closing price.
   // CAD-only mapping4 keeps the v2 sales projection; it does not retain v3's
@@ -196,7 +238,7 @@ function buildObservationPreview({ context_ref, retained_inputs: input, selectio
   const chargeOutput = value => {
     let bytes = memberBytes.get(value);
     if (bytes === undefined) { bytes = Buffer.byteLength(JSON.stringify(value)); memberBytes.set(value, bytes); }
-    outputBytes += bytes + 1; check(outputBytes <= L.output_utf8_bytes, 'output_bytes_limit');
+    outputBytes += bytes + 1; check(outputBytes <= outputByteLimit, 'output_bytes_limit');
   };
   const meter = (field, amount) => {
     if (field === 'measurement') { measurementWork += amount; check(measurementWork <= L.measurement_work, 'measurement_work_limit'); }
@@ -210,7 +252,8 @@ function buildObservationPreview({ context_ref, retained_inputs: input, selectio
       && sourceSnapshots.has(source.id), 'source_role');
     if (!roleRows.has(role)) roleRows.set(role, []);
     for (const row of bounded(source.payload.records, L.source_records, 'source_records')) {
-      check(++sourceRecords <= L.source_records, 'source_records_limit');
+      check(++sourceRecords <= sourceRecordLimit, 'source_records_limit');
+      if (sourceRecords % 125 === 0) yield;
       const key = `${role}\n${row.record_id}`, refKey = `${source.id}\n${row.record_id}`;
       check(!seen.has(key) && routes.has(refKey), 'source_routing'); seen.add(key);
       if (['parcels', 'accounts', 'transactions', 'sale_links'].includes(role)) {
@@ -221,55 +264,64 @@ function buildObservationPreview({ context_ref, retained_inputs: input, selectio
         capability_gaps: row.data.capability_gaps ?? [], source_references: [{ source_ref: source.id, record_id: row.record_id }] });
     }
   }
+  routes.clear(); seen.clear(); sourceSnapshots.clear();
   check(roleRows.size === 6, 'source_roles_missing');
   check(JSON.stringify(sorted(roleRows.get('selection').map(row => row.data.account_id))) === JSON.stringify(sorted(roster)), 'selection_source_mismatch');
   const parcelRows = groupBy(roleRows.get('parcels'), row => row.data.account_id);
   const accountRows = groupBy(roleRows.get('accounts'), row => row.data.account_id);
   const selectedRows = groupBy(roleRows.get('selection'), row => row.data.account_id);
   const spatialRows = groupBy(bounded(input.spatial.parcels, L.source_records, 'spatial_parcels'), row => row.account_id);
-  const stock = sorted(roster).map(account_id => {
+  const stock = [];
+  for (const account_id of sorted(roster)) {
+    if (stock.length % 125 === 0) yield;
     const rows = parcelRows.get(account_id) ?? [];
     meter('measurement', Math.max(1, rows.length) * Object.keys(CAD).length);
-    return { account_id, parcel_object_ids: sorted((spatialRows.get(account_id) ?? []).map(row => row.object_id)),
-      observations: Object.fromEntries(Object.entries(CAD).map(([key, [field, policy]]) => [key, observation(rows.map(row => row.raw[field]), policy)])),
-      source_references: refs([...rows, ...accountRows.get(account_id) ?? [], ...selectedRows.get(account_id) ?? []]) };
-  });
+    stock.push({ account_id, parcel_object_ids: sorted((spatialRows.get(account_id) ?? []).map(row => row.object_id)),
+      observations: Object.fromEntries(Object.entries(CAD).map(([key, [field, policy]]) => [key, observe(rows.map(row => row.raw[field]), policy)])),
+      source_references: refs([...rows, ...accountRows.get(account_id) ?? [], ...selectedRows.get(account_id) ?? []]) });
+  }
   const transactionRows = roleRows.get('transactions'), linkRows = groupBy(roleRows.get('sale_links'), row => row.data.source_record_id);
   const linksFor = rows => sorted(rows.map(row => row.data.source_record_id).filter(present)).flatMap(id => {
     const links = linkRows.get(id) ?? []; meter('member', links.length); return links;
   });
   const associations = (rows, links) => sorted([...rows.flatMap(row => [row.data.primary_account_id, row.raw.primary_account_id]),
     ...links.map(row => row.data.account_id)].filter(present));
-  const canonical = [...groupBy(transactionRows, row => row.data.canonical_transaction_id)].sort(([a], [b]) => compare(a, b)).map(([id, rows]) => {
+  const canonical = [];
+  for (const [id, rows] of [...groupBy(transactionRows, row => row.data.canonical_transaction_id)].sort(([a], [b]) => compare(a, b))) {
+    if (canonical.length % 125 === 0) yield;
     const links = linksFor(rows), dates = sorted(rows.map(row => row.data.sale_date).filter(present));
     const sale_date = dates.length === 1 && rows.every(row => row.data.sale_date === dates[0]) ? dates[0] : null;
     const disposition = dates.length > 1 ? 'conflicting_date' : sale_date === null ? 'missing_date'
       : sale_date < period.start_date || sale_date > period.end_date ? 'outside_period' : 'in_period';
     meter('measurement', rows.length);
     const associated_account_ids = associations(rows, links);
-    return { canonical_transaction_id: id, sale_date, disposition,
-      recorded_total_price: observation(rows.map(row => row.raw.sale_price)), currency: null,
+    canonical.push({ canonical_transaction_id: id, sale_date, disposition,
+      recorded_total_price: observe(rows.map(row => row.raw.sale_price)), currency: null,
       associated_account_ids, source_record_ids: sorted(rows.map(row => row.data.source_record_id).filter(present)),
       record_types: sorted(rows.map(row => row.data.record_type).filter(present)),
       multiple_parcel_evidence: associated_account_ids.length > 1 || rows.some(row => row.raw.has_multiple_parcel_numbers === true
         || ['possible', 'confirmed'].includes(row.raw.multi_parcel_status) || present(row.raw.parcel_number2_raw)),
       unresolved_link_count: links.filter(row => row.data.is_resolved !== true || row.data.account_id === null).length,
       membership_complete: null, market_eligible: null,
-      capability_gaps: sorted([...rows, ...links].flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) };
-  });
-  const sourceMembers = [...groupBy(transactionRows, row => row.data.source_record_id)].sort(([a], [b]) => compare(a, b)).map(([id, rows]) => {
+      capability_gaps: sorted([...rows, ...links].flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) });
+  }
+  const sourceMembers = [];
+  for (const [id, rows] of [...groupBy(transactionRows, row => row.data.source_record_id)].sort(([a], [b]) => compare(a, b))) {
+    if (sourceMembers.length % 125 === 0) yield;
     const links = linksFor(rows); meter('measurement', rows.length * Object.keys(sourceFields).length);
-    return { source_record_id: id, canonical_transaction_ids: sorted(rows.map(row => row.data.canonical_transaction_id).filter(present)),
+    sourceMembers.push({ source_record_id: id, canonical_transaction_ids: sorted(rows.map(row => row.data.canonical_transaction_id).filter(present)),
       associated_account_ids: associations(rows, links), source_names: sorted(rows.map(row => row.raw.source_name).filter(present)),
       record_types: sorted(rows.map(row => row.data.record_type).filter(present)),
-      observations: Object.fromEntries(Object.entries(sourceFields).map(([key, [field, policy]]) => [key, observation(rows.map(row => row.raw[field]), policy)])),
-      capability_gaps: sorted(rows.flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) };
-  });
+      observations: Object.fromEntries(Object.entries(sourceFields).map(([key, [field, policy]]) => [key, observe(rows.map(row => row.raw[field]), policy)])),
+      capability_gaps: sorted(rows.flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) });
+  }
+  cells.clear(); roleRows.clear(); parcelRows.clear(); accountRows.clear(); selectedRows.clear(); spatialRows.clear(); linkRows.clear();
   const memberTables = indexed ? { stock, transactions: canonical, source_reported: sourceMembers } : null;
   const ordinals = indexed ? new WeakMap() : null;
-  if (indexed) for (const rows of Object.values(memberTables)) rows.forEach((row, index) => {
+  if (indexed) for (const rows of Object.values(memberTables)) for (const [index, row] of rows.entries()) {
+    if (index % 125 === 0) yield;
     ordinals.set(row, index); chargeOutput(row);
-  });
+  }
   const indicesOf = rows => rows.map(row => ordinals.get(row));
   function distribution(members, getCell, label, unit) {
     meter('measurement', members.length);
@@ -326,18 +378,20 @@ function buildObservationPreview({ context_ref, retained_inputs: input, selectio
     return result;
   }
   const union = sorted(pockets.flatMap(pocket => pocket.account_ids));
-  const all = population('all_captured_accounts', sorted(roster), true), selected = population('selected_pocket_union', union);
+  const all = population('all_captured_accounts', sorted(roster), true); yield;
+  const selected = population('selected_pocket_union', union); yield;
   const pocketMembershipCounts = new Map();
   for (const pocket of pockets) for (const id of pocket.account_ids) pocketMembershipCounts.set(id, (pocketMembershipCounts.get(id) ?? 0) + 1);
-  const pocketResults = pockets.map(pocket => ({ ...pocket, disposition: 'needs_review',
+  const pocketResults = [];
+  for (const pocket of pockets) { yield; pocketResults.push({ ...pocket, disposition: 'needs_review',
     overlap_account_count: pocket.account_ids.filter(id => pocketMembershipCounts.get(id) > 1).length,
-    result: population(pocket.id, pocket.account_ids) }));
+    result: population(pocket.id, pocket.account_ids) }); }
   const snapshots = capture.source_snapshots.map(source => ({ ...source, scope: { ...source.scope } }));
   snapshots.forEach(chargeOutput);
   chargeOutput({ context, target: input.subject.target, pockets: pockets.map(pocket => ({ ...pocket, result: null })), support_gaps: GAPS });
   // Small top-level keys/notices and separators; this is a conservative output
   // ceiling, not a promise that a browser may display all private member rows.
-  outputBytes += 8000; check(outputBytes <= L.output_utf8_bytes, 'output_bytes_limit');
+  outputBytes += 8000; check(outputBytes <= outputByteLimit, 'output_bytes_limit');
   const result = { preview_version: indexed ? 2 : 1,
     ...(indexed ? { representation: 'indexed_members_v1', member_tables: memberTables } : {}),
     status: 'observations_only', authority: 'not_established', context_ref: context,
@@ -357,8 +411,15 @@ function buildObservationPreview({ context_ref, retained_inputs: input, selectio
   if (indexed) {
     // Check the complete actual compact serialization as well as incremental
     // construction. The margin covers growth of this bounded decimal counter.
-    result.work.output_utf8_bytes_bound = Math.max(outputBytes, Buffer.byteLength(JSON.stringify(result)) + 16);
-    check(result.work.output_utf8_bytes_bound <= L.output_utf8_bytes, 'output_bytes_limit');
+    // Exact serialization length, reusing the checked per-row encodings rather
+    // than allocating a second complete member-table string. Only the compact
+    // envelope is encoded here; no rows or byte charges are omitted.
+    const tables = Object.entries(memberTables);
+    const tableBytes = 2 + tables.reduce((total, [key, rows]) => total + Buffer.byteLength(JSON.stringify(key)) + 1
+      + 2 + Math.max(0, rows.length - 1) + rows.reduce((n, row) => n + memberBytes.get(row), 0), 0) + tables.length - 1;
+    const exactBytes = Buffer.byteLength(JSON.stringify({ ...result, member_tables: null })) - 4 + tableBytes;
+    result.work.output_utf8_bytes_bound = Math.max(outputBytes, exactBytes + 16);
+    check(result.work.output_utf8_bytes_bound <= outputByteLimit, 'output_bytes_limit');
     freeze(result);
     indexedPreviews.set(result, new Set([all, selected, ...pocketResults.map(pocket => pocket.result)]));
     // Validate the emitted index grammar without constructing an expanded view.

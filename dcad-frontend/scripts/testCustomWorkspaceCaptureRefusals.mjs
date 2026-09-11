@@ -46,6 +46,7 @@ const REFUSALS = [
   [409, 'neighborhood_market_policy_changed', 'capture_market_policy_changed'],
   [409, 'neighborhood_operation_outcome_unknown', 'capture_outcome_unknown'],
   [503, 'neighborhood_request_interrupted', 'capture_interrupted'],
+  [503, 'neighborhood_service_busy', 'capture_service_busy'],
 ];
 const TARGET = { accountId: 'SUBJECT', assignmentFileId: '37', sessionKey: 'capture-refusal-test' };
 const PERIOD = { start_date: '2026-01-01', end_date: '2026-09-10' };

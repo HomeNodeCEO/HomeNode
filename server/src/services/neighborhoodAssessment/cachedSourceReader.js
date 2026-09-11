@@ -1,7 +1,9 @@
 import { createHash } from 'node:crypto';
 import { performance } from 'node:perf_hooks';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
-import { buildCachedSourceCaptures } from './cachedSourceCaptures.js';
+import { buildCachedSourceCaptures, buildFrozenCadSourceCaptures } from './cachedSourceCaptures.js';
+import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_ACCOUNT_BATCH_SIZE } from './denseCadCapturePolicy.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
@@ -217,8 +219,8 @@ function sourceCount(value) {
 function releaseSafely(client,error) {
   try { client.release(error); return true; } catch { return false; }
 }
-function limitsOf(overrides) {
-  const result = { ...NEIGHBORHOOD_CACHE_READER_LIMITS };
+function limitsOf(overrides, maximum = NEIGHBORHOOD_CACHE_READER_LIMITS) {
+  const result = { ...maximum };
   for (const [key, value] of Object.entries(overrides)) {
     if (!(key in result) || !Number.isSafeInteger(value) || value<1 || value>result[key]) invalid('limits');
     result[key]=value;
@@ -282,10 +284,14 @@ export function createNeighborhoodSaleWitnessSourceReader(pool, { limits: overri
 export function createNeighborhoodCadEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
   return createSourceReader(pool,{limits:overrides,access},CAD_EVIDENCE_PROFILE);
 }
+// Separate opt-in factory; original mapping2/3/4 reader defaults stay unchanged.
+export function createNeighborhoodDenseCadEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},{ ...CAD_EVIDENCE_PROFILE, dense: true });
+}
 function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
-  const limits=limitsOf(overrides);
+  const limits=limitsOf(overrides,profile.dense ? DENSE_CAD_CACHE_READER_LIMITS : undefined);
   async function capture(input, owner=null) {
     const callerOwned=owner!==null;
     const options=callerOwned ? owner.options : {};
@@ -355,7 +361,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       const bytes=Buffer.byteLength(canonicalAssessmentJson(record));
       if (++counts.records>limits.records) incomplete('record_limit');
       if ((counts.bytes+=bytes)>limits.bytes) incomplete('byte_limit');
-      identities[group].add(id); groups[group].push(record);
+      identities[group].add(id); groups[group].push(profile.dense ? freeze(record) : record);
     };
     const available=key => {
       if (capabilities[key].state!=='available') { missing.add(`${key}:${capabilities[key].state}`); return false; }
@@ -414,15 +420,26 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       const originRuns=new Set();
       let syncState=null;
       if (available('parcels')) {
-        await page('parcels',profile.parcelsSql??SQL.parcels,[request.account_ids,'-1',n],1,row => big(row.object_id),row => {
-          retain('parcels',`parcel:${big(row.object_id)}`,row);
-          if (typeof row.sync_run_id==='string' && UUID.test(row.sync_run_id)) originRuns.add(row.sync_run_id);
-          else missing.add('parcels:origin_run_unknown');
-        });
+        // Partition the already authorized, unique account roster, never the
+        // returned evidence. Each batch exhausts its keyset in this same RR/RO
+        // snapshot. This avoids binding all 50k IDs again for every 250 rows.
+        const batchSize=profile.dense ? DENSE_CAD_ACCOUNT_BATCH_SIZE : request.account_ids.length;
+        for (let at=0;at<request.account_ids.length;at+=batchSize) {
+          await page('parcels',profile.parcelsSql??SQL.parcels,[request.account_ids.slice(at,at+batchSize),'-1',n],1,row => big(row.object_id),row => {
+            retain('parcels',`parcel:${big(row.object_id)}`,row);
+            if (typeof row.sync_run_id==='string' && UUID.test(row.sync_run_id)) originRuns.add(row.sync_run_id);
+            else missing.add('parcels:origin_run_unknown');
+          });
+        }
         const seen=new Set(groups.parcels.map(row => row.data.raw_projection.account_id));
         if (request.account_ids.some(id => !seen.has(id))) missing.add('parcels:selected_accounts_not_covered');
       }
-      if (available('accounts')) await page('accounts',SQL.accounts,[request.account_ids,'',n],1,row => text(row.account_id,'source_account'),row => retain('accounts',`account:${row.account_id}`,row));
+      if (available('accounts')) {
+        const batchSize=profile.dense ? DENSE_CAD_ACCOUNT_BATCH_SIZE : request.account_ids.length;
+        for (let at=0;at<request.account_ids.length;at+=batchSize) {
+          await page('accounts',SQL.accounts,[request.account_ids.slice(at,at+batchSize),'',n],1,row => text(row.account_id,'source_account'),row => retain('accounts',`account:${row.account_id}`,row));
+        }
+      }
       if (available('sync_state')) {
         const states=await rows('sync-state',SQL.sync_state);
         if (states.length!==1) missing.add('parcels:sync_state_unknown');
@@ -576,7 +593,11 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       for (const [key,records] of Object.entries({ selection:selectionRecords,...groups })) {
         if (callerOwned) check();
         const hash=createHash('sha256').update(canonicalAssessmentJson(compact));
-        for (const record of records.toSorted((a,b) => compare(a.record_id,b.record_id))) hash.update(canonicalAssessmentJson(record)).update('\n');
+        let batch=0;
+        for (const record of records.toSorted((a,b) => compare(a.record_id,b.record_id))) {
+          hash.update(canonicalAssessmentJson(record)).update('\n');
+          if (profile.dense && ++batch % 125===0) { check(); await yieldToRequests(); check(); }
+        }
         const digest=hash.digest('hex');
         captures.push({ upstream:{ id:`local-cache:${key}`,key,state:records.length?'populated':'present_empty',
           complete:true,revision:`${NEIGHBORHOOD_CACHE_READER_VERSION}:${digest}`,content_sha256:digest,
@@ -587,7 +608,9 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
             definition:{ ...compact,role:key,source_gaps:[...missing].sort(compare) },
             input_row_count:records.length,output_record_count:records.length,complete:true },records });
       }
-      const source_capture=buildCachedSourceCaptures({ scope:request.scope,captures });
+      const source_capture=profile.dense
+        ? await buildFrozenCadSourceCaptures(freeze({ scope:request.scope,captures }), { check })
+        : buildCachedSourceCaptures({ scope:request.scope,captures });
       if (callerOwned) check();
       const result = freeze({ status:missing.size?'incomplete':'captured',query_complete:missing.size===0,
         scope:request.scope,reader_version:NEIGHBORHOOD_CACHE_READER_VERSION,captured_at:capturedAt,

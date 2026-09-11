@@ -1,6 +1,7 @@
 import express from 'express';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
+import { customCohortExecutionGate, CUSTOM_COHORT_EXECUTION_LIMITS } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -32,6 +33,8 @@ function bodyOf(body, required, optional = []) {
   return body;
 }
 function publicFailure(error) {
+  if (error?.code === 'custom_cohort_execution_busy') return [503, { error: 'neighborhood_service_busy' }];
+  if (error?.code === 'custom_cohort_execution_interrupted') return [503, { error: 'neighborhood_request_interrupted' }];
   if (error?.outcome_unknown) return [409, { error: 'neighborhood_operation_outcome_unknown', retry_same_operation: true }];
   if (['assignment_sales_import_revision_conflict', 'assignment_sales_import_capture_changed'].includes(error?.code)) {
     return [409, { error: 'neighborhood_private_review_changed' }];
@@ -104,6 +107,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
       return parse(req, res, next);
     }, async (req, res) => {
       const controller = new AbortController();
+      const deadline = performance.now() + CUSTOM_COHORT_EXECUTION_LIMITS.duration_ms;
+      let releaseExecution;
       const abort = () => controller.abort();
       const closed = () => { if (!res.writableFinished) abort(); };
       req.once('aborted', abort); res.once('close', closed);
@@ -119,7 +124,8 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         if (controller.signal.aborted) return;
         // Principal is taken only from middleware. Never spread body into input.
         const identity = { auth: req.mobileAuth, accountId, assignmentFileId: body.assignment_file_id };
-        const result = await execute(identity, body, { signal: controller.signal });
+        releaseExecution = await customCohortExecutionGate.acquire({ signal: controller.signal, deadline });
+        const result = await execute(identity, body, { signal: controller.signal, deadline });
         if (action === 'catalog') {
           const encoded = JSON.stringify(result);
           if (Buffer.byteLength(encoded, 'utf8') > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
@@ -139,9 +145,11 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         }
         if (!controller.signal.aborted && !res.destroyed) {
           const [status, payload] = publicFailure(error);
+          if (error?.code === 'custom_cohort_execution_busy') res.set('retry-after', '5');
           return res.status(status).json(payload);
         }
       } finally {
+        releaseExecution?.();
         req.removeListener('aborted', abort); res.removeListener('close', closed);
       }
     });

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildCustomCohortObservationPreview as expanded,
-  buildCustomCohortIndexedObservationPreview as indexed,
+  buildCustomCohortIndexedObservationPreview as indexed, buildCustomCohortIndexedObservationPreviewBatched as batched,
   customCohortObservationMembers as members, isCustomCohortObservationPreview as supported,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS as L } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
@@ -80,6 +80,31 @@ test('both representations share exact observations, metrics, provenance and wor
   assert.equal(JSON.stringify(args), before);
   assert.deepEqual(Object.keys(next.member_tables), ['stock', 'transactions', 'source_reported']);
   assert.ok(supported(next)); assert.ok(supported(expanded(args)));
+});
+
+test('cell reuse preserves exact raw types and formatting instead of merging equal numeric values', () => {
+  const next = assertParity(fixture({ accounts: ['A', 'B', 'C', 'D'], parcels: [
+    parcel(1), parcel(2, 'B'), parcel(3, 'C', { residential_area_sqft: '1800.1250' }),
+    parcel(4, 'D', { residential_area_sqft: 1800.125 }),
+  ] }));
+  const [a, b, c, d] = next.member_tables.stock.map(row => row.observations.gla_sqft);
+  assert.equal(a, b); assert.ok(Object.isFrozen(a)); assert.ok(Object.isFrozen(a.raw_values));
+  assert.notEqual(a, c); assert.notEqual(a, d);
+  assert.equal(a.value, c.value); assert.equal(a.value, d.value);
+  assert.deepEqual(a.raw_values, ['1800.125']); assert.deepEqual(c.raw_values, ['1800.1250']);
+  assert.deepEqual(d.raw_values, [1800.125]);
+  assert.notDeepEqual(next.member_tables.stock[0].source_references, next.member_tables.stock[1].source_references);
+});
+
+test('cooperative preview seals shallow-frozen input, yields, preserves every result and cancels without a partial return', async () => {
+  const args = fixture(), expected = indexed(args); Object.freeze(args);
+  let yielded = false; setImmediate(() => { yielded = true; });
+  const pending = batched(args);
+  assert.throws(() => { args.selection.revision = 100; }, TypeError);
+  const actual = await pending; assert.equal(yielded, true); assert.deepEqual(actual, expected);
+  assert.ok(Buffer.byteLength(JSON.stringify(actual)) <= actual.work.output_utf8_bytes_bound);
+  let cancelled = false; setImmediate(() => { cancelled = true; });
+  await assert.rejects(batched(fixture(), { check() { if (cancelled) throw new Error('synthetic_cancel'); } }), /synthetic_cancel/);
 });
 
 test('full tables occur once in real JSON; populations contain only ordered indices', () => {

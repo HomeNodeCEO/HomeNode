@@ -1,9 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { customCohortObservationMappingVersion as version,
-  customCohortObservationProjectionMatches as matches } from '../src/services/neighborhoodAssessment/customCohortObservationMapping.js';
+  customCohortObservationProjectionMatches as matches, customCohortObservationRecordLimit as recordLimit } from '../src/services/neighborhoodAssessment/customCohortObservationMapping.js';
 
 const acquisition = mapping_version => ({ compact_metadata_json: JSON.stringify({ reader_version: 'local-capture-v3', mapping_version }) });
+
+test('only installed dense CAD metadata selects larger consumer traversal; old/raw profiles keep their ceiling', () => {
+  assert.equal(recordLimit({}), 100000);
+  for (const mapping_version of [2, 3, 4]) for (const records of [undefined, 100000, 150000, 200000, 200001, '200000', -1]) {
+    const input = { compact_metadata_json: JSON.stringify({ reader_version: 'local-capture-v3', mapping_version, limits: { records } }) };
+    assert.equal(recordLimit(input), mapping_version === 4 && [150000, 200000].includes(records) ? records : 100000);
+  }
+});
 
 test('legacy observation inputs stay v2 and original metadata selects each installed projection', () => {
   assert.equal(version({}), 2);

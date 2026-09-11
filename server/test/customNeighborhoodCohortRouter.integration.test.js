@@ -4,6 +4,7 @@ import express from 'express';
 import { createCustomNeighborhoodCohortRouter } from '../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { prepareCustomCohortContextReference } from '../src/services/neighborhoodAssessment/customCohortContextContract.js';
 import { assessmentDate, canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
+import { customCohortExecutionGate } from '../src/services/neighborhoodAssessment/customCohortExecutionGate.js';
 
 const auth = { userId: 'authenticated-appraiser', organizations: [{ organizationId: 'org', roles: ['appraiser'] }] };
 const contextRef = { context_id: '70000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -45,6 +46,21 @@ async function start(t, { principal = auth, methods = {}, parsed = false, logger
 test('cohort router requires actual display/inspection owner methods', () => {
   assert.throws(() => createCustomNeighborhoodCohortRouter({
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
+});
+
+test('saturated cohort execution does not consume ordinary route capacity or expose data', async t => {
+  const o = () => ({ signal: new AbortController().signal, deadline: performance.now() + 5000 });
+  const held = await customCohortExecutionGate.acquire(o());
+  const queued = Array.from({ length: 4 }, () => customCohortExecutionGate.acquire(o()));
+  try {
+    const { request, calls, origin } = await start(t);
+    const response = await request('preview');
+    assert.equal(response.status, 503); assert.equal(response.headers.get('retry-after'), '5');
+    assert.deepEqual(await response.json(), { error: 'neighborhood_service_busy' }); assert.equal(calls.length, 0);
+    assert.equal((await fetch(`${origin}/api/unrelated-report`, { method: 'POST' })).status, 200);
+    const anonymous = await start(t, { principal: null });
+    assert.equal((await anonymous.request('preview')).status, 401);
+  } finally { held(); for (const pending of queued) (await pending)(); }
 });
 
 test('capture forwards only the explicit private batch reference; omitted old requests stay unchanged', async t => {

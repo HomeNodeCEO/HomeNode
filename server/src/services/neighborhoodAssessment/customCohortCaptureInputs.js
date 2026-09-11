@@ -4,6 +4,7 @@ import { mapWitnessParcelRow, mapWitnessAccountRow, mapWitnessSaleRow, mapWitnes
 import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
+  recheckNeighborhoodCohortBlob,
   createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortSelectionRepository } from './customCohortSelectionRepository.js';
@@ -95,10 +96,10 @@ function referenceEdges(value, charge) {
   else for (const child of Object.values(value)) referenceEdges(child, charge);
 }
 const entryText = entry => Object.hasOwn(entry, 'text') ? entry.text : json(entry.value);
-function planBuilder(retainValues = false) {
+function planBuilder(retainValues = false, representation = blob) {
   const budget = meter(), pending = new Map(), existing = new Map();
   const text = (canonical, alreadyStored = false, hasReferenceEdges = true, originalValue) => {
-    const ref = blob(canonical);
+    const ref = representation(canonical);
     budget.bytes(Buffer.byteLength(canonical));
     if (hasReferenceEdges) referenceEdges(JSON.parse(canonical), budget.ref);
     const previous = pending.get(ref.content_sha256);
@@ -172,7 +173,7 @@ function* validateSpatial(spatial, point, discovery) {
     && spatial.account_ids_sha256 === assessmentEvidenceDigest({ account_ids: spatial.account_ids })
     && spatial.membership_sha256 === digest.digest('hex'));
 }
-function* validateSources(capture, request, compact) {
+function* validateSources(capture, request, compact, representation = blob) {
   check(capture.status === 'ready' && same(capture.scope, request.scope));
   array(capture.sources, L.source_chunks); array(capture.source_snapshots, L.source_chunks);
   check(capture.sources.length === capture.source_snapshots.length);
@@ -185,7 +186,7 @@ function* validateSources(capture, request, compact) {
     const p = source.payload;
     closed(p, ['schema_version', 'scope', 'upstream', 'projection', 'metadata', 'partition', 'records']);
     check(p.schema_version === 1 && same(p.scope, request.scope));
-    const ref = blob(json(p)), { id: captureId, ...metadata } = p.metadata;
+    const ref = representation(json(p)), { id: captureId, ...metadata } = p.metadata;
     check(source.id === `${captureId}:${ref.content_sha256}` && !ids.has(source.id)); ids.add(source.id);
     sourceIds.set(p, source.id);
     check(same(snapshots.get(source.id), { id: source.id, ...metadata, content_sha256: ref.content_sha256,
@@ -259,11 +260,15 @@ export function prepareCustomCohortCaptureInputs(input) {
 // Same complete validation and evidence graph as synchronous preparation, with
 // request processing opportunities between bounded source-record work batches.
 export async function prepareCustomCohortCaptureInputsBatched(input, { check = () => {}, afterBatch = async () => {} } = {}) {
+  return prepareInputBatchesAsync(input, { check, afterBatch });
+}
+
+async function prepareInputBatchesAsync(input, { check = () => {}, afterBatch = async () => {} } = {}, representation = blob) {
   // This private API receives the owner's original handoff or reconstructed
   // retained input. Seal it before yielding so another task cannot rewrite an
   // already-validated descendant while the evidence graph is being assembled.
   check(); freeze(input); check();
-  const iterator = prepareInputBatches(input, true);
+  const iterator = prepareInputBatches(input, true, representation);
   try {
     while (true) {
       check(); const step = iterator.next(); check();
@@ -273,7 +278,7 @@ export async function prepareCustomCohortCaptureInputsBatched(input, { check = (
   } finally { iterator.return(); }
 }
 
-function* prepareInputBatches(input, retainValues = false) {
+function* prepareInputBatches(input, retainValues = false, representation = blob) {
   const hasPrivate = Object.hasOwn(input, 'private_sales');
   closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at',
     ...(hasPrivate ? ['private_sales'] : [])]);
@@ -283,7 +288,7 @@ function* prepareInputBatches(input, retainValues = false) {
   const result = acquisition.capture_result, request = acquisition.captured_query_request;
   check(result.status === 'captured' && result.query_complete === true && result.reader_version === 'local-capture-v3'
     && result.incomplete_reasons.length === 0 && same(result.snapshot, spatial.snapshot), 'complete_original_capture_required');
-  const scope = scopeOf(subject.target), b = planBuilder(retainValues);
+  const scope = scopeOf(subject.target), b = planBuilder(retainValues, representation);
   check(same(b.add(pick(subject, SUBJECT_KEYS), true), reference(subjectRef)));
   for (const [key, value] of [['original_snapshot_row', subject.original_snapshot], ['original_section_reads', subject.original_sections],
     ['snapshot_evidence', subject.snapshot], ['material_input', subject.material]]) check(same(b.add(value, true), subject[key]));
@@ -349,7 +354,7 @@ function* prepareInputBatches(input, retainValues = false) {
   check(same(compact.authorization.transaction_closure, { version: closure.version, source_revision: closure.source_revision,
     closure_sha256: closure.closure_sha256, transaction_count: closure.transactions.length, link_count: closure.links.length,
     legacy_sale_count: closure.legacy.length, account_count: closure.closure_account_ids.length, source_record_count: closure.source_record_ids.length }));
-  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact);
+  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact, representation);
   // Mirror the existing retained-query index exactly; persist still calls its
   // actual repository. This preflight prevents late index/wrapper overflow.
   const evidence = query.evidence;
@@ -451,35 +456,82 @@ export async function persistCustomCohortCaptureInputs(client, scopeJson, prepar
 export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
   closed(refs, REFS); const scope = prepareCustomCohortContextScope(scopeJson), started = await transaction(client);
   const store = createNeighborhoodCohortBlobRepository(client, scope.organization_id), budget = meter(), cache = new Map(), seen = new Map();
+  // Request-local receipts only: no cached source bytes, permissions, or graph
+  // conclusions cross requests. Every independent read still checks originals.
+  const representations = new Map();
+  const representation = canonical => {
+    const hash = createHash('sha256').update(canonical, 'utf8').digest('hex');
+    const receipt = representations.get(hash);
+    return receipt ? recheckNeighborhoodCohortBlob(canonical, receipt) : blob(canonical);
+  };
   let cacheBytes = 0;
-  const text = async ref => {
+  const charge = ref => {
     budget.ref(ref);
     const previous = seen.get(ref.content_sha256);
     check(!previous || same(previous, ref), 'digest_conflict');
     if (!previous) {
       check(seen.size < L.blobs, 'input_limit'); seen.set(ref.content_sha256, ref);
     }
+  };
+  const remember = (ref, prepared) => {
+    check(prepared !== null, 'missing_evidence');
+    representations.set(ref.content_sha256, prepared.reference);
+    const value = prepared.canonicalJson, bytes = Number(ref.canonical_utf8_bytes);
+    if (!cache.has(ref.content_sha256) && bytes <= 32_768 && cacheBytes + bytes <= 4_000_000) {
+      cache.set(ref.content_sha256, value); cacheBytes += bytes;
+    }
+    return value;
+  };
+  const text = async ref => {
+    charge(ref);
     if (cache.has(ref.content_sha256)) return cache.get(ref.content_sha256);
     // The scoped repository validates canonical bytes, hash, byte length and
     // PostgreSQL representation before returning. Cache only small reusable
     // metadata, not another whole copy of every source/page payload. Logical
     // reference charges and distinct-blob limits apply even on cache hits.
-    const value = await store.get(ref.content_sha256, ref.canonical_utf8_bytes); check(value !== null, 'missing_evidence');
-    const bytes = Number(ref.canonical_utf8_bytes);
-    if (bytes <= 32_768 && cacheBytes + bytes <= 4_000_000) { cache.set(ref.content_sha256, value); cacheBytes += bytes; }
-    return value;
+    return remember(ref, await store.getPrepared(ref.content_sha256, ref.canonical_utf8_bytes));
   };
   const read = async ref => JSON.parse(await text(ref));
+  // Only sibling references from an already checked directory are read ahead.
+  // Keep at most eight originals / 2MB in flight; never allocate a second full
+  // study or parallel queries on the caller's transaction. Logical charges still
+  // include every occurrence, even duplicates satisfied by the metadata cache.
+  async function* readMany(refs) {
+    array(refs, L.blobs);
+    let offset = 0;
+    while (offset < refs.length) {
+      const batch = []; let bytes = 0;
+      while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) {
+        const ref = reference(refs[offset + batch.length]), size = Number(ref.canonical_utf8_bytes);
+        if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) break;
+        charge(ref); batch.push(ref); bytes += size;
+      }
+      const needed = [...new Map(batch.filter(ref => !cache.has(ref.content_sha256)).map(ref => [ref.content_sha256, ref])).values()];
+      const values = new Map();
+      if (needed.length) {
+        const originals = await store.getPreparedBatch(needed);
+        needed.forEach((ref, i) => values.set(ref.content_sha256, remember(ref, originals[i])));
+      }
+      for (let i = 0; i < batch.length; i++) {
+        const hash = batch[i].content_sha256;
+        yield { index: offset + i, value: JSON.parse(values.get(hash) ?? cache.get(hash)) };
+      }
+      offset += batch.length;
+    }
+  }
   const pages = async (ref, kind, maximum) => {
     const manifest = await read(ref); closed(manifest, ['collection_version', 'kind', 'entry_count', 'pages']);
     check(manifest.collection_version === 1 && manifest.kind === kind && /^(?:0|[1-9]\d*)$/.test(manifest.entry_count)
       && Number(manifest.entry_count) <= maximum, 'invalid_directory');
     array(manifest.pages, Math.min(maximum, L.blobs)); const entries = [];
-    for (const [index, item] of manifest.pages.entries()) {
+    const pageRefs = manifest.pages.map((item, index) => {
       closed(item, ['page_index', 'entry_count', 'page']);
       check(item.page_index === String(index) && /^[1-9]\d*$/.test(item.entry_count)
         && Number(item.entry_count) <= L.page_entries, 'invalid_directory');
-      const page = await read(item.page); closed(page, ['collection_version', 'kind', 'page_index', 'entries']);
+      return item.page;
+    });
+    for await (const { index, value: page } of readMany(pageRefs)) {
+      const item = manifest.pages[index]; closed(page, ['collection_version', 'kind', 'page_index', 'entries']);
       check(page.collection_version === 1 && page.kind === kind && page.page_index === String(index)
         && array(page.entries, L.page_entries).length === Number(item.entry_count), 'invalid_directory');
       entries.push(...page.entries); check(entries.length <= maximum, 'input_limit');
@@ -514,8 +566,10 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
     ['transactions', 'links', 'legacy'].includes(key) ? L.closure_records : L.accounts * 2);
   const source = await read(selection.sources.metadata);
   source.sources = [];
-  for (const entry of await pages(selection.sources.payloads, 'source_payloads', L.source_chunks)) {
-    closed(entry, ['id', 'payload']); source.sources.push({ id: entry.id, payload: await read(entry.payload) });
+  const payloadEntries = await pages(selection.sources.payloads, 'source_payloads', L.source_chunks);
+  const payloadRefs = payloadEntries.map(entry => { closed(entry, ['id', 'payload']); return entry.payload; });
+  for await (const { index, value: payload } of readMany(payloadRefs)) {
+    source.sources.push({ id: payloadEntries[index].id, payload });
   }
   source.source_snapshots = await pages(selection.sources.snapshots, 'source_snapshots', L.source_chunks);
   source.references = [];
@@ -545,12 +599,12 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
   // that same bounded client, so validation cannot silently outlive the owner's
   // deadline or leave PostgreSQL idle until it terminates the connection.
   let lastTransactionCheck = performance.now();
-  const checked = await prepareCustomCohortCaptureInputsBatched(input, { afterBatch: async () => {
+  const checked = await prepareInputBatchesAsync(input, { afterBatch: async () => {
     if (performance.now() - lastTransactionCheck >= 1000) {
       check(await transaction(client) === started, 'caller_transaction_required');
       lastTransactionCheck = performance.now();
     }
-  } });
+  } }, representation);
   check(same(checked.refs, refs), 'stored_graph_mismatch');
   check(await transaction(client) === started, 'caller_transaction_required');
   return freeze({ status: 'retained', authority: 'not_established', refs: checked.refs,

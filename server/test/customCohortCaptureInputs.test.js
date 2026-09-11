@@ -260,6 +260,20 @@ for (const parcelCount of [2, 1001]) test(`retains/reopens complete original gra
   const batches = f.state.calls.filter(c => c.tag === 'insert-batch');
   assert.ok(batches.length > 0);
   assert.ok(batches.every(c => c.params[1].length <= 8 && c.params[2].reduce((sum, n) => sum + n, 0) <= 2_000_000));
+  const readBatches = f.state.calls.filter(c => c.tag === 'read-batch' && c.params.length === 3);
+  assert.ok(readBatches.length > 0);
+  assert.ok(readBatches.every(c => c.params[1].length <= 8 && c.params[2].reduce((sum, n) => sum + n, 0) <= 2_000_000));
+});
+
+test('repeated reopen still reads and validates originals instead of retaining a successful graph cache', async () => {
+  const f = await fixture({ parcelCount: 501 }), refs = await persist(f.client, f.scopeJson, prepare(f.input));
+  const first = await load(f.client, f.scopeJson, refs);
+  f.state.calls.length = 0;
+  assert.deepEqual((await load(f.client, f.scopeJson, refs)).retained_inputs, first.retained_inputs);
+  assert.ok(f.state.calls.some(c => c.tag === 'read-batch'));
+  const hash = first.retained_inputs.acquisition.capture_result.source_capture.source_snapshots[0].content_sha256;
+  f.state.db.delete(`${f.scope.organization_id}:${hash}`);
+  await assert.rejects(load(f.client, f.scopeJson, refs), /missing_evidence/);
 });
 
 for (const [name, mutate] of [

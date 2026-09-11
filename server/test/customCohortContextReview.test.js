@@ -107,9 +107,11 @@ async function fixture({ deniedRetainedMapping = null } = {}) {
         }
         assert.fail(`Unexpected review query: ${tag}`);
       }
-      if (sql.includes('neighborhood-cohort-blob:read') && payloadHashes.has(params[1])) {
-        assert.ok(state.policies.length > 0, 'source payload read before current policy');
-        state.payloadReads.set(params[1], (state.payloadReads.get(params[1]) ?? 0) + 1);
+      if (sql.includes('neighborhood-cohort-blob:read')) {
+        for (const hash of (Array.isArray(params[1]) ? params[1] : [params[1]]).filter(hash => payloadHashes.has(hash))) {
+          assert.ok(state.policies.length > 0, 'source payload read before current policy');
+          state.payloadReads.set(hash, (state.payloadReads.get(hash) ?? 0) + 1);
+        }
       }
       return baseQuery(sql, params);
     },

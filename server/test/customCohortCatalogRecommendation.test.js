@@ -44,7 +44,10 @@ async function setup(options) {
     if (tag === 'transaction') return row({ transaction_id: '123456789' });
     if (tag === 'target') return row({ id: scope.report_file_id });
     if (tag === 'read') return row(params[4] === context.context_id ? context : null);
-    if (sql.includes('neighborhood-cohort-blob:read') && payloads.has(params[1])) state.sourceReads++;
+    if (sql.includes('neighborhood-cohort-blob:read')) {
+      const hashes = Array.isArray(params[1]) ? params[1] : [params[1]];
+      state.sourceReads += hashes.filter(hash => payloads.has(hash)).length;
+    }
     return baseQuery(sql, params);
   }, release(error) { state.releases.push(error); } };
   const service = createCustomCohortContextCapture({ pool: { async connect() { state.connects++; return client; } },

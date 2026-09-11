@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
-import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobRepository as repository } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobRepository as repository,
+  recheckNeighborhoodCohortBlob as recheck } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 
 const ORG = '10000000-0000-4000-8000-000000000001';
 const OTHER = '10000000-0000-4000-8000-000000000002';
@@ -29,6 +30,35 @@ test('canonical bytes, original string IDs/decimals, and Unicode round trip unch
   assert.deepEqual(ref, { content_sha256: createHash('sha256').update(text, 'utf8').digest('hex'), canonical_utf8_bytes: String(Buffer.byteLength(text)) });
   assert.equal(await repo.get(ref.content_sha256, ref.canonical_utf8_bytes), text);
   assert.ok(Object.isFrozen(ref));
+});
+
+test('fresh prepared reads issue immutable representation receipts, not cross-organization access', async () => {
+  const h = fake(), repo = repository(h.client, ORG), ref = await repo.put(text);
+  const read = await repo.getPrepared(ref.content_sha256, ref.canonical_utf8_bytes);
+  assert.equal(read.canonicalJson, text); assert.deepEqual(read.reference, ref);
+  assert.notEqual(read.reference, ref); assert.ok(Object.isFrozen(read)); assert.ok(Object.isFrozen(read.reference));
+  assert.equal(recheck(text, read.reference), read.reference);
+  assert.equal(await repository(h.client, OTHER).getPrepared(ref.content_sha256, ref.canonical_utf8_bytes), null);
+  assert.ok(h.calls.every(call => call.sql.includes('organization_id')));
+});
+
+test('representation reuse rejects copied receipts, mutated bytes and nonprimitive input', () => {
+  const reference = prepare(text);
+  for (const invalid of [null, {}, { ...reference }, structuredClone(reference), Object.create(reference)]) {
+    assert.throws(() => recheck(text, invalid), /invalid_representation_receipt/);
+  }
+  for (const invalid of [null, {}, new String(text), text + ' ', text.replace('1.00', '2.00'), text.replace('Café', 'Cafe')]) {
+    assert.throws(() => recheck(invalid, reference), /invalid_representation_receipt/);
+  }
+});
+
+test('an earlier prepared read never suppresses validation of a later independent read', async () => {
+  const h = fake(), repo = repository(h.client, ORG), ref = await repo.put(text);
+  const prior = await repo.getPrepared(ref.content_sha256, ref.canonical_utf8_bytes);
+  h.rows.get(`${ORG}/${ref.content_sha256}`).canonical_utf8 = text.replace('1.00', '2.00');
+  await assert.rejects(repo.getPrepared(ref.content_sha256, ref.canonical_utf8_bytes), /storage_conflict/);
+  await assert.rejects(repo.get(ref.content_sha256, ref.canonical_utf8_bytes), /storage_conflict/);
+  assert.equal(recheck(text, prior.reference), prior.reference, 'the original immutable representation is still valid, not a new read');
 });
 
 test('same-organization replay checks exact content and other organizations cannot read it', async () => {

@@ -256,7 +256,10 @@ for (const parcelCount of [2, 1001]) test(`retains/reopens complete original gra
   assert.ok(texts.some(t => t.includes('R-LINKED-ONLY') && t.includes('closure_links')));
   assert.ok(texts.some(t => t.includes('source_days_on_market') && t.includes('1850.125')));
   assert.ok(texts.some(t => t.includes('9007199254740993')));
-  assert.ok(f.state.calls.every(c => ['read', 'insert', 'transaction', 'history-target'].includes(c.tag)));
+  assert.ok(f.state.calls.every(c => ['read', 'insert', 'read-batch', 'insert-batch', 'transaction', 'history-target'].includes(c.tag)));
+  const batches = f.state.calls.filter(c => c.tag === 'insert-batch');
+  assert.ok(batches.length > 0);
+  assert.ok(batches.every(c => c.params[1].length <= 8 && c.params[2].reduce((sum, n) => sum + n, 0) <= 2_000_000));
 });
 
 for (const [name, mutate] of [
@@ -289,14 +292,14 @@ test('persist refuses copied preparation, foreign scope and missing original int
   await assert.rejects(persist(f.client, json({ ...f.scope, report_file_id: RUN }), prepared), /scope_mismatch/);
   f.state.db.delete(`${f.scope.organization_id}:${f.input.acquisition_intent.reference.content_sha256}`);
   await assert.rejects(persist(f.client, f.scopeJson, prepared), /missing_original_input/);
-  assert.equal(f.state.calls.filter(c => c.tag === 'insert').length, 0);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert' || c.tag === 'insert-batch').length, 0);
 });
 
 test('autocommit and storage errors propagate; owner alone rolls back or commits', async () => {
   const f = await fixture(), prepared = prepare(f.input); let tx = 1;
   f.state.transforms.transaction = () => ({ transaction_id: String(tx++) });
   await assert.rejects(persist(f.client, f.scopeJson, prepared), /caller_transaction_required/);
-  assert.equal(f.state.calls.filter(c => c.tag === 'insert').length, 0);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert' || c.tag === 'insert-batch').length, 0);
   delete f.state.transforms.transaction;
   const error = Object.assign(new Error('synthetic timeout'), { code: '57014' });
   f.state.error = { tag: 'insert', value: error };

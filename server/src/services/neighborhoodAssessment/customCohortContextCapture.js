@@ -1,5 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
+import { createCustomCapturePhaseTiming } from './customCapturePhaseTiming.js';
 import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
@@ -358,7 +359,13 @@ async function transaction(pool, mode, budget, execute) {
       const config = typeof sql === 'string' ? { text: sql, values } : { ...sql };
       config.query_timeout = Math.min(config.query_timeout ?? LIMITS.query_ms, budget.remaining(LIMITS.query_ms));
       try { const result = await raw.query(config); if (connectionError) throw connectionError; budget.check(); return result; }
-      catch (error) { discard = error; throw error; }
+      catch (error) {
+        discard = error;
+        // A driver timeout can win the race with the aggregate clock. Classify
+        // from our own deadline/signal, never from private driver error text.
+        budget.check();
+        throw error;
+      }
     },
     release() { fail('transaction_owner_required'); },
   });
@@ -771,10 +778,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   return Object.freeze({ async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);
     budget.check();
+    const phase = createCustomCapturePhaseTiming();
     const study = freeze({ profile_id: input.discovery?.profile_id ?? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
       ...(input.discovery ? { discovery: input.discovery } : {}),
       observation_period: input.observationPeriod, knowledge_cutoff: null });
-    const phaseOne = await transaction(pool, 'READ COMMITTED', budget, async client => {
+    const phaseOne = await phase('subject', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       const privateWorkfile = input.privateSalesImport ? await privateCaptureWorkfile(client, input) : null;
       const target = await resolveTarget(client, input, true);
       const scope = Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]]));
@@ -812,7 +820,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
       const reference = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalAssessmentJson(body));
       return { scope, scopeJson, subject, subjectReference, point, intent: { reference, body } };
-    });
+    }));
     if (phaseOne.replay) return phaseOne.replay;
     const { scope, scopeJson, subject, subjectReference, point, intent } = phaseOne;
     // A saved operation replays its retained original before consulting today's
@@ -835,7 +843,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           batchId: input.privateSalesImport.batch_id, expectedReviewRevision: input.privateSalesImport.expected_review_revision });
         privateSales = { capture, authorization: { decision_id: permission.decision_id, policy_revision: permission.policy_revision } };
       }
-      const spatial = captured(await captureNeighborhoodSpatialMembershipStream(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial');
+      const spatial = await phase('spatial', async () => captured(await captureNeighborhoodSpatialMembershipStream(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial'));
       // Existing cached-source access requires the subject in the source roster.
       // Never add an outside-city subject to claim complete polygon membership.
       if (city && !spatial.account_ids.includes(scope.account_id)) fail('city_subject_outside_scope');
@@ -866,14 +874,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           return closure.transaction_closure;
         },
       });
-      const grants = await access.prepare(input.auth, { target: context.target,
-        selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null });
-      const reader = createNeighborhoodDenseCadEvidenceSourceReader(pool, { access });
-      const result = captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
-        selection_grant: grants.selection_grant, market_grant: grants.market_grant },
-      { deadline: budget.deadline, signal: budget.signal }), 'source');
-      if (!same(result.snapshot, spatial.snapshot)) fail('snapshot_changed');
-      return { spatial, selector, reader, result, privateSales, startedAt, completedAt: await databaseTime(client) };
+      return phase('source', async () => {
+        const grants = await access.prepare(input.auth, { target: context.target,
+          selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null });
+        const reader = createNeighborhoodDenseCadEvidenceSourceReader(pool, { access });
+        const result = captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
+          selection_grant: grants.selection_grant, market_grant: grants.market_grant },
+        { deadline: budget.deadline, signal: budget.signal }), 'source');
+        if (!same(result.snapshot, spatial.snapshot)) fail('snapshot_changed');
+        return { spatial, selector, reader, result, privateSales, startedAt, completedAt: await databaseTime(client) };
+      });
     });
     // Pure original-evidence preparation owns no connection or database locks.
     // The source read has committed; registration below still takes fresh locks
@@ -881,11 +891,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // any prepared evidence/context is persisted. Never hold an idle write
     // transaction while encoding a dense area's evidence graph.
     budget.check();
-    const acquisition = consumeNeighborhoodCachedAcquisition(read.reader, read.result);
-    const prepared = await prepareCustomCohortCaptureInputsBatched({ acquisition, spatial: read.spatial, subject,
-      subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
-      started_at: read.startedAt, completed_at: read.completedAt,
-      ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
+    const prepared = await phase('preparation', () => {
+      const acquisition = consumeNeighborhoodCachedAcquisition(read.reader, read.result);
+      return prepareCustomCohortCaptureInputsBatched({ acquisition, spatial: read.spatial, subject,
+        subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
+        started_at: read.startedAt, completed_at: read.completedAt,
+        ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
+    });
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       if (read.privateSales) privateDraft(await privateCaptureWorkfile(client, input));
       assertTarget(await resolveTarget(client, input, true), subject.target);
@@ -900,12 +912,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         await recheckAssignmentSalesCsvCapture(client.query.bind(client), read.privateSales.capture);
       }
       budget.check();
-      const refs = await persistCustomCohortCaptureInputs(client, scopeJson, prepared);
+      const refs = await phase('retention', () => persistCustomCohortCaptureInputs(client, scopeJson, prepared));
       budget.check();
       const header = { context_version: 1, context_id: input.operationId, context_revision: '1',
         target: { ...context.target, ...context.scope, snapshot_version: subject.target.snapshot_version },
         effective_date: subject.effective_date, ...refs };
-      const stored = await createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header));
+      const stored = await phase('registration', () => createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header)));
       return freeze({ status: 'registered', reused: stored.status === 'reused', context_ref: stored.context_ref,
         discovery: { ...(city ? city.choice : { radius_metres: read.spatial.radius_metres }),
           parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },

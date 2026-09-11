@@ -31,6 +31,19 @@ test('checked-out connection errors fail safely and release once instead of cras
 test('Custom capture requires an explicit server market policy, without default grant', () => {
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
+
+test('driver rejection at aggregate deadline reports interruption and discards once', async t => {
+  let now = 1000; t.mock.method(performance, 'now', () => now);
+  const releases = [], calls = [], driverError = new Error('PRIVATE driver timeout');
+  const service = setup(async () => ({ async query(config) {
+    calls.push(config.text);
+    if (config.text.startsWith('SET LOCAL')) { now += 120000; throw driverError; }
+    return { rowCount: 0, rows: [] };
+  }, release(error) { releases.push(error); } }));
+  await assert.rejects(service.capture(input()), error => error.reason === 'deadline_exceeded'
+    && error.code === 'CUSTOM_COHORT_CAPTURE_FAILED' && !error.message.includes('PRIVATE'));
+  assert.deepEqual(releases, [driverError]); assert.ok(!calls.includes('COMMIT'));
+});
 test('Custom capture rejects browser source/target fields before any connection', async () => {
   for (const key of ['account_ids', 'geometry_input', 'organization_id', 'report_file_id', 'market_decision', 'profile_id']) {
     await assert.rejects(setup().capture({ ...input(), [key]: 'untrusted' }), /invalid_input/);

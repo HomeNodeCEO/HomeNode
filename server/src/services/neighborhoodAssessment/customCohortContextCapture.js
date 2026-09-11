@@ -23,9 +23,9 @@ import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInpu
 import { loadInstalledCustomCityDiscovery } from './customCityDiscovery.js';
 import { prepareCustomCohortCaptureInputsBatched, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
-import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
+import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreviewBatched,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
-import { buildCustomCohortParcelMap } from './customCohortParcelMap.js';
+import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentation } from './customCohortPocketRecommendationPresentation.js';
@@ -726,12 +726,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     budget.check();
     // Public summaries/pages/catalogs consume a genuinely indexed internal
     // view. Keep the raw internal preview API's v1 shape and ceiling unchanged.
-    const buildPreview = project ? buildCustomCohortIndexedObservationPreview : buildCustomCohortObservationPreview;
-    const preview = buildPreview({ context_ref: input.contextRef,
-      retained_inputs: loaded.retained.retained_inputs, selection: input.selection });
+    const buildPreview = project ? buildCustomCohortIndexedObservationPreviewBatched : buildCustomCohortObservationPreview;
+    const preview = await buildPreview({ context_ref: input.contextRef,
+      retained_inputs: loaded.retained.retained_inputs, selection: input.selection }, { check: budget.check });
     budget.check();
-    const parcelMap = includeMap ? buildCustomCohortParcelMap({ retained_inputs: loaded.retained.retained_inputs,
-      selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] })
+    const parcelMap = includeMap ? await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
+      selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] }, { check: budget.check })
       : { status: 'omitted', reason: 'geometry_not_requested' };
     const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
     const deriveProximity = () => transaction(pool, 'REPEATABLE READ READ ONLY', budget,

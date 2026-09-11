@@ -47,6 +47,7 @@ const CAPTURE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
   capture_market_policy_changed: 'Source access changed during capture. Confirm source access, then reload saved choices before continuing.',
   capture_outcome_unknown: 'The server could not confirm whether this capture was recorded. Reload saved choices, then use “Resume saved capture” to recover the same saved operation. Do not start another capture to resolve this request.',
   capture_interrupted: 'The capture request was interrupted or reached its time limit. Reload saved choices, then use “Resume saved capture” to retry the same saved operation.',
+  capture_service_busy: 'Other neighborhood requests are using the available processing capacity. Reload saved choices, then try “Resume saved capture” shortly; do not start a duplicate capture.',
 });
 const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
 type RadiusMiles = keyof typeof RADII;

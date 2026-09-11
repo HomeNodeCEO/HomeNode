@@ -37,6 +37,23 @@ increase a Render plan, or make a partial source capture usable.
   reference charges. Logical charges are **not** physical memory usage. Original
   graph hashes and the repository's exact-scope/original-preparation checks stay
   unchanged.
+- Indexed statistics and parcel-map preparation now yield between bounded
+  batches outside the database transaction. Inputs are sealed before yielding;
+  cancellation never returns partial results. Exact observation cells can share
+  their frozen representation within one operation, with a bounded cache keyed
+  by the complete raw values and policy. Member provenance stays separate.
+- Complete indexed-member byte accounting reuses checked row lengths instead
+  of allocating another full JSON string. Legacy captures retain their 100,000
+  record / 32 MB internal ceiling. Already owner-validated dense CAD captures
+  use their original declared record limit (at most 200,000) and a 64 MB internal
+  indexed ceiling. Public summary, member-page and map limits are unchanged.
+- A process-wide Custom cohort HTTP gate admits one heavy operation and at most
+  four waiting requests. Its 60-second deadline includes queue time. Disconnects
+  and expired waiting requests leave the queue; an active permit remains held
+  until its handler has finished serialization/cleanup. A full queue returns a
+  private, no-store 503 with Retry-After rather than starting more heavy work.
+  Ordinary routes do not enter this gate. This is not a new authorization grant,
+  global rate limiter, automatic retry or cross-process lock.
 
 ## Evidence and limitations
 
@@ -89,12 +106,45 @@ No resource ceiling or membership was relaxed to hide either failure.
 An isolated process fitting does not prove enough remaining memory for the full
 web server, simultaneous requests, map/statistics generation or city-wide studies.
 
+### Full web-service and repeated-preview measurements
+
+A subsequent private loopback harness loaded the real `oldServer.js` application
+and its normal startup schema checks in the same process as native evidence work.
+Only synthetic migrated test databases and the harness-owned web listener were
+reachable. These measurements are not an authenticated production HTTP capture
+or a live data benchmark; the dense factory remains unconnected to production.
+
+- Full-service capture retained all 38,347 parcels / 38,106 accounts / 116,621
+  source records. Elapsed time was 39.3 s including startup/fixture work; peak RSS
+  was 379,052 KiB (about 388 MB).
+- Two submitted full-size preview operations ran through the process gate with
+  a measured maximum of one active heavy operation. They completed in 21.9 s
+  and 20.7 s. Both included every account, all 1,030 fixture transactions, and
+  38,347 mapped parcels. The complete internal indexed byte bound was 51,609,837
+  bytes, not a clipped 32 MB result.
+- With the loaded service, repeated-preview peak RSS was 448,152 KiB (about
+  459 MB). All 306 concurrent lightweight health/readiness requests succeeded;
+  observed p99 latency was 222 ms and maximum latency was 256 ms. Maximum
+  event-loop delay was about 541 ms. Machine load and CPU differ from Render.
+- The local full server suite passed 7,023 tests with 33 explicit skips; the
+  frontend suite passed 2,318 tests. Native coordinator checks passed on a new
+  loopback database. TypeScript, lint/source/bundle budgets and production build
+  passed. Protected remote checks must also pass for the published commit.
+
+This leaves too little comfortable headroom on a 512 MB web process, especially
+for simultaneous photos/PDFs and a larger real-world source-size distribution.
+No photo-upload/PDF concurrency or production capacity guarantee is claimed.
+Do not activate a larger capture solely because a single synthetic run fits.
+
 ## Required before activation
 
-1. Extend the native measurements to the complete loaded web service and actual
-   source-size distribution, including maps/statistics and concurrent requests.
-2. Bound concurrent heavy requests independently of ordinary web requests. Use
-   a separate bounded worker if measured web-server headroom is insufficient.
+1. Verify the actual source-size distribution and photo/PDF concurrency on the
+   intended deployment capacity. Full-service synthetic capture and repeated
+   map/statistics tests are complete, but do not replace this check.
+2. Keep the installed process-wide gate. Obtain an explicit capacity decision:
+   a larger web instance or a separate bounded worker before dense activation.
+   Multiple instances each have their own gate and total database load still
+   needs a deployment-level bound.
 3. Preserve the newly tested preparation/transaction split and bounded reopen
    checks; verify contention and cancellation at realistic concurrency.
 4. Verify all per-statement and aggregate deadlines, late connection cleanup,

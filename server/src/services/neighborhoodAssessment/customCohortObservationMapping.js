@@ -1,4 +1,5 @@
 import { NEIGHBORHOOD_COHORT_LOCAL_QUERY_EVIDENCE_LIMITS } from './cohortEvidenceContract.js';
+import { DENSE_CAD_CACHE_READER_LIMITS } from './denseCadCapturePolicy.js';
 
 // These pure consumers follow an already owner-admitted retained capture; this
 // discriminator is not an alternative to retention/hash/rights validation.
@@ -22,4 +23,14 @@ export function customCohortObservationMappingVersion(acquisition) {
 export function customCohortObservationProjectionMatches(definition, mappingVersion) {
   return definition?.mapping_version === mappingVersion
     || (mappingVersion === 2 && definition?.mapping_version === undefined);
+}
+
+// Capacity only, AFTER the owner has validated original retained metadata and
+// rights. Old captures keep the 100k consumer ceiling; dense CAD observations
+// may traverse the same declared complete record set their reader retained.
+export function customCohortObservationRecordLimit(acquisition) {
+  if (customCohortObservationMappingVersion(acquisition) !== 4) return 100_000;
+  const records = JSON.parse(acquisition.compact_metadata_json).limits?.records;
+  return Number.isSafeInteger(records) && records > 100_000 && records <= DENSE_CAD_CACHE_READER_LIMITS.records
+    ? records : 100_000;
 }

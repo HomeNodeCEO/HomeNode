@@ -44,6 +44,7 @@ const CAPTURE_FAILURES = new Map<string, readonly [number, string]>([
   ['neighborhood_market_policy_changed', [409, 'capture_market_policy_changed']],
   ['neighborhood_operation_outcome_unknown', [409, 'capture_outcome_unknown']],
   ['neighborhood_request_interrupted', [503, 'capture_interrupted']],
+  ['neighborhood_service_busy', [503, 'capture_service_busy']],
 ]);
 const requireThat: (ok: unknown, code: string) => asserts ok = (ok, code) => {
   if (!ok) throw new WorkspaceApiError(code);

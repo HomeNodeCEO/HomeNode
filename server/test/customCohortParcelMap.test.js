@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { buildCustomCohortParcelMap as build, CUSTOM_COHORT_PARCEL_MAP_LIMITS as LIMITS }
+import { buildCustomCohortParcelMap as build, buildCustomCohortParcelMapBatched as batched, CUSTOM_COHORT_PARCEL_MAP_LIMITS as LIMITS }
   from '../src/services/neighborhoodAssessment/customCohortParcelMap.js';
 import { mapCachedParcelRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
 
@@ -71,6 +71,16 @@ test('joins distinct original reader and mapper identities without relabeling ei
   rows(input)[0].record_id = before.record_id;
   rows(input)[0].data.record_id = before.record_id;
   expectUnavailable(map(input), 'parcel_identity_mismatch');
+});
+
+test('cooperative map preserves exact geometry/selection and cancellation never publishes partial features', async () => {
+  const options = { retained_inputs: fixture() }, expected = build(options);
+  let yielded = false; setImmediate(() => { yielded = true; });
+  const pending = batched(options);
+  assert.throws(() => { options.retained_inputs.spatial.parcels.length = 0; }, TypeError);
+  assert.deepEqual(await pending, expected); assert.equal(yielded, true);
+  let cancelled = false; setImmediate(() => { cancelled = true; });
+  await assert.rejects(batched({ retained_inputs: fixture() }, { check() { if (cancelled) throw new Error('synthetic_cancel'); } }), /synthetic_cancel/);
 });
 
 for (const order of [0, 1]) {

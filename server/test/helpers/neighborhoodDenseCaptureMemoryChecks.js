@@ -14,13 +14,16 @@ import { createCustomCohortSubjectRepository } from '../../src/services/neighbor
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { prepareCustomCohortCaptureInputsBatched, persistCustomCohortCaptureInputs, loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
+import { buildCustomCohortIndexedObservationPreviewBatched } from '../../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
+import { buildCustomCohortParcelMapBatched } from '../../src/services/neighborhoodAssessment/customCohortParcelMap.js';
+import { presentCustomCohortPreview } from '../../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
-export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained }) {
+export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {} }) {
   const target = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
-  assert.ok(['capture', 'reopen'].includes(phase));
+  assert.ok(['capture', 'reopen', 'preview'].includes(phase));
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 2, connectionTimeoutMillis: 3000,
     statement_timeout: 5000, application_name: 'synthetic_dense_capture_memory' });
   const stages = [], started = performance.now(), delay = monitorEventLoopDelay({ resolution: 10 });
@@ -42,11 +45,28 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
     finally { probe.release(); }
     stage('connected');
     let result;
-    if (phase === 'reopen') {
+    if (phase !== 'capture') {
       assert.equal(retained.database, target.databaseName);
+      await beforeWork(); stage('web_ready');
       const opened = await tx('REPEATABLE READ READ ONLY', client => loadCustomCohortCaptureInputs(client, json(retained.scope), retained.refs));
       assert.deepEqual(opened.summary, retained.summary); assert.deepEqual(opened.refs, retained.refs);
       stage('reopened'); result = { summary: opened.summary };
+      if (phase === 'preview') {
+        const context_ref = { context_id: randomUUID(), context_revision: '1', context_sha256: 'a'.repeat(64) };
+        const account_ids = opened.retained_inputs.spatial.account_ids;
+        const selection = { revision: 1, pockets: [{ id: 'synthetic-all', label: 'Synthetic complete area', account_ids }] };
+        const preview = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref, retained_inputs: opened.retained_inputs, selection });
+        stage('statistics');
+        const parcel_map = await buildCustomCohortParcelMapBatched({ retained_inputs: opened.retained_inputs, selected_account_ids: account_ids });
+        assert.equal(parcel_map.status, 'available', parcel_map.reason); assert.equal(parcel_map.counts.parcels, retained.summary.parcel_count);
+        assert.equal(preview.all.stock.member_count, account_ids.length); assert.equal(preview.selected.stock.member_count, account_ids.length);
+        const summary = presentCustomCohortPreview({ preview, expected: { context_ref, selection_revision: 1 } });
+        const bytes = Buffer.byteLength(JSON.stringify({ summary, parcel_map }));
+        stage('presented'); result = { ...result, preview_bytes: bytes, preview_counts: {
+          all_accounts: preview.all.stock.member_count, selected_accounts: preview.selected.stock.member_count,
+          all_transactions: preview.all.transactions.member_count, mapped_parcels: parcel_map.counts.parcels,
+          internal_bytes_bound: preview.work.output_utf8_bytes_bound } };
+      }
     } else {
       await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA); // Refuses an existing GIS schema.
       const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshotId = randomUUID(), reportId = randomUUID(), run = randomUUID(), operation = randomUUID();
@@ -87,6 +107,7 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
           SELECT id,id,1,1,primary_account_id,true,now() FROM core.sales_source_records`);
       });
       stage('seeded');
+      await beforeWork(); stage('web_ready');
       const scopeJson = json(result.scope), period = { start_date: '2023-07-01', end_date: '2024-06-30' };
       const first = await tx('READ COMMITTED', async client => {
         const subjects = createCustomCohortSubjectRepository(client, scopeJson), subjectRef = await subjects.capture();

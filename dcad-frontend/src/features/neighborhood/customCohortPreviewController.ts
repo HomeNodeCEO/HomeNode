@@ -15,6 +15,9 @@ export interface CustomCohortPreviewInput {
   readonly selection: { readonly revision: number; readonly pockets: readonly CustomCohortPocket[] };
 }
 export interface CustomCohortPreviewRequest extends CustomCohortPreviewInput { readonly include_map: boolean }
+/** A single response delivered with this session's opening catalog. It must
+ * pass the same response/fingerprint/map checks as a fresh preview request. */
+export interface CustomCohortInitialResponse { readonly input: CustomCohortPreviewInput; readonly value: unknown }
 type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 type RecordValue = Record<string, unknown>;
 interface ParcelFeature {
@@ -56,6 +59,7 @@ interface Options {
   /** Injectable for deterministic tests. Production uses Web Crypto SHA-256. */
   fingerprint?: (canonicalSelection: string) => Promise<string>;
   onChange?: (state: CustomCohortPreviewState) => void;
+  initialResponse?: CustomCohortInitialResponse | null;
 }
 const L = { pockets: 128, accounts: 50_000, memberships: 100_000, selectionBytes: 3_900_000,
   summaryBytes: 2_000_000, summaryNodes: 150_000, mapBytes: 24_001_024, mapNodes: 3_500_000,
@@ -263,6 +267,7 @@ export function createCustomCohortPreviewController(options: Options) {
   let generation = 0, timer: { handle: unknown } | null = null, abort: AbortController | null = null;
   let deadline: { handle: unknown } | null = null;
   let current: ReturnType<typeof prepare> | null = null, cached: AvailableMap | null = null;
+  let initialResponse = options.initialResponse ?? null;
   const publish = (next: CustomCohortPreviewState) => {
     state = freeze(next);
     // A rendering observer cannot corrupt request ownership by throwing.
@@ -290,7 +295,10 @@ export function createCustomCohortPreviewController(options: Options) {
       const hash = await (options.fingerprint ?? fingerprint)(prepared.selectionJson);
       if (!isCurrent()) return; ensure(HASH.test(hash));
       const includeMap = cached === null;
-      const response = await options.transport(freeze({ ...prepared.input, include_map: includeMap }), { signal: controller.signal });
+      const opening = initialResponse; initialResponse = null;
+      const response = opening && prepare(opening.input).key === prepared.key
+        ? opening.value
+        : await options.transport(freeze({ ...prepared.input, include_map: includeMap }), { signal: controller.signal });
       if (!isCurrent()) return;
       phase = 'invalid_response';
       const group = accept(response, prepared.input, hash, cached, includeMap);
@@ -309,13 +317,13 @@ export function createCustomCohortPreviewController(options: Options) {
     setSelection(value: CustomCohortPreviewInput | null): void {
       if (state.status === 'disposed') return;
       if (value === null) {
-        cancel(); current = null; cached = null;
+        cancel(); current = null; cached = null; initialResponse = null;
         publish({ status: 'idle', freshness: 'none', requested: null, group: null, error: null }); return;
       }
       let prepared: ReturnType<typeof prepare>;
       try { prepared = prepare(value); }
       catch {
-        cancel(); current = null; cached = null;
+        cancel(); current = null; cached = null; initialResponse = null;
         publish({ status: 'failed', freshness: 'none', requested: null, group: null, error: 'invalid_input' }); return;
       }
       // Identical renders, including after failure, never start implicit retries.
@@ -329,7 +337,7 @@ export function createCustomCohortPreviewController(options: Options) {
     },
     dispose(): void {
       if (state.status === 'disposed') return;
-      cancel(); current = null; cached = null;
+      cancel(); current = null; cached = null; initialResponse = null;
       publish({ status: 'disposed', freshness: 'none', requested: null, group: null, error: null });
     },
   });

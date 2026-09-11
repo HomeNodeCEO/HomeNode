@@ -48,6 +48,22 @@ test('cohort router requires actual display/inspection owner methods', () => {
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
 });
 
+test('opening catalog passes recorded IDs only and expands only its explicitly requested response envelope', async t => {
+  const normal = await start(t);
+  const ids = ['discovery:unassigned'];
+  assert.equal((await normal.request('catalog', { ...bodies.catalog, initial_preview_groups: ids })).status, 200);
+  assert.deepEqual(normal.calls[0].args[0].initialPreviewGroups, ids);
+  assert.equal(normal.calls[0].args[0].auth, auth);
+  assert.equal((await normal.request('catalog', { ...bodies.catalog, initial_preview_groups: ids, initial_preview: {} })).status, 400);
+  const sized = await start(t, { methods: { catalog: async () => ({ initial_preview: { synthetic: 'x'.repeat(4_100_000) } }) } });
+  assert.equal((await sized.request('catalog')).status, 422);
+  const response = await sized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] });
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal((await response.json()).initial_preview.synthetic.length, 4_100_000);
+  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(31_000_000) }) } });
+  assert.equal((await oversized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] })).status, 422);
+});
+
 test('only capture receives two minutes; ordinary cohort actions keep one minute', async t => {
   const { request, calls } = await start(t);
   for (const action of ['capture', 'preview', 'catalog', 'members']) {

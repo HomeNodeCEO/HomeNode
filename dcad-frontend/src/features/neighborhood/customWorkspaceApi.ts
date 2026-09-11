@@ -198,11 +198,12 @@ export function createCustomWorkspaceApi(options: Options) {
         return response;
       });
     },
-    catalog(input: CustomCohortPreviewInput, io: CustomWorkspaceOperationOptions) {
+    catalog(input: CustomCohortPreviewInput & { readonly initialPreviewGroups?: readonly string[] }, io: CustomWorkspaceOperationOptions) {
       return observationRead(io.signal, async () => {
         const bound = identity(input.accountId, input.assignmentFileId);
         return cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
-          context_ref: input.contextRef, selection: input.selection, include_recommendation: true }, io);
+          context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
+          ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }) }, io);
       });
     },
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {

@@ -1,6 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
 import { createCustomCapturePhaseTiming } from './customCapturePhaseTiming.js';
+import { prepareCustomCohortOpeningGroups, customCohortOpeningSelection,
+  CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
 import { decideAssignmentAccess } from '../../security/assignmentAccess.js';
@@ -747,15 +749,36 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       client => deriveCustomCohortRecordedProximity((sql, parameters) => client.query(sql, parameters),
         { context_ref: input.contextRef, retained_inputs: loaded.retained.retained_inputs },
         { deadline: budget.deadline, signal: budget.signal }));
-    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity)
-      : { preview, parcel_map: parcelMap };
     const privateCapture = loaded.retained.retained_inputs.private_sales?.capture;
-    const privateObservations = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
+    const privateFor = (selection, view) => {
+      const observations = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
       context_ref: input.contextRef, effective_date: loaded.context.effective_date,
       observation_period: loaded.retained.study.observation_period,
-      selection: { revision: input.selection.revision, account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))].sort() } }) : null;
-    const privatePresentation = privateObservations ? presentCustomCohortPrivateSalesObservations({ observations: privateObservations,
-      binding: customCohortPreviewBinding(preview, expected) }) : null;
+      selection: { revision: selection.revision, account_ids: [...new Set(selection.pockets.flatMap(pocket => pocket.account_ids))].sort() } }) : null;
+      return observations ? presentCustomCohortPrivateSalesObservations({ observations,
+        binding: customCohortPreviewBinding(view, expected) }) : null;
+    };
+    const envelope = content => ({ status: 'preview', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+      ...expected, subject_freshness: 'matched', ...content, apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+    // The optional opening projection shares ONLY this request's fully checked
+    // retained graph. Its map/private rows/statistics use one exact union. Both
+    // exposure grants and fresh material/assignment checks still gate delivery.
+    const presentOpening = async selection => {
+      const checked = previewInputOf({ ...input, selection }).selection;
+      if (checked.revision !== input.selection.revision) fail('invalid_selection');
+      const selected = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref: input.contextRef,
+        retained_inputs: loaded.retained.retained_inputs, selection: checked }, { check: budget.check });
+      const map = await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
+        selected_account_ids: [...new Set(checked.pockets.flatMap(p => p.account_ids))] }, { check: budget.check });
+      const privateSales = privateFor(checked, selected);
+      const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected }), parcel_map: map,
+        ...(privateSales ? { private_sales: privateSales } : {}) });
+      if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
+      return result;
+    };
+    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening)
+      : { preview, parcel_map: parcelMap };
+    const privatePresentation = privateFor(input.selection, preview);
     budget.check();
     return transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
@@ -768,10 +791,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (!same(permitted, loaded.decision)) fail('market_policy_changed');
       }
       await recheckPrivatePolicy(client, input, loaded, budget, [...new Set([exposure, ...additionalExposures, 'report_observation_summary'])]);
-      const response = { status: 'preview', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
-        ...expected, subject_freshness: 'matched', ...content,
-        ...(privatePresentation ? { private_sales: privatePresentation } : {}),
-        apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+      const response = envelope({ ...content, ...(privatePresentation ? { private_sales: privatePresentation } : {}) });
+      if (Object.hasOwn(content, 'initial_preview')) {
+        const { initial_preview: _opening, ...catalogOnly } = response;
+        if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) fail('catalog_transport_limit');
+      }
       if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
       return freeze(response);
     });
@@ -1185,16 +1209,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const requested = value && Object.hasOwn(value, 'includeRecommendation');
     const include = requested ? value.includeRecommendation : false;
     if (typeof include !== 'boolean') fail('invalid_input');
-    const input = requested ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'includeRecommendation')) : value;
+    const opening = value && Object.hasOwn(value, 'initialPreviewGroups');
+    const groups = opening ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups) : null;
+    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['includeRecommendation', 'initialPreviewGroups'].includes(key)));
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
-      additionalExposures: include ? ['report_observation_summary'] : [],
-      outputLimit: include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
-      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity) => {
+      additionalExposures: include || opening ? ['report_observation_summary'] : [],
+      outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening) => {
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: CUSTOM_COHORT_DENSE_CATALOG_VERSION }), preview, expected,
         });
         const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
         const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };
+        if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog, groups, expected.selection_revision));
         if (!include) return response;
         // Do not spend native work on an unresolved catalog or pretend current
         // parcel locations establish a retrospective housing population.

@@ -68,6 +68,11 @@ function groups(value, version) {
   }
   return result; // Preserve explicit [] and order; never deduplicate or truncate.
 }
+// Opening a saved dense workspace uses the identical recorded-ID admission as
+// its checkpoint, but is a read: no checkpoint or selection is persisted here.
+export function prepareCustomNeighborhoodRecordedGroupIds(value) {
+  return Object.freeze(groups(value, 5));
+}
 function discovery(value, version) {
   if (version === 3) closed(value, ['profile_id', 'radius_metres'], 'discovery');
   else {

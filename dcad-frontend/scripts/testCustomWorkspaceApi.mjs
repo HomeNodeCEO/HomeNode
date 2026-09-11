@@ -58,6 +58,16 @@ function fixture(reply = readResponse(), editor = () => KEY) {
 const invalidResponse = error => error.workspaceCode === 'invalid_response' && error.message === 'custom_workspace_invalid_response';
 const invalidTarget = error => error.workspaceCode === 'invalid_target';
 
+test('opening catalog forwards exact saved group IDs without an editor key or report write', async () => {
+  const response = { status: 'catalog', initial_preview: { status: 'preview' } }, f = fixture(response);
+  const input = { ...previewInput(), initialPreviewGroups: [] };
+  assert.deepEqual(await f.api.catalog(input, io()), response);
+  assert.equal(f.requests.length, 1); assert.equal(f.keys.length, 0);
+  assert.deepEqual(JSON.parse(f.requests[0].init.body), { assignment_file_id: input.assignmentFileId,
+    context_ref: input.contextRef, selection: input.selection, include_recommendation: true, initial_preview_groups: [] });
+  assert.equal(f.requests[0].init.cache, 'no-store');
+});
+
 test('member inspection uses the exact retained selection and cursor without obtaining an editor key', async () => {
   const f = fixture({ status: 'members' }), input = previewInput(), options = io();
   const population = { group: 'selected', kind: 'source_reported' }, page = { limit: 50, after_member_id: null };

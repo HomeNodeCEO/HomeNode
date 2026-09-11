@@ -9,6 +9,7 @@ import { setSection } from './fixtures/neighborhoodCustomMaterialInputsFixture.j
 const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [structuredClone(value)] : [] });
 const GRANT = { allowed: true, decision_id: 'fixture-license', policy_revision: 'fixture-license-v1' };
 const CATALOG = 'report_observation_catalog', SUMMARY = 'report_observation_summary';
+import { customCohortOpeningSelection } from '../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 // Real retained loader/context/subject/presenters over scoped DB query fixtures.
 // No native locking, PostgreSQL isolation or actual provider authorization claim.
@@ -187,4 +188,62 @@ test('invalid optional flag is rejected before checkout and cannot act as a call
   for (const flag of ['true', 1, null, {}, []]) await assert.rejects(service.catalog({ ...input, includeRecommendation: flag }), /invalid_input/);
   await assert.rejects(service.catalog({ ...input, includeRecommendation: true, source_grant: true }), /invalid_input/);
   assert.equal(state.connects, 0);
+});
+
+test('opening catalog/map/statistics equal independent views but read the retained graph only once', async () => {
+  const { service, input, state } = await setup({ effectiveDate: '2026-09-05' });
+  const catalog = await service.catalog(input);
+  const all = [...catalog.catalog.pockets.map(p => p.id),
+    ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
+  for (const ids of [all, all.slice(0, 1), []]) {
+    const selection = customCohortOpeningSelection(catalog.catalog, ids, input.selection.revision);
+    const ordinary = await service.present({ ...input, selection });
+    state.sourceReads = 0; state.policies.length = 0; state.calls.length = 0;
+    const opening = await service.catalog({ ...input, initialPreviewGroups: ids, includeRecommendation: true });
+    const reads = state.sourceReads;
+    assert.deepEqual(opening.initial_preview, ordinary);
+    const { initial_preview, ...catalogOnly } = opening;
+    assert.deepEqual(catalogOnly, catalog);
+    assert.deepEqual(state.policies.map(p => p.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
+    assert.equal(state.policies[1].sourceReads, 0);
+    assert.equal(state.calls.filter(sql => sql === 'BEGIN ISOLATION LEVEL READ COMMITTED').length, 2);
+    assert.ok(reads > 0);
+    state.sourceReads = 0; await service.catalog(input); await service.present({ ...input, selection });
+    assert.equal(state.sourceReads, reads * 2, 'two old reads reconstruct twice; the opening reconstructs once');
+    assert.equal(initial_preview.apply.status, 'blocked');
+  }
+});
+
+test('opening group IDs are bounded/copied before checkout, unknown IDs fail without default selection', async () => {
+  const { service, input, state } = await setup();
+  for (const ids of [null, {}, [null], ['not-a-group'], Array(2),
+    ['discovery:unassigned', 'discovery:unassigned'], Array(1026).fill('discovery:unassigned')]) {
+    await assert.rejects(service.catalog({ ...input, initialPreviewGroups: ids }), /invalid_input/);
+  }
+  assert.equal(state.connects, 0);
+  await assert.rejects(service.catalog({ ...input, initialPreviewGroups: [`recorded-cad:${'f'.repeat(64)}`] }), /invalid_selection/);
+  const value = { ...input, initialPreviewGroups: [] };
+  state.onPolicy = () => { value.initialPreviewGroups.push('must-not-be-read'); return { ...GRANT }; };
+  const opening = await service.catalog(value);
+  const ordinary = await service.present(input);
+  assert.deepEqual(opening.initial_preview, ordinary);
+});
+
+for (const deniedAt of [1, 2, 3, 4]) test(`opening denies exposure ${deniedAt} even without recommendation`, async () => {
+  const { service, input, state } = await setup();
+  state.onPolicy = n => n === deniedAt ? { allowed: false } : { ...GRANT };
+  await assert.rejects(service.catalog({ ...input, initialPreviewGroups: [] }), /market_data_access_denied/);
+  assert.equal(state.policies.length, deniedAt); assert.equal(state.sourceReads > 0, deniedAt > 2);
+});
+
+for (const type of ['material', 'assignment', 'policy']) test(`opening still refuses a final ${type} change`, async () => {
+  const { service, input, state, f } = await setup();
+  state.onCommit = count => {
+    if (count !== 1) return;
+    if (type === 'material') setSection(f.f.state.input, 1, '{"main_improvement":{"living_area_sqft":9999}}');
+    else if (type === 'assignment') state.assigned = '80000000-0000-4000-8000-000000000002';
+    else state.onPolicy = () => ({ ...GRANT, policy_revision: 'changed' });
+  };
+  await assert.rejects(service.catalog({ ...input, initialPreviewGroups: [] }),
+    type === 'material' ? /subject_changed/ : type === 'assignment' ? /assignment_access_denied/ : /market_policy_changed/);
 });

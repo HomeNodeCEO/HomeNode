@@ -1,12 +1,13 @@
 import { prepareCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, prepareCustomWorkspacePrivateSalesImport, readCustomWorkspaceCheckpoint, restoreCustomWorkspaceSelection, upgradeCustomWorkspaceCatalogCheckpoint,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
-import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds } from './customCohortPocketCatalog';
+import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups } from './customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
-import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
+import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortInitialResponse } from './customCohortPreviewController';
 
 export interface CustomWorkspaceTarget { readonly accountId: string; readonly assignmentFileId: string; readonly sessionKey: string }
 export interface CustomWorkspaceOperationOptions { readonly signal: AbortSignal; readonly deadline: number }
+export interface CustomWorkspaceCatalogInput extends CustomCohortPreviewInput { readonly initialPreviewGroups?: readonly string[] }
 type Recovery = 'reload' | 'resume_pending' | 'reopen' | null;
 export interface CustomWorkspaceLifecycleState {
   readonly target: CustomWorkspaceTarget;
@@ -15,6 +16,7 @@ export interface CustomWorkspaceLifecycleState {
   readonly phase: string | null; readonly section_revision: number | null;
   readonly checkpoint: CustomWorkspaceCheckpoint | null; readonly catalog: CheckedPocketCatalog | null;
   readonly selection: CustomCohortPreviewInput['selection'] | null;
+  readonly initial_preview: CustomCohortInitialResponse | null;
   readonly error: string | null; readonly recovery: Recovery;
 }
 interface Options {
@@ -24,7 +26,7 @@ interface Options {
   capture: (input: { target: CustomWorkspaceTarget; operationId: string; observationPeriod: CustomWorkspaceObservationPeriod;
     privateSalesImport?: CustomWorkspacePrivateSalesImport; discovery?: CustomWorkspaceDiscovery },
     options: CustomWorkspaceOperationOptions) => Promise<unknown>;
-  catalog: (input: CustomCohortPreviewInput, options: CustomWorkspaceOperationOptions) => Promise<unknown>;
+  catalog: (input: CustomWorkspaceCatalogInput, options: CustomWorkspaceOperationOptions) => Promise<unknown>;
   onChange: (state: CustomWorkspaceLifecycleState) => void;
   operationId?: () => string; now?: () => number; timeoutMs?: number;
   timer?: { set: (callback: () => void, ms: number) => unknown; clear: (handle: unknown) => void };
@@ -63,7 +65,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
   let attemptedPrivateContext: CustomCohortContextRef | null = null;
   let attemptedClear: { expectedRevision: number; value: CustomWorkspaceCheckpoint } | null = null;
   let state: CustomWorkspaceLifecycleState = Object.freeze({ target, status: 'idle', phase: null, operation_pending: false,
-    section_revision: 0, checkpoint: null, catalog: null, selection: null, error: null, recovery: null });
+    section_revision: 0, checkpoint: null, catalog: null, selection: null, initial_preview: null, error: null, recovery: null });
   function emit(patch: Partial<CustomWorkspaceLifecycleState>) {
     if (disposed) return;
     state = Object.freeze({ ...state, ...patch });
@@ -72,12 +74,12 @@ export function createCustomWorkspaceLifecycle(options: Options) {
   function adopt(section: unknown) {
     const parsed = readCustomWorkspaceCheckpoint(section);
     if (parsed.status === 'invalid') {
-      emit({ status: 'invalid', section_revision: null, checkpoint: null, catalog: null, selection: null,
+      emit({ status: 'invalid', section_revision: null, checkpoint: null, catalog: null, selection: null, initial_preview: null,
         error: 'invalid_checkpoint', recovery: 'reload' }); return false;
     }
     const checkpoint = parsed.checkpoint;
     emit({ status: checkpoint?.pending_capture ? 'pending' : 'idle', section_revision: parsed.section_revision,
-      checkpoint, catalog: null, selection: null, error: null, recovery: null });
+      checkpoint, catalog: null, selection: null, initial_preview: null, error: null, recovery: null });
     return true;
   }
   adopt(options.initialSection);
@@ -109,6 +111,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     catch (error) {
       emit({ status: staged ? 'error' : before.status, phase: null, catalog: staged ? null : before.catalog,
         selection: staged ? null : before.selection, recovery: staged ? recovery : before.recovery,
+        initial_preview: staged ? null : before.initial_preview,
         error: error instanceof Error && 'workspaceCode' in error ? String(error.workspaceCode) : 'operation_failed' });
       throw error instanceof Error && 'workspaceCode' in error ? error : fault('operation_failed');
     } finally { timer.clear(handle); if (abort === owner) abort = null; busy = false; emit({ operation_pending: unsettled > 0 }); }
@@ -126,29 +129,46 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(saved.status === 'restored' && saved.section_revision === expected + 1 && same(saved.checkpoint, checked), 'save_ack_mismatch');
     emit({ checkpoint: saved.checkpoint, section_revision: saved.section_revision });
   }
-  async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO, discovery?: CustomWorkspaceDiscovery) {
+  async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO, discovery?: CustomWorkspaceDiscovery,
+    initialPreviewGroups?: readonly string[]) {
     const input: CustomCohortPreviewInput = Object.freeze({ accountId: target.accountId, assignmentFileId: target.assignmentFileId,
       contextRef: ref, selection: Object.freeze({ revision, pockets: Object.freeze([]) }) });
-    const catalog = checkCustomCohortPocketCatalog(await io(signal => options.catalog(input, signal)), input);
+    const response = object(await io(signal => options.catalog({ ...input,
+      ...(initialPreviewGroups === undefined ? {} : { initialPreviewGroups: Object.freeze([...initialPreviewGroups]) }) }, signal)));
+    const catalog = checkCustomCohortPocketCatalog(response, input);
     requireThat(same(catalog.discovery, discovery?.profile_id === 'custom-city-polygon-v1' ? discovery : undefined), 'catalog_discovery_mismatch');
-    return catalog;
+    let initialPreview: CustomCohortInitialResponse | null = null;
+    if (initialPreviewGroups !== undefined) {
+      // Full summary/map admission remains with the preview controller. Never
+      // silently fall back to all groups, or ignore a missing opening response.
+      requireThat(Object.hasOwn(response, 'initial_preview'), 'opening_preview_missing');
+      initialPreview = Object.freeze({ input: Object.freeze({ ...input,
+        selection: selectionFromRecordedGroups(catalog, initialPreviewGroups, revision) }), value: object(response.initial_preview) });
+    }
+    return { catalog, initialPreview };
   }
-  function ready(catalog: CheckedPocketCatalog) {
+  function ready(catalog: CheckedPocketCatalog, initialPreview?: CustomCohortInitialResponse | null) {
     const restored = restoreCustomWorkspaceSelection({ value: state.checkpoint, revision: state.section_revision }, catalog);
     requireThat(restored.status === 'restored', 'selection_restore_failed');
-    emit({ status: 'ready', phase: null, catalog, selection: restored.selection, error: null, recovery: null });
+    requireThat(!initialPreview || same(initialPreview.input.selection, restored.selection), 'opening_selection_mismatch');
+    emit({ status: 'ready', phase: null, catalog, selection: restored.selection,
+      initial_preview: initialPreview === undefined ? state.initial_preview : initialPreview, error: null, recovery: null });
   }
   async function reopen(io: IO, stage: Stage) {
     const active = state.checkpoint?.active;
     if (!active) { emit({ status: state.checkpoint?.pending_capture ? 'pending' : 'idle', phase: null, error: null, recovery: null }); return; }
     stage('loading_active_catalog', 'reopen');
-    const catalog = await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery);
+    // Older checkpoints need a catalog migration/save acknowledgment first.
+    // Dense v5 checkpoints already name the exact saved groups and can open the
+    // catalog, map and statistics with one authorized retained-graph read.
+    const { catalog, initialPreview } = await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery,
+      state.checkpoint?.workspace_version === 5 ? active.selection.included_recorded_group_ids : undefined);
     const upgraded = upgradeCustomWorkspaceCatalogCheckpoint({ value: state.checkpoint, revision: state.section_revision }, catalog);
     if (upgraded) {
       stage('upgrading_catalog_checkpoint', 'reload');
       await persist(upgraded, io);
     }
-    ready(catalog);
+    ready(catalog, initialPreview);
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
     const privateInput = pending.private_sales_import, discovery = pending.discovery, version = versionFor(discovery, privateInput);
@@ -177,7 +197,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
-    const catalog = await loadCatalog(draft.active.context_ref, 1, io, discovery);
+    const { catalog } = await loadCatalog(draft.active.context_ref, 1, io, discovery);
     if (privateInput) {
       requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
         && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision
@@ -186,7 +206,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     } else requireThat(!catalog.private_sales, 'catalog_private_sales_mismatch');
     const value = prepareCustomWorkspaceCheckpoint({ ...draft, workspace_version: catalog.catalog_version === 2 ? 5 : draft.workspace_version, active: { ...draft.active,
       selection: { revision: 1, included_recorded_group_ids: customCohortCatalogGroupIds(catalog) } } });
-    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog);
+    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog, null);
   }
   return Object.freeze({
     getState: () => state,
@@ -263,6 +283,6 @@ export function createCustomWorkspaceLifecycle(options: Options) {
         emit({ status: 'error', recovery: 'resume_pending', error: 'pending_save_unconfirmed' });
       }
     }, true),
-    dispose() { if (disposed) return; disposed = true; abort?.abort(); state = Object.freeze({ ...state, status: 'disposed', phase: null, catalog: null, selection: null }); },
+    dispose() { if (disposed) return; disposed = true; abort?.abort(); state = Object.freeze({ ...state, status: 'disposed', phase: null, catalog: null, selection: null, initial_preview: null }); },
   });
 }

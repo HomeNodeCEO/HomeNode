@@ -1,5 +1,6 @@
 import express from 'express';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -70,7 +71,12 @@ function publicFailure(error) {
     || (error instanceof TypeError && /^(custom_cohort_observation_preview_|invalid_neighborhood_assessment:)/.test(error.message))) {
     return [400, { error: 'invalid_neighborhood_request' }];
   }
-  if (UNAVAILABLE_ERRORS.has(reason)) return [422, { error: 'neighborhood_source_unavailable' }];
+  if (UNAVAILABLE_ERRORS.has(reason)) {
+    const diagnostic = customCaptureDiagnostic(error);
+    if (diagnostic?.category === 'capacity') return [422, { error: 'neighborhood_capture_capacity_exceeded' }];
+    if (diagnostic?.category === 'interrupted') return [503, { error: 'neighborhood_request_interrupted' }];
+    return [422, { error: 'neighborhood_source_unavailable' }];
+  }
   if (['cancelled', 'deadline_exceeded', 'connection_timeout', 'policy_timeout'].includes(reason)) {
     return [503, { error: 'neighborhood_request_interrupted' }];
   }
@@ -83,7 +89,7 @@ function publicFailure(error) {
  * The owner resolves and rechecks the exact organization/assignment in the DB.
  * Never supply its internal raw `.preview` method as `.present` here.
  */
-export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
+export function createCustomNeighborhoodCohortRouter({ cohortService, logger = console } = {}) {
   if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
   }
@@ -125,6 +131,12 @@ export function createCustomNeighborhoodCohortRouter({ cohortService } = {}) {
         }
         if (!controller.signal.aborted && !res.destroyed) return res.json(result);
       } catch (error) {
+        if (action === 'capture') {
+          const diagnostic = customCaptureDiagnostic(error);
+          if (diagnostic) {
+            try { logger?.warn?.('[neighborhood] capture refused', diagnostic); } catch { /* logging cannot change recovery */ }
+          }
+        }
         if (!controller.signal.aborted && !res.destroyed) {
           const [status, payload] = publicFailure(error);
           return res.status(status).json(payload);

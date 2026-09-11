@@ -367,6 +367,7 @@ for (const [status, errorCode, guidance] of [
   [503, 'custom_neighborhood_workspace_disabled', 'disabled in this environment'],
   [404, 'neighborhood_context_unavailable', 'saved capture target is unavailable'],
   [422, 'neighborhood_source_unavailable', 'source data is unavailable or exceeds capture limits'],
+  [422, 'neighborhood_capture_capacity_exceeded', 'complete study exceeds the current processing capacity'],
   [422, 'neighborhood_private_source_review_required', 'source-use review completed'],
   [422, 'neighborhood_private_source_limit', 'private-sales source exceeds the capture limits'],
   [409, 'neighborhood_private_review_changed', 'private-sales review changed'],

@@ -35,6 +35,7 @@ const REFUSALS = [
   [503, 'custom_neighborhood_workspace_disabled', 'capture_disabled'],
   [404, 'neighborhood_context_unavailable', 'capture_context_unavailable'],
   [422, 'neighborhood_source_unavailable', 'capture_source_unavailable'],
+  [422, 'neighborhood_capture_capacity_exceeded', 'capture_capacity_exceeded'],
   [422, 'neighborhood_private_source_review_required', 'capture_private_source_review_required'],
   [422, 'neighborhood_private_source_limit', 'capture_private_source_limit'],
   [409, 'neighborhood_private_review_changed', 'capture_private_review_changed'],

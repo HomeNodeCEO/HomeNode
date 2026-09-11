@@ -214,5 +214,36 @@ the process-wide limit. A deadline never authorizes partial persistence or an
 automatic retry: explicit recovery keeps the saved operation UUID. These bounds
 enable measured larger captures; they do not promise instant initial acquisition.
 
+### Bounded immutable retention
+
+On the 2 GB/1 CPU service, the resumed three-mile capture reached its final
+immutable evidence retention but exhausted the 119-second effective deadline.
+A read-only database-activity observer confirmed spatial discovery, source
+acquisition and preparation had finished before the blob inserts. No partially
+registered context or report Apply was accepted. This is not a successful live
+large-study acceptance result.
+
+Retention now reuses the original in-process representation-validation receipt,
+rechecking exact UTF-8 length and SHA-256 against each immutable string. Receipts
+are frozen object identities in a WeakSet, not serialized authority or source
+provenance. Copied or forged references fail before SQL. Batches contain at most
+eight blobs and 2 MB of encoded text, never an extra encoded copy of the entire
+study. Each parameterized insert and conflict read remains organization-scoped;
+every returned hash, byte count and exact string must match, independent of row
+order. Missing, duplicate, unknown or corrupt acknowledgments fail the caller's
+transaction. Independent reads still fully scan, parse and validate the bytes.
+All original access, freshness, complete-membership and commit checks remain.
+
+A local representation-only benchmark over 91,350,750 synthetic bytes reduced
+duplicate validation from 2,192 ms to 75 ms using prepared receipts; this excludes
+real SQL and is not an end-to-end production speed claim. Native full-web tests
+retained/reopened all 38,347 synthetic parcels and 38,106 accounts, with a complete
+1,030-transaction preview. Capture/prepare/retention completed in 42.3 seconds
+and the preview in 32.9 seconds; peak RSS was about 356/412 MiB. Concurrent
+ordinary health/readiness requests had zero failures. These runs were not an
+uncontended before/after throughput comparison. The unchanged live deadline,
+resource guards, existing operation UUID recovery and fresh-reopen acceptance
+must still be verified against the real source distribution after deployment.
+
 No historical characteristics, provider coverage, MLS rights, eligibility or
 statistical validity are established by increasing processing capacity.

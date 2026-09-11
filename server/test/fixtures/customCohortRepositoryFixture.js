@@ -54,6 +54,20 @@ export function customCohortRepositoryFixture({ assignmentFileId, effectiveDate 
       case 'section-fence': value = { locked_section_count: '3' }; break;
       case 'sections': value = { original_json: JSON.stringify(state.input.sections) }; break;
       case 'history-target': value = { id: t.report_file_id }; break;
+      case 'insert-batch': {
+        const [org, hashes, bytes, texts] = params, stored = [];
+        for (let i = 0; i < hashes.length; i++) {
+          const key = `${org}:${hashes[i]}`;
+          if (state.db.has(key)) continue;
+          const item = { content_sha256: hashes[i], canonical_utf8_bytes: String(bytes[i]), canonical_utf8: texts[i] };
+          state.db.set(key, item); stored.push(item);
+        }
+        return { rowCount: stored.length, rows: stored };
+      }
+      case 'read-batch': {
+        const values = params[1].map(hash => state.db.get(`${params[0]}:${hash}`)).filter(Boolean);
+        return { rowCount: values.length, rows: values };
+      }
       case 'insert': {
         const [org, hash, bytes, text] = params, key = `${org}:${hash}`;
         if (state.db.has(key)) return absent();

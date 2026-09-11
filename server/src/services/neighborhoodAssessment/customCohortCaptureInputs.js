@@ -4,7 +4,7 @@ import { mapWitnessParcelRow, mapWitnessAccountRow, mapWitnessSaleRow, mapWitnes
 import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
-  createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
+  createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortSelectionRepository } from './customCohortSelectionRepository.js';
 import { prepareCustomCohortContextScope } from './customCohortContextContract.js';
@@ -426,9 +426,21 @@ export async function persistCustomCohortCaptureInputs(client, scopeJson, prepar
   check(await transaction(client) === started, 'caller_transaction_required');
   const retained = await createCustomCohortSelectionRepository(client, scopeJson).retain(p.subjectRef, p.queryJson);
   check(same(retained, p.queryRef));
+  // Bound each encoded batch, not the study membership. All entries still pass
+  // exact original-validation receipt, hash, byte and database ACK checks.
+  let batch = [], batchBytes = 0;
+  const flush = async () => {
+    if (!batch.length) return;
+    check(same(await store.putPreparedBatch(batch), batch.map(entry => entry.reference)));
+    batch = []; batchBytes = 0;
+  };
   for (const entry of p.pending.values()) if (!p.existing.has(entry.ref.content_sha256)) {
-    check(same(await store.put(entryText(entry)), entry.ref));
+    const bytes = Number(entry.ref.canonical_utf8_bytes);
+    if (batch.length === NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records
+      || batchBytes + bytes > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) await flush();
+    batch.push({ reference: entry.ref, canonicalJson: entryText(entry) }); batchBytes += bytes;
   }
+  await flush();
   check(await transaction(client) === started, 'caller_transaction_required');
   return prepared.refs;
 }

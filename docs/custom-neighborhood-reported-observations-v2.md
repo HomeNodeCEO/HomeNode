@@ -41,6 +41,44 @@ Separate proposal operations also have separate server-authored evidence binding
 
 ## Activation and verification
 
+### Dense retained contexts
+
+The report consumer uses the same indexed observation engine and owner-admitted
+mapping-v4 record allowance as capture/catalog/preview. Mapping-v2/v3 retain
+their original 100,000-record limit; this is not a client-selectable limit.
+Per-chunk, account-link, output-byte and publication budgets remain independent.
+An oversized result is refused as a whole, never trimmed to a convenient sample.
+
+For mapping-v4, each CAD publication member stores a versioned
+`retained_account_observation_reference` instead of duplicating the entire
+already-retained preview row. It includes the SHA-256 of that **full** row and
+the exact state/value cells used for living area, site area and year built.
+Calendar age is derived from that year using the appraisal effective year.
+The population source binds the context reference, selected account-set digest,
+selection revision, derivation and source snapshot hashes. The representation
+is explicitly `retained-account-observation-reference-v1`.
+
+To audit a compact member, reopen its authorized, hash-verified retained context,
+rebuild the indexed observation row for its account and compare the full row
+digest and the three exact cells. Raw conflicting values, parcel identities,
+unused observations and original source routing remain bound by that digest;
+they have not been deleted or replaced by a new fact. The shared-sale members
+retain their existing full source-record evidence. Mapping-v2/v3 publication
+bytes and all calculation/temporal semantics are unchanged.
+
+The server yields between report-preparation phases with deadline/cancellation
+checks. Retained input descendants are sealed before the first yield, and fresh
+revision/rights checks still precede the publication transaction. Preparation
+is not held inside a database transaction. This reduces event-loop starvation;
+it is not a guarantee of instantaneous processing or a separate worker process.
+
+The opt-in native dense fixture checks 38,106 accounts, 887 recorded groups and
+more than 100,000 retained records under a 384 MiB V8 heap, with the real loopback
+web host serving concurrent health requests. It verifies every compact account
+reference and the complete publication roster. This preparation test performs
+no report writes; native coordinator Apply/reopen tests and live QA acceptance
+remain separate release checks.
+
 This change does **not** enable the existing frontend feature flag or install organization grants. Existing shared/private observation rights are still required, plus an explicit `custom_neighborhood_report_observation_rights` grant for retaining/exporting this Custom report group. The report grant is default-deny and cannot be inferred from an upload review checkbox or an unrelated MLS subscription.
 
 Before activation, run the canonical migration sequence and native publication/Apply/reopen tests, frontend production build and regression suites, then test the actual application with authorized source grants. Synthetic local tests are not evidence of successful production activation or provider permission.

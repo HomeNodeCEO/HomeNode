@@ -41,3 +41,21 @@ test('coordinator and context failures retain only fixed checks, including plain
   assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new TypeError('custom_cohort_invalid_selection'), {
     reason: 'invalid_selection' })), { action: 'catalog', family: 'validator', check: 'invalid_selection' });
 });
+
+test('report proposal failures use closed diagnostics without exposing source data or changing Apply logging', () => {
+  for (const [message, family, check] of [
+    ['custom_cohort_reported_shared_sales_record_limit', 'reported_sales', 'record_limit'],
+    ['custom_cohort_reported_assessment_catalog_incomplete', 'reported_assessment', 'catalog_incomplete'],
+    ['custom_cohort_reported_assessment_PRIVATE SQL address', 'reported_assessment', 'unclassified'],
+  ]) {
+    const error = new TypeError(message);
+    assert.deepEqual(customCohortReadDiagnostic('reported-proposal', error), { action: 'reported-proposal', family, check });
+    assert.equal(customCohortReadDiagnostic('reported-apply', error), null);
+  }
+  const oversized = Object.assign(new Error('PRIVATE source detail'), { code: 'neighborhood_publication_bytes' });
+  assert.deepEqual(customCohortReadDiagnostic('reported-proposal', oversized),
+    { action: 'reported-proposal', family: 'publication', check: 'publication_bytes' });
+  assert.equal(customCohortReadDiagnostic('reported-apply', oversized), null);
+  assert.equal(customCohortReadDiagnostic('reported-proposal', Object.assign(new Error('PRIVATE'),
+    { code: 'neighborhood_PRIVATE' })), null);
+});

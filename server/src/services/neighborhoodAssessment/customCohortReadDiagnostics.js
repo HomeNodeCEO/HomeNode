@@ -16,14 +16,21 @@ const CHECKS = new Set([
   'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import',
   'invalid_reported_input', 'invalid_discovery', 'invalid_identity', 'invalid_reference',
   'invalid_version', 'invalid_workflow', 'input_limit',
+  'record_limit', 'route_record_limit', 'catalog_incomplete', 'metric_denominator',
 ]);
 const FAMILIES = [
   ['custom_cohort_observation_preview_', 'observations'],
   ['custom_cohort_preview_presentation_', 'presentation'],
   ['invalid_neighborhood_assessment:', 'contract'],
+  ['custom_cohort_reported_shared_sales_', 'reported_sales'],
+  ['custom_cohort_reported_assessment_', 'reported_assessment'],
 ];
 export function customCohortReadDiagnostic(action, error) {
-  if (!['catalog', 'preview', 'members'].includes(action) || !(error instanceof Error)) return null;
+  if (!['catalog', 'preview', 'members', 'reported-proposal'].includes(action) || !(error instanceof Error)) return null;
+  if (action === 'reported-proposal' && ['neighborhood_publication_bytes', 'neighborhood_publication_storage_bytes',
+    'neighborhood_member_row_bytes', 'neighborhood_member_row_storage_bytes'].includes(error.code)) {
+    return { action, family: 'publication', check: error.code.slice('neighborhood_'.length) };
+  }
   if (error.code === 'CUSTOM_COHORT_CAPTURE_FAILED' && CHECKS.has(error.reason)) {
     return { action, family: 'coordinator', check: error.reason };
   }

@@ -41,7 +41,7 @@ import { createCustomCohortReviewRepository } from './customCohortReviewReposito
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
-import { buildCustomCohortReportedAssessment } from './customCohortReportedAssessment.js';
+import { buildCustomCohortReportedAssessmentBatched } from './customCohortReportedAssessment.js';
 import { createNeighborhoodAssessmentRepositoryInTransaction } from './assessmentRepository.js';
 import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
 import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply,
@@ -1005,12 +1005,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       effective_date: loaded.retained.context.effective_date, data_cutoff: loaded.retained.context.effective_date };
     const identity = { assessment_id: randomUUID(), assessment_revision: 1, attachment_id: randomUUID(), attachment_revision: 1 };
     budget.check();
-    const prepared = buildCustomCohortReportedAssessment({ context_ref: input.contextRef,
+    const prepared = await buildCustomCohortReportedAssessmentBatched({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
       catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint),
       preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,
       proposal_binding: { operation_id: input.operationId, actor_user_id: input.auth.userId,
-        expected_editor_revision: input.expectedEditorRevision } });
+        expected_editor_revision: input.expectedEditorRevision } }, { check: budget.check });
     // Rehearse the exact public shape before any publication writes. The final
     // published identity is checked again after its actual revision is assigned.
     if (prepared.status === 'ready') proposalResponse(input, loaded, prepared.candidate, prepared.assessment);

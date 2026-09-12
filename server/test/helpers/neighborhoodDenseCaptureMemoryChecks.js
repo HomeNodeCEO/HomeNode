@@ -27,9 +27,10 @@ import { deriveCustomCohortRecordedProximity } from '../../src/services/neighbor
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
-export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {} }) {
+export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {}, currentEffectiveDate = false }) {
   const target = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
-  assert.ok(['capture', 'reopen', 'preview', 'opening', 'recommendation'].includes(phase));
+  assert.ok(['capture', 'reopen', 'preview', 'opening', 'recommendation', 'reported'].includes(phase));
+  assert.equal(typeof currentEffectiveDate, 'boolean');
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 2, connectionTimeoutMillis: 3000,
     statement_timeout: 5000, application_name: 'synthetic_dense_capture_memory' });
   const stages = [], started = performance.now(), delay = monitorEventLoopDelay({ resolution: 10 });
@@ -57,6 +58,12 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
       const opened = await tx('REPEATABLE READ READ ONLY', client => loadCustomCohortCaptureInputs(client, json(retained.scope), retained.refs));
       assert.deepEqual(opened.summary, retained.summary); assert.deepEqual(opened.refs, retained.refs);
       stage('reopened'); result = { summary: opened.summary };
+      if (phase === 'reported') {
+        const { checkDenseReportedPreparation } = await import('./customCohortDenseReportedChecks.js');
+        result.reported = await checkDenseReportedPreparation({ retained: opened.retained_inputs,
+          query: (text, values) => pool.query(text, values) });
+        stage('reported_preparation');
+      }
       if (phase === 'preview' || phase === 'opening' || phase === 'recommendation') {
         const context_ref = { context_id: randomUUID(), context_revision: '1', context_sha256: 'a'.repeat(64) };
         const account_ids = opened.retained_inputs.spatial.account_ids;
@@ -121,6 +128,11 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
       await pool.query(NEIGHBORHOOD_CACHED_SOURCE_SCHEMA); // Refuses an existing GIS schema.
       const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshotId = randomUUID(), reportId = randomUUID(), run = randomUUID(), operation = randomUUID();
       const account = 'DENSE-000000', parcelCount = 38_347, accountCount = 38_106;
+      // Opt-in report tests create a NEW source capture at today's database
+      // date. Never relabel an older retained subject to pass the stock gate.
+      const effectiveDate = currentEffectiveDate
+        ? (await pool.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD') AS value")).rows[0].value
+        : '2024-06-30';
       // Ten-edge native-valid rings with realistic coordinate precision: the
       // old five-point rectangles under-tested dense retained map size.
       const ring = Array.from({ length: 10 }, (_, i) => {
@@ -134,12 +146,12 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         await client.query(`INSERT INTO core.accounts(account_id,county,address,city,subdivision)
           SELECT 'DENSE-'||lpad(n::text,6,'0'),'Dallas','Synthetic address '||n,'Synthetic','Synthetic Plat '||(n%887)
           FROM generate_series(0,$1::int-1) n`, [accountCount]);
-        await client.query("INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,'2024-06-30')", [caseId, org, account]);
+        await client.query('INSERT INTO app.appraisal_cases(id,organization_id,account_id,effective_date) VALUES($1,$2,$3,$4)', [caseId, org, account, effectiveDate]);
         const location = { account_id: account, latitude: 32.8, longitude: -96.7, source: 'dcad_parcel_query', precision: 'parcel_centroid',
           status: 'matched', confidence: 'high', review_required: false, review_reason: null, match_method: 'parcel_id', source_parcel_id: account,
           feature_count: 1, metadata: { address_agreement: true }, geocoded_at: '2020-01-01T00:00:00.000Z', source_updated_at: null };
         await client.query(`INSERT INTO app.appraisal_subject_snapshots(id,appraisal_case_id,snapshot_version,effective_date,subject_data)
-          VALUES($1,$2,1,'2024-06-30',$3::jsonb)`, [snapshotId, caseId, JSON.stringify({ custom_property_snapshot: {
+          VALUES($1,$2,1,$3,$4::jsonb)`, [snapshotId, caseId, effectiveDate, JSON.stringify({ custom_property_snapshot: {
           account: { account_id: account }, improvement: { living_area_sqft: 2000 }, location } })]);
         const assignment = (await client.query(`INSERT INTO app.assignment_files(organization_id,account_id,file_number,created_by_user_id,assigned_appraiser_user_id)
           VALUES($1,$2,$3,$4,$4) RETURNING id::text`, [org, account, `DENSE-${operation}`, actor])).rows[0].id;
@@ -176,7 +188,7 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         return { subject, subjectRef, point, study, intent: { body, reference: await createNeighborhoodCohortBlobRepository(client, org).put(json(body)) } };
       });
       const context = { target: { report_file_id: reportId, workflow_type: 'custom_appraisal', workflow_target_id: result.scope.assignment_file_id },
-        scope: { organization_id: org, appraisal_case_id: caseId, subject_snapshot_id: snapshotId, account_id: account }, effective_date: '2024-06-30' };
+        scope: { organization_id: org, appraisal_case_id: caseId, subject_snapshot_id: snapshotId, account_id: account }, effective_date: effectiveDate };
       const read = await tx('REPEATABLE READ READ ONLY', async client => {
         const startedAt = await time(client), spatial = await captureNeighborhoodSpatialMembershipStream(client, first.point.geometry_input);
         assert.equal(spatial.status, 'captured', spatial.reason); assert.equal(spatial.parcels.length, parcelCount); assert.equal(spatial.account_ids.length, accountCount);

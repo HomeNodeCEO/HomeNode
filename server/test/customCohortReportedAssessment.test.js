@@ -1,10 +1,63 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { buildCustomCohortReportedAssessment as build } from '../src/services/neighborhoodAssessment/customCohortReportedAssessment.js';
+import { buildCustomCohortReportedAssessment as build,
+  buildCustomCohortReportedAssessmentBatched as buildBatched } from '../src/services/neighborhoodAssessment/customCohortReportedAssessment.js';
 import { customCohortReportedAssessmentFixture as fixture } from './fixtures/customCohortReportedAssessmentFixture.js';
 import { neighborhoodMemberSetDigest } from '../src/services/neighborhoodAssessment/assessmentRepository.js';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from '../src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js';
 import { prepareCustomCohortAssessmentPreparation } from '../src/services/neighborhoodAssessment/customCohortAssessmentPreparation.js';
+import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
+
+test('dense capacity integration preserves the prior exact small-report publication digests', async () => {
+  // Recorded from the implementation before the dense-consumer change.
+  for (const [options, expected] of [
+    [{}, '49116493fa700f79d8d9370331ebe4b06db7b533c02654a01b19a5e9086b33cc'],
+    [{ emptySelection: true }, 'a21d8409321d57fcafcdf91cde5c218f0c16a123dca123f65b5abad0f44896df'],
+    [{ privateRows: [{ ClosePrice: '123456.789' }] }, '0527067c558f600ac2c3445e24c50cc691468862e49f7a4c1523dc8756aab726'],
+  ]) {
+    const { input } = await fixture(options);
+    assert.equal(assessmentEvidenceDigest(build(input)), expected);
+    assert.equal(assessmentEvidenceDigest(await buildBatched(input)), expected);
+  }
+});
+
+test('cooperative report preparation yields and seals nested input before its first suspension', async () => {
+  const { input } = await fixture(), expected = build(input), mutable = structuredClone(input);
+  // Native-completed geography is an opaque, process-local admission capability.
+  // Clone the data, not that capability, which correctly rejects a counterfeit.
+  mutable.report_geography = input.report_geography;
+  Object.freeze(mutable); // An outer freeze must not leave mutable descendants across awaits.
+  const pending = buildBatched(mutable);
+  assert.ok(Object.isFrozen(mutable.selection.included_recorded_group_ids));
+  assert.ok(Object.isFrozen(mutable.retained_inputs.subject.target));
+  assert.throws(() => { mutable.target.effective_date = '2000-01-01'; }, TypeError);
+  assert.throws(() => mutable.selection.included_recorded_group_ids.pop(), TypeError);
+  let serviced = false;
+  setImmediate(() => { serviced = true; });
+  assert.deepEqual(await pending, expected);
+  assert.equal(serviced, true, 'ordinary event-loop work proceeds before report completion');
+});
+
+test('cooperative preparation checks cancellation initially and between every preparation stage', async () => {
+  const { input } = await fixture(), cancelled = new Error('synthetic cancellation');
+  let calls = 0;
+  await buildBatched(input, { check() { calls++; } });
+  assert.ok(calls > 10);
+  for (let stop = 1; stop <= calls; stop++) {
+    let visited = 0;
+    await assert.rejects(buildBatched(input, { check() { if (++visited === stop) throw cancelled; } }),
+      error => error === cancelled);
+    assert.equal(visited, stop);
+  }
+});
+
+test('cooperative and synchronous preparation preserve historical and invalid-selection refusals', async () => {
+  const historical = (await fixture({ effectiveDate: '2024-07-01' })).input;
+  assert.deepEqual(await buildBatched(historical), build(historical));
+  const { input } = await fixture();
+  await assert.rejects(buildBatched({ ...input, selection: { revision: 1,
+    included_recorded_group_ids: ['made-up-pocket'] } }), /selection_membership/);
+});
 
 test('actual retained CAD graph and explicit saved manual geometry produce one v2 report candidate', async () => {
   const { input } = await fixture(), result = build(input);

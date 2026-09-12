@@ -59,10 +59,27 @@ JSON document that would incorrectly apply a one-blob limit to many blobs.
 `persistCustomCohortCaptureInputs(client, scopeJson, prepared)` requires the exact
 original prepared object. Before INSERT, it verifies existing subject/intent
 bytes and the subject repository's real original-dependency checks. It calls the
-existing selection repository's `retain` and immutable blob repository's `put`;
+existing selection repository's `retain` and immutable blob repository's bounded
+`putPreparedBatch`;
 the returned value is exactly the four references above. Owner-controlled actual
 transaction identity is checked before writes and at completion. Errors propagate
 for owner rollback; returned references are not a durable-success receipt.
+
+Selection retention preflights every query original and header, then reuses those
+representation receipts in batches of at most eight blobs / two MB. Database
+acknowledgements still check exact canonical bytes, hashes and lengths; conflicts
+are read and compared, not treated as success without verification. After this
+same-transaction retention succeeds, the parent does not write the acknowledged
+query originals a second time. Its private prepared hash set is not reusable
+authorization, a cross-request cache, or permission to skip a later replay's reads.
+
+The deterministic 38,106-account storage fixture compares the old sequential
+path with batching and verifies identical complete stored maps and headers:
+43 insert calls become six; replay's 43 inserts plus 43 conflict reads become
+six inserts plus six reads. Including unchanged subject/transaction checks,
+retain uses 14 rather than 51 calls fresh, and 20 rather than 94 on replay.
+These are measured query counts, not a production latency promise. Parent
+duplicate-write elimination is additionally checked for fresh and repeated calls.
 
 `loadCustomCohortCaptureInputs(client, scopeJson, refs)` follows the complete
 bounded graph, reopens original subject/query inputs using the existing

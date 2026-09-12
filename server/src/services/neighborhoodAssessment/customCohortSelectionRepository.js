@@ -2,7 +2,7 @@ import { canonicalAssessmentJson } from './contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from './cohortEvidenceContract.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob,
-  prepareNeighborhoodCohortBlobReference } from './cohortEvidenceBlobRepository.js';
+  prepareNeighborhoodCohortBlobReference, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 
 // This is a retained-input link, NOT the c74 issuer context, a selected current
 // head, original acquisition completion, or evidence of source/license coverage.
@@ -96,14 +96,28 @@ export function createCustomCohortSelectionRepository(client, scopeJson) {
       const headerJson = canonicalAssessmentJson(header);
       // Preflight ALL storage representations before any insertion, including
       // storage's tighter JSONB/numeric/Unicode limits and wrapper overhead.
-      prepareNeighborhoodCohortBlob(headerJson);
-      for (const blob of evidence.blobs) prepareNeighborhoodCohortBlob(blob.canonical_json);
+      const headerRef = prepareNeighborhoodCohortBlob(headerJson);
+      const entries = evidence.blobs.map(blob => ({ canonicalJson: blob.canonical_json,
+        reference: prepareNeighborhoodCohortBlob(blob.canonical_json) }));
+      entries.push({ canonicalJson: headerJson, reference: headerRef });
       const started = await transaction();
       const subject = await subjects.load(subjectRef);
       checkSubject(subject, evidence);
       if (await transaction() !== started) fail('caller_transaction_required');
-      for (const blob of evidence.blobs) await blobs.put(blob.canonical_json);
-      return blobs.put(headerJson);
+      // Reuse only the original representation receipts. The repository still
+      // checks exact returned bytes, including conflicts; a header reference is
+      // returned only after every bounded batch has been acknowledged.
+      let batch = [], batchBytes = 0;
+      for (const entry of entries) {
+        const bytes = Number(entry.reference.canonical_utf8_bytes);
+        if (batch.length && (batch.length === NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records
+          || batchBytes + bytes > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes)) {
+          await blobs.putPreparedBatch(batch); batch = []; batchBytes = 0;
+        }
+        batch.push(entry); batchBytes += bytes;
+      }
+      if (batch.length) await blobs.putPreparedBatch(batch);
+      return headerRef;
     },
     async load(selectionReference) {
       const selectionRef = reference(selectionReference);

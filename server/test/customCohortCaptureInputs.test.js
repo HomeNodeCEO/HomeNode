@@ -293,6 +293,27 @@ for (const parcelCount of [2, 1001]) test(`retains/reopens complete original gra
   assert.ok(readBatches.every(c => c.params[1].length <= 8 && c.params[2].reduce((sum, n) => sum + n, 0) <= 2_000_000));
 });
 
+test('retention writes every prepared original once per call, including query originals, with fresh replay ACKs', async () => {
+  const f = await fixture({ parcelCount: 1001, accountCount: 1001 });
+  const prepared = prepare(f.input);
+  let originalRefs;
+  for (const replay of [false, true]) {
+    f.state.calls.length = 0;
+    const refs = await persist(f.client, f.scopeJson, prepared);
+    if (replay) assert.deepEqual(refs, originalRefs);
+    else originalRefs = refs;
+    const writes = f.state.calls.filter(c => c.tag === 'insert' || c.tag === 'insert-batch');
+    const hashes = writes.flatMap(c => c.tag === 'insert' ? [c.params[1]] : c.params[1]);
+    assert.equal(hashes.length, new Set(hashes).size, 'query blobs and header are not rewritten by the parent');
+    const queryHashes = f.input.acquisition.capture_result.query_evidence.blobs.map(b => b.ref.content_sha256);
+    for (const hash of queryHashes) assert.ok(hashes.includes(hash), 'all query originals still receive a database ACK');
+    assert.ok(writes.every(c => c.tag === 'insert-batch'), 'all new and replay writes use bounded batches');
+    if (replay) assert.ok(f.state.calls.some(c => c.tag === 'read-batch' && c.params.length === 2),
+      'repeated persistence verifies database conflicts instead of trusting a previous call');
+    assert.deepEqual((await load(f.client, f.scopeJson, refs)).retained_inputs, f.input);
+  }
+});
+
 test('repeated reopen still reads and validates originals instead of retaining a successful graph cache', async () => {
   const f = await fixture({ parcelCount: 501 }), refs = await persist(f.client, f.scopeJson, prepare(f.input));
   const first = await load(f.client, f.scopeJson, refs);
@@ -302,6 +323,15 @@ test('repeated reopen still reads and validates originals instead of retaining a
   const hash = first.retained_inputs.acquisition.capture_result.source_capture.source_snapshots[0].content_sha256;
   f.state.db.delete(`${f.scope.organization_id}:${hash}`);
   await assert.rejects(load(f.client, f.scopeJson, refs), /missing_evidence/);
+});
+
+test('previous retention cannot excuse a corrupted original query blob on replay', async () => {
+  const f = await fixture(), prepared = prepare(f.input);
+  await persist(f.client, f.scopeJson, prepared);
+  const hash = f.input.acquisition.capture_result.query_evidence.blobs[0].ref.content_sha256;
+  const key = `${f.scope.organization_id}:${hash}`;
+  f.state.db.set(key, { ...f.state.db.get(key), canonical_utf8: '{}' });
+  await assert.rejects(persist(f.client, f.scopeJson, prepared), /storage_conflict/);
 });
 
 test('reopened frozen source receipts retain exact full-preparation parity without becoming transferable authority', async () => {
@@ -375,9 +405,9 @@ test('autocommit and storage errors propagate; owner alone rolls back or commits
   assert.equal(f.state.calls.filter(c => c.tag === 'insert' || c.tag === 'insert-batch').length, 0);
   delete f.state.transforms.transaction;
   const error = Object.assign(new Error('synthetic timeout'), { code: '57014' });
-  f.state.error = { tag: 'insert', value: error };
+  f.state.error = { tag: 'insert-batch', value: error };
   await assert.rejects(persist(f.client, f.scopeJson, prepared), actual => actual === error);
-  assert.equal(f.state.calls.filter(c => c.tag === 'insert').length, 1);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert-batch').length, 1);
 });
 
 test('reopen rejects missing source payload, corrupted originals and substituted dependency refs', async () => {

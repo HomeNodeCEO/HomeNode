@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomCohortSelectionRepository } from '../src/services/neighborhoodAssessment/customCohortSelectionRepository.js';
-import { createNeighborhoodCohortBlobRepository } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { canonicalAssessmentJson as canonical } from '../src/services/neighborhoodAssessment/contract.js';
 import { customCohortRepositoryFixture, customCohortScopeOf, customCohortQueryFixture } from './fixtures/customCohortRepositoryFixture.js';
 import { setSection } from './fixtures/neighborhoodCustomMaterialInputsFixture.js';
@@ -28,7 +28,7 @@ for (const count of [3, 1001, 50000]) test(`retains and reloads all ${count} ori
   assert.equal(result.query.authority, 'not_established');
   assert.deepEqual(await f.repo.retain(f.subjectRef, f.query.inputJson), ref);
   assert.equal(f.state.db.size, 5 + f.query.bundle.blobs.length + 1);
-  assert.ok(f.state.calls.every(c => ['read', 'insert', 'transaction', 'history-target'].includes(c.tag)));
+  assert.ok(f.state.calls.every(c => ['read', 'insert-batch', 'read-batch', 'transaction', 'history-target'].includes(c.tag)));
 });
 
 test('historical selection and period survive current subject, physical inputs and lifecycle changes', async () => {
@@ -110,7 +110,105 @@ test('autocommit and database failures propagate without retries or partial succ
   assert.equal(f.state.db.size, 5);
   delete f.state.transforms.transaction;
   const error = Object.assign(new Error('synthetic failure'), { code: '57014' });
-  f.state.error = { tag: 'insert', value: error };
+  f.state.error = { tag: 'insert-batch', value: error };
   await assert.rejects(f.repo.retain(f.subjectRef, f.query.inputJson), actual => actual === error);
-  assert.equal(f.state.calls.filter(c => c.tag === 'insert').length, 1);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert-batch').length, 1);
+});
+
+function legacyHeaderJson(f) {
+  const evidence = f.query.bundle;
+  return canonical({ selection_input_version: 1, usage: 'retained_selection_inputs_only', subject_inputs: f.subjectRef,
+    query_bundle: { version: evidence.version, producer_profile: evidence.producer_profile,
+      query_preimage: evidence.query_preimage, captured_query_selection_sha256: evidence.captured_query_selection_sha256,
+      blob_refs: evidence.blobs.map(blob => blob.ref) } });
+}
+
+function interceptQueries(f, transform) {
+  const query = f.client.query.bind(f.client);
+  f.client.query = async (sql, params) => transform(await query(sql, params), sql, params);
+  f.repo = createCustomCohortSelectionRepository(f.client, JSON.stringify(f.scope));
+}
+
+test('38,106-account retention preserves sequential bytes while reducing fresh/replay write round trips', async () => {
+  const accountIds = ['0000123456789', ...Array.from({ length: 38105 }, (_, i) => `R-${String(i).padStart(6, '0')}`)];
+  const legacy = await fixture({ accountIds }), batched = await fixture({ accountIds });
+  assert.equal(legacy.query.bundle.blobs.length, 42);
+  // Execute the former write path, rather than estimate its round trips. The
+  // separate subject/transaction admission reads are unchanged by batching.
+  const retainSequential = async () => {
+    for (const blob of legacy.query.bundle.blobs) await legacy.blobs.put(blob.canonical_json);
+    return legacy.blobs.put(legacyHeaderJson(legacy));
+  };
+  for (const replay of [false, true]) {
+    legacy.state.calls.length = 0; batched.state.calls.length = 0;
+    const expected = await retainSequential(), actual = await batched.repo.retain(batched.subjectRef, batched.query.inputJson);
+    assert.deepEqual(actual, expected);
+    assert.deepEqual(batched.state.db, legacy.state.db, 'every stored hash, byte count and canonical string remains identical');
+    assert.equal(legacy.state.calls.filter(c => c.tag === 'insert').length, 43);
+    assert.equal(legacy.state.calls.filter(c => c.tag === 'read').length, replay ? 43 : 0);
+    const batches = batched.state.calls.filter(c => c.tag === 'insert-batch');
+    assert.equal(batches.length, 6);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'read-batch').length, replay ? 6 : 0);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'read').length, 5);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'transaction').length, 2);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'history-target').length, 1);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'insert').length, 0);
+    assert.equal(batched.state.calls.length, replay ? 20 : 14);
+    for (const batch of batches) {
+      assert.ok(batch.params[1].length > 0 && batch.params[1].length <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records);
+      assert.ok(batch.params[2].reduce((sum, bytes) => sum + bytes, 0) <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes);
+      assert.deepEqual(batch.params[2], batch.params[3].map(text => Buffer.byteLength(text, 'utf8')));
+    }
+    assert.equal(batches.at(-1).params[1].at(-1), actual.content_sha256, 'header stays last');
+  }
+});
+
+test('standalone retention accepts unordered insert and replay acknowledgements without changing the reference', async () => {
+  const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 8000 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
+  interceptQueries(f, (result, sql) => /neighborhood-cohort-blob:(?:insert|read)-batch/.test(sql)
+    ? { ...result, rows: [...result.rows].reverse() } : result);
+  const ref = await f.repo.retain(f.subjectRef, f.query.inputJson);
+  assert.deepEqual(await f.repo.retain(f.subjectRef, f.query.inputJson), ref);
+  assert.deepEqual((await f.repo.load(ref)).query.evidence, f.query.bundle);
+});
+
+for (const [name, change] of [
+  ['duplicate', result => ({ rowCount: result.rowCount + 1, rows: [...result.rows, result.rows[0]] })],
+  ['unknown', result => ({ ...result, rows: [{ ...result.rows[0], content_sha256: '0'.repeat(64) }, ...result.rows.slice(1)] })],
+  ['wrong bytes', result => ({ ...result, rows: [{ ...result.rows[0], canonical_utf8_bytes: '1' }, ...result.rows.slice(1)] })],
+  ['changed text', result => ({ ...result, rows: [{ ...result.rows[0], canonical_utf8: '{}' }, ...result.rows.slice(1)] })],
+  ['inconsistent count', result => ({ ...result, rowCount: result.rowCount + 1 })],
+]) test(`standalone retention rejects ${name} batch acknowledgements`, async () => {
+  const f = await fixture();
+  interceptQueries(f, (result, sql) => /neighborhood-cohort-blob:insert-batch/.test(sql) ? change(result) : result);
+  await assert.rejects(f.repo.retain(f.subjectRef, f.query.inputJson), /storage_conflict/);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert-batch').length, 1);
+  assert.equal(f.state.calls.filter(c => c.tag === 'read-batch').length, 0);
+});
+
+test('missing replay acknowledgement refuses the complete selection instead of returning a partial receipt', async () => {
+  const f = await fixture();
+  await f.repo.retain(f.subjectRef, f.query.inputJson);
+  f.state.calls.length = 0;
+  interceptQueries(f, (result, sql) => /neighborhood-cohort-blob:read-batch/.test(sql)
+    ? { rowCount: result.rowCount - 1, rows: result.rows.slice(1) } : result);
+  await assert.rejects(f.repo.retain(f.subjectRef, f.query.inputJson), /storage_conflict/);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert-batch').length, 1);
+  assert.equal(f.state.calls.filter(c => c.tag === 'read-batch').length, 1);
+});
+
+test('a later batch timeout stops retention without retries or a header receipt; rollback stays caller-owned', async () => {
+  const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 16000 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
+  const query = f.client.query.bind(f.client), error = Object.assign(new Error('synthetic timeout'), { code: '57014' });
+  let inserts = 0;
+  f.client.query = async (sql, params) => {
+    if (/neighborhood-cohort-blob:insert-batch/.test(sql) && ++inserts === 2) throw error;
+    return query(sql, params);
+  };
+  f.repo = createCustomCohortSelectionRepository(f.client, JSON.stringify(f.scope));
+  await assert.rejects(f.repo.retain(f.subjectRef, f.query.inputJson), actual => actual === error);
+  assert.equal(inserts, 2);
+  assert.equal(f.state.calls.filter(c => c.tag === 'insert-batch').length, 1);
+  assert.ok([...f.state.db.values()].every(row => row.canonical_utf8 !== legacyHeaderJson(f)));
+  assert.equal(f.state.db.size, 5 + NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records);
 });

@@ -26,3 +26,46 @@ test('broken synchronous or asynchronous logging cannot change capture results',
     await new Promise(resolve => setImmediate(resolve));
   }
 });
+
+test('source subphases preserve the outer duration and log only fixed aggregate metadata', async t => {
+  let now = 100; t.mock.method(performance, 'now', () => now);
+  const events = [], phase = createCustomCapturePhaseTiming(event => events.push(event));
+  const grants = { auth: 'PRIVATE', account_ids: ['PRIVATE'] }, result = { payload: 'PRIVATE' };
+  assert.equal(await phase('source', async () => {
+    assert.equal(await phase('source_authorization', () => { now += 25; return grants; }), grants);
+    return phase('source_read', () => { now += 75; return result; });
+  }), result);
+  assert.deepEqual(events, [
+    { phase: 'source_authorization', outcome: 'completed', duration_ms: 25, elapsed_ms: 25 },
+    { phase: 'source_read', outcome: 'completed', duration_ms: 75, elapsed_ms: 100 },
+    { phase: 'source', outcome: 'completed', duration_ms: 100, elapsed_ms: 100 },
+  ]);
+  assert.ok(events.every(Object.isFrozen));
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE|account_ids|payload|auth":/);
+  await assert.rejects(phase('source_authorization', () => assert.fail('duplicate subphase')), /invalid_capture_phase/);
+  await assert.rejects(phase('source_PRIVATE', () => assert.fail('unknown subphase')), /invalid_capture_phase/);
+  assert.equal(events.length, 3);
+});
+
+for (const failedPhase of ['source_authorization', 'source_read']) {
+  test(`source subphase ${failedPhase} preserves the original error and outer failure`, async t => {
+    let now = 100; t.mock.method(performance, 'now', () => now);
+    const events = [], phase = createCustomCapturePhaseTiming(event => events.push(event));
+    const original = Object.assign(new Error('PRIVATE SQL and policy data'), { private_payload: 'PRIVATE' });
+    await assert.rejects(phase('source', async () => {
+      for (const name of ['source_authorization', 'source_read']) {
+        await phase(name, () => { now += 10; if (name === failedPhase) throw original; return 'PRIVATE'; });
+      }
+    }), error => error === original);
+    assert.deepEqual(events, failedPhase === 'source_authorization' ? [
+      { phase: 'source_authorization', outcome: 'failed', duration_ms: 10, elapsed_ms: 10 },
+      { phase: 'source', outcome: 'failed', duration_ms: 10, elapsed_ms: 10 },
+    ] : [
+      { phase: 'source_authorization', outcome: 'completed', duration_ms: 10, elapsed_ms: 10 },
+      { phase: 'source_read', outcome: 'failed', duration_ms: 10, elapsed_ms: 20 },
+      { phase: 'source', outcome: 'failed', duration_ms: 20, elapsed_ms: 20 },
+    ]);
+    assert.ok(events.every(Object.isFrozen));
+    assert.doesNotMatch(JSON.stringify(events), /PRIVATE|private_payload|SQL|policy/);
+  });
+}

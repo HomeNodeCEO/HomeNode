@@ -1,8 +1,9 @@
 import { performance } from 'node:perf_hooks';
 
-const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'retention', 'registration']);
+const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 'source_read',
+  'preparation', 'retention', 'registration']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
-// Six fixed phases per acquisition; logger failures cannot change its outcome.
+// Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {
   console.info('[neighborhood] capture-phase ' + JSON.stringify(event));
 }) {

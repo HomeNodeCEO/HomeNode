@@ -18,6 +18,14 @@ will not resolve it. Setting aside the pending operation preserves accepted
 report data. No automatic retry, smaller radius, partial roster, Apply or signing
 is introduced here. Existing limits and all source admission checks stay intact.
 
+Capture-phase logs retain the aggregate `source` wall time and additionally emit
+fixed `source_authorization` and `source_read` spans. The first includes existing
+policy and transaction-closure discovery; the second includes source SQL, row
+mapping and finalization, and incomplete-result classification. The spans nest
+inside `source`, so do not add them to the outer duration. They contain only
+fixed phase/outcome labels and numeric durations/elapsed times, never individual
+records or authorization inputs. A throwing logger cannot change capture results.
+
 ## Remaining capacity work
 
 Live dense-suburban testing exposed a mismatch between a 50,000-account spatial

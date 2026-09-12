@@ -5,7 +5,7 @@ import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPrev
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
-  CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
+  customCohortCountyNameMatches, CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics from './CustomCohortStatistics';
@@ -138,6 +138,9 @@ function WorkspaceSession(props: Props) {
       county: 'Needs review', count: catalog.unassigned.member_count }] : [])]
     .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
   const selectedGroup = groups.find(p => p.id === inspected);
+  const countyMatches = useMemo(() => catalog && inspected ? customCohortCountyNameMatches(catalog, inspected) : [], [catalog, inspected]);
+  const subjectCountyMatches = useMemo(() => catalog?.subject_membership.assigned_pocket_id
+    ? customCohortCountyNameMatches(catalog, catalog.subject_membership.assigned_pocket_id) : [], [catalog]);
   const filteredGroups = groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase()));
   const pageSize = 50, pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(groupPage, pageCount - 1);
@@ -231,6 +234,8 @@ function WorkspaceSession(props: Props) {
         <button type="button" className={button} disabled={selectionDisabled || !catalog.subject_membership.assigned_pocket_id}
           onClick={() => { const id = catalog.subject_membership.assigned_pocket_id; if (id) choose([id]); }}>
           Preview subject’s recorded group</button>
+        {subjectCountyMatches.length > 1 && <button type="button" className={button} disabled={selectionDisabled}
+          onClick={() => choose(subjectCountyMatches.map(p => p.id))}>Preview subject’s matching county-name groups</button>}
       </div>
       <p role="status" aria-live="polite" className="text-sm">
         {saving ? 'Saving the group selection… Any displayed map and statistics still match the preceding selection.'
@@ -288,6 +293,15 @@ function WorkspaceSession(props: Props) {
               Recorded-name grouping requires review; builder, HOA dues, amenities and legal phases are not inferred.</p>
             <button type="button" className={button} disabled={selectionDisabled} onClick={() => toggle(selectedGroup.id)}>
               {included.includes(selectedGroup.id) ? 'Exclude this group' : 'Include this group'}</button>
+            {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
+              <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
+              <p>{countyMatches.length.toLocaleString('en-US')} groups · {countyMatches.reduce((sum, p) => sum + p.member_count, 0).toLocaleString('en-US')} accounts.
+                {' '}Review these together if appropriate. Saved groups remain separate; matching names do not prove a common legal subdivision.</p>
+              <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => included.includes(p.id))}
+                onClick={() => choose([...included, ...countyMatches.filter(p => !included.includes(p.id)).map(p => p.id)])}>Include matching groups</button>
+              <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => !included.includes(p.id))}
+                onClick={() => choose(included.filter(id => !countyMatches.some(p => p.id === id)))}>Exclude matching groups</button>
+            </div>}
           </div>}
         </aside>
       </div>

@@ -150,6 +150,34 @@ test('batched preparation honors cancellation before publishing any preparation 
   assert.equal(f.state.calls.length, calls);
 });
 
+test('initial preparation receipts preserve exact graph/counts and do not survive as source authority', async () => {
+  const f = await fixture({ parcelCount: 1001, mappingVersion: 4 });
+  const original = structuredClone(f.input), expected = prepare(original);
+  const actual = await prepareBatched(f.input);
+  assert.deepEqual(actual, expected);
+  assert.deepEqual(await prepareBatched(f.input), expected);
+  assert.deepEqual(await prepareBatched(structuredClone(original)), expected);
+  assert.equal(f.state.calls.length, 0);
+  const changed = structuredClone(original);
+  changed.acquisition.capture_result.source_capture.references[0].record_sources[0].source_ref = 'forged';
+  await assert.rejects(prepareBatched(changed), /binding_mismatch/);
+  assert.equal(f.state.calls.length, 0);
+});
+
+test('initial batched preparation still checks source identity and mapping on every operation', async () => {
+  const f = await fixture({ mappingVersion: 4 });
+  await prepareBatched(f.input);
+  for (const change of [
+    input => { input.acquisition.capture_result.source_capture.sources[0].id = 'forged'; },
+    input => { input.acquisition.capture_result.source_capture.sources.find(s => s.payload.projection.definition.role === 'parcels')
+      .payload.records[0].data.raw_projection.class_code = 'changed'; },
+  ]) {
+    const changed = structuredClone(f.input); change(changed);
+    await assert.rejects(prepareBatched(changed), /binding_mismatch|cad_evidence_mapping_mismatch/);
+  }
+  assert.equal(f.state.calls.length, 0);
+});
+
 test('lazy prepared payloads cannot change while waiting for persistence', async () => {
   const f = await fixture({ mappingVersion: 4, cadText: 'Original synthetic CAD text' });
   const expected = prepare(f.input), actual = await prepareBatched(f.input);

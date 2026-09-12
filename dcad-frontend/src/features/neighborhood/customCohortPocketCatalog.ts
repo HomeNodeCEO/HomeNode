@@ -113,6 +113,29 @@ export function customCohortCatalogGroupIds(catalog: CheckedPocketCatalog): read
   return [...catalog.pockets.map(p => p.id), ...(catalog.unassigned.member_count ? [UNASSIGNED] : [])];
 }
 
+const reviewCountyNames = new Set(['collin', 'dallas', 'denton', 'ellis', 'johnson',
+  'kaufman', 'parker', 'rockwall', 'tarrant', 'wise']);
+const reviewName = (value: string) => value.trim().replace(/\s+/gu, ' ').toLowerCase();
+function reviewCounty(value: string): string | null {
+  const normalized = reviewName(value), name = normalized.replace(/ county$/, '');
+  return reviewCountyNames.has(name) ? name : null;
+}
+
+/** Review convenience over an already checked, complete catalog. Only the
+ * literal County suffix is equivalent; subdivision phases, punctuation and
+ * different/unknown jurisdictions are not guessed. IDs and saved membership
+ * remain unchanged. The caller must explicitly choose the returned union.
+ * This does not establish common legal subdivision/developer identity. */
+export function customCohortCountyNameMatches(catalog: CheckedPocketCatalog, pocketId: string): readonly CheckedRecordedPocket[] {
+  if (catalog.status !== 'review_only') return Object.freeze([]);
+  const pocket = catalog.pockets.find(item => item.id === pocketId);
+  if (!pocket) return Object.freeze([]);
+  const county = reviewCounty(pocket.county), name = reviewName(pocket.label);
+  const matches = county === null ? [pocket] : catalog.pockets.filter(item =>
+    reviewCounty(item.county) === county && reviewName(item.label) === name);
+  return Object.freeze(matches.sort((a, b) => a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+}
+
 /** One exact selected union avoids truncating a versioned catalog plus unresolved
  * observations. Individual group inspection is a separate, explicit request. */
 export function selectionFromRecordedGroups(catalog: CheckedPocketCatalog, included: readonly string[], revision: number) {

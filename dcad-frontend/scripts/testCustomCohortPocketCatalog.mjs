@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { checkCustomCohortPocketCatalog as check, customCohortCatalogGroupIds as groups,
-  selectionFromRecordedGroups as select, CUSTOM_COHORT_UNASSIGNED_GROUP as unresolved } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+  selectionFromRecordedGroups as select, customCohortCountyNameMatches as countyMatches,
+  CUSTOM_COHORT_UNASSIGNED_GROUP as unresolved } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { buildCustomCohortObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCachedSourceCaptures } from '../../server/src/services/neighborhoodAssessment/cachedSourceCaptures.js';
@@ -10,13 +11,14 @@ import { contextFixture } from '../../server/test/fixtures/customCohortContextFi
 
 // Actual mapper -> retained observation -> catalog -> public presenter -> browser
 // admission. Synthetic observations do not establish live provider coverage.
-function fixture() {
+function fixture({ countyVariants = false } = {}) {
   const context_ref = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'e'.repeat(64) };
   const target = { ...contextFixture().target, account_id: '00001', assignment_file_id: '9007199254740993' };
   const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'].map(k => [k, target[k]]));
   const ids = ['00001', 'R-2', 'other'];
-  const accountRows = ids.map((id, i) => ({ account_id: id, county: i === 2 ? null : 'Dallas', subdivision: i === 0 ? 'Cedar' : 'Oak' }));
-  const parcelRows = ids.map((id, i) => ({ object_id: String(i + 1), account_id: id, subdivision_name: i === 0 ? 'CEDAR' : 'Oak' }));
+  const accountRows = ids.map((id, i) => ({ account_id: id, county: i === 2 ? null : countyVariants && i === 1 ? 'DALLAS COUNTY' : 'Dallas',
+    subdivision: i === 0 || countyVariants && i === 1 ? 'Cedar' : 'Oak' }));
+  const parcelRows = ids.map((id, i) => ({ object_id: String(i + 1), account_id: id, subdivision_name: i === 0 || countyVariants && i === 1 ? 'CEDAR' : 'Oak' }));
   const wrap = (rows, mapper) => rows.map(row => { const mapped = mapper(row); return { record_id: mapped.record_id, data: mapped }; });
   const records = { selection: ids.map(account_id => ({ record_id: account_id, data: { account_id } })),
     accounts: wrap(accountRows, mapCachedAccountRow), parcels: wrap(parcelRows, mapCachedParcelRow), transactions: [], sale_links: [], gis_sync: [] };
@@ -55,6 +57,47 @@ test('clearing all remains an empty selection instead of defaulting to nearby sa
   const { input, response } = fixture(), catalog = check(response, input);
   assert.deepEqual(select(catalog, [], 3), { revision: 3, pockets: [] });
   assert.deepEqual(select(catalog, [unresolved], 4).pockets[0].account_ids, ['other']);
+});
+
+test('county review matches exact recorded names across County suffixes without changing IDs or selected members', () => {
+  const { input, response } = fixture({ countyVariants: true });
+  const catalog = check(response, input), before = JSON.stringify(catalog), id = catalog.pockets[0].id;
+  const matches = countyMatches(catalog, id);
+  assert.equal(matches.length, 2); assert.ok(Object.isFrozen(matches));
+  assert.deepEqual(matches.map(p => p.id), catalog.pockets.map(p => p.id).sort());
+  assert.deepEqual(select(catalog, [id], 2).pockets[0].account_ids, ['00001']);
+  assert.deepEqual(select(catalog, matches.map(p => p.id), 3).pockets[0].account_ids, ['00001', 'R-2']);
+  assert.deepEqual(select(catalog, [], 4).pockets, []);
+  assert.equal(JSON.stringify(catalog), before);
+  assert.deepEqual(countyMatches(catalog, unresolved), []);
+  assert.deepEqual(countyMatches(catalog, 'foreign'), []);
+});
+
+test('county review tolerates only letter case and whitespace in otherwise equal subdivision labels', () => {
+  const { input, response } = structuredClone(fixture({ countyVariants: true }));
+  response.catalog.pockets[0].label = ' Cedar   Phase 1 ';
+  response.catalog.pockets[1].label = 'CEDAR PHASE 1';
+  const catalog = check(response, input);
+  assert.equal(countyMatches(catalog, catalog.pockets[0].id).length, 2);
+});
+
+for (const [label, county] of [['Cedar Phase 2', 'Dallas County'], ['Cedar-Phase 1', 'Dallas County'],
+  ['Cedar Phase 1', 'Collin County'], ['Cedar Phase 1', 'Dallas County, MO'],
+  ['Cedar Phase 1', 'County of Dallas'], ['Cedar Phase 1', 'Unknown']]) {
+  test(`county review does not guess ${label} / ${county}`, () => {
+    const { input, response } = structuredClone(fixture()), c = response.catalog;
+    c.pockets[0].label = 'Cedar Phase 1'; c.pockets[1].label = label; c.pockets[1].county = county;
+    const catalog = check(response, input);
+    assert.deepEqual(countyMatches(catalog, catalog.pockets[0].id).map(p => p.id), [catalog.pockets[0].id]);
+  });
+}
+
+test('unknown counties never gain an inferred alias identity and incomplete catalogs return no name matches', () => {
+  const { input, response } = structuredClone(fixture());
+  response.catalog.pockets.forEach(p => { p.label = 'Cedar'; p.county = 'Unknown'; });
+  const catalog = check(response, input), id = catalog.pockets[0].id;
+  assert.deepEqual(countyMatches(catalog, id).map(p => p.id), [id]);
+  assert.deepEqual(countyMatches({ ...catalog, status: 'incomplete' }, id), []);
 });
 
 for (const [name, mutate] of [

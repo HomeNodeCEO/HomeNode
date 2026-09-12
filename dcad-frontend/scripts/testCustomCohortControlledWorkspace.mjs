@@ -167,6 +167,40 @@ test('dense list pages50 groups while map selection and Include all retain887; m
   assert.ok(!h.intents.at(-1).includes(groupId(887))); h.unmount();
 });
 
+test('county-name review finds off-page variants; explicit union and exclusion retain every unrelated saved choice', async () => {
+  const h = harness(), dense = denseCatalog();
+  const aliased = { ...dense, pockets: dense.pockets.map((p, i) => i === 886
+    ? { ...p, label: dense.pockets[0].label, county: 'DALLAS COUNTY' } : p) };
+  const props = h.props([groupId(1), groupId(2)]); props.workspace.catalog = aliased;
+  h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
+  assert.equal(h.intents.length, 0, 'opening never merges saved groups');
+  assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'Account1']);
+  h.child('CustomCohortParcelMap').onInspectPocket(groupId(1)); h.render(props);
+  assert.match(h.text(), /Dallas \/ DALLAS COUNTY/);
+  assert.match(h.text(), /2 groups · 2 accounts/);
+  assert.equal(h.intents.length, 0, 'inspection never changes inclusion');
+  h.click('Include matching groups');
+  assert.deepEqual(h.intents.at(-1), [groupId(1), groupId(2), groupId(887)]);
+  assert.equal(h.calls.length, 1, 'wait for the owner save before requesting a new union');
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8,
+    included_recorded_group_ids: h.intents.at(-1) } } });
+  h.click('Exclude matching groups'); assert.deepEqual(h.intents.at(-1), [groupId(2)]);
+  h.click('Preview subject’s matching county-name groups');
+  assert.deepEqual(h.intents.at(-1), [groupId(1), groupId(887)]);
+  assert.equal(h.catalogCalls.length, 0); h.unmount();
+});
+
+for (const blockedReason of ['read_only', 'pending_capture', 'reload_required']) {
+  test(`county-name controls preserve ${blockedReason} ownership barriers`, async () => {
+    const h = harness(), props = h.props();
+    props.workspace.catalog = { ...catalog, pockets: catalog.pockets.map((p, i) => i
+      ? { ...p, label: catalog.pockets[0].label, county: 'DALLAS COUNTY' } : p) };
+    props.workspace.blockedReason = blockedReason;
+    h.render(props); h.click('Preview subject’s matching county-name groups');
+    assert.equal(h.intents.length, 0); await h.tick(); assert.equal(h.calls.length, 0); h.unmount();
+  });
+}
+
 test('capacity refusal preserves stale map and stats, and narrowing stays an explicit save-gated intent', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(h.props([groupId(1)], 7)); await h.tick(); await h.complete();
   const old = h.child('CustomCohortStatistics').group;

@@ -3,7 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { types } from 'node:util';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { buildCustomCohortParcelMap, CUSTOM_COHORT_PARCEL_MAP_LIMITS } from './customCohortParcelMap.js';
+import { buildCustomCohortParcelGeometryIndex, CUSTOM_COHORT_PARCEL_MAP_LIMITS } from './customCohortParcelMap.js';
 import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
 import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 
@@ -103,26 +103,14 @@ function admitted(input) {
     const definition = projection?.definition === undefined ? null : data(projection.definition);
     if (definition?.role === 'parcels') for (const record of rows) data(data(data(record).data).raw_projection);
   }
-  const map = buildCustomCohortParcelMap({ retained_inputs: input });
+  const map = buildCustomCohortParcelGeometryIndex({ retained_inputs: input });
   if (map.status !== 'available') return { counts, point, radius,
     reason: map.reason === 'capacity_exceeded' ? 'capacity_exceeded' : 'retained_map_unavailable' };
   // Display capacity is not permission to increase native recommendation work.
   if (map.counts.coordinates > L.coordinates || map.counts.geojson_bytes > L.geojson_bytes) {
     return { counts, point, radius, reason: 'capacity_exceeded' };
   }
-  const components = new Map(map.geojson.features.map(row => [row.properties.object_id,
-    row.geometry.type === 'Polygon' ? 1 : row.geometry.coordinates.length]));
-  const wanted = new Set(components.keys()), raw = new Map();
-  for (const source of input.acquisition.capture_result.source_capture.sources) {
-    if (source.payload.projection?.definition?.role !== 'parcels') continue;
-    for (const row of source.payload.records) {
-      const projection = row.data.raw_projection;
-      if (wanted.has(projection.object_id)) raw.set(projection.object_id, projection.stored_geometry_ewkb);
-    }
-  }
-  const rows = input.spatial.parcels.map(row => ({ object_id: row.object_id, account_id: row.account_id,
-    geometry_sha256: row.geometry_sha256, source_record_hash: row.source_record_hash,
-    component_count: components.get(row.object_id), geometry_ewkb: raw.get(row.object_id) })).sort((a, b) => compare(a.object_id, b.object_id));
+  const rows = [...map.parcels].sort((a, b) => compare(a.object_id, b.object_id));
   return { counts, point, radius, rows, ids: [...ids].sort(compare), reason: null };
 }
 function signature(input, prepared) {
@@ -131,7 +119,7 @@ function signature(input, prepared) {
     study: input.study, geometry_input: input.spatial.geometry_input,
     membership_sha256: input.spatial.membership_sha256 })).update('\n');
   for (const id of prepared.ids ?? input.spatial.account_ids) hash.update(json(id)).update('\n');
-  // The map rechecks original EWKB against each digest. Do not allocate a
+  // The shared geometry index rechecks original EWKB against each digest. Do not allocate a
   // canonical megabyte-hex envelope or one city-sized array merely to hash it.
   for (const { geometry_ewkb, ...row } of prepared.rows ?? []) hash.update(json(row)).update('\n');
   return hash.digest('hex');

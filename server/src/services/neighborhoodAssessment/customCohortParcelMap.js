@@ -166,6 +166,17 @@ export function buildCustomCohortParcelMap(options = {}) {
   while (true) { const step = iterator.next(); if (step.done) return step.value; }
 }
 
+/** Internal native-work index over the SAME complete retained map admission.
+ * Decode/check/hash each parcel once, then release its transient coordinates.
+ * Keep only literal EWKB and binding/component metadata, not a second full map.
+ * Counts (including would-be GeoJSON bytes) and all map limits stay identical.
+ * This is not a new source, geometry repair, or a larger-capacity admission.
+ */
+export function buildCustomCohortParcelGeometryIndex(options = {}) {
+  const iterator = parcelMapBatches(options, true);
+  while (true) { const step = iterator.next(); if (step.done) return step.value; }
+}
+
 export async function buildCustomCohortParcelMapBatched(options, { check = () => {} } = {}) {
   check(); freeze(options); check();
   const iterator = parcelMapBatches(options);
@@ -174,7 +185,7 @@ export async function buildCustomCohortParcelMapBatched(options, { check = () =>
   } finally { iterator.return(); }
 }
 
-function* parcelMapBatches(options) {
+function* parcelMapBatches(options, indexOnly = false) {
   try {
     if (!object(options)) unavailable('invalid_retained_inputs');
     const { retained_inputs: input, selected_account_ids: selected } = options;
@@ -182,9 +193,11 @@ function* parcelMapBatches(options) {
     const roster = rosterOf(input.spatial, selected), rows = yield* parcelRows(input, roster);
     const budget = { geometry_bytes: 0, coordinates: 0 };
     const geojson = { type: 'FeatureCollection', features: [] };
+    const geometryIndex = [];
+    let parcelCount = 0;
     let jsonBytes = Buffer.byteLength(JSON.stringify(geojson));
     for (const [id, parcel] of roster.parcels) {
-      if (geojson.features.length % 125 === 0) yield;
+      if (parcelCount % 125 === 0) yield;
       const hex = rows.get(id).stored_geometry_ewkb;
       if (typeof hex !== 'string' || !hex.length) unavailable('missing_parcel_geometry');
       if (hex.length > LIMITS.geometry_bytes * 2) unavailable('capacity_exceeded');
@@ -196,16 +209,22 @@ function* parcelMapBatches(options) {
       const feature = { type: 'Feature', id: `gis.dcad_parcels:${id}`,
         properties: { object_id: id, account_id: parcel.account_id, selected: roster.selected.has(parcel.account_id) },
         geometry: decodeGeometry(bytes, budget) };
-      jsonBytes += Buffer.byteLength(JSON.stringify(feature)) + (geojson.features.length ? 1 : 0);
+      jsonBytes += Buffer.byteLength(JSON.stringify(feature)) + (parcelCount ? 1 : 0);
       if (jsonBytes > LIMITS.geojson_bytes) unavailable('capacity_exceeded');
-      geojson.features.push(feature);
+      if (indexOnly) geometryIndex.push({ object_id: id, account_id: parcel.account_id,
+        geometry_sha256: parcel.geometry_sha256, source_record_hash: parcel.source_record_hash,
+        component_count: feature.geometry.type === 'Polygon' ? 1 : feature.geometry.coordinates.length,
+        geometry_ewkb: hex });
+      else geojson.features.push(feature);
+      parcelCount++;
     }
-    return freeze({ status: 'available', geojson, geometry_semantics: SEMANTICS,
-      counts: { parcels: geojson.features.length, accounts: roster.accounts.size,
+    return freeze({ status: 'available', ...(indexOnly ? { parcels: geometryIndex } : { geojson }), geometry_semantics: SEMANTICS,
+      counts: { parcels: parcelCount, accounts: roster.accounts.size,
         selected_accounts: roster.selected.size, coordinates: budget.coordinates,
         geometry_bytes: budget.geometry_bytes, geojson_bytes: jsonBytes } });
   } catch (error) {
     if (!(error instanceof UnavailableMap)) throw error;
-    return Object.freeze({ status: 'unavailable', reason: error.message, geojson: null, geometry_semantics: SEMANTICS });
+    return Object.freeze({ status: 'unavailable', reason: error.message,
+      ...(indexOnly ? { parcels: null } : { geojson: null }), geometry_semantics: SEMANTICS });
   }
 }

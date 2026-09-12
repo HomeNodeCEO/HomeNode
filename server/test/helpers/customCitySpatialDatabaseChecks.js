@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { captureNeighborhoodSpatialMembership } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { captureNeighborhoodSpatialMembership,
+  captureNeighborhoodSpatialMembershipStream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 import { validateRetainedCustomCityDiscovery } from '../../src/services/neighborhoodAssessment/customCityDiscovery.js';
 import { createCustomCohortContextRepository } from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
 import { createCustomCohortSubjectRepository } from '../../src/services/neighborhoodAssessment/customCohortSubjectRepository.js';
@@ -140,6 +141,22 @@ export async function runCustomCitySpatialDatabaseChecks(connectionString) {
         assert.ok(call.text.includes('$1::text') && !call.text.includes('"coordinates"'));
         assert.deepEqual(call.values, [JSON.stringify(city.admitted.geometry), call.values[1], 3]);
       }
+      // Both readers run in the SAME native snapshot. Streaming may encounter
+      // any physical row order but must emit the identical complete roster,
+      // original geometry hashes and exact city membership digest.
+      const setting = (await client.query("SELECT current_setting('enable_indexscan') AS v")).rows[0].v;
+      const streamCalls = [], streaming = { query: config => { streamCalls.push(config); return client.query(config); } };
+      const streamed = await captureNeighborhoodSpatialMembershipStream(streaming, origin.point.geometry_input,
+        { page_size: 2 }, city.compact.choice, city.compact);
+      assert.deepEqual({ ...streamed, counts: { ...streamed.counts, queries: 0 } },
+        { ...result, counts: { ...result.counts, queries: 0 } });
+      assert.equal(streamCalls.filter(call => call.text.includes(':parcels-open')).length, 1);
+      assert.equal(streamCalls.filter(call => call.text.includes(':parcels-fetch')).length, 3,
+        'an exact-full last page must be followed by an empty fetch');
+      assert.ok(streamCalls.some(call => call.text.includes(':parcels-close')));
+      assert.ok(streamCalls.every(call => !/cursor-plan-|set_config|SET LOCAL/.test(call.text)));
+      assert.equal((await client.query("SELECT current_setting('enable_indexscan') AS v")).rows[0].v, setting);
+      assert.equal((await client.query("SELECT name FROM pg_cursors WHERE name LIKE 'nh_membership_%'")).rowCount, 0);
       const observed = await client.query(`WITH city AS (SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::text),4326) AS geom)
         SELECT p.object_id::text,encode(sha256(ST_AsEWKB(p.geom)),'hex') AS full_hash,
           p.geom && city.geom AS bbox,ST_Intersects(p.geom,city.geom) AS intersects,
@@ -165,18 +182,22 @@ export async function runCustomCitySpatialDatabaseChecks(connectionString) {
     });
     checks.push('native city polygon preserves holes/island; excludes bbox-only gap and outside; includes edge touch and crossing parcels');
     checks.push('actual paged membership is parameterized and binds full original parcel EWKB hashes, not clipped or centroid geometry');
-    for (const [limits, reason] of [[{ accounts: 3 }, 'account_limit'], [{ parcels: 3 }, 'parcel_limit'], [{ bytes: 1 }, 'byte_limit']]) {
+    checks.push('single-pass city cursor matches keyset output/hashes in the same snapshot; exact-full final fetch and portal cleanup verified');
+    for (const reader of [captureNeighborhoodSpatialMembership, captureNeighborhoodSpatialMembershipStream])
+      for (const [limits, reason] of [[{ accounts: 3 }, 'account_limit'], [{ parcels: 3 }, 'parcel_limit'], [{ bytes: 1 }, 'byte_limit']]) {
       await transaction('REPEATABLE READ READ ONLY', async client => {
-        const result = await captureNeighborhoodSpatialMembership(client, origin.point.geometry_input, { page_size: 2, ...limits }, city.compact.choice, city.compact);
+        const result = await reader(client, origin.point.geometry_input, { page_size: 2, ...limits }, city.compact.choice, city.compact);
         assert.equal(result.status, 'incomplete'); assert.equal(result.query_complete, false); assert.equal(result.reason, reason);
         assert.equal(Object.hasOwn(result, 'account_ids'), false); assert.equal(Object.hasOwn(result, 'parcels'), false);
+        assert.equal((await client.query("SELECT name FROM pg_cursors WHERE name LIKE 'nh_membership_%'")).rowCount, 0);
       });
     }
     checks.push('account/parcel/byte capacity refusal returns no partial roster');
-    await transaction('REPEATABLE READ READ ONLY', async client => {
+    for (const reader of [captureNeighborhoodSpatialMembership, captureNeighborhoodSpatialMembershipStream])
+      await transaction('REPEATABLE READ READ ONLY', async client => {
       const invalid = cityFixture({ type: 'Polygon', coordinates: [[[-104, 30], [-103.98, 30.02], [-104, 30.02], [-103.98, 30], [-104, 30]]] });
       const calls = [], wrapper = { query: config => { calls.push(config.text); return client.query(config); } };
-      const result = await captureNeighborhoodSpatialMembership(wrapper, origin.point.geometry_input, {}, invalid.compact.choice, invalid.compact);
+      const result = await reader(wrapper, origin.point.geometry_input, {}, invalid.compact.choice, invalid.compact);
       assert.equal(result.status, 'incomplete'); assert.equal(result.reason, 'city_geometry_ineligible');
       assert.equal(result.query_complete, false); assert.equal(Object.hasOwn(result, 'parcels'), false);
       assert.equal(calls.some(text => text.includes('neighborhood-membership:parcels')), false);

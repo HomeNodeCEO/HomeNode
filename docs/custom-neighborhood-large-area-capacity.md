@@ -13,7 +13,7 @@ several independent boundaries:
 
 | Boundary | Current constraints that affect larger complete studies |
 | --- | --- |
-| Spatial membership | 50k accounts, 100k parcels, 16 MiB metadata; full arrays |
+| Spatial membership | 50k accounts, 100k parcels; new compact16 MiB encoded /32 MiB expanded; legacy16 MiB; full arrays |
 | Canonical roster/query evidence | One 1.5 MB JSON roster before page construction; 50k accounts |
 | Read capability and transaction closure | 50k accounts; bounded capability lifetime and complete closure |
 | Dense source acquisition | 200k records / 128 MB, including selected roster rows, CAD account rows, parcel rows, sales and links |
@@ -27,6 +27,10 @@ several independent boundaries:
 These are data/operation-specific limits, not interchangeable grants. Missing
 source rights, historical stock evidence, known sale prices, units, or housing
 classification cannot be remedied by increasing capacity.
+
+The lossless new-capture representation is documented in
+`custom-neighborhood-spatial-encoding.md`. It removes repeated field names but
+does not remove the full-roster/count/downstream limits described here.
 
 ## Implementation sequence
 

@@ -6,6 +6,7 @@ import { prepareCustomCohortContextReference } from './customCohortContextContra
 import { buildCustomCohortParcelGeometryIndex, CUSTOM_COHORT_PARCEL_MAP_LIMITS } from './customCohortParcelMap.js';
 import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
 import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { iterateSpatialParcels } from './spatialMembershipEncoding.js';
 
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS = 'recorded_subject_centroid_to_retained_parcel_point_on_surface';
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_LIMITS = Object.freeze({ batch_parcels: 64,
@@ -83,7 +84,7 @@ function admitted(input) {
   check(ids.length <= L.parcels && input.spatial.parcels.length <= L.parcels
     && ids.every(id => typeof id === 'string' && id.length > 0 && id.length <= 64)
     && new Set(ids).size === ids.length, 'invalid_input');
-  for (const row of input.spatial.parcels) data(row);
+  for (const row of iterateSpatialParcels(input.spatial)) data(row);
   const point = representCustomCohortSubjectPoint(input.subject);
   const counts = { accounts: ids.length, parcels: input.spatial.parcels.length, observed_accounts: 0, unknown_accounts: ids.length };
   let radius;

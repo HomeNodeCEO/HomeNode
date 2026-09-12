@@ -5,6 +5,8 @@ import { assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js
 import { prepareNeighborhoodDiscoveryGeometryV1, prepareNeighborhoodDiscoveryChoice,
   NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY, NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
 import { validateRetainedCustomCityDiscovery } from './customCityDiscovery.js';
+import { SPATIAL_PARCEL_TUPLE_ENCODING, SPATIAL_TUPLE_LIMITS, encodeSpatialParcel,
+  iterateSpatialParcels } from './spatialMembershipEncoding.js';
 
 const LIMITS = Object.freeze({ page_size: 500, parcels: 100000, accounts: 50000,
   bytes: 16777216, duration_ms: 15000, query_ms: 5000 });
@@ -117,7 +119,14 @@ export async function captureNeighborhoodSpatialMembershipStream(client, geometr
   return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, true);
 }
 
-async function captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, streamRequested) {
+/** Versioned storage encoding for NEW captures only. The exact original row
+ * digest and logical counts.bytes remain unchanged; counts.encoded_bytes meters
+ * the tuple array separately. This is not sampling or a larger account grant. */
+export async function captureNeighborhoodSpatialMembershipCompact(client, geometryInput, overrides = {}, discoveryChoice, cityInput) {
+  return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, true, true);
+}
+
+async function captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, streamRequested, compact = false) {
   const discovery = discoveryChoice === undefined ? null : prepareNeighborhoodDiscoveryChoice(discoveryChoice);
   const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
     ? validateRetainedCustomCityDiscovery(cityInput) : null;
@@ -134,7 +143,7 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
   const limits = limitsOf(overrides, streaming && !city ? STREAM_LIMITS : LIMITS);
   let portal = null;
   const started = performance.now();
-  const counts = { queries: 0, parcels: 0, accounts: 0, bytes: 0 };
+  const counts = { queries: 0, parcels: 0, accounts: 0, bytes: 0, ...(compact ? { encoded_bytes: 2 } : {}) };
   const check = () => { if (performance.now() - started > limits.duration_ms) incomplete('duration_limit'); };
   const query = async (tag, text, values = []) => {
     check(); counts.queries += 1;
@@ -213,13 +222,17 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
           || typeof payload.sync_run_id !== 'string' || !payload.sync_run_id.length
           || typeof payload.synced_at !== 'string') incomplete('parcel_provenance_incomplete');
         const json = canonicalAssessmentJson(payload);
+        const retained = compact ? encodeSpatialParcel(payload) : payload;
+        if (compact) counts.encoded_bytes += Buffer.byteLength(canonicalAssessmentJson(retained)) + (counts.parcels ? 1 : 0);
         counts.parcels += 1; counts.bytes += Buffer.byteLength(json);
         accounts.add(accountId); counts.accounts = accounts.size;
         if (counts.parcels > limits.parcels) incomplete('parcel_limit');
         if (counts.accounts > limits.accounts) incomplete('account_limit');
-        if (counts.bytes > limits.bytes) incomplete('byte_limit');
+        if (compact ? counts.encoded_bytes > Math.min(limits.bytes, SPATIAL_TUPLE_LIMITS.encoded_bytes)
+          : counts.bytes > limits.bytes) incomplete('byte_limit');
+        if (compact && counts.bytes > SPATIAL_TUPLE_LIMITS.expanded_bytes) incomplete('expanded_byte_limit');
         if (!streaming) digest.update(json).update('\n');
-        parcels.push(payload); cursor = objectId;
+        parcels.push(retained); cursor = objectId;
         check();
       }
       if (streaming ? rows.length < limits.page_size : rows.length <= limits.page_size) break;
@@ -227,9 +240,13 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
     if (portal) {
       const name = portal; portal = null;
       await query('parcels-close', `CLOSE ${name}`);
-      parcels.sort((a, b) => BigInt(a.object_id) < BigInt(b.object_id) ? -1 : 1);
-      for (const parcel of parcels) { digest.update(canonicalAssessmentJson(parcel)).update('\n'); check(); }
+      parcels.sort((a, b) => BigInt(compact ? a[0] : a.object_id) < BigInt(compact ? b[0] : b.object_id) ? -1 : 1);
+      const originalParcels = compact ? iterateSpatialParcels({ parcels, parcel_encoding: SPATIAL_PARCEL_TUPLE_ENCODING }) : parcels;
+      for (const parcel of originalParcels) {
+        digest.update(canonicalAssessmentJson(parcel)).update('\n'); check();
+      }
     }
+    if (compact && counts.encoded_bytes > limits.bytes) incomplete('byte_limit');
     const finalSnapshot = snapshotOf(await query('snapshot-end', SNAPSHOT_SQL));
     if (canonicalAssessmentJson(finalSnapshot) !== canonicalAssessmentJson(snapshot)) incomplete('transaction_changed');
     const accountIds = [...accounts].sort();
@@ -239,6 +256,7 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
       ...(city ? { city_scope: { choice: city.choice, asset_utf8: city.asset_utf8, asset_sha256: city.asset_sha256, source: city.source } }
         : { radius_metres: discovery?.radius_metres ?? '4828.032' }),
       ...(discovery ? { discovery } : {}),
+      ...(compact ? { parcel_encoding: SPATIAL_PARCEL_TUPLE_ENCODING } : {}),
       snapshot, parcels, account_ids: accountIds,
       account_ids_sha256: assessmentEvidenceDigest({ account_ids: accountIds }),
       membership_sha256: digest.digest('hex'), counts });

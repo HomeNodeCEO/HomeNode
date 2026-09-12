@@ -9,6 +9,7 @@ import { loadInstalledCustomCityDiscovery, validateRetainedCustomCityDiscovery }
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { readCustomNeighborhoodWorkspaceCheckpoint } from '../../src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js';
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
+import { iterateSpatialParcels, SPATIAL_PARCEL_TUPLE_ENCODING } from '../../src/services/neighborhoodAssessment/spatialMembershipEncoding.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 
 const ACCOUNT = 'CAPTURE-COORD-SUBJECT';
@@ -174,7 +175,9 @@ export async function runCustomCohortCityDatabaseChecks(connectionString) {
     const retained = await load(fixture, captured.context_ref), input = retained.retained_inputs;
     assert.deepEqual(retained.study.discovery, dallas.choice); assert.deepEqual(retained.acquisition_intent.body.study.discovery, dallas.choice);
     assert.deepEqual(input.selector.account_roster.account_ids, ids); assert.deepEqual(input.spatial.account_ids, ids);
-    assert.deepEqual(input.spatial.parcels.map(row => ({ object_id: row.object_id, account_id: row.account_id })), nativeGeometry);
+    assert.equal(input.spatial.parcel_encoding, SPATIAL_PARCEL_TUPLE_ENCODING);
+    assert.equal(input.spatial.counts.encoded_bytes, Buffer.byteLength(JSON.stringify(input.spatial.parcels)));
+    assert.deepEqual([...iterateSpatialParcels(input.spatial)].map(row => ({ object_id: row.object_id, account_id: row.account_id })), nativeGeometry);
     assert.equal(Object.hasOwn(input.spatial, 'radius_metres'), false);
     assert.deepEqual(validateRetainedCustomCityDiscovery(input.spatial.city_scope), dallas);
     assert.equal(input.spatial.city_scope.asset_utf8, dallas.asset_utf8);

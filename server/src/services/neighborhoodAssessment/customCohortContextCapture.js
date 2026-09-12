@@ -16,7 +16,7 @@ import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepo
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { captureNeighborhoodSpatialMembershipStream } from './cachedSpatialMembership.js';
+import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
@@ -879,7 +879,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           batchId: input.privateSalesImport.batch_id, expectedReviewRevision: input.privateSalesImport.expected_review_revision });
         privateSales = { capture, authorization: { decision_id: permission.decision_id, policy_revision: permission.policy_revision } };
       }
-      const spatial = await phase('spatial', async () => captured(await captureNeighborhoodSpatialMembershipStream(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial'));
+      const spatial = await phase('spatial', async () => captured(await captureNeighborhoodSpatialMembershipCompact(client, point.geometry_input, {}, input.discovery, city ?? undefined), 'spatial'));
       // Existing cached-source access requires the subject in the source roster.
       // Never add an outside-city subject to claim complete polygon membership.
       if (city && !spatial.account_ids.includes(scope.account_id)) fail('city_subject_outside_scope');

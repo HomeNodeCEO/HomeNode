@@ -16,6 +16,9 @@ keyset function and radius predicate/parameters remain unchanged.
   geometric repair, or claim of authoritative provider coverage.
 - Original city limits: 15 seconds overall, 5 seconds per query, 50,000 accounts,
   100,000 parcels, 16 MiB spatial metadata, and bounded individual row payloads.
+  The subsequent compact-capture representation has separate encoded/expanded
+  byte meters; see `custom-neighborhood-spatial-encoding.md`. Original object
+  reader limits and all count/query/deadline limits remain unchanged.
 - An exact-full last batch requires another fetch. Any invalid row, capacity
   limit, changed snapshot, or query failure refuses the entire result.
 - The helper closes its portal on success and attempts bounded cleanup on

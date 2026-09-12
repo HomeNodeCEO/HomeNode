@@ -3,6 +3,7 @@ import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { exactDistribution, finiteNumberOrNull } from './statistics.js';
 import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { iterateSpatialParcels } from './spatialMembershipEncoding.js';
 
 export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
   source_chunks: 1000, source_records: 100000, accounts: 50000, pockets: 128,
@@ -270,13 +271,21 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
   const parcelRows = groupBy(roleRows.get('parcels'), row => row.data.account_id);
   const accountRows = groupBy(roleRows.get('accounts'), row => row.data.account_id);
   const selectedRows = groupBy(roleRows.get('selection'), row => row.data.account_id);
-  const spatialRows = groupBy(bounded(input.spatial.parcels, L.source_records, 'spatial_parcels'), row => row.account_id);
+  bounded(input.spatial.parcels, L.source_records, 'spatial_parcels');
+  // Only these two identities are consumed here; do not inflate the complete
+  // compact seven-field roster merely to group account membership.
+  const spatialRows = new Map();
+  for (const row of iterateSpatialParcels(input.spatial)) {
+    if (row.account_id === null || row.account_id === undefined) continue;
+    if (!spatialRows.has(row.account_id)) spatialRows.set(row.account_id, []);
+    spatialRows.get(row.account_id).push(row.object_id);
+  }
   const stock = [];
   for (const account_id of sorted(roster)) {
     if (stock.length % 125 === 0) yield;
     const rows = parcelRows.get(account_id) ?? [];
     meter('measurement', Math.max(1, rows.length) * Object.keys(CAD).length);
-    stock.push({ account_id, parcel_object_ids: sorted((spatialRows.get(account_id) ?? []).map(row => row.object_id)),
+    stock.push({ account_id, parcel_object_ids: sorted(spatialRows.get(account_id) ?? []),
       observations: Object.fromEntries(Object.entries(CAD).map(([key, [field, policy]]) => [key, observe(rows.map(row => row.raw[field]), policy)])),
       source_references: refs([...rows, ...accountRows.get(account_id) ?? [], ...selectedRows.get(account_id) ?? []]) });
   }

@@ -34,3 +34,17 @@ test('unknown errors and non-capture owner failures do not produce diagnostics',
     assert.equal(customCaptureDiagnostic(error), null);
   }
 });
+
+test('compact spatial capacity diagnostics retain both exact byte meters without source data', () => {
+  for (const detail of ['byte_limit', 'expanded_byte_limit']) {
+    assert.deepEqual(customCaptureDiagnostic(failure(detail, { reason: 'spatial_incomplete',
+      capture_counts: { bytes: 22000000, encoded_bytes: 16777217, parcels: 60000,
+        source_record_hash: 'PRIVATE', account_id: 'PRIVATE' } })), {
+      stage: 'spatial', category: 'capacity', checks: [detail],
+      counts: { bytes: 22000000, encoded_bytes: 16777217, parcels: 60000 },
+    });
+  }
+  for (const encoded_bytes of [-1, 1.5, Infinity, NaN, '16777217']) {
+    assert.deepEqual(customCaptureDiagnostic(failure('byte_limit', { capture_counts: { encoded_bytes } })).counts, {});
+  }
+});

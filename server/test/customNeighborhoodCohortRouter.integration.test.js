@@ -48,6 +48,23 @@ test('cohort router requires actual display/inspection owner methods', () => {
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
 });
 
+test('catalog validation diagnostics preserve the public response and cannot leak error details', async t => {
+  const logged = [];
+  const { request } = await start(t, { logger: { warn: (...args) => logged.push(args) }, methods: {
+    catalog() { throw Object.assign(new TypeError('custom_cohort_preview_presentation_text_limit'), {
+      code: 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID', reason: 'text_limit', detail: 'PRIVATE' }); },
+  } });
+  const response = await request('catalog');
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
+  assert.deepEqual(logged, [['[neighborhood] read refused', { action: 'catalog', family: 'presentation', check: 'text_limit' }]]);
+  const brokenLogger = await start(t, { logger: { warn() { throw new Error('logger unavailable'); } }, methods: {
+    catalog() { throw Object.assign(new TypeError('custom_cohort_preview_presentation_text_limit'), {
+      code: 'CUSTOM_COHORT_PREVIEW_PRESENTATION_INVALID', reason: 'text_limit' }); },
+  } });
+  assert.equal((await brokenLogger.request('catalog')).status, 400);
+});
+
 test('opening catalog passes recorded IDs only and expands only its explicitly requested response envelope', async t => {
   const normal = await start(t);
   const ids = ['discovery:unassigned'];

@@ -2,6 +2,7 @@ import express from 'express';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
+import { customCohortReadDiagnostic } from '../../services/neighborhoodAssessment/customCohortReadDiagnostics.js';
 import { customCohortExecutionGate } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from '../../services/neighborhoodAssessment/customCohortOperationLimits.js';
 
@@ -142,6 +143,10 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         }
         if (!controller.signal.aborted && !res.destroyed) return res.json(result);
       } catch (error) {
+        const readDiagnostic = customCohortReadDiagnostic(action, error);
+        if (readDiagnostic) {
+          try { logger?.warn?.('[neighborhood] read refused', readDiagnostic); } catch { /* logging cannot change recovery */ }
+        }
         if (action === 'capture') {
           const diagnostic = customCaptureDiagnostic(error);
           if (diagnostic) {

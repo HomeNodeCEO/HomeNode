@@ -47,6 +47,10 @@ function isoDate(value, code) {
   return normalized;
 }
 
+// Shared validation only; callers still decide whether a date is required and
+// which immutable assignment snapshot it belongs to.
+export { isoDate as normalizeOptionalAppraisalDate };
+
 function optionalUuid(value, code) {
   if (value === undefined || value === null) return null;
   const normalized = String(value).trim().toLowerCase();

@@ -3070,6 +3070,8 @@ export async function createCanonicalReportFile(
     organization_id: string;
     client_request_id: string;
     previous_report_file_id?: string | null;
+    /** Explicit Custom Appraisal date, independent of today's file number. */
+    effective_date?: string;
   },
 ): Promise<{ report_file: CanonicalReportFile; created: boolean }> {
   const id = (accountId || '').trim();

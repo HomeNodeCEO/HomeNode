@@ -127,6 +127,7 @@ test("mobile report files preserve prior versions and allocate one daily assignm
       account_id: accountId,
       workflow_type: "custom_appraisal",
       client_request_id: firstCustomRequest,
+      effective_date: "2024-02-29",
     });
     assert.equal(firstCustom.created, true);
     assert.match(firstCustom.reportFile.file_number, /^CA-\d{4}-\d{3}-01$/);
@@ -140,15 +141,27 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     assert.equal(firstCustomOwnership.rows[0].assigned_appraiser_user_id, userId);
     assert.equal(firstCustomOwnership.rows[0].created_by_user_id, userId);
     assert.equal(firstCustomOwnership.rows[0].updated_by_user_id, userId);
+    const dated = await pool.query(`SELECT c.effective_date::text AS case_date,
+      s.effective_date::text AS snapshot_date FROM app.report_files r
+      JOIN app.appraisal_cases c ON c.id=r.appraisal_case_id
+      JOIN app.appraisal_subject_snapshots s ON s.id=r.subject_snapshot_id WHERE r.id=$1`, [firstCustom.reportFile.id]);
+    assert.deepEqual(dated.rows, [{ case_date: "2024-02-29", snapshot_date: "2024-02-29" }]);
 
     const retried = await createReportFile(pool, auth, {
       organization_id: organizationId,
       account_id: accountId,
       workflow_type: "custom_appraisal",
       client_request_id: firstCustomRequest,
+      effective_date: "2024-02-29",
     });
     assert.equal(retried.created, false);
     assert.equal(retried.reportFile.id, firstCustom.reportFile.id);
+    for (const effective_date of ["2024-03-01", undefined]) {
+      await assert.rejects(createReportFile(pool, auth, {
+        organization_id: organizationId, account_id: accountId,
+        workflow_type: "custom_appraisal", client_request_id: firstCustomRequest, effective_date,
+      }), /creation_request_conflict/);
+    }
 
     await pool.query(
       `UPDATE app.assignment_files
@@ -168,6 +181,9 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     });
     assert.match(secondCustom.reportFile.file_number, /^CA-\d{4}-\d{3}-02$/);
     assert.equal(secondCustom.reportFile.previous_report_file_id, firstCustom.reportFile.id);
+    const undated = await pool.query(`SELECT c.effective_date::text FROM app.report_files r
+      JOIN app.appraisal_cases c ON c.id=r.appraisal_case_id WHERE r.id=$1`, [secondCustom.reportFile.id]);
+    assert.equal(undated.rows[0].effective_date, null, "legacy callers do not inherit another file's appraisal date");
 
     const uad = await createReportFile(pool, auth, {
       organization_id: organizationId,

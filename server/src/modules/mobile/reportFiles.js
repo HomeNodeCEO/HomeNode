@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 
 import { createUadWorkfileWithClient } from "../uad/workfiles.js";
-import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
+import { normalizeOptionalAppraisalDate, registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 import { canonicalCustomAppraisalFileName } from "../../services/customAppraisalWorkfiles.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import {
@@ -258,6 +258,12 @@ export async function createReportFile(pool, auth, input = {}) {
   const organizationId = normalizeOrganization(auth, input.organization_id, { write: true });
   const accountId = normalizeAccountId(input.account_id);
   const workflowType = normalizeWorkflowType(input.workflow_type);
+  // Optional for existing native callers. The desktop Custom chooser asks for
+  // this explicitly; neither file-number day nor observation end is evidence
+  // of the appraisal's effective date. Other workflow creation is unchanged.
+  const effectiveDate = workflowType === "custom_appraisal"
+    ? normalizeOptionalAppraisalDate(input.effective_date, "invalid_effective_date")
+    : null;
   const creationRequestId = normalizeUuid(input.client_request_id, "invalid_client_request_id");
   const explicitPreviousId = input.previous_report_file_id == null
     ? null
@@ -282,6 +288,17 @@ export async function createReportFile(pool, auth, input = {}) {
         || retried.rows[0].workflow_type !== workflowType
       ) {
         throw new Error("creation_request_conflict");
+      }
+      if (workflowType === "custom_appraisal") {
+        const original = await client.query(
+          `SELECT metadata->>'effective_date' AS effective_date FROM app.report_file_events
+            WHERE report_file_id = $1 AND event_type = 'report_file.created'
+            ORDER BY occurred_at, id LIMIT 1`,
+          [retried.rows[0].id],
+        );
+        if (original.rows.length !== 1 || (original.rows[0].effective_date ?? null) !== effectiveDate) {
+          throw new Error("creation_request_conflict");
+        }
       }
       await client.query("COMMIT");
       return { reportFile: reportFileResponse(retried.rows[0]), created: false };
@@ -342,12 +359,14 @@ export async function createReportFile(pool, auth, input = {}) {
       `INSERT INTO app.report_file_events (
          report_file_id, actor_user_id, event_type, next_registry_revision, metadata
        ) VALUES ($1, $2, 'report_file.created', 1, $3::jsonb)`,
-      [id, auth.userId, JSON.stringify({ workflow_type: workflowType, file_number: allocation.fileNumber })],
+      [id, auth.userId, JSON.stringify({ workflow_type: workflowType, file_number: allocation.fileNumber,
+        ...(workflowType === "custom_appraisal" && effectiveDate ? { effective_date: effectiveDate } : {}) })],
     );
     if (workflowType === "custom_appraisal" || workflowType === "uad_3_6") {
       await registerOriginalAppraisalReport(client, id, {
         actorUserId: auth.userId,
         captureReason: "mobile_report_file_created",
+        ...(workflowType === "custom_appraisal" && effectiveDate ? { effectiveDate } : {}),
       });
     }
     const property = await client.query(

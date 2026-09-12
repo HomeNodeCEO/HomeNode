@@ -119,8 +119,8 @@ function planBuilder(retainValues = false, representation = blob, loadedSources)
   const sourcePayload = value => {
     const ref = loadedSources?.get(value);
     if (!ref) return add(value, false, false);
-    // Only this reopen's fully validated, deeply frozen source values have a
-    // receipt. Reuse their representation, not source validity or authority.
+    // Only this operation's fully validated, deeply frozen source values have
+    // a receipt. Reuse their representation, not source validity or authority.
     // Sources are literal data, never storage-reference edges. All logical
     // byte/blob charges and subsequent semantic/routing checks still apply.
     budget.bytes(Number(ref.canonical_utf8_bytes));
@@ -203,6 +203,11 @@ function* validateSources(capture, request, compact, representation = blob, load
     closed(p, ['schema_version', 'scope', 'upstream', 'projection', 'metadata', 'partition', 'records']);
     check(p.schema_version === 1 && same(p.scope, request.scope));
     const ref = loadedSources?.get(p) ?? representation(json(p)), { id: captureId, ...metadata } = p.metadata;
+    // Batched preparation sealed this graph before its first yield. Preserve
+    // the representation checked here for later blob planning in this SAME
+    // operation; every source/mapping/routing check below still runs. The map
+    // is private, weak, and never retained across captures or exposed as access.
+    loadedSources?.set(p, ref);
     check(source.id === `${captureId}:${ref.content_sha256}` && !ids.has(source.id)); ids.add(source.id);
     sourceIds.set(p, source.id);
     check(same(snapshots.get(source.id), { id: source.id, ...metadata, content_sha256: ref.content_sha256,
@@ -304,7 +309,11 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   const result = acquisition.capture_result, request = acquisition.captured_query_request;
   check(result.status === 'captured' && result.query_complete === true && result.reader_version === 'local-capture-v3'
     && result.incomplete_reasons.length === 0 && same(result.snapshot, spatial.snapshot), 'complete_original_capture_required');
-  const scope = scopeOf(subject.target), b = planBuilder(retainValues, representation, loadedSources);
+  // Synchronous callers keep detached text, since their input is not sealed.
+  // Batched callers can reuse only identity-bound representations of the graph
+  // frozen by prepareInputBatchesAsync. Reopens supply their own read receipts.
+  const sourceRepresentations = loadedSources ?? (retainValues ? new WeakMap() : undefined);
+  const scope = scopeOf(subject.target), b = planBuilder(retainValues, representation, sourceRepresentations);
   check(same(b.add(pick(subject, SUBJECT_KEYS), true), reference(subjectRef)));
   for (const [key, value] of [['original_snapshot_row', subject.original_snapshot], ['original_section_reads', subject.original_sections],
     ['snapshot_evidence', subject.snapshot], ['material_input', subject.material]]) check(same(b.add(value, true), subject[key]));
@@ -370,7 +379,7 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   check(same(compact.authorization.transaction_closure, { version: closure.version, source_revision: closure.source_revision,
     closure_sha256: closure.closure_sha256, transaction_count: closure.transactions.length, link_count: closure.links.length,
     legacy_sale_count: closure.legacy.length, account_count: closure.closure_account_ids.length, source_record_count: closure.source_record_ids.length }));
-  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact, representation, loadedSources);
+  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact, representation, sourceRepresentations);
   // Mirror the existing retained-query index exactly; persist still calls its
   // actual repository. This preflight prevents late index/wrapper overflow.
   const evidence = query.evidence;

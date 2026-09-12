@@ -27,3 +27,15 @@ test('private error text, fields and identities never enter read diagnostics', (
     assert.equal(customCohortReadDiagnostic(action, new TypeError('custom_cohort_preview_presentation_text_limit')), null);
   }
 });
+
+test('coordinator and context failures retain only fixed checks, including plain Error validators', () => {
+  assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
+    code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'invalid_input', detail: 'PRIVATE' })),
+  { action: 'catalog', family: 'coordinator', check: 'invalid_input' });
+  assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
+    code: 'custom_cohort_context_input_limit' })), { action: 'catalog', family: 'context', check: 'input_limit' });
+  assert.equal(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
+    code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'PRIVATE' })), null);
+  assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
+    code: 'custom_cohort_context_PRIVATE' })), { action: 'catalog', family: 'context', check: 'unclassified' });
+});

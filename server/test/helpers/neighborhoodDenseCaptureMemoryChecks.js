@@ -22,6 +22,7 @@ import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } from
 import { customCohortOpeningSelection, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { buildCustomCohortPocketRecommendationBatched } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
+import { deriveCustomCohortRecordedProximity } from '../../src/services/neighborhoodAssessment/customCohortRecordedProximity.js';
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
@@ -74,7 +75,15 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
             // Performance-only CURRENT observation diagnostic. This intentionally
             // does not invoke the historical report/recommendation owner or claim
             // that these later synthetic CAD observations apply retrospectively.
-            const diagnostic = await buildCustomCohortPocketRecommendationBatched({ context_ref,
+            // Exercise the actual catalog's optional proximity path over the
+            // complete dense retained graph. Its independent native geometry
+            // cap must leave proximity unknown, not discard the whole catalog.
+            const recorded_proximity = await tx('REPEATABLE READ READ ONLY', client =>
+              deriveCustomCohortRecordedProximity(client.query.bind(client), { context_ref, retained_inputs: opened.retained_inputs }));
+            assert.equal(recorded_proximity.status, 'unavailable');
+            assert.equal(recorded_proximity.reason, 'capacity_exceeded');
+            assert.equal(recorded_proximity.counts.accounts, account_ids.length);
+            const diagnostic = await buildCustomCohortPocketRecommendationBatched({ context_ref, recorded_proximity,
               retained_inputs: opened.retained_inputs, catalog_version: 2, observation_preview: empty,
               selection: { revision: 1, included_recorded_group_ids: [] } });
             recommendation = presentCustomCohortPocketRecommendation({ recommendation: diagnostic, catalog: openingCatalog,

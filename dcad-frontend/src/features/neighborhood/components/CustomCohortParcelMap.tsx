@@ -154,7 +154,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           } });
           instance.addSource(LABEL_SOURCE, { type: 'geojson', data: latest.current.labels });
           instance.addLayer({ id: LABEL_LAYER, type: 'symbol', source: LABEL_SOURCE, minzoom: 9,
-            layout: { 'text-field': ['get', 'label'], 'text-size': 11, 'text-max-width': 16,
+            // OpenFreeMap serves Noto Sans. MapLibre's implicit Open Sans/Arial
+            // stack returns 404s here and forces repeated local glyph fallback.
+            layout: { 'text-field': ['get', 'label'], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 16,
               'text-anchor': 'left', 'text-offset': [0.5, 0], 'text-allow-overlap': false, 'text-optional': true },
             paint: { 'text-color': '#3b0764', 'text-halo-color': '#fff8e7', 'text-halo-width': 2 },
           });

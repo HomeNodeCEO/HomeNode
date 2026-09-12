@@ -442,7 +442,9 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
       parcel_count: spatial.parcels.length, account_count: spatial.account_ids.length,
       source_chunk_count: capture.sources.length, source_record_count: capture.sources.reduce((n, s) => n + s.payload.records.length, 0),
       source_query_complete: true, provider_coverage: 'not_established' }, counts: { ...b.counts } });
-  preparedPlans.set(prepared, { scope, subjectRef, queryRef, queryJson: JSON.stringify(evidence), pending: b.pending, existing: b.existing });
+  preparedPlans.set(prepared, { scope, subjectRef, queryRef, queryJson: JSON.stringify(evidence),
+    queryHashes: new Set([queryRef.content_sha256, ...evidence.blobs.map(entry => entry.ref.content_sha256)]),
+    pending: b.pending, existing: b.existing });
   return prepared;
 }
 
@@ -473,7 +475,11 @@ export async function persistCustomCohortCaptureInputs(client, scopeJson, prepar
     check(same(await store.putPreparedBatch(batch), batch.map(entry => entry.reference)));
     batch = []; batchBytes = 0;
   };
-  for (const entry of p.pending.values()) if (!p.existing.has(entry.ref.content_sha256)) {
+  // retain() has acknowledged every original query blob and its exact header
+  // in this same caller transaction. Do not insert/read those originals twice.
+  // This private preparation set is not a cross-request cache or authority.
+  for (const entry of p.pending.values()) if (!p.existing.has(entry.ref.content_sha256)
+    && !p.queryHashes.has(entry.ref.content_sha256)) {
     const bytes = Number(entry.ref.canonical_utf8_bytes);
     if (batch.length === NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records
       || batchBytes + bytes > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) await flush();

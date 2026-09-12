@@ -911,12 +911,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         },
       });
       return phase('source', async () => {
-        const grants = await access.prepare(input.auth, { target: context.target,
-          selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null });
+        const grants = await phase('source_authorization', () => access.prepare(input.auth, { target: context.target,
+          selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null }));
         const reader = createNeighborhoodDenseCadEvidenceSourceReader(pool, { access });
-        const result = captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
+        const result = await phase('source_read', async () => captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
           selection_grant: grants.selection_grant, market_grant: grants.market_grant },
-        { deadline: budget.deadline, signal: budget.signal }), 'source');
+        { deadline: budget.deadline, signal: budget.signal }), 'source'));
         if (!same(result.snapshot, spatial.snapshot)) fail('snapshot_changed');
         return { spatial, selector, reader, result, privateSales, startedAt, completedAt: await databaseTime(client) };
       });

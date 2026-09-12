@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import {
@@ -40,6 +40,8 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
   const [loading, setLoading] = useState(false);
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState("");
+  const [effectiveDate, setEffectiveDate] = useState("");
+  const creationIntent = useRef<{ key: string; id: string } | null>(null);
   const option = REPORT_OPTIONS.find((item) => item.type === selectedType) || null;
   const writableOrganizations = useMemo(() => {
     if (!option) return [];
@@ -60,6 +62,8 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
     setSelectedType(null);
     setFiles([]);
     setError("");
+    setEffectiveDate("");
+    creationIntent.current = null;
   }, [subject?.accountId]);
 
   useEffect(() => {
@@ -86,13 +90,18 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
 
   async function startNewAssignment() {
     if (!option || !organizationId || creating || !subject) return;
+    if (option.workflow === "custom_appraisal" && !effectiveDate) return;
     setCreating(true);
     setError("");
     try {
+      const key = JSON.stringify([subject.accountId, option.workflow, organizationId,
+        option.workflow === "custom_appraisal" ? effectiveDate : null]);
+      if (creationIntent.current?.key !== key) creationIntent.current = { key, id: crypto.randomUUID() };
       const result = await createCanonicalReportFile(subject.accountId, {
         workflow_type: option.workflow,
         organization_id: organizationId,
-        client_request_id: crypto.randomUUID(),
+        client_request_id: creationIntent.current.id,
+        ...(option.workflow === "custom_appraisal" ? { effective_date: effectiveDate } : {}),
       });
       window.location.assign(reportDestination(option.type, subject, result.report_file.target_id));
     } catch (reason) {
@@ -151,6 +160,17 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
             <section className="hn-report-chooser__panel rounded-xl border p-4">
               <h3 className="hn-report-chooser__section-title font-semibold">Start a new assignment</h3>
               <p className="hn-report-chooser__meta mt-1 text-sm">HomeNode will reserve the next file number for today before opening the report.</p>
+              {option.workflow === "custom_appraisal" && (
+                <label className="hn-report-chooser__label mt-3 block text-sm font-medium">
+                  Appraisal effective date
+                  <input type="date" required disabled={creating} value={effectiveDate}
+                    onChange={(event) => setEffectiveDate(event.target.value)}
+                    className="hn-report-chooser__select mt-1 w-full rounded-lg border px-3 py-2" />
+                  <span className="hn-report-chooser__meta mt-1 block text-xs font-normal">
+                    The date being appraised, not the date this file is created. Neighborhood evidence is checked against this date.
+                  </span>
+                </label>
+              )}
               {writableOrganizations.length > 1 && (
                 <label className="hn-report-chooser__label mt-3 block text-sm font-medium">
                   Organization
@@ -159,7 +179,7 @@ export default function ReportTypeChooser({ subject, onClose }: Props) {
                   </select>
                 </label>
               )}
-              <button className="hn-report-chooser-button mt-3 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating} onClick={() => { void startNewAssignment(); }} type="button">
+              <button className="hn-report-chooser-button mt-3 rounded-xl px-5 py-2.5 text-sm font-semibold disabled:cursor-not-allowed disabled:opacity-50" disabled={!organizationId || creating || (option.workflow === "custom_appraisal" && !effectiveDate)} onClick={() => { void startNewAssignment(); }} type="button">
                 {creating ? "Creating assignment…" : "Start New Assignment"}
               </button>
               {!writableOrganizations.length && <p className="hn-report-chooser__warning mt-2 text-xs font-medium">Your account does not have permission to create this report type.</p>}

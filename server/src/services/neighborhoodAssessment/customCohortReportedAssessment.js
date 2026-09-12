@@ -1,7 +1,7 @@
 import { assessmentEvidenceDigest as digest, buildNeighborhoodAssessment } from './contract.js';
 import { neighborhoodMemberContentDigest, neighborhoodMemberSetDigest, prepareNeighborhoodPublication } from './assessmentRepository.js';
 import { REPORTED_OBSERVATION_PROFILE, REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
-import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreview,
+import { buildCustomCohortIndexedObservationPreview,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
@@ -9,7 +9,10 @@ import { buildCustomCohortReportedSharedSales } from './customCohortReportedShar
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortReportGeographyForReportedAssessment } from './customCohortReportGeography.js';
 import { buildCustomNeighborhoodReportCandidate } from './customReportMapping.js';
+import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { denseReportedAccountReference } from './customCohortReportedAccountReference.js';
 import { types as utilTypes } from 'node:util';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 
 const profile = { contract_version: 2, profile_id: REPORTED_OBSERVATION_PROFILE_ID };
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
@@ -64,7 +67,29 @@ function proposalBinding(value, target) {
  * No current-source lookup, user-supplied member roster, implicit top-N sampling,
  * economic-property inference, temporal promotion, or report writes occur here.
  */
-export function buildCustomCohortReportedAssessment({ context_ref, retained_inputs, selection, target,
+export function buildCustomCohortReportedAssessment(input) {
+  const stages = reportedAssessmentStages(input);
+  while (true) { const step = stages.next(); if (step.done) return step.value; }
+}
+
+/** Same exact report candidate, yielding between bounded preparation phases.
+ * The owner performs fresh revision/rights checks before publication afterward.
+ * Seal descendants before yielding; a shallow-frozen caller is insufficient. */
+export async function buildCustomCohortReportedAssessmentBatched(input, { check = () => {} } = {}) {
+  const seen = new WeakSet();
+  const seal = value => {
+    if (value && typeof value === 'object' && !seen.has(value)) {
+      seen.add(value); Object.values(value).forEach(seal); Object.freeze(value);
+    }
+  };
+  check(); seal(input); check();
+  const stages = reportedAssessmentStages(input);
+  try {
+    while (true) { check(); const step = stages.next(); check(); if (step.done) return step.value; await yieldToRequests(); }
+  } finally { stages.return(); }
+}
+
+function* reportedAssessmentStages({ context_ref, retained_inputs, selection, target,
   preparation_identity: identity, report_geography, derived_at, proposal_binding, catalog_version = 1 }) {
   // Distinguish independently authorized proposal operations without changing
   // their observations or inventing a later clock. This is audit identity, not
@@ -84,8 +109,9 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
   check(Number.isSafeInteger(selection?.revision) && selection.revision > 0
     && Array.isArray(selection.included_recorded_group_ids)
     && new Set(selection.included_recorded_group_ids).size === selection.included_recorded_group_ids.length, 'selection');
-  const discovery = buildCustomCohortObservationPreview({ context_ref, retained_inputs: retained,
+  const discovery = buildCustomCohortIndexedObservationPreview({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets: [] } });
+  yield;
   const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview: discovery, catalog_version });
   check(catalog.catalog_complete === true, 'catalog_incomplete');
   const groups = new Map(catalog.pockets.map(group => [group.id, group]));
@@ -101,6 +127,7 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
     label: 'Selected retained accounts', account_ids: selectedAccounts }] : [];
   const preview = buildCustomCohortIndexedObservationPreview({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets } });
+  yield;
   const selected = customCohortObservationMembers(preview, preview.selected, 'stock');
   const period = { ...preview.observation_period, date_basis: 'closing_date' };
   const privateCapture = retained.private_sales?.capture;
@@ -157,10 +184,14 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
         ...counts, denominator_count: pop.member_count, denominator_basis: 'population_members', source_refs: [...pop.source_refs] });
     }
   }
+  const dense = customCohortObservationRecordLimit(retained.acquisition) > 100_000;
   const cad = population('selected-cad-accounts', selected.map(row => ({ id: row.account_id, accounts: [row.account_id],
-    data: { captured_account_observations: row } })), preview.captured_at,
-  { source_snapshots: preview.source_snapshots, source_basis: 'current_cad_observations_not_historical_housing_stock' },
+    data: dense ? { retained_account_observation_reference: denseReportedAccountReference(row) }
+      : { captured_account_observations: row } })), preview.captured_at,
+  { source_snapshots: preview.source_snapshots, source_basis: 'current_cad_observations_not_historical_housing_stock',
+    ...(dense ? { member_representation: 'retained-account-observation-reference-v1' } : {}) },
   'Selected retained CAD accounts; current reported characteristics, not verified economic-property inventory', true);
+  yield;
   const year = Number(effective.slice(0, 4));
   for (const [field, name, unit] of [['gla_sqft', 'current_cad_living_area', 'ft2'], ['site_area_sqft', 'current_cad_parcel_area', 'ft2'],
     ['year_built', 'current_cad_year_built', 'year']]) {
@@ -177,6 +208,7 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
     return Number(cell.exact_value) > year ? { state: 'invalid', exact_value: null }
       : { state: 'observed', exact_value: String(year - Number(cell.exact_value)) };
   }), 'years'));
+  yield;
   const shared = buildCustomCohortReportedSharedSales({ retained_inputs: retained, selected_account_ids: preview.selected.account_ids });
   const sharedSales = population('selected-shared-source-records', shared.rows, shared.captured_at,
     { source_snapshots: preview.source_snapshots, disposition_counts: shared.disposition_counts,
@@ -184,6 +216,7 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
     'Selected locally stored closed source records; reported dates and full observed account associations, not verified sale events',
     false, 'retained_source_account_associations');
   for (const [measurement, metric] of Object.entries(shared.metrics)) distribution(sharedSales, measurement, metric);
+  yield;
   if (privateSales) {
     const dispositions = new Map(privateSales.rows.map(row => [row.receipt_id, row]));
     const rows = privateCapture.rows.filter(row => dispositions.get(row.receipt_id)?.disposition === 'included');
@@ -214,7 +247,9 @@ export function buildCustomCohortReportedAssessment({ context_ref, retained_inpu
       'current_cad_capture_not_historical_stock', 'median_is_not_predominant_value', 'no_package_price_allocation',
       'selected_data_may_differ_from_broad_manual_boundary', 'dispersion_is_not_reliability',
       ...(privateSales ? [] : ['no_assignment_private_sales_capture'])] } });
+  yield;
   const publication = prepareNeighborhoodPublication(assessment, members, sources);
+  yield;
   const candidate = buildCustomNeighborhoodReportCandidate({ assessment: publication.assessment, target: { ...target,
     attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,
     workflow_type: 'custom_appraisal', uad_workfile_id: null, specification_release: null } });

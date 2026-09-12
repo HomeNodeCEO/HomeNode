@@ -1,5 +1,5 @@
 import { assessmentDate } from './contract.js';
-import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches } from './customCohortObservationMapping.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 
 export const CUSTOM_COHORT_REPORTED_SHARED_SALES_LIMITS = Object.freeze({
   chunks: 1000, records: 100000, selected_accounts: 50000, accounts_per_record: 1000,
@@ -88,6 +88,10 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
   const acquisition = input?.acquisition, result = acquisition?.capture_result, capture = result?.source_capture;
   check(result?.query_complete === true && capture?.status === 'ready' && input?.spatial?.query_complete === true, 'retained_capture');
   const version = customCohortObservationMappingVersion(acquisition), effective = assessmentDate(input.subject.effective_date, 'effective_date');
+  // Follow the same owner-admitted dense record set as the indexed preview.
+  // This changes traversal capacity only; per-chunk, sale/link and output
+  // limits and every source-record interpretation rule remain independent.
+  const recordLimit = customCohortObservationRecordLimit(acquisition);
   const period = input.study.observation_period, start = assessmentDate(period.start_date, 'start_date'), end = assessmentDate(period.end_date, 'end_date');
   check(start <= end && end <= effective, 'observation_period');
   const capturedAt = result.captured_at;
@@ -107,7 +111,7 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
   const routes = new Set(); let routeCount = 0;
   for (const route of bounded(capture.references, L.chunks, 'route_limit')) {
     for (const ref of bounded(route.record_sources, L.records, 'route_record_limit')) {
-      check(++routeCount <= L.records, 'route_record_limit'); routes.add(`${ref.source_ref}\n${ref.record_id}`);
+      check(++routeCount <= recordLimit, 'route_record_limit'); routes.add(`${ref.source_ref}\n${ref.record_id}`);
     }
   }
   let recordCount = 0, legacyCount = 0;
@@ -116,7 +120,7 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
     check(customCohortObservationProjectionMatches(definition, version), 'mapping_profile');
     check(['selection', 'parcels', 'accounts', 'transactions', 'sale_links', 'gis_sync'].includes(role) && snapshots.has(source.id), 'source_role'); roles.add(role);
     for (const row of bounded(source.payload.records, L.records, 'record_limit')) {
-      check(++recordCount <= L.records, 'record_limit');
+      check(++recordCount <= recordLimit, 'record_limit');
       const key = `${role}\n${row.record_id}`;
       check(!seen.has(key) && routes.has(`${source.id}\n${row.record_id}`), 'source_routing'); seen.add(key);
       if (!['transactions', 'sale_links'].includes(role)) continue;

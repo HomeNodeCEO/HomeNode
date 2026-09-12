@@ -38,4 +38,6 @@ test('coordinator and context failures retain only fixed checks, including plain
     code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'PRIVATE' })), null);
   assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
     code: 'custom_cohort_context_PRIVATE' })), { action: 'catalog', family: 'context', check: 'unclassified' });
+  assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new TypeError('custom_cohort_invalid_selection'), {
+    reason: 'invalid_selection' })), { action: 'catalog', family: 'validator', check: 'invalid_selection' });
 });

@@ -31,11 +31,11 @@ export function customCohortReadDiagnostic(action, error) {
     const reason = error.code.slice('custom_cohort_context_'.length);
     return { action, family: 'context', check: CHECKS.has(reason) ? reason : 'unclassified' };
   }
-  if (!(error instanceof TypeError)) return null;
-  for (const [prefix, family] of FAMILIES) {
+  for (const [prefix, family] of error instanceof TypeError ? FAMILIES : []) {
     if (!error.message.startsWith(prefix)) continue;
     const reason = error.message.slice(prefix.length);
     return { action, family, check: CHECKS.has(reason) ? reason : 'unclassified' };
   }
+  if (CHECKS.has(error.reason)) return { action, family: 'validator', check: error.reason };
   return null;
 }

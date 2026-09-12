@@ -18,7 +18,7 @@ test('actual city polygon membership, original geometry and complete capacity re
   const target = await prepareNeighborhoodCiDatabase();
   await runCustomCohortContextCaptureDatabaseChecks(target.connectionString);
   const result = await runCustomCitySpatialDatabaseChecks(target.connectionString);
-  assert.equal(result.checks.length, 5);
+  assert.equal(result.checks.length, 6);
   assert.equal(Object.keys(result.fixture.account_ids).length, 7);
   assert.equal(result.fixture.subject_point.type, 'Point');
 });

@@ -62,6 +62,10 @@ const CITY_PAGE_SQL = PAGE_SQL
       4828.032, true)`, `geom && ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326)
     AND ST_Intersects(geom, ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326))`)
   .replace('LIMIT $4', 'LIMIT $3');
+const CITY_STREAM_SQL = CITY_PAGE_SQL
+  .replace('($2::bigint IS NULL OR object_id > $2::bigint)', 'true')
+  .replace('ORDER BY object_id LIMIT $3', '')
+  .replace('FROM encoded ORDER BY object_id', 'FROM encoded');
 const CITY_VALIDITY_SQL = `WITH city AS (
   SELECT ST_SetSRID(ST_GeomFromGeoJSON($1::text), 4326) AS geom
 ) SELECT (NOT ST_IsEmpty(geom) AND ST_IsValid(geom)
@@ -107,13 +111,13 @@ export async function captureNeighborhoodSpatialMembership(client, geometryInput
   return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, false);
 }
 
-/** One-pass radius acquisition for the live Custom coordinator. City membership
- * keeps its existing indexed keyset reader. No source/cap/predicate changes. */
+/** One-pass radius/city acquisition for the live Custom coordinator. The public
+ * keyset reader stays unchanged. No source, data-cap or predicate changes. */
 export async function captureNeighborhoodSpatialMembershipStream(client, geometryInput, overrides = {}, discoveryChoice, cityInput) {
   return captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, true);
 }
 
-async function captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, streamRadius) {
+async function captureMembership(client, geometryInput, overrides, discoveryChoice, cityInput, streamRequested) {
   const discovery = discoveryChoice === undefined ? null : prepareNeighborhoodDiscoveryChoice(discoveryChoice);
   const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY
     ? validateRetainedCustomCityDiscovery(cityInput) : null;
@@ -124,8 +128,10 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
   const prepared = prepareNeighborhoodDiscoveryGeometryV1(geometryInput);
   if (prepared.status !== 'prepared') return prepared;
   if (!client || typeof client.query !== 'function') throw new TypeError('spatial_membership_client_required');
-  const streaming = streamRadius && !city;
-  const limits = limitsOf(overrides, streaming ? STREAM_LIMITS : LIMITS);
+  const streaming = streamRequested;
+  // City acquisition retains its original 15s aggregate budget. The longer
+  // streamed-radius budget was separately measured; it is not a city override.
+  const limits = limitsOf(overrides, streaming && !city ? STREAM_LIMITS : LIMITS);
   let portal = null;
   const started = performance.now();
   const counts = { queries: 0, parcels: 0, accounts: 0, bytes: 0 };
@@ -166,18 +172,24 @@ async function captureMembership(client, geometryInput, overrides, discoveryChoi
       // Scope the planner preference to DECLARE only. Restore the caller's
       // exact setting before FETCH or any subsequent source query. A failed
       // statement belongs to the caller's rollback, which also resets SET LOCAL.
-      const settings = await query('cursor-plan-read', "SELECT current_setting('enable_indexscan') AS enable_indexscan");
-      const previous = settings[0]?.enable_indexscan;
-      if (settings.length !== 1 || !['on', 'off'].includes(previous)) incomplete('cursor_plan_setting_unavailable');
-      await query('cursor-plan-start', 'SET LOCAL enable_indexscan=off');
+      // City intersections keep the caller's planner settings unchanged.
+      let previous;
+      if (!city) {
+        const settings = await query('cursor-plan-read', "SELECT current_setting('enable_indexscan') AS enable_indexscan");
+        previous = settings[0]?.enable_indexscan;
+        if (settings.length !== 1 || !['on', 'off'].includes(previous)) incomplete('cursor_plan_setting_unavailable');
+        await query('cursor-plan-start', 'SET LOCAL enable_indexscan=off');
+      }
       // Generated identifier only, never caller text. NO HOLD keeps this portal
       // tied to the exact caller-owned snapshot and rollback lifecycle.
       portal = `nh_membership_${randomUUID().replaceAll('-', '')}`;
-      await query('parcels-open', `DECLARE ${portal} NO SCROLL CURSOR FOR ${discovery ? STREAM_SQL_V2 : STREAM_SQL}`,
-        [...prepared.geometry_input.coordinates, ...(discovery ? [discovery.radius_metres] : [])]);
-      const restored = await query('cursor-plan-restore',
-        "SELECT set_config('enable_indexscan', $1, true) AS enable_indexscan", [previous]);
-      if (restored.length !== 1 || restored[0].enable_indexscan !== previous) incomplete('cursor_plan_setting_unavailable');
+      await query('parcels-open', `DECLARE ${portal} NO SCROLL CURSOR FOR ${city ? CITY_STREAM_SQL : discovery ? STREAM_SQL_V2 : STREAM_SQL}`,
+        city ? [cityGeometry] : [...prepared.geometry_input.coordinates, ...(discovery ? [discovery.radius_metres] : [])]);
+      if (!city) {
+        const restored = await query('cursor-plan-restore',
+          "SELECT set_config('enable_indexscan', $1, true) AS enable_indexscan", [previous]);
+        if (restored.length !== 1 || restored[0].enable_indexscan !== previous) incomplete('cursor_plan_setting_unavailable');
+      }
     }
     while (true) {
       const rows = streaming

@@ -7,12 +7,12 @@ import { automaticBoundaryRestoreState } from '../src/lib/neighborhoodBoundaryRe
 // the regression tied to the actual callback wiring without mounting the map.
 // This is effect-level coverage, not a browser/render or persistence test.
 const source = readFileSync(new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const start = source.indexOf('  useEffect(() => {\n    if (!accountId) return;\n    const attemptSignature =');
-const end = source.indexOf('  }, [accountId, assignmentFileId, begin]);', start);
+const start = source.indexOf('  useEffect(() => {\n    if (!automaticAnalysisEnabled || !accountId) return;\n    const attemptSignature =');
+const end = source.indexOf('  }, [automaticAnalysisEnabled, accountId, assignmentFileId, begin]);', start);
 assert.ok(start >= 0 && end > start, 'automatic boundary effect exists');
 const effectBody = source.slice(start + '  useEffect(() => {'.length, end);
 const effect = new Function('bindings', `const {
-  accountId, assignmentFileId, automaticBoundaryAttemptRef, currentBoundaryContextRef, begin,
+  accountId, assignmentFileId, automaticAnalysisEnabled, automaticBoundaryAttemptRef, currentBoundaryContextRef, begin,
   setGeneratedBoundaryLoading, setGeneratedBoundaryMessage, getNeighborhoodBoundary,
   runNeighborhoodBoundaryGeneration, DISCOVERY_ENVELOPE_METHODOLOGY_VERSION,
   applyGeneratedBoundaryRef, automaticBoundaryRestoreState
@@ -30,7 +30,7 @@ function harness(current) {
   const applied = [], messages = [], loading = [], calls = [];
   const context = { current };
   const cancel = effect({
-    accountId: 'account', assignmentFileId: 12,
+    accountId: 'account', assignmentFileId: 12, automaticAnalysisEnabled: true,
     automaticBoundaryAttemptRef: { current: '' }, currentBoundaryContextRef: { current: () => context.current },
     begin: () => () => true,
     setGeneratedBoundaryLoading: value => loading.push(value),

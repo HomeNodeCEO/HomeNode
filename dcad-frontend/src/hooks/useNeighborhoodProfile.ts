@@ -21,6 +21,7 @@ type BoundarySuggestions = NonNullable<
 
 type UseNeighborhoodProfileOptions = {
   enabled?: boolean;
+  automaticAnalysisEnabled?: boolean;
   accountId?: string;
   assignmentFileId?: number | null;
   assignmentDraft: AssignmentDetailsPayload;
@@ -64,6 +65,7 @@ function hasPocketStatistics(draft: AssignmentDetailsPayload): boolean {
 
 export function useNeighborhoodProfile({
   enabled = true,
+  automaticAnalysisEnabled = true,
   accountId,
   assignmentFileId,
   assignmentDraft,
@@ -253,7 +255,7 @@ export function useNeighborhoodProfile({
 
   useEffect(() => {
     const geometry = effectiveGeometry;
-    if (!enabled || !sectionReady || !geometry || !accountId || !assignmentFileId || assignmentFilesLoading || !assignmentFilesLoaded) return;
+    if (!enabled || !automaticAnalysisEnabled || !sectionReady || !geometry || !accountId || !assignmentFileId || assignmentFilesLoading || !assignmentFilesLoaded) return;
     const structuredBoundariesPresent = [assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west]
       .every((value) => String(value || "").trim());
     const profileValuesPresent = structuredBoundariesPresent && [assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_sale_count]
@@ -263,7 +265,7 @@ export function useNeighborhoodProfile({
     if (attemptedSignature.current === signature) return;
     attemptedSignature.current = signature;
     void refreshProfile(false);
-  }, [enabled, accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFileId, assignmentFilesLoaded, assignmentFilesLoading, effectiveGeometry, inputSignature, refreshProfile, retryNonce, sectionReady]);
+  }, [enabled, automaticAnalysisEnabled, accountId, assignmentDraft.neighborhood_age_predominant, assignmentDraft.neighborhood_boundary_east, assignmentDraft.neighborhood_boundary_north, assignmentDraft.neighborhood_boundary_south, assignmentDraft.neighborhood_boundary_west, assignmentDraft.neighborhood_city_average_sale_price, assignmentDraft.neighborhood_gla_predominant, assignmentDraft.neighborhood_ppsf_predominant, assignmentDraft.neighborhood_sale_count, assignmentFileId, assignmentFilesLoaded, assignmentFilesLoading, effectiveGeometry, inputSignature, refreshProfile, retryNonce, sectionReady]);
 
   useEffect(() => () => {
     requestGeneration.current += 1;

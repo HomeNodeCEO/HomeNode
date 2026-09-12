@@ -79,6 +79,14 @@ function harness(draft = ordinary, extraOptions = {}) {
   };
 }
 
+test('captured workspace suppresses automatic profile work but preserves explicit refresh', async () => {
+  const h = harness(selected, { sectionReady: true, automaticAnalysisEnabled: false });
+  h.render(); assert.equal(h.requests.length, 0); assert.deepEqual(h.draft, selected);
+  const run = h.api.refreshProfile(true); assert.equal(h.requests.length, 1);
+  await h.complete(); await run;
+  for (const key of Object.keys(selected)) assert.deepEqual(h.draft[key], selected[key], key);
+});
+
 test('initial broad population still fills ordinary statistics and missing road text', async () => {
   const h = harness(); const run = h.api.refreshProfile(); await h.complete(); await run;
   assert.equal(h.draft.neighborhood_house_price_predominant, 300000);

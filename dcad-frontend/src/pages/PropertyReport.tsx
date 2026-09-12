@@ -425,6 +425,7 @@ function AddressHero({
     resetProfileTracking,
   } = useNeighborhoodProfile({
     enabled: legacyNeighborhoodAllowed,
+    automaticAnalysisEnabled: !CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED,
     accountId,
     assignmentFileId: activeAssignmentFile?.id || null,
     assignmentDraft,
@@ -3194,6 +3195,7 @@ function AddressHero({
                     </p>
                   )
                 ) : <NeighborhoodCharacteristicsContent
+              automaticAnalysisEnabled={!CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED}
               accountId={accountId}
               assignmentFileId={activeAssignmentFile?.id || null}
               assignmentDraft={assignmentDraft}
@@ -3243,7 +3245,7 @@ function AddressHero({
             && applicationAuth.ready && !applicationAuth.bootstrapError && applicationAuth.session?.user_id && (
             <div className="order-3 print:hidden">
               <Suspense fallback={null}>
-                {/* Explicit reviewed-source capture remains separate from report autosave. */}
+                {/* Reviewed-source capture is separate from report autosave. */}
                 <PrivateSalesImportsPanel accountId={accountId} assignmentFileId={activeAssignmentFile.id}
                   sessionKey={applicationAuth.session.user_id}
                   readOnly={activeAssignmentFile.workfile?.status !== "draft" || Boolean(finalizingAssignmentFile)

@@ -276,6 +276,37 @@ test('repeated reopen still reads and validates originals instead of retaining a
   await assert.rejects(load(f.client, f.scopeJson, refs), /missing_evidence/);
 });
 
+test('reopened frozen source receipts retain exact full-preparation parity without becoming transferable authority', async () => {
+  const f = await fixture({ parcelCount: 1001, mappingVersion: 4 });
+  const original = prepare(f.input), refs = await persist(f.client, f.scopeJson, original);
+  const opened = await load(f.client, f.scopeJson, refs);
+  const fullyPrepared = prepare(structuredClone(opened.retained_inputs));
+  assert.deepEqual(fullyPrepared, original, 'same graph, summary and logical charges without the private reopen receipts');
+  for (const source of opened.retained_inputs.acquisition.capture_result.source_capture.sources) {
+    assert.ok(Object.isFrozen(source.payload));
+    assert.ok(Object.isFrozen(source.payload.records));
+    if (source.payload.records.length) {
+      assert.ok(Object.isFrozen(source.payload.records[0].data));
+      assert.throws(() => { source.payload.records[0].record_id = 'changed'; }, TypeError);
+    }
+  }
+  await assert.rejects(persist(f.client, f.scopeJson, structuredClone(fullyPrepared)), /original_preparation_required/);
+});
+
+test('a valid stored blob receipt cannot authorize a substituted source payload or bypass source identity checks', async () => {
+  const f = await fixture(), refs = await persist(f.client, f.scopeJson, prepare(f.input));
+  const read = async ref => JSON.parse(await f.store.get(ref.content_sha256, ref.canonical_utf8_bytes));
+  const selection = await read(refs.selection_input), manifest = await read(selection.sources.payloads);
+  const page = await read(manifest.pages[0].page), payload = await read(page.entries[0].payload);
+  payload.metadata.provider = 'Altered provider in a genuinely stored canonical blob';
+  page.entries[0].payload = await f.store.put(json(payload));
+  manifest.pages[0].page = await f.store.put(json(page));
+  selection.sources.payloads = await f.store.put(json(manifest));
+  const changed = { ...refs, selection_input: await f.store.put(json(selection)) };
+  await assert.rejects(load(f.client, f.scopeJson, changed), /binding_mismatch/);
+  assert.deepEqual((await load(f.client, f.scopeJson, refs)).refs, refs, 'original graph still opens through a fresh read');
+});
+
 for (const [name, mutate] of [
   ['incomplete original', i => { i.acquisition.capture_result.query_complete = false; }],
   ['foreign snapshot', i => { i.acquisition.capture_result.snapshot.backend_pid++; }],

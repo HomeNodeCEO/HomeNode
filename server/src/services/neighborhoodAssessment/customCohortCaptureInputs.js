@@ -96,7 +96,7 @@ function referenceEdges(value, charge) {
   else for (const child of Object.values(value)) referenceEdges(child, charge);
 }
 const entryText = entry => Object.hasOwn(entry, 'text') ? entry.text : json(entry.value);
-function planBuilder(retainValues = false, representation = blob) {
+function planBuilder(retainValues = false, representation = blob, loadedSources) {
   const budget = meter(), pending = new Map(), existing = new Map();
   const text = (canonical, alreadyStored = false, hasReferenceEdges = true, originalValue) => {
     const ref = representation(canonical);
@@ -116,6 +116,22 @@ function planBuilder(retainValues = false, representation = blob) {
     return ref;
   };
   const add = (value, alreadyStored = false, hasReferenceEdges = true) => text(json(value), alreadyStored, hasReferenceEdges, value);
+  const sourcePayload = value => {
+    const ref = loadedSources?.get(value);
+    if (!ref) return add(value, false, false);
+    // Only this reopen's fully validated, deeply frozen source values have a
+    // receipt. Reuse their representation, not source validity or authority.
+    // Sources are literal data, never storage-reference edges. All logical
+    // byte/blob charges and subsequent semantic/routing checks still apply.
+    budget.bytes(Number(ref.canonical_utf8_bytes));
+    const previous = pending.get(ref.content_sha256);
+    check(!previous || previous.value === value || entryText(previous) === json(value), 'digest_conflict');
+    if (!previous) {
+      check(++budget.counts.blobs <= L.blobs, 'input_limit');
+      pending.set(ref.content_sha256, { ref, value });
+    }
+    return ref;
+  };
   function* pagesBatches(kind, entries, maximum, hasReferenceEdges = true) {
     array(entries, maximum);
     const refs = []; let batch = [], size = 200;
@@ -133,7 +149,7 @@ function planBuilder(retainValues = false, representation = blob) {
     if (batch.length) flush();
     return add({ collection_version: 1, kind, entry_count: String(entries.length), pages: refs });
   }
-  return { ...budget, pending, existing, text, add, pages: pagesBatches };
+  return { ...budget, pending, existing, text, add, sourcePayload, pages: pagesBatches };
 }
 function* validateSpatial(spatial, point, discovery) {
   const city = discovery?.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
@@ -173,7 +189,7 @@ function* validateSpatial(spatial, point, discovery) {
     && spatial.account_ids_sha256 === assessmentEvidenceDigest({ account_ids: spatial.account_ids })
     && spatial.membership_sha256 === digest.digest('hex'));
 }
-function* validateSources(capture, request, compact, representation = blob) {
+function* validateSources(capture, request, compact, representation = blob, loadedSources) {
   check(capture.status === 'ready' && same(capture.scope, request.scope));
   array(capture.sources, L.source_chunks); array(capture.source_snapshots, L.source_chunks);
   check(capture.sources.length === capture.source_snapshots.length);
@@ -186,7 +202,7 @@ function* validateSources(capture, request, compact, representation = blob) {
     const p = source.payload;
     closed(p, ['schema_version', 'scope', 'upstream', 'projection', 'metadata', 'partition', 'records']);
     check(p.schema_version === 1 && same(p.scope, request.scope));
-    const ref = representation(json(p)), { id: captureId, ...metadata } = p.metadata;
+    const ref = loadedSources?.get(p) ?? representation(json(p)), { id: captureId, ...metadata } = p.metadata;
     check(source.id === `${captureId}:${ref.content_sha256}` && !ids.has(source.id)); ids.add(source.id);
     sourceIds.set(p, source.id);
     check(same(snapshots.get(source.id), { id: source.id, ...metadata, content_sha256: ref.content_sha256,
@@ -263,12 +279,12 @@ export async function prepareCustomCohortCaptureInputsBatched(input, { check = (
   return prepareInputBatchesAsync(input, { check, afterBatch });
 }
 
-async function prepareInputBatchesAsync(input, { check = () => {}, afterBatch = async () => {} } = {}, representation = blob) {
+async function prepareInputBatchesAsync(input, { check = () => {}, afterBatch = async () => {} } = {}, representation = blob, loadedSources) {
   // This private API receives the owner's original handoff or reconstructed
   // retained input. Seal it before yielding so another task cannot rewrite an
   // already-validated descendant while the evidence graph is being assembled.
   check(); freeze(input); check();
-  const iterator = prepareInputBatches(input, true, representation);
+  const iterator = prepareInputBatches(input, true, representation, loadedSources);
   try {
     while (true) {
       check(); const step = iterator.next(); check();
@@ -278,7 +294,7 @@ async function prepareInputBatchesAsync(input, { check = () => {}, afterBatch = 
   } finally { iterator.return(); }
 }
 
-function* prepareInputBatches(input, retainValues = false, representation = blob) {
+function* prepareInputBatches(input, retainValues = false, representation = blob, loadedSources) {
   const hasPrivate = Object.hasOwn(input, 'private_sales');
   closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at',
     ...(hasPrivate ? ['private_sales'] : [])]);
@@ -288,7 +304,7 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   const result = acquisition.capture_result, request = acquisition.captured_query_request;
   check(result.status === 'captured' && result.query_complete === true && result.reader_version === 'local-capture-v3'
     && result.incomplete_reasons.length === 0 && same(result.snapshot, spatial.snapshot), 'complete_original_capture_required');
-  const scope = scopeOf(subject.target), b = planBuilder(retainValues, representation);
+  const scope = scopeOf(subject.target), b = planBuilder(retainValues, representation, loadedSources);
   check(same(b.add(pick(subject, SUBJECT_KEYS), true), reference(subjectRef)));
   for (const [key, value] of [['original_snapshot_row', subject.original_snapshot], ['original_section_reads', subject.original_sections],
     ['snapshot_evidence', subject.snapshot], ['material_input', subject.material]]) check(same(b.add(value, true), subject[key]));
@@ -354,7 +370,7 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   check(same(compact.authorization.transaction_closure, { version: closure.version, source_revision: closure.source_revision,
     closure_sha256: closure.closure_sha256, transaction_count: closure.transactions.length, link_count: closure.links.length,
     legacy_sale_count: closure.legacy.length, account_count: closure.closure_account_ids.length, source_record_count: closure.source_record_ids.length }));
-  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact, representation);
+  yield* validateSources(result.source_capture, { ...request, query_hash: result.selection_sha256 }, compact, representation, loadedSources);
   // Mirror the existing retained-query index exactly; persist still calls its
   // actual repository. This preflight prevents late index/wrapper overflow.
   const evidence = query.evidence;
@@ -372,7 +388,7 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   const capture = result.source_capture;
   const sourcePayloads = [];
   for (const source of capture.sources) {
-    sourcePayloads.push({ id: source.id, payload: b.add(source.payload, false, false) });
+    sourcePayloads.push({ id: source.id, payload: b.sourcePayload(source.payload) });
     yield;
   }
   const closureCollections = {};
@@ -458,7 +474,7 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
   const store = createNeighborhoodCohortBlobRepository(client, scope.organization_id), budget = meter(), cache = new Map(), seen = new Map();
   // Request-local receipts only: no cached source bytes, permissions, or graph
   // conclusions cross requests. Every independent read still checks originals.
-  const representations = new Map();
+  const representations = new Map(), loadedSources = new WeakMap();
   const representation = canonical => {
     const hash = createHash('sha256').update(canonical, 'utf8').digest('hex');
     const receipt = representations.get(hash);
@@ -569,6 +585,12 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
   const payloadEntries = await pages(selection.sources.payloads, 'source_payloads', L.source_chunks);
   const payloadRefs = payloadEntries.map(entry => { closed(entry, ['id', 'payload']); return entry.payload; });
   for await (const { index, value: payload } of readMany(payloadRefs)) {
+    // The scoped blob read just checked these exact originals (canonical form,
+    // hash, size and storage grammar). Seal before any yield, retaining only
+    // identity -> receipt, not an additional encoded source or graph cache.
+    const receipt = representations.get(payloadRefs[index].content_sha256);
+    check(receipt, 'missing_evidence');
+    freeze(payload); loadedSources.set(payload, receipt);
     source.sources.push({ id: payloadEntries[index].id, payload });
   }
   source.source_snapshots = await pages(selection.sources.snapshots, 'source_snapshots', L.source_chunks);
@@ -604,7 +626,7 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
       check(await transaction(client) === started, 'caller_transaction_required');
       lastTransactionCheck = performance.now();
     }
-  } }, representation);
+  } }, representation, loadedSources);
   check(same(checked.refs, refs), 'stored_graph_mismatch');
   check(await transaction(client) === started, 'caller_transaction_required');
   return freeze({ status: 'retained', authority: 'not_established', refs: checked.refs,

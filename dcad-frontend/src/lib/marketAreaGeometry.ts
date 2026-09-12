@@ -47,7 +47,9 @@ export function shouldAdoptIncomingMarketArea({
   incomingGeometry?: GeoJsonPolygon | null;
 }): boolean {
   if (!incomingGeometry || currentOrigin === 'cleared') return false;
-  if (currentOrigin === 'appraiser' && currentGeometry) return false;
+  // A redraw deliberately has no closed polygon until Close Area. That empty
+  // manual draft is still authoritative over the saved/automatic input.
+  if (currentOrigin === 'appraiser') return false;
   return !polygonsMatch(currentGeometry, incomingGeometry);
 }
 

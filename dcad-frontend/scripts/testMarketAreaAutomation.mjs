@@ -45,3 +45,38 @@ test('clearing an area blocks automatic reseeding until the appraiser resets it'
   }), false);
   assert.equal(marketAreaOriginFromSource('appraiser_defined_area_cleared', null), 'cleared');
 });
+
+test('starting a redraw preserves the intentionally empty manual draft', () => {
+  // beginCustomBoundary switches to appraiser origin and clears the local
+  // polygon before the first click. The saved assignment still supplies the
+  // old polygon until Close Area; it must not refill that draft on rerender.
+  for (const incomingGeometry of [generated, edited, structuredClone(generated)]) {
+    assert.equal(shouldAdoptIncomingMarketArea({
+      currentGeometry: null,
+      currentOrigin: 'appraiser',
+      incomingGeometry,
+    }), false);
+  }
+});
+
+test('an untouched empty area still accepts its asynchronously loaded assignment', () => {
+  assert.equal(shouldAdoptIncomingMarketArea({
+    currentGeometry: null,
+    currentOrigin: 'automatic',
+    incomingGeometry: generated,
+  }), true);
+});
+
+test('closing and cancelling edits retain the prior origin rules', () => {
+  assert.equal(shouldAdoptIncomingMarketArea({
+    currentGeometry: edited, currentOrigin: 'appraiser', incomingGeometry: generated,
+  }), false);
+  // Cancelling an automatic outline edit restores its original geometry and
+  // origin, allowing a genuinely newer automatic outline again.
+  assert.equal(shouldAdoptIncomingMarketArea({
+    currentGeometry: generated, currentOrigin: 'automatic', incomingGeometry: edited,
+  }), true);
+  assert.equal(shouldAdoptIncomingMarketArea({
+    currentGeometry: generated, currentOrigin: 'automatic', incomingGeometry: structuredClone(generated),
+  }), false);
+});

@@ -5,7 +5,7 @@ const STAGES = new Map([
   ['transaction_identity_incomplete', 'transaction_identity'], ['source_incomplete', 'source'],
 ]);
 const CAPACITY = new Set(['account_limit', 'parcel_limit', 'record_limit', 'identity_limit',
-  'byte_limit', 'row_bytes_limit', 'query_limit', 'query_evidence_limit', 'capture_budget_limit',
+  'byte_limit', 'expanded_byte_limit', 'row_bytes_limit', 'query_limit', 'query_evidence_limit', 'capture_budget_limit',
   'account_roster_canonical_byte_limit']);
 const INTERRUPTED = new Set(['duration_limit', 'capture_cancelled', 'connection_timeout']);
 const CHECKS = new Set([...CAPACITY, ...INTERRUPTED, 'source_query_unavailable',
@@ -15,7 +15,7 @@ const CHECKS = new Set([...CAPACITY, ...INTERRUPTED, 'source_query_unavailable',
   'parcels:origin_run_unknown', 'parcels:selected_accounts_not_covered', 'parcels:sync_state_unknown',
   'parcels:last_run_unknown', 'parcels:sync_not_complete', 'parcels:sync_success_unverifiable',
   'parcels:sync_count_contradiction', 'parcels:origin_run_not_complete']);
-const COUNTERS = ['queries', 'records', 'bytes', 'accounts', 'parcels', 'source_records', 'identity_records'];
+const COUNTERS = ['queries', 'records', 'bytes', 'encoded_bytes', 'accounts', 'parcels', 'source_records', 'identity_records'];
 
 export function customCaptureDiagnostic(error) {
   if (error?.code !== 'CUSTOM_COHORT_CAPTURE_FAILED' || !STAGES.has(error.reason)) return null;

@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
+import { iterateSpatialParcels } from './spatialMembershipEncoding.js';
 
 export const CUSTOM_COHORT_PARCEL_MAP_LIMITS = Object.freeze({
   parcels: 100_000, source_chunks: 1_000, source_records: 100_000,
@@ -97,11 +98,12 @@ function rosterOf(spatial, selected) {
     accounts.add(id);
   }
   const parcels = new Map(), represented = new Set();
-  for (const parcel of spatial.parcels) {
+  for (const parcel of iterateSpatialParcels(spatial)) {
     if (!object(parcel) || !objectId(parcel.object_id) || !accounts.has(parcel.account_id)
       || !HASH.test(parcel.source_record_hash ?? '') || !HASH.test(parcel.geometry_sha256 ?? '')) unavailable('invalid_retained_inputs');
     if (parcels.has(parcel.object_id)) unavailable('duplicate_parcel');
-    parcels.set(parcel.object_id, parcel);
+    parcels.set(parcel.object_id, { object_id: parcel.object_id, account_id: parcel.account_id,
+      source_record_hash: parcel.source_record_hash, geometry_sha256: parcel.geometry_sha256 });
     represented.add(parcel.account_id);
   }
   if (represented.size !== accounts.size) unavailable('invalid_retained_inputs');

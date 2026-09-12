@@ -19,6 +19,7 @@ import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
 import { prepareCustomCohortPrivateSalesSupplement } from './customCohortPrivateSales.js';
+import { SPATIAL_TUPLE_LIMITS, spatialParcelEncoding, iterateSpatialParcels } from './spatialMembershipEncoding.js';
 
 export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
   blobs: 4000, references: 12000, logical_utf8_bytes: 512_000_000, page_entries: 250,
@@ -169,9 +170,11 @@ function* validateSpatial(spatial, point, discovery) {
       : discovery ? { geometry_input: point.geometry_input, discovery,
       distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' }
       : { geometry_input: point.geometry_input, radius_metres: '4828.032', distance_semantics: 'postgis_geography_spheroid_v1' })).update('\n');
-  const ids = new Set(); let cursor = null, bytes = 0;
+  const encoding = spatialParcelEncoding(spatial);
+  array(spatial.parcels, L.spatial_parcels);
+  const ids = new Set(); let cursor = null, bytes = 0, encodedBytes = 2;
   let batch = 0;
-  for (const row of array(spatial.parcels, L.spatial_parcels)) {
+  for (const row of iterateSpatialParcels(spatial)) {
     if (++batch % 125 === 0) yield;
     closed(row, ['object_id', 'account_id', 'source_record_hash', 'sync_run_id', 'synced_at', 'source_updated_at', 'geometry_sha256']);
     check(typeof row.object_id === 'string' && /^-?(?:0|[1-9]\d*)$/.test(row.object_id)
@@ -182,8 +185,13 @@ function* validateSpatial(spatial, point, discovery) {
     check(HASH.test(row.source_record_hash) && HASH.test(row.geometry_sha256) && typeof row.sync_run_id === 'string' && row.sync_run_id.length > 0);
     timestamp(row.synced_at); if (row.source_updated_at !== null) timestamp(row.source_updated_at);
     const encoded = json(row); digest.update(encoded).update('\n'); bytes += Buffer.byteLength(encoded);
+    if (encoding) {
+      encodedBytes += Buffer.byteLength(json(spatial.parcels[batch - 1])) + (batch > 1 ? 1 : 0);
+      check(encodedBytes <= SPATIAL_TUPLE_LIMITS.encoded_bytes && bytes <= SPATIAL_TUPLE_LIMITS.expanded_bytes, 'input_limit');
+    }
     ids.add(row.account_id); cursor = BigInt(row.object_id);
   }
+  if (encoding) check(spatial.counts.encoded_bytes === encodedBytes);
   check(same([...ids].sort(), array(spatial.account_ids, L.accounts)) && spatial.counts.parcels === spatial.parcels.length
     && spatial.counts.accounts === ids.size && spatial.counts.bytes === bytes
     && spatial.account_ids_sha256 === assessmentEvidenceDigest({ account_ids: spatial.account_ids })
@@ -416,7 +424,8 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
       closure: { metadata: b.add(omit(closure, CLOSURE_ARRAYS)), collections: closureCollections } },
     selector: { metadata: b.add(omit(selector, ['account_roster', 'query_input'])), query_input: b.add(selector.query_input),
       roster_metadata: b.add(omit(selector.account_roster, ['account_ids'])), account_ids: yield* b.pages('selector_accounts', selector.account_roster.account_ids, L.accounts) },
-    spatial: { metadata: b.add(omit(spatial, ['parcels', 'account_ids'])), parcels: yield* b.pages('spatial_parcels', spatial.parcels, L.spatial_parcels),
+    spatial: { metadata: b.add(omit(spatial, ['parcels', 'account_ids'])), parcels: yield* b.pages(
+      spatialParcelEncoding(spatial) ? 'spatial_parcel_tuples_v1' : 'spatial_parcels', spatial.parcels, L.spatial_parcels),
       account_ids: yield* b.pages('spatial_accounts', spatial.account_ids, L.accounts) },
     sources: { metadata: b.add(omit(capture, ['sources', 'source_snapshots', 'references'])),
       // Original source values are DATA, not this storage graph's reference
@@ -611,8 +620,10 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
       account_ids: await pages(selection.request.account_ids, 'request_accounts', L.accounts), transaction_closure: closure },
     compact_metadata_json: await text(selection.compact_metadata), capture_result: { ...await read(selection.capture_metadata),
       source_capture: source, query_evidence: retainedQuery.query.evidence } };
+  const spatialMetadata = await read(selection.spatial.metadata);
   const input = { acquisition, subject, subject_reference: selection.subject_inputs,
-    spatial: { ...await read(selection.spatial.metadata), parcels: await pages(selection.spatial.parcels, 'spatial_parcels', L.spatial_parcels),
+    spatial: { ...spatialMetadata, parcels: await pages(selection.spatial.parcels,
+      spatialParcelEncoding(spatialMetadata) ? 'spatial_parcel_tuples_v1' : 'spatial_parcels', L.spatial_parcels),
       account_ids: await pages(selection.spatial.account_ids, 'spatial_accounts', L.accounts) },
     selector: { ...await read(selection.selector.metadata), query_input: await read(selection.selector.query_input),
       account_roster: { ...await read(selection.selector.roster_metadata), account_ids: await pages(selection.selector.account_ids, 'selector_accounts', L.accounts) } },

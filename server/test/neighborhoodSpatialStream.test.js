@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { captureNeighborhoodSpatialMembership as keyset,
-  captureNeighborhoodSpatialMembershipStream as stream } from '../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+  captureNeighborhoodSpatialMembershipStream as stream,
+  captureNeighborhoodSpatialMembershipCompact as compact } from '../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { iterateSpatialParcels } from '../src/services/neighborhoodAssessment/spatialMembershipEncoding.js';
 
 const geometry = { geometry_version: 1, type: 'Point', crs: 'EPSG:4326', axis_order: 'longitude_latitude',
   coordinate_encoding: 'decimal_string_v1', coordinates: ['-96.63', '32.88'], source_sha256: 'a'.repeat(64) };
@@ -54,6 +56,53 @@ function clientFor(rows, options = {}) {
   } };
 }
 const semantic = result => { const { counts, ...rest } = result; return { ...rest, counts: { ...counts, queries: 0 } }; };
+
+test('compact acquisition preserves literal rows, snapshot and canonical membership at all installed radii', async () => {
+  const rows = [parcel(-7), parcel(1), parcel(2, '0001'), parcel(9007199254740993n)];
+  for (const radius of [undefined, '4828.032', '8046.72', '16093.44']) {
+    const choice = radius === undefined ? undefined : { profile_id: 'custom-suburban-radius-v2', radius_metres: radius };
+    const reference = await stream(clientFor(rows), geometry, { page_size: 2 }, choice);
+    const result = await compact(clientFor([...rows].reverse()), geometry, { page_size: 2 }, choice);
+    const { parcel_encoding, counts, ...body } = result;
+    assert.equal(parcel_encoding, 'fixed_fields_v1');
+    assert.deepEqual({ ...body, parcels: [...iterateSpatialParcels(result)],
+      counts: { queries: counts.queries, accounts: counts.accounts, parcels: counts.parcels, bytes: counts.bytes } }, reference);
+    assert.equal(counts.encoded_bytes, Buffer.byteLength(JSON.stringify(result.parcels)));
+    assert.ok(counts.encoded_bytes < counts.bytes);
+    assert.ok(Object.isFrozen(result.parcels) && result.parcels.every(Object.isFrozen));
+  }
+});
+
+test('compact encoding charges its exact array bytes; legacy expanded-byte ceiling is unchanged', async () => {
+  const rows = [parcel(1), parcel(2)], reference = await compact(clientFor(rows), geometry);
+  const n = reference.counts.encoded_bytes;
+  assert.equal((await compact(clientFor(rows), geometry, { bytes: n })).status, 'captured');
+  const refused = await compact(clientFor(rows), geometry, { bytes: n - 1 });
+  assert.equal(refused.reason, 'byte_limit'); assert.equal(refused.parcels, undefined);
+  assert.equal((await stream(clientFor(rows), geometry, { bytes: n })).reason, 'byte_limit');
+  assert.equal((await compact(clientFor([]), geometry, { bytes: 2 })).counts.encoded_bytes, 2);
+  assert.equal((await compact(clientFor([]), geometry, { bytes: 1 })).reason, 'byte_limit');
+});
+
+test('compact capture keeps duplicate, identity, account, parcel, deadline and snapshot refusals', async () => {
+  for (const [rows, limits, opts, reason] of [
+    [[parcel(1), parcel(1)], {}, {}, 'parcel_order_invalid'],
+    [[parcel('01')], {}, {}, 'parcel_order_invalid'],
+    [[parcel(1, '')], {}, {}, 'parcel_account_unresolved'],
+    [[parcel(1), parcel(2)], { accounts: 1 }, {}, 'account_limit'],
+    [[parcel(1), parcel(2)], { parcels: 1 }, {}, 'parcel_limit'],
+    [[parcel(1)], { duration_ms: 5 }, { delay: 15 }, 'duration_limit'],
+    [[parcel(1)], {}, { end: { ...snapshot, backend_pid: 99 } }, 'transaction_changed'],
+  ]) {
+    const client = clientFor(rows, opts), result = await compact(client, geometry, limits);
+    assert.equal(result.reason, reason); assert.equal(result.query_complete, false);
+    assert.equal(result.parcels, undefined); assert.equal(result.membership_sha256, undefined);
+    assert.ok(client.calls.some(c => c.text.includes(':parcels-close')));
+  }
+  const client = clientFor([{ ...parcel(1), unexpected: 'must not disappear' }]);
+  await assert.rejects(compact(client, geometry));
+  assert.ok(client.calls.at(-1).text.includes(':parcels-close'));
+});
 
 test('one-pass arbitrary scan order preserves every row, canonical order, counts and membership hashes', async () => {
   const sorted = [parcel(-7), parcel(1), parcel(2, '0001'), parcel(99), parcel(900)];

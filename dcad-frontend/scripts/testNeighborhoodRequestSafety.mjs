@@ -16,18 +16,18 @@ const safetySource = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/use
 const safetyBody = safetySource.slice(safetySource.indexOf('function analyticalContext')).replace('export function useNeighborhoodRequestSafety', 'function useNeighborhoodRequestSafety');
 const createComponent = new Function('bindings', `const {
   useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect,
-  getNeighborhoodBoundary, runNeighborhoodBoundaryGeneration, runNeighborhoodRelevanceGeneration,
+  getNeighborhoodBoundary, runNeighborhoodBoundaryGeneration, runNeighborhoodRelevanceGeneration, runNeighborhoodLandUseAnalysis,
   automaticBoundaryRestoreState, applyPocketOverrides, recommendPocketSelection, summarizePockets,
   neighborhoodBoundaryReadinessErrors, parseNumber, determineNeighborhoodValuePosition,
   calculateNeighborhoodRepresentativeness, hasSavedNeighborhoodLandUseProfile, neighborhoodSelectionStatisticsPatch
 } = bindings;
 ${safetyBody}
-return function render({ accountId, assignmentFileId, assignmentDraft, marketConditionsDraft,
+return function render({ accountId, assignmentFileId, assignmentDraft, marketConditionsDraft, automaticAnalysisEnabled = true,
   onAssignmentChange: onParentAssignmentChange, onBoundarySuggestionsChange }) {
   const DISCOVERY_ENVELOPE_METHODOLOGY_VERSION = 6;
   const valuePositionContext = { concludedValue: null };
   ${body}
-  return { generateSuggestedBoundary, analyzeRelevantPropertyDataset, handleCustomGeometryChange,
+  return { generateSuggestedBoundary, analyzeRelevantPropertyDataset, analyzePresentLandUse, handleCustomGeometryChange,
     setPocketIncluded, resetPocketOverrides, applyRecommendedPocketSelection,
     generatedBoundary, generatedBoundaryLoading, generatedBoundaryMessage,
     relevanceAssessment, relevanceLoading, relevanceMessage };
@@ -49,9 +49,9 @@ const relevance = (id = 20) => ({ id, account_id: 'account', assignment_file_id:
     relevant_statistics: { included_sale_count: 10, included_property_count: 50,
       sales_profile: { sale_price: { median: 250000 } }, property_profile: {} } }, visualization: [] });
 
-function harness({ automatic = false, initialDraft = draft } = {}) {
+function harness({ automatic = false, initialDraft = draft, automaticAnalysisEnabled = true, savedLandUse = true } = {}) {
   const slots = [], effects = [], requests = [], assignments = [], suggestions = [];
-  let cursor = 0, options = { accountId: 'account', assignmentFileId: 12 }, currentDraft = structuredClone(initialDraft), api;
+  let cursor = 0, options = { accountId: 'account', assignmentFileId: 12, automaticAnalysisEnabled }, currentDraft = structuredClone(initialDraft), api;
   const equal = (a, b) => Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((item, i) => Object.is(item, b[i]));
   const request = kind => (...args) => new Promise((resolve, reject) => requests.push({ kind, args, resolve, reject }));
   const effect = type => (callback, deps) => { const i = cursor++;
@@ -70,6 +70,7 @@ function harness({ automatic = false, initialDraft = draft } = {}) {
     useCallback: (callback, deps) => { const i = cursor++; if (!slots[i] || !equal(deps, slots[i].deps)) slots[i] = { deps, value: callback }; return slots[i].value; },
     useEffect: effect('passive'), useLayoutEffect: effect('layout'),
     getNeighborhoodBoundary: request('lookup'), runNeighborhoodBoundaryGeneration: request('boundary'), runNeighborhoodRelevanceGeneration: request('relevance'),
+    runNeighborhoodLandUseAnalysis: request('land-use'),
     automaticBoundaryRestoreState, neighborhoodSelectionStatisticsPatch,
     applyPocketOverrides: (assessment, removed, added) => assessment.summary.relevant_statistics
       ? ({ ...assessment, summary: { ...assessment.summary,
@@ -78,7 +79,7 @@ function harness({ automatic = false, initialDraft = draft } = {}) {
       : assessment,
     recommendPocketSelection: () => ({ removedSystemPocketIds: ['recommended'], recommendedPocketIds: [], recommendedPocketCount: 1 }),
     summarizePockets: () => [], neighborhoodBoundaryReadinessErrors: () => [], parseNumber: () => null,
-    determineNeighborhoodValuePosition: () => ({ ready: false }), calculateNeighborhoodRepresentativeness: () => ({}), hasSavedNeighborhoodLandUseProfile: () => true,
+    determineNeighborhoodValuePosition: () => ({ ready: false }), calculateNeighborhoodRepresentativeness: () => ({}), hasSavedNeighborhoodLandUseProfile: () => savedLandUse,
   });
   const onAssignmentChange = (key, value) => { assignments.push([options.assignmentFileId, key, value]); currentDraft = { ...currentDraft, [key]: value }; };
   const onBoundarySuggestionsChange = value => suggestions.push(value);
@@ -102,6 +103,24 @@ function harness({ automatic = false, initialDraft = draft } = {}) {
     },
   };
 }
+
+test('captured workspace starts no legacy requests but retains manual actions and saved geometry', async () => {
+  const h = harness({ automatic: true, automaticAnalysisEnabled: false, savedLandUse: false });
+  h.replayEffects(); h.render();
+  assert.equal(h.requests.length, 0); assert.equal(h.assignments.length, 0);
+  assert.deepEqual(h.draft, draft);
+  void h.api.generateSuggestedBoundary();
+  void h.api.analyzeRelevantPropertyDataset();
+  void h.api.analyzePresentLandUse();
+  assert.deepEqual(h.requests.map(r => r.kind).sort(), ['boundary', 'land-use', 'relevance']);
+  h.cancel();
+});
+
+test('legacy-only mode still automatically requests its original analyses', () => {
+  const h = harness({ automatic: true, savedLandUse: false });
+  assert.deepEqual(h.requests.map(r => r.kind).sort(), ['land-use', 'lookup', 'relevance']);
+  h.cancel();
+});
 
 test('manual boundary response cannot write into a different exact assignment or account', async () => {
   for (const options of [{ assignmentFileId: 13 }, { accountId: 'different' }]) {

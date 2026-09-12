@@ -143,6 +143,7 @@ function NeighborhoodRangeGrid({
   );
 }
 export default function NeighborhoodCharacteristicsContent({
+  automaticAnalysisEnabled = true,
   accountId,
   assignmentFileId,
   assignmentDraft,
@@ -168,6 +169,7 @@ export default function NeighborhoodCharacteristicsContent({
   onMarketConditionsChange,
   onSave,
 }: {
+  automaticAnalysisEnabled?: boolean;
   accountId?: string;
   assignmentFileId?: number | null;
   assignmentDraft: AssignmentDetails;
@@ -558,6 +560,7 @@ export default function NeighborhoodCharacteristicsContent({
   const savedLandUseProfileIsComplete = hasSavedNeighborhoodLandUseProfile(assignmentDraft);
   useEffect(() => {
     if (
+      !automaticAnalysisEnabled ||
       !automaticLandUseFingerprint ||
       automaticLandUseFingerprintRef.current === automaticLandUseFingerprint
     ) return;
@@ -571,7 +574,7 @@ export default function NeighborhoodCharacteristicsContent({
     }
 
     void analyzePresentLandUseRef.current(true);
-  }, [automaticLandUseFingerprint, savedLandUseProfileIsComplete]);
+  }, [automaticAnalysisEnabled, automaticLandUseFingerprint, savedLandUseProfileIsComplete]);
   const updateBoundarySide = (
     field: "neighborhood_boundary_north" | "neighborhood_boundary_east" |
       "neighborhood_boundary_south" | "neighborhood_boundary_west",
@@ -721,7 +724,7 @@ export default function NeighborhoodCharacteristicsContent({
   };
 
   useEffect(() => {
-    if (!accountId) return;
+    if (!automaticAnalysisEnabled || !accountId) return;
     const attemptSignature = `${accountId}:${assignmentFileId || "property"}`;
     if (automaticBoundaryAttemptRef.current === attemptSignature) return;
     automaticBoundaryAttemptRef.current = attemptSignature;
@@ -800,7 +803,7 @@ export default function NeighborhoodCharacteristicsContent({
     return () => {
       cancelled = true;
     };
-  }, [accountId, assignmentFileId, begin]);
+  }, [automaticAnalysisEnabled, accountId, assignmentFileId, begin]);
 
   const handleCustomGeometryChange = useCallback((
     geometry: AssignmentDetails["neighborhood_boundary_geometry"],
@@ -1013,7 +1016,7 @@ export default function NeighborhoodCharacteristicsContent({
     const boundaryAssessmentId = Number(
       assignmentDraft.neighborhood_boundary_engine_assessment_id,
     );
-    if (!accountId || !Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
+    if (!automaticAnalysisEnabled || !accountId || !Number.isSafeInteger(boundaryAssessmentId) || boundaryAssessmentId <= 0) {
       return;
     }
     const signature = `${scopeKey}:${contextKey}:${relevanceRequestVersion}`;
@@ -1021,6 +1024,7 @@ export default function NeighborhoodCharacteristicsContent({
     automaticRelevanceAttemptRef.current = signature;
     void analyzeRelevantPropertyDataset();
   }, [
+    automaticAnalysisEnabled,
     accountId,
     assignmentFileId,
     assignmentDraft.neighborhood_boundary_engine_assessment_id,
@@ -1093,7 +1097,9 @@ export default function NeighborhoodCharacteristicsContent({
         <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
           <div>
             <h3 className="text-sm font-semibold text-slate-900">Present Land Use</h3>
-            <p className="mt-0.5 text-xs text-slate-500">Loads automatically from the appraiser-defined area; use the button to refresh the parcel analysis.</p>
+            <p className="mt-0.5 text-xs text-slate-500">{automaticAnalysisEnabled
+              ? "Loads automatically from the appraiser-defined area; use the button to refresh the parcel analysis."
+              : "Saved legacy land-use results remain available. Use Analyze Present Land Use for an explicit refresh; the pocket workspace above runs its own captured analysis."}</p>
           </div>
           <div className="flex flex-wrap items-center gap-2">
             <button
@@ -1487,7 +1493,9 @@ export default function NeighborhoodCharacteristicsContent({
             <p className="mt-0.5 text-xs text-slate-600">
               {assignmentDraft.neighborhood_boundary_geometry
                 ? `${assignmentDraft.neighborhood_boundary_label || "Appraiser-defined market area"} · ${Math.max(boundaryRing.length - 1, 0)} boundary vertices`
-                : "The automatic neighborhood suggestion is loading; manual drawing remains available if needed."}
+                : automaticAnalysisEnabled
+                  ? "The automatic neighborhood suggestion is loading; manual drawing remains available if needed."
+                  : "Draw the rough road boundaries for the report. The pocket workspace above handles the captured analysis; legacy suggestions run only when requested."}
             </p>
             <p className="mt-0.5 max-w-3xl text-[10px] leading-4 text-slate-500">
               The analytical envelope finds and scores the complete available parcel and sales population. The appraiser may separately redraw the broad narrative boundary without discarding the analytical pockets.

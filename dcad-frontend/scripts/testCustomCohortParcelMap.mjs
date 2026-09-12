@@ -160,6 +160,18 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.match(h.html(), /Colors describe inclusion, not similarity or reliability/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
 });
+test('recorded labels explicitly use the OpenFreeMap font across toggles and remounts', async () => {
+  const props = fixture(), h = harness(); await h.ready(props);
+  const assertFont = map => assert.deepEqual(map.getLayer('custom-cohort-group-labels-text').layout['text-font'], ['Noto Sans Regular']);
+  assertFont(h.maps[0]);
+  h.showLabels(false); h.showLabels(true); h.changeColor('similarity');
+  assertFont(h.maps[0]); assert.equal(h.loadCount, 1);
+  h.render({ ...props, group: { ...props.group, binding: { ...props.group.binding, assignmentFileId: '18' } } });
+  await h.drain(); h.emit('load'); h.emit('idle');
+  assert.equal(h.maps.length, 2); assertFont(h.maps[1]);
+  h.unmount(); assert.equal(h.timers.size, 0);
+});
+
 test('selection color flags come from the coherent group, unresolved membership stays explicit', async () => {
   const h = harness(); await h.ready(); const data = h.maps[0].getSource('custom-cohort-parcels').data;
   assert.deepEqual(data.features.map(f => [f.properties.selected, f.properties.unresolved, f.properties.subject]),

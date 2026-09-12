@@ -12,6 +12,10 @@ const CHECKS = new Set([
   'source_records_limit', 'source_chunks_limit', 'source_routing', 'source_roles_missing',
   'selection_source_mismatch', 'mapping_v2_required', 'mapping_v3_required', 'mapping_v4_required',
   'effective_date', 'start_date', 'end_date', 'json_limit', 'json_type', 'json_number', 'json_bytes',
+  'invalid_input', 'invalid_account', 'invalid_assignment', 'invalid_operation', 'invalid_period',
+  'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import',
+  'invalid_reported_input', 'invalid_discovery', 'invalid_identity', 'invalid_reference',
+  'invalid_version', 'invalid_workflow', 'input_limit',
 ]);
 const FAMILIES = [
   ['custom_cohort_observation_preview_', 'observations'],
@@ -19,11 +23,19 @@ const FAMILIES = [
   ['invalid_neighborhood_assessment:', 'contract'],
 ];
 export function customCohortReadDiagnostic(action, error) {
-  if (!['catalog', 'preview', 'members'].includes(action) || !(error instanceof TypeError)) return null;
-  for (const [prefix, family] of FAMILIES) {
+  if (!['catalog', 'preview', 'members'].includes(action) || !(error instanceof Error)) return null;
+  if (error.code === 'CUSTOM_COHORT_CAPTURE_FAILED' && CHECKS.has(error.reason)) {
+    return { action, family: 'coordinator', check: error.reason };
+  }
+  if (typeof error.code === 'string' && error.code.startsWith('custom_cohort_context_')) {
+    const reason = error.code.slice('custom_cohort_context_'.length);
+    return { action, family: 'context', check: CHECKS.has(reason) ? reason : 'unclassified' };
+  }
+  for (const [prefix, family] of error instanceof TypeError ? FAMILIES : []) {
     if (!error.message.startsWith(prefix)) continue;
     const reason = error.message.slice(prefix.length);
     return { action, family, check: CHECKS.has(reason) ? reason : 'unclassified' };
   }
+  if (CHECKS.has(error.reason)) return { action, family: 'validator', check: error.reason };
   return null;
 }

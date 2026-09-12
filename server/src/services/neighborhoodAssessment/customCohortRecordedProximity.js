@@ -5,6 +5,7 @@ import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { buildCustomCohortParcelMap, CUSTOM_COHORT_PARCEL_MAP_LIMITS } from './customCohortParcelMap.js';
 import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
+import { customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
 
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS = 'recorded_subject_centroid_to_retained_parcel_point_on_surface';
 export const CUSTOM_COHORT_RECORDED_PROXIMITY_LIMITS = Object.freeze({ batch_parcels: 64,
@@ -90,13 +91,14 @@ function admitted(input) {
   if (point.status !== 'represented') return { counts, point, radius, reason: 'subject_point_unavailable' };
   if (!same(point.geometry_input, input.spatial.geometry_input)) return { counts, point, radius, reason: 'retained_binding_mismatch' };
   const capture = data(data(input.acquisition).capture_result), sources = data(data(capture.source_capture).sources);
+  const sourceRecordLimit = customCohortObservationRecordLimit(input.acquisition);
   check(Array.isArray(sources) && sources.length <= CUSTOM_COHORT_PARCEL_MAP_LIMITS.source_chunks, 'invalid_input');
   // Guard only the original fields consumed by the shared map adapter. Do not
   // walk/duplicate unrelated retained transaction, private CSV or metadata rows.
   let records = 0;
   for (const source of sources) {
     const payload = data(data(source).payload), rows = data(payload.records);
-    check(Array.isArray(rows) && (records += rows.length) <= CUSTOM_COHORT_PARCEL_MAP_LIMITS.source_records, 'invalid_input');
+    check(Array.isArray(rows) && (records += rows.length) <= sourceRecordLimit, 'invalid_input');
     const projection = payload.projection === undefined ? null : data(payload.projection);
     const definition = projection?.definition === undefined ? null : data(projection.definition);
     if (definition?.role === 'parcels') for (const record of rows) data(data(data(record).data).raw_projection);

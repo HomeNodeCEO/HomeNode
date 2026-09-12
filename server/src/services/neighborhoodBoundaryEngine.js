@@ -380,7 +380,7 @@ async function buildBroadBoundary(pool, { accountId, radiusMiles, radialDiscover
      ), raw_boundary AS (
        SELECT
          CASE
-           WHEN $6::boolean THEN ST_Buffer(subject.center::geography, $2)::geometry
+           WHEN $6::boolean THEN ST_Buffer((SELECT center FROM subject)::geography, $2)::geometry
            WHEN COUNT(*) >= 4 THEN ST_Buffer(
              ST_ConcaveHull(ST_Collect(center), 0.82, false)::geography,
              GREATEST($4::double precision, LEAST($2::double precision * 0.08, 300))

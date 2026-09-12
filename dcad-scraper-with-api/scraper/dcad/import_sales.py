@@ -58,6 +58,18 @@ OPTIONAL_SOURCE_HEADERS = [
     "County",
     "CountyOrParish",
 ]
+# Optional source evidence, not additional typed measurements or defaults. Keep
+# these cells literal and separate from the legacy cleaned/hash inputs. A unit
+# in this payload describes this source row, never an older COALESCE-held value.
+OPTIONAL_RAW_EVIDENCE_HEADERS = [
+    "ClosePrice",
+    "Currency",
+    "PriceCurrency",
+    "CurrentPriceCurrency",
+    "ClosePriceCurrency",
+    "LivingAreaUnits",
+    "LotSizeUnits",
+]
 ACCOUNT_PATTERN = re.compile(r"^[A-Z0-9]{17}$")
 EMBEDDED_ACCOUNT_PATTERN = re.compile(r"(?<![A-Z0-9])([A-Z0-9]{17})(?![A-Z0-9])")
 COLLIN_VARIANT_PREFIX = "COLLIN:"
@@ -235,10 +247,21 @@ def _load_rows(path: Path) -> list[tuple[int, dict[str, str]]]:
         source_headers = EXPECTED_HEADERS + [
             header for header in OPTIONAL_SOURCE_HEADERS if header in headers
         ]
+        evidence_headers = [
+            header for header in OPTIONAL_RAW_EVIDENCE_HEADERS if header in headers
+        ]
+        if any(headers.count(header) > 1 for header in evidence_headers):
+            raise ValueError("CSV contains duplicate optional source evidence columns")
         for source_row_number, source_row in enumerate(reader, start=2):
             raw_payload = {
                 header: _clean(source_row.get(header)) for header in source_headers
             }
+            # Do not trim, parse, substitute, or synthesize absent cells. DictReader
+            # uses None for an unprovided trailing cell; an explicit blank is "".
+            raw_payload.update({
+                header: source_row[header]
+                for header in evidence_headers if source_row.get(header) is not None
+            })
             # Style columns were added after the original import. Keeping the
             # original 23-column hash lets the revised export enrich those rows
             # in place instead of creating a second copy of every prior sale.

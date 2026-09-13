@@ -200,6 +200,7 @@ export function createAssignmentWorkfileReadRouter({
       res.set({
         "Content-Type": "application/json; charset=utf-8",
         "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Access-Control-Expose-Headers": "Content-Disposition, X-HomeNode-Immutable",
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",
         "X-HomeNode-Immutable": String(download.immutable),
@@ -249,6 +250,7 @@ export function createAssignmentWorkfileReadRouter({
       res.set({
         "Content-Type": "application/pdf",
         "Content-Disposition": `attachment; filename="${fileName}"`,
+        "Access-Control-Expose-Headers": "Content-Disposition, X-HomeNode-Immutable, X-HomeNode-Report-Pages",
         "Content-Length": String(report.content.length),
         "Cache-Control": "no-store",
         "X-Content-Type-Options": "nosniff",

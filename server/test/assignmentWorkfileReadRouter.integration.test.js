@@ -3,6 +3,7 @@ import fs from "node:fs";
 import test from "node:test";
 
 import express from "express";
+import { createCorsMiddleware } from "../src/security/httpSecurity.js";
 
 import {
   createAssignmentWorkfileReadRouter,
@@ -26,8 +27,9 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, { cors = false } = {}) {
   const app = express();
+  if (cors) app.use(createCorsMiddleware({ corsOrigins: ["https://frontend.example"] }));
   app.use(createAssignmentWorkfileReadRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -405,4 +407,123 @@ test("workfile read composition is explicit and inline handlers are absent", () 
   assert.equal(source.includes("workfile/readiness"), false);
   assert.equal(source.includes("workfile/download"), false);
   assert.equal(source.includes("workfile/report.pdf"), false);
+});
+
+const DOWNLOAD_EXPOSURE = "Content-Disposition, X-HomeNode-Immutable";
+const PDF_EXPOSURE = `${DOWNLOAD_EXPOSURE}, X-HomeNode-Report-Pages`;
+const originHeaders = { Origin: "https://frontend.example" };
+function assertNoDownloadMetadata(response) {
+  for (const name of ["access-control-expose-headers", "content-disposition", "x-homenode-immutable", "x-homenode-report-pages"]) {
+    assert.equal(response.headers.get(name), null, name);
+  }
+}
+
+for (const immutable of [false, true]) for (const suffix of ["/download", "/report.pdf"]) {
+  test(`${immutable ? "signed" : "draft"} ${suffix} exposes only its fixed metadata through allowed CORS`, async context => {
+    const download = { canonical_file_name: 'canonical"\r\n-41.json', immutable, checksum_sha256: "original-json-sha",
+      snapshot: { status: immutable ? "signed" : "draft", original: "retained UTF-8 École" } };
+    const report = { canonical_file_name: 'canonical"\r\n-41.pdf', immutable, content: Buffer.from("%PDF-original-bytes"),
+      content_sha256: "original-pdf-sha", page_count: 17 };
+    const calls = [];
+    const server = await startRouter(baseOptions({
+      requireWorkflowAccess(_req, _res, workflow, permission) {
+        assert.equal(workflow, "custom_appraisal"); assert.equal(permission, "read"); calls.push("workflow"); return true;
+      },
+      requireAssignmentAccess: async (_req, _res, accountId, fileId, permission) => {
+        assert.equal(accountId, "ACCOUNT_1"); assert.equal(fileId, 41); assert.equal(permission, "read"); calls.push("assignment"); return true;
+      },
+      getDownload: async () => { calls.push("download"); return download; },
+      getReportPdf: async () => { calls.push("pdf"); return report; },
+    }), { cors: true });
+    context.after(server.close);
+    const response = await fetch(endpoint(server.baseUrl, suffix), { headers: originHeaders });
+    const pdf = suffix === "/report.pdf";
+    assert.equal(response.status, 200);
+    assert.equal(response.headers.get("access-control-allow-origin"), "https://frontend.example");
+    assert.equal(response.headers.get("access-control-allow-credentials"), "true");
+    assert.match(response.headers.get("vary"), /(?:^|,\s*)Origin(?:,|$)/i);
+    // Node fetch does not enforce browser header filtering. Assert the explicit
+    // wire exposure contract, not just headers that Node could read regardless.
+    assert.equal(response.headers.get("access-control-expose-headers"), pdf ? PDF_EXPOSURE : DOWNLOAD_EXPOSURE);
+    assert.doesNotMatch(response.headers.get("access-control-expose-headers"), /\*|etag|authorization|cookie/i);
+    assert.equal(response.headers.get("content-disposition"), `attachment; filename="canonical___-41.${pdf ? "pdf" : "json"}"`);
+    assert.equal(response.headers.get("x-homenode-immutable"), String(immutable));
+    assert.equal(response.headers.get("x-homenode-report-pages"), pdf ? "17" : null);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.equal(response.headers.get("x-content-type-options"), "nosniff");
+    assert.equal(response.headers.get("etag"), pdf ? '"original-pdf-sha"' : '"original-json-sha"');
+    assert.equal(response.headers.get("content-type"), pdf ? "application/pdf" : "application/json; charset=utf-8");
+    if (pdf) {
+      assert.equal(response.headers.get("content-length"), String(report.content.length));
+      assert.deepEqual(Buffer.from(await response.arrayBuffer()), report.content);
+    } else assert.equal(await response.text(), `${JSON.stringify(download.snapshot, null, 2)}\n`);
+    assert.deepEqual(calls, pdf ? ["workflow", "assignment", "download", "pdf"] : ["workflow", "assignment", "download"]);
+  });
+}
+
+test("download metadata exposure does not widen origins, preflight, or ordinary responses", async context => {
+  const calls = [];
+  const server = await startRouter(baseOptions({
+    requireWorkflowAccess() { calls.push("workflow"); return true; },
+    getWorkfile: async () => { calls.push("workfile"); return { status: "draft" }; },
+    getReadiness: async () => { calls.push("readiness"); return { ready: false }; },
+  }), { cors: true });
+  context.after(server.close);
+  for (const suffix of ["/download", "/report.pdf"]) {
+    const denied = await fetch(endpoint(server.baseUrl, suffix), { headers: { Origin: "https://untrusted.example" } });
+    assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: "cors_origin_denied" });
+    assert.equal(denied.headers.get("access-control-allow-origin"), null); assertNoDownloadMetadata(denied);
+    const preflight = await fetch(endpoint(server.baseUrl, suffix), { method: "OPTIONS", headers: {
+      ...originHeaders, "Access-Control-Request-Method": "GET", "Access-Control-Request-Headers": "Authorization",
+    } });
+    assert.equal(preflight.status, 204); assertNoDownloadMetadata(preflight);
+    assert.equal(preflight.headers.get("access-control-allow-origin"), "https://frontend.example");
+    assert.match(preflight.headers.get("access-control-allow-headers"), /(?:^|,\s*)Authorization(?:,|$)/i);
+  }
+  assert.deepEqual(calls, []);
+  for (const suffix of ["", "/readiness"]) {
+    const response = await fetch(endpoint(server.baseUrl, suffix), { headers: originHeaders });
+    assert.equal(response.status, 200); assertNoDownloadMetadata(response);
+    assert.equal(response.headers.get("access-control-allow-origin"), "https://frontend.example");
+    assert.equal(response.headers.get("cache-control"), "no-store"); await response.json();
+  }
+  const unrelated = await fetch(`${server.baseUrl}/unrelated`, { headers: originHeaders });
+  assert.equal(unrelated.status, 404); assertNoDownloadMetadata(unrelated); await unrelated.text();
+  assert.deepEqual(calls, ["workflow", "workfile", "workflow", "readiness"]);
+});
+
+for (const deniedAt of ["workflow", "assignment"]) test(`allowed CORS cannot expose download metadata after ${deniedAt} denial`, async context => {
+  let serviceCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireWorkflowAccess(_req, res) {
+      if (deniedAt !== "workflow") return true;
+      res.status(401).json({ error: "authentication_required" }); return false;
+    },
+    requireAssignmentAccess: async (_req, res) => {
+      res.status(403).json({ error: "custom_appraisal_assignment_access_denied" }); return false;
+    },
+    getDownload: async () => { serviceCalls++; throw new Error("must not read a denied file"); },
+    getReportPdf: async () => { serviceCalls++; throw new Error("must not render a denied file"); },
+  }), { cors: true });
+  context.after(server.close);
+  for (const suffix of ["/download", "/report.pdf"]) for (const method of ["GET", "HEAD"]) {
+    const response = await fetch(endpoint(server.baseUrl, suffix), { method, headers: originHeaders });
+    assert.equal(response.status, deniedAt === "workflow" ? 401 : 403); assertNoDownloadMetadata(response);
+    assert.equal(response.headers.get("access-control-allow-origin"), "https://frontend.example");
+    assert.equal(response.headers.get("cache-control"), "no-store"); await response.arrayBuffer();
+  }
+  assert.equal(serviceCalls, 0);
+});
+
+for (const suffix of ["/download", "/report.pdf"]) test(`${suffix} service failure exposes no success metadata or private error text`, async context => {
+  const error = new Error("private database hostname and token");
+  const server = await startRouter(baseOptions({
+    getDownload: async () => { if (suffix === "/download") throw error; return { immutable: false, snapshot: {} }; },
+    getReportPdf: async () => { throw error; },
+  }), { cors: true });
+  context.after(server.close);
+  const response = await fetch(endpoint(server.baseUrl, suffix), { headers: originHeaders });
+  assert.equal(response.status, 500); assertNoDownloadMetadata(response);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: suffix === "/download" ? "custom_appraisal_workfile_download_failed" : "custom_appraisal_report_pdf_failed" });
 });

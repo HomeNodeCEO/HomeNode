@@ -176,7 +176,7 @@ for (const [name, change] of [
   ['duplicate', result => ({ rowCount: result.rowCount + 1, rows: [...result.rows, result.rows[0]] })],
   ['unknown', result => ({ ...result, rows: [{ ...result.rows[0], content_sha256: '0'.repeat(64) }, ...result.rows.slice(1)] })],
   ['wrong bytes', result => ({ ...result, rows: [{ ...result.rows[0], canonical_utf8_bytes: '1' }, ...result.rows.slice(1)] })],
-  ['changed text', result => ({ ...result, rows: [{ ...result.rows[0], canonical_utf8: '{}' }, ...result.rows.slice(1)] })],
+  ['changed text', result => ({ ...result, rows: [{ ...result.rows[0], exact_original: false }, ...result.rows.slice(1)] })],
   ['inconsistent count', result => ({ ...result, rowCount: result.rowCount + 1 })],
 ]) test(`standalone retention rejects ${name} batch acknowledgements`, async () => {
   const f = await fixture();

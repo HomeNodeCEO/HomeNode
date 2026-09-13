@@ -308,7 +308,7 @@ test('retention writes every prepared original once per call, including query or
     const queryHashes = f.input.acquisition.capture_result.query_evidence.blobs.map(b => b.ref.content_sha256);
     for (const hash of queryHashes) assert.ok(hashes.includes(hash), 'all query originals still receive a database ACK');
     assert.ok(writes.every(c => c.tag === 'insert-batch'), 'all new and replay writes use bounded batches');
-    if (replay) assert.ok(f.state.calls.some(c => c.tag === 'read-batch' && c.params.length === 2),
+    if (replay) assert.ok(f.state.calls.some(c => c.tag === 'read-batch' && c.params.length === 4),
       'repeated persistence verifies database conflicts instead of trusting a previous call');
     assert.deepEqual((await load(f.client, f.scopeJson, refs)).retained_inputs, f.input);
   }

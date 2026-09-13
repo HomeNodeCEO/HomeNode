@@ -1,10 +1,12 @@
 import assert from 'node:assert/strict';
+import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { checkCustomCohortPocketCatalog as check, selectionFromRecordedGroups as select } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { buildCustomCohortSubdivisionFamilies as build,
   buildCustomCohortSubdivisionPhases as phasesFor,
   createCustomCohortSubdivisionPhaseReader as phaseReader,
   customCohortSubdivisionFamilyForPocket as find } from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
+import { buildCustomCohortSubdivisionInspection as inspection } from '../src/features/neighborhood/customCohortSubdivisionInspection.ts';
 
 const contextRef = { context_id: '30000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
 const pocketId = n => `recorded-cad:${n.toString(16).padStart(64, '0')}`;
@@ -53,6 +55,113 @@ test('narrow PH and PHASE markers share an explicit name basis and numeric child
   const model = build(catalog), item = family(model);
   assert.equal(model.families.length, 1); assert.equal(item.basis, 'explicit_phase_name');
   assert.deepEqual(item.pocket_ids, [pocketId(2), pocketId(1), pocketId(3)]); complete(catalog, model);
+});
+
+// Full model plus phase bytes captured from the unchanged helper before the
+// mixed-name review correction. Already admitted and same-basis refused views
+// retain their original IDs, order, labels, counts, and local profile bytes.
+for (const [name, specs, bytes, hash] of [
+  ['bare', ['MONICA PARK 1', 'MONICA PARK 4', 'MONICA PARK'], 2282,
+    '82f17d2538ec36120600a76cda2b75ef6333ab0c015ccf13ad6646b74d8ff4c7'],
+  ['explicit', ['Cedar Park PHASE 12', 'cedar  park PH 2', 'CEDAR PARK PHASE 999'], 2077,
+    '327f8ea21d57cca29d158e5d438b5ed6a5a220737511b0914ffe69084c4f9ed3'],
+  ['aliases', [{ label: 'Park 1', county: 'Dallas' }, { label: 'Park 1', county: 'DALLAS COUNTY' },
+    { label: 'Park 2', county: 'Dallas' }], 1914,
+    '30e33df7bc3468ca9c403bf24e59e5e438c66449cbb23e0d1a6bf19184654c0e'],
+  ['ambiguous', ['Park PHASE 1', 'Park PH 1', 'Park PHASE 2'], 2441,
+    '7326549762994d1c42a1b126b8a6490ae51d0eccc51d2e5e70f28caae96ee966'],
+]) test(`pre-change full family and phase bytes remain exact: ${name}`, () => {
+  const { catalog } = fixture(specs), families = build(catalog);
+  const json = JSON.stringify({ families, phases: families.families.map(phaseReader(catalog)) });
+  assert.equal(Buffer.byteLength(json), bytes);
+  assert.equal(createHash('sha256').update(json).digest('hex'), hash);
+});
+
+for (const countyMode of ['same', 'aliases']) test(`mixed Willow Run review keeps every original phase and exact union: ${countyMode}`, () => {
+  const specs = [['WILLOW RUN NO 5', 1], ['WILLOW RUN 3', 1], ['WILLOW RUN 5', 145],
+    ['WILLOW RUN PH 2', 67], ['WILLOW RUN 4', 26], ['WILLOW RUN PH 1', 65], ['WILLOW RUN PH 3', 3],
+    ['WILLOW RUN', 2], ['Unrelated', 4]].map(([label, member_count], i) => ({ label, member_count,
+    county: countyMode === 'aliases' && i % 2 ? 'Dallas' : 'DALLAS COUNTY' }));
+  const { catalog } = fixture(specs), before = JSON.stringify(catalog), model = build(catalog), parent = family(model, 3);
+  complete(catalog, model); assert.equal(model.families.length, 4);
+  assert.equal(parent.label, 'WILLOW RUN'); assert.equal(parent.basis, 'candidate_numbered_name');
+  assert.equal(parent.member_count, 307); assert.deepEqual(parent.pocket_ids, [6, 4, 2, 7, 5, 3].map(pocketId));
+  for (const i of [1, 8, 9]) assert.equal(family(model, i).basis, 'standalone');
+  const phases = phasesFor(catalog, parent);
+  assert.deepEqual(phases.map(p => p.label), ['WILLOW RUN PH 1', 'WILLOW RUN PH 2', 'WILLOW RUN 3',
+    'WILLOW RUN PH 3', 'WILLOW RUN 4', 'WILLOW RUN 5']);
+  assert.deepEqual(phases.map(p => p.member_count), [65, 67, 1, 3, 26, 145]);
+  assert.ok(phases.every(p => p.pocket_ids.length === 1 && p.id === p.pocket_ids[0]));
+  assert.deepEqual(phases.flatMap(p => p.pocket_ids), parent.pocket_ids);
+  const batch = inspection(catalog, parent), batchAccounts = batch.pockets.flatMap(p => p.account_ids);
+  assert.equal(batch.pockets.length, 6); assert.equal(batchAccounts.length, 307);
+  assert.equal(new Set(batchAccounts).size, 307);
+  assert.deepEqual([...batchAccounts].sort(), [...select(catalog, parent.pocket_ids, 8).pockets[0].account_ids].sort());
+  const outside = [1, 8, 9].map(pocketId), all = [...outside, ...parent.pocket_ids];
+  assert.equal(select(catalog, all, 8).pockets[0].account_ids.length, 314);
+  for (const [index, removedCount] of [[2, 1], [7, 3]]) {
+    const selected = all.filter(id => id !== pocketId(index));
+    assert.equal(select(catalog, selected, 9).pockets[0].account_ids.length, 314 - removedCount);
+    assert.ok(selected.includes(pocketId(index === 2 ? 7 : 2)), 'the other recorded phase 3 remains independently selected');
+    const saved = JSON.parse(JSON.stringify({ revision: 9, included_recorded_group_ids: selected }));
+    assert.deepEqual(build(catalog), model); assert.deepEqual(saved.included_recorded_group_ids, selected);
+    assert.deepEqual(selected.filter(id => !parent.pocket_ids.includes(id)), outside);
+  }
+  const reversed = { ...catalog, pockets: [...catalog.pockets].reverse() };
+  assert.deepEqual(build(reversed), model);
+  assert.deepEqual(phasesFor(reversed, { ...parent, pocket_ids: [...parent.pocket_ids].reverse() }), phases);
+  assert.throws(() => phasesFor(catalog, { ...parent, basis: 'explicit_phase_name' }), TypeError);
+  for (const value of [model, parent, parent.pocket_ids, phases, ...phases, ...phases.map(p => p.pocket_ids)]) assert.ok(Object.isFrozen(value));
+  assert.equal(JSON.stringify(catalog), before);
+});
+
+test('mixed grammar uses exact-name county aliases only within each separate phase row', () => {
+  const { catalog } = fixture([{ label: 'Park PH 1', county: 'Dallas', member_count: 5 },
+    { label: 'Park 1', county: 'DALLAS COUNTY', member_count: 3 },
+    { label: 'Park 1', county: 'Dallas', member_count: 2 },
+    { label: 'Park PH 1', county: 'DALLAS COUNTY', member_count: 7 }]);
+  const model = build(catalog), parent = family(model), phases = phasesFor(catalog, parent);
+  complete(catalog, model); assert.equal(model.families.length, 1); assert.equal(parent.member_count, 17);
+  assert.equal(parent.basis, 'candidate_numbered_name');
+  assert.deepEqual(phases.map(p => [p.label, p.member_count, p.pocket_ids]), [
+    ['Park 1', 5, [pocketId(2), pocketId(3)]], ['Park PH 1', 12, [pocketId(1), pocketId(4)]],
+  ]);
+  assert.deepEqual(phases.flatMap(p => p.pocket_ids), parent.pocket_ids);
+  const reversed = { ...catalog, pockets: [...catalog.pockets].reverse() };
+  assert.deepEqual(build(reversed), model);
+  assert.deepEqual(phasesFor(reversed, { ...parent, pocket_ids: [...parent.pocket_ids].reverse() }), phases);
+});
+
+for (const labels of [['Park PHASE 1', 'Park 2'], ['Park 1', 'Park PH 1', 'Park 2'],
+  ['Park 5 SEC 2', 'Park PH 5 SEC 2', 'Park 6']]) {
+  test(`mixed forms share a candidate parent without merging raw phase rows: ${labels.join(' / ')}`, () => {
+    const { catalog } = fixture(labels), model = build(catalog), parent = family(model);
+    complete(catalog, model); assert.equal(model.families.length, 1); assert.equal(parent.basis, 'candidate_numbered_name');
+    assert.equal(phasesFor(catalog, parent).length, labels.length);
+    assert.deepEqual(phasesFor(catalog, parent).map(p => p.label).sort(), [...labels].sort());
+  });
+}
+
+for (const labels of [['Park PHASE 1', 'Park PH 1', 'Park 2'],
+  ['Park 5 SEC 2', 'Park 5 SECTION 2', 'Park PH 6'], ['Park 1', 'Park 1', 'Park PH 2']]) {
+  test(`a mixed member never overrides same-grammar ambiguity: ${labels.join(' / ')}`, () => {
+    const { catalog } = fixture(labels), model = build(catalog);
+    complete(catalog, model); assert.ok(model.families.every(f => f.basis === 'standalone'));
+    assert.ok(model.families.every(f => phasesFor(catalog, f).length === 1));
+  });
+}
+
+test('mixed grammar does not relax exact base, county, unknown, or zero-member isolation', () => {
+  const { catalog } = fixture([{ label: 'Park North 1', county: 'Dallas' },
+    { label: 'Park North PH 2', county: 'DALLAS COUNTY' },
+    { label: 'Park North 1', county: 'Collin' }, { label: 'Park North PH 2', county: 'Collin County' },
+    { label: 'Park North 1', county: 'Unknown' }, { label: 'Park North PH 2', county: 'Unknown' },
+    { label: 'Park North 1', county: 'Travis' }, { label: 'Park North PH 2', county: 'Travis County' },
+    'Park South PH 3', 'Park-North PH 3', { label: 'Park North PH 3', member_count: 0 }]);
+  const model = build(catalog); complete(catalog, model);
+  assert.deepEqual(family(model, 1).pocket_ids, [1, 2].map(pocketId));
+  assert.deepEqual(family(model, 3).pocket_ids, [3, 4].map(pocketId));
+  for (const id of [5, 6, 7, 8, 9, 10, 11]) assert.equal(family(model, id).basis, 'standalone');
 });
 
 test('known DFW county suffixes are equivalent while other county names remain exactly isolated', () => {
@@ -114,7 +223,7 @@ test('known alias collapse requires exact normalized full names, not equivalent-
   assert.deepEqual(phases[0].pocket_ids, [pocketId(1), pocketId(2)]); assert.equal(phases[0].member_count, 5);
   assert.ok(catalog.pockets.some(p => p.label === phases[0].label));
   for (const labels of [['Park PHASE 1', 'Park PH 1', 'Park PHASE 2'],
-    ['Park 5 SEC 2', 'Park 5 SECTION 2', 'Park 6'], ['Park 1', 'Park PH 1', 'Park 2']]) {
+    ['Park 5 SEC 2', 'Park 5 SECTION 2', 'Park 6']]) {
     const { catalog: ambiguous } = fixture(labels.map((label, i) => ({ label, county: i === 1 ? 'DALLAS COUNTY' : 'Dallas' })));
     const view = build(ambiguous); complete(ambiguous, view);
     assert.ok(view.families.every(f => f.basis === 'standalone'));
@@ -222,7 +331,7 @@ for (const labels of [
   ['Park 0', 'Park 1'], ['Park 01', 'Park 2'], ['Park 1000', 'Park 1001'],
   ['Park PHASE I', 'Park PHASE II'], ['Park PHASE 1A', 'Park PHASE 1B'],
   ['Park SECTION 1', 'Park SECTION 2'], ['Park UNIT 1', 'Park UNIT 2'],
-  ['Park 1 2', 'Park 1 3'], ['Park PHASE 1', 'Park 2'],
+  ['Park 1 2', 'Park 1 3'],
   ['Park PHASE 1', 'Park PH 1', 'Park PHASE 2'],
 ]) test(`ambiguous/unsupported whole families remain standalone: ${labels.join(' / ')}`, () => {
   const { catalog } = fixture(labels), model = build(catalog); complete(catalog, model);
@@ -282,8 +391,8 @@ test('model is detached, deeply immutable, and deterministic under catalog order
   assert.ok(a.families.every(f => f.id.startsWith('subdivision-family-v1:') && f.id.length < 300));
 });
 
-test('complete 50,000-account / 1,024-leaf catalog keeps every original member and leaf', () => {
-  const specs = Array.from({ length: 1024 }, (_, i) => ({ label: `Development ${Math.floor(i / 2)} Gardens PHASE ${i % 2 + 1}`,
+for (const grammar of ['explicit', 'mixed']) test(`complete 50,000-account / 1,024-leaf catalog keeps every original member and leaf: ${grammar}`, () => {
+  const specs = Array.from({ length: 1024 }, (_, i) => ({ label: `Development ${Math.floor(i / 2)} Gardens ${grammar === 'mixed' && i % 2 === 0 ? '' : 'PHASE '}${i % 2 + 1}`,
     member_count: 48 + (i < 848 ? 1 : 0) }));
   const { catalog } = fixture(specs), model = build(catalog); complete(catalog, model);
   assert.equal(catalog.coverage.discovery_member_count, 50_000); assert.equal(model.families.length, 512);

@@ -34,8 +34,9 @@ test('catalog/member/capture operations share cancellation and smaller response 
   }
 });
 
-test('only explicit catalog opening accepts the combined envelope, still capped at 31MB', async () => {
-  const payload = { initial_preview_groups: [] }, signal = new AbortController().signal;
+for (const payload of [{ initial_preview_groups: [] }, { initial_preview_mode: 'all_catalog_groups' }])
+test(`only explicit catalog opening ${Object.keys(payload)[0]} accepts the unchanged combined 31MB envelope`, async () => {
+  const signal = new AbortController().signal;
   const transport = createCustomCohortJsonTransport({ urlFor: p => p,
     request: async () => json({ initial_preview: { synthetic: 'x'.repeat(4_100_000) } }) });
   assert.equal((await transport('A', 'catalog', payload, { signal })).initial_preview.synthetic.length, 4_100_000);
@@ -46,6 +47,39 @@ test('only explicit catalog opening accepts the combined envelope, still capped 
     request: async () => responseStream(stream([encoded(`"${'x'.repeat(31_000_000)}"`)], {
       onCancel: () => { cancelled = true; }, hanging: true })) });
   await assert.rejects(oversized('A', 'catalog', payload, { signal }), /too large/); assert.equal(cancelled, true);
+});
+
+for (const mode of [undefined, null, '', false, 1, [], {}, 'ALL_CATALOG_GROUPS', 'all_catalog_groups ', 'all', 'selected']) {
+  test(`generic transport refuses invalid present catalog mode ${JSON.stringify(mode)} before URL or request`, async () => {
+    let routed = 0, requested = 0;
+    const transport = createCustomCohortJsonTransport({ urlFor: p => { routed++; return p; }, request: async () => { requested++; return json({}); } });
+    await assert.rejects(transport('A', 'catalog', { initial_preview_mode: mode }, { signal: new AbortController().signal }),
+      /Invalid neighborhood opening request/);
+    assert.equal(routed, 0); assert.equal(requested, 0);
+  });
+}
+for (const groups of [undefined, null, [], ['discovery:unassigned']]) {
+  test(`generic transport refuses mode plus own groups ${JSON.stringify(groups)} before URL or request`, async () => {
+    let routed = 0, requested = 0;
+    const transport = createCustomCohortJsonTransport({ urlFor: p => { routed++; return p; }, request: async () => { requested++; return json({}); } });
+    await assert.rejects(transport('A', 'catalog', { initial_preview_mode: 'all_catalog_groups', initial_preview_groups: groups },
+      { signal: new AbortController().signal }), /Invalid neighborhood opening request/);
+    assert.equal(routed, 0); assert.equal(requested, 0);
+  });
+}
+
+test('both opening forms retain the exact 31MB Content-Length boundary without widening ordinary catalog responses', async () => {
+  for (const payload of [{ initial_preview_groups: [] }, { initial_preview_mode: 'all_catalog_groups' }]) {
+    let declared = 31_000_000, cancelled = 0;
+    const transport = createCustomCohortJsonTransport({ urlFor: p => p,
+      request: async () => responseStream(stream([encoded('{}')], { onCancel: () => cancelled++ }), { 'content-length': String(declared) }) });
+    const options = { signal: new AbortController().signal };
+    assert.deepEqual(await transport('A', 'catalog', payload, options), {});
+    declared++; await assert.rejects(transport('A', 'catalog', payload, options), /too large/);
+    assert.equal(cancelled, 1);
+    declared = 31_000_000; await assert.rejects(transport('A', 'catalog', {}, options), /too large/);
+    assert.equal(cancelled, 2);
+  }
 });
 
 test('dense map preview has a bounded 27MB envelope, not an unbounded download', async () => {

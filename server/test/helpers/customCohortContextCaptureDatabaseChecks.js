@@ -237,11 +237,93 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       const initial_preview_groups = [...catalog.catalog.pockets.map(p => p.id),
         ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
       const { customCohortOpeningSelection } = await import('../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js');
+      const evidenceReadsSince = from => calls.slice(from).filter(sql => /neighborhood-cohort-blob:read(?:-batch)? \*/.test(sql)).length;
+      const ordinaryFrom = calls.length;
       const expectedOpening = await capture.present({ ...previewRequest,
         selection: customCohortOpeningSelection(catalog.catalog, initial_preview_groups, body.selection.revision) });
+      const ordinaryReads = evidenceReadsSince(ordinaryFrom);
+      assert.ok(ordinaryReads > 0, 'the independent preview must load real retained evidence');
+      const explicitFrom = calls.length;
       const openingResponse = await post('catalog', { ...body, initial_preview_groups });
       assert.equal(openingResponse.status, 200); assert.equal(openingResponse.headers.get('cache-control'), 'no-store');
-      assert.deepEqual((await openingResponse.json()).initial_preview, expectedOpening);
+      const explicitOpening = await openingResponse.json();
+      assert.deepEqual(explicitOpening.initial_preview, expectedOpening);
+      assert.equal(evidenceReadsSince(explicitFrom), ordinaryReads, 'explicit opening loads one retained graph');
+      const allFrom = calls.length, allExposureFrom = exposures.length;
+      const allResponse = await post('catalog', { ...body, initial_preview_mode: 'all_catalog_groups' });
+      assert.equal(allResponse.status, 200); assert.equal(allResponse.headers.get('cache-control'), 'no-store');
+      const allText = await allResponse.text(); assert.ok(Buffer.byteLength(allText) <= 31_000_000);
+      assert.deepEqual(JSON.parse(allText), explicitOpening, 'native all-catalog mode is the exact explicit-all opening');
+      assert.equal(evidenceReadsSince(allFrom), ordinaryReads, 'all-catalog opening must not reload the retained graph for its preview');
+      assert.deepEqual(exposures.slice(allExposureFrom), ['report_observation_catalog', 'report_observation_summary',
+        'report_observation_catalog', 'report_observation_summary']);
+      assert.equal(explicitOpening.initial_preview.summary.selected.stock.member_count, 2);
+      const emptyOpeningResponse = await post('catalog', { ...body, initial_preview_groups: [] });
+      assert.equal(emptyOpeningResponse.status, 200);
+      const emptyOpening = await emptyOpeningResponse.json();
+      assert.deepEqual(emptyOpening.initial_preview, await capture.present({ ...previewRequest,
+        selection: customCohortOpeningSelection(catalog.catalog, [], body.selection.revision) }));
+      assert.equal(emptyOpening.initial_preview.summary.selected.stock.member_count, 0);
+      assert.equal(emptyOpening.initial_preview.parcel_map.counts.selected_accounts, 0);
+      assert.equal(Object.hasOwn(JSON.parse(catalogText), 'initial_preview'), false, 'omission remains catalog-only');
+      for (const mode of [undefined, null, false, true, 1, '', 'all', 'ALL_CATALOG_GROUPS', {}, []]) {
+        const invalidFrom = calls.length, invalidExposureFrom = exposures.length;
+        await assert.rejects(capture.catalog({ ...previewRequest, initialPreviewMode: mode }), /invalid_input/);
+        if (mode !== undefined) {
+          const invalid = await post('catalog', { ...body, initial_preview_mode: mode });
+          assert.equal(invalid.status, 400); await invalid.json();
+        }
+        assert.equal(calls.length, invalidFrom, 'invalid opening modes must fail before any native query');
+        assert.equal(exposures.length, invalidExposureFrom);
+      }
+      for (const groups of [[], initial_preview_groups]) {
+        const conflictFrom = calls.length, conflictExposureFrom = exposures.length;
+        await assert.rejects(capture.catalog({ ...previewRequest, initialPreviewMode: 'all_catalog_groups',
+          initialPreviewGroups: groups }), /invalid_input/);
+        const conflict = await post('catalog', { ...body, initial_preview_mode: 'all_catalog_groups', initial_preview_groups: groups });
+        assert.equal(conflict.status, 400); await conflict.json();
+        assert.equal(calls.length, conflictFrom, 'both opening choices, including explicit [], must fail before native reads');
+        assert.equal(exposures.length, conflictExposureFrom);
+      }
+
+      // Give one already-owned fixture account no recorded label for a distinct
+      // capture. Its operation UUID is created once and never aliases the first
+      // capture; restore the exact live row before testing retained reopening.
+      const unassignedRequest = makeInput();
+      assert.notEqual(unassignedRequest.operationId, request.operationId);
+      assert.deepEqual((await pool.query('SELECT subdivision FROM core.accounts WHERE account_id=$1', [other])).rows,
+        [{ subdivision: 'Live Changed Label' }]);
+      assert.equal((await pool.query("UPDATE core.accounts SET subdivision=NULL WHERE account_id=$1 AND subdivision='Live Changed Label'", [other])).rowCount, 1);
+      let unassignedCapture;
+      try { unassignedCapture = await capture.capture(unassignedRequest); }
+      finally {
+        assert.equal((await pool.query("UPDATE core.accounts SET subdivision='Live Changed Label' WHERE account_id=$1 AND subdivision IS NULL", [other])).rowCount, 1);
+        assert.deepEqual((await pool.query('SELECT subdivision FROM core.accounts WHERE account_id=$1', [other])).rows,
+          [{ subdivision: 'Live Changed Label' }]);
+      }
+      assert.equal(unassignedCapture.status, 'registered'); assert.equal(unassignedCapture.reused, false);
+      assert.equal(unassignedCapture.context_ref.context_id, unassignedRequest.operationId);
+      assert.notEqual(unassignedCapture.context_ref.context_id, result.context_ref.context_id);
+      const unassignedInput = { ...previewRequest, contextRef: unassignedCapture.context_ref, selection: { revision: 7, pockets: [] } };
+      const unassignedFrom = calls.length;
+      const unassignedCatalog = await capture.catalog(unassignedInput);
+      assert.equal(unassignedCatalog.catalog.unassigned.member_count, 1);
+      assert.deepEqual(unassignedCatalog.catalog.unassigned.account_ids, [other]);
+      assert.equal(unassignedCatalog.catalog.pockets.length, 1);
+      assert.deepEqual(unassignedCatalog.catalog.pockets[0].account_ids, [account]);
+      const unassignedGroups = [...unassignedCatalog.catalog.pockets.map(p => p.id), 'discovery:unassigned'];
+      const unassignedExplicit = await capture.catalog({ ...unassignedInput, initialPreviewGroups: unassignedGroups });
+      const unassignedAll = await capture.catalog({ ...unassignedInput, initialPreviewMode: 'all_catalog_groups' });
+      assert.deepEqual(unassignedAll, unassignedExplicit, 'all-catalog mode includes nonempty unassigned membership exactly once');
+      assert.deepEqual(unassignedAll.initial_preview, await capture.present({ ...unassignedInput,
+        selection: customCohortOpeningSelection(unassignedCatalog.catalog, unassignedGroups, 7) }));
+      assert.equal(unassignedAll.initial_preview.selection_revision, 7);
+      assert.equal(unassignedAll.initial_preview.summary.selected.stock.member_count, 2);
+      assert.equal(unassignedAll.initial_preview.parcel_map.counts.selected_accounts, 2);
+      assert.ok(!calls.slice(unassignedFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)),
+        'the restored mutable label must not be reread while opening the retained unassigned capture');
+      assert.ok(!calls.slice(unassignedFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)),
+        'all-catalog opening must not save, apply, or replace retained evidence');
       for (const key of ['raw_projection', 'source_record_id', 'source_ref', 'raw_label_variants', 'market_decision']) {
         assert.ok(!catalogText.includes(`"${key}":`), key);
       }
@@ -250,6 +332,8 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     } finally { await new Promise(resolve => { server.closeAllConnections(); server.close(resolve); }); }
     checks.push('actual scoped HTTP compact-preview/member pages; foreign context refusal; no raw source exposure');
     checks.push('actual scoped HTTP retained pocket catalog is byte bounded; exact memberships and foreign-context refusal');
+    checks.push('native all-catalog opening equals explicit recorded groups plus nonempty unassigned and independent preview; one retained load, unchanged empty/omitted modes, exact revision and two-phase exposures');
+    checks.push('native owner and HTTP reject malformed or conflicting opening modes before queries; distinct unassigned fixture capture restores its exact owned live label before read-only reopening');
 
     for (const method of ['preview', 'catalog']) for (const deny of [true, false]) {
       let checksDone = 0;

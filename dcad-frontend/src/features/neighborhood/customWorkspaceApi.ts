@@ -4,8 +4,8 @@ import type { CustomCohortMemberTransport } from './customCohortPreviewTransport
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomWorkspaceCheckpoint,
   readCustomWorkspaceCheckpoint, prepareCustomWorkspaceDiscovery, customWorkspaceCaptureDiscoveryMatches } from './customWorkspaceCheckpoint';
 import type { CustomWorkspaceCheckpoint, CustomWorkspaceDiscovery, CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
-import type { CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from './customWorkspaceLifecycle';
-import type { CustomCohortPreviewInput, CustomCohortPreviewRequest } from './customCohortPreviewController';
+import type { CustomWorkspaceCatalogInput, CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from './customWorkspaceLifecycle';
+import type { CustomCohortPreviewRequest } from './customCohortPreviewController';
 
 interface Options {
   request: (url: string, init: RequestInit) => Promise<Response>;
@@ -198,12 +198,16 @@ export function createCustomWorkspaceApi(options: Options) {
         return response;
       });
     },
-    catalog(input: CustomCohortPreviewInput & { readonly initialPreviewGroups?: readonly string[] }, io: CustomWorkspaceOperationOptions) {
+    catalog(input: CustomWorkspaceCatalogInput, io: CustomWorkspaceOperationOptions) {
       return observationRead(io.signal, async () => {
         const bound = identity(input.accountId, input.assignmentFileId);
+        const mode = Object.hasOwn(input, 'initialPreviewMode');
+        requireThat(!mode || (input.initialPreviewMode === 'all_catalog_groups'
+          && !Object.hasOwn(input, 'initialPreviewGroups')), 'invalid_input');
         return cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
-          ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }) }, io);
+          ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }),
+          ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}) }, io);
       });
     },
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {

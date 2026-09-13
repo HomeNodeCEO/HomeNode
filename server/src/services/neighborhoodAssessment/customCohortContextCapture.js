@@ -1,7 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
 import { createCustomCapturePhaseTiming } from './customCapturePhaseTiming.js';
-import { prepareCustomCohortOpeningGroups, customCohortOpeningSelection,
+import { prepareCustomCohortOpeningGroups, prepareCustomCohortOpeningMode, customCohortOpeningGroupIds, customCohortOpeningSelection,
   CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
 import { types as utilTypes } from 'node:util';
@@ -1220,9 +1220,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const requested = value && Object.hasOwn(value, 'includeRecommendation');
     const include = requested ? value.includeRecommendation : false;
     if (typeof include !== 'boolean') fail('invalid_input');
-    const opening = value && Object.hasOwn(value, 'initialPreviewGroups');
-    const groups = opening ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups) : null;
-    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['includeRecommendation', 'initialPreviewGroups'].includes(key)));
+    const explicitGroups = value && Object.hasOwn(value, 'initialPreviewGroups');
+    const modeRequested = value && Object.hasOwn(value, 'initialPreviewMode');
+    if (explicitGroups && modeRequested) fail('invalid_input');
+    if (modeRequested) prepareCustomCohortOpeningMode(value.initialPreviewMode);
+    const opening = explicitGroups || modeRequested;
+    const groups = explicitGroups ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups) : null;
+    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode'].includes(key)));
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
@@ -1232,7 +1236,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         });
         const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
         const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };
-        if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog, groups, expected.selection_revision));
+        // Fresh opening selects this exact presented catalog, including its
+        // nonempty unassigned group. Explicit [] remains an empty selection.
+        if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog,
+          groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision));
         if (!include) return response;
         // Do not spend native work on an unresolved catalog or pretend current
         // parcel locations establish a retrospective housing population.

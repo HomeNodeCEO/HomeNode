@@ -229,6 +229,14 @@ export async function runCustomCohortCityDatabaseChecks(connectionString) {
     // QA, then prove failed acquisitions do not replace its active selection.
     const included = catalog.catalog.pockets.map(pocket => pocket.id);
     if (catalog.catalog.unassigned.member_count) included.push('discovery:unassigned');
+    const openingStart = calls.length;
+    const explicitOpening = await owner.catalog({ ...previewInput, includeRecommendation: true, initialPreviewGroups: included });
+    const allOpening = await owner.catalog({ ...previewInput, includeRecommendation: true, initialPreviewMode: 'all_catalog_groups' });
+    assert.deepEqual(allOpening, explicitOpening, 'city all-catalog opening preserves the same catalog, discovery, recommendation and preview');
+    assert.deepEqual(allOpening.discovery, dallas.choice);
+    assert.equal(allOpening.initial_preview.summary.selected.stock.member_count, ids.length);
+    assert.equal(calls.slice(openingStart).some(sql => sql.includes('custom-cohort-recorded-proximity:distances')
+      || /neighborhood-(?:cache|membership|closure):/.test(sql)), false);
     const checkpoint = { workspace_version: 4, active: { context_ref: captured.context_ref, observation_period: PERIOD,
       selection: { revision: 1, included_recorded_group_ids: included }, discovery: dallas.choice }, pending_capture: null };
     const saved = await transaction(client => saveCustomAppraisalWorkfileSectionInTransaction(client, {

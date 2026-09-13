@@ -153,13 +153,18 @@ export function createCustomCohortJsonTransport(options: Options) {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
       || !['preview', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply'].includes(operation)) throw new Error('Invalid neighborhood request');
+    const openingMode = operation === 'catalog' && payload !== null && typeof payload === 'object'
+      && Object.hasOwn(payload, 'initial_preview_mode');
+    if (openingMode && ((payload as Record<string, unknown>).initial_preview_mode !== 'all_catalog_groups'
+      || Object.hasOwn(payload, 'initial_preview_groups'))) throw new Error('Invalid neighborhood opening request');
     const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
     if (encoder.encode(body).length > REQUEST_BYTES) throw new Error('Neighborhood preview selection is too large');
     return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
       operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
-        : operation === 'catalog' && payload !== null && typeof payload === 'object' && Object.hasOwn(payload, 'initial_preview_groups')
+        : operation === 'catalog' && payload !== null && typeof payload === 'object'
+          && (openingMode || Object.hasOwn(payload, 'initial_preview_groups'))
           ? OPENING_RESPONSE_BYTES : REQUEST_BYTES, signal);
   };
 }

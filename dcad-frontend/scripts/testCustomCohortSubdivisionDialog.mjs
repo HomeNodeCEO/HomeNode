@@ -6,6 +6,9 @@ import { Script } from 'node:vm';
 import * as locationHelpers from '../src/features/neighborhood/customCohortSubdivisionLocationReview.ts';
 import * as familyHelpers from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 import * as inspectionHelpers from '../src/features/neighborhood/customCohortSubdivisionInspection.ts';
+import * as comparisonHelpers from '../src/features/neighborhood/customCohortStockCompositionComparison.ts';
+import { checkCustomCohortStockComposition } from '../src/features/neighborhood/customCohortStockComposition.ts';
+import { STOCK_COMPOSITION_DEFINITION, STOCK_COMPOSITION_PROFILE } from '../src/features/neighborhood/customCohortStockCompositionDefinition.ts';
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript');
 const file = new URL('../src/features/neighborhood/components/CustomCohortSubdivisionDialog.tsx', import.meta.url);
@@ -27,13 +30,15 @@ function harness(count = 3) {
     useMemo(fn, deps) { const i = cursor++; if (!cells[i] || deps.some((v, index) => !Object.is(v, cells[i].deps[index]))) cells[i] = { value: fn(), deps }; return cells[i].value; },
     useEffect(fn) { const i = cursor++; if (!cells[i]) { cells[i] = true; effects.push(fn); } },
   };
-  const Inspector = () => null, module = { exports: {} };
+  const Inspector = () => null, Comparison = () => null, module = { exports: {} };
   new Script(`(function(require,module,exports,document,HTMLElement){${compiled}\n})`).runInThisContext()(key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortSubdivisionLocationReview') return locationHelpers;
     if (key === '../customCohortSubdivisionFamilies') return familyHelpers;
     if (key === '../customCohortSubdivisionInspection') return inspectionHelpers;
+    if (key === '../customCohortStockCompositionComparison.ts') return comparisonHelpers;
+    if (key === './CustomCohortStockCompositionComparison') return { default: Comparison, __esModule: true };
     assert.equal(key, './CustomCohortPocketInspector'); return { default: Inspector, __esModule: true };
   }, module, module.exports, document, Element);
   const phases = Array.from({ length: count }, (_, i) => ({ id: phaseId(i), label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 1,
@@ -59,6 +64,7 @@ function harness(count = 3) {
     get modalCloses() { return modalCloses; }, get focusRestores() { return focusRestores; }, prior,
     button: find, click(label) { const n = find(label); assert.ok(n, label); n.props.onClick(); render(); },
     inspector: () => walk(tree).find(n => n.type === Inspector).props,
+    comparison: () => walk(tree).find(n => n.type === Comparison).props.comparison,
     search(value) { walk(tree).find(n => n.type === 'input').props.onChange({ target: { value } }); render(); },
     close() { cleanups.splice(0).forEach(fn => fn?.()); } };
 }
@@ -67,6 +73,27 @@ test('dialog mounts once, opens no selection action, restores focus and Escape c
   h.render({ ...h.props, included: [...h.props.included] }); assert.equal(h.modalOpens, 1);
   assert.match(h.text, /Partially included/); h.tree.props.onCancel(); assert.deepEqual(h.actions, [['close']]);
   h.close(); assert.equal(h.modalCloses, 1); assert.equal(h.focusRestores, 1);
+});
+
+test('collapsed advisory receives exact parent/phase and saved selected unions without making requests or selection writes', () => {
+  const h = harness(), original = h.props.catalog;
+  const population = n => [n, Array.from({ length: 3 }, () => [[n, 0, 0, 0, 0], [0, 0, 0, n]]),
+    [[n, 0, 0, 0, 0], [n, 0, 0, 0, 0, 0, 0]]];
+  const stock = checkCustomCohortStockComposition({ composition_version: 1, profile: STOCK_COMPOSITION_PROFILE,
+    binding: { context_ref: original.binding.context_ref, captured_at: '2026-09-06T08:00:00.123Z' }, status: 'available', reason: null,
+    mapping_version: 4, housing_profile: STOCK_COMPOSITION_DEFINITION.housing_profiles[0], definition: STOCK_COMPOSITION_DEFINITION,
+    bin_cuts: [[2000, 2000, 2000], [2000, 2000, 2000], [2000, 2000, 2000]], subject: {
+      numeric: [['observed', 2100, 'saved_subject'], ['observed', 1999, 'saved_subject'], ['missing', null, 'saved_subject']],
+      housing: ['missing', null, 'current_subject_cad'], recorded_group_id: phaseId(0), group_reason: null },
+    all: population(6), pockets: original.pockets.map(p => [p.id, ...population(p.member_count)]) }, original);
+  const catalog = { ...original, recommendation: { pockets: [], stock_composition_v1: stock } };
+  h.render({ ...h.props, catalog });
+  assert.equal(h.comparison().reference.member_count, 6); assert.equal(h.comparison().inspected.member_count, 6);
+  assert.equal(h.comparison().selected.member_count, 1); assert.deepEqual(h.actions, []);
+  h.render({ ...h.props, catalog, phaseId: phaseId(1), included: [] });
+  assert.deepEqual(h.comparison().inspected.pocket_ids, [phaseId(1)]); assert.equal(h.comparison().inspected.member_count, 2);
+  assert.equal(h.comparison().selected.member_count, 0); assert.deepEqual(h.actions, []);
+  h.render({ ...h.props, catalog: original }); assert.equal(h.comparison().reason, 'composition_unavailable'); h.close();
 });
 test('subdivision union contains all phases even when search/page display only25', () => {
   const h = harness(60); h.render(); assert.match(h.text, /Page 1 of 3/);

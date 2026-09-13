@@ -1,6 +1,8 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import { checkCustomCohortCadEvidence } from './customCohortCadEvidence.ts';
 import type { CheckedCadRecordedEvidence } from './customCohortCadEvidence';
+import { checkCustomCohortStockComposition } from './customCohortStockComposition.ts';
+import type { CheckedStockComposition } from './customCohortStockComposition';
 
 const FACTORS = ['gla', 'age', 'housing_type', 'site_size', 'proximity', 'sale_price'] as const;
 type Factor = typeof FACTORS[number];
@@ -59,6 +61,7 @@ export interface CheckedPocketRecommendation {
   readonly recorded_proximity?: CheckedRecordedProximity;
   readonly recorded_housing?: CheckedRecordedHousing;
   readonly evidence_mode?: 'recorded_housing_only' | 'recorded_housing_and_proximity';
+  readonly stock_composition_v1?: CheckedStockComposition;
 }
 type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>
   & Partial<Pick<CheckedPocketCatalog, 'catalog_version'>>;
@@ -218,10 +221,12 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const hasProximity = value !== null && typeof value === 'object' && Object.hasOwn(value, 'recorded_proximity');
   const hasHousing = value !== null && typeof value === 'object' && Object.hasOwn(value, 'recorded_housing');
   const hasMode = value !== null && typeof value === 'object' && Object.hasOwn(value, 'evidence_mode');
+  const hasComposition = value !== null && typeof value === 'object' && Object.hasOwn(value, 'stock_composition_v1');
   const r = object(value, ['presentation_version', 'recommendation_version', 'status', 'basis', 'selection_scope', 'authority',
     'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply',
     ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : []),
-    ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : [])]);
+    ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : []),
+    ...(hasComposition ? ['stock_composition_v1'] : [])]);
   const dense = r.presentation_version === 2;
   ensure((dense ? r.recommendation_version === 2 && catalog.catalog_version === 2
     : r.presentation_version === 1 && r.recommendation_version === 1)
@@ -299,11 +304,15 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const proximity = proximityEnabled ? recordedProximity(r.recorded_proximity, all, pockets) : null;
   const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
   if (cad && housing) ensure(cad.mapping_version === housing.mapping_version);
+  const composition = hasComposition ? checkCustomCohortStockComposition(r.stock_composition_v1, catalog) : null;
+  if (composition) ensure(housing && (composition.status !== 'available' || composition.mapping_version === housing.mapping_version)
+    && (!cad || composition.binding.captured_at === cad.binding.captured_at));
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (dense ? 2_500_000 : 512_000));
   return freeze({ status: r.status, policy: { id: housingV3 ? 'custom-current-observation-review-v3' : proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',
     revision: housingV3 ? 3 : proximityV2 ? 2 : 1, minimum_mean_lower_bound: 55, minimum_mean_known_weight_percent: 70 },
     subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations,
     ...(cad ? { cad_recorded_evidence: cad } : {}), ...(proximity ? { recorded_proximity: proximity } : {}),
-    ...(housing ? { recorded_housing: housing, evidence_mode: r.evidence_mode as CheckedPocketRecommendation['evidence_mode'] } : {}) });
+    ...(housing ? { recorded_housing: housing, evidence_mode: r.evidence_mode as CheckedPocketRecommendation['evidence_mode'] } : {}),
+    ...(composition ? { stock_composition_v1: composition } : {}) });
 }

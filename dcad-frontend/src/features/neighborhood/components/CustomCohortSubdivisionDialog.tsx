@@ -1,13 +1,15 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomCohortSubdivisionFamily, CustomCohortSubdivisionFamilies } from '../customCohortSubdivisionFamilies';
-import { buildCustomCohortSubdivisionPhases } from '../customCohortSubdivisionFamilies';
+import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases } from '../customCohortSubdivisionFamilies';
 import { buildCustomCohortSubdivisionInspection } from '../customCohortSubdivisionInspection';
+import { createCustomCohortStockCompositionComparison } from '../customCohortStockCompositionComparison.ts';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomCohortPreviewInput, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import { buildCustomCohortSubdivisionFamilyLocationReview } from '../customCohortSubdivisionLocationReview';
 import type { requestCustomCohortObservationPreview } from '../customCohortPreviewApi';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
+import CustomCohortStockCompositionComparison from './CustomCohortStockCompositionComparison';
 
 interface Props {
   family: CustomCohortSubdivisionFamily; catalog: CheckedPocketCatalog; input: CustomCohortPreviewInput;
@@ -45,6 +47,11 @@ export default function CustomCohortSubdivisionDialog(props: Props) {
   const selectedCount = phases.filter(p => p.pocket_ids.every(id => selectedIds.has(id))).length;
   const selectedAccounts = catalog.pockets.reduce((sum, p) => sum + (familyIds.has(p.id) && selectedIds.has(p.id) ? p.member_count : 0), 0);
   const phase = phases.find(p => props.phaseId !== null && p.pocket_ids.includes(props.phaseId)) ?? null;
+  const comparisonFamilies = useMemo(() => props.families ?? buildCustomCohortSubdivisionFamilies(catalog), [props.families, catalog]);
+  const compareStock = useMemo(() => createCustomCohortStockCompositionComparison({ catalog, families: comparisonFamilies,
+    contextRef: props.input.contextRef, composition: catalog.recommendation?.stock_composition_v1 }), [catalog, comparisonFamilies, props.input.contextRef]);
+  const stockComparison = useMemo(() => compareStock({ family, inspectedPocketIds: phase?.pocket_ids ?? family.pocket_ids,
+    selectedPocketIds: included }), [compareStock, family, phase, included]);
   const rows = phases.filter(p => p.label.toLowerCase().includes(search.toLowerCase()));
   const pageCount = Math.max(1, Math.ceil(rows.length / PAGE_SIZE)), currentPage = Math.min(page, pageCount - 1);
   const reviews = new Map(catalog.recommendation?.pockets.map(p => [p.id, p]));
@@ -108,6 +115,7 @@ export default function CustomCohortSubdivisionDialog(props: Props) {
         {locationReview.combined_extent && <p className="mt-2 tabular-nums">Recorded spread: latitude {locationReview.combined_extent.south.toFixed(5)}–{locationReview.combined_extent.north.toFixed(5)};
           {' '}longitude {locationReview.combined_extent.west.toFixed(5)}–{locationReview.combined_extent.east.toFixed(5)}.</p>}
       </details>}
+      <CustomCohortStockCompositionComparison comparison={stockComparison} />
       <CustomCohortPocketInspector input={props.input} catalog={catalog} pocketId={phase?.id ?? family.pocket_ids[0]}
         pocketIds={phase ? phase.pocket_ids.length > 1 ? phase.pocket_ids : undefined : family.pocket_ids} label={phase?.label ?? family.label} previewTransport={props.previewTransport}
         inspectionSelection={batchUnavailable ? undefined : inspectionSelection ?? undefined}

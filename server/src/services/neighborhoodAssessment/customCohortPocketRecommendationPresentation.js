@@ -8,6 +8,7 @@ import { getCustomCohortRecordedHousingProfile, CUSTOM_COHORT_RECORDED_HOUSING_B
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
+import { readCustomCohortStockComposition } from './customCohortStockComposition.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
@@ -199,6 +200,17 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
       maximumBytes: byteLimit - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"cad_recorded_evidence":') });
   }
   check(Buffer.byteLength(JSON.stringify(result)) <= byteLimit, 'output_byte_limit');
+  if (Object.hasOwn(recommendation, 'stock_composition_v1')) {
+    const composition = readCustomCohortStockComposition(recommendation.stock_composition_v1,
+      { context_ref: expected.context_ref, captured_at: recommendation.binding.captured_at });
+    const remaining = byteLimit - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"stock_composition_v1":');
+    const candidate = Buffer.byteLength(JSON.stringify(composition)) <= remaining ? composition
+      : { composition_version: 1, profile: composition.profile, binding: composition.binding,
+        status: 'unavailable', reason: 'output_byte_limit' };
+    // Never sacrifice the established complete recommendation/CAD evidence to
+    // make room for optional composition. Even the diagnostic needs room.
+    if (Buffer.byteLength(JSON.stringify(candidate)) <= remaining) result.stock_composition_v1 = candidate;
+  }
   return freeze(result);
 }
 
@@ -217,6 +229,7 @@ function compositionAllowed({ catalog, retained_inputs }) {
 }
 function kernelArgs({ catalog, expected, retained_inputs, recorded_proximity, observation_preview }) {
   return { context_ref: expected.context_ref, retained_inputs, catalog_version: catalog.catalog_version,
+    include_stock_composition: true,
     selection: { revision: expected.selection_revision, included_recorded_group_ids: [] },
     ...(catalog.catalog_version === 2 && observation_preview ? { observation_preview } : {}),
     ...(recorded_proximity === undefined ? {} : { recorded_proximity }) };

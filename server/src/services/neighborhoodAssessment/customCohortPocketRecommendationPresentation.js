@@ -3,7 +3,7 @@ import { buildCustomCohortPocketRecommendation, buildCustomCohortPocketRecommend
   CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V2 as POLICY_V2,
   CUSTOM_COHORT_POCKET_RECOMMENDATION_POLICY_V3 as POLICY_V3 } from './customCohortPocketRecommendation.js';
 import { CUSTOM_COHORT_RECORDED_PROXIMITY_BASIS, CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS } from './customCohortRecordedProximity.js';
-import { CUSTOM_COHORT_RECORDED_HOUSING_PROFILE, CUSTOM_COHORT_RECORDED_HOUSING_BASIS,
+import { getCustomCohortRecordedHousingProfile, CUSTOM_COHORT_RECORDED_HOUSING_BASIS,
   CUSTOM_COHORT_RECORDED_HOUSING_STATES, CUSTOM_COHORT_RECORDED_HOUSING_CATEGORIES } from './customCohortRecordedHousing.js';
 import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresentation.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
@@ -77,9 +77,9 @@ function proximitySummary(value, all, pockets) {
 
 function housingSummary(value, all, pockets) {
   check(value && Object.keys(value).sort().join(',') === 'authority,basis,coverage,housing_version,mapping_version,profile,subject'
-    && value.housing_version === 1 && value.mapping_version === 4
+    && value.housing_version === 1 && [4, 5].includes(value.mapping_version)
     && value.basis === CUSTOM_COHORT_RECORDED_HOUSING_BASIS && value.authority === 'not_established'
-    && json(value.profile) === json(CUSTOM_COHORT_RECORDED_HOUSING_PROFILE), 'housing');
+    && json(value.profile) === json(getCustomCohortRecordedHousingProfile(value.mapping_version)), 'housing');
   const subject = value.subject;
   check(subject && Object.keys(subject).sort().join(',') === 'category,origin,state'
     && CUSTOM_COHORT_RECORDED_HOUSING_STATES.includes(subject.state)
@@ -100,7 +100,8 @@ function housingSummary(value, all, pockets) {
   const combined = {};
   for (const pocket of pockets) for (const [key, n] of Object.entries(pocket.factor_coverage.housing_type.states)) combined[key] = (combined[key] ?? 0) + n;
   check(json(combined) === json(expectedStates), 'housing_factor_coverage');
-  return { housing_version: 1, mapping_version: 4, profile: structuredClone(CUSTOM_COHORT_RECORDED_HOUSING_PROFILE),
+  return { housing_version: 1, mapping_version: value.mapping_version,
+    profile: structuredClone(getCustomCohortRecordedHousingProfile(value.mapping_version)),
     basis: value.basis, authority: 'not_established', subject: { ...subject },
     coverage: { account_count: accounts, observed_count: observed, unknown_count: unknown, states } };
 }
@@ -186,6 +187,7 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
     }
   }
   if (Object.hasOwn(recommendation, 'cad_recorded_evidence')) {
+    if (v3) check(recommendation.cad_recorded_evidence?.mapping_version === result.recorded_housing.mapping_version, 'housing_mapping');
     check(Buffer.byteLength(JSON.stringify(result)) + 32 < byteLimit, 'output_byte_limit');
     // The extension is current recorded evidence only. Old mapping2/3 payloads
     // retain their exact bytes, and every scoring/selection field above stays

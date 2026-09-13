@@ -7,9 +7,9 @@ const acquisition = mapping_version => ({ compact_metadata_json: JSON.stringify(
 
 test('only installed dense CAD metadata selects larger consumer traversal; old/raw profiles keep their ceiling', () => {
   assert.equal(recordLimit({}), 100000);
-  for (const mapping_version of [2, 3, 4]) for (const records of [undefined, 100000, 150000, 200000, 200001, '200000', -1]) {
+  for (const mapping_version of [2, 3, 4, 5]) for (const records of [undefined, 100000, 150000, 200000, 200001, '200000', -1]) {
     const input = { compact_metadata_json: JSON.stringify({ reader_version: 'local-capture-v3', mapping_version, limits: { records } }) };
-    assert.equal(recordLimit(input), mapping_version === 4 && [150000, 200000].includes(records) ? records : 100000);
+    assert.equal(recordLimit(input), [4, 5].includes(mapping_version) && [150000, 200000].includes(records) ? records : 100000);
   }
 });
 
@@ -18,9 +18,10 @@ test('legacy observation inputs stay v2 and original metadata selects each insta
   assert.equal(version(acquisition(2)), 2);
   assert.equal(version(acquisition(3)), 3);
   assert.equal(version(acquisition(4)), 4);
+  assert.equal(version(acquisition(5)), 5);
 });
 
-for (const mapping of [1, 5, '3', '4', null]) test(`unknown mapping ${JSON.stringify(mapping)} cannot select a consumer`, () => {
+for (const mapping of [1, 6, '3', '4', '5', null]) test(`unknown mapping ${JSON.stringify(mapping)} cannot select a consumer`, () => {
   assert.throws(() => version(acquisition(mapping)), /metadata_invalid/);
 });
 
@@ -35,7 +36,8 @@ test('new profiles require explicitly matching source projection versions; they 
   assert.equal(matches({ role: 'accounts' }, 2), true);
   assert.equal(matches({ role: 'accounts' }, 3), false);
   assert.equal(matches({ role: 'accounts' }, 4), false);
-  for (const selected of [2, 3, 4]) for (const projected of [1, 2, 3, 4, 5, '3', '4', null]) {
+  assert.equal(matches({ role: 'accounts' }, 5), false);
+  for (const selected of [2, 3, 4, 5]) for (const projected of [1, 2, 3, 4, 5, 6, '3', '4', '5', null]) {
     assert.equal(matches({ mapping_version: projected }, selected), projected === selected);
   }
 });

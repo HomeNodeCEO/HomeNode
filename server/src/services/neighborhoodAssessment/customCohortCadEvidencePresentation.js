@@ -113,7 +113,7 @@ export function presentCustomCohortCadEvidence({ evidence, expected, pockets, me
   const groupLimit = customCohortCatalogGroupLimit(catalog_version) + 1;
   object(evidence, ['cad_baseline_version', 'mapping_version', 'basis', 'authority', 'binding', 'comparison_basis',
     'temporal_basis', 'subject', 'all', 'pockets', 'limitations']);
-  check(evidence.cad_baseline_version === 1 && evidence.mapping_version === 4
+  check(evidence.cad_baseline_version === 1 && [4, 5].includes(evidence.mapping_version)
     && evidence.basis === 'retained_current_cad_observations' && evidence.authority === 'not_established'
     && evidence.comparison_basis === 'exact_literal_same_recorded_county_not_housing_similarity'
     && evidence.temporal_basis === 'observation_availability_not_historical_validity', 'profile');
@@ -160,7 +160,7 @@ export function presentCustomCohortCadEvidence({ evidence, expected, pockets, me
     }
   }
   check(json(array(evidence.limitations, LIMITATIONS.length)) === json(LIMITATIONS), 'limitations');
-  const metadata = { cad_baseline_version: 1, mapping_version: 4, basis: evidence.basis, authority: evidence.authority,
+  const metadata = { cad_baseline_version: 1, mapping_version: evidence.mapping_version, basis: evidence.basis, authority: evidence.authority,
     binding: { context_ref: JSON.parse(json(expected.context_ref)), captured_at: expected.captured_at },
     comparison_basis: evidence.comparison_basis, temporal_basis: evidence.temporal_basis };
   const result = { ...metadata, status: 'available', reason: null, subject, all, pockets: summaries, limitations: [...LIMITATIONS] };

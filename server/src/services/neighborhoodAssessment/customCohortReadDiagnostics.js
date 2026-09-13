@@ -10,7 +10,7 @@ const CHECKS = new Set([
   'observation_period', 'duplicate_account', 'roster_mismatch', 'scope_mismatch',
   'selection_revision', 'pocket_membership', 'mapping_profile_mismatch', 'source_role',
   'source_records_limit', 'source_chunks_limit', 'source_routing', 'source_roles_missing',
-  'selection_source_mismatch', 'mapping_v2_required', 'mapping_v3_required', 'mapping_v4_required',
+  'selection_source_mismatch', 'mapping_v2_required', 'mapping_v3_required', 'mapping_v4_required', 'mapping_v5_required',
   'effective_date', 'start_date', 'end_date', 'json_limit', 'json_type', 'json_number', 'json_bytes',
   'invalid_input', 'invalid_account', 'invalid_assignment', 'invalid_operation', 'invalid_period',
   'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import',

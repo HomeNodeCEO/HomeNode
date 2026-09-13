@@ -50,7 +50,7 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
   const groupLimit = customCohortCatalogGroupLimit(catalog_version) + 1;
   const recordLimit = catalog_version === 2 ? customCohortObservationRecordLimit(input?.acquisition) : L.source_records;
   const mapping = customCohortObservationMappingVersion(input?.acquisition);
-  if (mapping !== 4) return null;
+  if (mapping !== 4 && mapping !== 5) return null;
   const capture = input.acquisition.capture_result?.source_capture;
   check(capture?.status === 'ready' && input.acquisition.capture_result.query_complete === true
     && isCustomCohortObservationPreview(preview) && preview.status === 'observations_only'
@@ -99,7 +99,7 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
   const roles = new Set(), seen = new Set();
   for (const source of list(capture.sources, L.source_chunks)) {
     const definition = source.payload?.projection?.definition, role = definition?.role;
-    check(customCohortObservationProjectionMatches(definition, 4), 'mapping_profile_mismatch');
+    check(customCohortObservationProjectionMatches(definition, mapping), 'mapping_profile_mismatch');
     if (!['accounts', 'parcels'].includes(role)) continue;
     roles.add(role);
     for (const record of list(source.payload.records, L.source_records)) {
@@ -107,8 +107,8 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
       const key = `${role}\n${record.record_id}`;
       check(!seen.has(key), 'duplicate_source_record'); seen.add(key);
       const mapped = record.data, raw = mapped?.raw_projection, normalized = mapped?.data;
-      check(normalized?.cached_mapping_version === 4 && raw
-        && normalized.cached_projection_kind === (role === 'accounts' ? 'account' : 'parcel'), 'mapping_v4_required');
+      check(normalized?.cached_mapping_version === mapping && raw
+        && normalized.cached_projection_kind === (role === 'accounts' ? 'account' : 'parcel'), `mapping_v${mapping}_required`);
       const id = account(normalized.account_id); check(raw.account_id === id && members.has(id), 'cad_account_scope');
       const target = members.get(id);
       if (role === 'accounts') add(target.county, raw.county ?? null, 'county');
@@ -157,7 +157,7 @@ export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, pr
       return [field, { ...result, distribution, subject_comparison: comparisons }];
     })) };
   }
-  const result = { cad_baseline_version: 1, mapping_version: 4, basis: 'retained_current_cad_observations', authority: 'not_established',
+  const result = { cad_baseline_version: 1, mapping_version: mapping, basis: 'retained_current_cad_observations', authority: 'not_established',
     binding: { context_ref: structuredClone(preview.context_ref), captured_at: preview.captured_at },
     comparison_basis: 'exact_literal_same_recorded_county_not_housing_similarity',
     temporal_basis: 'observation_availability_not_historical_validity',

@@ -6,17 +6,26 @@ const FACTORS = ['gla', 'age', 'housing_type', 'site_size', 'proximity', 'sale_p
 type Factor = typeof FACTORS[number];
 const HOUSING_STATES = ['observed', 'missing', 'unknown', 'partial', 'conflicting'] as const;
 const HOUSING_CATEGORIES = ['detached_single_family', 'townhouse', 'condominium', 'duplex', 'apartment', 'mobile_home', 'manufactured_home'] as const;
-const HOUSING_PROFILE_SHA256 = '12871b3b6251f507a19b1ac20e45df07ace43f6d10654ee513f314ad830de391';
+const HOUSING_PROFILES = {
+  4: { id: 'custom-recorded-housing-v1', revision: 1,
+    content_sha256: '12871b3b6251f507a19b1ac20e45df07ace43f6d10654ee513f314ad830de391' },
+  5: { id: 'custom-recorded-housing-v2', revision: 2,
+    content_sha256: '636415258d1f8d1e74ab1aac1f5592ea5f3d634153225bd138113a63d993f135' },
+} as const;
 type HousingState = typeof HOUSING_STATES[number];
-export interface CheckedRecordedHousing {
-  readonly housing_version: 1; readonly mapping_version: 4;
-  readonly profile: { readonly id: 'custom-recorded-housing-v1'; readonly revision: 1; readonly content_sha256: string };
+type RecordedHousingMapping = {
+  [Version in keyof typeof HOUSING_PROFILES]: {
+    readonly mapping_version: Version; readonly profile: typeof HOUSING_PROFILES[Version];
+  }
+}[keyof typeof HOUSING_PROFILES];
+export type CheckedRecordedHousing = RecordedHousingMapping & {
+  readonly housing_version: 1;
   readonly basis: 'retained_current_housing_observations'; readonly authority: 'not_established';
   readonly subject: { readonly state: HousingState; readonly category: typeof HOUSING_CATEGORIES[number] | null;
     readonly origin: 'saved_subject' | 'retained_subject_public' | 'current_subject_cad' };
   readonly coverage: { readonly account_count: number; readonly observed_count: number; readonly unknown_count: number;
     readonly states: Readonly<Record<HousingState, number>> };
-}
+};
 interface Similarity { readonly lower: number | null; readonly upper: number | null; readonly known_weight_percent: number | null }
 interface Population {
   readonly member_count: number; readonly similarity: Similarity;
@@ -170,10 +179,12 @@ function validateAggregate(all: Population, pockets: readonly Population[]) {
 
 function recordedHousing(value: unknown, all: Population, pockets: readonly Population[]): CheckedRecordedHousing {
   const h = object(value, ['housing_version', 'mapping_version', 'profile', 'basis', 'authority', 'subject', 'coverage']);
-  ensure(h.housing_version === 1 && h.mapping_version === 4 && h.basis === 'retained_current_housing_observations' && h.authority === 'not_established');
+  ensure(h.housing_version === 1 && (h.mapping_version === 4 || h.mapping_version === 5)
+    && h.basis === 'retained_current_housing_observations' && h.authority === 'not_established');
   const profile = object(h.profile, ['id', 'revision', 'content_sha256']);
-  ensure(profile.id === 'custom-recorded-housing-v1' && profile.revision === 1
-    && profile.content_sha256 === HOUSING_PROFILE_SHA256);
+  const expectedProfile = HOUSING_PROFILES[h.mapping_version];
+  ensure(profile.id === expectedProfile.id && profile.revision === expectedProfile.revision
+    && profile.content_sha256 === expectedProfile.content_sha256);
   const subject = object(h.subject, ['state', 'category', 'origin']);
   ensure(HOUSING_STATES.some(state => state === subject.state)
     && (subject.state === 'observed' ? HOUSING_CATEGORIES.some(category => category === subject.category) : subject.category === null)
@@ -190,7 +201,10 @@ function recordedHousing(value: unknown, all: Population, pockets: readonly Popu
     for (const state of HOUSING_STATES.slice(1)) ensure((comparison.states[`candidate_${state}`] ?? 0) === states[state]
       && (comparison.states[`subject_${state}`] ?? 0) === 0);
   } else ensure(comparison.observed_count === 0 && (comparison.states[`subject_${subject.state}`] ?? 0) === account_count);
-  return { housing_version: 1, mapping_version: 4, profile: { id: 'custom-recorded-housing-v1', revision: 1, content_sha256: profile.content_sha256 },
+  const mapping: RecordedHousingMapping = h.mapping_version === 4
+    ? { mapping_version: 4, profile: { ...HOUSING_PROFILES[4] } }
+    : { mapping_version: 5, profile: { ...HOUSING_PROFILES[5] } };
+  return { housing_version: 1, ...mapping,
     basis: 'retained_current_housing_observations', authority: 'not_established',
     subject: { state: subject.state as HousingState, category: subject.category as CheckedRecordedHousing['subject']['category'],
       origin: subject.origin as CheckedRecordedHousing['subject']['origin'] }, coverage: { account_count, observed_count, unknown_count, states } };
@@ -284,6 +298,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog, dense ? 2 : 1) : null;
   const proximity = proximityEnabled ? recordedProximity(r.recorded_proximity, all, pockets) : null;
   const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
+  if (cad && housing) ensure(cad.mapping_version === housing.mapping_version);
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (dense ? 2_500_000 : 512_000));
   return freeze({ status: r.status, policy: { id: housingV3 ? 'custom-current-observation-review-v3' : proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',

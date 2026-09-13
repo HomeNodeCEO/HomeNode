@@ -28,6 +28,16 @@ test('private error text, fields and identities never enter read diagnostics', (
   }
 });
 
+test('installed combined mapping failures have a closed diagnostic without accepting future versions', () => {
+  for (const family of ['observations', 'reported_sales']) {
+    const prefix = family === 'observations' ? 'custom_cohort_observation_preview_' : 'custom_cohort_reported_shared_sales_';
+    assert.deepEqual(customCohortReadDiagnostic('preview', new TypeError(prefix + 'mapping_v5_required')),
+      { action: 'preview', family, check: 'mapping_v5_required' });
+    assert.deepEqual(customCohortReadDiagnostic('preview', new TypeError(prefix + 'mapping_v6_required')),
+      { action: 'preview', family, check: 'unclassified' });
+  }
+});
+
 test('coordinator and context failures retain only fixed checks, including plain Error validators', () => {
   assert.deepEqual(customCohortReadDiagnostic('catalog', Object.assign(new Error('PRIVATE'), {
     code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason: 'invalid_input', detail: 'PRIVATE' })),

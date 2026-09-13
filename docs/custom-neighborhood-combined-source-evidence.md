@@ -1,4 +1,4 @@
-# Combined CAD and original sales evidence — preservation slice
+# Combined CAD and original sales evidence — dormant compatibility
 
 Status: **dormant, opt-in infrastructure**. Custom Appraisal still captures
 mapping4. This slice does not enable a new report metric, recommendation, source
@@ -79,9 +79,9 @@ compatible same-payload closing date and status evidence.
 2. Teach the Custom owner to choose the exact expanded purpose from retained
    metadata before loading source pages, with no narrower fallback. Its current
    mapping5 refusal intentionally stays in place in this preservation slice.
-3. Add compatible observation, recorded-housing, CAD baseline, presentation and
-   frontend contracts together. Do not lose mapping4's CAD observations or
-   relabel mapping5 as mapping4 merely to satisfy an old consumer.
+3. Consumer compatibility is now installed and tested locally; production owner
+   activation is still separate. The contracts below preserve the original
+   version instead of relabeling mapping5 as mapping4.
 4. Separately define and test same-payload price/currency/area/date semantics.
    Do not remove existing unsupported-value warnings based only on retention.
 5. Validate native capture, save/reopen, source-rights revocation, coherent map
@@ -90,6 +90,44 @@ compatible same-payload closing date and status evidence.
 Whole-city capacity and business-date applicability remain separate work. This
 format is not a cap increase, a historical-property snapshot, or proof that the
 neighborhood feature is complete.
+
+## Version-aware consumers (not source activation)
+
+Pure observation, catalog, preparation and shared-source descriptive consumers
+can now read an original, retained mapping5 graph. Existing routing, full-roster,
+date, profile, and hash checks remain required. The source owner still issues
+mapping4 and rejects mapping5 metadata before loading its source pages. The
+production source policy still refuses the expanded purpose. A version-aware
+consumer is not an authorization path.
+
+CAD and housing use the same interpreter, dictionaries and comparison rules for
+mapping4 and mapping5. Their presentation schema shapes remain version1, but
+`mapping_version` reports the actual source format. Recorded housing binds the
+format to one exact profile:
+
+| Mapping | Housing profile | Revision | Definition SHA-256 |
+| --- | --- | --- | --- |
+| 4 | `custom-recorded-housing-v1` | 1 | `12871b3b6251f507a19b1ac20e45df07ace43f6d10654ee513f314ad830de391` |
+| 5 | `custom-recorded-housing-v2` | 2 | `636415258d1f8d1e74ab1aac1f5592ea5f3d634153225bd138113a63d993f135` |
+
+Only the definition's id, revision and mapping version differ. Backend and
+frontend reject crossed profile/version pairs, unknown versions and mixed
+CAD/housing versions in one recommendation. Whole-addon byte-limit omissions
+retain the actual mapping and full denominator; they do not invent detail.
+
+This does **not** interpret the new witness's currency, units, status or date.
+Shared sales keep the prior typed-source descriptive population and unit rules;
+a retained raw ClosePrice remains missing or unsupported, never borrowed from
+the canonical price or CurrentPrice. Lot-area previews explicitly say that units
+are unverified, as for mapping3. Raw fields are not added to public recommendation
+responses. The later same-payload interpretation must be separately versioned.
+
+No current source limits, study periods, score weights, selection rules, owner
+routes, source grants or accepted report data change here. Mapping5 uses only
+the already declared dense mapping4 traversal ceiling; unknown/invalid capacity
+metadata never raises it. Existing mapping4 checked browser output has an exact
+pre-change digest regression, in addition to actual mapping4/mapping5
+capture-to-consumer parity checks.
 
 ## Regression coverage
 

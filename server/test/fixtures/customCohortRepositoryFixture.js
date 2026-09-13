@@ -60,12 +60,20 @@ export function customCohortRepositoryFixture({ assignmentFileId, effectiveDate 
           const key = `${org}:${hashes[i]}`;
           if (state.db.has(key)) continue;
           const item = { content_sha256: hashes[i], canonical_utf8_bytes: String(bytes[i]), canonical_utf8: texts[i] };
-          state.db.set(key, item); stored.push(item);
+          state.db.set(key, item); stored.push({ content_sha256: item.content_sha256,
+            canonical_utf8_bytes: item.canonical_utf8_bytes, exact_original: true });
         }
         return { rowCount: stored.length, rows: stored };
       }
       case 'read-batch': {
-        const values = params[1].map(hash => state.db.get(`${params[0]}:${hash}`)).filter(Boolean);
+        const values = params[1].map((hash, index) => {
+          const stored = state.db.get(`${params[0]}:${hash}`);
+          if (!stored || params.length !== 4) return stored;
+          return { content_sha256: stored.content_sha256, canonical_utf8_bytes: stored.canonical_utf8_bytes,
+            exact_original: stored.canonical_utf8_bytes === String(params[2][index])
+              && typeof stored.canonical_utf8 === 'string' && Buffer.byteLength(stored.canonical_utf8) === params[2][index]
+              && stored.canonical_utf8 === params[3][index] };
+        }).filter(Boolean);
         return { rowCount: values.length, rows: values };
       }
       case 'insert': {

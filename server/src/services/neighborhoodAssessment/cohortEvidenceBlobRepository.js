@@ -108,23 +108,48 @@ export function createNeighborhoodCohortBlobRepository(client, organizationId) {
         for (const row of result.rows) {
           const entry = expected.get(row?.content_sha256);
           if (!entry) fail('storage_conflict');
-          checkedRow({ rows: [row], rowCount: 1 }, entry.ref, entry.text);
+          // SQL compares the stored original to our already-validated exact
+          // text, not jsonb equality or a digest-only assertion. Return only
+          // fixed-size acknowledgments; independent reads still load/validate
+          // every original through checkedRow.
+          if (row.canonical_utf8_bytes !== entry.ref.canonical_utf8_bytes || row.exact_original !== true) fail('storage_conflict');
           expected.delete(entry.ref.content_sha256);
         }
       };
       accept(await query(`/* neighborhood-cohort-blob:insert-batch */
-        INSERT INTO app.neighborhood_cohort_evidence_blobs
-          (organization_id, content_sha256, canonical_utf8_bytes, canonical_utf8)
-        SELECT $1, input.hash, input.bytes, input.text
-          FROM unnest($2::text[], $3::integer[], $4::text[]) AS input(hash, bytes, text)
-        ON CONFLICT (organization_id, content_sha256) DO NOTHING
-        RETURNING content_sha256, canonical_utf8_bytes::text, canonical_utf8`,
+        WITH input AS MATERIALIZED (
+          SELECT * FROM unnest($2::text[], $3::integer[], $4::text[]) AS original(hash, bytes, text)
+        ), inserted AS (
+          INSERT INTO app.neighborhood_cohort_evidence_blobs
+            (organization_id, content_sha256, canonical_utf8_bytes, canonical_utf8)
+          SELECT $1, input.hash, input.bytes, input.text FROM input
+          ON CONFLICT (organization_id, content_sha256) DO NOTHING
+          RETURNING content_sha256, canonical_utf8_bytes, canonical_utf8
+        )
+        SELECT stored.content_sha256, stored.canonical_utf8_bytes::text,
+          CASE WHEN stored.canonical_utf8_bytes=input.bytes AND octet_length(stored.canonical_utf8)=input.bytes
+            THEN convert_to(stored.canonical_utf8, 'UTF8')=convert_to(input.text, 'UTF8')
+            ELSE false END AS exact_original
+          FROM inserted stored LEFT JOIN input ON input.hash=stored.content_sha256`,
       [organization, captured.map(entry => entry.ref.content_sha256), captured.map(entry => Number(entry.ref.canonical_utf8_bytes)),
         captured.map(entry => entry.text)]));
-      if (expected.size) accept(await query(`/* neighborhood-cohort-blob:read-batch */
-        SELECT content_sha256, canonical_utf8_bytes::text, canonical_utf8
-          FROM app.neighborhood_cohort_evidence_blobs
-         WHERE organization_id=$1 AND content_sha256=ANY($2::text[])`, [organization, [...expected.keys()]]));
+      if (expected.size) {
+        // Keep a separate statement: READ COMMITTED may observe a conflicting
+        // insert only after ON CONFLICT has waited for its owner to commit.
+        // Rebind captured originals, never caller entries after an await. Full
+        // replay trades response bytes for a second bounded original upload.
+        const remaining = [...expected.values()];
+        accept(await query(`/* neighborhood-cohort-blob:read-batch */
+          SELECT stored.content_sha256, stored.canonical_utf8_bytes::text,
+            CASE WHEN stored.canonical_utf8_bytes=input.bytes AND octet_length(stored.canonical_utf8)=input.bytes
+              THEN convert_to(stored.canonical_utf8, 'UTF8')=convert_to(input.text, 'UTF8')
+              ELSE false END AS exact_original
+            FROM unnest($2::text[], $3::integer[], $4::text[]) AS input(hash, bytes, text)
+            JOIN app.neighborhood_cohort_evidence_blobs stored
+              ON stored.organization_id=$1 AND stored.content_sha256=input.hash`,
+        [organization, remaining.map(entry => entry.ref.content_sha256), remaining.map(entry => Number(entry.ref.canonical_utf8_bytes)),
+          remaining.map(entry => entry.text)]));
+      }
       if (expected.size) fail('storage_conflict');
       return captured.map(entry => entry.ref);
     },

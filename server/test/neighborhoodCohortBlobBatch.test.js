@@ -7,6 +7,10 @@ import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobR
 const ORG = '10000000-0000-4000-8000-000000000001', OTHER = '10000000-0000-4000-8000-000000000002';
 const entry = (canonicalJson = '{"id":"00001","price":"1.00"}') => ({ canonicalJson, reference: prepare(canonicalJson) });
 const result = rows => ({ rows, rowCount: rows.length });
+const acknowledgment = (stored, bytes, text) => ({ content_sha256: stored.content_sha256,
+  canonical_utf8_bytes: stored.canonical_utf8_bytes,
+  exact_original: stored.canonical_utf8_bytes === String(bytes) && typeof stored.canonical_utf8 === 'string'
+    && Buffer.byteLength(stored.canonical_utf8) === bytes && stored.canonical_utf8 === text });
 function fixture(intercept) {
   const rows = new Map(), calls = [];
   const client = { async query(sql, params) {
@@ -20,11 +24,14 @@ function fixture(intercept) {
         const key = `${org}/${hash}`;
         if (rows.has(key)) return;
         const row = { content_sha256: hash, canonical_utf8_bytes: String(bytes[i]), canonical_utf8: texts[i] };
-        rows.set(key, row); inserted.push(row);
+        rows.set(key, row); inserted.push(acknowledgment(row, bytes[i], texts[i]));
       });
       return result(inserted.reverse()); // Never rely on database row order.
     }
-    if (sql.includes('read-batch')) return result(hashes.map(hash => rows.get(`${org}/${hash}`)).filter(Boolean).reverse());
+    if (sql.includes('read-batch')) return result(hashes.map((hash, index) => {
+      const stored = rows.get(`${org}/${hash}`);
+      return stored && texts ? acknowledgment(stored, bytes[index], texts[index]) : stored;
+    }).filter(Boolean).reverse());
     throw new Error('unexpected query');
   } };
   return { rows, calls, client, repo: repository(client, ORG) };
@@ -124,14 +131,71 @@ test('all batch admission is bounded and validated before SQL, including the las
 
 test('prepared batches reject incomplete, duplicate, unknown and corrupted acknowledgments', async () => {
   const original = entry(), valid = { content_sha256: original.reference.content_sha256,
-    canonical_utf8_bytes: original.reference.canonical_utf8_bytes, canonical_utf8: original.canonicalJson };
+    canonical_utf8_bytes: original.reference.canonical_utf8_bytes, exact_original: true };
   for (const returned of [null, {}, { rowCount: 1, rows: [] }, result([null]), result([valid, valid]),
     result([{ ...valid, content_sha256: 'f'.repeat(64) }]), result([{ ...valid, canonical_utf8_bytes: '1' }]),
-    result([{ ...valid, canonical_utf8: original.canonicalJson.replace('00001', '00002') }]), result([])]) {
+    ...[false, null, undefined, 1, 'true', {}, []].map(exact_original => result([{ ...valid, exact_original }])),
+    result([{ content_sha256: valid.content_sha256, canonical_utf8_bytes: valid.canonical_utf8_bytes,
+      canonical_utf8: original.canonicalJson }]), result([])]) {
     const h = fixture(() => returned);
     await assert.rejects(h.repo.putPreparedBatch([original]), /storage_conflict/);
     assert.ok(h.calls.length <= 2);
   }
+});
+
+test('compact acknowledgments use stored metadata and guarded UTF8 byte equality, not a digest or JSON comparison', async () => {
+  const h = fixture(), original = entry('{"number":1e+21,"raw":"1.00","unicode":"Café 🏠"}');
+  await h.repo.putPreparedBatch([original]);
+  await h.repo.putPreparedBatch([original]);
+  const [fresh, replay, conflict] = h.calls;
+  assert.match(fresh.sql, /WITH input AS MATERIALIZED/);
+  assert.match(fresh.sql, /RETURNING content_sha256, canonical_utf8_bytes, canonical_utf8/);
+  assert.match(fresh.sql, /FROM inserted stored LEFT JOIN input ON input.hash=stored.content_sha256/);
+  assert.match(conflict.sql, /JOIN app.neighborhood_cohort_evidence_blobs stored/);
+  assert.match(conflict.sql, /stored.organization_id=\$1/);
+  for (const call of [fresh, replay, conflict]) {
+    assert.match(call.sql, /SELECT stored.content_sha256, stored.canonical_utf8_bytes::text/);
+    assert.match(call.sql, /CASE WHEN stored.canonical_utf8_bytes=input.bytes AND octet_length\(stored.canonical_utf8\)=input.bytes\s+THEN convert_to\(stored.canonical_utf8, 'UTF8'\)=convert_to\(input.text, 'UTF8'\)\s+ELSE false END AS exact_original/);
+    assert.doesNotMatch(call.sql, /::jsonb|sha256\(/);
+    assert.deepEqual(call.params, [ORG, [original.reference.content_sha256],
+      [Number(original.reference.canonical_utf8_bytes)], [original.canonicalJson]]);
+  }
+});
+
+test('mixed conflicts resend only still-unacknowledged captured originals after caller mutation', async () => {
+  const h = fixture(), old = entry(), fresh = entry('{"new":"Café 🏠"}');
+  await h.repo.putPreparedBatch([old]); h.calls.length = 0;
+  const oldText = old.canonicalJson, oldRef = old.reference, freshRef = fresh.reference;
+  const entries = [old, fresh], query = h.client.query.bind(h.client);
+  h.client.query = async (sql, params) => {
+    const response = await query(sql, params);
+    if (sql.includes('insert-batch')) { entries[0].canonicalJson = '{}'; entries[0].reference = {}; entries.length = 0; }
+    return response;
+  };
+  assert.deepEqual(await repository(h.client, ORG).putPreparedBatch(entries), [oldRef, freshRef]);
+  assert.equal(h.calls.length, 2);
+  assert.deepEqual(h.calls[1].params, [ORG, [oldRef.content_sha256], [Number(oldRef.canonical_utf8_bytes)], [oldText]]);
+});
+
+for (const replacement of ['{"id":"00002","price":"1.00"}', '{"id":"00001","price":"1.01"}']) {
+  test(`same-length substituted stored originals fail compact replay: ${replacement}`, async () => {
+    const h = fixture(), original = entry();
+    await h.repo.putPreparedBatch([original]);
+    assert.equal(Buffer.byteLength(replacement), Number(original.reference.canonical_utf8_bytes));
+    h.rows.get(`${ORG}/${original.reference.content_sha256}`).canonical_utf8 = replacement;
+    await assert.rejects(h.repo.putPreparedBatch([original]), /storage_conflict/);
+    assert.equal(h.calls.length, 3);
+  });
+}
+
+for (const code of ['57014', '40001']) test(`compact conflict query ${code} propagates without retries`, async () => {
+  const failure = Object.assign(new Error('synthetic caller rollback required'), { code });
+  const h = fixture(sql => {
+    if (sql.includes('insert-batch')) return result([]);
+    throw failure;
+  });
+  await assert.rejects(h.repo.putPreparedBatch([entry()]), error => error === failure);
+  assert.equal(h.calls.length, 2);
 });
 
 test('conflict reads verify all original bytes instead of accepting matching digests alone', async () => {

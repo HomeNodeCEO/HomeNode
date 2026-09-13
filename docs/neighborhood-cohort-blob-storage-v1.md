@@ -22,4 +22,29 @@ No provider data is downloaded, production table is backfilled, or report calcul
 
 ## Verification boundaries
 
+### Compact acknowledgments for prepared batches
+
+`putPreparedBatch` retains the eight-original / two-MB batch bound and captures
+validated primitive originals before awaiting SQL. PostgreSQL compares stored
+length and actual UTF-8 bytes with those originals, using `convert_to` bytea
+equality rather than collation, JSONB normalization, or a digest-only assertion.
+Only hash, byte count, and a strict boolean acknowledgment return to Node. Missing,
+duplicate, unknown, false, or malformed acknowledgments still fail the entire call.
+
+Conflicts use a separate statement so a READ COMMITTED caller can see a winner
+that committed while its INSERT waited. That statement resends only the remaining
+captured originals. Ordinary `put`, `get`, `getPrepared`, and `getPreparedBatch`
+keep their original full-text validation behavior; transaction ownership and
+rollback are unchanged.
+
+This removes evidence text from batch responses. A fresh batch uploads its text
+once and does not download it again. An all-conflict replay uploads it twice, so
+it does not reduce total bidirectional canonical-text bytes; PostgreSQL array
+encoding and SQL comparison still cost work. Do not infer a process-memory or
+production-latency improvement from response size alone. The native child-DB
+suite measures canonical-text and returned-row JSON bytes (not protocol/TLS wire
+bytes), verifies exact stored originals, and exercises concurrent conflict waits,
+Unicode/exponent literals, same-length text substitution, tenant isolation, and
+caller-owned rollback.
+
 Unit tests use a fake SQL client and verify mapping, scope parameters, limits, mismatch refusal, and transaction ownership. Real PostgreSQL assertions run inside the existing isolated CI child-database suite, with ordinary migrations, to verify exact UTF-8 round trips, tenant keys, mutation guards, rollback, concurrent idempotent inserts, and deliberately corrupted-reference refusal. The local no-database suite skips that real-PG test; do not report a skipped test as a pass or this component as an end-to-end Custom save/reopen feature.

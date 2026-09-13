@@ -68,6 +68,18 @@ export async function cadEvidenceFixture(options = {}) {
   const base = recordedProximity ? await recordedProximityFixture()
     : await decisionEvidenceFixture({ saleOverrides, effectiveDate, parcelCount, assignmentFileId });
   const old = base.input.retained_inputs;
+  const hasInterpretation = Object.hasOwn(options, 'reportedSaleInterpretation');
+  const hasPrivate = Object.hasOwn(options, 'privateSales');
+  let originalIntent = old.acquisition_intent;
+  if (hasInterpretation || hasPrivate) {
+    // Choose a NEW original attempt before combined acquisition/preparation.
+    // Never relabel the already-retained base graph or rewrite its intent hash.
+    const body = { ...old.acquisition_intent.body, intent_version: 1 + (hasPrivate ? 1 : 0) + (hasInterpretation ? 2 : 0),
+      ...(hasInterpretation ? { reported_sale_interpretation: structuredClone(options.reportedSaleInterpretation) } : {}),
+      ...(hasPrivate ? { private_sales_import: { batch_id: options.privateSales.capture.batch.batch_id,
+        expected_review_revision: options.privateSales.capture.review.revision } } : {}) };
+    originalIntent = { body, reference: await base.store.put(json(body)) };
+  }
   const oldCapture = old.acquisition.capture_result;
   const sourceRows = role => oldCapture.source_capture.sources.filter(s => s.payload.projection.definition.role === role)
     .flatMap(s => s.payload.records.map(r => structuredClone(r.data.raw_projection ?? r.data)));
@@ -162,7 +174,10 @@ export async function cadEvidenceFixture(options = {}) {
   const captureResult = await reader.captureInSnapshot(client, { ...issued.request, auth: access.auth,
     selection_grant: issued.selection_grant, market_grant: issued.market_grant });
   assert.equal(captureResult.status, 'captured', JSON.stringify(captureResult.incomplete_reasons));
-  const originalRetained = { ...old, acquisition: consumeNeighborhoodCachedAcquisition(reader, captureResult) };
+  const originalRetained = { ...old, acquisition: consumeNeighborhoodCachedAcquisition(reader, captureResult),
+    acquisition_intent: originalIntent,
+    ...(hasInterpretation ? { reported_sale_interpretation: structuredClone(options.reportedSaleInterpretation) } : {}),
+    ...(hasPrivate ? { private_sales: structuredClone(options.privateSales) } : {}) };
   const refs = await persistCustomCohortCaptureInputs(base.client, base.scopeJson, prepareCustomCohortCaptureInputs(originalRetained));
   const reopened = await loadCustomCohortCaptureInputs(base.client, base.scopeJson, refs);
   const header = prepareCustomCohortContextHeader(base.input.context_header_json);

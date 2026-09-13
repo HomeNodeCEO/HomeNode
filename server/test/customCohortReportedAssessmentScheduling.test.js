@@ -7,6 +7,7 @@ import { buildCustomCohortReportedAssessment as legacy,
 import { buildCustomCohortIndexedObservationPreview as preview,
   customCohortIndexedObservationPreviewBatches as previewBatches } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { assessmentEvidenceDigest as digest } from '../src/services/neighborhoodAssessment/contract.js';
+import { customCohortSelectionCatalogBatches } from '../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCohortReportedAssessmentFixture } from './fixtures/customCohortReportedAssessmentFixture.js';
 import { cadEvidenceFixture } from './fixtures/customCohortCadEvidenceFixture.js';
 
@@ -64,12 +65,15 @@ for (const [name, useWitness, build, batched, readyHash, emptyHash] of [
     const args = { context_ref: input.context_ref, retained_inputs: input.retained_inputs,
       selection: { revision: input.selection.revision, pockets: [] } };
     const discovery = drain(previewBatches(args));
+    const catalog = drain(customCohortSelectionCatalogBatches({ retained_inputs: input.retained_inputs,
+      preview: discovery.result, catalog_version: input.catalog_version ?? 1 }));
     assert.ok(discovery.yields >= 2);
     // Two initial seal checks; each yielded report step has pre/post checks.
-    // Discovery contributes N steps, followed by its existing explicit yield.
+    // Discovery contributes N steps and its existing explicit yield; the
+    // catalog contributes its exact checkpoints plus the new startup boundary.
     // These post-next checks therefore suspend inside the FIRST and SECOND
     // preview respectively, without production hooks or kernel replacements.
-    for (const stop of [4, 2 * discovery.yields + 6]) {
+    for (const stop of [4, 2 * (discovery.yields + catalog.yields + 1) + 6]) {
       const controller = new AbortController(), cancelled = new Error(`cancel-${name}-${stop}`);
       let checks = 0, serviced = false;
       await assert.rejects(batched(input, { check() {

@@ -3,7 +3,7 @@ import { neighborhoodMemberContentDigestBatches, neighborhoodMemberSetDigest, pr
 import { REPORTED_OBSERVATION_PROFILE, REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
 import { customCohortIndexedObservationPreviewBatches,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
-import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
+import { customCohortSelectionCatalogBatches } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
 import { customCohortReportedSharedSalesBatches, customCohortReportedSharedSalesWitnessV2Batches } from './customCohortReportedSharedSales.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
@@ -132,7 +132,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
   const discovery = yield* customCohortIndexedObservationPreviewBatches({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets: [] } });
   yield;
-  const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview: discovery, catalog_version });
+  const catalog = yield* customCohortSelectionCatalogBatches({ retained_inputs: retained, preview: discovery, catalog_version });
   check(catalog.catalog_complete === true, 'catalog_incomplete');
   const groups = new Map(catalog.pockets.map(group => [group.id, group]));
   if (catalog.unassigned.member_count) groups.set('discovery:unassigned', { id: 'discovery:unassigned',
@@ -145,6 +145,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
     .flatMap(id => groups.get(id).account_ids))].sort(compare);
   const pockets = selectedAccounts.length ? [{ id: 'reported-selected-accounts',
     label: 'Selected retained accounts', account_ids: selectedAccounts }] : [];
+  yield; // Keep complete catalog/selection work separate from preview startup.
   const preview = yield* customCohortIndexedObservationPreviewBatches({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets } });
   yield;

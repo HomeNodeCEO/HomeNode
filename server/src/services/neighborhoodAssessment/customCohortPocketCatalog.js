@@ -10,6 +10,8 @@ export const CUSTOM_COHORT_POCKET_CATALOG_LIMITS = Object.freeze({
   public_output_utf8_bytes: 3990000, transport_output_utf8_bytes: 4000000,
 });
 const L = CUSTOM_COHORT_POCKET_CATALOG_LIMITS;
+const CHECKPOINT = 125;
+const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 // Keep v1 replay semantics: its unresolved group can represent the entire
 // discovery roster after 128 names. Only explicitly versioned owners use v2.
 export const CUSTOM_COHORT_DENSE_CATALOG_VERSION = 2;
@@ -48,7 +50,19 @@ const LIMITATIONS = Object.freeze([
  * checks belong to the owner. A catalog ID is a county/name key, not authority,
  * legal identity, geography, a competitive recommendation or report readiness.
  */
-export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview, catalog_version = 1 } = {}) {
+export function buildCustomCohortPocketCatalog(input = {}) {
+  return drain(customCohortPocketCatalogBatches(input));
+}
+
+/** Internal iterator for an owner that seals all caller-reachable inputs before
+ * suspension and retains scheduling, cancellation and final authorization.
+ * Checkpoints expose no partial catalog or authority. The synchronous entry
+ * point drains this exact kernel, including every complete-roster fallback. */
+export function customCohortPocketCatalogBatches(input = {}) {
+  return pocketCatalogBatches(input);
+}
+
+function* pocketCatalogBatches({ retained_inputs: input, preview, catalog_version = 1 }) {
   const groupLimit = customCohortCatalogGroupLimit(catalog_version);
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(capture?.status === 'ready' && input?.acquisition?.capture_result?.query_complete === true
@@ -100,6 +114,7 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
     const key = normalize(value);
     return { state: missingLabels.has(key) ? 'placeholder' : 'known', raw: value, key };
   }
+  yield;
   try {
     const roles = new Set(); let records = 0, accountRows = 0, parcelRows = 0;
     for (const source of array(capture.sources, L.source_chunks)) {
@@ -117,9 +132,12 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
         if (role === 'accounts') {
           accountRows++; facts.account_rows++; facts.county.push(label(raw.county)); facts.labels.push(label(raw.subdivision));
         } else { parcelRows++; facts.parcel_rows++; facts.labels.push(label(raw.subdivision_name)); }
+        // Count CAD rows across all source chunks, not independently per role.
+        if (records % CHECKPOINT === 0) yield;
       }
     }
     check(roles.size === 2, 'cad_source_roles_missing');
+    yield;
     const groups = new Map(), resolved = new Map(), reasonCounts = new Map();
     let countyKnown = 0, labelKnown = 0, conflicting = 0, invalid = 0, partial = 0;
     for (const id of roster) {
@@ -166,7 +184,9 @@ export function buildCustomCohortPocketCatalog({ retained_inputs: input, preview
       for (const reason of reasons) reasonCounts.set(reason, (reasonCounts.get(reason) ?? 0) + 1);
       resolved.set(id, { account_id: id, assigned_pocket_id: assigned, reasons,
         candidate_pocket_ids: sorted(candidates), raw_label_variants: rawLabels, raw_county_variants: rawCounties });
+      if (resolved.size % CHECKPOINT === 0) yield;
     }
+    yield;
     const pockets = [...groups.values()].map(group => {
       const raw_label_variants = sorted(group.raw_label_variants), raw_county_variants = sorted(group.raw_county_variants);
       return { id: group.id, label: display(raw_label_variants[0]), county: display(raw_county_variants[0]),
@@ -276,7 +296,15 @@ export function presentCustomCohortPocketCatalog({ catalog, preview, expected } 
  * appraiser saw, including a whole-roster response-byte fallback. Legacy pure
  * consumers retain v1 semantics; no current-source query or grant occurs here. */
 export function buildCustomCohortSelectionCatalog(input) {
-  const catalog = buildCustomCohortPocketCatalog(input);
-  return catalog.catalog_version === 1 ? catalog : presentCustomCohortPocketCatalog({ catalog, preview: input.preview,
+  return drain(customCohortSelectionCatalogBatches(input));
+}
+
+/** Same sealed-owner contract as the internal catalog bridge. V2 still resolves
+ * against the exact public projection and its complete-roster byte fallback. */
+export function* customCohortSelectionCatalogBatches(input) {
+  const catalog = yield* customCohortPocketCatalogBatches(input);
+  if (catalog.catalog_version === 1) return catalog;
+  yield;
+  return presentCustomCohortPocketCatalog({ catalog, preview: input.preview,
     expected: { context_ref: input.preview.context_ref, selection_revision: input.preview.selection_revision } });
 }

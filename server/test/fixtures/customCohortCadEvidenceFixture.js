@@ -56,14 +56,17 @@ function syntheticCombinedSaleWitness(rawPayload, overrides) {
  */
 export async function cadEvidenceFixture(options = {}) {
   const { parcelOverrides = {}, omitParcelFields = [], legacy = false,
-    mappingVersion = 4, saleWitnessFields, saleOverrides = {}, effectiveDate, parcelCount,
-    parcelOverridesByIndex = [], recordedProximity = false } = options;
+    mappingVersion = 4, saleWitnessFields, saleOverrides = {}, effectiveDate, parcelCount, assignmentFileId,
+    parcelOverridesByIndex = [], recordedProximity = false, extraTransactions = [], saleWitnessesBySourceId = {} } = options;
   assert.ok(mappingVersion === 4 || mappingVersion === 5, 'exact CAD/combined mapping version required');
   assert.ok(mappingVersion === 5 || saleWitnessFields === undefined && !Object.hasOwn(options, 'rawPayload'), 'sale witness requires mapping5');
-  assert.ok(!recordedProximity || effectiveDate === undefined && parcelCount === undefined && Object.keys(saleOverrides).length === 0,
+  assert.ok(Array.isArray(extraTransactions) && extraTransactions.length <= 1000, 'bounded synthetic extra transactions only');
+  assert.ok(Object.getPrototypeOf(saleWitnessesBySourceId) === Object.prototype
+    && (mappingVersion === 5 || Object.keys(saleWitnessesBySourceId).length === 0), 'per-source witness requires mapping5');
+  assert.ok(!recordedProximity || effectiveDate === undefined && parcelCount === undefined && assignmentFileId === undefined && Object.keys(saleOverrides).length === 0,
     'recorded proximity fixture uses its original base inputs');
   const base = recordedProximity ? await recordedProximityFixture()
-    : await decisionEvidenceFixture({ saleOverrides, effectiveDate, parcelCount });
+    : await decisionEvidenceFixture({ saleOverrides, effectiveDate, parcelCount, assignmentFileId });
   const old = base.input.retained_inputs;
   const oldCapture = old.acquisition.capture_result;
   const sourceRows = role => oldCapture.source_capture.sources.filter(s => s.payload.projection.definition.role === role)
@@ -73,13 +76,25 @@ export async function cadEvidenceFixture(options = {}) {
     for (const field of omitParcelFields) delete result[field];
     return result;
   });
-  const accounts = sourceRows('accounts'), transactions = sourceRows('transactions'), links = sourceRows('sale_links');
+  const accounts = sourceRows('accounts'), transactions = [...sourceRows('transactions'), ...structuredClone(extraTransactions)], links = sourceRows('sale_links');
+  assert.ok(extraTransactions.every(row => typeof row.source_record_id === 'string' && typeof row.sale_id === 'string'),
+    'additional canonical-only rows use the separate legacy fixture option');
   if (mappingVersion === 5) {
     // Synthetic fixed SQL-result cells, not a provider payload or an inferred
     // scalar conversion. Callers can supply exact text, including precise numbers.
     const witness = syntheticCombinedSaleWitness(Object.hasOwn(options, 'rawPayload') ? options.rawPayload : {}, saleWitnessFields);
+    const bySource = new Map();
+    for (const [sourceId, override] of Object.entries(saleWitnessesBySourceId)) {
+      assert.ok(transactions.some(row => row.source_record_id === sourceId), 'witness override must name a captured source');
+      assert.ok(override && Object.getPrototypeOf(override) === Object.prototype
+        && Object.keys(override).every(key => ['rawPayload', 'saleWitnessFields'].includes(key)), 'closed synthetic witness override');
+      bySource.set(sourceId, syntheticCombinedSaleWitness(Object.hasOwn(override, 'rawPayload') ? override.rawPayload
+        : Object.hasOwn(options, 'rawPayload') ? options.rawPayload : {}, override.saleWitnessFields ?? saleWitnessFields));
+    }
+    // One retained source row supplies the same witness to every canonical
+    // wrapper. These overrides precede acquisition, never rewrite saved hashes.
     for (const row of transactions) Object.assign(row,
-      { source_mls_status: null, source_row_number: null, source_raw_witness: witness });
+      { source_mls_status: null, source_row_number: null, source_raw_witness: bySource.get(row.source_record_id) ?? witness });
   }
   const legacyRows = legacy ? [{ source_record_id: null, sale_id: '22', sale_account_id: 'R-001',
     sale_closing_date: '2024-04-01', sale_price: '300000', sale_source: 'Synthetic canonical-only observation',
@@ -109,7 +124,9 @@ export async function cadEvidenceFixture(options = {}) {
       case 'accounts': result = accounts.filter(r => r.account_id > values[1]).slice(0, values[2]); break;
       case 'sync-state': result = sourceRows('gis_sync').filter(r => r.source_key === 'dcad_parcels' && !r.id); break;
       case 'sync-runs': result = sourceRows('gis_sync').filter(r => r.id); break;
-      case 'source-ids': result = values[1] === '0' ? identities.map(r => ({ source_record_id: r.source_record_id })) : []; break;
+      case 'source-ids': result = [...new Set(identities.map(r => r.source_record_id))]
+        .filter(id => BigInt(id) > BigInt(values[1])).sort((a, b) => BigInt(a) < BigInt(b) ? -1 : BigInt(a) > BigInt(b) ? 1 : 0)
+        .slice(0, values[2]).map(source_record_id => ({ source_record_id })); break;
       case 'transaction-identities': result = identities.filter(r => values[0].includes(r.source_record_id)); break;
       case 'transactions': result = transactions.filter(r => values[0].includes(r.source_record_id)); break;
       case 'link-identities': case 'sale-links': result = links.filter(r => values[0].includes(r.source_record_id)

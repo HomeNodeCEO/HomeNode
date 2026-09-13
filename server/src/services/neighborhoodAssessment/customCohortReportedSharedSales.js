@@ -1,5 +1,7 @@
-import { assessmentDate } from './contract.js';
+import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
+import { prepareCachedSaleWitnessV2 } from './cachedSaleWitnessV2.js';
+import { interpretCustomCohortReportedSaleWitnessV2, getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
 
 export const CUSTOM_COHORT_REPORTED_SHARED_SALES_LIMITS = Object.freeze({
   chunks: 1000, records: 100000, selected_accounts: 50000, accounts_per_record: 1000,
@@ -65,15 +67,41 @@ function unscale(value, digits = 12) {
   const text = value.toString().padStart(digits + 1, '0'), fraction = text.slice(-digits).replace(/0+$/, '');
   return text.slice(0, -digits) + (fraction ? `.${fraction}` : '');
 }
-function metric(rows, name, unit) {
+function metric(rows, name, unit, heterogeneous = false) {
   const counts = { observed_count: 0, missing_count: 0, invalid_count: 0, conflicting_count: 0, unsupported_count: 0 }, values = [];
   for (const row of rows) {
     const cell = row.data.observations[name]; counts[`${cell.state}_count`]++;
-    if (cell.state === 'observed') values.push(scaled(cell.exact_value));
+    if (cell.state === 'observed' && !heterogeneous) values.push(scaled(cell.exact_value));
   }
   values.sort(compare); const n = values.length, middle = Math.floor(n / 2);
   return { unit, ...counts, low: n ? unscale(values[0]) : null, high: n ? unscale(values.at(-1)) : null,
     median: !n ? null : n % 2 ? unscale(values[middle]) : unscale((values[middle - 1] + values[middle]) * 5n, 13) };
+}
+
+function sameSourceWitness(originals, effective) {
+  let originalText = null, witness;
+  for (const row of originals) {
+    const checked = prepareCachedSaleWitnessV2(row.raw.source_raw_witness);
+    const text = canonicalAssessmentJson(checked);
+    check(originalText === null || text === originalText, 'source_witness_mismatch');
+    originalText = text; witness = checked;
+  }
+  return interpretCustomCohortReportedSaleWitnessV2(witness, effective);
+}
+
+function witnessedDisposition(interpretation, start, end) {
+  if (interpretation.record_type.state !== 'closed') return interpretation.record_type.reason;
+  const close = interpretation.close_date;
+  return close.state !== 'observed' ? close.reason
+    : close.exact_value < start || close.exact_value > end ? 'outside_period' : 'included';
+}
+
+function witnessedMetric(rows, name, fixedUnit) {
+  const units = new Set(rows.map(row => row.data.observations[name]).filter(cell => cell.state === 'observed').map(cell => cell.unit));
+  // Report every observed quantity, but never compute a pooled median across
+  // unlike units or select a preferred-unit subset without saying so.
+  const heterogeneous = units.size > 1;
+  return metric(rows, name, fixedUnit ?? (units.size === 1 ? [...units][0] : null), heterogeneous);
 }
 
 /** Internal consumer of an owner-admitted, immutable retained Custom graph.
@@ -84,10 +112,22 @@ function metric(rows, name, unit) {
  * Mapping3/5 witnesses are deliberately not paired with typed values: a later raw
  * unit/currency could belong to a different observation than a retained value.
  */
-export function buildCustomCohortReportedSharedSales({ retained_inputs: input, selected_account_ids } = {}) {
+export function buildCustomCohortReportedSharedSales(input = {}) {
+  return buildReportedSharedSales(input, false);
+}
+
+/** Explicit dormant local-observation profile. Never selected by a numeric
+ * mapping-version upgrade or an external authority flag. The workflow owner,
+ * report assembly and existing default entry point do not call this export. */
+export function buildCustomCohortReportedSharedSalesWitnessV2(input = {}) {
+  return buildReportedSharedSales(input, true);
+}
+
+function buildReportedSharedSales({ retained_inputs: input, selected_account_ids }, useWitness) {
   const acquisition = input?.acquisition, result = acquisition?.capture_result, capture = result?.source_capture;
   check(result?.query_complete === true && capture?.status === 'ready' && input?.spatial?.query_complete === true, 'retained_capture');
   const version = customCohortObservationMappingVersion(acquisition), effective = assessmentDate(input.subject.effective_date, 'effective_date');
+  if (useWitness) check(version === 5, 'mapping5_required');
   // Follow the same owner-admitted dense record set as the indexed preview.
   // This changes traversal capacity only; per-chunk, sale/link and output
   // limits and every source-record interpretation rule remain independent.
@@ -138,9 +178,11 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
   check(roles.size === 6, 'source_roles_missing');
   const dispositions = { included: 0, outside_selection: 0, outside_period: 0, nonclosed: 0, unknown_record_type: 0,
     conflicting_record_type: 0, missing_close_date: 0, invalid_close_date: 0, conflicting_close_date: 0,
-    associations_unavailable: 0, legacy_source_record_unavailable: legacyCount };
+    associations_unavailable: 0, legacy_source_record_unavailable: legacyCount,
+    ...(useWitness ? { unsupported_close_date: 0 } : {}) };
   const rows = []; let outputBytes = 16384, links = 0;
   for (const [id, originals] of [...groups].sort(([a], [b]) => compare(a, b))) {
+    const interpretation = useWitness ? sameSourceWitness(originals, effective) : null;
     const associatedLinks = linksBySource.get(id) ?? [];
     const accounts = sorted([...originals.flatMap(row => [account(row.raw.primary_account_id), account(row.data.primary_account_id)]),
       ...associatedLinks.map(row => account(row.data.account_id))].filter(value => value !== null));
@@ -148,6 +190,7 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
     const types = sorted(originals.map(row => row.raw.record_type).filter(present));
     const rawDates = originals.map(row => row.raw.source_close_date), dates = sorted(rawDates.filter(present).map(date).filter(Boolean));
     const disposition = !accounts.length ? 'associations_unavailable' : !accounts.some(value => selectedSet.has(value)) ? 'outside_selection'
+      : interpretation ? witnessedDisposition(interpretation, start, end)
       : types.length > 1 ? 'conflicting_record_type' : types.length === 0 || originals.some(row => !present(row.raw.record_type)) ? 'unknown_record_type'
         : types[0] === 'listing' ? 'nonclosed' : types[0] !== 'closed_sale' ? 'unknown_record_type'
           : dates.length > 1 ? 'conflicting_close_date' : rawDates.some(value => present(value) && date(value) === null) ? 'invalid_close_date'
@@ -157,11 +200,14 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
     links += accounts.length; check(links <= L.account_links, 'account_link_limit');
     const member = { id: `core.sales_source_records:${id}`, accounts, data: {
       basis: 'locally_stored_source_reported_observations', source_record_id: id, mapping_version: version,
-      record_type: 'closed_sale', reported_close_date: dates[0],
+      record_type: 'closed_sale', reported_close_date: interpretation ? interpretation.close_date.exact_value : dates[0],
       canonical_transaction_ids: sorted(originals.map(row => row.data.canonical_transaction_id).filter(present)),
       retained_source_references: [...originals, ...associatedLinks].map(row => ({ ...row.ref }))
         .sort((a, b) => compare(a.source_ref, b.source_ref) || compare(a.record_id, b.record_id)),
-      observations: Object.fromEntries(Object.entries(FIELDS).map(([name, descriptor]) => [name, observation(originals, descriptor, version)])),
+      observations: interpretation ? interpretation.observations
+        : Object.fromEntries(Object.entries(FIELDS).map(([name, descriptor]) => [name, observation(originals, descriptor, version)])),
+      ...(interpretation ? { interpretation_profile_ref: interpretation.interpretation_profile_ref,
+        observation_basis: interpretation.observation_basis } : {}),
       association_completeness: 'not_established',
       unresolved_link_count: associatedLinks.filter(row => row.data.is_resolved !== true || account(row.data.account_id) === null
         || row.gaps.includes('parcel_link_resolution_unavailable')).length,
@@ -171,6 +217,7 @@ export function buildCustomCohortReportedSharedSales({ retained_inputs: input, s
     check(outputBytes <= L.output_utf8_bytes, 'output_limit'); rows.push(member);
   }
   const output = { captured_at: capturedAt, rows, metrics: Object.fromEntries(Object.entries(FIELDS)
-    .map(([name, [, , unit]]) => [name, metric(rows, name, unit)])), disposition_counts: dispositions };
+    .map(([name, [, , unit]]) => [name, useWitness ? witnessedMetric(rows, name, unit) : metric(rows, name, unit)])), disposition_counts: dispositions,
+  ...(useWitness ? { interpretation_profile_ref: getCustomCohortReportedSaleWitnessV2Profile().profile_ref } : {}) };
   check(Buffer.byteLength(JSON.stringify(output)) <= L.output_utf8_bytes, 'output_limit'); return freeze(output);
 }

@@ -11,6 +11,11 @@ The existing synchronous APIs and asynchronous owner consume the same kernels.
 - Publication normalization, independent population-content verification and
   final member freezing use the same bounded checkpoints. Sources and major
   validation boundaries also yield.
+- Selected CAD account-reference assembly yields every 125 accounts before
+  creating its population source. Each dense reference still hashes the full
+  original preview row, including facts outside the displayed metrics. Normal
+  full-row reports retain their original representation and ordering. Temporary
+  assembly wrappers are released after the population is complete.
 
 The report owner's original deep input seal, checks before and after each
 iterator step, cancellation cleanup and final authorization remain in place.
@@ -30,8 +35,8 @@ legacy/Witness2 report hashes are pinned in regression tests.
 ## Measurement limits
 
 This does not make every operation asynchronous. Sorting, member-set hashing,
-individual bounded row/source processing, selected-account reference assembly
-and reported-sales interpretation still have synchronous portions. Follow-up
+individual bounded row/source processing and reported-sales interpretation
+still have synchronous portions. Follow-up
 dense measurements must report the longest processing interval and health
 probe delay as well as total elapsed time. Test-helper setup/assertion work is
 not production-owner work. Callback ordinals must not be presented as semantic

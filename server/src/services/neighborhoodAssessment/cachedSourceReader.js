@@ -9,7 +9,7 @@ import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { CACHED_TRANSACTION_IDENTITY_SQL, CACHED_TRANSACTION_IDENTITY_ORDER,
-  CACHED_TRANSACTION_SNAPSHOT_SQL as SNAPSHOT_SQL } from './cachedTransactionClosureReader.js';
+  CACHED_TRANSACTION_SNAPSHOT_SQL as SNAPSHOT_SQL, selectCachedTransactionSourceIdsSql } from './cachedTransactionClosureReader.js';
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 import { CACHED_SALE_WITNESS_SQL } from './cachedSaleWitness.js';
@@ -492,9 +492,10 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
           if (counts.bytes>limits.bytes) incomplete('byte_limit');
           identityRows[group].push(row);
         };
+        const sourceIdsSql=selectCachedTransactionSourceIdsSql(request.account_ids.length);
         let after='0';
         while (true) {
-          const found=await rows('source-ids',SQL.source_ids,[request.account_ids,after,n]);
+          const found=await rows('source-ids',sourceIdsSql,[request.account_ids,after,n]);
           const ids=found.slice(0,limits.page_size).map(row => big(row.source_record_id));
           if (ids.length) {
             seedIds.push(...ids);

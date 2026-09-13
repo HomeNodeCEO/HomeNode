@@ -9,11 +9,13 @@ import { runCustomCohortReviewDatabaseChecks } from './helpers/customCohortRevie
 import { runCachedSaleWitnessDatabaseChecks } from './helpers/cachedSaleWitnessDatabaseChecks.js';
 import { runCachedSaleWitnessReaderDatabaseChecks } from './helpers/cachedSaleWitnessReaderDatabaseChecks.js';
 import { runCustomCohortDiscoveryDatabaseChecks } from './helpers/customCohortDiscoveryDatabaseChecks.js';
+import { runNeighborhoodSourceIdQueryDatabaseChecks } from './helpers/neighborhoodSourceIdQueryDatabaseChecks.js';
 
 test('Custom context capture composes real discovery, retention, source policy, checkpoint and review persistence and retry', {
   skip: !process.env.DATABASE_URL, timeout: 360_000,
 }, async () => {
   const target = await prepareNeighborhoodCiDatabase();
+  await runNeighborhoodSourceIdQueryDatabaseChecks(target.connectionString);
   await runCustomCohortContextCaptureDatabaseChecks(target.connectionString);
   // All helpers use this one freshly migrated disposable child. The
   // checkpoint helper requires the exact coordinator fixture; policy fixtures

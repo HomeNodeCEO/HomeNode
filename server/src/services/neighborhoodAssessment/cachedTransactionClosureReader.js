@@ -24,6 +24,28 @@ export const CACHED_TRANSACTION_IDENTITY_SQL = Object.freeze({
     WHERE account_id=ANY($1::text[]) AND source_record_id IS NULL AND id>$2::bigint
     ORDER BY id LIMIT $3`,
 });
+// Query strategy only, not a larger roster limit or an authorization decision.
+// Keep the small-roster literal above unchanged. Both the closure owner and
+// independent source reader select from their validated original stock roster.
+const LARGE_SOURCE_ID_ROSTER_THRESHOLD = 10_000;
+const LARGE_ROSTER_SOURCE_IDS_SQL = `WITH selected_accounts AS MATERIALIZED (
+    SELECT unnest($1::text[]) AS account_id
+  ), ids AS (
+    SELECT src.id FROM core.sales_source_records src
+      JOIN selected_accounts selected ON src.primary_account_id=selected.account_id WHERE src.id>$2::bigint
+    UNION SELECT sp.source_record_id FROM core.sale_parcels sp
+      JOIN selected_accounts selected ON sp.account_id=selected.account_id WHERE sp.source_record_id>$2::bigint
+    UNION SELECT sale.source_record_id FROM core.sales sale
+      JOIN selected_accounts selected ON sale.account_id=selected.account_id
+      WHERE sale.source_record_id IS NOT NULL AND sale.source_record_id>$2::bigint
+  ) SELECT id::text AS source_record_id FROM ids WHERE id>$2::bigint ORDER BY id LIMIT $3`;
+export function selectCachedTransactionSourceIdsSql(selectedAccountCount) {
+  if (!Number.isSafeInteger(selectedAccountCount) || selectedAccountCount<0) {
+    throw new TypeError('invalid_neighborhood_source_id_sql_count');
+  }
+  return selectedAccountCount>=LARGE_SOURCE_ID_ROSTER_THRESHOLD
+    ? LARGE_ROSTER_SOURCE_IDS_SQL : CACHED_TRANSACTION_IDENTITY_SQL.source_ids;
+}
 export const CACHED_TRANSACTION_IDENTITY_ORDER = Object.freeze({
   'source-ids':"(payload->>'source_record_id')::bigint",
   'transaction-identities':"(payload->>'source_record_id')::bigint,(payload->>'sale_id')::bigint",
@@ -191,9 +213,10 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
     // Two separate probes reject autocommit even with RR/RO session defaults.
     await verifySnapshot();await verifySnapshot();
     const n=limits.page_size+1;
+    const sourceIdsSql=selectCachedTransactionSourceIdsSql(selected.selected_account_ids.length);
     let after='0';
     while (true) {
-      const found=await rows('source-ids',CACHED_TRANSACTION_IDENTITY_SQL.source_ids,[selected.selected_account_ids,after,n]);
+      const found=await rows('source-ids',sourceIdsSql,[selected.selected_account_ids,after,n]);
       let previous=after;
       for (const row of found) {
         const id=positiveId(row.source_record_id);

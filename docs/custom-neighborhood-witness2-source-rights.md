@@ -1,10 +1,19 @@
-# Dormant witness2 source rights
+# Witness2 source rights
 
 `createCustomNeighborhoodWitness2SourcePolicy` is a parallel, server-only
-evaluator. Nothing in this change installs it in the Custom owner, changes the
-default source reader or report interpreter, or provisions organization metadata.
+evaluator. Composition now routes a retained purpose with any own
+`source_projection` exclusively to this fixed evaluator; absence of that property
+uses the unchanged legacy evaluator. This routing is independent of the source
+mode for new captures. No configuration provisions organization metadata.
 A mapping number, application role, retained witness, or interpretation profile
 is not source permission.
+
+The trusted `CUSTOM_NEIGHBORHOOD_SOURCE_MODE` accepts exactly `cad4` or
+`combined-witness2-v1`; absence preserves the CAD4 default and the previous
+configuration shape. Enabled unknown modes fail before application resources;
+disabled workspaces ignore the unused mode. Both fixed policy constructors
+validate the configured source profile before resources, including valid Unicode.
+No live setting or grant is changed by this implementation.
 
 ## Exact, separate grant
 
@@ -65,7 +74,7 @@ Any accepted configuration change changes that exact configuration binding;
 selection changes alone do not. Rechecks read the metadata and clock again.
 Driver failures use the new sanitized policy-unavailable error, never a grant.
 
-Later activation still requires explicit owner/composition integration and its
-existing assignment, source, exposure, freshness and final-decision fences.
-There are no policy writes, migrations, environment switches, source-cap changes
-or live activation in this slice.
+Choosing the combined mode does not supply the separately required source
+approval or waive the owner's assignment, source, exposure, freshness and
+final-decision fences. There are no policy writes, migrations, live environment
+changes, source-cap changes or live activation in this slice.

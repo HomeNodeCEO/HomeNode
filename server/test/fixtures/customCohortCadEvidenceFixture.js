@@ -59,6 +59,7 @@ export async function cadEvidenceFixture(options = {}) {
     mappingVersion = 4, saleWitnessFields, saleOverrides = {}, effectiveDate, parcelCount, assignmentFileId,
     parcelOverridesByIndex = [], recordedProximity = false, extraTransactions = [], saleWitnessesBySourceId = {} } = options;
   assert.ok(mappingVersion === 4 || mappingVersion === 5, 'exact CAD/combined mapping version required');
+  assert.ok(options.authorizeMarketData === undefined || typeof options.authorizeMarketData === 'function', 'synthetic source authorizer must be a function');
   assert.ok(mappingVersion === 5 || saleWitnessFields === undefined && !Object.hasOwn(options, 'rawPayload'), 'sale witness requires mapping5');
   assert.ok(Array.isArray(extraTransactions) && extraTransactions.length <= 1000, 'bounded synthetic extra transactions only');
   assert.ok(Object.getPrototypeOf(saleWitnessesBySourceId) === Object.prototype
@@ -158,11 +159,14 @@ export async function cadEvidenceFixture(options = {}) {
   const access = createTestCachedReadAccess({ target, scope: oldCapture.scope, effective_date: old.subject.effective_date,
     selection: old.selector.selection, account_ids: base.accountIds, ...old.study }, {
     accessFactory: mappingVersion === 4 ? createNeighborhoodCadEvidenceReadAccess : createNeighborhoodCombinedEvidenceReadAccess,
-    authorizeMarketData: async (_auth, _context, purpose) => {
+    authorizeMarketData: async (auth, context, purpose) => {
       marketPurposes.push(structuredClone(purpose));
       if (mappingVersion === 4) assert.equal(Object.hasOwn(purpose, 'source_projection'), false, 'v4 does not request sale-witness exposure');
       else assert.deepEqual(purpose.source_projection, { id: 'cached-combined-evidence-v1', mapping_version: 5,
         witness_version: 2, fields: CACHED_SALE_WITNESS_V2_FIELDS });
+      // Optional real policy evaluation happens before original access issuance
+      // and acquisition, never by rewriting a retained decision or source hash.
+      if (options.authorizeMarketData) return options.authorizeMarketData(auth, context, purpose);
       return { allowed: true, decision_id: 'synthetic-cad-field-test', policy_revision: 'synthetic-cad-field-v1' };
     },
     transactionClosure: { source_revision: 'synthetic-cad-evidence-closure', transactions: identities, links,

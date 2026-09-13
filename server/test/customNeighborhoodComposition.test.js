@@ -20,14 +20,52 @@ const invalid = error => error instanceof TypeError
 for (const flag of [undefined, null, '', 'false', '0', 'off', 'not-a-flag']) {
   test(`disabled flag ${String(flag)} ignores unused profile and pool`, () => {
     const environment = { CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED: flag,
+      get CUSTOM_NEIGHBORHOOD_SOURCE_MODE() { throw new Error('must_not_read_unused_mode'); },
       get CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON() { throw new Error('must_not_read_unused_profile'); } };
     const configuration = createCustomNeighborhoodConfiguration(environment);
     assert.deepEqual(configuration, { enabled: false, sourceProfile: null });
     assert.ok(Object.isFrozen(configuration));
     const pool = { get connect() { throw new Error('must_not_touch_disabled_pool'); } };
     assert.equal(typeof createCustomNeighborhoodApplicationRouter({ pool, configuration }), 'function');
+    assert.equal(typeof createCustomNeighborhoodApplicationRouter({ pool,
+      configuration: { ...configuration, get sourceMode() { throw new Error('must_not_read_disabled_mode'); } } }), 'function');
   });
 }
+
+for (const mode of ['cad4', 'combined-witness2-v1']) test(`explicit trusted source mode ${mode} is exact and frozen`, () => {
+  const environment = { ...enabled(JSON.stringify(PROFILE)), CUSTOM_NEIGHBORHOOD_SOURCE_MODE: mode };
+  const configuration = createCustomNeighborhoodConfiguration(environment);
+  assert.deepEqual(configuration, { enabled: true, sourceProfile: PROFILE, sourceMode: mode });
+  assert.ok(Object.isFrozen(configuration));
+  environment.CUSTOM_NEIGHBORHOOD_SOURCE_MODE = 'other'; assert.equal(configuration.sourceMode, mode);
+  const pool = { connect() { assert.fail('configuration must not connect'); } };
+  assert.equal(typeof createCustomNeighborhoodApplicationRouter({ pool, configuration }), 'function');
+});
+
+for (const mode of [null, '', ' ', 'CAD4', ' cad4', 'cad4 ', 'combined', 'combined-witness2-v2', '5', 5, false]) {
+  test(`enabled unknown source mode ${JSON.stringify(mode)} fails before profile or resource access`, () => {
+    const environment = { CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED: 'true', CUSTOM_NEIGHBORHOOD_SOURCE_MODE: mode,
+      get CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON() { assert.fail('mode must fail first'); } };
+    assert.throws(() => createCustomNeighborhoodConfiguration(environment), invalid);
+    const pool = { get connect() { assert.fail('invalid mode must precede owner resources'); } };
+    assert.throws(() => createCustomNeighborhoodApplicationRouter({ pool,
+      configuration: { enabled: true, sourceMode: mode, sourceProfile: PROFILE } }), invalid);
+  });
+}
+
+test('explicit undefined mode preserves the exact old default configuration shape', () => {
+  const configuration = createCustomNeighborhoodConfiguration({ ...enabled(JSON.stringify(PROFILE)), CUSTOM_NEIGHBORHOOD_SOURCE_MODE: undefined });
+  assert.deepEqual(configuration, { enabled: true, sourceProfile: PROFILE });
+  assert.equal(Object.hasOwn(configuration, 'sourceMode'), false);
+});
+
+test('enabled source profile must be valid for both fixed evaluators before resources', () => {
+  const profile = { ...PROFILE, datasetRevision: '\ud800' };
+  assert.throws(() => createCustomNeighborhoodConfiguration(enabled(JSON.stringify(profile))), invalid);
+  const pool = { get connect() { assert.fail('invalid Unicode must precede resources'); } };
+  assert.throws(() => createCustomNeighborhoodApplicationRouter({ pool,
+    configuration: { enabled: true, sourceProfile: profile } }), invalid);
+});
 
 for (const flag of ['true', ' TRUE ', '1', 'yes', 'on']) {
   test(`enabled flag ${flag} reuses environmentFlag semantics and freezes parsed profile`, () => {

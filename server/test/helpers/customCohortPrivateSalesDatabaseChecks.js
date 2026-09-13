@@ -9,13 +9,16 @@ import { appendAssignmentSalesImportReview }
 import { prepareAssignmentSalesCsv } from '../../src/services/assignmentSalesCsv/prepare.js';
 import { digestPreparedSalesParts } from '../../src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { authorizeCustomNeighborhoodPrivateSales, CUSTOM_NEIGHBORHOOD_PRIVATE_SALES_RIGHTS_KEY,
-  CUSTOM_NEIGHBORHOOD_PRIVATE_SALES_PURPOSE } from '../../src/security/customNeighborhoodPrivateSalesPolicy.js';
+  CUSTOM_NEIGHBORHOOD_PRIVATE_SALES_PURPOSE, customNeighborhoodPrivateSalesPurpose } from '../../src/security/customNeighborhoodPrivateSalesPolicy.js';
 import { createCustomCohortContextCapture }
   from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortContextRepository }
   from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
 import { loadCustomCohortCaptureInputs }
   from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
+import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from '../../src/services/neighborhoodAssessment/customCohortReportedSaleWitnessV2.js';
+import { describeNeighborhoodCombinedEvidenceMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction }
   from '../../src/services/customAppraisalWorkfiles.js';
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
@@ -189,7 +192,8 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   const sharedPolicy = async (_client, principal, context) => {
     assert.equal(principal.userId, actor); assert.equal(context.scope.organization_id, organization); return sharedGrant;
   };
-  const makeOwner = ({ after, privatePolicy = authorizeCustomNeighborhoodPrivateSales } = {}) => {
+  const makeOwner = ({ after, privatePolicy = authorizeCustomNeighborhoodPrivateSales,
+    marketPolicy = sharedPolicy, sourceMode = 'cad4' } = {}) => {
     const calls = [];
     const observedPool = { async connect() {
       const client = await pool.connect();
@@ -202,7 +206,7 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
         } };
     } };
     return { calls, owner: createCustomCohortContextCapture({ pool: observedPool,
-      authorizeMarketData: sharedPolicy, authorizePrivateSales: privatePolicy }) };
+      authorizeMarketData: marketPolicy, authorizePrivateSales: privatePolicy, sourceMode }) };
   };
   const captureInput = () => ({ auth, accountId: account, assignmentFileId: assignment, operationId: randomUUID(),
     observationPeriod, privateSalesImport: { batch_id: batchId, expected_review_revision: revision } });
@@ -251,6 +255,71 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   assert.equal(retained.study.observation_period.end_date, effectiveDate);
   assert.equal(reopened.rows[0].record_data.values.close_date, '2024-03-01');
   checks.push('actual private policy and three-phase context capture persist/reopen immutable v2 intent and all private rows without shared-sales/report mutation');
+
+  // A separate original acquisition opts in only the shared-source projection.
+  // Its independent private grant and exact CSV/review originals are unchanged.
+  const witnessProfile = getCustomCohortReportedSaleWitnessV2Profile();
+  const witnessRequest = captureInput(), sharedPurposes = [], privatePurposes = [], privateGrants = [];
+  const witnessMarketPolicy = async (...args) => {
+    assert.deepEqual(args[4], { retention: true, exposure: 'none' });
+    sharedPurposes.push(args[3]); return sharedPolicy(...args);
+  };
+  const witnessedPrivatePolicy = async (...args) => {
+    assert.deepEqual(args[3], customNeighborhoodPrivateSalesPurpose(witnessRequest.privateSalesImport));
+    assert.deepEqual(args[4], { retention: true, exposure: 'none' });
+    privatePurposes.push(args[3]);
+    const decision = await authorizeCustomNeighborhoodPrivateSales(...args);
+    assert.equal(decision.allowed, true); privateGrants.push(decision); return decision;
+  };
+  const combined = makeOwner({ sourceMode: 'combined-witness2-v1', marketPolicy: witnessMarketPolicy,
+    privatePolicy: witnessedPrivatePolicy });
+  const witnessRegistered = await combined.owner.capture(witnessRequest);
+  assert.equal(witnessRegistered.status, 'registered'); assert.equal(witnessRegistered.reused, false);
+  assert.equal(await countContext(witnessRequest.operationId), 1);
+  assert.deepEqual(witnessRegistered.private_sales_import, witnessRequest.privateSalesImport);
+  const witnessSaved = await transaction('REPEATABLE READ READ ONLY', async client => {
+    const context = await createCustomCohortContextRepository(client, json(target)).get(json(witnessRegistered.context_ref));
+    const refs = Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, context.body[key]]));
+    const loaded = await loadCustomCohortCaptureInputs(client, json(target), refs);
+    const blobs = createNeighborhoodCohortBlobRepository(client, organization);
+    const study = JSON.parse(await blobs.get(refs.study_input.content_sha256, refs.study_input.canonical_utf8_bytes));
+    const definition = study.reported_sale_interpretation.definition_blob;
+    return { loaded, study, definitionText: await blobs.get(definition.content_sha256, definition.canonical_utf8_bytes) };
+  });
+  const witnessInputs = witnessSaved.loaded.retained_inputs, witnessPrivate = witnessInputs.private_sales;
+  assert.equal(witnessSaved.loaded.acquisition_intent.body.intent_version, 4);
+  assert.deepEqual(witnessSaved.loaded.acquisition_intent.body.private_sales_import, witnessRequest.privateSalesImport);
+  assert.deepEqual(witnessSaved.loaded.acquisition_intent.body.reported_sale_interpretation, witnessProfile.profile_ref);
+  assert.equal(JSON.parse(witnessInputs.acquisition.compact_metadata_json).mapping_version, 5);
+  assert.equal(witnessSaved.study.study_input_version, 2);
+  assert.deepEqual(witnessSaved.study.reported_sale_interpretation,
+    { profile_ref: witnessProfile.profile_ref, definition_blob: witnessProfile.definition_blob.ref });
+  assert.equal(witnessSaved.definitionText, witnessProfile.definition_blob.canonical_json);
+  assert.deepEqual(witnessInputs.reported_sale_interpretation, witnessProfile.profile_ref);
+  assert.deepEqual(witnessPrivate.capture, { ...reopened, captured_at: witnessPrivate.capture.captured_at },
+    'new capture time changes, not the original private batch, review, source interpretation or any row');
+  assert.ok(witnessPrivate.capture.captured_at >= reopened.captured_at);
+  assert.deepEqual(witnessPrivate.authorization, retained.retained_inputs.private_sales.authorization);
+  assert.deepEqual(sharedPurposes, Array(2).fill(describeNeighborhoodCombinedEvidenceMarketDataPurpose(witnessInputs.acquisition.captured_query_request)));
+  assert.equal(privatePurposes.length, 2); assert.deepEqual(privateGrants[0], privateGrants[1]);
+  assert.deepEqual(witnessPrivate.authorization, { decision_id: privateGrants[0].decision_id, policy_revision: privateGrants[0].policy_revision });
+  assert.notEqual(privateGrants[0].decision_id, sharedGrant.decision_id);
+  for (const [sourceMode, replayRequest, expected, marketPolicy] of [
+    ['cad4', witnessRequest, witnessRegistered, witnessMarketPolicy],
+    ['combined-witness2-v1', request, registered, async (...args) => {
+      assert.equal(Object.hasOwn(args[3], 'source_projection'), false); return sharedPolicy(...args);
+    }],
+  ]) {
+    const replayOwner = makeOwner({ sourceMode, marketPolicy, privatePolicy: witnessedPrivatePolicy });
+    const privateBefore = privatePurposes.length;
+    assert.deepEqual(await replayOwner.owner.capture(replayRequest), { ...expected, reused: true });
+    assert.equal(privatePurposes.length, privateBefore + 1, 'registered replay rechecks the independent private grant');
+    assert.ok(!replayOwner.calls.some(sql => /assignment-sales-capture:|neighborhood-(cache|membership|closure):/.test(sql)));
+    assert.ok(!replayOwner.calls.some(sql => /\b(?:INSERT\s+INTO|UPDATE\s+(?:app|app_auth|core|gis)\.|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE\s)/i.test(sql)),
+      'cross-mode private replay may lock but cannot rewrite originals or report state');
+  }
+  assert.deepEqual(await protectedState(), baseline);
+  checks.push('native separate private capture retains intent4/study2 and exact witness2 definition with unchanged private originals and independent grants; private intent2/4 replay across producer modes without source or report writes');
 
   const previewInput = { auth, accountId: account, assignmentFileId: assignment, contextRef: registered.context_ref,
     selection: { revision: 1, pockets: [{ id: 'synthetic-subject', label: 'Synthetic subject', account_ids: [account] }] } };

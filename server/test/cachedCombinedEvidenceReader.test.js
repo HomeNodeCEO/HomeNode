@@ -6,6 +6,7 @@ import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from '../sr
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { createCustomNeighborhoodSourcePolicy } from '../src/security/customNeighborhoodSourcePolicy.js';
+import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { CACHED_SALE_WITNESS_V2_FIELDS, CACHED_SALE_WITNESS_V2_SQL } from '../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
 import { CACHED_CAD_EVIDENCE_FIELDS } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
@@ -118,25 +119,24 @@ test('current production policy denies the combined purpose before policy SQL or
   await assert.rejects(f.prepare(), denied('market_data_access_denied')); assert.equal(sql, 0); assert.equal(closure, 0);
 });
 
-test('structural dormant-owner guard keeps mapping4 issuance and rejects mapping5 metadata before source-page loading', () => {
-  // Deliberately structural: the actual owner fixture is much larger than this
-  // reader/access boundary. This does not claim native authorization/replay QA.
-  // Activation must explicitly update this preservation-only guard and policy.
-  const owner = readFileSync(new URL('../src/services/neighborhoodAssessment/customCohortContextCapture.js', import.meta.url), 'utf8');
-  assert.equal((owner.match(/const access = createNeighborhoodCadEvidenceReadAccess\(/g) ?? []).length, 1);
-  assert.equal((owner.match(/const reader = createNeighborhoodDenseCadEvidenceSourceReader\(pool, \{ access \}\)/g) ?? []).length, 1);
-  assert.doesNotMatch(owner, /createNeighborhood(?:Dense)?CombinedEvidence(?:ReadAccess|SourceReader)|describeNeighborhoodCombinedEvidenceMarketDataPurpose/);
-  const start = owner.indexOf('async function authorizedRetainedInputs('), end = owner.indexOf('/** Executable, Custom-only acquisition owner.');
-  assert.ok(start >= 0 && end > start);
-  const authorization = owner.slice(start, end);
-  const guard = authorization.match(/if \(compact\.reader_version !== 'local-capture-v3' \|\| !\[1, 2, 3, 4\]\.includes\(compact\.mapping_version\)[\s\S]*?\) fail\('operation_conflict'\);/);
-  assert.ok(guard, 'retained mapping5 must stay outside the explicit admitted owner versions');
-  const metadata = authorization.indexOf('const compact = await readMetadata(directory.compact_metadata);');
-  const policy = authorization.indexOf('const decision = await boundedPolicy(');
-  const sourcePages = authorization.indexOf('await loadCustomCohortCaptureInputs(');
-  assert.ok(metadata >= 0 && metadata < guard.index && guard.index < policy && policy < sourcePages,
-    'the mapping5 refusal must precede even policy selection and all full retained source reads');
-  assert.equal((authorization.match(/loadCustomCohortCaptureInputs\(/g) ?? []).length, 1);
+test('owner source mode is trusted configuration, never a browser capture override', async () => {
+  // Actual issuance/replay is covered by the native owner suite and the
+  // Witness2 reported-owner tests; no source-text pattern stands in for it.
+  let connections = 0;
+  const dependencies = { pool: { connect() { connections++; assert.fail('no checkout'); } },
+    authorizeMarketData() { assert.fail('no policy call'); } };
+  for (const sourceMode of [undefined, 'cad4', 'combined-witness2-v1']) {
+    const owner = createCustomCohortContextCapture({ ...dependencies, ...(sourceMode ? { sourceMode } : {}) });
+    for (const key of ['sourceMode', 'source_mode', 'reported_sale_interpretation']) {
+      await assert.rejects(owner.capture({ auth: { userId: 'synthetic', organizations: [] }, accountId: A,
+        assignmentFileId: '10', operationId: RUN, observationPeriod: { start_date: '2024-01-01', end_date: '2024-12-31' },
+        [key]: 'combined-witness2-v1' }), /invalid_input/);
+    }
+  }
+  for (const sourceMode of [null, '', 5, 'combined', 'cad3', {}, []]) {
+    assert.throws(() => createCustomCohortContextCapture({ ...dependencies, sourceMode }), /source_mode_invalid/);
+  }
+  assert.equal(connections, 0);
 });
 
 const readerText = readFileSync(new URL('../src/services/neighborhoodAssessment/cachedSourceReader.js', import.meta.url), 'utf8');

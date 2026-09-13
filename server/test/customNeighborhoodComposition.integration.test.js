@@ -7,6 +7,13 @@ import { createWebSessionAuthenticator, WEB_SESSION_COOKIE } from '../src/securi
 import { jsonErrorHandler } from '../src/security/httpSecurity.js';
 import { prepareCustomCohortContextHeader } from '../src/services/neighborhoodAssessment/customCohortContextContract.js';
 import { decisionEvidenceFixture } from './fixtures/customCohortDecisionEvidenceFixture.js';
+import { cadEvidenceFixture } from './fixtures/customCohortCadEvidenceFixture.js';
+import { saleWitnessMeaningFixture } from './fixtures/customCohortSaleWitnessMeaningFixture.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from '../src/services/neighborhoodAssessment/customCohortReportedSaleWitnessV2.js';
+import { createCustomNeighborhoodSourcePolicy, CUSTOM_NEIGHBORHOOD_SOURCE_PURPOSE as LEGACY_PURPOSE,
+  CUSTOM_NEIGHBORHOOD_SOURCE_RIGHTS_KEY as LEGACY_KEY, CUSTOM_NEIGHBORHOOD_SOURCE_DATASET as DATASET } from '../src/security/customNeighborhoodSourcePolicy.js';
+import { createCustomNeighborhoodWitness2SourcePolicy, CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_PURPOSE as WITNESS2_PURPOSE,
+  CUSTOM_NEIGHBORHOOD_WITNESS2_SOURCE_RIGHTS_KEY as WITNESS2_KEY } from '../src/security/customNeighborhoodWitness2SourcePolicy.js';
 
 const PROFILE = { datasetRevision: 'synthetic-dataset-1',
   providerRevisions: [{ provider_id: 'synthetic-provider', revision: 'synthetic-revision-1' }] };
@@ -21,7 +28,7 @@ const row = value => ({ rows: value ? [structuredClone(value)] : [], rowCount: v
 // Actual application boundary, session authenticator, policy, coordinator and
 // cohort router; only bearer verification and SQL results are synthetic here.
 // This is not a PostgreSQL isolation/locking or provider-authorization test.
-async function start(t, { enabled = false, authenticationRequired = true, principal = identity, cohortPool } = {}) {
+async function start(t, { enabled = false, sourceMode, authenticationRequired = true, principal = identity, cohortPool } = {}) {
   const app = express(), state = { sessionQueries: 0, ratePaths: [], cohortConnections: 0 };
   const pool = {
     async query(sql) {
@@ -39,6 +46,7 @@ async function start(t, { enabled = false, authenticationRequired = true, princi
   };
   const configuration = createCustomNeighborhoodConfiguration(enabled ? {
     CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED: 'true', CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON: JSON.stringify(PROFILE),
+    ...(sourceMode === undefined ? {} : { CUSTOM_NEIGHBORHOOD_SOURCE_MODE: sourceMode }),
   } : {});
   mountApplicationRouteBoundary(app, {
     authenticationPolicy: { authenticationRequired, mode: authenticationRequired ? 'enforced' : 'development_legacy' },
@@ -157,15 +165,42 @@ test('enabled mount does not expose internal raw preview, review or accepted App
   assert.equal(server.state.cohortConnections, 0);
 });
 
-async function retainedPolicyFixture() {
-  const fixture = await decisionEvidenceFixture();
-  const header = prepareCustomCohortContextHeader(fixture.input.context_header_json);
-  await fixture.store.put(fixture.input.context_header_json);
-  const scope = fixture.input.expected.target, target = fixture.f.state.input.target;
+function installedGrant(organizationId, purpose) {
+  return { policy_version: 1, organization_id: organizationId, grant_id: 'synthetic-composition-grant',
+    dataset: { id: DATASET, revision: PROFILE.datasetRevision,
+      coverage: 'entire_integrated_source_mix_including_prior_merged_values', provider_revisions: structuredClone(PROFILE.providerRevisions) },
+    purpose_version: 1, purpose_scope: structuredClone(purpose),
+    rights_basis: { owner_id: 'synthetic-rights-owner', basis_reference: 'test-fixture-not-a-provider-grant',
+      approved_by: 'synthetic-approver', approved_at: '2026-09-01T00:00:00.000000Z' },
+    valid_from: '2026-09-02T00:00:00.000000Z', expires_at: '2026-10-01T00:00:00.000000Z', revoked_at: null,
+    retention: 'immutable_originals_without_automated_deletion',
+    exposures: { none: true, report_observation_summary: true, report_observation_members: true, report_observation_catalog: true } };
+}
+
+async function retainedPolicyFixture({ mappingVersion = 2, marked = false, installedRights = false } = {}) {
+  const metadata = {}, acquisitionPolicyCalls = [], originalPolicy = mappingVersion === 5
+    ? createCustomNeighborhoodWitness2SourcePolicy(PROFILE) : createCustomNeighborhoodSourcePolicy(PROFILE);
+  const capture = mappingVersion === 2 ? await decisionEvidenceFixture()
+    : mappingVersion === 3 ? await saleWitnessMeaningFixture()
+    : await cadEvidenceFixture({ mappingVersion,
+      ...(marked ? { reportedSaleInterpretation: getCustomCohortReportedSaleWitnessV2Profile().profile_ref } : {}),
+      ...(installedRights ? { authorizeMarketData: async (auth, context, purpose) => {
+        metadata[LEGACY_KEY] = installedGrant(context.scope.organization_id, LEGACY_PURPOSE);
+        metadata[WITNESS2_KEY] = installedGrant(context.scope.organization_id, WITNESS2_PURPOSE);
+        return originalPolicy({ async query(sql, params) {
+          acquisitionPolicyCalls.push({ sql, params, purpose: structuredClone(purpose) });
+          return row({ organization_id: context.scope.organization_id, active: true,
+            source_rights: metadata[params[1]], checked_at: '2026-09-09T12:00:00.000000Z' });
+        } }, auth, context, purpose, { retention: true, exposure: 'none' });
+      } } : {}) });
+  const fixture = capture.base ?? capture, input = capture.input;
+  const header = prepareCustomCohortContextHeader(input.context_header_json);
+  await fixture.store.put(input.context_header_json);
+  const scope = input.expected.target, target = fixture.f.state.input.target;
   const context = { ...header.context_ref, header_content_sha256: header.header_blob.ref.content_sha256,
     header_canonical_utf8_bytes: header.header_blob.ref.canonical_utf8_bytes };
-  const payloads = new Set(fixture.input.retained_inputs.acquisition.capture_result.source_capture.source_snapshots.map(source => source.content_sha256));
-  const state = { calls: [], policyChecks: 0, sourceReads: 0, releases: [], rollbacks: 0, assigned: ACTOR,
+  const payloads = new Set(input.retained_inputs.acquisition.capture_result.source_capture.source_snapshots.map(source => source.content_sha256));
+  const state = { calls: [], policyChecks: 0, policyNamespaces: [], blobReads: [], sourceReads: 0, sourceReadCalls: [], releases: [], rollbacks: 0, assigned: ACTOR,
     policyThrows: false, missingTarget: false };
   const principal = { userId: ACTOR, organizations: [{ organizationId: scope.organization_id, roles: ['appraiser'] }] };
   const client = { async query(config) {
@@ -184,16 +219,23 @@ async function retainedPolicyFixture() {
     if (tag === 'transaction') return row({ transaction_id: '123456789' });
     if (tag === 'target') return row({ id: scope.report_file_id });
     if (tag === 'read') return row(params[4] === context.context_id ? context : null);
-    if (sql.includes('custom-neighborhood-source-policy:organization')) {
-      state.policyChecks++; assert.deepEqual(params, [scope.organization_id, 'custom_neighborhood_source_rights', 16_384]);
+    if (sql.includes('custom-neighborhood-source-policy:organization') || sql.includes('custom-neighborhood-witness2-source-policy:organization')) {
+      const key = sql.includes('custom-neighborhood-witness2-source-policy:organization') ? WITNESS2_KEY : LEGACY_KEY;
+      state.policyChecks++; state.policyNamespaces.push(key); assert.deepEqual(params, [scope.organization_id, key, 16_384]);
       if (state.policyThrows) throw new Error('synthetic-private-source-rights-driver-secret');
-      return row({ organization_id: scope.organization_id, active: true, source_rights: null,
+      return row({ organization_id: scope.organization_id, active: true, source_rights: metadata[key] ?? null,
         checked_at: '2026-09-09T12:00:00.000000Z' });
     }
-    if (sql.includes('neighborhood-cohort-blob:read') && payloads.has(params[1])) state.sourceReads++;
+    if (sql.includes('neighborhood-cohort-blob:read')) {
+      const requested = Array.isArray(params[1]) ? params[1] : [params[1]];
+      state.blobReads.push(...requested.map(hash => ({ hash, index: state.calls.length - 1 })));
+      const hashes = requested.filter(hash => payloads.has(hash));
+      state.sourceReads += hashes.length;
+      if (hashes.length) state.sourceReadCalls.push({ index: state.calls.length - 1, hashes, batch: Array.isArray(params[1]) });
+    }
     return fixture.client.query(sql, params);
   }, release(error) { state.releases.push(error); } };
-  return { state, principal, pool: { async connect() { return client; } },
+  return { state, principal, metadata, acquisitionPolicyCalls, input, fixture, pool: { async connect() { return client; } },
     path: `/api/accounts/${scope.account_id}/neighborhood-cohort/catalog`,
     body: { assignment_file_id: scope.assignment_file_id, context_ref: header.context_ref,
       selection: { revision: 1, pockets: [] }, include_recommendation: true } };
@@ -224,11 +266,88 @@ for (const mode of ['no_grant', 'policy_failure', 'assignment_denied', 'workflow
   });
 }
 
+for (const sourceMode of ['cad4', 'combined-witness2-v1']) {
+  for (const [mappingVersion, marked] of [[4, false], [5, false], [5, true]]) {
+    test(`composed ${sourceMode} reopens original mapping${mappingVersion} marked=${marked} with its own real policy namespace`, async t => {
+      const f = await retainedPolicyFixture({ mappingVersion, marked, installedRights: true });
+      const key = mappingVersion === 5 ? WITNESS2_KEY : LEGACY_KEY;
+      assert.equal(f.acquisitionPolicyCalls.length, 1);
+      assert.deepEqual(f.acquisitionPolicyCalls[0].params, [f.input.expected.target.organization_id, key, 16_384]);
+      const originalPurpose = f.acquisitionPolicyCalls[0].purpose;
+      assert.deepEqual(Object.fromEntries(Object.keys(mappingVersion === 5 ? WITNESS2_PURPOSE : LEGACY_PURPOSE)
+        .map(name => [name, originalPurpose[name]])), mappingVersion === 5 ? WITNESS2_PURPOSE : LEGACY_PURPOSE);
+      // The unrelated subtree is deliberately absent. Current capture mode
+      // cannot require a different source grant to reopen these originals.
+      delete f.metadata[key === LEGACY_KEY ? WITNESS2_KEY : LEGACY_KEY];
+      const server = await start(t, { enabled: true, sourceMode, principal: f.principal, cohortPool: f.pool });
+      const response = await server.request(f.path, { body: { ...f.body, include_recommendation: false } });
+      const body = await response.json();
+      assert.equal(response.status, 200, JSON.stringify({ body, tail: f.state.calls.slice(-5) }));
+      assert.equal(body.status, 'catalog'); assert.deepEqual(body.context_ref, f.body.context_ref);
+      assert.equal(response.headers.get('cache-control'), 'no-store');
+      assert.deepEqual(f.state.policyNamespaces, [key, key], 'fresh final check uses the identical original purpose');
+      assert.ok(f.state.sourceReads > 0); assert.ok(f.state.sourceReadCalls.some(call => call.batch), 'batched source reads are counted');
+      const sourceHashes = f.input.retained_inputs.acquisition.capture_result.source_capture.source_snapshots.map(source => source.content_sha256).sort();
+      assert.deepEqual([...new Set(f.state.sourceReadCalls.flatMap(call => call.hashes))].sort(), sourceHashes);
+      const firstPolicy = f.state.calls.findIndex(sql => sql.includes('source-policy:organization'));
+      assert.ok(firstPolicy >= 0 && firstPolicy < f.state.sourceReadCalls[0].index);
+      if (marked) {
+        const original = f.state.blobReads.find(call => call.hash === getCustomCohortReportedSaleWitnessV2Profile().profile_ref.content_sha256);
+        assert.ok(original && original.index < f.state.sourceReadCalls[0].index, 'the actual profile original gates full source reads');
+      }
+      assert.equal(f.state.rollbacks, 0); assert.ok(f.state.releases.every(error => error === undefined));
+      assert.ok(!f.state.calls.some(sql => /neighborhood-(cache|membership|closure):/.test(sql)), 'reopen performs no replacement source acquisition');
+      assert.ok(!f.state.calls.some(sql => /\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
+    });
+  }
+
+  for (const mappingVersion of [4, 5]) test(`composed ${sourceMode} cannot substitute the other namespace for mapping${mappingVersion}`, async t => {
+    const f = await retainedPolicyFixture({ mappingVersion, marked: mappingVersion === 5, installedRights: true });
+    const key = mappingVersion === 5 ? WITNESS2_KEY : LEGACY_KEY;
+    delete f.metadata[key];
+    const server = await start(t, { enabled: true, sourceMode, principal: f.principal, cohortPool: f.pool });
+    await responseIs(await server.request(f.path, { body: f.body }), 403, 'neighborhood_access_denied');
+    assert.deepEqual(f.state.policyNamespaces, [key]); assert.equal(f.state.sourceReads, 0);
+  });
+
+  test(`composed ${sourceMode} routes old mapping3 projection only to witness2 denial without legacy fallback`, async t => {
+    const f = await retainedPolicyFixture({ mappingVersion: 3 });
+    f.metadata[LEGACY_KEY] = installedGrant(f.input.expected.target.organization_id, LEGACY_PURPOSE);
+    f.metadata[WITNESS2_KEY] = installedGrant(f.input.expected.target.organization_id, WITNESS2_PURPOSE);
+    const server = await start(t, { enabled: true, sourceMode, principal: f.principal, cohortPool: f.pool });
+    await responseIs(await server.request(f.path, { body: f.body }), 403, 'neighborhood_access_denied');
+    assert.equal(f.state.policyChecks, 0, 'fixed witness2 evaluator rejects wrong projection before SQL');
+    assert.equal(f.state.sourceReads, 0);
+  });
+}
+
+for (const failure of ['missing_profile', 'corrupt_profile', 'no_catalog_exposure', 'revoked', 'policy_failure']) {
+  test(`composed witness2 ${failure} refuses before any full source page read`, async t => {
+    const f = await retainedPolicyFixture({ mappingVersion: 5, marked: true, installedRights: true });
+    const profile = getCustomCohortReportedSaleWitnessV2Profile();
+    const key = `${f.input.expected.target.organization_id}:${profile.profile_ref.content_sha256}`;
+    if (failure === 'missing_profile') f.fixture.f.state.db.delete(key);
+    if (failure === 'corrupt_profile') f.fixture.f.state.db.set(key, { ...f.fixture.f.state.db.get(key), canonical_utf8: '{}' });
+    if (failure === 'no_catalog_exposure') f.metadata[WITNESS2_KEY].exposures.report_observation_catalog = false;
+    if (failure === 'revoked') f.metadata[WITNESS2_KEY].revoked_at = '2026-09-09T00:00:00.000000Z';
+    f.state.policyThrows = failure === 'policy_failure';
+    const server = await start(t, { enabled: true, sourceMode: 'combined-witness2-v1', principal: f.principal, cohortPool: f.pool });
+    const [status, error] = failure === 'missing_profile' ? [409, 'neighborhood_operation_conflict']
+      : ['corrupt_profile', 'policy_failure'].includes(failure) ? [500, 'neighborhood_request_failed']
+      : [403, 'neighborhood_access_denied'];
+    await responseIs(await server.request(f.path, { body: f.body }), status, error);
+    assert.equal(f.state.sourceReads, 0);
+    assert.equal(f.state.policyChecks, failure.endsWith('_profile') ? 0 : 1);
+    assert.ok(!f.state.calls.some(sql => /\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
+  });
+}
+
 test('body principal/profile/target fields cannot substitute for trusted middleware and path identity', async t => {
   const server = await start(t, { enabled: true });
   const body = { assignment_file_id: '10', operation_id: '60000000-0000-4000-8000-000000000001',
     observation_period: { start_date: '2024-01-01', end_date: '2024-12-31' } };
-  for (const extra of [{ auth: identity }, { accountId: 'other' }, { sourceProfile: PROFILE }, { allowed: true }]) {
+  for (const extra of [{ auth: identity }, { accountId: 'other' }, { sourceProfile: PROFILE }, { allowed: true },
+    { sourceMode: 'combined-witness2-v1' }, { source_mode: 'combined-witness2-v1' }, { reported_sale_interpretation: getCustomCohortReportedSaleWitnessV2Profile().profile_ref }]) {
     await responseIs(await server.request(`${base}/capture`, { body: { ...body, ...extra } }), 400, 'invalid_neighborhood_request');
   }
   assert.equal(server.state.cohortConnections, 0);

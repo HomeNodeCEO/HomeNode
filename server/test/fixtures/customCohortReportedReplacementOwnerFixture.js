@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { prepareCustomCohortContextHeader } from '../../src/services/neighborhoodAssessment/customCohortContextContract.js';
 import { supportedInputsFixture } from './customCohortSupportedInputsFixture.js';
 
 const one = value => ({ rows: value == null ? [] : [structuredClone(value)], rowCount: value == null ? 0 : 1 });
@@ -11,9 +12,20 @@ const sqlHash = value => createHash('sha256').update(JSON.stringify(value, null,
 /** Genuine retained acquisition/assembler/repositories, with explicit SQL-result
  * doubles retaining all immutable revisions. Snapshot rollback here is only a
  * deterministic failure test, NOT PostgreSQL isolation/trigger/locking proof. */
-export async function reportedReplacementOwnerFixture() {
-  const f = await supportedInputsFixture({ assignmentFileId: '41', effectiveDate: '2026-09-10', saleCount: 1 });
+export async function reportedReplacementOwnerFixture({ captureFixture, sourceMode } = {}) {
+  const f = captureFixture ?? await supportedInputsFixture({ assignmentFileId: '41', effectiveDate: '2026-09-10', saleCount: 1 });
   const subject = f.input.retained_inputs.subject, target = subject.target;
+  assert.equal(target.assignment_file_id, '41', 'choose compatible test identity before original acquisition');
+  let injectedContext = null;
+  if (captureFixture) {
+    // Retain the genuinely acquired graph's original header, not a mapping or
+    // interpretation relabel. The legacy supported-input fixture already owns
+    // its own registered-context query double and remains unchanged.
+    const header = prepareCustomCohortContextHeader(f.input.context_header_json);
+    assert.deepEqual(await f.base.store.put(f.input.context_header_json), header.header_blob.ref);
+    injectedContext = { ...header.context_ref, header_content_sha256: header.header_blob.ref.content_sha256,
+      header_canonical_utf8_bytes: header.header_blob.ref.canonical_utf8_bytes };
+  }
   const actor = f.input.retained_inputs.acquisition_intent.body.actor_user_id;
   const shape = { neighborhood_boundary_source: 'appraiser_defined_area_manual_v2',
     neighborhood_boundary_geometry: { type: 'Polygon', coordinates: [[[-97, 32], [-96, 32], [-96, 34], [-97, 34], [-97, 32]]] },
@@ -21,7 +33,7 @@ export async function reportedReplacementOwnerFixture() {
     neighborhood_boundary_south: 'Recorded south', neighborhood_boundary_west: 'Recorded west' };
   const encoded = JSON.stringify(shape);
   const state = { calls: [], phases: 0, commits: 0, releases: [], afterCommit: null, beforeQuery: null, afterQuery: null,
-    reportPolicy: null, marketPolicy: null, db: {
+    reportPolicy: null, marketPolicy: null, marketCalls: [], reportCalls: [], db: {
       workspace: { revision: 9, value: { workspace_version: 1, pending_capture: null, active: {
         context_ref: f.input.expected.context_ref, observation_period: f.input.expected.observation_period,
         selection: { revision: 3, included_recorded_group_ids: f.input.selection.included_recorded_group_ids } } } },
@@ -46,6 +58,14 @@ export async function reportedReplacementOwnerFixture() {
     target_organization_id: target.organization_id, target_account_id: target.account_id });
   async function execute(text, v) {
     const d = state.db;
+    if (injectedContext) {
+      if (text.includes('custom-cohort-capture:existing-context')) return one(v[0] === target.organization_id
+        && v[1] === injectedContext.context_id ? { context_sha256: injectedContext.context_sha256 } : null);
+      const contextTag = text.match(/custom-cohort-context:([a-z-]+)/)?.[1];
+      if (contextTag === 'transaction') return one({ transaction_id: '123456789' });
+      if (contextTag === 'target') return one({ id: target.report_file_id });
+      if (contextTag === 'read') return one(v[4] === injectedContext.context_id ? injectedContext : null);
+    }
     if (text.includes('custom-cohort-capture:assignment')) return one(d.assignment);
     if (text.includes('custom-cohort-capture:report */')) return one({ report_file_id: target.report_file_id,
       appraisal_case_id: target.appraisal_case_id, subject_snapshot_id: target.subject_snapshot_id });
@@ -136,9 +156,17 @@ export async function reportedReplacementOwnerFixture() {
         const result = await execute(text, v); await state.afterQuery?.(text, v, result); return result;
       } };
   } };
-  const service = createCustomCohortContextCapture({ pool,
-    authorizeMarketData: async () => state.marketPolicy?.() ?? { allowed: true, ...f.input.retained_inputs.acquisition.captured_query_request.market_decision },
-    authorizeReportedObservations: async () => state.reportPolicy?.() ?? { allowed: true, decision_id: 'synthetic-report', policy_revision: 'v1' } });
+  const rebuildService = mode => createCustomCohortContextCapture({ pool,
+    ...(mode === undefined ? {} : { sourceMode: mode }),
+    authorizeMarketData: async (...args) => {
+      state.marketCalls.push({ phase: state.phases, purpose: structuredClone(args[3]), requested: structuredClone(args[4]) });
+      return state.marketPolicy?.(...args) ?? { allowed: true, ...f.input.retained_inputs.acquisition.captured_query_request.market_decision };
+    },
+    authorizeReportedObservations: async (...args) => {
+      state.reportCalls.push({ phase: state.phases, purpose: structuredClone(args[3]), requested: structuredClone(args[4]) });
+      return state.reportPolicy?.(...args) ?? { allowed: true, decision_id: 'synthetic-report', policy_revision: 'v1' };
+    } });
+  const service = rebuildService(sourceMode);
   const applyInput = (request, proposal) => ({ ...request, operationId: randomUUID(), proposalOperationId: request.operationId,
     attachmentId: proposal.attachment_ref.attachment_id, attachmentRevision: proposal.attachment_ref.attachment_revision,
     bindingDigest: proposal.attachment_ref.binding_digest, adopt: true,
@@ -155,5 +183,5 @@ export async function reportedReplacementOwnerFixture() {
     const proposal = await service.prepareReportedObservations(input), apply = applyInput(input, proposal);
     const accepted = await service.applyReportedObservations(apply); return { proposal, apply, accepted };
   }
-  return { f, state, pool, service, input, target, applyInput, replacementInput, acceptFirst, sqlHash };
+  return { f, state, pool, service, rebuildService, input, target, applyInput, replacementInput, acceptFirst, sqlHash };
 }

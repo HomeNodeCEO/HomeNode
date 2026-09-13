@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from copy import deepcopy
+from dataclasses import asdict
 from decimal import Decimal
 from pathlib import Path
 from types import ModuleType
@@ -21,6 +22,7 @@ from dcad import import_sales as importer  # noqa: E402
 
 
 EVIDENCE = {
+    "StandardStatus": " Pending ",
     "ClosePrice": " 9007199254740993.0100 ",
     "Currency": " USD ",
     "PriceCurrency": "",
@@ -78,11 +80,13 @@ class OptionalSourceEvidenceTests(unittest.TestCase):
         self.assertEqual({key: raw[key] for key in fields}, fields)
 
     def test_unprovided_trailing_cell_is_not_synthesized_as_blank(self) -> None:
-        path = self.csv_file([source_row()])
-        contents = path.read_bytes().decode("utf-8")
-        header, body = contents.split("\r\n", 1)
-        path.write_bytes((header + ",ClosePrice\r\n" + body).encode("utf-8"))
-        self.assertNotIn("ClosePrice", importer._load_rows(path)[0][1])
+        for field in ("ClosePrice", "StandardStatus"):
+            with self.subTest(field=field):
+                path = self.csv_file([source_row()])
+                contents = path.read_bytes().decode("utf-8")
+                header, body = contents.split("\r\n", 1)
+                path.write_bytes((header + f",{field}\r\n" + body).encode("utf-8"))
+                self.assertNotIn(field, importer._load_rows(path)[0][1])
 
     def test_unknown_columns_remain_unretained_and_required_headers_unchanged(self) -> None:
         raw = importer._load_rows(self.csv_file([source_row(UnknownColumn="unused", **EVIDENCE)]))[0][1]
@@ -93,9 +97,47 @@ class OptionalSourceEvidenceTests(unittest.TestCase):
             importer._load_rows(self.csv_file([incomplete]))
 
     def test_duplicate_evidence_headers_fail_instead_of_selecting_last_value(self) -> None:
-        path = self.csv_file([source_row(**EVIDENCE)], list(source_row(**EVIDENCE)) + ["ClosePrice"])
-        with self.assertRaisesRegex(ValueError, "duplicate optional source evidence columns"):
-            importer._load_rows(path)
+        for field in ("ClosePrice", "StandardStatus"):
+            with self.subTest(field=field):
+                path = self.csv_file([source_row(**EVIDENCE)], list(source_row(**EVIDENCE)) + [field])
+                with self.assertRaisesRegex(ValueError, "duplicate optional source evidence columns"):
+                    importer._load_rows(path)
+
+    def test_standard_status_is_literal_and_never_a_typed_mls_status_fallback(self) -> None:
+        for mls_status, standard_status in (("Closed", " Pending "), ("Active", " Closed "),
+                                            ("", "Closed"), ("Closed", "\t"),
+                                            ("Closed", ""), ("Closed", "unknown\r\nprovider,\"token\"")):
+            with self.subTest(mls_status=mls_status, standard_status=standard_status):
+                before = importer._prepare_sales([(2, source_row(MlsStatus=mls_status))], {})[0]
+                path = self.csv_file([source_row(MlsStatus=mls_status, StandardStatus=standard_status)])
+                after = importer._prepare_sales(importer._load_rows(path), {})[0]
+                self.assertEqual(after.raw_payload["StandardStatus"], standard_status)
+                # Status disagreements are retained, not resolved by the importer.
+                # Removing only the new raw cell recovers the entire old preparation.
+                after_without_evidence = asdict(after)
+                del after_without_evidence["raw_payload"]["StandardStatus"]
+                self.assertEqual(after_without_evidence, asdict(before))
+
+    def test_standard_status_does_not_replace_the_required_mls_status_column(self) -> None:
+        row = source_row(StandardStatus="Closed")
+        del row["MlsStatus"]
+        with self.assertRaisesRegex(ValueError, "missing required columns: MlsStatus"):
+            importer._load_rows(self.csv_file([row]))
+
+    def test_absent_standard_status_preserves_full_prechange_preparation_hashes(self) -> None:
+        # Captured before adding the optional raw header, using this synthetic row.
+        # Covers raw/typed values, flags, links, stable identity and fingerprint.
+        expected = {
+            "Closed": "509b9146e315cc54b14b640e1385227ce2cb3126f81f5d5887102d2abcbf62ea",
+            "Active": "aae05282cdf531552fd84570576a6f0aaf5e78d21cdf077899b8ce6208cde85e",
+            "": "ff658fb9b2ee1967ccab9e919e9ebb752f8a0c751742dcc5ac1f8d0841bdd787",
+        }
+        for status, digest in expected.items():
+            with self.subTest(status=status):
+                path = self.csv_file([source_row(MlsStatus=status)])
+                prepared = importer._prepare_sales(importer._load_rows(path), {})[0]
+                canonical = json.dumps(asdict(prepared), sort_keys=True, separators=(",", ":"), default=str)
+                self.assertEqual(hashlib.sha256(canonical.encode("utf-8")).hexdigest(), digest)
 
     def test_conflicting_price_and_unit_metadata_cannot_change_typed_values_or_flags(self) -> None:
         before = importer._prepare_sales([(2, source_row())], {})[0]

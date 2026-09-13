@@ -5,7 +5,8 @@ import { assessmentEvidenceDigest, buildNeighborhoodAssessment, canonicalAssessm
 import { neighborhoodMemberSetDigest, prepareNeighborhoodPublication }
   from '../src/services/neighborhoodAssessment/assessmentRepository.js';
 import { NEIGHBORHOOD_CI_IDENTITY_SQL, prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
-import { projectionPublicationFixture, runNeighborhoodRevisionContractProjectionDatabaseChecks }
+import { projectionPublicationFixture, runNeighborhoodRevisionContractProjectionDatabaseChecks,
+  runProjectionMigrationContentionChecks, runProjectionRowLockChecks }
   from './helpers/neighborhoodRevisionContractProjectionDatabaseChecks.js';
 
 const databaseName = 'neighborhood_projection_test';
@@ -153,6 +154,177 @@ test('projection native helper releases non-idle or identity-query-failed client
   await assert.rejects(runNeighborhoodRevisionContractProjectionDatabaseChecks({ pool, databaseName }),
     error => error === identityError);
   assert.deepEqual(observed, { connections: 1, releases: 1, queries: [NEIGHBORHOOD_CI_IDENTITY_SQL] });
+});
+
+// Failure injection only. This fake explicitly refuses fixture, lock and
+// migration SQL; it verifies ownership/error handling, not database semantics.
+const initialSettingsSql = "SELECT current_setting('lock_timeout') AS lock_timeout, current_setting('statement_timeout') AS statement_timeout";
+function oracleFailurePool(options = [{}, {}]) {
+  const observed = { connections: 0, clients: options.map(() => ({ queries: [], releases: [], status: 'I' })) };
+  const clients = options.map((option, index) => {
+    const record = observed.clients[index];
+    return {
+      connection: { stream: { remoteAddress: option.remoteAddress ?? '127.0.0.1' } },
+      getTransactionStatus: () => record.status,
+      query: async sql => {
+        const normalized = sql.replace(/\s+/g, ' ').trim();
+        record.queries.push(normalized);
+        if (normalized === NEIGHBORHOOD_CI_IDENTITY_SQL) {
+          if (option.identityError) throw option.identityError;
+          return { rows: [option.actualIdentity ?? { database_name: databaseName, server_address: '127.0.0.1' }] };
+        }
+        if (normalized === initialSettingsSql) {
+          if (option.settingsError) {
+            if (option.settingsFailureStatus) record.status = option.settingsFailureStatus;
+            throw option.settingsError;
+          }
+          return { rows: [{ lock_timeout: '0', statement_timeout: '8s' }] };
+        }
+        if (normalized === 'BEGIN') {
+          record.status = option.beginError ? 'E' : 'T';
+          if (option.beginError) throw option.beginError;
+          return { rows: [] };
+        }
+        if (normalized === 'ROLLBACK') {
+          if (option.rollbackError) throw option.rollbackError;
+          record.status = 'I';
+          return { rows: [] };
+        }
+        assert.fail('Failure-path fake must never execute fixture, lock or migration SQL');
+      },
+      release: error => { record.releases.push(error); },
+    };
+  });
+  return { observed, pool: { connect: async () => {
+    const index = observed.connections++;
+    assert.ok(index < clients.length, 'only the expected connections may be acquired');
+    if (options[index].connectError) throw options[index].connectError;
+    return clients[index];
+  } } };
+}
+const oracleCases = [
+  { name: 'migration contention', run: (pool, name) =>
+    runProjectionMigrationContentionChecks(pool, name, '-- Unreachable migration in failure-only test.') },
+  { name: 'row lock', run: (pool, name) => runProjectionRowLockChecks(pool, name) },
+];
+const assertReleases = (observed, expected) => {
+  assert.equal(observed.clients.length, expected.length);
+  for (const [index, errors] of expected.entries()) {
+    assert.equal(observed.clients[index].releases.length, errors.length, `client ${index + 1} release count`);
+    for (const [releaseIndex, error] of errors.entries()) {
+      assert.equal(observed.clients[index].releases[releaseIndex], error, `client ${index + 1} release error identity`);
+    }
+  }
+};
+
+for (const oracle of oracleCases) {
+  test(`projection ${oracle.name} oracle rejects invalid database names before acquisition`, async () => {
+    const { pool, observed } = oracleFailurePool();
+    for (const invalid of [undefined, null, '', 'production', 'projection-test', 'UPPER_test']) {
+      await assert.rejects(oracle.run(pool, invalid), { code: 'ERR_ASSERTION' });
+    }
+    assert.equal(observed.connections, 0);
+    assertReleases(observed, [[], []]);
+  });
+
+  test(`projection ${oracle.name} oracle preserves a first-connect failure without releasing unowned clients`, async () => {
+    const primary = new Error('synthetic first connection failure');
+    const { pool, observed } = oracleFailurePool([{ connectError: primary }, {}]);
+    await assert.rejects(oracle.run(pool, databaseName), error => error === primary);
+    assert.equal(observed.connections, 1);
+    assertReleases(observed, [[], []]);
+    assert.deepEqual(observed.clients.map(client => client.queries), [[], []]);
+  });
+
+  test(`projection ${oracle.name} oracle releases the first client when the second acquisition fails`, async () => {
+    const primary = new Error('synthetic second connection failure');
+    const { pool, observed } = oracleFailurePool([{}, { connectError: primary }]);
+    await assert.rejects(oracle.run(pool, databaseName), error => error === primary);
+    assert.equal(observed.connections, 2);
+    assertReleases(observed, [[undefined], []]);
+    assert.deepEqual(observed.clients.map(client => client.queries.filter(query => query !== 'ROLLBACK')),
+      [[NEIGHBORHOOD_CI_IDENTITY_SQL], []]);
+  });
+
+  test(`projection ${oracle.name} oracle verifies each actual identity and releases every acquired client on mismatch`, async () => {
+    for (const index of [0, 1]) {
+      for (const invalid of [
+        { actualIdentity: { database_name: 'different_test', server_address: '127.0.0.1' } },
+        { actualIdentity: { database_name: databaseName, server_address: '203.0.113.12' } },
+        { remoteAddress: '203.0.113.12' },
+      ]) {
+        const options = [{}, {}]; options[index] = invalid;
+        const { pool, observed } = oracleFailurePool(options);
+        await assert.rejects(oracle.run(pool, databaseName), /Neighborhood CI database connection identity mismatch/);
+        assert.equal(observed.connections, index + 1);
+        assertReleases(observed, index === 0 ? [[undefined], []] : [[undefined], [undefined]]);
+        for (const client of observed.clients.slice(0, index + 1)) {
+          assert.deepEqual(client.queries.filter(query => query !== 'ROLLBACK'), [NEIGHBORHOOD_CI_IDENTITY_SQL]);
+        }
+      }
+    }
+  });
+
+  test(`projection ${oracle.name} oracle rolls back a failed BEGIN and releases both owned clients`, async () => {
+    const primary = new Error('synthetic first BEGIN failure');
+    const { pool, observed } = oracleFailurePool([{ beginError: primary }, {}]);
+    await assert.rejects(oracle.run(pool, databaseName), error => error === primary);
+    assert.equal(observed.connections, 2);
+    assertReleases(observed, [[undefined], [undefined]]);
+    assert.deepEqual(observed.clients[0].queries, [NEIGHBORHOOD_CI_IDENTITY_SQL, 'BEGIN', 'ROLLBACK']);
+    assert.ok(observed.clients.every(client => client.status === 'I'));
+  });
+
+  test(`projection ${oracle.name} oracle destroys a rollback-failed client and retains primary plus cleanup errors`, async () => {
+    const primary = new Error('synthetic first BEGIN failure');
+    const cleanup = new Error('synthetic rollback failure');
+    const { pool, observed } = oracleFailurePool([{ beginError: primary, rollbackError: cleanup }, {}]);
+    await assert.rejects(oracle.run(pool, databaseName), error => {
+      assert.ok(error instanceof AggregateError);
+      assert.ok(error.errors.includes(primary), 'original operation error is retained by identity');
+      assert.ok(error.errors.includes(cleanup), 'rollback error is retained by identity');
+      return true;
+    });
+    assert.equal(observed.connections, 2);
+    assertReleases(observed, [[cleanup], [undefined]]);
+    assert.deepEqual(observed.clients[0].queries, [NEIGHBORHOOD_CI_IDENTITY_SQL, 'BEGIN', 'ROLLBACK']);
+  });
+}
+
+test('projection migration contention oracle releases both clients after initial settings failure', async () => {
+  const primary = new Error('synthetic initial settings failure');
+  const { pool, observed } = oracleFailurePool([{}, { settingsError: primary }]);
+  await assert.rejects(runProjectionMigrationContentionChecks(pool, databaseName, '-- Unreachable migration.'),
+    error => error === primary);
+  assert.equal(observed.connections, 2);
+  assertReleases(observed, [[undefined], [undefined]]);
+  assert.deepEqual(observed.clients.map(client => client.queries.filter(query => query !== 'ROLLBACK')),
+    [[NEIGHBORHOOD_CI_IDENTITY_SQL], [NEIGHBORHOOD_CI_IDENTITY_SQL, initialSettingsSql]]);
+});
+
+test('projection outer native helper releases its client and preserves an initial settings error', async () => {
+  const primary = new Error('synthetic outer initial settings failure');
+  const { pool, observed } = oracleFailurePool([{ settingsError: primary }]);
+  await assert.rejects(runNeighborhoodRevisionContractProjectionDatabaseChecks({ pool, databaseName }),
+    error => error === primary);
+  assert.equal(observed.connections, 1);
+  assertReleases(observed, [[undefined]]);
+  assert.deepEqual(observed.clients[0].queries, [NEIGHBORHOOD_CI_IDENTITY_SQL, initialSettingsSql]);
+});
+
+test('projection outer native helper destroys a rollback-failed client while retaining both original errors', async () => {
+  const primary = new Error('synthetic outer initial settings failure');
+  const cleanup = new Error('synthetic outer rollback failure');
+  const { pool, observed } = oracleFailurePool([{ settingsError: primary, settingsFailureStatus: 'E', rollbackError: cleanup }]);
+  await assert.rejects(runNeighborhoodRevisionContractProjectionDatabaseChecks({ pool, databaseName }), error => {
+    assert.ok(error instanceof AggregateError);
+    assert.ok(error.errors.includes(primary));
+    assert.ok(error.errors.includes(cleanup));
+    return true;
+  });
+  assert.equal(observed.connections, 1);
+  assertReleases(observed, [[cleanup]]);
+  assert.deepEqual(observed.clients[0].queries, [NEIGHBORHOOD_CI_IDENTITY_SQL, initialSettingsSql, 'ROLLBACK']);
 });
 
 test('projection migration: real PostgreSQL generated storage, publication, upgrade and locking', {

@@ -33,6 +33,26 @@ async function checkedClient(pool, databaseName) {
     return client;
   } catch (error) { client.release(); throw error; }
 }
+// Release every acquired resource even when rollback/release of an earlier one
+// fails. A failed rollback destroys that connection instead of returning an
+// unknown transaction to the pool. The row-lock oracle must unblock its writer
+// before waiting for the already-caught child query, then clean up the child.
+async function cleanupClients(clients, primaryErrors, pending = null) {
+  const errors = [];
+  for (const [index, client] of clients.entries()) {
+    if (client) {
+      let rollbackError;
+      try {
+        if (client.getTransactionStatus() !== 'I') await client.query('ROLLBACK');
+      } catch (error) { rollbackError = error; errors.push(error); }
+      try { client.release(rollbackError); } catch (error) { errors.push(error); }
+    }
+    if (index === 0 && pending) {
+      try { await pending; } catch (error) { errors.push(error); }
+    }
+  }
+  if (errors.length) throw new AggregateError([...primaryErrors, ...errors], 'projection_native_cleanup_failed');
+}
 async function probe(client, action, rejection) {
   await client.query('SAVEPOINT contract_projection_probe');
   try {
@@ -235,7 +255,7 @@ export async function runNeighborhoodRevisionContractProjectionDatabaseChecks({ 
   const timeoutSql = migration.slice(timeoutStart, migration.indexOf(';', timeoutStart) + 1);
   assert.match(timeoutSql, /^SELECT set_config/);
   const oldFunctions = ['neighborhood_guard_revision_child', 'neighborhood_guard_revision'].map(name => body(previous, name)).join('\n');
-  const client = await checkedClient(pool, databaseName), checks = [];
+  const client = await checkedClient(pool, databaseName), checks = [], primaryErrors = [];
   let reconstructedIds;
   try {
     const initialSettings = await settings(client), installedFunctions = await functionDefinitions(client);
@@ -309,20 +329,24 @@ export async function runNeighborhoodRevisionContractProjectionDatabaseChecks({ 
     } finally { await client.query('ROLLBACK'); }
     assert.deepEqual(await settings(client), initialSettings);
     checks.push('subsequent SQL statement obeys retained stricter timeout and rollback restores session settings');
-  } finally {
-    if (client.getTransactionStatus() !== 'I') await client.query('ROLLBACK');
-    client.release();
-  }
-  checks.push(...await contentionChecks(pool, databaseName, migration));
-  const retained = await rowLockChecks(pool, databaseName);
+  } catch (error) { primaryErrors.push(error); throw error; }
+  finally { await cleanupClients([client], primaryErrors); }
+  checks.push(...await runProjectionMigrationContentionChecks(pool, databaseName, migration));
+  const retained = await runProjectionRowLockChecks(pool, databaseName);
   checks.push('child FOR SHARE waits for concurrent publication status transition; both contenders roll back');
   return { checks, retained_staging_assessment_id: retained };
 }
 
-async function contentionChecks(pool, databaseName, migration) {
-  const holder = await checkedClient(pool, databaseName), contender = await checkedClient(pool, databaseName);
-  const initial = await settings(contender);
+// Test-helper-only exports let failure tests stop before any fixture SQL. They
+// are the same actual native oracles called above, not alternate implementations.
+export async function runProjectionMigrationContentionChecks(pool, databaseName, migration) {
+  assert.match(databaseName, /^[a-z][a-z0-9_]*_test$/);
+  let holder, contender;
+  const primaryErrors = [];
   try {
+    holder = await checkedClient(pool, databaseName);
+    contender = await checkedClient(pool, databaseName);
+    const initial = await settings(contender);
     await holder.query('BEGIN');
     await holder.query('LOCK TABLE app.neighborhood_assessment_revisions IN ACCESS SHARE MODE');
     await contender.query('BEGIN');
@@ -333,15 +357,16 @@ async function contentionChecks(pool, databaseName, migration) {
     await contender.query('ROLLBACK');
     assert.deepEqual(await settings(contender), initial);
     return ['migration contention respects stricter lock timeout without partial DDL or setting leakage'];
-  } finally {
-    if (contender.getTransactionStatus() !== 'I') await contender.query('ROLLBACK');
-    await holder.query('ROLLBACK'); contender.release(); holder.release();
-  }
+  } catch (error) { primaryErrors.push(error); throw error; }
+  finally { await cleanupClients([holder, contender], primaryErrors); }
 }
-async function rowLockChecks(pool, databaseName) {
-  const writer = await checkedClient(pool, databaseName), child = await checkedClient(pool, databaseName);
-  let prepared, pending;
+export async function runProjectionRowLockChecks(pool, databaseName) {
+  assert.match(databaseName, /^[a-z][a-z0-9_]*_test$/);
+  let writer, child, prepared, pending;
+  const primaryErrors = [];
   try {
+    writer = await checkedClient(pool, databaseName);
+    child = await checkedClient(pool, databaseName);
     await writer.query('BEGIN');
     const identity = await identityFixture(writer);
     prepared = projectionPublicationFixture(identity, 2);
@@ -374,10 +399,6 @@ async function rowLockChecks(pool, databaseName) {
       WHERE assessment_id=$1 AND revision=$2`, [prepared.assessment.id, prepared.assessment.revision])).rows[0];
     assert.equal(actual.n, prepared.members.length);
     return prepared.assessment.id;
-  } finally {
-    if (writer.getTransactionStatus() !== 'I') await writer.query('ROLLBACK');
-    if (pending) await pending;
-    if (child.getTransactionStatus() !== 'I') await child.query('ROLLBACK');
-    writer.release(); child.release();
-  }
+  } catch (error) { primaryErrors.push(error); throw error; }
+  finally { await cleanupClients([writer, child], primaryErrors, pending); }
 }

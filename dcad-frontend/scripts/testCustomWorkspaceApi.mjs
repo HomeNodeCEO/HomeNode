@@ -47,13 +47,13 @@ const io = () => ({ signal: new AbortController().signal, deadline: performance.
 const defer = () => { let resolve, reject; const promise = new Promise((a, b) => { resolve = a; reject = b; }); return { promise, resolve, reject }; };
 const tick = () => new Promise(resolve => setImmediate(resolve));
 function fixture(reply = readResponse(), editor = () => KEY) {
-  const requests = [], keys = [];
+  const requests = [], keys = [], routes = [];
   const api = create({
-    urlFor: path => `/injected${path}`,
+    urlFor: path => { routes.push(path); return `/injected${path}`; },
     editorKeyForSave: (bound, options) => { keys.push({ bound, options }); return editor(bound, options); },
     request: async (url, init) => { requests.push({ url, init }); return typeof reply === 'function' ? reply(url, init) : json(reply); },
   });
-  return { api, requests, keys };
+  return { api, requests, keys, routes };
 }
 const invalidResponse = error => error.workspaceCode === 'invalid_response' && error.message === 'custom_workspace_invalid_response';
 const invalidTarget = error => error.workspaceCode === 'invalid_target';
@@ -67,6 +67,34 @@ test('opening catalog forwards exact saved group IDs without an editor key or re
     context_ref: input.contextRef, selection: input.selection, include_recommendation: true, initial_preview_groups: [] });
   assert.equal(f.requests[0].init.cache, 'no-store');
 });
+
+test('fresh opening forwards only the fixed all-catalog mode with the same target, revision and cancellation', async () => {
+  const response = { status: 'catalog', initial_preview: { status: 'preview' } }, f = fixture(response), options = io();
+  const input = { ...previewInput(), initialPreviewMode: 'all_catalog_groups' }, original = copy(input);
+  const pending = f.api.catalog(input, options); input.initialPreviewMode = 'changed-after-request';
+  assert.deepEqual(await pending, response); assert.equal(f.requests.length, 1); assert.equal(f.keys.length, 0);
+  const { init } = f.requests[0];
+  assert.deepEqual(JSON.parse(init.body), { assignment_file_id: original.assignmentFileId, context_ref: original.contextRef,
+    selection: original.selection, include_recommendation: true, initial_preview_mode: 'all_catalog_groups' });
+  assert.equal(init.signal, options.signal); assert.equal(init.cache, 'no-store');
+  assert.equal(init.headers['x-homenode-editor-key'], undefined);
+});
+
+for (const mode of [undefined, null, '', false, 1, [], {}, 'ALL_CATALOG_GROUPS', 'all_catalog_groups ', 'all', 'selected']) {
+  test(`invalid present opening mode ${JSON.stringify(mode)} refuses before routing, transport or key lookup`, async () => {
+    const f = fixture();
+    await assert.rejects(f.api.catalog({ ...previewInput(), initialPreviewMode: mode }, io()), error => error.workspaceCode === 'invalid_input');
+    assert.equal(f.requests.length, 0); assert.equal(f.routes.length, 0); assert.equal(f.keys.length, 0);
+  });
+}
+for (const groups of [undefined, null, [], ['discovery:unassigned']]) {
+  test(`all-catalog opening and own explicit groups ${JSON.stringify(groups)} are mutually exclusive before transport`, async () => {
+    const f = fixture();
+    await assert.rejects(f.api.catalog({ ...previewInput(), initialPreviewMode: 'all_catalog_groups', initialPreviewGroups: groups }, io()),
+      error => error.workspaceCode === 'invalid_input');
+    assert.equal(f.requests.length, 0); assert.equal(f.routes.length, 0); assert.equal(f.keys.length, 0);
+  });
+}
 
 test('member inspection uses the exact retained selection and cursor without obtaining an editor key', async () => {
   const f = fixture({ status: 'members' }), input = previewInput(), options = io();

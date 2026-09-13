@@ -7,7 +7,10 @@ import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortInit
 
 export interface CustomWorkspaceTarget { readonly accountId: string; readonly assignmentFileId: string; readonly sessionKey: string }
 export interface CustomWorkspaceOperationOptions { readonly signal: AbortSignal; readonly deadline: number }
-export interface CustomWorkspaceCatalogInput extends CustomCohortPreviewInput { readonly initialPreviewGroups?: readonly string[] }
+export interface CustomWorkspaceCatalogInput extends CustomCohortPreviewInput {
+  readonly initialPreviewGroups?: readonly string[];
+  readonly initialPreviewMode?: 'all_catalog_groups';
+}
 type Recovery = 'reload' | 'resume_pending' | 'reopen' | null;
 export interface CustomWorkspaceLifecycleState {
   readonly target: CustomWorkspaceTarget;
@@ -130,13 +133,18 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     emit({ checkpoint: saved.checkpoint, section_revision: saved.section_revision });
   }
   async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO, discovery?: CustomWorkspaceDiscovery,
-    initialPreviewGroups?: readonly string[]) {
+    opening?: Pick<CustomWorkspaceCatalogInput, 'initialPreviewGroups' | 'initialPreviewMode'>) {
     const input: CustomCohortPreviewInput = Object.freeze({ accountId: target.accountId, assignmentFileId: target.assignmentFileId,
       contextRef: ref, selection: Object.freeze({ revision, pockets: Object.freeze([]) }) });
     const response = object(await io(signal => options.catalog({ ...input,
-      ...(initialPreviewGroups === undefined ? {} : { initialPreviewGroups: Object.freeze([...initialPreviewGroups]) }) }, signal)));
+      ...(opening?.initialPreviewGroups === undefined ? {} : { initialPreviewGroups: Object.freeze([...opening.initialPreviewGroups]) }),
+      ...(opening?.initialPreviewMode === undefined ? {} : { initialPreviewMode: opening.initialPreviewMode }) }, signal)));
     const catalog = checkCustomCohortPocketCatalog(response, input);
     requireThat(same(catalog.discovery, discovery?.profile_id === 'custom-city-polygon-v1' ? discovery : undefined), 'catalog_discovery_mismatch');
+    // Fresh captures already include every catalog group. Independently derive
+    // that exact selection from the checked catalog, not a recommended subset.
+    const initialPreviewGroups = opening?.initialPreviewMode === 'all_catalog_groups'
+      ? customCohortCatalogGroupIds(catalog) : opening?.initialPreviewGroups;
     let initialPreview: CustomCohortInitialResponse | null = null;
     if (initialPreviewGroups !== undefined) {
       // Full summary/map admission remains with the preview controller. Never
@@ -162,7 +170,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     // Dense v5 checkpoints already name the exact saved groups and can open the
     // catalog, map and statistics with one authorized retained-graph read.
     const { catalog, initialPreview } = await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery,
-      state.checkpoint?.workspace_version === 5 ? active.selection.included_recorded_group_ids : undefined);
+      state.checkpoint?.workspace_version === 5 ? { initialPreviewGroups: active.selection.included_recorded_group_ids } : undefined);
     const upgraded = upgradeCustomWorkspaceCatalogCheckpoint({ value: state.checkpoint, revision: state.section_revision }, catalog);
     if (upgraded) {
       stage('upgrading_catalog_checkpoint', 'reload');
@@ -197,7 +205,8 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
-    const { catalog } = await loadCatalog(draft.active.context_ref, 1, io, discovery);
+    const { catalog, initialPreview } = await loadCatalog(draft.active.context_ref, 1, io, discovery,
+      { initialPreviewMode: 'all_catalog_groups' });
     if (privateInput) {
       requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
         && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision
@@ -206,7 +215,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     } else requireThat(!catalog.private_sales, 'catalog_private_sales_mismatch');
     const value = prepareCustomWorkspaceCheckpoint({ ...draft, workspace_version: catalog.catalog_version === 2 ? 5 : draft.workspace_version, active: { ...draft.active,
       selection: { revision: 1, included_recorded_group_ids: customCohortCatalogGroupIds(catalog) } } });
-    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog, null);
+    stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog, initialPreview);
   }
   return Object.freeze({
     getState: () => state,

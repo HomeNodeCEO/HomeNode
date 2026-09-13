@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import { fileURLToPath } from 'node:url';
+import { createHash } from 'node:crypto';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { privateSalesSummaryFixture } from './fixtures/customPrivateSalesSummaryFixture.mjs';
 
@@ -40,6 +41,9 @@ function captured(input) { return { status: 'registered', reused: false, context
   unsupported_capabilities: ['historical_characteristics'] }; }
 function catalog(input) {
   return { status: 'catalog', subject_freshness: 'matched', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+    // Opaque here: the preview controller separately admits summary/map bindings.
+    ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
+      ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
       catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(input.contextRef), selection_revision: input.selection.revision },
@@ -103,11 +107,206 @@ function denseCatalog(input) {
   c.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i + 1), disposition: 'needs_review', label: `Group ${i}`,
     county: 'Dallas', account_ids: [i === 0 ? 'SUBJECT' : `A${i}`], member_count: 1 }));
   c.coverage = { discovery_member_count: 888, assigned_account_count: 887, unassigned_account_count: 1 };
-  // This lifecycle fixture is opaque; full map/summary admission is tested by
-  // the preview controller using real producer output and corruptions.
-  if (Object.hasOwn(input, 'initialPreviewGroups')) result.initial_preview = { fixture: 'opening' };
   return result;
 }
+
+function ordinaryPendingSection() {
+  const result = activeSection(); result.revision++;
+  result.value.pending_capture = { operation_id: OPERATION, observation_period: copy(PERIOD) };
+  return result;
+}
+function openingCatalog(input, kind) {
+  const result = kind === 'dense887' ? denseCatalog(input) : catalog(input), c = result.catalog;
+  if (kind === 'empty' || kind === 'unassigned-only') {
+    const accounts = kind === 'empty' ? [] : ['C', 'SUBJECT'];
+    c.pockets = []; c.unassigned = { account_ids: accounts, member_count: accounts.length, reason_counts: [] };
+    c.coverage = { discovery_member_count: accounts.length, assigned_account_count: 0, unassigned_account_count: accounts.length };
+    c.subject_membership.assigned_pocket_id = null; c.subject_membership.status = kind === 'empty' ? 'not_in_discovery' : 'unassigned';
+  } else if (kind === 'named-only') {
+    c.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+    c.coverage = { discovery_member_count: 2, assigned_account_count: 2, unassigned_account_count: 0 };
+  }
+  return result;
+}
+for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', 'empty', 'unassigned-only', 'dense887']) {
+  test(`${resume ? 'resumed' : 'fresh'} combined opening conserves the complete ${kind} catalog in one read`, async () => {
+    let original, before;
+    const h = harness({ initialSection: resume ? ordinaryPendingSection() : undefined, loadCatalog(input) {
+      original = openingCatalog(input, kind); before = JSON.stringify(original); return original;
+    } });
+    try {
+      const state = await (resume ? h.controller.resumePending() : h.controller.start(PERIOD));
+      assert.deepEqual(h.calls.map(c => c.kind), resume ? ['capture', 'catalog', 'save'] : ['save', 'capture', 'catalog', 'save']);
+      const request = h.calls.find(c => c.kind === 'catalog').input;
+      assert.equal(request.initialPreviewMode, 'all_catalog_groups'); assert.equal(Object.hasOwn(request, 'initialPreviewGroups'), false);
+      assert.deepEqual(request.selection, { revision: 1, pockets: [] });
+      const expectedIds = kind === 'dense887' ? [...Array.from({ length: 887 }, (_, i) => groupId(i + 1)), 'discovery:unassigned']
+        : kind === 'empty' ? [] : kind === 'unassigned-only' ? ['discovery:unassigned']
+        : [groupId(1), groupId(2), ...(kind === 'mixed' ? ['discovery:unassigned'] : [])];
+      const expectedAccounts = [...original.catalog.pockets.flatMap(p => p.account_ids), ...original.catalog.unassigned.account_ids].sort();
+      assert.deepEqual(state.checkpoint.active.selection.included_recorded_group_ids, expectedIds);
+      assert.deepEqual(state.selection.pockets.flatMap(p => p.account_ids), expectedAccounts);
+      assert.equal(new Set(expectedAccounts).size, original.catalog.coverage.discovery_member_count);
+      assert.deepEqual(state.initial_preview.input, { accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId,
+        contextRef: context(OPERATION), selection: state.selection });
+      assert.equal(state.initial_preview.value.fixture, 'opening'); assert.equal(state.status, 'ready');
+      assert.equal(state.checkpoint.pending_capture, null); assert.equal(h.ids, resume ? 0 : 1);
+      assert.equal(h.maxOpen, 1); assert.equal(JSON.stringify(original), before, 'opaque response is not rewritten');
+      assert.ok(Object.isFrozen(state.initial_preview) && Object.isFrozen(state.initial_preview.input.selection));
+      assert.equal(state.checkpoint.workspace_version, kind === 'dense887' ? 5 : 1);
+    } finally { h.controller.dispose(); }
+  });
+}
+
+for (const resume of [false, true]) test(`${resume ? 'resumed' : 'fresh'} acquisition refuses a missing opening before active publication`, async () => {
+  const initial = resume ? ordinaryPendingSection() : activeSection();
+  const h = harness({ initialSection: initial, loadCatalog(input) { const result = catalog(input); delete result.initial_preview; return result; } });
+  try {
+    await rejects(resume ? h.controller.resumePending() : h.controller.start(PERIOD), 'opening_preview_missing');
+    assert.deepEqual(h.calls.map(c => c.kind), resume ? ['capture', 'catalog'] : ['save', 'capture', 'catalog']);
+    assert.deepEqual(h.db.section.value.active, initial.value.active);
+    assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
+    assert.equal(h.controller.getState().checkpoint.pending_capture.operation_id, OPERATION);
+    assert.equal(h.controller.getState().initial_preview, null); assert.equal(h.controller.getState().recovery, 'resume_pending');
+    assert.ok(!h.states.some(s => s.status === 'ready'));
+  } finally { h.controller.dispose(); }
+});
+
+test('combined opening remains unpublished until the exact active-save CAS acknowledgment', async () => {
+  const entered = deferred(), held = deferred(), initial = activeSection();
+  const h = harness({ initialSection: initial, save: async (input, _io, commit) => {
+    if (input.value.active?.context_ref.context_id === OPERATION) { entered.resolve(); await held.promise; }
+    return commit(input);
+  } });
+  try {
+    await h.controller.reopen(); const work = h.controller.start(PERIOD); await entered.promise;
+    assert.equal(h.controller.getState().phase, 'saving_active');
+    assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
+    assert.equal(h.controller.getState().initial_preview, null);
+    assert.deepEqual(h.db.section.value.active, initial.value.active);
+    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    held.resolve(); const ready = await work;
+    assert.equal(ready.status, 'ready'); assert.equal(ready.initial_preview.value.fixture, 'opening');
+    assert.equal(ready.section_revision, initial.revision + 2);
+    assert.deepEqual(ready.initial_preview.input.selection, ready.selection);
+    assert.equal(h.calls.filter(c => c.kind === 'catalog' && c.input.contextRef.context_id === OPERATION).length, 1);
+  } finally { held.resolve(); h.controller.dispose(); }
+});
+
+for (const badAck of ['target', 'revision', 'value']) test(`combined opening rejects wrong active ${badAck} ACK and retains prior acknowledged identity`, async () => {
+  const initial = activeSection(), h = harness({ initialSection: initial, save(input, _io, commit) {
+    const ack = commit(input);
+    if (input.value.active?.context_ref.context_id === OPERATION) {
+      if (badAck === 'target') ack.assignmentFileId = '1';
+      if (badAck === 'revision') ack.section.revision++;
+      if (badAck === 'value') ack.section.value.active.selection.included_recorded_group_ids = [];
+    }
+    return ack;
+  } });
+  try {
+    await h.controller.reopen(); await assert.rejects(h.controller.start(PERIOD));
+    assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
+    assert.equal(h.controller.getState().checkpoint.pending_capture.operation_id, OPERATION);
+    assert.equal(h.controller.getState().initial_preview, null); assert.equal(h.controller.getState().recovery, 'reload');
+    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    await rejects(h.controller.resumePending(), 'recovery_required');
+    await h.reload(); assert.equal(h.controller.getState().status, 'ready');
+    assert.equal(h.calls.filter(c => c.kind === 'capture').length, 1, 'fresh saved-section recovery must not recapture');
+  } finally { h.controller.dispose(); }
+});
+
+test('late failed active save cannot publish the timed-out combined opening or replace the previous saved study', async () => {
+  const entered = deferred(), held = deferred(), initial = activeSection();
+  const h = harness({ initialSection: initial, save: async (input, _io, commit) => {
+    if (input.value.active?.context_ref.context_id === OPERATION) { entered.resolve(); await held.promise; }
+    return commit(input);
+  } });
+  try {
+    await h.controller.reopen(); const work = h.controller.start(PERIOD); await entered.promise;
+    h.expire(); await rejects(work, 'cancelled_or_timed_out');
+    assert.equal(h.controller.getState().operation_pending, true); assert.equal(h.controller.getState().initial_preview, null);
+    held.reject(new Error('synthetic late save failure')); await drain();
+    assert.deepEqual(h.db.section.value.active, initial.value.active);
+    assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
+    assert.equal(h.controller.getState().initial_preview, null); assert.equal(h.controller.getState().recovery, 'reload');
+    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    assert.equal(h.calls.filter(c => c.kind === 'catalog' && c.input.contextRef.context_id === OPERATION).length, 1);
+  } finally { held.resolve(); h.controller.dispose(); }
+});
+
+test('real retained producers cross combined transport, fresh lifecycle ACK and controller admission with one catalog request', async () => {
+  const { recordedProximityFixture } = await import('../../server/test/fixtures/customCohortRecordedProximityFixture.js');
+  const { buildCustomCohortObservationPreview } = await import('../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js');
+  const { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog } = await import('../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js');
+  const { customCohortOpeningGroupIds, customCohortOpeningSelection } = await import('../../server/src/services/neighborhoodAssessment/customCohortOpeningPreview.js');
+  const { presentCustomCohortPreview } = await import('../../server/src/services/neighborhoodAssessment/customCohortPreviewPresentation.js');
+  const { buildCustomCohortParcelMap } = await import('../../server/src/services/neighborhoodAssessment/customCohortParcelMap.js');
+  const { createCustomCohortPreviewController } = await import('../src/features/neighborhood/customCohortPreviewController.ts');
+  const { createCustomCohortJsonTransport, createCustomCohortPreviewTransport } = await import('../src/features/neighborhood/customCohortPreviewTransport.ts');
+  // Existing original-capture/persist/reopen fixture, not a relabeled capture or
+  // native database/authorization proof. Its max-int64 file identity is supported
+  // by this transport, not the generic-workfile API gate tested separately.
+  // Actual presenters provide the wire data without changing retained identities.
+  const f = await recordedProximityFixture(), retained_inputs = f.retained_inputs, before = JSON.stringify(retained_inputs);
+  const target = { accountId: f.input.expected.target.account_id, assignmentFileId: f.input.expected.target.assignment_file_id,
+    sessionKey: 'synthetic-combined-opening' };
+  const requests = [], saves = [], entered = deferred(), ack = deferred(); let section, producedOpening, previewController;
+  const adapters = { urlFor: path => path,
+    request: async (url, init) => {
+      requests.push({ url, init }); assert.match(url, /\/catalog$/);
+      const body = JSON.parse(init.body);
+      assert.equal(body.initial_preview_mode, 'all_catalog_groups'); assert.equal(Object.hasOwn(body, 'initial_preview_groups'), false);
+      assert.deepEqual(body.selection, { revision: 1, pockets: [] }); assert.deepEqual(body.context_ref, f.context_ref);
+      const expected = { context_ref: f.context_ref, selection_revision: body.selection.revision };
+      const preview = buildCustomCohortObservationPreview({ context_ref: f.context_ref, retained_inputs, selection: body.selection });
+      const catalog = presentCustomCohortPocketCatalog({ expected, preview,
+        catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: 2 }) });
+      const selection = customCohortOpeningSelection(catalog, customCohortOpeningGroupIds(catalog), 1);
+      const common = { target: { account_id: target.accountId, assignment_file_id: target.assignmentFileId },
+        context_ref: f.context_ref, selection_revision: 1, subject_freshness: 'matched',
+        apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+      producedOpening = { ...common, status: 'preview', summary: presentCustomCohortPreview({ expected,
+        preview: buildCustomCohortObservationPreview({ context_ref: f.context_ref, retained_inputs, selection }) }),
+      parcel_map: buildCustomCohortParcelMap({ retained_inputs, selected_account_ids: selection.pockets.flatMap(p => p.account_ids) }) };
+      return new Response(JSON.stringify({ ...common, status: 'catalog', catalog, initial_preview: producedOpening }),
+        { headers: { 'content-type': 'application/json' } });
+    } };
+  const catalogTransport = createCustomCohortJsonTransport(adapters);
+  const owner = create({ target, onChange() {}, operationId: () => f.context_ref.context_id,
+    catalog: (input, io) => catalogTransport(input.accountId, 'catalog', { assignment_file_id: input.assignmentFileId,
+      context_ref: input.contextRef, selection: input.selection, include_recommendation: true, initial_preview_mode: input.initialPreviewMode }, io),
+    capture: async input => { assert.equal(input.operationId, f.context_ref.context_id); return { status: 'registered', reused: false,
+      context_ref: f.context_ref, source_query_complete: true, discovery: { radius_metres: '4828.032',
+        account_count: f.accountIds.length, parcel_count: f.parcels.length } }; },
+    save: async input => {
+      saves.push(copy(input)); assert.equal(input.expectedRevision, section?.revision ?? 0);
+      if (input.value.active) { entered.resolve(); await ack.promise; }
+      section = { revision: input.expectedRevision + 1, value: copy(input.value) };
+      return { accountId: target.accountId, assignmentFileId: target.assignmentFileId, section: copy(section) };
+    } });
+  try {
+    const work = owner.start(retained_inputs.study.observation_period); await entered.promise;
+    assert.equal(owner.getState().initial_preview, null); assert.equal(section.value.active, null);
+    ack.resolve(); const ready = await work; assert.equal(ready.status, 'ready'); assert.equal(ready.checkpoint.workspace_version, 5);
+    const timers = new Map(); let sequence = 0;
+    previewController = createCustomCohortPreviewController({ initialResponse: ready.initial_preview,
+      fingerprint: async canonical => createHash('sha256').update(canonical).digest('hex'),
+      timer: { set(fn) { timers.set(++sequence, fn); return sequence; }, clear(id) { timers.delete(id); } },
+      transport: createCustomCohortPreviewTransport(adapters) });
+    previewController.setSelection(ready.initial_preview.input);
+    const pendingTimers = [...timers.values()]; timers.clear(); pendingTimers.forEach(fn => fn()); await drain();
+    const visible = previewController.getState();
+    assert.equal(visible.status, 'ready'); assert.equal(visible.freshness, 'current'); assert.equal(requests.length, 1);
+    assert.equal(visible.group.summary.all.stock.member_count, f.accountIds.length);
+    assert.equal(visible.group.summary.selected.stock.member_count, f.accountIds.length);
+    assert.equal(visible.group.parcel_map.status, 'available'); assert.equal(visible.group.parcel_map.counts.selected_accounts, f.accountIds.length);
+    assert.deepEqual(visible.group.parcel_map.geojson, producedOpening.parcel_map.geojson);
+    assert.equal(visible.group.binding.selectionFingerprint, producedOpening.summary.binding.selection_sha256);
+    assert.deepEqual(ready.selection, ready.initial_preview.input.selection);
+    assert.equal(saves.length, 2); assert.ok(saves.every(save => !JSON.stringify(save.value).includes('initial_preview')));
+    assert.equal(JSON.stringify(retained_inputs), before, 'no retained input was changed to fit the opening');
+  } finally { ack.resolve(); previewController?.dispose(); owner.dispose(); }
+});
 
 for (const ids of [[groupId(1), groupId(2), 'discovery:unassigned'], []]) test(`v5 reopens the exact ${ids.length}-group selection in one read without saving`, async () => {
   const initialSection = legacyDenseSection(ids); initialSection.value.workspace_version = 5;
@@ -115,6 +314,7 @@ for (const ids of [[groupId(1), groupId(2), 'discovery:unassigned'], []]) test(`
   const state = await h.controller.reopen();
   assert.deepEqual(h.calls.map(c => c.kind), ['catalog']);
   assert.deepEqual(h.calls[0].input.initialPreviewGroups, ids);
+  assert.equal(Object.hasOwn(h.calls[0].input, 'initialPreviewMode'), false);
   assert.deepEqual(state.initial_preview.input.selection, state.selection);
   assert.equal(state.initial_preview.value.fixture, 'opening');
   const opening = state.initial_preview;

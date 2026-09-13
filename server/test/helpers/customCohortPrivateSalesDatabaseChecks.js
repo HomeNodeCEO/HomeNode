@@ -288,6 +288,8 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     const opening = await owner.catalog({ ...previewInput, initialPreviewGroups: ids });
     assert.deepEqual(opening.initial_preview, separate);
     assert.equal(opening.initial_preview.private_sales.binding.selection_sha256, opening.initial_preview.summary.binding.selection_sha256);
+    if (ids === openingGroups) assert.deepEqual(await owner.catalog({ ...previewInput, initialPreviewMode: 'all_catalog_groups' }), opening,
+      'fresh all-catalog mode preserves the exact private-source binding and independent private/shared statistics');
     assert.deepEqual(await protectedState(), baseline);
   }
   checks.push('native opening combines exact catalog/map/private/shared statistics with independent-preview parity for all and empty selections; no report/source mutation');

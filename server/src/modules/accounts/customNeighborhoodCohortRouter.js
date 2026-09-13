@@ -1,6 +1,6 @@
 import express from 'express';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
-import { CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../services/neighborhoodAssessment/customCohortOpeningPreview.js';
+import { prepareCustomCohortOpeningMode, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
 import { customCohortReadDiagnostic } from '../../services/neighborhoodAssessment/customCohortReadDiagnostics.js';
 import { customCohortExecutionGate } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
@@ -132,7 +132,7 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         const result = await execute(identity, body, { signal: controller.signal, deadline });
         if (action === 'catalog') {
           const encoded = JSON.stringify(result);
-          const maximum = Object.hasOwn(body, 'initial_preview_groups')
+          const maximum = Object.hasOwn(body, 'initial_preview_groups') || Object.hasOwn(body, 'initial_preview_mode')
             ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes;
           if (Buffer.byteLength(encoded, 'utf8') > maximum) {
             throw Object.assign(new Error('catalog_transport_limit'), { reason: 'catalog_transport_limit' });
@@ -179,10 +179,14 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
   route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) => {
     const requested = Object.hasOwn(body, 'include_recommendation');
     if (requested && typeof body.include_recommendation !== 'boolean') invalid();
+    const modeRequested = Object.hasOwn(body, 'initial_preview_mode');
+    if (modeRequested && Object.hasOwn(body, 'initial_preview_groups')) invalid();
+    if (modeRequested) prepareCustomCohortOpeningMode(body.initial_preview_mode);
     return cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection,
       ...(Object.hasOwn(body, 'initial_preview_groups') ? { initialPreviewGroups: body.initial_preview_groups } : {}),
+      ...(modeRequested ? { initialPreviewMode: body.initial_preview_mode } : {}),
       ...(requested ? { includeRecommendation: body.include_recommendation } : {}) }, options);
-  }, ['include_recommendation', 'initial_preview_groups']);
+  }, ['include_recommendation', 'initial_preview_groups', 'initial_preview_mode']);
   // Optional owner methods keep older/default-disabled composition unchanged.
   // Browser input identifies saved intent only; no assessment/member/source JSON.
   if (typeof cohortService.prepareReportedObservations === 'function') route('reported-proposal',

@@ -81,6 +81,39 @@ test('opening catalog passes recorded IDs only and expands only its explicitly r
   assert.equal((await oversized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] })).status, 422);
 });
 
+test('fresh opening mode is exact, exclusive, and uses the existing combined envelope', async t => {
+  const normal = await start(t);
+  const mode = { initial_preview_mode: 'all_catalog_groups' };
+  const before = performance.now();
+  const accepted = await normal.request('catalog', { ...bodies.catalog, ...mode });
+  assert.equal(accepted.status, 200); assert.equal(accepted.headers.get('cache-control'), 'no-store');
+  assert.deepEqual(normal.calls[0].args[0], { auth, accountId: 'R-001', assignmentFileId: assignment,
+    contextRef, selection, initialPreviewMode: 'all_catalog_groups' });
+  assert.ok(normal.calls[0].args[1].deadline >= before + 60_000);
+  assert.ok(normal.calls[0].args[1].deadline <= performance.now() + 60_000);
+  for (const initial_preview_mode of [null, false, true, 1, '', 'all', 'ALL_CATALOG_GROUPS', [], {}]) {
+    const response = await normal.request('catalog', { ...bodies.catalog, initial_preview_mode });
+    assert.equal(response.status, 400); assert.equal(response.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
+  }
+  for (const initial_preview_groups of [[], ['discovery:unassigned'], null]) {
+    const response = await normal.request('catalog', { ...bodies.catalog, ...mode, initial_preview_groups });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
+  }
+  assert.equal(normal.calls.length, 1, 'invalid or ambiguous opening intent never reaches the owner');
+  const sized = await start(t, { methods: { catalog: async () => ({ initial_preview: { synthetic: 'é'.repeat(2_050_000) } }) } });
+  assert.equal((await sized.request('catalog')).status, 422);
+  const response = await sized.request('catalog', { ...bodies.catalog, ...mode });
+  assert.equal(response.status, 200);
+  assert.equal((await response.json()).initial_preview.synthetic.length, 2_050_000);
+  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(31_000_000) }) } });
+  const refused = await oversized.request('catalog', { ...bodies.catalog, ...mode });
+  assert.equal(refused.status, 422);
+  assert.deepEqual(await refused.json(), { error: 'neighborhood_catalog_incomplete',
+    reason: 'catalog_response_byte_limit', membership_returned: false });
+});
+
 test('only capture receives two minutes; ordinary cohort actions keep one minute', async t => {
   const { request, calls } = await start(t);
   for (const action of ['capture', 'preview', 'catalog', 'members']) {

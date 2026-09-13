@@ -9,7 +9,7 @@ import { setSection } from './fixtures/neighborhoodCustomMaterialInputsFixture.j
 const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [structuredClone(value)] : [] });
 const GRANT = { allowed: true, decision_id: 'fixture-license', policy_revision: 'fixture-license-v1' };
 const CATALOG = 'report_observation_catalog', SUMMARY = 'report_observation_summary';
-import { customCohortOpeningSelection } from '../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
+import { customCohortOpeningGroupIds, customCohortOpeningSelection, prepareCustomCohortOpeningMode } from '../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 // Real retained loader/context/subject/presenters over scoped DB query fixtures.
 // No native locking, PostgreSQL isolation or actual provider authorization claim.
@@ -229,14 +229,73 @@ test('opening group IDs are bounded/copied before checkout, unknown IDs fail wit
   assert.deepEqual(opening.initial_preview, ordinary);
 });
 
-for (const deniedAt of [1, 2, 3, 4]) test(`opening denies exposure ${deniedAt} even without recommendation`, async () => {
+test('all-group selection preserves empty catalogs and includes only nonempty unassigned membership', () => {
+  const empty = { pockets: [], unassigned: { member_count: 0, account_ids: [] } };
+  assert.deepEqual(customCohortOpeningGroupIds(empty), []);
+  assert.deepEqual(customCohortOpeningSelection(empty, customCohortOpeningGroupIds(empty), 7), { revision: 7, pockets: [] });
+  const catalog = { pockets: [{ id: 'pocket-a', account_ids: ['B'] }, { id: 'pocket-b', account_ids: ['A'] }],
+    unassigned: { member_count: 1, account_ids: ['C'] } };
+  assert.deepEqual(customCohortOpeningGroupIds(catalog), ['pocket-a', 'pocket-b', 'discovery:unassigned']);
+  assert.deepEqual(customCohortOpeningSelection(catalog, customCohortOpeningGroupIds(catalog), 7), {
+    revision: 7, pockets: [{ id: 'discovery:selected', label: 'Selected observations', account_ids: ['A', 'B', 'C'] }] });
+  assert.deepEqual(customCohortOpeningSelection(catalog, [], 7), { revision: 7, pockets: [] });
+  assert.equal(prepareCustomCohortOpeningMode('all_catalog_groups'), 'all_catalog_groups');
+  const hostile = { toString() { assert.fail('mode must not coerce values'); } };
+  assert.throws(() => prepareCustomCohortOpeningMode(hostile), /invalid_input/);
+});
+
+for (const missingCounty of [false, true]) for (const includeRecommendation of [false, true]) {
+  test(`fresh all-group opening equals explicit all IDs with one retained load (unassigned ${missingCounty}, recommendation ${includeRecommendation})`, async () => {
+    const { service, input, state, f } = await setup({ missingCounty, effectiveDate: '2026-09-05' });
+    const catalog = await service.catalog({ ...input, includeRecommendation });
+    const ids = [...catalog.catalog.pockets.map(p => p.id),
+      ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
+    assert.equal(catalog.catalog.unassigned.member_count > 0, missingCounty);
+    const explicit = await service.catalog({ ...input, includeRecommendation, initialPreviewGroups: ids });
+    const selection = customCohortOpeningSelection(catalog.catalog, ids, input.selection.revision);
+    assert.deepEqual(selection.pockets.flatMap(p => p.account_ids), [...f.accountIds].sort());
+    const ordinary = await service.present({ ...input, selection });
+    state.sourceReads = 0; state.policies.length = 0; state.calls.length = 0;
+    const all = await service.catalog({ ...input, includeRecommendation, initialPreviewMode: 'all_catalog_groups' });
+    const reads = state.sourceReads;
+    assert.deepEqual(all, explicit);
+    assert.deepEqual(all.initial_preview, ordinary);
+    assert.deepEqual(state.policies.map(p => p.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
+    assert.equal(state.policies[1].sourceReads, 0); assert.ok(reads > 0);
+    assert.equal(state.calls.filter(sql => sql === 'BEGIN ISOLATION LEVEL READ COMMITTED').length, 2);
+    state.sourceReads = 0;
+    await service.catalog({ ...input, includeRecommendation }); await service.present({ ...input, selection });
+    assert.equal(state.sourceReads, reads * 2, 'all-mode opening reconstructs retained inputs only once');
+    const empty = await service.catalog({ ...input, initialPreviewGroups: [] });
+    assert.deepEqual(empty.initial_preview, await service.present(input));
+    assert.notDeepEqual(empty.initial_preview, all.initial_preview);
+  });
+}
+
+test('unknown or conflicting opening modes fail before checkout and validated mode cannot change during authorization', async () => {
+  const { service, input, state } = await setup({ effectiveDate: '2026-09-05' });
+  for (const initialPreviewMode of [undefined, null, false, true, 1, '', 'all', 'ALL_CATALOG_GROUPS', [], {}]) {
+    await assert.rejects(service.catalog({ ...input, initialPreviewMode }), /invalid_input/);
+  }
+  for (const initialPreviewGroups of [[], ['discovery:unassigned'], null, undefined]) {
+    await assert.rejects(service.catalog({ ...input, initialPreviewGroups, initialPreviewMode: 'all_catalog_groups' }), /invalid_input/);
+  }
+  assert.equal(state.connects, 0); assert.equal(state.calls.length, 0); assert.equal(state.sourceReads, 0);
+  const expected = await service.catalog({ ...input, initialPreviewMode: 'all_catalog_groups' });
+  const value = { ...input, initialPreviewMode: 'all_catalog_groups' };
+  state.onPolicy = () => { value.initialPreviewMode = 'unknown'; value.initialPreviewGroups = []; return { ...GRANT }; };
+  assert.deepEqual(await service.catalog(value), expected);
+});
+
+const openingRequests = [{ name: 'explicit', initialPreviewGroups: [] }, { name: 'all-mode', initialPreviewMode: 'all_catalog_groups' }];
+for (const { name, ...opening } of openingRequests) for (const deniedAt of [1, 2, 3, 4]) test(`${name} opening denies exposure ${deniedAt} even without recommendation`, async () => {
   const { service, input, state } = await setup();
   state.onPolicy = n => n === deniedAt ? { allowed: false } : { ...GRANT };
-  await assert.rejects(service.catalog({ ...input, initialPreviewGroups: [] }), /market_data_access_denied/);
+  await assert.rejects(service.catalog({ ...input, ...opening }), /market_data_access_denied/);
   assert.equal(state.policies.length, deniedAt); assert.equal(state.sourceReads > 0, deniedAt > 2);
 });
 
-for (const type of ['material', 'assignment', 'policy']) test(`opening still refuses a final ${type} change`, async () => {
+for (const { name, ...opening } of openingRequests) for (const type of ['material', 'assignment', 'policy']) test(`${name} opening still refuses a final ${type} change`, async () => {
   const { service, input, state, f } = await setup();
   state.onCommit = count => {
     if (count !== 1) return;
@@ -244,6 +303,6 @@ for (const type of ['material', 'assignment', 'policy']) test(`opening still ref
     else if (type === 'assignment') state.assigned = '80000000-0000-4000-8000-000000000002';
     else state.onPolicy = () => ({ ...GRANT, policy_revision: 'changed' });
   };
-  await assert.rejects(service.catalog({ ...input, initialPreviewGroups: [] }),
+  await assert.rejects(service.catalog({ ...input, ...opening }),
     type === 'material' ? /subject_changed/ : type === 'assignment' ? /assignment_access_denied/ : /market_policy_changed/);
 });

@@ -58,7 +58,11 @@ test('actual mapping4 capture/persist/reopen presents all accounts independently
   assert.deepEqual(second.pockets, result.pockets);
   assert.deepEqual(result.all, input.recommendation.all);
   assert.deepEqual(result.recommended_recorded_group_ids, input.recommendation.recommended_recorded_group_ids);
-  assert.deepEqual(compose({ catalog: input.catalog, expected: input.expected, retained_inputs: f.input.retained_inputs }), result);
+  const { stock_composition_v1: composition, ...unchanged } = compose({ catalog: input.catalog,
+    expected: input.expected, retained_inputs: f.input.retained_inputs });
+  assert.deepEqual(unchanged, result);
+  assert.equal(composition.status, 'available');
+  assert.equal(composition.all[0], cad.all.member_count);
 });
 
 test('mapping4 SQL-null, blank and false literals remain distinct without reducing the denominator', async () => {

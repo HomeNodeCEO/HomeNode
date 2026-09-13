@@ -8,6 +8,7 @@ import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBas
 import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
 import { readCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { buildCustomCohortRecordedHousing } from './customCohortRecordedHousing.js';
+import { customCohortStockCompositionBatches } from './customCohortStockComposition.js';
 
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
@@ -138,7 +139,8 @@ export async function buildCustomCohortPocketRecommendationBatched(args = {}, { 
 }
 
 function* recommendationBatches({ context_ref, retained_inputs: input, selection, recorded_proximity,
-  catalog_version = 1, observation_preview } = {}) {
+  catalog_version = 1, observation_preview, include_stock_composition = false } = {}) {
+  check(typeof include_stock_composition === 'boolean', 'composition_option');
   customCohortCatalogGroupLimit(catalog_version);
   check(NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION === P.curve_methodology_version
     && KEYS.every(key => NEIGHBORHOOD_RELEVANCE_WEIGHTS[key] === P.weights[key]), 'curve_policy_changed');
@@ -288,6 +290,16 @@ function* recommendationBatches({ context_ref, retained_inputs: input, selection
   charge({ all: result.all, selected: result.selected, subject: result.subject });
   // Incremental checks limit construction. Count the COMPLETE final envelope as
   // well, including both ID lists, ranks, separators and binding/disclosures.
-  check(Buffer.byteLength(JSON.stringify(result)) <= P.output_utf8_bytes, 'output_byte_limit');
+  const resultBytes = Buffer.byteLength(JSON.stringify(result));
+  check(resultBytes <= P.output_utf8_bytes, 'output_byte_limit');
+  // Descriptive sidecar only: old direct callers keep identical score/profile
+  // bytes. The catalog owner opts in; no new source read or changed selection.
+  if (include_stock_composition && housing) {
+    yield;
+    const composition = yield* customCohortStockCompositionBatches({ preview, catalog, subject: result.subject, housing });
+    if (resultBytes + Buffer.byteLength(JSON.stringify(composition)) + 32 <= P.output_utf8_bytes) {
+      result.stock_composition_v1 = composition;
+    }
+  }
   return freeze(result);
 }

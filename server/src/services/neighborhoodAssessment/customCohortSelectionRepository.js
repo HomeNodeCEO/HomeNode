@@ -126,7 +126,25 @@ export function createCustomCohortSelectionRepository(client, scopeJson) {
       // subject bytes, never today's replacement snapshot/sections.
       const subject = await subjects.load(header.subject_inputs);
       const queryBlobs = [];
-      for (const ref of header.query_bundle.blob_refs) queryBlobs.push({ ref, canonical_json: await read(ref) });
+      const refs = header.query_bundle.blob_refs;
+      // Read only siblings from the fully checked header, after the unchanged
+      // subject integrity read. Each independent load still validates every
+      // original; batching changes round trips, never reference order or bytes.
+      let offset = 0;
+      while (offset < refs.length) {
+        const batch = []; let bytes = 0;
+        while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) {
+          const ref = refs[offset + batch.length], size = Number(ref.canonical_utf8_bytes);
+          if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) break;
+          batch.push(ref); bytes += size;
+        }
+        const originals = await blobs.getPreparedBatch(batch);
+        for (let i = 0; i < batch.length; i++) {
+          if (originals[i] === null) fail('missing_evidence');
+          queryBlobs.push({ ref: batch[i], canonical_json: originals[i].canonicalJson });
+        }
+        offset += batch.length;
+      }
       const stored = header.query_bundle;
       const result = admitted(JSON.stringify({ version: stored.version, producer_profile: stored.producer_profile,
         query_preimage: stored.query_preimage, captured_query_selection_sha256: stored.captured_query_selection_sha256,

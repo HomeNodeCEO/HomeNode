@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { buildCachedSourceCaptures, buildFrozenCadSourceCaptures } from './cachedSourceCaptures.js';
+import { createCustomSourceReadTiming } from './customSourceReadTiming.js';
 import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_ACCOUNT_BATCH_SIZE } from './denseCadCapturePolicy.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
@@ -292,7 +293,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
   const limits=limitsOf(overrides,profile.dense ? DENSE_CAD_CACHE_READER_LIMITS : undefined);
-  async function capture(input, owner=null) {
+  async function capture(input, owner=null, timing=null) {
     const callerOwned=owner!==null;
     const options=callerOwned ? owner.options : {};
     if (callerOwned && (typeof owner.client?.query!=='function' || typeof owner.client.release!=='function')) invalid('caller_client');
@@ -329,8 +330,12 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
     };
     const query=async (tag,sql,values=[]) => {
       check(); counts.queries++;
-      const result=await client.query({ text:`/* neighborhood-cache:${tag} */ ${sql}`,values,
-        query_timeout:callerOwned ? Math.max(1,Math.min(limits.statement_ms+1000,Math.ceil(deadline-performance.now()))) : limits.statement_ms+1000 });
+      const stopQuery=timing?.startQuery(tag);
+      let result;
+      try {
+        result=await client.query({ text:`/* neighborhood-cache:${tag} */ ${sql}`,values,
+          query_timeout:callerOwned ? Math.max(1,Math.min(limits.statement_ms+1000,Math.ceil(deadline-performance.now()))) : limits.statement_ms+1000 });
+      } finally { stopQuery?.(); }
       check();
       return result.rows;
     };
@@ -568,6 +573,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
     // Keep the large, verified identity closure private to authorization/drift
     // checking. Only its immutable digest and bounded counts belong in every
     // source envelope; never spread an authorized request into evidence metadata.
+    timing?.beginFinalization();
     try {
       if (callerOwned) check();
       const closure=authorized.transaction_closure;
@@ -645,8 +651,13 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         captured_at:capturedAt,source_capture:null,capabilities,incomplete_reasons:['capture_budget_limit'],counts });
     }
   }
+  const invoke = (input, owner=null) => {
+    if (!profile.dense) return capture(input,owner);
+    const timing=createCustomSourceReadTiming();
+    return timing.run(() => capture(input,owner,timing));
+  };
   const reader = {
-    capture: input => capture(input),
+    capture: input => invoke(input),
     /** Private composition API. Caller exclusively owns an explicit RR/RO
      * transaction, bounded server timeouts and UTC. This method never connects,
      * changes settings, begins/ends a transaction or releases the client, even on
@@ -656,7 +667,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
      * The returned snapshot is comparison metadata, NOT a transferable capability
      * or spatial/coverage proof. Original read capabilities remain mandatory.
      */
-    captureInSnapshot: (client,input,options={}) => capture(input,{client,options}),
+    captureInSnapshot: (client,input,options={}) => invoke(input,{client,options}),
   };
   return reader;
 }

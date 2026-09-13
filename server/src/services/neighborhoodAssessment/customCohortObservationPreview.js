@@ -204,11 +204,11 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
     }
     return value;
   };
-  // Mapping3 retains raw unit witnesses, but observation summaries still do not
+  // Mappings 3 and 5 retain raw unit witnesses, but observation summaries do not
   // interpret provider units or join historical GLA to a closing price.
   // CAD-only mapping4 keeps the v2 sales projection; it does not retain v3's
   // raw unit witnesses merely because its numeric version is newer.
-  const sourceFields = mappingVersion === 3 ? { ...SOURCE,
+  const sourceFields = [3, 5].includes(mappingVersion) ? { ...SOURCE,
     lot_size_area: ['source_lot_size_area', 'nonnegative', 'Source-reported lot area; units not verified', null] } : SOURCE;
   const effectiveDate = assessmentDate(input.subject.effective_date, 'effective_date');
   const period = { start_date: assessmentDate(input.study.observation_period.start_date, 'start_date'),

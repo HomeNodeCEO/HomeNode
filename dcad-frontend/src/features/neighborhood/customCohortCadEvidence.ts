@@ -19,7 +19,7 @@ interface FieldSummary {
 }
 interface Summary { readonly member_count: number; readonly fields: Readonly<Record<Field, FieldSummary>> }
 interface CadBinding {
-  readonly cad_baseline_version: 1; readonly mapping_version: 4;
+  readonly cad_baseline_version: 1; readonly mapping_version: 4 | 5;
   readonly binding: { readonly context_ref: CheckedPocketCatalog['binding']['context_ref']; readonly captured_at: string };
 }
 interface AvailableCadEvidence extends CadBinding {
@@ -141,7 +141,7 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, c
   ensure(available || descriptor.value === 'details_unavailable');
   const v = object(value, ['cad_baseline_version', 'mapping_version', 'basis', 'authority', 'binding', 'comparison_basis',
     'temporal_basis', 'status', 'reason', ...(available ? ['subject', 'all', 'pockets', 'limitations'] : ['member_count', 'pocket_count'])]);
-  ensure(v.cad_baseline_version === 1 && v.mapping_version === 4 && v.basis === 'retained_current_cad_observations'
+  ensure(v.cad_baseline_version === 1 && (v.mapping_version === 4 || v.mapping_version === 5) && v.basis === 'retained_current_cad_observations'
     && v.authority === 'not_established' && v.comparison_basis === 'exact_literal_same_recorded_county_not_housing_similarity'
     && v.temporal_basis === 'observation_availability_not_historical_validity');
   const b = object(v.binding, ['context_ref', 'captured_at']), ref = object(b.context_ref, ['context_id', 'context_revision', 'context_sha256']);
@@ -155,7 +155,7 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, c
   if (!available) {
     ensure(v.reason === 'presentation_byte_limit' && count(v.member_count, 50_000) === catalog.coverage.discovery_member_count
       && count(v.pocket_count, groupLimit) === known.size);
-    return { cad_baseline_version: 1, mapping_version: 4, status: 'details_unavailable', reason: 'presentation_byte_limit',
+    return { cad_baseline_version: 1, mapping_version: v.mapping_version, status: 'details_unavailable', reason: 'presentation_byte_limit',
       binding, member_count: catalog.coverage.discovery_member_count, pocket_count: known.size };
   }
   ensure(v.reason === null);
@@ -198,5 +198,5 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, c
   const limitations = array(v.limitations, LIMITATIONS.length);
   ensure(limitations.length === LIMITATIONS.length && limitations.every((item, i) => item === LIMITATIONS[i]));
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (catalogVersion === 2 ? 2_500_000 : 512_000));
-  return { cad_baseline_version: 1, mapping_version: 4, status: 'available', reason: null, binding, subject, all, pockets };
+  return { cad_baseline_version: 1, mapping_version: v.mapping_version, status: 'available', reason: null, binding, subject, all, pockets };
 }

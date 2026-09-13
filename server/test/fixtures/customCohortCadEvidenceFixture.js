@@ -1,13 +1,16 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { canonicalAssessmentJson as json } from '../../src/services/neighborhoodAssessment/contract.js';
-import { createNeighborhoodCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
-import { createNeighborhoodCadEvidenceReadAccess } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { createNeighborhoodCadEvidenceSourceReader, createNeighborhoodCombinedEvidenceSourceReader,
+  consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCadEvidenceReadAccess, createNeighborhoodCombinedEvidenceReadAccess } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { CACHED_SALE_WITNESS_V2_FIELDS, prepareCachedSaleWitnessV2 } from '../../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
 import { prepareCustomCohortCaptureInputs, persistCustomCohortCaptureInputs, loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { prepareCustomCohortContextHeader } from '../../src/services/neighborhoodAssessment/customCohortContextContract.js';
 import { buildCustomCohortObservationPreview } from '../../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCustomCohortPocketCatalog } from '../../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { decisionEvidenceFixture } from './customCohortDecisionEvidenceFixture.js';
+import { recordedProximityFixture } from './customCohortRecordedProximityFixture.js';
 import { createTestCachedReadAccess } from './neighborhoodCachedReadAccessFixture.js';
 
 const CAD_FIELDS = ['class_code', 'class_description', 'use_description', 'structure_type', 'built_up'];
@@ -15,22 +18,69 @@ const DEFAULT_CAD = Object.freeze({ class_code: '  A1 ', class_description: '  R
   use_description: 'Unknown retained use', structure_type: 'Provider-specific structure', built_up: false });
 const MS = '2026-09-06T08:00:00.123Z', PRECISE = '2026-09-06T08:00:00.123456Z';
 
-/** Actual opt-in mapping4 source acquisition, persistence and reopen over
+// Bounded SQL-result fake only, not a PostgreSQL transform oracle. undefined is
+// SQL NULL; null is JSON null. Exact numeric text can use saleWitnessFields.
+function syntheticCombinedSaleWitness(rawPayload, overrides) {
+  const object = rawPayload !== null && typeof rawPayload === 'object' && !Array.isArray(rawPayload);
+  assert.ok(!object || Object.getPrototypeOf(rawPayload) === Object.prototype, 'synthetic plain JSON object only');
+  const kind = value => Array.isArray(value) ? 'array' : typeof value;
+  const root = rawPayload === undefined ? 'sql_null' : rawPayload === null ? 'json_null' : object ? 'object' : 'non_object';
+  const rootType = rawPayload === undefined ? null : rawPayload === null ? 'null' : kind(rawPayload);
+  const fields = Object.fromEntries(CACHED_SALE_WITNESS_V2_FIELDS.map(key => {
+    let state = 'payload_unavailable', json_type = null, value_text = null, utf8_bytes = null;
+    if (object) {
+      if (!Object.hasOwn(rawPayload, key)) state = 'absent';
+      else if (rawPayload[key] === null) { state = 'json_null'; json_type = 'null'; }
+      else {
+        const value = rawPayload[key]; json_type = kind(value);
+        if (['array', 'object'].includes(json_type)) state = 'non_scalar';
+        else {
+          assert.ok(['string', 'number', 'boolean'].includes(json_type), 'synthetic JSON scalar only');
+          assert.ok(json_type !== 'number' || Number.isFinite(value), 'synthetic finite JSON number only');
+          value_text = String(value); utf8_bytes = Buffer.byteLength(value_text);
+          state = utf8_bytes > 512 ? 'oversize' : 'scalar';
+          if (state === 'oversize') value_text = null;
+        }
+      }
+    }
+    return [key, { state, json_type, value_text, utf8_bytes }];
+  }));
+  return prepareCachedSaleWitnessV2({ witness_version: 2, root_state: root, root_json_type: rootType,
+    fields: { ...fields, ...overrides } });
+}
+
+/** Actual opt-in mapping4/5 source acquisition, persistence and reopen over
  * bounded SQL-result fakes. Existing admitted subject/spatial/intent evidence is
  * reused unchanged, never relabeled as a new acquisition. This is not native SQL,
  * schema/ingestion, provider truth, historical support or production activation.
  */
-export async function cadEvidenceFixture({ parcelOverrides = {}, omitParcelFields = [], legacy = false } = {}) {
-  const base = await decisionEvidenceFixture(), old = base.input.retained_inputs;
+export async function cadEvidenceFixture(options = {}) {
+  const { parcelOverrides = {}, omitParcelFields = [], legacy = false,
+    mappingVersion = 4, saleWitnessFields, saleOverrides = {}, effectiveDate, parcelCount,
+    parcelOverridesByIndex = [], recordedProximity = false } = options;
+  assert.ok(mappingVersion === 4 || mappingVersion === 5, 'exact CAD/combined mapping version required');
+  assert.ok(mappingVersion === 5 || saleWitnessFields === undefined && !Object.hasOwn(options, 'rawPayload'), 'sale witness requires mapping5');
+  assert.ok(!recordedProximity || effectiveDate === undefined && parcelCount === undefined && Object.keys(saleOverrides).length === 0,
+    'recorded proximity fixture uses its original base inputs');
+  const base = recordedProximity ? await recordedProximityFixture()
+    : await decisionEvidenceFixture({ saleOverrides, effectiveDate, parcelCount });
+  const old = base.input.retained_inputs;
   const oldCapture = old.acquisition.capture_result;
   const sourceRows = role => oldCapture.source_capture.sources.filter(s => s.payload.projection.definition.role === role)
     .flatMap(s => s.payload.records.map(r => structuredClone(r.data.raw_projection ?? r.data)));
-  const parcels = sourceRows('parcels').map(row => {
-    const result = { ...row, ...DEFAULT_CAD, ...parcelOverrides };
+  const parcels = sourceRows('parcels').map((row, index) => {
+    const result = { ...row, ...DEFAULT_CAD, ...parcelOverrides, ...parcelOverridesByIndex[index] };
     for (const field of omitParcelFields) delete result[field];
     return result;
   });
   const accounts = sourceRows('accounts'), transactions = sourceRows('transactions'), links = sourceRows('sale_links');
+  if (mappingVersion === 5) {
+    // Synthetic fixed SQL-result cells, not a provider payload or an inferred
+    // scalar conversion. Callers can supply exact text, including precise numbers.
+    const witness = syntheticCombinedSaleWitness(Object.hasOwn(options, 'rawPayload') ? options.rawPayload : {}, saleWitnessFields);
+    for (const row of transactions) Object.assign(row,
+      { source_mls_status: null, source_row_number: null, source_raw_witness: witness });
+  }
   const legacyRows = legacy ? [{ source_record_id: null, sale_id: '22', sale_account_id: 'R-001',
     sale_closing_date: '2024-04-01', sale_price: '300000', sale_source: 'Synthetic canonical-only observation',
     sale_loaded_at: '2026-09-05T00:00:00.000Z' }] : [];
@@ -41,6 +91,8 @@ export async function cadEvidenceFixture({ parcelOverrides = {}, omitParcelField
     .matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'\]/g)]
     .flatMap(([, relation, columns]) => columns.split(' ').map(column => ({ relation, column })));
   schema.push(...CAD_FIELDS.map(column => ({ relation: 'gis.dcad_parcels', column })));
+  if (mappingVersion === 5) schema.push(...['mls_status', 'source_row_number', 'raw_payload']
+    .map(column => ({ relation: 'core.sales_source_records', column })));
   const queryCalls = [], marketPurposes = [];
   const client = { release() { assert.fail('caller-owned transaction only'); }, async query(config) {
     queryCalls.push(config.text);
@@ -76,17 +128,20 @@ export async function cadEvidenceFixture({ parcelOverrides = {}, omitParcelField
     workflow_target_id: subjectTarget.assignment_file_id };
   const access = createTestCachedReadAccess({ target, scope: oldCapture.scope, effective_date: old.subject.effective_date,
     selection: old.selector.selection, account_ids: base.accountIds, ...old.study }, {
-    accessFactory: createNeighborhoodCadEvidenceReadAccess,
+    accessFactory: mappingVersion === 4 ? createNeighborhoodCadEvidenceReadAccess : createNeighborhoodCombinedEvidenceReadAccess,
     authorizeMarketData: async (_auth, _context, purpose) => {
       marketPurposes.push(structuredClone(purpose));
-      assert.equal(Object.hasOwn(purpose, 'source_projection'), false, 'v4 does not request sale-witness exposure');
+      if (mappingVersion === 4) assert.equal(Object.hasOwn(purpose, 'source_projection'), false, 'v4 does not request sale-witness exposure');
+      else assert.deepEqual(purpose.source_projection, { id: 'cached-combined-evidence-v1', mapping_version: 5,
+        witness_version: 2, fields: CACHED_SALE_WITNESS_V2_FIELDS });
       return { allowed: true, decision_id: 'synthetic-cad-field-test', policy_revision: 'synthetic-cad-field-v1' };
     },
     transactionClosure: { source_revision: 'synthetic-cad-evidence-closure', transactions: identities, links,
       legacy: legacyRows.map(r => ({ sale_id: r.sale_id, sale_account_id: r.sale_account_id })) },
   });
   const issued = await access.prepare();
-  const reader = createNeighborhoodCadEvidenceSourceReader({ connect() { assert.fail('caller-owned transaction only'); } }, { access: access.access });
+  const readerFactory = mappingVersion === 4 ? createNeighborhoodCadEvidenceSourceReader : createNeighborhoodCombinedEvidenceSourceReader;
+  const reader = readerFactory({ connect() { assert.fail('caller-owned transaction only'); } }, { access: access.access });
   const captureResult = await reader.captureInSnapshot(client, { ...issued.request, auth: access.auth,
     selection_grant: issued.selection_grant, market_grant: issued.market_grant });
   assert.equal(captureResult.status, 'captured', JSON.stringify(captureResult.incomplete_reasons));

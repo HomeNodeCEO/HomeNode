@@ -40,7 +40,7 @@ const FIELDS = Object.freeze({
   reported_days_on_market: ['source_days_on_market', 'integer', 'days', null],
 });
 function observation(rows, [field, policy, unit, unavailable], mappingVersion) {
-  if (field === null && mappingVersion === 3) {
+  if (field === null && [3, 5].includes(mappingVersion)) {
     const missing = rows.every(row => {
       const witness = row.raw.source_raw_witness?.fields?.ClosePrice;
       return ['absent', 'json_null'].includes(witness?.state)
@@ -81,7 +81,7 @@ function metric(rows, name, unit) {
  * caller owns hash/rights/freshness admission and the historical-stock gate.
  * Typed source values may predate the latest imported raw file (COALESCE); this
  * profile reports their local captured meaning, never original-file chronology.
- * Mapping3 witnesses are deliberately not paired with typed values: a later raw
+ * Mapping3/5 witnesses are deliberately not paired with typed values: a later raw
  * unit/currency could belong to a different observation than a retained value.
  */
 export function buildCustomCohortReportedSharedSales({ retained_inputs: input, selected_account_ids } = {}) {

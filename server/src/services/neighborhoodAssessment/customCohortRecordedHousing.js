@@ -67,6 +67,17 @@ const DEFINITION = freeze({
 });
 export const CUSTOM_COHORT_RECORDED_HOUSING_PROFILE = freeze({ id: DEFINITION.id, revision: DEFINITION.revision,
   content_sha256: createHash('sha256').update(canonicalAssessmentJson(DEFINITION)).digest('hex') });
+// Same interpreter and dictionaries; the exact input mapping is independently
+// versioned so combined evidence never inherits the mapping4 profile identity.
+const COMBINED_DEFINITION = freeze({ ...DEFINITION,
+  id: 'custom-recorded-housing-v2', revision: 2, mapping_version: 5 });
+export const CUSTOM_COHORT_COMBINED_RECORDED_HOUSING_PROFILE = freeze({
+  id: COMBINED_DEFINITION.id, revision: COMBINED_DEFINITION.revision,
+  content_sha256: createHash('sha256').update(canonicalAssessmentJson(COMBINED_DEFINITION)).digest('hex') });
+export function getCustomCohortRecordedHousingProfile(mappingVersion) {
+  check(mappingVersion === 4 || mappingVersion === 5, 'mapping_profile');
+  return mappingVersion === 4 ? CUSTOM_COHORT_RECORDED_HOUSING_PROFILE : CUSTOM_COHORT_COMBINED_RECORDED_HOUSING_PROFILE;
+}
 const L = CUSTOM_COHORT_RECORDED_HOUSING_LIMITS, STATES = CUSTOM_COHORT_RECORDED_HOUSING_STATES;
 const TARGET = ['organization_id', 'report_file_id', 'assignment_file_id', 'account_id', 'appraisal_case_id', 'subject_snapshot_id'];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
@@ -103,7 +114,8 @@ export function buildCustomCohortRecordedHousing(args = {}) {
   const groupLimit = customCohortCatalogGroupLimit(get(args, 'catalog_version', true) ?? 1) + 1;
   const recordLimit = groupLimit > L.groups ? customCohortObservationRecordLimit(acquisition) : L.source_records;
   const metadata = get(acquisition, 'compact_metadata_json', true);
-  if (customCohortObservationMappingVersion(metadata === undefined ? {} : { compact_metadata_json: metadata }) !== 4) return null;
+  const mapping = customCohortObservationMappingVersion(metadata === undefined ? {} : { compact_metadata_json: metadata });
+  if (mapping !== 4 && mapping !== 5) return null;
   const preview = get(args, 'preview'), groups = get(args, 'groups'), subject = get(input, 'subject');
   const captureResult = get(acquisition, 'capture_result'), capture = get(captureResult, 'source_capture');
   check(get(capture, 'status') === 'ready' && get(captureResult, 'query_complete') === true
@@ -151,7 +163,7 @@ export function buildCustomCohortRecordedHousing(args = {}) {
   for (const source of list(get(capture, 'sources'), L.source_chunks)) {
     const payload = get(source, 'payload'), definition = get(get(payload, 'projection'), 'definition');
     const role = get(definition, 'role');
-    check(customCohortObservationProjectionMatches({ mapping_version: get(definition, 'mapping_version') }, 4), 'mapping_profile_mismatch');
+    check(customCohortObservationProjectionMatches({ mapping_version: get(definition, 'mapping_version') }, mapping), 'mapping_profile_mismatch');
     if (!['accounts', 'parcels'].includes(role)) continue;
     roles.add(role);
     for (const record of list(get(payload, 'records'), L.source_records)) {
@@ -159,8 +171,8 @@ export function buildCustomCohortRecordedHousing(args = {}) {
       const key = `${role}\n${id(get(record, 'record_id'), 1000)}`;
       check(!seen.has(key), 'duplicate_source_record'); seen.add(key);
       const mapped = get(record, 'data'), raw = get(mapped, 'raw_projection'), normalized = get(mapped, 'data');
-      check(get(normalized, 'cached_mapping_version') === 4
-        && get(normalized, 'cached_projection_kind') === (role === 'accounts' ? 'account' : 'parcel'), 'mapping_v4_required');
+      check(get(normalized, 'cached_mapping_version') === mapping
+        && get(normalized, 'cached_projection_kind') === (role === 'accounts' ? 'account' : 'parcel'), `mapping_v${mapping}_required`);
       const account = id(get(normalized, 'account_id'));
       check(get(raw, 'account_id') === account && members.has(account), 'cad_account_scope');
       if (role === 'accounts') members.get(account).counties.push(text(get(raw, 'county', true) ?? null));
@@ -234,7 +246,7 @@ export function buildCustomCohortRecordedHousing(args = {}) {
     for (const account of ids) { check(++work <= L.membership_work, 'membership_work_limit'); states[byAccount.get(account).state]++; }
     return { account_count: ids.length, observed_count: states.observed, unknown_count: ids.length - states.observed, states };
   }
-  const result = { housing_version: 1, mapping_version: 4, profile: CUSTOM_COHORT_RECORDED_HOUSING_PROFILE,
+  const result = { housing_version: 1, mapping_version: mapping, profile: getCustomCohortRecordedHousingProfile(mapping),
     basis: CUSTOM_COHORT_RECORDED_HOUSING_BASIS, authority: 'not_established', binding: { context_ref: context, captured_at: capturedAt },
     subject: subjectResult, accounts, coverage: coverage(roster), pockets: orderedGroups.map(group => ({ id: group.id, ...coverage(group.accounts) })),
     limitations: [...CUSTOM_COHORT_RECORDED_HOUSING_LIMITATIONS] };

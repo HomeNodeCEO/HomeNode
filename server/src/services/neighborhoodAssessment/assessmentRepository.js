@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
+import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { assessmentDate, assessmentEvidenceDigest, buildNeighborhoodAssessment, canonicalAssessmentJson } from './contract.js';
 import { assertNeighborhoodJsonbStorage } from './jsonbStorage.js';
 import { REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
@@ -291,9 +292,13 @@ export function neighborhoodCallerCleanupFailure(error) {
 export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
   if (typeof client?.query !== 'function' || typeof client?.release !== 'function') fail('caller_client_required');
   let active = false;
-  return repositoryWithTransaction(async operation => {
+  const exclusive = async operation => {
     if (active) fail('caller_client_busy');
-    active = true; let opened = false;
+    active = true;
+    try { return await operation(); } finally { active = false; }
+  };
+  const savepoint = async operation => {
+    let opened = false;
     try {
       await client.query('SAVEPOINT neighborhood_repository_owner'); opened = true;
       const state = one(await client.query(`/* neighborhood:caller-transaction */
@@ -315,8 +320,110 @@ export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
         }
       }
       throw error;
-    } finally { active = false; }
+    }
+  };
+  const repository = repositoryWithTransaction(operation => exclusive(() => savepoint(operation)));
+  // This additional path is intentionally absent from the generic pool API.
+  // Its caller owns the outer transaction and all input objects. Reserve the
+  // client before sealing or yielding, and independently verify the full bundle.
+  repository.publishBatched = (claim, assessmentInput, members, sources, { check = () => {} } = {}) => exclusive(async () => {
+    const seen = new WeakSet();
+    const seal = value => {
+      const pending = [[value, false]];
+      while (pending.length) {
+        const [current, visited] = pending.pop();
+        if (!current || typeof current !== 'object') continue;
+        if (visited) { Object.freeze(current); continue; }
+        if (seen.has(current)) continue;
+        seen.add(current); pending.push([current, true]);
+        const children = Object.values(current);
+        // Preserve the original left-to-right, child-before-parent traversal
+        // without consuming call-stack depth before bounded JSON validation.
+        for (let index = children.length - 1; index >= 0; index--) pending.push([children[index], false]);
+      }
+    };
+    check(); seal([claim, assessmentInput, members, sources]); check();
+    const stages = prepareNeighborhoodPublicationBatches(assessmentInput, members, sources);
+    let prepared;
+    try {
+      for (;;) {
+        check(); const step = stages.next(); check();
+        if (step.done) { prepared = step.value; break; }
+        await yieldToRequests();
+      }
+    } finally { stages.return(); }
+    // Keep claim validation after publication validation, as in publish(). The
+    // claim's descendants were sealed before the first suspension as well.
+    const scope = scopeOf(prepared.assessment.scope), values = claimValues(claim);
+    check();
+    const result = await savepoint(client => publishPrepared(client, prepared, scope, values));
+    // RELEASE is not COMMIT. A late budget failure still belongs to the outer
+    // owner's rollback/discard path, not to a released inner savepoint.
+    check(); return result;
   });
+  return repository;
+}
+
+// The synchronous and explicit caller-owned cooperative paths execute exactly
+// the same SQL and publication fences after independent full revalidation.
+async function publishPrepared(client, prepared, scope, values) {
+  await verifyScope(client, scope, prepared.assessment.effective_date);
+  const lookup = one(await client.query('/* neighborhood:job-head */ SELECT assessment_id FROM app.neighborhood_assessment_jobs WHERE id=$1', [values[0]]), 'job_not_found');
+  const head = await lockedHead(client, lookup.assessment_id);
+  if (canonicalAssessmentJson(scopeOf(head)) !== canonicalAssessmentJson(scope)) fail('scope_mismatch');
+  const job = one(await client.query(`/* neighborhood:publication-fence */ SELECT *,effective_date::text AS effective_date,
+          data_cutoff::text AS data_cutoff FROM app.neighborhood_assessment_jobs WHERE ${fence} FOR UPDATE`, values), 'claim_lost');
+  if (job.input_signature_sha256 !== prepared.assessment.input_signature_sha256 ||
+      String(job.effective_date).slice(0, 10) !== prepared.assessment.effective_date ||
+      String(job.data_cutoff).slice(0, 10) !== prepared.assessment.data_cutoff) fail('job_input_mismatch');
+  const revision = integer(head.next_revision, 'next_revision', 1, 2_147_483_646);
+  let publicationInput = prepared.assessment;
+  if (publicationInput.contract_version === 2) {
+    // Preflight has checked these derived values. The repository now owns
+    // the real immutable revision, so recompute its group/digest rather
+    // than presenting provisional identity fields as saved facts.
+    const { input_signature_sha256, application_group, evidence_digest_sha256, ...raw } = publicationInput;
+    publicationInput = raw;
+  }
+  const assessment = buildNeighborhoodAssessment({ ...publicationInput, id: head.id, revision });
+  await client.query(`/* neighborhood:revision */ INSERT INTO app.neighborhood_assessment_revisions
+          (assessment_id,revision,input_signature_sha256,evidence_digest_sha256,assessment,publication_status)
+          VALUES ($1,$2,$3,$4,$5::jsonb,'staging')`, [head.id, revision, assessment.input_signature_sha256, assessment.evidence_digest_sha256, canonicalAssessmentJson(assessment)]);
+  for (const { snapshot, payload } of prepared.sources) {
+    await client.query(`/* neighborhood:source */ INSERT INTO app.neighborhood_assessment_sources
+            (assessment_id,revision,source_id,source_revision,content_sha256,source_snapshot,source_payload)
+            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
+    [head.id, revision, snapshot.id, snapshot.revision, snapshot.content_sha256, canonicalAssessmentJson(snapshot), canonicalAssessmentJson(payload)]);
+  }
+  for (const population of assessment.populations) {
+    await client.query(`/* neighborhood:population */ INSERT INTO app.neighborhood_assessment_populations
+            (assessment_id,revision,population_id,member_unit,member_count,unique_property_count,property_link_count,completeness,member_set_sha256,population)
+            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
+    [head.id, revision, population.id, population.member_unit, population.member_count,
+      assessment.contract_version === 2 ? null : population.unique_property_count,
+      assessment.contract_version === 2 ? null : population.property_link_count,
+      population.completeness, population.member_set_sha256, canonicalAssessmentJson(population)]);
+  }
+  for (const batch of memberBatches(prepared.members)) {
+    await client.query(`/* neighborhood:members */ INSERT INTO app.neighborhood_assessment_members
+            (assessment_id,revision,population_id,member_id,member_unit,account_ids,member_data)
+            SELECT $1,$2,population_id,member_id,member_unit,account_ids,member_data FROM jsonb_to_recordset($3::jsonb)
+              AS item(population_id text,member_id text,member_unit text,account_ids text[],member_data jsonb)`,
+    [head.id, revision, batch]);
+  }
+  affected(await client.query(`/* neighborhood:publish */ UPDATE app.neighborhood_assessment_revisions
+          SET publication_status='published',published_at=clock_timestamp()
+          WHERE assessment_id=$1 AND revision=$2 AND publication_status='staging'`, [head.id, revision]), 'publication_conflict');
+  // A -> B -> A reuses immutable job A but advances the head's intent.
+  // Its original creation generation must not invalidate that new intent.
+  const promoted = head.requested_job_id === job.id;
+  affected(await client.query(`/* neighborhood:promote */ UPDATE app.neighborhood_assessments SET next_revision=$2,
+          current_revision=CASE WHEN requested_job_id=$3 THEN $4 ELSE current_revision END,
+          updated_at=clock_timestamp() WHERE id=$1 AND next_revision=$4`, [head.id, revision + 1, job.id, revision]), 'publication_conflict');
+  affected(await client.query(`/* neighborhood:finish */ UPDATE app.neighborhood_assessment_jobs
+          SET status='succeeded',result_revision=$4,claim_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
+          WHERE ${fence}`, [...values, revision]), 'claim_lost');
+  return { assessment, promoted };
 }
 
 function repositoryWithTransaction(runTransaction) {
@@ -465,65 +572,7 @@ function repositoryWithTransaction(runTransaction) {
       const prepared = prepareNeighborhoodPublication(assessmentInput, members, sources);
       const scope = scopeOf(prepared.assessment.scope);
       const values = claimValues(claim);
-      return runTransaction(async client => {
-        await verifyScope(client, scope, prepared.assessment.effective_date);
-        const lookup = one(await client.query('/* neighborhood:job-head */ SELECT assessment_id FROM app.neighborhood_assessment_jobs WHERE id=$1', [values[0]]), 'job_not_found');
-        const head = await lockedHead(client, lookup.assessment_id);
-        if (canonicalAssessmentJson(scopeOf(head)) !== canonicalAssessmentJson(scope)) fail('scope_mismatch');
-        const job = one(await client.query(`/* neighborhood:publication-fence */ SELECT *,effective_date::text AS effective_date,
-          data_cutoff::text AS data_cutoff FROM app.neighborhood_assessment_jobs WHERE ${fence} FOR UPDATE`, values), 'claim_lost');
-        if (job.input_signature_sha256 !== prepared.assessment.input_signature_sha256 ||
-            String(job.effective_date).slice(0, 10) !== prepared.assessment.effective_date ||
-            String(job.data_cutoff).slice(0, 10) !== prepared.assessment.data_cutoff) fail('job_input_mismatch');
-        const revision = integer(head.next_revision, 'next_revision', 1, 2_147_483_646);
-        let publicationInput = prepared.assessment;
-        if (publicationInput.contract_version === 2) {
-          // Preflight has checked these derived values. The repository now owns
-          // the real immutable revision, so recompute its group/digest rather
-          // than presenting provisional identity fields as saved facts.
-          const { input_signature_sha256, application_group, evidence_digest_sha256, ...raw } = publicationInput;
-          publicationInput = raw;
-        }
-        const assessment = buildNeighborhoodAssessment({ ...publicationInput, id: head.id, revision });
-        await client.query(`/* neighborhood:revision */ INSERT INTO app.neighborhood_assessment_revisions
-          (assessment_id,revision,input_signature_sha256,evidence_digest_sha256,assessment,publication_status)
-          VALUES ($1,$2,$3,$4,$5::jsonb,'staging')`, [head.id, revision, assessment.input_signature_sha256, assessment.evidence_digest_sha256, canonicalAssessmentJson(assessment)]);
-        for (const { snapshot, payload } of prepared.sources) {
-          await client.query(`/* neighborhood:source */ INSERT INTO app.neighborhood_assessment_sources
-            (assessment_id,revision,source_id,source_revision,content_sha256,source_snapshot,source_payload)
-            VALUES ($1,$2,$3,$4,$5,$6::jsonb,$7::jsonb)`,
-          [head.id, revision, snapshot.id, snapshot.revision, snapshot.content_sha256, canonicalAssessmentJson(snapshot), canonicalAssessmentJson(payload)]);
-        }
-        for (const population of assessment.populations) {
-          await client.query(`/* neighborhood:population */ INSERT INTO app.neighborhood_assessment_populations
-            (assessment_id,revision,population_id,member_unit,member_count,unique_property_count,property_link_count,completeness,member_set_sha256,population)
-            VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb)`,
-          [head.id, revision, population.id, population.member_unit, population.member_count,
-            assessment.contract_version === 2 ? null : population.unique_property_count,
-            assessment.contract_version === 2 ? null : population.property_link_count,
-            population.completeness, population.member_set_sha256, canonicalAssessmentJson(population)]);
-        }
-        for (const batch of memberBatches(prepared.members)) {
-          await client.query(`/* neighborhood:members */ INSERT INTO app.neighborhood_assessment_members
-            (assessment_id,revision,population_id,member_id,member_unit,account_ids,member_data)
-            SELECT $1,$2,population_id,member_id,member_unit,account_ids,member_data FROM jsonb_to_recordset($3::jsonb)
-              AS item(population_id text,member_id text,member_unit text,account_ids text[],member_data jsonb)`,
-          [head.id, revision, batch]);
-        }
-        affected(await client.query(`/* neighborhood:publish */ UPDATE app.neighborhood_assessment_revisions
-          SET publication_status='published',published_at=clock_timestamp()
-          WHERE assessment_id=$1 AND revision=$2 AND publication_status='staging'`, [head.id, revision]), 'publication_conflict');
-        // A -> B -> A reuses immutable job A but advances the head's intent.
-        // Its original creation generation must not invalidate that new intent.
-        const promoted = head.requested_job_id === job.id;
-        affected(await client.query(`/* neighborhood:promote */ UPDATE app.neighborhood_assessments SET next_revision=$2,
-          current_revision=CASE WHEN requested_job_id=$3 THEN $4 ELSE current_revision END,
-          updated_at=clock_timestamp() WHERE id=$1 AND next_revision=$4`, [head.id, revision + 1, job.id, revision]), 'publication_conflict');
-        affected(await client.query(`/* neighborhood:finish */ UPDATE app.neighborhood_assessment_jobs
-          SET status='succeeded',result_revision=$4,claim_token=NULL,lease_expires_at=NULL,updated_at=clock_timestamp()
-          WHERE ${fence}`, [...values, revision]), 'claim_lost');
-        return { assessment, promoted };
-      });
+      return runTransaction(client => publishPrepared(client, prepared, scope, values));
     },
 
     async getCurrent(scopeInput) {

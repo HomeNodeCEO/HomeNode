@@ -14,6 +14,9 @@ map appearance, source interpretation, or report Apply.
 - Switching phases in that open dialog displays the matching pocket result
   from the same checked response. It does not recompute statistics, average
   medians, sum overlapping sale counts, or relabel the parent as a phase.
+- The frozen batch's structural session identity is memoized. Phase-only and
+  response-state renders do not serialize every account again. A copied equal
+  batch preserves its session; changed membership or target/context resets it.
 - Record pages still make authorized requests with the complete original batch
   selection fingerprint and the exact pocket population descriptor. Switching
   populations clears the prior record page and continuation.

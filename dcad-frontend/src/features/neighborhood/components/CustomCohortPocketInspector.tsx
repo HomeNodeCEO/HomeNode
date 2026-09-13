@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortMembers } from '../customCohortPreviewApi';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
@@ -54,9 +54,16 @@ function RecordedCadDetails({ evidence, pocketId }: { evidence: CheckedCadRecord
  * its map again. Keyed identity prevents an old group's numbers flashing on click. */
 export default function CustomCohortPocketInspector(props: Props) {
   const ref = props.input.contextRef;
-  return <InspectorSession key={JSON.stringify([props.input.accountId, props.input.assignmentFileId,
-    ref.context_id, ref.context_revision, ref.context_sha256, props.inspectionSelection
-      ? ['phase-batch', props.inspectionSelection] : [props.pocketId, props.pocketIds ? [...props.pocketIds].sort() : null]])} {...props} />;
+  // The dialog's batch is frozen. Phase-only renders keep its identity, while
+  // copied equal batches still produce the same structural session key.
+  const batchKey = useMemo(() => props.inspectionSelection ? JSON.stringify([
+    props.input.accountId, props.input.assignmentFileId, ref.context_id, ref.context_revision,
+    ref.context_sha256, ['phase-batch', props.inspectionSelection],
+  ]) : null, [props.input.accountId, props.input.assignmentFileId, ref.context_id,
+    ref.context_revision, ref.context_sha256, props.inspectionSelection]);
+  return <InspectorSession key={batchKey ?? JSON.stringify([props.input.accountId, props.input.assignmentFileId,
+    ref.context_id, ref.context_revision, ref.context_sha256,
+    [props.pocketId, props.pocketIds ? [...props.pocketIds].sort() : null]])} {...props} />;
 }
 function InspectorSession(props: Props) {
   const cad = props.catalog.recommendation?.cad_recorded_evidence;

@@ -68,7 +68,7 @@ const children = node => (Array.isArray(node?.props?.children) ? node.props.chil
 const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : node && typeof node === 'object' ? children(node).map(text).join('') : '';
-function harness(name = 'CustomCohortWorkspace') {
+function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   const cells = [], effects = [], calls = [], catalogCalls = [], intents = [], timers = new Map();
   const requestWaiters = new Map(), fingerprints = new Set();
   let cursor = 0, dirty = false, tree, props, serial = 0, now = 0, fingerprintCount = 0, ownerKey;
@@ -93,7 +93,7 @@ function harness(name = 'CustomCohortWorkspace') {
   const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText, module = { exports: {} };
-  new Script(`(function(require,module,exports,setTimeout,clearTimeout){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
+  new Script(`(function(require,module,exports,setTimeout,clearTimeout,JSON){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortPreviewApi') return api;
@@ -109,19 +109,21 @@ function harness(name = 'CustomCohortWorkspace') {
       },
       createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
-  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; }, id => timers.delete(id));
+  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; }, id => timers.delete(id),
+  { parse: JSON.parse, stringify: (...args) => { onSerialize?.(args[0]); return JSON.stringify(...args); } });
   function render(next = props) {
     props = next; cursor = 0; dirty = false;
     const owner = module.exports.default(props);
     if (name === 'CustomCohortPocketInspector' && ownerKey !== owner.key) {
-      cells.forEach(cell => cell?.cleanup?.()); cells.length = 0; effects.length = 0; cursor = 0; ownerKey = owner.key;
+      // A keyed child remount does not discard the outer component's memo hooks.
+      cells.slice(cursor).forEach(cell => cell?.cleanup?.()); cells.length = cursor; effects.length = 0; ownerKey = owner.key;
     }
     tree = owner.type(owner.props);
     effects.splice(0).forEach(fn => fn());
   }
   function flush() { let n = 0; while (dirty) { assert.ok(++n < 20, 'No render loop'); render(); } }
   return { calls, catalogCalls, intents, previewTransport, api,
-    get fingerprintCount() { return fingerprintCount; },
+    get fingerprintCount() { return fingerprintCount; }, get sessionKey() { return ownerKey; },
     pendingTimers: () => [...timers.values()],
     props(ids = [groupId(1)], revision = 7) { return { ...input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'session-1',
       workspace: { catalog, selection: { revision, included_recorded_group_ids: ids }, saving: false,
@@ -705,15 +707,71 @@ test('changed context or batch membership clears checked observations and ignore
   assert.equal(h.child('CustomCohortMemberBrowser').input.selection.pockets.length, 1);
 });
 
-test('capacity failure asks the dialog for complete standalone inspection once; malformed phase summaries never substitute the parent', async t => {
+test('frozen batch identity serializes once across phase-only renders; equal copies preserve the structural session', async t => {
+  const serialized = [];
+  const h = harness('CustomCohortPocketInspector', { onSerialize(value) {
+    if (Array.isArray(value) && value[5]?.[0] === 'phase-batch') serialized.push(value[5][1]);
+  } }); t.after(() => h.unmount());
+  const freezeSelection = value => Object.freeze({ revision: value.revision,
+    pockets: Object.freeze(value.pockets.map(p => Object.freeze({ ...p, account_ids: Object.freeze([...p.account_ids]) }))) });
+  const inspectionSelection = freezeSelection({ revision: 1,
+    pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) });
+  const props = { input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection, previewTransport: h.previewTransport };
+  h.render(props); const originalKey = h.sessionKey;
+  assert.deepEqual(serialized, [inspectionSelection]);
+  assert.equal(originalKey, JSON.stringify([input.accountId, input.assignmentFileId, ref.context_id,
+    ref.context_revision, ref.context_sha256, ['phase-batch', inspectionSelection]]), 'original key bytes are unchanged');
+  await h.tick(); await h.waitForRequest(0);
+  for (let i = 0; i < 12; i++) h.render({ ...props, pocketId: groupId(i % 2 + 1),
+    inspectedPocketId: groupId(i % 2 + 1), label: `Phase ${i % 2 + 1}` });
+  assert.equal(serialized.length, 1); assert.equal(h.sessionKey, originalKey); assert.equal(h.calls[0].signal.aborted, false);
+  await h.complete(); const group = h.child('CustomCohortStatistics').group;
+  assert.equal(serialized.length, 1, 'response state renders do not traverse the frozen batch again');
+  const copied = freezeSelection(structuredClone(inspectionSelection));
+  const copiedProps = { ...props, inspectionSelection: copied };
+  h.render(copiedProps); h.render({ ...copiedProps, membersPaused: true, inspectedPocketId: groupId(2) });
+  h.render({ ...copiedProps, input: { ...input, selection: { revision: 9, pockets: [] } } });
+  await h.tick(); await h.settleFingerprints();
+  assert.deepEqual(serialized, [inspectionSelection, copied]); assert.equal(h.sessionKey, originalKey);
+  assert.equal(h.child('CustomCohortStatistics').group, group); assert.equal(h.calls.length, 1);
+  const changed = freezeSelection({ ...copied, pockets: copied.pockets.slice(1) });
+  h.render({ ...copiedProps, inspectionSelection: changed });
+  assert.deepEqual(serialized, [inspectionSelection, copied, changed]); assert.notEqual(h.sessionKey, originalKey);
+  assert.equal(h.child('CustomCohortStatistics'), undefined); assert.equal(h.calls[0].signal.aborted, true);
+  await h.tick(); await h.waitForRequest(1); await h.complete(1);
+  assert.equal(h.child('CustomCohortMemberBrowser').input.selection, changed); assert.equal(serialized.length, 3);
+});
+
+test('memoized batch key retains every original account, assignment and context binding', t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const inspectionSelection = Object.freeze({ revision: 1, pockets: Object.freeze([]) });
+  const props = { input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection, paused: true };
+  h.render(props); const originalKey = h.sessionKey;
+  for (const changedInput of [{ ...input, accountId: 'B' }, { ...input, assignmentFileId: '9007199254740994' },
+    ...Object.entries({ context_id: '10000000-0000-4000-8000-000000000002', context_revision: '2', context_sha256: 'b'.repeat(64) })
+      .map(([key, value]) => ({ ...input, contextRef: { ...ref, [key]: value } }))]) {
+    h.render({ ...props, input: changedInput }); const changedRef = changedInput.contextRef;
+    assert.notEqual(h.sessionKey, originalKey);
+    assert.equal(h.sessionKey, JSON.stringify([changedInput.accountId, changedInput.assignmentFileId,
+      changedRef.context_id, changedRef.context_revision, changedRef.context_sha256, ['phase-batch', inspectionSelection]]));
+    h.render(props); assert.equal(h.sessionKey, originalKey);
+  }
+  assert.equal(h.calls.length, 0);
+});
+
+test('only capacity failure requests standalone fallback; malformed, auth and timeout failures stay closed', async t => {
   const inspectionSelection = { revision: 1, pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) };
-  let fallback = 0;
-  for (const kind of ['capacity', 'missing', 'count', 'duplicate', 'wrong-label']) {
+  for (const kind of ['capacity', 'missing', 'count', 'duplicate', 'wrong-label', 'authentication', 'authorization', 'transport-timeout', 'deadline']) {
+    let fallback = 0;
     const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
     h.render({ input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection,
       previewTransport: h.previewTransport, onBatchUnavailable: () => fallback++ });
     await h.tick(); await h.waitForRequest(0);
     if (kind === 'capacity') h.calls[0].reject(Object.assign(new Error('secret'), { status: 422, workspaceCode: 'preview_capacity_exceeded' }));
+    else if (kind === 'authentication' || kind === 'authorization') h.calls[0].reject(Object.assign(new Error('secret'), {
+      status: kind === 'authentication' ? 401 : 403, workspaceCode: 'request_failed' }));
+    else if (kind === 'transport-timeout') h.calls[0].reject(Object.assign(new Error('secret'), { status: 504, name: 'TimeoutError' }));
+    else if (kind === 'deadline') { await h.advance(65_000); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0); }
     else {
       const bad = response(h.calls[0].request);
       if (kind === 'missing') bad.summary.pockets.pop();
@@ -723,6 +781,9 @@ test('capacity failure asks the dialog for complete standalone inspection once; 
       h.calls[0].resolve(bad);
     }
     await h.drain(); assert.equal(h.child('CustomCohortStatistics'), undefined); assert.equal(h.child('CustomCohortMemberBrowser'), undefined);
-    assert.equal(fallback, 1); await h.tick(); assert.equal(h.calls.length, 1); h.unmount();
+    const expectedFallback = kind === 'capacity' ? 1 : 0;
+    assert.equal(fallback, expectedFallback, kind); assert.doesNotMatch(h.text(), /secret/);
+    await h.tick(); await h.settleFingerprints();
+    assert.equal(h.calls.length, 1, `${kind} does not retry implicitly`); assert.equal(fallback, expectedFallback, kind); h.unmount();
   }
 });

@@ -14,7 +14,7 @@ function component(name) {
   const module = { exports: {} };
   // Only the public keyed wrapper executes. Child effects/transport are not run.
   new Script(`(function(require,module,exports){${code}\n})`, { filename: file }).runInThisContext()(id =>
-    id === 'react/jsx-runtime' ? requireRuntime(id) : {}, module, module.exports);
+    id === 'react/jsx-runtime' ? requireRuntime(id) : id === 'react' ? { useMemo: factory => factory() } : {}, module, module.exports);
   return { Component: module.exports.default, source };
 }
 const contextRef = { context_id: 'same-context', context_revision: '1', context_sha256: 'same-hash' };

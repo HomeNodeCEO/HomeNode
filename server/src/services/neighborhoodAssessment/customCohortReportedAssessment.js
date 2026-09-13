@@ -285,6 +285,18 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
   const candidate = buildCustomNeighborhoodReportCandidate({ assessment: publication.assessment, target: { ...target,
     attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,
     workflow_type: 'custom_appraisal', uad_workfile_id: null, specification_release: null } });
+  let issues = candidate.issues ?? [];
+  const checked = publication.assessment;
+  if (candidate.status === 'incomplete' && checked.contract_version === 2
+    && checked.application_group.status === 'incomplete' && checked.geographic_neighborhood.status === 'incomplete') {
+    // Diagnostics only, after full publication/candidate validation. Never
+    // substitute saved-input text or change the checked graph/readiness gates.
+    const codes = new Set(issues.map(issue => issue.code));
+    issues = [...issues];
+    for (const code of checked.geographic_neighborhood.reasons) {
+      if (!codes.has(code)) { codes.add(code); issues.push({ code }); }
+    }
+  }
   return freeze({ status: candidate.status, assessment: publication.assessment, publication_bundle: publication, candidate,
-    issues: candidate.issues ?? [], binding });
+    issues, binding });
 }

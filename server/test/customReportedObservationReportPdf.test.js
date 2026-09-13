@@ -86,9 +86,13 @@ for (const [name, mutate] of [
   assert.ok(customAppraisalReportReadiness(f.snapshot, f.property).blockers.some(item => item.code === 'custom_neighborhood_report_unavailable'));
 });
 
-test('v1 appendix remains byte-identical in its planned text/position stream', () => {
+test('v1 appendix retains its original complete content/style stream with explicit statistic-heading layout', () => {
   const f = customNeighborhoodReportPdfFixture(), doc = { font() { return this; }, fontSize() { return this; }, widthOfString(text) { return text.length * 4; } };
   const pages = prepareCustomNeighborhoodPdfAppendix(doc, { assessment: f.assessment,
     operation_id: f.section.operation_id, accepted_editor_revision: f.section.accepted_editor_revision });
-  assert.equal(createHash('sha256').update(JSON.stringify(pages)).digest('hex'), 'dbadecf05191e1cdf5ad9ac23fb555388ac1cc00dd686976fa7f0d0662802aef');
+  // The old dbadecf... layout orphaned zero-denominator's heading. Text/style
+  // stays exactly pre-edit; only the now-explicit keep-with-next layout changes.
+  const stream = pages.flat().map(({ y: _y, ...line }) => line);
+  assert.equal(createHash('sha256').update(JSON.stringify(stream)).digest('hex'), 'cb89714d507a9dfe708e434bfe2316b7d778bd51eb81832657590624cc827c53');
+  assert.equal(createHash('sha256').update(JSON.stringify(pages)).digest('hex'), 'e43fe3644c47ed3ba2a00141ef3c9880b2953ef3c99fd91ec63bdfb6421dbba4');
 });

@@ -74,9 +74,16 @@ function wrap(doc, value, width, font, size) {
 export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
   const assessment = projected.assessment, pages = [[]], reported = assessment.contract_version === 2;
   let y = TOP;
-  const paragraph = (value, heading = false) => {
+  const paragraph = (value, heading = false, keepNextLine = false) => {
     const font = heading ? "Helvetica-Bold" : "Helvetica", size = heading ? 9 : 8;
     const lines = wrap(doc, value, WIDTH, font, size);
+    // Only statistic headings opt in: keep the complete heading and the first
+    // detail line together, not an arbitrarily long reason/statistic block.
+    const keptHeight = lines.length * 12 + 3 + 12;
+    if (keepNextLine && heading && keptHeight <= BOTTOM - TOP
+      && pages.at(-1).length && y + keptHeight > BOTTOM) {
+      pages.push([]); y = TOP;
+    }
     for (const text of lines) {
       if (y + 12 > BOTTOM) { pages.push([]); y = TOP; }
       pages.at(-1).push({ text, font, size, y, heading }); y += 12;
@@ -111,7 +118,7 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
       const statistics = assessment.statistics.filter(statistic => statistic.population_id === population.id);
       if (!statistics.length) paragraph("Unavailable - no statistics supplied for this population.");
       for (const statistic of statistics) {
-        paragraph(`Statistic ${statistic.id} - ${reportedLabels[statistic.measurement]}`, true);
+        paragraph(`Statistic ${statistic.id} - ${reportedLabels[statistic.measurement]}`, true, true);
         const value = statistic.status === "ready" ? `${reportedNumber(statistic.value, statistic.unit)} ${statistic.unit === "source_records" ? "source records" : statistic.unit}`
           : `Unavailable - ${statistic.reason || statistic.status}`;
         paragraph(`Estimator: ${estimators[statistic.estimator]}; status: ${statistic.status}; value: ${value}.`);
@@ -133,7 +140,7 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
       let title = label[statistic.measurement];
       if (population.member_unit === "allocated_property_sale" && ["predominant_sale_price", "sale_price_per_square_foot"].includes(statistic.measurement)) title = `Package-allocated ${title.toLowerCase()}`;
       if (statistic.measurement.startsWith("assessed_")) title += `; tax year: ${supplied(statistic.assessment_tax_year)}`;
-      paragraph(`Statistic ${statistic.id} - ${title}`, true);
+      paragraph(`Statistic ${statistic.id} - ${title}`, true, true);
       let value = statistic.status === "ready" ? `${formatNumber(statistic.value, statistic.unit)} ${statistic.unit}` : `Unavailable - ${statistic.reason || statistic.status}`;
       if (statistic.status === "ready" && statistic.estimator === "modal_interval") {
         const parameters = statistic.estimator_parameters;

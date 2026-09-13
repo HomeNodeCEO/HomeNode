@@ -1,7 +1,7 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { type AppraisalAssignmentFile } from "@/lib/api";
 import { loadAssignmentFiles } from "@/lib/appraisalFileRequests";
-import { selectAssignmentFile } from "@/lib/assignmentFileSelection";
+import { customAssignmentFileMatches, selectCustomAssignmentFile, CUSTOM_ASSIGNMENT_REQUEST_ERROR } from "@/lib/customAssignmentNavigation";
 
 type AssignmentFileSelectionHandler = (
   file: AppraisalAssignmentFile,
@@ -30,6 +30,8 @@ export function useAssignmentFiles({
 
   useLayoutEffect(() => {
     selectionGenerationRef.current += 1;
+    setActiveAssignmentFile(null);
+    setAssignmentFileNumber("");
   }, [accountId, enabled, requestedAssignmentFileId]);
 
   useEffect(() => {
@@ -38,13 +40,16 @@ export function useAssignmentFiles({
 
   useEffect(() => {
     let cancelled = false;
+    const generation = selectionGenerationRef.current;
+    const isCancelled = () => cancelled || selectionGenerationRef.current !== generation;
     setAssignmentFiles([]);
     setAssignmentFilesLoaded(false);
     setActiveAssignmentFile(null);
     setAssignmentFileNumber("");
     setAssignmentFilesError("");
 
-    if (!accountId?.trim() || !enabled) {
+    if (!accountId?.trim() || !enabled || requestedAssignmentFileId === null) {
+      if (requestedAssignmentFileId === null) setAssignmentFilesError(CUSTOM_ASSIGNMENT_REQUEST_ERROR);
       setAssignmentFilesLoading(false);
       setAssignmentFilesLoaded(true);
       return () => {
@@ -55,28 +60,24 @@ export function useAssignmentFiles({
     setAssignmentFilesLoading(true);
     void loadAssignmentFiles(accountId)
       .then(async (response) => {
-        if (cancelled) return;
+        if (isCancelled()) return;
         const files = response.files || [];
+        const selectedFile = selectCustomAssignmentFile(response, accountId, requestedAssignmentFileId);
         setAssignmentFiles(files);
-        const selectedFile = selectAssignmentFile(
-          files,
-          response.latest_file,
-          requestedAssignmentFileId,
-        );
         if (!selectedFile) return;
         setActiveAssignmentFile(selectedFile);
         setAssignmentFileNumber(selectedFile.file_number);
-        await selectionHandlerRef.current?.(selectedFile, () => cancelled);
+        await selectionHandlerRef.current?.(selectedFile, isCancelled);
       })
       .catch((error: unknown) => {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setAssignmentFilesError(
             error instanceof Error ? error.message : "The assignment log could not be loaded.",
           );
         }
       })
       .finally(() => {
-        if (!cancelled) {
+        if (!isCancelled()) {
           setAssignmentFilesLoading(false);
           setAssignmentFilesLoaded(true);
         }
@@ -87,6 +88,11 @@ export function useAssignmentFiles({
     };
   }, [accountId, enabled, requestedAssignmentFileId]);
 
+  const currentFile = enabled && requestedAssignmentFileId !== null
+    && customAssignmentFileMatches(activeAssignmentFile, accountId || "")
+    && (requestedAssignmentFileId === undefined || activeAssignmentFile.id === requestedAssignmentFileId)
+    ? activeAssignmentFile : null;
+
   return {
     assignmentFiles,
     setAssignmentFiles,
@@ -94,9 +100,9 @@ export function useAssignmentFiles({
     assignmentFilesLoaded,
     assignmentFilesError,
     setAssignmentFilesError,
-    activeAssignmentFile,
+    activeAssignmentFile: currentFile,
     setActiveAssignmentFile,
-    assignmentFileNumber,
+    assignmentFileNumber: currentFile ? assignmentFileNumber : "",
     setAssignmentFileNumber,
     selectionGenerationRef,
   };

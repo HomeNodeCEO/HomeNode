@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import * as api from '@/lib/api';
 import { loadAppraisalFileContext, useAppraisalFileRequest } from '@/hooks/useAppraisalFileContext';
 import { requestEditorCredential } from '@/lib/editorCredential';
+import { customAssignmentHref } from '@/lib/customAssignmentNavigation';
 import {
   calculateFinalReconciliation,
   DEFAULT_APPRAISER_CERTIFICATION,
@@ -96,7 +97,11 @@ function defaultEffectiveDate(workfile: api.CustomAppraisalWorkfile): string {
 }
 
 export default function FinalReconciliation() {
-  const { propertyId, requestedFileId } = useAppraisalFileRequest();
+  const request = useAppraisalFileRequest();
+  return <FinalReconciliationWorkspace key={`${request.propertyId}:${String(request.requestedFileId)}`} {...request} />;
+}
+
+function FinalReconciliationWorkspace({ propertyId, requestedFileId }: ReturnType<typeof useAppraisalFileRequest>) {
   const [detail, setDetail] = useState<api.AccountDetail | null>(null);
   const [assignmentFile, setAssignmentFile] =
     useState<api.AppraisalAssignmentFile | null>(null);
@@ -248,8 +253,8 @@ export default function FinalReconciliation() {
               <p className="text-sm text-slate-500">{assignmentFile ? `File ${assignmentFile.file_number}` : 'Create an appraisal file before saving.'}</p>
             </div>
             <div className="flex flex-wrap gap-2">
-              <a className="hn-action-secondary btn normal-case rounded-md" href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
-              <a className="hn-action-primary btn normal-case rounded-md" href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${assignmentFile ? `&assignmentFileId=${assignmentFile.id}` : ''}`}>Full Report</a>
+              <a className="hn-action-secondary btn normal-case rounded-md" href={customAssignmentHref('/report', propertyId, requestedFileId, assignmentFile)}>Property Report</a>
+              <a className="hn-action-primary btn normal-case rounded-md" href={customAssignmentHref('/AppraisalReport', propertyId, requestedFileId, assignmentFile)}>Full Report</a>
             </div>
           </div>
         </header>

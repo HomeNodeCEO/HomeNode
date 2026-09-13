@@ -1,0 +1,9 @@
+# Custom assignment navigation context
+
+Property Report, Full Appraisal Report, Sales Comparison, Cost, Income, and Final Reconciliation preserve the selected assignment ID in their same-file navigation. A valid explicit ID remains in links while the workfile loads. Without an explicit ID, initial selection still uses the latest authorized file; subsequent links bind the resolved file and its account rather than silently selecting the latest again.
+
+The Custom query parser distinguishes an absent `assignmentFileId` from an invalid explicit request. Exactly one positive, safe, decimal integer is accepted. Empty, duplicate, signed, fractional, exponent, padded, and unsafe values are invalid, not requests for the latest file. An explicit ID missing from the returned authorized list also fails closed. Invalid or unavailable requests establish no active file and do not hydrate another assignment. Responses for another account and superseded asynchronous selections cannot establish a new save destination. Existing workfile identity, authorization, signing, and save-generation checks remain in place.
+
+The existing chooser and new-assignment flow continue to navigate with their exact returned target IDs. No backend, authorization, appraisal calculations, stored values, or non-Custom navigation changed. Cost, Income, and Final Reconciliation use an account/request-keyed workspace: changing that identity remounts local state, so an old draft or late save completion cannot populate the newly requested file. Their calculation and save bodies are unchanged. Property Report clears its selected file in the layout phase before the next passive load effect.
+
+Focused tests execute the actual page link expressions and loading effects, including unavailable IDs, delayed responses, same-account multiple-file lists, and deliberate chooser/new-file navigation. Merely checking that source text contains `assignmentFileId` is not sufficient to prove this binding.

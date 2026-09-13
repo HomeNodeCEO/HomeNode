@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
+import { selectCustomAssignmentFile, customAssignmentHref, parseCustomAssignmentFileId, CUSTOM_ASSIGNMENT_REQUEST_ERROR } from "@/lib/customAssignmentNavigation";
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
 import type { AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
@@ -326,11 +327,7 @@ export default function AppraisalReport() {
     const params = new URLSearchParams(location.search);
     return (params.get("propertyId") || params.get("accountId") || "").trim();
   }, [location.search]);
-  const requestedAssignmentFileId = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    const parsed = Number(params.get("assignmentFileId"));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const requestedAssignmentFileId = useMemo(() => parseCustomAssignmentFileId(location.search), [location.search]);
   const [detail, setDetail] = useState<Detail | null>(null);
   const [draft, setDraft] = useState<AppraisalReportSalesDraft | null>(null);
   const [marketDraft, setMarketDraft] = useState<MarketConditionsDraft | null>(null);
@@ -379,7 +376,8 @@ export default function AppraisalReport() {
     const selectionIsCurrent = () => (
       !cancelled && assignmentSelectionGenerationRef.current === selectionGeneration
     );
-    if (!propertyId) {
+    if (!propertyId || requestedAssignmentFileId === null) {
+      if (requestedAssignmentFileId === null) setPrintBlocker(CUSTOM_ASSIGNMENT_REQUEST_ERROR);
       if (selectionIsCurrent()) setAssignmentLoading(false);
       return () => { cancelled = true; };
     }
@@ -387,9 +385,7 @@ export default function AppraisalReport() {
     void loadAssignmentFiles(propertyId)
       .then(async (response) => {
         if (!selectionIsCurrent()) return;
-        const assignment = requestedAssignmentFileId
-          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
-          : response.latest_file;
+        const assignment = selectCustomAssignmentFile(response, propertyId, requestedAssignmentFileId);
         if (!assignment) return;
         const result = await loadCustomAppraisalWorkfile(propertyId, assignment.id);
         if (!selectionIsCurrent()) return;
@@ -430,6 +426,7 @@ export default function AppraisalReport() {
       })
       .catch(() => {
         if (!selectionIsCurrent()) return;
+        setPrintBlocker(CUSTOM_ASSIGNMENT_REQUEST_ERROR);
         setAssignmentFile(null);
         setAcceptedNeighborhood(null);
         setDraft(null);
@@ -1017,8 +1014,8 @@ export default function AppraisalReport() {
           <div className="text-xs text-slate-500">{address}</div>
         </div>
         <div className="report-toolbar-actions">
-          <a href={`/report/${encodeURIComponent(propertyId)}`}>Property Report</a>
-          <a href={`/ComparableSalesAnalysis?propertyId=${encodeURIComponent(propertyId)}`}>
+          <a href={customAssignmentHref("/report", propertyId, requestedAssignmentFileId, assignmentFile)}>Property Report</a>
+          <a href={customAssignmentHref("/ComparableSalesAnalysis", propertyId, requestedAssignmentFileId, assignmentFile)}>
             Sales Comparison
           </a>
           <button type="button" className="report-print-button" onClick={() => void downloadServerReport()} disabled={pdfGenerating}>

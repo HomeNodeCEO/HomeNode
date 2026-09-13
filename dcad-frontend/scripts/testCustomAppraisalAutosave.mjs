@@ -34,7 +34,7 @@ test("save results apply only to the same assignment selection generation", () =
 test("assignment selection changes invalidate every asynchronous save completion path", () => {
   assert.match(
     assignmentFilesHookSource,
-    /useLayoutEffect\(\(\) => \{\s*selectionGenerationRef\.current \+= 1;\s*\}, \[accountId, enabled, requestedAssignmentFileId\]\);/u,
+    /useLayoutEffect\(\(\) => \{\s*selectionGenerationRef\.current \+= 1;\s*setActiveAssignmentFile\(null\);\s*setAssignmentFileNumber\(""\);\s*\}, \[accountId, enabled, requestedAssignmentFileId\]\);/u,
   );
   assert.equal(propertyReportSource.match(/selectionIsCurrent\(\)/gu)?.length, 5);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\)\) return true;/u);

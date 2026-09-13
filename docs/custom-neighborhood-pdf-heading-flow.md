@@ -1,0 +1,7 @@
+# Neighborhood PDF statistic heading flow
+
+Newly rendered neighborhood evidence appendices keep each complete statistic heading with at least its first estimator/status/value detail line, for both assessment contracts. This is an opt-in page-placement rule at the two statistic headings only; other headings retain their existing behavior. Text, order, fonts, sizes, exact retained values and unknown/unsupported reasons are unchanged.
+
+The planner reserves the wrapped heading's existing 12-point lines, its 3-point gap and one 12-point detail line. An exact fit stays on the current page. An overflow starts a new page only when the current page is nonempty and the reserved block fits a whole body page. An oversized heading retains line-by-line fallback. Long reasons and other details still continue across pages without truncation or a whole-statistic keep-together rule.
+
+Page counts are still planned before rendering, including summary appendix ranges, report headers and photo offsets. The four synthetic pre-edit content/style hashes remain exact; three layout hashes intentionally change, including an existing v1 orphan. Tests cover exact fit, overflow, wrapped/oversized headings, long details, 888 complete selection IDs and more than 32 statistics through the real accepted mapper/PDF path. Existing signed-artifact retrieval remains unchanged and does not regenerate stored PDF bytes.

@@ -12,30 +12,31 @@ const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
-const REPORTED_DIAGNOSTIC_CHECK_COUNT = 18;
+const REPORTED_DIAGNOSTIC_MAX_CHECKS = 100_000;
 
 // Test-only observer of the EXISTING check-before/check-after contract. It does
 // not change production scheduling, skip verification or receive source values.
-// This count-only fixture guard cannot detect reordered work or establish stage
+// This paired-check guard cannot detect reordered work or establish stage
 // identity. Ordinals mean callback intervals, never named production operations.
 // Diagnostic runners must retain their actual source hashes separately. Version
-// 2 deliberately removes the unsupported semantic labels in earlier artifacts.
+// 3 admits bounded variable pairs from nested generators, not the old fixed
+// count. The diagnostic ceiling limits observer output, not source/report inputs.
 export function createDenseReportedStageObserver(emit, now = () => performance.now()) {
   assert.equal(typeof emit, 'function'); assert.equal(typeof now, 'function');
   let calls = 0, begin;
   return {
     check() {
       const timestamp = now(); assert.ok(Number.isFinite(timestamp));
-      assert.ok(calls < REPORTED_DIAGNOSTIC_CHECK_COUNT, 'reported diagnostic check count changed');
+      assert.ok(calls < REPORTED_DIAGNOSTIC_MAX_CHECKS, 'reported diagnostic check limit');
       if (calls % 2 === 0) begin = timestamp;
       else {
         const ordinal = Math.floor(calls / 2) + 1;
         emit({ name: `builder_synchronous_interval_${ordinal}`, kind: 'synchronous_builder_interval',
-          observer_version: 2, interval_ordinal: ordinal, start_ms: begin, end_ms: timestamp, elapsed_ms: timestamp - begin });
+          observer_version: 3, interval_ordinal: ordinal, start_ms: begin, end_ms: timestamp, elapsed_ms: timestamp - begin });
       }
       calls++;
     },
-    complete() { assert.equal(calls, REPORTED_DIAGNOSTIC_CHECK_COUNT, 'reported diagnostic check count changed'); },
+    complete() { assert.ok(calls > 0 && calls % 2 === 0, 'reported diagnostic incomplete check pairs'); },
   };
 }
 const observed = (exact_value, unit) => ({ state: 'observed', exact_value, unit, reason: null });

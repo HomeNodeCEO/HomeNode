@@ -162,6 +162,16 @@ function buildObservationPreview(args, indexed) {
   while (true) { const step = iterator.next(); if (step.done) return step.value; }
 }
 
+/** Internal iterator bridge for yield* in an owner-budgeted computation. The
+ * caller must seal all externally reachable inputs before any asynchronous
+ * suspension and own scheduling, budget checks, cleanup and final authorization.
+ * Locally constructed selections must not escape while suspended. This does not
+ * schedule work, mint authority, or expose a partial preview; sync and async
+ * public builders continue to drain the same observation kernel below. */
+export function customCohortIndexedObservationPreviewBatches(args) {
+  return observationBatches(args, true);
+}
+
 export async function buildCustomCohortIndexedObservationPreviewBatched(args, { check = () => {} } = {}) {
   // Do not mistake a shallow-frozen parent for immutable descendants. This
   // private owner input must be fully sealed before the first asynchronous yield.

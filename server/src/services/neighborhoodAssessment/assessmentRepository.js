@@ -6,6 +6,8 @@ import { REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.j
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const HASH = /^[a-f0-9]{64}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+const MEMBER_CHECKPOINT = 125;
+const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 const copy = value => {
   const result = JSON.parse(canonicalAssessmentJson(value));
   assertNeighborhoodJsonbStorage(result);
@@ -96,24 +98,51 @@ function* memberBatches(members) {
  * supplied by the caller; this helper invents no provenance or capture dates.
  */
 export function neighborhoodMemberContentDigest(members, profileInput) {
+  return drain(neighborhoodMemberContentDigestBatches(members, profileInput));
+}
+
+/** Internal cooperative bridge. The owner must seal caller-reachable inputs
+ * before suspending this iterator; yields expose no rows, hashes or receipts.
+ * Sync callers drain this exact kernel without an asynchronous boundary.
+ */
+export function* neighborhoodMemberContentDigestBatches(members, profileInput) {
   if (!Array.isArray(members) || members.length > 100_000) fail('member_limit');
   const profile = memberProfile(profileInput);
-  const rows = members.map(row => normalizedMember(row, profile.contract_version))
-    .sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
+  const rows = new Array(members.length);
+  for (let index = 0; index < rows.length; index++) {
+    // Preserve Array#map's sparse-array behavior for the unchanged sync API.
+    if (index in members) rows[index] = normalizedMember(members[index], profile.contract_version);
+    if ((index + 1) % MEMBER_CHECKPOINT === 0) yield;
+  }
+  yield;
+  rows.sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
+  yield;
   // V1 hashes remain the exact original canonical row array. V2 additionally
   // binds its installed observation profile, including an empty member array.
   const digest = createHash('sha256').update(profile.contract_version === 2 ? '{"contract_version":2,"members":[' : '[');
   let bytes = 0;
-  rows.forEach((row, index) => {
+  for (let index = 0; index < rows.length; index++) {
+    if (!(index in rows)) continue;
+    const row = rows[index];
     if (index && row.population_id === rows[index - 1].population_id && row.member_id === rows[index - 1].member_id) fail('duplicate_member');
     const encoded = canonicalAssessmentJson(row); bytes += Buffer.byteLength(encoded);
     if (bytes > 32_000_000) fail('publication_bytes');
     if (index) digest.update(','); digest.update(encoded);
-  });
+    if ((index + 1) % MEMBER_CHECKPOINT === 0) yield;
+  }
+  yield;
   return digest.update(profile.contract_version === 2 ? `],"profile_id":${canonicalAssessmentJson(profile.profile_id)}}` : ']').digest('hex');
 }
 
 export function prepareNeighborhoodPublication(assessmentInput, members, sources) {
+  return drain(prepareNeighborhoodPublicationBatches(assessmentInput, members, sources));
+}
+
+/** Same validation/reverification kernel as the synchronous API. Only an owner
+ * with sealed caller inputs and exclusively owned derived arrays may suspend
+ * this iterator. No partial publication or validation authority is yielded.
+ */
+export function* prepareNeighborhoodPublicationBatches(assessmentInput, members, sources) {
   const assessment = buildNeighborhoodAssessment(assessmentInput);
   const profile = memberProfile(assessment.contract_version === 2
     ? { contract_version: 2, profile_id: assessment.methodology.configuration.profile_id } : { contract_version: 1 });
@@ -124,8 +153,11 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
   const sourceIds = new Set(assessment.source_snapshots.map(source => source.id));
   let bytes = 0;
   const accountLinks = { count: 0 };
-  const normalizedMembers = members.map(member => {
-    const row = normalizedMember(member, profile.contract_version);
+  yield;
+  const normalizedMembers = new Array(members.length);
+  for (let index = 0; index < normalizedMembers.length; index++) {
+    if (!(index in members)) continue;
+    const row = normalizedMember(members[index], profile.contract_version);
     const encoded = canonicalAssessmentJson(row);
     if (Buffer.byteLength(encoded) + 2 > 1_500_000) fail('member_row_bytes');
     bytes += Buffer.byteLength(encoded);
@@ -145,8 +177,12 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     population.rows.push(row);
     row.account_ids.forEach(id => population.accounts.add(id));
     population.links += row.account_ids.length;
-    return row;
-  }).sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
+    normalizedMembers[index] = row;
+    if ((index + 1) % MEMBER_CHECKPOINT === 0) yield;
+  }
+  yield;
+  normalizedMembers.sort((a, b) => compare(a.population_id, b.population_id) || compare(a.member_id, b.member_id));
+  yield;
   for (const { item, members: ids, accounts, links } of populations.values()) {
     const memberDigest = neighborhoodMemberSetDigest(ids);
     const uniqueCount = reported ? item.unique_account_count : item.unique_property_count;
@@ -156,6 +192,7 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     if (reported && ((uniqueCount !== null && uniqueCount !== accounts.size) || (linkCount !== null && linkCount !== links))) fail('population_account_counts');
     if (item.member_count !== null && item.member_count !== ids.length) fail('population_member_count');
     if (item.member_set_sha256 !== null && item.member_set_sha256 !== memberDigest) fail('population_member_digest');
+    yield;
   }
   const bySource = new Map();
   for (const source of sources) {
@@ -166,12 +203,14 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     storageBytes += assertNeighborhoodJsonbStorage(payload);
     if (storageBytes > 64_000_000) fail('publication_storage_bytes');
     bySource.set(source.id, { id: source.id, payload, digest: assessmentEvidenceDigest(payload) });
+    yield;
   }
   const normalizedSources = assessment.source_snapshots.map(snapshot => {
     const source = bySource.get(snapshot.id);
     if (!source || source.digest !== snapshot.content_sha256) fail('source_content_mismatch');
     return { snapshot, payload: source.payload };
   });
+  yield;
   for (const { item, rows } of populations.values()) {
     const captures = item.source_refs.map(id => bySource.get(id)?.payload).filter(payload =>
       (reported ? ['neighborhood_population_members_v1', 'neighborhood_population_members_v2'].includes(payload?.capture_type)
@@ -179,9 +218,23 @@ export function prepareNeighborhoodPublication(assessmentInput, members, sources
     if (captures.length !== 1 || captures[0].member_unit !== item.member_unit ||
         (reported && (captures[0].capture_type !== 'neighborhood_population_members_v2' || captures[0].contract_version !== 2
           || captures[0].profile_id !== profile.profile_id)) ||
-        captures[0].member_content_sha256 !== neighborhoodMemberContentDigest(rows, profile)) fail('member_content_mismatch');
+        captures[0].member_content_sha256 !== (yield* neighborhoodMemberContentDigestBatches(rows, profile))) fail('member_content_mismatch');
+    yield;
   }
-  return freeze({ assessment, members: normalizedMembers, sources: normalizedSources });
+  // Preserve the original postorder deep freeze, including re-traversal of
+  // assessment snapshots also referenced by sources. Split only between rows.
+  freeze(assessment);
+  yield;
+  for (let index = 0; index < normalizedMembers.length; index++) {
+    if (index in normalizedMembers) freeze(normalizedMembers[index]);
+    if ((index + 1) % MEMBER_CHECKPOINT === 0) yield;
+  }
+  Object.freeze(normalizedMembers);
+  yield;
+  for (const source of normalizedSources) { freeze(source); yield; }
+  Object.freeze(normalizedSources);
+  yield;
+  return Object.freeze({ assessment, members: normalizedMembers, sources: normalizedSources });
 }
 
 async function transaction(pool, operation) {

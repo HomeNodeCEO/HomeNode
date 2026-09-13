@@ -14,6 +14,7 @@ import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAss
 import { prepareCustomCohortCaptureInputs } from '../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { CACHED_SALE_WITNESS_V2_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
 import { cadEvidenceFixture } from './fixtures/customCohortCadEvidenceFixture.js';
+import { prepareCustomCohortReportGeography, completeCustomCohortReportGeography } from '../src/services/neighborhoodAssessment/customCohortReportGeography.js';
 
 const profile = getCustomCohortReportedSaleWitnessV2Profile(), cases = denseWitness2FixtureCases();
 const hash = value => createHash('sha256').update(json(value)).digest('hex');
@@ -23,19 +24,61 @@ const shared = (f, build = buildCustomCohortReportedSharedSalesWitnessV2) => bui
 const combined = (options = {}) => cadEvidenceFixture({ mappingVersion: 5, rawPayload: cases[0].raw,
   reportedSaleInterpretation: profile.profile_ref, ...options });
 
-test('optional reported diagnostic observer names only the existing bounded check intervals', () => {
+test('optional reported diagnostic observer emits neutral ordinals and guards callback count only', () => {
   const rows = []; let tick = 100;
   const observer = createDenseReportedStageObserver(row => rows.push(row), () => tick++);
   for (let i = 0; i < 18; i++) observer.check();
   observer.complete();
-  assert.deepEqual(rows.map(row => row.name), ['builder_input_seal', 'builder_discovery_preview',
-    'builder_catalog_and_selected_preview', 'builder_cad_population', 'builder_cad_metrics',
-    'builder_shared_population', 'builder_assessment_contract', 'builder_publication_preparation', 'builder_candidate']);
+  assert.deepEqual(rows.map(row => row.name), Array.from({ length: 9 }, (_, index) => `builder_synchronous_interval_${index + 1}`));
+  assert.deepEqual(rows.map(row => row.interval_ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
   assert.ok(rows.every(row => row.elapsed_ms === 1 && row.end_ms - row.start_ms === 1
-    && row.kind === 'synchronous_builder_interval'));
-  assert.throws(() => observer.check(), /stage layout changed/);
-  assert.throws(() => createDenseReportedStageObserver(() => {}).complete(), /stage layout changed/);
+    && row.kind === 'synchronous_builder_interval' && row.observer_version === 2));
+  assert.throws(() => observer.check(), /check count changed/);
+  assert.throws(() => createDenseReportedStageObserver(() => {}).complete(), /check count changed/);
   assert.throws(() => createDenseReportedStageObserver(null));
+});
+
+// Small original source acquisition/retention fixtures and the real cooperative
+// builders; no native DB or capacity timing claim. The synthetic geography
+// oracle uses the existing process-local admission, never a copied capability.
+for (const mappingVersion of [4, 5]) test(`real mapping${mappingVersion} report builder verifies diagnostic count and output parity`, async () => {
+  const capture = await cadEvidenceFixture({ mappingVersion, assignmentFileId: '41', effectiveDate: '2026-09-06',
+    ...(mappingVersion === 5 ? { rawPayload: cases[0].raw, reportedSaleInterpretation: profile.profile_ref } : {}) });
+  const originals = retained(capture), subject = originals.subject.target, derivedAt = '2026-09-06T16:00:00.000Z';
+  const target = { scope: Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']
+    .map(key => [key, subject[key]])), report_file_id: subject.report_file_id, custom_assignment_file_id: 41,
+    editor_revision: 0, effective_date: originals.subject.effective_date, data_cutoff: originals.subject.effective_date };
+  const saved = { neighborhood_boundary_source: 'appraiser_defined_area_manual_v2',
+    neighborhood_boundary_geometry: { type: 'Polygon', coordinates: [[[-97, 32], [-96, 32], [-96, 34], [-97, 34], [-97, 32]]] },
+    ...Object.fromEntries(['north', 'east', 'south', 'west'].map(side => [`neighborhood_boundary_${side}`, `Synthetic ${side}`])) };
+  const projected = JSON.stringify(saved), admitted = prepareCustomCohortReportGeography({
+    target: { organization_id: subject.organization_id, report_file_id: subject.report_file_id,
+      assignment_file_id: subject.assignment_file_id, account_id: subject.account_id }, assignment_revision: 1,
+    captured_at: derivedAt, retained_subject: originals.subject,
+    projection: { details_type: 'object', projected_utf8_bytes: Buffer.byteLength(projected),
+      projected_sha256: createHash('sha256').update(projected).digest('hex'), projected_json: projected } });
+  assert.equal(admitted.status, 'awaiting_topology');
+  const geography = completeCustomCohortReportGeography(admitted, { is_valid: true, validation_reason: 'Synthetic diagnostic oracle',
+    postgis_version: 'synthetic-only', geometry_type: 'ST_Polygon', is_empty: false, component_count: 1,
+    covers_recorded_subject_point: true, contains_recorded_subject_point: true });
+  const input = { context_ref: capture.input.expected.context_ref, retained_inputs: originals, target,
+    selection: { revision: 1, included_recorded_group_ids: [...capture.catalog.pockets.map(pocket => pocket.id),
+      ...(capture.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])] },
+    preparation_identity: { assessment_id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000001', assessment_revision: 1,
+      attachment_id: 'bbbbbbbb-bbbb-4bbb-8bbb-000000000002', attachment_revision: 1 },
+    report_geography: geography, derived_at: derivedAt };
+  const builder = denseReportedAssessmentBuilder(originals), expected = await builder(input), before = json(input), rows = [];
+  assert.equal(expected.status, 'ready');
+  let calls = 0, tick = 100;
+  const observer = createDenseReportedStageObserver(row => rows.push(row), () => tick++);
+  const result = await builder(input, { check() { calls++; observer.check(); } });
+  observer.complete();
+  assert.equal(calls, 18); assert.equal(rows.length, 9);
+  assert.deepEqual(rows.map(row => row.interval_ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  for (const [index, row] of rows.entries()) assert.deepEqual(row, { name: `builder_synchronous_interval_${index + 1}`,
+    kind: 'synchronous_builder_interval', observer_version: 2, interval_ordinal: index + 1,
+    start_ms: 100 + index * 2, end_ms: 101 + index * 2, elapsed_ms: 1 });
+  assert.deepEqual(result, expected); assert.equal(json(result), json(expected)); assert.equal(json(input), before);
 });
 
 // Bounded dispatcher/oracle tests only. No native database, dense allocation,

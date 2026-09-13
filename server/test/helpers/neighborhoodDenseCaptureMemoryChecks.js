@@ -46,6 +46,8 @@ export function neighborhoodDenseCaptureProfile(sourceMode = 'cad4', spatialEnco
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
+// Optional reported callbacks expose neutral synchronous interval ordinals,
+// not inferred semantic stages. Runners record exact source provenance separately.
 export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {}, currentEffectiveDate = false,
   sourceMode = 'cad4', spatialEncoding = 'expanded', onReportedDiagnostic }) {
   const profile = neighborhoodDenseCaptureProfile(sourceMode, spatialEncoding);

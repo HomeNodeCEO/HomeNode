@@ -12,25 +12,30 @@ const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
-const REPORTED_TIMING_STAGES = Object.freeze(['builder_input_seal', 'builder_discovery_preview',
-  'builder_catalog_and_selected_preview', 'builder_cad_population', 'builder_cad_metrics',
-  'builder_shared_population', 'builder_assessment_contract', 'builder_publication_preparation', 'builder_candidate']);
+const REPORTED_DIAGNOSTIC_CHECK_COUNT = 18;
 
 // Test-only observer of the EXISTING check-before/check-after contract. It does
 // not change production scheduling, skip verification or receive source values.
+// This count-only fixture guard cannot detect reordered work or establish stage
+// identity. Ordinals mean callback intervals, never named production operations.
+// Diagnostic runners must retain their actual source hashes separately. Version
+// 2 deliberately removes the unsupported semantic labels in earlier artifacts.
 export function createDenseReportedStageObserver(emit, now = () => performance.now()) {
   assert.equal(typeof emit, 'function'); assert.equal(typeof now, 'function');
   let calls = 0, begin;
   return {
     check() {
       const timestamp = now(); assert.ok(Number.isFinite(timestamp));
-      assert.ok(calls < REPORTED_TIMING_STAGES.length * 2, 'reported diagnostic stage layout changed');
+      assert.ok(calls < REPORTED_DIAGNOSTIC_CHECK_COUNT, 'reported diagnostic check count changed');
       if (calls % 2 === 0) begin = timestamp;
-      else emit({ name: REPORTED_TIMING_STAGES[Math.floor(calls / 2)], kind: 'synchronous_builder_interval',
-        start_ms: begin, end_ms: timestamp, elapsed_ms: timestamp - begin });
+      else {
+        const ordinal = Math.floor(calls / 2) + 1;
+        emit({ name: `builder_synchronous_interval_${ordinal}`, kind: 'synchronous_builder_interval',
+          observer_version: 2, interval_ordinal: ordinal, start_ms: begin, end_ms: timestamp, elapsed_ms: timestamp - begin });
+      }
       calls++;
     },
-    complete() { assert.equal(calls, REPORTED_TIMING_STAGES.length * 2, 'reported diagnostic stage layout changed'); },
+    complete() { assert.equal(calls, REPORTED_DIAGNOSTIC_CHECK_COUNT, 'reported diagnostic check count changed'); },
   };
 }
 const observed = (exact_value, unit) => ({ state: 'observed', exact_value, unit, reason: null });

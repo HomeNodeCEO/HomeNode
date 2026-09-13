@@ -8,6 +8,17 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const HASH = /^[a-f0-9]{64}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const MEMBER_CHECKPOINT = 125;
+// Capture only the standard data-property iterator, never a startup accessor
+// or a custom function that happened to be installed before this module loaded.
+const ARRAY_ITERATOR = (() => {
+  const iterator = Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)?.value;
+  const values = Object.getOwnPropertyDescriptor(Array.prototype, 'values')?.value;
+  const stringify = Object.getOwnPropertyDescriptor(Function.prototype, 'toString')?.value;
+  try {
+    return typeof iterator === 'function' && iterator === values && typeof stringify === 'function'
+      && Reflect.apply(stringify, iterator, []) === 'function values() { [native code] }' ? iterator : null;
+  } catch { return null; }
+})();
 const CALLER_CLEANUP_FAILURES = new WeakMap();
 const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 const copy = value => {
@@ -71,7 +82,17 @@ function normalizedMember(value, version) {
   row.account_ids = row.account_ids.map(id => text(id, 'member_account', 100)).sort(compare);
   if (new Set(row.account_ids).size !== row.account_ids.length ||
       (row.member_unit === (reported ? 'account' : 'property') && row.account_ids[0] !== row.member_id)) fail('member_accounts');
-  row.member_data = objectCopy(row.member_data, 'member_data');
+  // The whole-row JSON copy already detached and bounded this own subtree.
+  // Keep the original copy/refusal path for invalid or inherited values and
+  // ambient hooks that could make a second serialization non-idempotent.
+  const data = row.member_data;
+  if (!Object.hasOwn(row, 'member_data') || !data || typeof data !== 'object' || Array.isArray(data)
+      || Object.hasOwn(Object.prototype, 'toJSON') || Object.getPrototypeOf(Array.prototype) !== Object.prototype
+      || Object.hasOwn(Array.prototype, 'toJSON')
+      || typeof ARRAY_ITERATOR !== 'function'
+      || Object.getOwnPropertyDescriptor(Array.prototype, Symbol.iterator)?.value !== ARRAY_ITERATOR) {
+    row.member_data = objectCopy(data, 'member_data');
+  }
   const refs = row.member_data.source_refs;
   if (!Array.isArray(refs) || refs.length > 1000 || new Set(refs).size !== refs.length) fail('member_sources');
   row.member_data.source_refs = refs.map(id => text(id, 'member_source', 200)).sort(compare);

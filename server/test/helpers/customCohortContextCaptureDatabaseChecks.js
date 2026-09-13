@@ -1338,6 +1338,9 @@ async function checkCadEvidenceCapture(pool, checks) {
       Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
   });
   assert.deepEqual(reopened.retained_inputs.acquisition.capture_result, originalAcquisition.capture_result);
+  assert.equal(reopened.acquisition_intent.body.intent_version, 1);
+  assert.equal(Object.hasOwn(reopened.acquisition_intent.body, 'recorded_housing_interpretation'), false);
+  assert.equal(Object.hasOwn(reopened.retained_inputs, 'recorded_housing_interpretation'), false);
   const owner = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: policy }), from = sqls.length;
   const replay = await owner.capture({ auth, accountId: account, assignmentFileId: assignment, operationId, observationPeriod: period });
   assert.equal(replay.reused, true); assert.deepEqual(replay.context_ref, savedContext.context_ref);

@@ -5,6 +5,7 @@ import { createCustomCohortContextRepository } from '../../src/services/neighbor
 import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from '../../src/services/neighborhoodAssessment/customCohortReportedSaleWitnessV2.js';
+import { getCustomCohortRecordedHousingInterpretation } from '../../src/services/neighborhoodAssessment/customCohortRecordedHousingProfiles.js';
 import { describeNeighborhoodCombinedEvidenceMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { CACHED_CAD_EVIDENCE_FIELDS } from '../../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { CACHED_SALE_WITNESS_V2_VERSION, CACHED_SALE_WITNESS_V2_FIELDS, CACHED_SALE_WITNESS_V2_SQL,
@@ -65,8 +66,11 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
       const study = JSON.parse(studyText);
       const definition = study.reported_sale_interpretation?.definition_blob;
       const definitionText = definition ? await blobs.get(definition.content_sha256, definition.canonical_utf8_bytes) : null;
+      const housingDefinition = study.recorded_housing_interpretation?.definition_blob;
+      const housingDefinitionText = housingDefinition
+        ? await blobs.get(housingDefinition.content_sha256, housingDefinition.canonical_utf8_bytes) : null;
       await client.query('COMMIT'); opened = false;
-      return { retained, study, studyText, definitionText };
+      return { retained, study, studyText, definitionText, housingDefinitionText };
     } finally {
       if (opened) try { await client.query('ROLLBACK'); } catch (error) { discard = error; }
       client.release(discard);
@@ -82,9 +86,20 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
     FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2`,
   [scope.organization_id, operationId])).rows[0].n;
   const beforeReport = await reportState(), legacy = await load(legacyResult.context_ref);
+  const checkHousing = (saved, mapping) => {
+    const installed = getCustomCohortRecordedHousingInterpretation(mapping, 2);
+    assert.deepEqual(saved.retained.acquisition_intent.body.recorded_housing_interpretation, installed.profile_ref);
+    assert.deepEqual(saved.retained.retained_inputs.recorded_housing_interpretation, installed.profile_ref);
+    assert.deepEqual(saved.study.recorded_housing_interpretation,
+      { profile_ref: installed.profile_ref, definition_blob: installed.definition_blob.ref });
+    assert.equal(saved.housingDefinitionText, installed.definition_blob.canonical_json);
+  };
   assert.equal(JSON.parse(legacy.retained.retained_inputs.acquisition.compact_metadata_json).mapping_version, 4);
-  assert.equal(legacy.retained.acquisition_intent.body.intent_version, 1);
-  assert.equal(legacy.study.study_input_version, 1);
+  // This predecessor was just acquired by the current default owner, not a
+  // historical unmarked fixture. Separate CAD4-only native checks pin that path.
+  assert.equal(legacy.retained.acquisition_intent.body.intent_version, 5);
+  assert.equal(legacy.study.study_input_version, 3);
+  checkHousing(legacy, 4);
   assert.equal(Object.hasOwn(legacy.study, 'reported_sale_interpretation'), false);
 
   const request = { ...legacyRequest, operationId: randomUUID() };
@@ -110,9 +125,10 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
   assert.equal(acquisition.provenance, 'original_cached_reader_invocation');
   assert.equal(acquisition.authority, 'not_established');
   assert.deepEqual(purposes, Array(2).fill(describeNeighborhoodCombinedEvidenceMarketDataPurpose(acquisition.captured_query_request)));
-  assert.equal(saved.retained.acquisition_intent.body.intent_version, 3);
+  assert.equal(saved.retained.acquisition_intent.body.intent_version, 7);
   assert.deepEqual(saved.retained.acquisition_intent.body.reported_sale_interpretation, profile.profile_ref);
-  assert.equal(saved.study.study_input_version, 2);
+  assert.equal(saved.study.study_input_version, 4);
+  checkHousing(saved, 5);
   assert.deepEqual(saved.study.reported_sale_interpretation,
     { profile_ref: profile.profile_ref, definition_blob: profile.definition_blob.ref });
   assert.equal(saved.definitionText, profile.definition_blob.canonical_json);
@@ -154,7 +170,7 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
   assert.ok(sale.capability_gaps.includes('canonical_source_price_conflict'));
   assert.deepEqual(sourceRows(acquisition, 'sale_links').map(row => row.data.raw_projection.account_id).sort(),
     sourceRows(legacy.retained.retained_inputs.acquisition, 'sale_links').map(row => row.data.raw_projection.account_id).sort());
-  checks.push('native opt-in owner executes CAD4 plus exact witness2 SQL in RR/RO; original mapping5 dense capture registers intent3/study2 with exact retained interpretation definition and complete one-hop links');
+  checks.push('native opt-in owner executes CAD4 plus exact witness2 SQL in RR/RO; original mapping5 dense capture registers intent7/study4 with both exact retained interpretation definitions and complete one-hop links');
 
   for (const [sourceMode, replayRequest, expected, combined] of [
     ['cad4', request, result, true], ['combined-witness2-v1', legacyRequest, legacyResult, false],
@@ -170,8 +186,8 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
     assert.ok(!calls.slice(from).some(sql => /\b(?:INSERT\s+INTO|UPDATE\s+(?:app|app_auth|core|gis)\.|DELETE\s+FROM|MERGE\s+INTO|TRUNCATE\s)/i.test(sql)),
       'replay may lock rows with SELECT FOR UPDATE but must not rewrite retained originals');
   }
-  assert.deepEqual(await load(legacyResult.context_ref), legacy, 'opt-in replay never upgrades original mapping4/intent1/study1');
-  assert.deepEqual(await load(result.context_ref), saved, 'default-mode replay retains original mapping5/intent3/study2');
+  assert.deepEqual(await load(legacyResult.context_ref), legacy, 'opt-in replay never upgrades original mapping4/intent5/study3');
+  assert.deepEqual(await load(result.context_ref), saved, 'default-mode replay retains original mapping5/intent7/study4');
   checks.push('registered contexts replay across either current producer mode with their original purpose/profile and bytes; no source reread or evidence rewrite');
 
   for (const revokeAt of [1, 2]) {
@@ -207,11 +223,12 @@ export async function runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, s
       assert.ok(!retrySql.some(sql => sql.includes(CACHED_SALE_WITNESS_V2_SQL)));
       const retrySaved = await load(retried.context_ref);
       assert.equal(JSON.parse(retrySaved.retained.retained_inputs.acquisition.compact_metadata_json).mapping_version, 4);
-      assert.equal(retrySaved.retained.acquisition_intent.body.intent_version, 1);
-      assert.equal(retrySaved.study.study_input_version, 1);
+      assert.equal(retrySaved.retained.acquisition_intent.body.intent_version, 5);
+      assert.equal(retrySaved.study.study_input_version, 3);
+      checkHousing(retrySaved, 4);
       assert.equal(Object.hasOwn(retrySaved.retained.acquisition_intent.body, 'reported_sale_interpretation'), false);
       assert.equal(Object.hasOwn(retrySaved.study, 'reported_sale_interpretation'), false);
-      checks.push('same unregistered operation retries as a new CAD4 intent1/study1 capture under the current default; orphan intent3 is not registered replay');
+      checks.push('same unregistered operation retries as a new CAD4 intent5/study3 capture under the current default; orphan intent7 is not registered replay');
     }
   }
   assert.deepEqual(await reportState(), beforeReport);

@@ -1,3 +1,5 @@
+import { RECORDED_HOUSING_PROFILES } from './customCohortRecordedHousingProfiles.ts';
+
 // Fixed browser admission counterpart; producer/checker parity tests pin these
 // exact bytes to the server definition. This is descriptive, not a scoring policy.
 export const STOCK_COMPOSITION_PROFILE = {"id":"custom-current-stock-composition-v1","revision":1,"content_sha256":"27dc44aa824a4d09b65ae9b96051613fff7731bd3494b8844dfecfbfd15e1ce8"} as const;
@@ -130,4 +132,16 @@ export const STOCK_COMPOSITION_DEFINITION = {
     "no_legal_subdivision_identity_or_name_family_inferred",
     "no_similarity_weight_score_or_selection_change"
   ]
+} as const;
+
+export const COUNTY_STOCK_COMPOSITION_PROFILE = {
+  id: 'custom-current-stock-composition-v2', revision: 2,
+  content_sha256: '38c5d3a8f4682e4ccb589148b4bb5d8c43f3545d36746c1fd6dda585eef534f2',
+} as const;
+// Only the exact housing interpretation pair changes; all bins, denominator,
+// eligibility limitations and numeric definitions retain their original meaning.
+export const COUNTY_STOCK_COMPOSITION_DEFINITION = {
+  ...STOCK_COMPOSITION_DEFINITION,
+  id: COUNTY_STOCK_COMPOSITION_PROFILE.id, revision: COUNTY_STOCK_COMPOSITION_PROFILE.revision,
+  housing_profiles: [RECORDED_HOUSING_PROFILES[2][4], RECORDED_HOUSING_PROFILES[2][5]],
 } as const;

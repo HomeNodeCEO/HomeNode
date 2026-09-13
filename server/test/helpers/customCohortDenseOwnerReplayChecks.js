@@ -7,6 +7,7 @@ import { createCustomCohortOwnerReplayTiming } from './customCohortOwnerReplayTi
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { createCustomCohortContextRepository } from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
 import { loadCustomCohortCaptureInputs } from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
+import { getCustomCohortRecordedHousingInterpretation } from '../../src/services/neighborhoodAssessment/customCohortRecordedHousingProfiles.js';
 import { getNeighborhoodAttachment } from '../../src/services/neighborhoodAssessment/applicationRepository.js';
 import { prepareNeighborhoodPublication } from '../../src/services/neighborhoodAssessment/assessmentRepository.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
@@ -98,7 +99,10 @@ export function assertDenseCad4Original(loaded) {
   assert.equal(input.acquisition.provenance, 'original_cached_reader_invocation');
   assert.equal(JSON.parse(input.acquisition.compact_metadata_json).mapping_version, 4);
   assert.equal(Object.hasOwn(input, 'reported_sale_interpretation'), false);
-  assert.equal(input.acquisition_intent.body.intent_version, 1);
+  assert.equal(input.acquisition_intent.body.intent_version, 5);
+  const housingProfile = getCustomCohortRecordedHousingInterpretation(4, 2).profile_ref;
+  assert.deepEqual(input.recorded_housing_interpretation, housingProfile);
+  assert.deepEqual(input.acquisition_intent.body.recorded_housing_interpretation, housingProfile);
   assert.equal(input.subject.effective_date, input.acquisition.capture_result.captured_at.slice(0, 10));
   assert.equal(input.spatial.parcel_encoding, 'fixed_fields_v1');
   assert.equal(input.spatial.account_ids.length, DENSE_OWNER_COUNTS.accounts);

@@ -3,25 +3,15 @@ import { checkCustomCohortCadEvidence } from './customCohortCadEvidence.ts';
 import type { CheckedCadRecordedEvidence } from './customCohortCadEvidence';
 import { checkCustomCohortStockComposition } from './customCohortStockComposition.ts';
 import type { CheckedStockComposition } from './customCohortStockComposition';
+import { RECORDED_HOUSING_PROFILES } from './customCohortRecordedHousingProfiles.ts';
+import type { RecordedHousingMapping } from './customCohortRecordedHousingProfiles';
 
 const FACTORS = ['gla', 'age', 'housing_type', 'site_size', 'proximity', 'sale_price'] as const;
 type Factor = typeof FACTORS[number];
 const HOUSING_STATES = ['observed', 'missing', 'unknown', 'partial', 'conflicting'] as const;
 const HOUSING_CATEGORIES = ['detached_single_family', 'townhouse', 'condominium', 'duplex', 'apartment', 'mobile_home', 'manufactured_home'] as const;
-const HOUSING_PROFILES = {
-  4: { id: 'custom-recorded-housing-v1', revision: 1,
-    content_sha256: '12871b3b6251f507a19b1ac20e45df07ace43f6d10654ee513f314ad830de391' },
-  5: { id: 'custom-recorded-housing-v2', revision: 2,
-    content_sha256: '636415258d1f8d1e74ab1aac1f5592ea5f3d634153225bd138113a63d993f135' },
-} as const;
 type HousingState = typeof HOUSING_STATES[number];
-type RecordedHousingMapping = {
-  [Version in keyof typeof HOUSING_PROFILES]: {
-    readonly mapping_version: Version; readonly profile: typeof HOUSING_PROFILES[Version];
-  }
-}[keyof typeof HOUSING_PROFILES];
 export type CheckedRecordedHousing = RecordedHousingMapping & {
-  readonly housing_version: 1;
   readonly basis: 'retained_current_housing_observations'; readonly authority: 'not_established';
   readonly subject: { readonly state: HousingState; readonly category: typeof HOUSING_CATEGORIES[number] | null;
     readonly origin: 'saved_subject' | 'retained_subject_public' | 'current_subject_cad' };
@@ -182,10 +172,10 @@ function validateAggregate(all: Population, pockets: readonly Population[]) {
 
 function recordedHousing(value: unknown, all: Population, pockets: readonly Population[]): CheckedRecordedHousing {
   const h = object(value, ['housing_version', 'mapping_version', 'profile', 'basis', 'authority', 'subject', 'coverage']);
-  ensure(h.housing_version === 1 && (h.mapping_version === 4 || h.mapping_version === 5)
+  ensure((h.housing_version === 1 || h.housing_version === 2) && (h.mapping_version === 4 || h.mapping_version === 5)
     && h.basis === 'retained_current_housing_observations' && h.authority === 'not_established');
   const profile = object(h.profile, ['id', 'revision', 'content_sha256']);
-  const expectedProfile = HOUSING_PROFILES[h.mapping_version];
+  const expectedProfile = RECORDED_HOUSING_PROFILES[h.housing_version][h.mapping_version];
   ensure(profile.id === expectedProfile.id && profile.revision === expectedProfile.revision
     && profile.content_sha256 === expectedProfile.content_sha256);
   const subject = object(h.subject, ['state', 'category', 'origin']);
@@ -204,10 +194,14 @@ function recordedHousing(value: unknown, all: Population, pockets: readonly Popu
     for (const state of HOUSING_STATES.slice(1)) ensure((comparison.states[`candidate_${state}`] ?? 0) === states[state]
       && (comparison.states[`subject_${state}`] ?? 0) === 0);
   } else ensure(comparison.observed_count === 0 && (comparison.states[`subject_${subject.state}`] ?? 0) === account_count);
-  const mapping: RecordedHousingMapping = h.mapping_version === 4
-    ? { mapping_version: 4, profile: { ...HOUSING_PROFILES[4] } }
-    : { mapping_version: 5, profile: { ...HOUSING_PROFILES[5] } };
-  return { housing_version: 1, ...mapping,
+  const mapping: RecordedHousingMapping = h.housing_version === 1
+    ? h.mapping_version === 4
+      ? { housing_version: 1, mapping_version: 4, profile: { ...RECORDED_HOUSING_PROFILES[1][4] } }
+      : { housing_version: 1, mapping_version: 5, profile: { ...RECORDED_HOUSING_PROFILES[1][5] } }
+    : h.mapping_version === 4
+      ? { housing_version: 2, mapping_version: 4, profile: { ...RECORDED_HOUSING_PROFILES[2][4] } }
+      : { housing_version: 2, mapping_version: 5, profile: { ...RECORDED_HOUSING_PROFILES[2][5] } };
+  return { ...mapping,
     basis: 'retained_current_housing_observations', authority: 'not_established',
     subject: { state: subject.state as HousingState, category: subject.category as CheckedRecordedHousing['subject']['category'],
       origin: subject.origin as CheckedRecordedHousing['subject']['origin'] }, coverage: { account_count, observed_count, unknown_count, states } };
@@ -305,7 +299,8 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
   if (cad && housing) ensure(cad.mapping_version === housing.mapping_version);
   const composition = hasComposition ? checkCustomCohortStockComposition(r.stock_composition_v1, catalog) : null;
-  if (composition) ensure(housing && (composition.status !== 'available' || composition.mapping_version === housing.mapping_version)
+  if (composition) ensure(housing && composition.composition_version === housing.housing_version
+    && (composition.status !== 'available' || composition.mapping_version === housing.mapping_version)
     && (!cad || composition.binding.captured_at === cad.binding.captured_at));
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (dense ? 2_500_000 : 512_000));

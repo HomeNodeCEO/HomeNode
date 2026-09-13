@@ -18,6 +18,7 @@ import { loadCustomCohortCaptureInputs }
   from '../../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
 import { createNeighborhoodCohortBlobRepository } from '../../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from '../../src/services/neighborhoodAssessment/customCohortReportedSaleWitnessV2.js';
+import { getCustomCohortRecordedHousingInterpretation } from '../../src/services/neighborhoodAssessment/customCohortRecordedHousingProfiles.js';
 import { describeNeighborhoodCombinedEvidenceMarketDataPurpose } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction }
   from '../../src/services/customAppraisalWorkfiles.js';
@@ -245,20 +246,34 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   const retained = await transaction('REPEATABLE READ READ ONLY', async client => {
     const context = await createCustomCohortContextRepository(client, json(target)).get(json(registered.context_ref));
     const refs = Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, context.body[key]]));
-    return loadCustomCohortCaptureInputs(client, json(target), refs);
+    const loaded = await loadCustomCohortCaptureInputs(client, json(target), refs);
+    const profile = getCustomCohortRecordedHousingInterpretation(4, 2);
+    const blobs = createNeighborhoodCohortBlobRepository(client, organization);
+    const study = JSON.parse(await blobs.get(refs.study_input.content_sha256, refs.study_input.canonical_utf8_bytes));
+    assert.equal(study.study_input_version, 3);
+    assert.deepEqual(study.recorded_housing_interpretation,
+      { profile_ref: profile.profile_ref, definition_blob: profile.definition_blob.ref });
+    assert.equal(await blobs.get(profile.definition_blob.ref.content_sha256, profile.definition_blob.ref.canonical_utf8_bytes),
+      profile.definition_blob.canonical_json);
+    return loaded;
   });
   const reopened = retained.retained_inputs.private_sales.capture;
   assert.deepEqual(reopened.rows, direct.rows); assert.deepEqual(reopened.batch, direct.batch);
   assert.deepEqual(reopened.review, direct.review); assert.deepEqual(reopened.source_interpretation, source);
-  assert.equal(retained.acquisition_intent.body.intent_version, 2);
+  assert.equal(retained.acquisition_intent.body.intent_version, 6);
+  assert.deepEqual(retained.acquisition_intent.body.recorded_housing_interpretation,
+    getCustomCohortRecordedHousingInterpretation(4, 2).profile_ref);
+  assert.deepEqual(retained.retained_inputs.recorded_housing_interpretation,
+    retained.acquisition_intent.body.recorded_housing_interpretation);
   assert.deepEqual(retained.acquisition_intent.body.private_sales_import, request.privateSalesImport);
   assert.equal(retained.study.observation_period.end_date, effectiveDate);
   assert.equal(reopened.rows[0].record_data.values.close_date, '2024-03-01');
-  checks.push('actual private policy and three-phase context capture persist/reopen immutable v2 intent and all private rows without shared-sales/report mutation');
+  checks.push('actual private policy and three-phase context capture persist/reopen immutable intent6/study3, exact housing definition and all private rows without shared-sales/report mutation');
 
   // A separate original acquisition opts in only the shared-source projection.
   // Its independent private grant and exact CSV/review originals are unchanged.
   const witnessProfile = getCustomCohortReportedSaleWitnessV2Profile();
+  const witnessHousingProfile = getCustomCohortRecordedHousingInterpretation(5, 2);
   const witnessRequest = captureInput(), sharedPurposes = [], privatePurposes = [], privateGrants = [];
   const witnessMarketPolicy = async (...args) => {
     assert.deepEqual(args[4], { retention: true, exposure: 'none' });
@@ -284,14 +299,21 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     const blobs = createNeighborhoodCohortBlobRepository(client, organization);
     const study = JSON.parse(await blobs.get(refs.study_input.content_sha256, refs.study_input.canonical_utf8_bytes));
     const definition = study.reported_sale_interpretation.definition_blob;
-    return { loaded, study, definitionText: await blobs.get(definition.content_sha256, definition.canonical_utf8_bytes) };
+    const housingDefinition = study.recorded_housing_interpretation.definition_blob;
+    return { loaded, study, definitionText: await blobs.get(definition.content_sha256, definition.canonical_utf8_bytes),
+      housingDefinitionText: await blobs.get(housingDefinition.content_sha256, housingDefinition.canonical_utf8_bytes) };
   });
   const witnessInputs = witnessSaved.loaded.retained_inputs, witnessPrivate = witnessInputs.private_sales;
-  assert.equal(witnessSaved.loaded.acquisition_intent.body.intent_version, 4);
+  assert.equal(witnessSaved.loaded.acquisition_intent.body.intent_version, 8);
+  assert.deepEqual(witnessSaved.loaded.acquisition_intent.body.recorded_housing_interpretation, witnessHousingProfile.profile_ref);
+  assert.deepEqual(witnessInputs.recorded_housing_interpretation, witnessHousingProfile.profile_ref);
   assert.deepEqual(witnessSaved.loaded.acquisition_intent.body.private_sales_import, witnessRequest.privateSalesImport);
   assert.deepEqual(witnessSaved.loaded.acquisition_intent.body.reported_sale_interpretation, witnessProfile.profile_ref);
   assert.equal(JSON.parse(witnessInputs.acquisition.compact_metadata_json).mapping_version, 5);
-  assert.equal(witnessSaved.study.study_input_version, 2);
+  assert.equal(witnessSaved.study.study_input_version, 4);
+  assert.deepEqual(witnessSaved.study.recorded_housing_interpretation,
+    { profile_ref: witnessHousingProfile.profile_ref, definition_blob: witnessHousingProfile.definition_blob.ref });
+  assert.equal(witnessSaved.housingDefinitionText, witnessHousingProfile.definition_blob.canonical_json);
   assert.deepEqual(witnessSaved.study.reported_sale_interpretation,
     { profile_ref: witnessProfile.profile_ref, definition_blob: witnessProfile.definition_blob.ref });
   assert.equal(witnessSaved.definitionText, witnessProfile.definition_blob.canonical_json);
@@ -319,7 +341,7 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
       'cross-mode private replay may lock but cannot rewrite originals or report state');
   }
   assert.deepEqual(await protectedState(), baseline);
-  checks.push('native separate private capture retains intent4/study2 and exact witness2 definition with unchanged private originals and independent grants; private intent2/4 replay across producer modes without source or report writes');
+  checks.push('native separate private capture retains intent8/study4 and both exact interpretation definitions with unchanged private originals and independent grants; private intent6/8 replay across producer modes without source or report writes');
 
   const previewInput = { auth, accountId: account, assignmentFileId: assignment, contextRef: registered.context_ref,
     selection: { revision: 1, pockets: [{ id: 'synthetic-subject', label: 'Synthetic subject', account_ids: [account] }] } };

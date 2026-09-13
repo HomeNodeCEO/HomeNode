@@ -78,9 +78,9 @@ function proximitySummary(value, all, pockets) {
 
 function housingSummary(value, all, pockets) {
   check(value && Object.keys(value).sort().join(',') === 'authority,basis,coverage,housing_version,mapping_version,profile,subject'
-    && value.housing_version === 1 && [4, 5].includes(value.mapping_version)
+    && [1, 2].includes(value.housing_version) && [4, 5].includes(value.mapping_version)
     && value.basis === CUSTOM_COHORT_RECORDED_HOUSING_BASIS && value.authority === 'not_established'
-    && json(value.profile) === json(getCustomCohortRecordedHousingProfile(value.mapping_version)), 'housing');
+    && json(value.profile) === json(getCustomCohortRecordedHousingProfile(value.mapping_version, value.housing_version)), 'housing');
   const subject = value.subject;
   check(subject && Object.keys(subject).sort().join(',') === 'category,origin,state'
     && CUSTOM_COHORT_RECORDED_HOUSING_STATES.includes(subject.state)
@@ -101,8 +101,8 @@ function housingSummary(value, all, pockets) {
   const combined = {};
   for (const pocket of pockets) for (const [key, n] of Object.entries(pocket.factor_coverage.housing_type.states)) combined[key] = (combined[key] ?? 0) + n;
   check(json(combined) === json(expectedStates), 'housing_factor_coverage');
-  return { housing_version: 1, mapping_version: value.mapping_version,
-    profile: structuredClone(getCustomCohortRecordedHousingProfile(value.mapping_version)),
+  return { housing_version: value.housing_version, mapping_version: value.mapping_version,
+    profile: structuredClone(getCustomCohortRecordedHousingProfile(value.mapping_version, value.housing_version)),
     basis: value.basis, authority: 'not_established', subject: { ...subject },
     coverage: { account_count: accounts, observed_count: observed, unknown_count: unknown, states } };
 }
@@ -203,9 +203,10 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
   if (Object.hasOwn(recommendation, 'stock_composition_v1')) {
     const composition = readCustomCohortStockComposition(recommendation.stock_composition_v1,
       { context_ref: expected.context_ref, captured_at: recommendation.binding.captured_at });
+    check(composition.composition_version === result.recorded_housing?.housing_version, 'housing_composition_version');
     const remaining = byteLimit - Buffer.byteLength(JSON.stringify(result)) - Buffer.byteLength(',"stock_composition_v1":');
     const candidate = Buffer.byteLength(JSON.stringify(composition)) <= remaining ? composition
-      : { composition_version: 1, profile: composition.profile, binding: composition.binding,
+      : { composition_version: composition.composition_version, profile: composition.profile, binding: composition.binding,
         status: 'unavailable', reason: 'output_byte_limit' };
     // Never sacrifice the established complete recommendation/CAD evidence to
     // make room for optional composition. Even the diagnostic needs room.

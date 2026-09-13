@@ -1,12 +1,13 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
-import { STOCK_COMPOSITION_DEFINITION as D, STOCK_COMPOSITION_PROFILE as PROFILE } from './customCohortStockCompositionDefinition.ts';
+import { STOCK_COMPOSITION_DEFINITION as LEGACY_DEFINITION, STOCK_COMPOSITION_PROFILE as LEGACY_PROFILE,
+  COUNTY_STOCK_COMPOSITION_DEFINITION, COUNTY_STOCK_COMPOSITION_PROFILE } from './customCohortStockCompositionDefinition.ts';
 
 type Context = CheckedPocketCatalog['binding']['context_ref'];
 type NumericCounts = readonly [readonly number[], readonly number[]];
 export type StockCompositionPopulation = readonly [number, readonly NumericCounts[], readonly [readonly number[], readonly number[]]];
 type SubjectCell = readonly [string, number | null, string];
-interface Header {
-  readonly composition_version: 1; readonly profile: typeof PROFILE;
+type Header = ({ readonly composition_version: 1; readonly profile: typeof LEGACY_PROFILE }
+  | { readonly composition_version: 2; readonly profile: typeof COUNTY_STOCK_COMPOSITION_PROFILE }) & {
   readonly binding: { readonly context_ref: Context; readonly captured_at: string };
 }
 export type CheckedStockComposition = Header & ({ readonly status: 'unavailable'; readonly reason: string } | {
@@ -76,12 +77,17 @@ export function checkCustomCohortStockComposition(value: unknown, catalog: Pick<
   const available = status.value === 'available'; ensure(available || status.value === 'unavailable');
   const r = object(value, ['composition_version', 'profile', 'binding', 'status', 'reason',
     ...(available ? ['mapping_version', 'housing_profile', 'definition', 'bin_cuts', 'subject', 'all', 'pockets'] : [])]);
-  ensure(r.composition_version === 1); fixed(r.profile, PROFILE);
+  ensure(r.composition_version === 1 || r.composition_version === 2);
+  const D = r.composition_version === 1 ? LEGACY_DEFINITION : COUNTY_STOCK_COMPOSITION_DEFINITION;
+  const profile = r.composition_version === 1 ? LEGACY_PROFILE : COUNTY_STOCK_COMPOSITION_PROFILE;
+  fixed(r.profile, profile);
   const binding = object(r.binding, ['context_ref', 'captured_at']); fixed(binding.context_ref, catalog.binding.context_ref);
   ensure(typeof binding.captured_at === 'string' && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(binding.captured_at)
     && Number.isFinite(Date.parse(binding.captured_at)) && new Date(binding.captured_at).toISOString() === binding.captured_at);
-  const header: Header = { composition_version: 1, profile: PROFILE,
-    binding: { context_ref: { ...catalog.binding.context_ref }, captured_at: binding.captured_at } };
+  const checkedBinding = { context_ref: { ...catalog.binding.context_ref }, captured_at: binding.captured_at };
+  const header: Header = r.composition_version === 1
+    ? { composition_version: 1, profile: LEGACY_PROFILE, binding: checkedBinding }
+    : { composition_version: 2, profile: COUNTY_STOCK_COMPOSITION_PROFILE, binding: checkedBinding };
   if (!available) {
     ensure(typeof r.reason === 'string' && ['catalog_incomplete', 'account_limit', 'group_limit', 'housing_interpretation_unavailable', 'output_byte_limit'].includes(r.reason));
     return freeze({ ...header, status: 'unavailable', reason: r.reason });

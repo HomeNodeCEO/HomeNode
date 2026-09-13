@@ -51,7 +51,18 @@ const DEFINITION = freeze({ id: 'custom-current-stock-composition-v1', revision:
 });
 export const CUSTOM_COHORT_STOCK_COMPOSITION_PROFILE = freeze({ id: DEFINITION.id, revision: DEFINITION.revision,
   content_sha256: createHash('sha256').update(json(DEFINITION)).digest('hex') });
-export function getCustomCohortStockCompositionDefinition() { return DEFINITION; }
+const COUNTY_DEFINITION = freeze({ ...DEFINITION, id: 'custom-current-stock-composition-v2', revision: 2,
+  housing_profiles: [getCustomCohortRecordedHousingProfile(4, 2), getCustomCohortRecordedHousingProfile(5, 2)] });
+export const CUSTOM_COHORT_COUNTY_STOCK_COMPOSITION_PROFILE = freeze({ id: COUNTY_DEFINITION.id, revision: COUNTY_DEFINITION.revision,
+  content_sha256: createHash('sha256').update(json(COUNTY_DEFINITION)).digest('hex') });
+export function getCustomCohortStockCompositionDefinition(version = 1) {
+  check(version === 1 || version === 2, 'composition_version');
+  return version === 1 ? DEFINITION : COUNTY_DEFINITION;
+}
+export function getCustomCohortStockCompositionProfile(version = 1) {
+  check(version === 1 || version === 2, 'composition_version');
+  return version === 1 ? CUSTOM_COHORT_STOCK_COMPOSITION_PROFILE : CUSTOM_COHORT_COUNTY_STOCK_COMPOSITION_PROFILE;
+}
 const issued = new WeakSet();
 function issue(value) { freeze(value); issued.add(value); return value; }
 /** Identity-only request-local derivation proof, not retained evidence or rights.
@@ -183,7 +194,10 @@ export function* customCohortStockCompositionBatches(args = {}) {
   check(get(catalog, 'authority') === 'not_established' && get(get(catalog, 'apply'), 'status') === 'blocked', 'catalog');
   const maximum = get(args, 'maximumBytes', true) ?? L.output_utf8_bytes;
   check(Number.isSafeInteger(maximum) && maximum >= 0 && maximum <= L.output_utf8_bytes, 'byte_limit');
-  const header = { composition_version: 1, profile: CUSTOM_COHORT_STOCK_COMPOSITION_PROFILE, binding };
+  const version = Object.hasOwn(args, 'composition_version') ? get(args, 'composition_version') : 1;
+  check(version === 1 || version === 2, 'composition_version');
+  const definition = getCustomCohortStockCompositionDefinition(version);
+  const header = { composition_version: version, profile: getCustomCohortStockCompositionProfile(version), binding };
   // Unavailable is a diagnostic envelope, not a payload promised to fit a zero
   // remaining transport budget. The composing owner can omit that envelope too.
   const unavailable = reason => issue({ ...header, status: 'unavailable', reason });
@@ -195,11 +209,11 @@ export function* customCohortStockCompositionBatches(args = {}) {
   const housing = get(args, 'housing');
   if (housing === null) return unavailable('housing_interpretation_unavailable');
   const mapping = get(housing, 'mapping_version');
-  check([4, 5].includes(mapping) && get(housing, 'housing_version') === 1
+  check([4, 5].includes(mapping) && get(housing, 'housing_version') === version
     && get(housing, 'basis') === CUSTOM_COHORT_RECORDED_HOUSING_BASIS
     && get(housing, 'authority') === 'not_established', 'housing');
   const hp = get(housing, 'profile');
-  const expectedHousingProfile = getCustomCohortRecordedHousingProfile(mapping);
+  const expectedHousingProfile = getCustomCohortRecordedHousingProfile(mapping, version);
   check(['id', 'revision', 'content_sha256'].every(key => get(hp, key) === expectedHousingProfile[key]), 'housing_profile');
   const hb = get(housing, 'binding');
   check(same(context(get(hb, 'context_ref')), binding.context_ref) && get(hb, 'captured_at') === binding.captured_at, 'housing_binding');
@@ -300,7 +314,7 @@ export function* customCohortStockCompositionBatches(args = {}) {
     add(total, result); pockets.push([group.id, ...result]);
   }
   const result = { ...header, status: 'available', reason: null, mapping_version: mapping,
-    housing_profile: getCustomCohortRecordedHousingProfile(mapping), definition: DEFINITION, bin_cuts: cuts,
+    housing_profile: expectedHousingProfile, definition, bin_cuts: cuts,
     subject: { numeric: subjectNumeric, housing: housingCell(get(housing, 'subject'), true),
       recorded_group_id: groupId, group_reason: groupId === null ? groupStatus : null }, all: total, pockets };
   if (Buffer.byteLength(JSON.stringify(result)) > maximum) return unavailable('output_byte_limit');

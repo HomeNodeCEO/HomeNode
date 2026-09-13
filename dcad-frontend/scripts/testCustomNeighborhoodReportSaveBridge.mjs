@@ -2,6 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { customNeighborhoodPdfReadinessErrors } from '../src/features/neighborhood/customNeighborhoodPdfReadiness.ts';
+import { matchCustomNeighborhoodAcceptedResponse } from '../src/features/neighborhood/customNeighborhoodAcceptedState.ts';
+import { reportedObservationReportFixture } from '../../server/test/fixtures/reportedObservationReportFixture.js';
 
 const source = readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
 const ast = ts.createSourceFile('PropertyReport.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
@@ -43,9 +46,10 @@ const tick = async () => { await Promise.resolve(); await Promise.resolve(); };
 function fixture(options = {}) {
   const events = [], messages = [], workMessages = [], files = [];
   const state = { owned: false, live: true, retained: false, readonly: false, privateSalesSaveLock: null };
-  const file = { id: 37, file_number: 'QA-37', reviewer: 'Synthetic Reviewer', workfile: { status: 'draft' } };
+  const accountId = options.accountId ?? 'QA-0001';
+  const file = { id: options.assignmentFileId ?? 37, file_number: 'QA-37', reviewer: 'Synthetic Reviewer', workfile: { status: 'draft' } };
   const env = {
-    accountId: 'QA-0001', activeAssignmentFile: file,
+    accountId, activeAssignmentFile: file,
     privateSalesBusyRef: { current: Boolean(options.privateSalesBusy) },
     setPrivateSalesSaveLock: value => { state.privateSalesSaveLock = typeof value === 'function' ? value(state.privateSalesSaveLock) : value; },
     activeAssignmentFileRef: { current: file }, selectionGenerationRef: { current: 1 },
@@ -54,7 +58,7 @@ function fixture(options = {}) {
     assignmentDraftRef: { current: {} }, assignmentSaveInFlightRef: { current: null },
     cloneEditorValue: value => structuredClone(value), customAppraisalDraftsMatch: (a, b) => JSON.stringify(a) === JSON.stringify(b),
     marketConditionsDraft: { response: { analyses: [{}] } },
-    assignmentValidationErrors: () => [], neighborhoodBoundaryReadinessErrors: () => [],
+    assignmentValidationErrors: () => [], customNeighborhoodPdfReadinessErrors: () => [], currentAcceptedNeighborhood: null,
     setAssignmentSaveMessage: message => messages.push(message),
     setAssignmentChooserOpen: () => events.push('chooser'),
     setSavingAssignmentFile: value => events.push(`saving:${value}`),
@@ -68,11 +72,11 @@ function fixture(options = {}) {
     marketWorkfileSaveErrorRef: { current: null },
     saveAssignmentDetails: async () => { events.push('assignment'); return true; },
     getCustomAppraisalWorkfileReadiness: async (...args) => {
-      events.push('readiness'); assert.equal(args[0], 'QA-0001'); assert.equal(args[1], 37);
+      events.push('readiness'); assert.equal(args[0], accountId); assert.equal(args[1], file.id);
       return options.readiness ? options.readiness : { readiness: { ready: true, warnings: [], warning_codes: [] } };
     },
     signCustomAppraisalWorkfile: async (...args) => {
-      events.push('sign'); assert.equal(args[0], 'QA-0001'); assert.equal(args[1], 37);
+      events.push('sign'); assert.equal(args[0], accountId); assert.equal(args[1], file.id);
       assert.deepEqual(args[2], { signed_by: 'Synthetic Reviewer', acknowledged_warning_codes: [] });
       return options.sign ?? { workfile: { workfile_key: 'qa', canonical_file_name: 'qa.pdf', status: 'signed',
         signed_at: '2026-09-09', signed_by: 'Synthetic Reviewer', updated_at: '2026-09-09', checksum_sha256: 'synthetic' } };
@@ -91,6 +95,53 @@ function fixture(options = {}) {
     save: () => handler('saveCustomAppraisalNow', env)(),
     sign: () => handler('finalizeCustomAppraisalFile', env)() };
 }
+
+function acceptedFixture(options = {}) {
+  const evidence = reportedObservationReportFixture();
+  const accepted = matchCustomNeighborhoodAcceptedResponse(evidence.match);
+  assert.equal(accepted.status, 'accepted');
+  const f = fixture({ ...options, accountId: accepted.accountId, assignmentFileId: accepted.assignmentFileId });
+  f.env.currentAcceptedNeighborhood = accepted;
+  f.env.customNeighborhoodPdfReadinessErrors = customNeighborhoodPdfReadinessErrors;
+  return f;
+}
+
+test('accepted reported group replaces only the legacy boundary blocker before full finalization checks', async () => {
+  const f = acceptedFixture(); assert.deepEqual(f.env.assignmentDraft, {});
+  await f.sign();
+  assert.ok(f.events.includes('readiness')); assert.ok(f.events.includes('sign'));
+  assert.ok(f.events.indexOf('flush') < f.events.indexOf('readiness'));
+  assert.ok(f.events.indexOf('readiness') < f.events.indexOf('sign'));
+});
+
+for (const status of ['loading', 'unavailable']) test(`${status} accepted read cannot start finalization`, async () => {
+  const f = acceptedFixture(); f.env.currentAcceptedNeighborhood = { ...f.env.currentAcceptedNeighborhood, status };
+  await f.sign(); assert.deepEqual(f.events, []); assert.match(f.messages.at(-1), /Cannot finalize yet/);
+});
+
+for (const field of ['accountId', 'assignmentFileId']) test(`wrong accepted ${field} cannot start finalization`, async () => {
+  const f = acceptedFixture();
+  f.env.currentAcceptedNeighborhood = { ...f.env.currentAcceptedNeighborhood,
+    [field]: field === 'accountId' ? 'OTHER' : f.env.activeAssignmentFile.id + 1 };
+  await f.sign(); assert.deepEqual(f.events, []); assert.match(f.messages.at(-1), /could not be verified/);
+});
+
+for (const [name, change] of [
+  ['assignment', env => { env.assignmentValidationErrors = () => ['Required assignment detail is missing.']; }],
+  ['comparables', env => { env.salesComparisonDraft.comparables = []; }],
+  ['reconciled value', env => { env.salesComparisonDraft.opinionOfValue = 0; }],
+  ['market study', env => { env.marketConditionsDraft.response.analyses = []; }],
+  ['unsaved draft', env => { env.assignmentDirty = true; }],
+]) test(`accepted neighborhood does not clear the independent ${name} finalization blocker`, async () => {
+  const f = acceptedFixture(); change(f.env); await f.sign();
+  assert.deepEqual(f.events, []); assert.match(f.messages.at(-1), /Cannot finalize yet/);
+});
+
+test('accepted neighborhood cannot bypass server finalization readiness', async () => {
+  const f = acceptedFixture({ readiness: { readiness: { ready: false, blocker_messages: ['Server original binding must be restored.'] } } });
+  await f.sign(); assert.ok(f.events.includes('readiness')); assert.equal(f.events.includes('sign'), false);
+  assert.match(f.messages.at(-1), /Server original binding must be restored/);
+});
 
 for (const dirty of [false, true]) test(`Save Everything flush precedes ${dirty ? 'dirty' : 'clean'} success path`, async () => {
   const hold = deferred(), f = fixture({ dirty, flush: hold.promise });

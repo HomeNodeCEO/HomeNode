@@ -29,6 +29,7 @@ import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
 import { useCustomNeighborhoodAcceptedReload } from "@/features/neighborhood/useCustomNeighborhoodAcceptedReload";
 import { customNeighborhoodLegacyAllowed, type AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
+import { customNeighborhoodPdfReadinessErrors } from "@/features/neighborhood/customNeighborhoodPdfReadiness";
 import { useCustomNeighborhoodReportBridge } from "@/features/neighborhood/useCustomNeighborhoodReportBridge";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "@/lib/propertyReportHydration";
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
@@ -49,7 +50,6 @@ import { usePropertyReportDetail } from "@/hooks/usePropertyReportDetail";
 import {
   DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE,
   marketTrendFromChange,
-  neighborhoodBoundaryReadinessErrors,
 } from "@/lib/neighborhoodCharacteristics";
 import {
   growthFromMarket,
@@ -96,8 +96,7 @@ const CustomNeighborhoodAcceptedSummary = lazy(() => import("@/features/neighbor
 const CustomNeighborhoodAcceptedOutline = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedOutline"));
 const CustomNeighborhoodWorkspaceHost = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodWorkspaceHost"));
 const PrivateSalesImportsPanel = lazy(() => import("@/features/neighborhood/components/PrivateSalesImportsPanel"));
-// Rollout requires the independently configured server/source owner as well.
-// This display gate is not authorization and stays off unless explicitly built on.
+// Default-off display gate; server/source owner authorization remains independent.
 const CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED = import.meta.env.VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true";
 const ListingsContractsSalesContent = lazy(
   () => import("@/components/ListingsContractsSalesContent"),
@@ -282,15 +281,13 @@ function AddressHero({
       const workfileResult = await loadCustomAppraisalWorkfile(accountId, selectedFile.id);
       if (isCancelled()) return;
       const neighborhoodSection = workfileResult.workfile.sections.neighborhood_assessment;
-      // Even an absent section needs the authoritative check: retained acceptance
-      // history with a missing current section is NOT an empty legacy file.
+      // Server-check absent sections: acceptance history does not mean a legacy file.
       if (workfileResult.workfile.status === "signed") {
         if (acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood({ accountId, assignmentFileId: selectedFile.id, status: "signed", assessment: null,
           message: "This is a signed file. View the signed PDF for its immutable neighborhood analysis." });
       } else {
-        // Keep this independent: a slow neighborhood read must not delay the
-        // existing sales/market workfile hydration or file-selection completion.
-        // The loader always resolves a checked state, including network failure.
+        // Independent read: never block sales/market hydration or file selection.
+        // Even network failures resolve a checked state.
         void loadCustomNeighborhoodAccepted(accountId, selectedFile.id, neighborhoodSection).then(restored => {
           if (!isCancelled() && acceptedReadGeneration.current === acceptedRead) setAcceptedNeighborhood(restored);
         });
@@ -1403,7 +1400,7 @@ function AddressHero({
     if (signingFile.workfile?.status === "signed" || signingFile.workfile?.status === "archived") return;
     const localBlockers = [
       ...assignmentValidationErrors(assignmentDraft),
-      ...neighborhoodBoundaryReadinessErrors(assignmentDraft),
+      ...customNeighborhoodPdfReadinessErrors(currentAcceptedNeighborhood, accountId, signingFile.id, assignmentDraft),
       ...(salesComparisonDraft?.comparables?.length
         ? []
         : ["Complete and save the Sales Comparison Approach before finalizing."]),
@@ -1613,7 +1610,8 @@ function AddressHero({
     ? assignmentFiles.filter((file) => file.id !== activeAssignmentFile.id)
     : assignmentFiles;
   const hasPriorAssignmentFiles = priorAssignmentFiles.length > 0;
-  const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(assignmentDraft);
+  const neighborhoodBoundaryErrors = customNeighborhoodPdfReadinessErrors(currentAcceptedNeighborhood,
+    accountId, activeAssignmentFile?.id, assignmentDraft);
   const appraisalReportAssignmentFile = activeAssignmentFile;
   const relatedParcelsToShow = (relatedParcels?.parcels || []).filter(
     (parcel) => parcel.is_subject || parcel.materially_different,

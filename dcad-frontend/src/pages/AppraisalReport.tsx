@@ -1,6 +1,9 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router-dom";
 import { useApplicationAuth } from "@/features/auth/ApplicationAuth";
+import type { AcceptedNeighborhoodState } from "@/features/neighborhood/customNeighborhoodAcceptedState";
+import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
+import { customNeighborhoodBrowserPrintReadinessErrors, customNeighborhoodPdfReadinessErrors } from "@/features/neighborhood/customNeighborhoodPdfReadiness";
 import * as api from "@/lib/api";
 import {
   loadAssignmentFiles,
@@ -335,6 +338,7 @@ export default function AppraisalReport() {
   const [incomeDraft, setIncomeDraft] = useState<IncomeApproachDraft | null>(null);
   const [finalDraft, setFinalDraft] = useState<FinalReconciliationDraft | null>(null);
   const [assignmentFile, setAssignmentFile] = useState<AppraisalAssignmentFile | null>(null);
+  const [acceptedNeighborhood, setAcceptedNeighborhood] = useState<AcceptedNeighborhoodState | null>(null);
   const [assignmentLoading, setAssignmentLoading] = useState(Boolean(propertyId));
   const [printBlocker, setPrintBlocker] = useState("");
   const [pdfGenerating, setPdfGenerating] = useState(false);
@@ -358,6 +362,7 @@ export default function AppraisalReport() {
   useLayoutEffect(() => {
     assignmentSelectionGenerationRef.current += 1;
     setAssignmentFile(null);
+    setAcceptedNeighborhood(null);
     setAssignmentLoading(Boolean(propertyId));
     setDraft(null);
     setMarketDraft(null);
@@ -395,6 +400,16 @@ export default function AppraisalReport() {
           throw new Error("assignment_workfile_identity_mismatch");
         }
         setAssignmentFile(assignment);
+        if (result.workfile.status === "signed") {
+          setAcceptedNeighborhood({ accountId: propertyId, assignmentFileId: assignment.id, status: "signed", assessment: null,
+            message: "Download the immutable signed PDF for this appraisal file." });
+        } else {
+          setAcceptedNeighborhood({ accountId: propertyId, assignmentFileId: assignment.id, status: "loading", assessment: null,
+            message: "Loading the saved neighborhood group..." });
+          void loadCustomNeighborhoodAccepted(propertyId, assignment.id, result.workfile.sections.neighborhood_assessment).then(restored => {
+            if (selectionIsCurrent()) setAcceptedNeighborhood(restored);
+          });
+        }
         setDraft(
           (result.workfile.sections.sales_comparison?.value as AppraisalReportSalesDraft | undefined) ||
             readAppraisalReportDraft(propertyId, assignment.id, applicationSession),
@@ -416,6 +431,7 @@ export default function AppraisalReport() {
       .catch(() => {
         if (!selectionIsCurrent()) return;
         setAssignmentFile(null);
+        setAcceptedNeighborhood(null);
         setDraft(null);
         setMarketDraft(null);
         setCostDraft(null);
@@ -565,6 +581,12 @@ export default function AppraisalReport() {
     .map((value) => value.replaceAll("_", " ").replace(/\b\w/g, (character) => character.toUpperCase()))
     .join(", ");
   const neighborhoodBoundaryErrors = neighborhoodBoundaryReadinessErrors(neighborhoodDetails);
+  const pdfNeighborhoodErrors = customNeighborhoodPdfReadinessErrors(acceptedNeighborhood, propertyId,
+    assignmentFile?.id, neighborhoodDetails);
+  const browserPrintErrors = customNeighborhoodBrowserPrintReadinessErrors(acceptedNeighborhood, propertyId,
+    assignmentFile?.id, neighborhoodDetails);
+  const serverPdfOnly = pdfNeighborhoodErrors.length === 0
+    && (acceptedNeighborhood?.status === "accepted" || acceptedNeighborhood?.status === "signed");
   const landUseTotal = neighborhoodLandUseTotal(neighborhoodDetails);
   const neighborhoodRepresentativeness = calculateNeighborhoodRepresentativeness(neighborhoodDetails);
   const propertyContext = detail?.property_context || null;
@@ -578,8 +600,8 @@ export default function AppraisalReport() {
       setPrintBlocker("Create or select an appraisal file before generating the report PDF.");
       return;
     }
-    if (neighborhoodBoundaryErrors.length) {
-      const message = `PDF E&O check: ${neighborhoodBoundaryErrors.join(" ")}`;
+    if (pdfNeighborhoodErrors.length) {
+      const message = `PDF E&O check: ${pdfNeighborhoodErrors.join(" ")}`;
       setPrintBlocker(message);
       window.alert(message);
       return;
@@ -626,7 +648,7 @@ export default function AppraisalReport() {
   }
 
   return (
-    <div className={`appraisal-report-shell ${neighborhoodBoundaryErrors.length ? "report-print-blocked" : ""}`}>
+    <div className={`appraisal-report-shell ${browserPrintErrors.length ? "report-print-blocked" : ""}`}>
       <style>{`
         .appraisal-report-shell {
           min-height: 100vh;
@@ -1000,7 +1022,7 @@ export default function AppraisalReport() {
             Sales Comparison
           </a>
           <button type="button" className="report-print-button" onClick={() => void downloadServerReport()} disabled={pdfGenerating}>
-            {neighborhoodBoundaryErrors.length
+            {pdfNeighborhoodErrors.length
               ? "Complete Boundary Review"
               : pdfGenerating
                 ? "Building PDF..."
@@ -1011,14 +1033,14 @@ export default function AppraisalReport() {
         </div>
       </div>
 
-      {(printBlocker || neighborhoodBoundaryErrors.length > 0) ? (
+      {(printBlocker || pdfNeighborhoodErrors.length > 0) ? (
         <div className="mx-auto mt-3 w-[min(8.5in,calc(100%-24px))] rounded-lg border border-amber-300 bg-amber-50 px-4 py-3 text-sm font-medium text-amber-950 print:hidden">
-          {printBlocker || `PDF E&O check: ${neighborhoodBoundaryErrors.join(" ")}`}
+          {printBlocker || `PDF E&O check: ${pdfNeighborhoodErrors.join(" ")}`}
         </div>
       ) : null}
       <div className="report-print-blocker-page">
-        <strong>PDF E&amp;O check incomplete.</strong>
-        <div>{neighborhoodBoundaryErrors.join(" ")}</div>
+        <strong>Browser print unavailable.</strong>
+        <div>{browserPrintErrors.join(" ")}</div>
       </div>
 
       <main className="report-document">
@@ -1388,9 +1410,11 @@ export default function AppraisalReport() {
           <section className="report-section">
             <div className={`report-note ${neighborhoodBoundaryErrors.length ? "" : "report-status"}`}>
               <strong>{assignmentFile ? `Appraisal file ${assignmentFile.file_number}` : "No appraisal file selected"}.</strong>{" "}
-              {neighborhoodBoundaryErrors.length
-                ? `E&O review incomplete: ${neighborhoodBoundaryErrors.join(" ")}`
-                : "The appraiser-defined neighborhood boundary was reviewed and confirmed for this assignment."}
+              {serverPdfOnly
+                ? browserPrintErrors.join(" ")
+                : neighborhoodBoundaryErrors.length
+                  ? `E&O review incomplete: ${neighborhoodBoundaryErrors.join(" ")}`
+                  : "The appraiser-defined neighborhood boundary was reviewed and confirmed for this assignment."}
             </div>
           </section>
 

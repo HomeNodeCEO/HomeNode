@@ -28,6 +28,18 @@ matching source/spatial snapshot descriptors. It requires
 `intent.created_at <= started_at <= capture_observed_at <= completed_at`.
 These read timestamps do not imply a successful retention COMMIT.
 
+During initial dense preparation, an exact immutable mapping4 parcel/account
+factory output may reuse its deterministic mapper result when its retained raw
+fields are all primitive and no discarded-field gap exists. Recognition is a
+private WeakMap identity lookup with fixed kind/version checks; it adds no field,
+digest token, JSON string cache, source permission, or acquisition authority.
+It skips only re-running that same mapper and comparing its output. Source
+original-byte checks, all hashes, partitions, counts, routing, closure, and
+subject/intent/scope bindings still run. Copies, reopened objects, nested raw
+values, discarded fields, and other mapping kinds/versions take the original
+full remapping path. Reuse must preserve exactly the same prepared graph and
+references as a fresh-copy fallback.
+
 ## Four retained dependency references
 
 - `snapshot_evidence`: reuses the verified original subject snapshot reference.

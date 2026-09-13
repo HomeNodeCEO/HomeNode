@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { mapWitnessParcelRow, mapWitnessAccountRow, mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
-import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
+import { mapCadEvidenceParcelRow, mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow,
+  hasOriginalPrimitiveCadMappingReceipt } from './cachedRowMappingsV4.js';
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
   recheckNeighborhoodCohortBlob,
@@ -32,6 +33,7 @@ const WITNESS_MAPPERS = Object.freeze({ parcels: mapWitnessParcelRow, accounts: 
   transactions: mapWitnessSaleRow, sale_links: mapWitnessSaleLinkRow });
 const CAD_EVIDENCE_MAPPERS = Object.freeze({ parcels: mapCadEvidenceParcelRow, accounts: mapCadEvidenceAccountRow,
   transactions: mapCadEvidenceSaleRow, sale_links: mapCadEvidenceSaleLinkRow });
+const CAD_RECEIPT_KINDS = Object.freeze({ parcels: 'parcel', accounts: 'account' });
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const HASH = /^[a-f0-9]{64}$/;
 const SUBJECT_KEYS = ['subject_input_version', 'usage', 'target', 'effective_date', 'case_effective_date',
@@ -248,8 +250,13 @@ function* validateSources(capture, request, compact, representation = blob, load
         closed(row, ['record_id', 'data']);
         if (compact.mapping_version === 3 || compact.mapping_version === 4) {
           const mapper = (compact.mapping_version === 3 ? WITNESS_MAPPERS : CAD_EVIDENCE_MAPPERS)[p.projection.definition.role];
+          // Only an exact immutable factory output can avoid repeating its
+          // deterministic primitive CAD mapping. Reopened/copied/nested rows
+          // still remap; all source bytes, hashes and bindings remain checked.
+          const originalCadMapping = compact.mapping_version === 4 && hasOriginalPrimitiveCadMappingReceipt(
+            row.data, CAD_RECEIPT_KINDS[p.projection.definition.role], compact.mapping_version);
           if (mapper) check(row.data?.data?.cached_mapping_version === compact.mapping_version
-            && same(row.data, mapper(row.data.raw_projection)),
+            && (originalCadMapping || same(row.data, mapper(row.data.raw_projection))),
           compact.mapping_version === 3 ? 'witness_mapping_mismatch' : 'cad_evidence_mapping_mismatch');
         }
         check(typeof row.record_id === 'string' && !recordIds.has(row.record_id)

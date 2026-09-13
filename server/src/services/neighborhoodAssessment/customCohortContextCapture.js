@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
-import { createCustomCapturePhaseTiming } from './customCapturePhaseTiming.js';
+import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming } from './customCapturePhaseTiming.js';
 import { prepareCustomCohortOpeningGroups, prepareCustomCohortOpeningMode, customCohortOpeningGroupIds, customCohortOpeningSelection,
   CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
@@ -1052,8 +1052,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         generation: saved.generation, authority: 'not_established' });
     });
   }, async prepareReportedObservations(value, options = {}) {
-    const input = reportedInputOf(value), budget = operationBudget(options);
-    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+    const input = reportedInputOf(value), budget = operationBudget(options), phase = createCustomReportPhaseTiming();
+    const loaded = await phase('load', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       const data = await loadReported(client, input, budget);
       if (data.reportEditor.editor_revision !== input.expectedEditorRevision) fail('report_editor_changed');
       if (input.replacement) data.replacement = await reportedPredecessor(client, input, data.target);
@@ -1061,7 +1061,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (previous && !same(previous.payload.fences, reportFences(data))) fail('report_proposal_changed');
       await recheckReported(client, input, data, budget);
       return { ...data, previous };
-    });
+    }));
     if (loaded.previous) return proposalResponse(input, loaded, { status: 'ready',
       attachment: loaded.previous.stored.attachment }, loaded.previous.stored.assessment, [], true);
     const active = loaded.workspace.checkpoint.active;
@@ -1072,17 +1072,17 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     budget.check();
     const buildReported = loaded.retained.reportedInterpretation
       ? buildCustomCohortReportedAssessmentWitnessV2Batched : buildCustomCohortReportedAssessmentBatched;
-    const prepared = await buildReported({ context_ref: input.contextRef,
+    const prepared = await phase('assembly', () => buildReported({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
       catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint),
       preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,
       proposal_binding: { operation_id: input.operationId, actor_user_id: input.auth.userId,
-        expected_editor_revision: input.expectedEditorRevision } }, { check: budget.check });
+        expected_editor_revision: input.expectedEditorRevision } }, { check: budget.check }));
     // Rehearse the exact public shape before any publication writes. The final
     // published identity is checked again after its actual revision is assigned.
     if (prepared.status === 'ready') proposalResponse(input, loaded, prepared.candidate, prepared.assessment);
     budget.check();
-    return transaction(pool, 'READ COMMITTED', budget, async client => {
+    return phase('publication', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       privateDraft(await privateCaptureWorkfile(client, input));
       await recheckReported(client, input, loaded, budget);
       // Another exact retry may have committed while this request assembled.
@@ -1101,8 +1101,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         input_signature_sha256: prepared.assessment.input_signature_sha256, payload });
       const claim = await repository.claimExact(target.scope,
         { job_id: queued.job.id, expected_request_generation: queued.request_generation });
-      const published = await repository.publish(claim, prepared.assessment, prepared.publication_bundle.members,
-        prepared.publication_bundle.sources.map(source => ({ id: source.snapshot.id, payload: source.payload })));
+      const published = await phase('repository', () => repository.publishBatched(claim, prepared.assessment, prepared.publication_bundle.members,
+        prepared.publication_bundle.sources.map(source => ({ id: source.snapshot.id, payload: source.payload })), { check: budget.check }));
       if (!published.promoted) fail('report_proposal_changed');
       const candidate = buildCustomNeighborhoodReportCandidate({ assessment: published.assessment,
         target: { ...target, attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,
@@ -1112,7 +1112,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         attachment: candidate.attachment, mappedSuggestions: candidate.suggestions });
       await recheckReported(client, input, loaded, budget);
       return proposalResponse(input, loaded, candidate, published.assessment);
-    });
+    }));
   }, async applyReportedObservations(value, options = {}) {
     const input = reportedInputOf(value, true), budget = operationBudget(options);
     return transaction(pool, 'READ COMMITTED', budget, async client => {

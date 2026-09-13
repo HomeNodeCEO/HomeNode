@@ -2,6 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { checkCustomCohortPocketCatalog as check, selectionFromRecordedGroups as select } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { buildCustomCohortSubdivisionFamilies as build,
+  buildCustomCohortSubdivisionPhases as phasesFor,
+  createCustomCohortSubdivisionPhaseReader as phaseReader,
   customCohortSubdivisionFamilyForPocket as find } from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 
 const contextRef = { context_id: '30000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -64,6 +66,136 @@ test('known DFW county suffixes are equivalent while other county names remain e
   assert.deepEqual(family(model, 1).pocket_ids, [pocketId(1), pocketId(2)]);
   assert.deepEqual(family(model, 3).pocket_ids, [pocketId(3), pocketId(4)]);
   for (const i of [5, 6, 7]) assert.equal(family(model, i).basis, 'standalone');
+});
+
+test('mirrored Monica Park phases across Dallas aliases keep the complete roster and exact phase unions', () => {
+  const specs = Array.from({ length: 5 }, (_, i) => [
+    { label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 2 },
+    { label: `MONICA PARK ${i + 1}`, county: 'DALLAS COUNTY', member_count: i + 7 },
+  ]).flat();
+  specs.push({ label: 'MONICA PARK 6', county: 'DALLAS COUNTY', member_count: 13 },
+    { label: 'MONICA PARK 5 SEC 2', county: 'Dallas', member_count: 17 },
+    { label: 'MONICA PARK 5 SEC 2', county: 'DALLAS COUNTY', member_count: 19 },
+    { label: 'MONICA PARK', county: 'Dallas', member_count: 23 },
+    { label: 'MONICA PARK HEIGHTS 1', county: 'Dallas', member_count: 29 },
+    { label: 'MONICA PARK HEIGHTS 2', county: 'Dallas', member_count: 31 });
+  const { catalog } = fixture(specs), model = build(catalog), parent = family(model);
+  complete(catalog, model); assert.equal(model.families.length, 3);
+  assert.equal(parent.label, 'MONICA PARK'); assert.equal(parent.basis, 'candidate_numbered_name');
+  assert.equal(parent.member_count, 114); assert.equal(parent.pocket_ids.length, 13);
+  assert.equal(family(model, 14).basis, 'standalone'); assert.equal(family(model, 14).label, 'MONICA PARK');
+  assert.equal(family(model, 15).label, 'MONICA PARK HEIGHTS');
+  const phases = phasesFor(catalog, parent);
+  assert.equal(phases.length, 7);
+  assert.deepEqual(phases.map(p => p.label), ['MONICA PARK 1', 'MONICA PARK 2', 'MONICA PARK 3',
+    'MONICA PARK 4', 'MONICA PARK 5', 'MONICA PARK 5 SEC 2', 'MONICA PARK 6']);
+  assert.deepEqual(phases.map(p => p.member_count), [9, 11, 13, 15, 17, 36, 13]);
+  assert.deepEqual(phases.map(p => p.id), [1, 3, 5, 7, 9, 12, 11].map(pocketId));
+  assert.deepEqual(phases.flatMap(p => p.pocket_ids), parent.pocket_ids);
+  assert.equal(phases.reduce((sum, p) => sum + p.member_count, 0), parent.member_count);
+  for (let i = 0; i < 5; i++) assert.deepEqual(phases[i].pocket_ids, [pocketId(2 * i + 1), pocketId(2 * i + 2)]);
+  const allIds = [...parent.pocket_ids, pocketId(14)], included = select(catalog, allIds, 8);
+  assert.equal(included.pockets[0].account_ids.length, 137);
+  const excluded = allIds.filter(id => !phases[4].pocket_ids.includes(id));
+  assert.equal(select(catalog, excluded, 9).pockets[0].account_ids.length, 120);
+  assert.ok(phases[5].pocket_ids.every(id => excluded.includes(id)), 'excluding phase 5 does not silently exclude its separate section row');
+  const saved = JSON.parse(JSON.stringify({ revision: 9, included_recorded_group_ids: excluded }));
+  assert.deepEqual(phasesFor(catalog, family(build(catalog))), phases);
+  assert.deepEqual(saved.included_recorded_group_ids, excluded);
+  assert.ok(!saved.included_recorded_group_ids.includes(parent.id));
+});
+
+test('known alias collapse requires exact normalized full names, not equivalent-looking marker syntax', () => {
+  const { catalog } = fixture([{ label: 'Cedar  Park PHASE 1', county: 'Dallas', member_count: 2 },
+    { label: ' cedar park phase 1 ', county: 'Dallas County', member_count: 3 },
+    { label: 'Cedar Park PHASE 2', county: 'Dallas County', member_count: 5 }]);
+  const model = build(catalog), phases = phasesFor(catalog, family(model));
+  assert.equal(model.families.length, 1); assert.equal(phases.length, 2);
+  assert.deepEqual(phases[0].pocket_ids, [pocketId(1), pocketId(2)]); assert.equal(phases[0].member_count, 5);
+  assert.ok(catalog.pockets.some(p => p.label === phases[0].label));
+  for (const labels of [['Park PHASE 1', 'Park PH 1', 'Park PHASE 2'],
+    ['Park 5 SEC 2', 'Park 5 SECTION 2', 'Park 6'], ['Park 1', 'Park PH 1', 'Park 2']]) {
+    const { catalog: ambiguous } = fixture(labels.map((label, i) => ({ label, county: i === 1 ? 'DALLAS COUNTY' : 'Dallas' })));
+    const view = build(ambiguous); complete(ambiguous, view);
+    assert.ok(view.families.every(f => f.basis === 'standalone'));
+    assert.ok(view.families.every(f => phasesFor(ambiguous, f).length === 1));
+  }
+});
+
+test('same-name county aliases alone can form one review phase without minting an original ID', () => {
+  const { catalog } = fixture([{ label: 'MONICA PARK 4', county: 'Dallas' }, { label: 'MONICA PARK 4', county: 'DALLAS COUNTY' }]);
+  const model = build(catalog), phases = phasesFor(catalog, family(model));
+  assert.equal(model.families.length, 1); assert.equal(phases.length, 1);
+  assert.equal(phases[0].id, pocketId(1)); assert.deepEqual(phases[0].pocket_ids, [pocketId(1), pocketId(2)]);
+});
+
+test('duplicate suffixes without a distinct recognized county spelling stay ambiguous', () => {
+  for (const counties of [['Dallas', 'Dallas'], ['Dallas', ' dallas '], ['DALLAS COUNTY', 'Dallas County'],
+    ['Travis', 'Travis'], ['Travis', 'Travis County'], ['Unknown', 'UNKNOWN COUNTY']]) {
+    const { catalog } = fixture([{ label: 'Park 1', county: counties[0] },
+      { label: 'Park 1', county: counties[1] }, { label: 'Park 2', county: counties[0] }]);
+    const model = build(catalog); complete(catalog, model);
+    if (counties[0] === 'Travis' && counties[1] === 'Travis County') {
+      assert.deepEqual(family(model, 1).pocket_ids, [pocketId(1), pocketId(3)]);
+      assert.equal(family(model, 2).basis, 'standalone');
+    } else assert.ok(model.families.every(f => f.basis === 'standalone'));
+  }
+  const { catalog } = fixture(['Dallas', 'DALLAS COUNTY', 'Collin', 'COLLIN COUNTY'].flatMap(county =>
+    [1, 2].map(n => ({ label: `Park ${n}`, county }))));
+  const model = build(catalog); assert.equal(model.families.length, 2); complete(catalog, model);
+  assert.deepEqual(phasesFor(catalog, family(model)).map(p => p.pocket_ids), [[pocketId(1), pocketId(3)], [pocketId(2), pocketId(4)]]);
+  assert.deepEqual(phasesFor(catalog, family(model, 5)).map(p => p.pocket_ids), [[pocketId(5), pocketId(7)], [pocketId(6), pocketId(8)]]);
+});
+
+test('one bounded nested section remains a distinct phase row under the exact recognized base', () => {
+  for (const phaseMarker of ['', 'PH ', 'PHASE ']) {
+    const { catalog } = fixture([`Monica Park ${phaseMarker}5 SECTION 999`, `Monica Park ${phaseMarker}5`,
+      `Monica Park ${phaseMarker}5 SEC 2`, `Monica Park ${phaseMarker}6`]);
+    const model = build(catalog), parent = family(model); complete(catalog, model);
+    assert.equal(model.families.length, 1); assert.equal(parent.label, 'Monica Park');
+    assert.deepEqual(parent.pocket_ids, [2, 3, 1, 4].map(pocketId));
+    assert.deepEqual(phasesFor(catalog, parent).map(p => p.id), [2, 3, 1, 4].map(pocketId));
+  }
+  for (const unsupported of ['MONICA PARK 5 SEC 0', 'MONICA PARK 5 SEC 01', 'MONICA PARK 5 SEC 1000',
+    'MONICA PARK 5 SEC II', 'MONICA PARK 5 SEC2', 'MONICA PARK5 SEC 2', 'MONICA PARK 5 SEC 2 SEC 3',
+    'MONICA PARK SECTION 2', 'MONICA PARK 5 UNIT 2', 'MONICA PARK 5 2', 'Route 66 5 SEC 2']) {
+    const { catalog } = fixture(['MONICA PARK 1', 'MONICA PARK 6', unsupported]);
+    const model = build(catalog); complete(catalog, model);
+    assert.equal(family(model, 3).basis, 'standalone', unsupported);
+    assert.deepEqual(family(model).pocket_ids, [pocketId(1), pocketId(2)]);
+  }
+});
+
+test('phase projection is immutable, order-independent, metadata-only and rejects foreign or partial families', () => {
+  const { catalog } = fixture([{ label: 'Park 1', county: 'Dallas' }, { label: 'Park 1', county: 'DALLAS COUNTY' },
+    { label: 'Park 2', county: 'Dallas' }, { label: 'Unrelated', county: 'Dallas' }]);
+  const parent = family(build(catalog)), before = JSON.stringify(catalog), phases = phasesFor(catalog, parent);
+  const metadataOnly = { ...catalog, pockets: catalog.pockets.map(p => ({ ...p,
+    get account_ids() { throw new Error('phase projection must not rescan account arrays'); } })) };
+  assert.deepEqual(phasesFor(metadataOnly, { ...parent, pocket_ids: [...parent.pocket_ids].reverse() }), phases);
+  assert.deepEqual(phasesFor({ ...catalog, pockets: [...catalog.pockets].reverse() }, parent), phases);
+  assert.equal(JSON.stringify(catalog), before);
+  for (const value of [phases, ...phases, ...phases.map(p => p.pocket_ids)]) assert.ok(Object.isFrozen(value));
+  assert.throws(() => phases[0].pocket_ids.push('foreign'), TypeError);
+  assert.throws(() => { phases[0].member_count = 100; }, TypeError);
+  for (const change of [{ id: 'foreign' }, { label: 'Park Other' }, { county: 'Collin' }, { basis: 'standalone' },
+    { member_count: parent.member_count + 1 }, { pocket_ids: [pocketId(1), pocketId(2)] },
+    { pocket_ids: [pocketId(1), pocketId(2), pocketId(4)] }, { pocket_ids: [pocketId(1), pocketId(1), pocketId(3)] },
+    { pocket_ids: [] }, { pocket_ids: ['foreign'] }]) {
+    assert.throws(() => phasesFor(catalog, { ...parent, ...change }), TypeError);
+  }
+  assert.deepEqual(phasesFor({ ...catalog, status: 'incomplete' }, parent), []);
+});
+
+test('prepared phase reader owns a detached metadata snapshot, not a hidden mutable catalog cache', () => {
+  const { catalog } = fixture([{ label: 'Park 1', county: 'Dallas' }, { label: 'Park 1', county: 'DALLAS COUNTY' }, 'Park 2']);
+  const parent = family(build(catalog)), mutable = structuredClone(catalog), reader = phaseReader(mutable);
+  const expected = reader(parent);
+  mutable.pockets[0].label = 'Changed 1'; mutable.pockets[0].member_count = 100;
+  assert.deepEqual(reader(parent), expected);
+  assert.throws(() => phaseReader(mutable)(parent), TypeError);
+  mutable.pockets.length = 0;
+  assert.deepEqual(reader(parent), expected);
 });
 
 test('directions, punctuation, and internal numbers stay part of the exact base', () => {
@@ -157,6 +289,16 @@ test('complete 50,000-account / 1,024-leaf catalog keeps every original member a
   assert.equal(catalog.coverage.discovery_member_count, 50_000); assert.equal(model.families.length, 512);
   assert.equal(model.families.flatMap(f => f.pocket_ids).length, 1024);
   assert.equal(select(catalog, model.families.flatMap(f => f.pocket_ids), 8).pockets[0].account_ids.length, 50_000);
+  let metadataReads = 0;
+  const metadataOnly = { ...catalog, pockets: catalog.pockets.map(p => ({ ...p,
+    get label() { metadataReads++; return p.label; },
+    get account_ids() { throw new Error('prepared phase reader must not scan account arrays'); } })) };
+  const reader = phaseReader(metadataOnly);
+  assert.equal(metadataReads, 1024);
+  const phases = model.families.flatMap(reader);
+  assert.equal(metadataReads, 1024, 'all 512 family projections share exactly one catalog metadata traversal');
+  assert.equal(phases.length, 1024); assert.equal(phases.reduce((sum, p) => sum + p.member_count, 0), 50_000);
+  assert.deepEqual(phases.flatMap(p => p.pocket_ids).sort(), catalog.pockets.map(p => p.id).sort());
 });
 
 test('incomplete catalog returns no derived families rather than a partial-name prefix', () => {

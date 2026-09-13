@@ -7,7 +7,7 @@ import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransp
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
   customCohortCountyNameMatches, CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
-import { buildCustomCohortSubdivisionFamilies, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
+import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics from './CustomCohortStatistics';
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
@@ -75,8 +75,9 @@ function WorkspaceSession(props: Props) {
   const catalog = props.workspace?.catalog ?? localCatalog;
   const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
   const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
-  const highlightedIds = useMemo(() => inspectedFamily ? inspectedPhaseId ? [inspectedPhaseId] : inspectedFamily.pocket_ids : undefined,
-    [inspectedFamily, inspectedPhaseId]);
+  const highlightedIds = useMemo(() => inspectedFamily && catalog ? inspectedPhaseId
+    ? buildCustomCohortSubdivisionPhases(catalog, inspectedFamily).find(phase => phase.pocket_ids.includes(inspectedPhaseId))?.pocket_ids
+    : inspectedFamily.pocket_ids : undefined, [catalog, inspectedFamily, inspectedPhaseId]);
   const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
   const revision = props.workspace?.selection.revision ?? localRevision;
   const saving = props.workspace?.saving ?? false;

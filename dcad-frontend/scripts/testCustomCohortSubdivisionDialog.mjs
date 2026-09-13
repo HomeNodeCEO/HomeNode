@@ -4,6 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import * as locationHelpers from '../src/features/neighborhood/customCohortSubdivisionLocationReview.ts';
+import * as familyHelpers from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript');
 const file = new URL('../src/features/neighborhood/components/CustomCohortSubdivisionDialog.tsx', import.meta.url);
@@ -13,6 +14,7 @@ const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOption
 const kids = n => [n?.props?.children].flat(Infinity);
 const walk = n => n && typeof n === 'object' ? [n, ...kids(n).flatMap(walk)] : [];
 const text = n => typeof n === 'string' || typeof n === 'number' ? String(n) : kids(n).filter(Boolean).map(text).join('');
+const phaseId = i => `recorded-cad:phase-${i}`;
 function harness(count = 3) {
   let tree, cursor = 0, current, modalOpens = 0, modalCloses = 0, focusRestores = 0;
   const cells = [], effects = [], cleanups = [], actions = [];
@@ -29,13 +31,19 @@ function harness(count = 3) {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortSubdivisionLocationReview') return locationHelpers;
+    if (key === '../customCohortSubdivisionFamilies') return familyHelpers;
     assert.equal(key, './CustomCohortPocketInspector'); return { default: Inspector, __esModule: true };
   }, module, module.exports, document, Element);
-  const phases = Array.from({ length: count }, (_, i) => ({ id: `phase-${i}`, label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 1, account_ids: [] }));
-  const props = { family: { id: 'family', label: 'MONICA PARK', county: 'Dallas', pocket_ids: phases.map(p => p.id),
-    member_count: phases.reduce((n, p) => n + p.member_count, 0), basis: 'candidate_numbered_name' },
-    input: { accountId: 'subject', assignmentFileId: '7', contextRef: {} }, catalog: { pockets: phases },
-    included: ['phase-0'], phaseId: null, selectionDisabled: false, inspectionsPaused: false,
+  const phases = Array.from({ length: count }, (_, i) => ({ id: phaseId(i), label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 1,
+    account_ids: Array.from({ length: i + 1 }, (_, j) => `synthetic-${i}-${j}`) }));
+  const total = phases.reduce((n, p) => n + p.member_count, 0), contextRef = { context_id: 'context', context_revision: '1', context_sha256: 'a'.repeat(64) };
+  const catalog = { catalog_version: 1, status: 'review_only', binding: { context_ref: contextRef, selection_revision: 1 }, pockets: phases,
+    unassigned: { member_count: 0, account_ids: [], reason_counts: [] },
+    coverage: { discovery_member_count: total, assigned_account_count: total, unassigned_account_count: 0 },
+    subject_membership: { account_id: phases[0].account_ids[0], assigned_pocket_id: phases[0].id, recorded_label_match_only: true } };
+  const family = familyHelpers.buildCustomCohortSubdivisionFamilies(catalog).families[0];
+  const props = { family, input: { accountId: phases[0].account_ids[0], assignmentFileId: '7', contextRef }, catalog,
+    included: [phaseId(0)], phaseId: null, selectionDisabled: false, inspectionsPaused: false,
     previewTransport: () => assert.fail('Only the child inspector may request data'),
     onInclude: ids => actions.push(['include', [...ids]]), onExclude: ids => actions.push(['exclude', [...ids]]),
     onInspectPhase: id => actions.push(['inspect', id]), onClose: () => actions.push(['close']) };
@@ -66,14 +74,14 @@ test('subdivision union contains all phases even when search/page display only25
   assert.equal(h.inspector().pocketIds.length, 60, 'visible rows do not narrow statistics'); h.close();
 });
 test('phase inspection passes one exact leaf, excludes only explicit phase and can return to parent', () => {
-  const h = harness(); h.render({ ...h.props, phaseId: 'phase-1' });
-  assert.equal(h.inspector().pocketId, 'phase-1'); assert.equal(h.inspector().pocketIds, undefined);
-  h.click('Include phase MONICA PARK 2'); assert.deepEqual(h.actions, [['include', ['phase-1']]]);
-  h.click('Exclude phase MONICA PARK 1'); assert.deepEqual(h.actions.at(-1), ['exclude', ['phase-0']]);
+  const h = harness(); h.render({ ...h.props, phaseId: phaseId(1) });
+  assert.equal(h.inspector().pocketId, phaseId(1)); assert.equal(h.inspector().pocketIds, undefined);
+  h.click('Include phase MONICA PARK 2'); assert.deepEqual(h.actions, [['include', [phaseId(1)]]]);
+  h.click('Exclude phase MONICA PARK 1'); assert.deepEqual(h.actions.at(-1), ['exclude', [phaseId(0)]]);
   h.click('View whole subdivision'); assert.deepEqual(h.actions.at(-1), ['inspect', null]); h.close();
 });
 test('blocked state guards direct selection and inspection callbacks and preserves colors/classes', () => {
-  const h = harness(); h.render({ ...h.props, phaseId: 'phase-1', selectionDisabled: true, inspectionsPaused: true });
+  const h = harness(); h.render({ ...h.props, phaseId: phaseId(1), selectionDisabled: true, inspectionsPaused: true });
   for (const label of ['Include all phases', 'Exclude subdivision', 'Exclude phase MONICA PARK 1', 'View whole subdivision']) {
     assert.equal(h.button(label).props.disabled, true); h.click(label);
   }
@@ -81,8 +89,21 @@ test('blocked state guards direct selection and inspection callbacks and preserv
   assert.match(h.tree.props.className, /border-amber-300/); assert.match(h.text, /not verified legal/); h.close();
 });
 test('missing raw phase details stay unavailable; property similarity is not relabelled subdivision reliability', () => {
-  const h = harness(); h.render({ ...h.props, catalog: { ...h.props.catalog, recommendation: { pockets: [{ id: 'phase-0', similarity: { lower: 55, upper: 85 } }] } } });
+  const h = harness(); h.render({ ...h.props, catalog: { ...h.props.catalog, recommendation: { pockets: [{ id: phaseId(0), similarity: { lower: 55, upper: 85 } }] } } });
   assert.match(h.text, /Similarity to subject property: 55.0–85.0/);
   assert.match(h.text, /Not a reliability score/); assert.match(h.text, /verified zoning are not available/);
   assert.doesNotMatch(h.text, /55.0.*subdivision similarity/); h.close();
+});
+test('equivalent county-name leaves show one phase and partial selection; inspection and buttons use the complete original ID union', () => {
+  const h = harness(), original = h.props.catalog, alias = { ...original.pockets[0], id: 'recorded-cad:alias', county: 'DALLAS COUNTY',
+    account_ids: ['synthetic-alias'], member_count: 1 };
+  const catalog = { ...original, pockets: [...original.pockets, alias], coverage: { ...original.coverage,
+    discovery_member_count: original.coverage.discovery_member_count + 1, assigned_account_count: original.coverage.assigned_account_count + 1 } };
+  const family = familyHelpers.buildCustomCohortSubdivisionFamilies(catalog).families[0];
+  h.render({ ...h.props, family, catalog, phaseId: alias.id });
+  const union = [alias.id, phaseId(0)].sort();
+  assert.deepEqual([...h.inspector().pocketIds].sort(), union); assert.match(h.text, /Partially included/);
+  assert.match(h.text, /2 equivalent recorded county-name groups/);
+  h.click('Exclude phase MONICA PARK 1'); assert.deepEqual([...h.actions.at(-1)[1]].sort(), union);
+  h.click('Include phase MONICA PARK 1'); assert.deepEqual([...h.actions.at(-1)[1]].sort(), union); h.close();
 });

@@ -555,6 +555,26 @@ test('keyboard/list family review opens the same modal without silently selectin
   h.child('CustomCohortSubdivisionDialog').onInclude([groupId(1), groupId(2)]);
   assert.deepEqual(h.intents, [[groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP, groupId(2)]]);
 });
+test('near click on a county-name variant highlights the entire exact phase; exclusion saves all phase leaves once', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const props = phasedProps(h, [groupId(1), groupId(2), groupId(3)]);
+  const original = props.workspace.catalog;
+  props.workspace.catalog = { ...original, pockets: [...original.pockets,
+    { ...original.pockets[0], id: groupId(3), county: 'DALLAS COUNTY', account_ids: ['D'], member_count: 1 }],
+    coverage: { discovery_member_count: 4, assigned_account_count: 3, unassigned_account_count: 1 } };
+  h.render(props); await h.tick(); await h.complete();
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'phase'); await h.drain();
+  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortSubdivisionDialog').phaseId, groupId(3));
+  assert.deepEqual([...h.child('CustomCohortParcelMap').inspectedPocketIds].sort(), [groupId(1), groupId(3)]);
+  h.child('CustomCohortSubdivisionDialog').onExclude([groupId(1), groupId(3)]);
+  assert.deepEqual(h.intents, [[groupId(2)]]);
+  const saved = { ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: [groupId(2)] } } };
+  h.render(saved); await h.tick(); await h.complete();
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(1), 'phase'); await h.drain(); assert.equal(h.intents.length, 1);
+  assert.deepEqual(h.calls.at(-1).request.selection.pockets[0].account_ids, ['B']);
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'subdivision'); await h.drain();
+  assert.deepEqual([...h.intents.at(-1)].sort(), [groupId(1), groupId(2), groupId(3)]);
+});
 test('subdivision inspector requests one exact union without map or per-phase median averaging', { timeout: 10_000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
   const props = { input, catalog, pocketId: groupId(1), pocketIds: [groupId(1), groupId(2)], label: 'Parent', previewTransport: h.previewTransport };

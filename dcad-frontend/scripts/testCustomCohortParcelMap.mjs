@@ -29,7 +29,7 @@ const familiesCompiled = ts.transpileModule(readFileSync(familiesFile, 'utf8'), 
   compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
 });
 new Script(`(function(module,exports){${familiesCompiled.outputText}\n})`, { filename: familiesFile }).runInThisContext()(familiesModule, familiesModule.exports);
-const { buildCustomCohortSubdivisionFamilies } = familiesModule.exports;
+const { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases } = familiesModule.exports;
 const contextRef = { context_id: 'context', context_revision: '1', context_sha256: 'a'.repeat(64) };
 const polygon = x => ({ type: 'Polygon', coordinates: [[[x, 32], [x + .01, 32], [x + .01, 32.01], [x, 32]],
   [[x + .003, 32.003], [x + .005, 32.003], [x + .005, 32.004], [x + .003, 32.003]]] });
@@ -65,6 +65,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Obje
 function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, throwQuery = false } = {}) {
   const cells = [], effects = [], layouts = [], maps = [], timers = new Map(), inspections = [];
   let cursor = 0, dirty = false, props, tree, nextTimer = 0, loadCount = 0, presentationCount = 0, resolveLoad;
+  let phasePreparationCount = 0, phaseReadCount = 0, standalonePhaseReadCount = 0;
   const runtimePromise = new Promise(resolve => { resolveLoad = resolve; });
   const hook = (fn, deps, queue) => {
     const i = cursor++, old = cells[i];
@@ -133,6 +134,14 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
       buildCustomCohortMapPresentation(...args) { presentationCount++; return buildCustomCohortMapPresentation(...args); } };
     if (name.endsWith('/NeighborhoodCityReferenceControl')) return { default: CityReferenceStub };
     if (name.endsWith('/customCohortPocketCatalog')) return { CUSTOM_COHORT_UNASSIGNED_GROUP: 'discovery:unassigned' };
+    if (name.endsWith('/customCohortSubdivisionFamilies')) return { ...familiesModule.exports,
+      createCustomCohortSubdivisionPhaseReader(...args) {
+        phasePreparationCount++; const read = familiesModule.exports.createCustomCohortSubdivisionPhaseReader(...args);
+        return family => { phaseReadCount++; return read(family); };
+      },
+      buildCustomCohortSubdivisionPhases(...args) {
+        standalonePhaseReadCount++; return familiesModule.exports.buildCustomCohortSubdivisionPhases(...args);
+      } };
     assert.equal(name, '../../../lib/mapLibreRuntime');
     return { MAPLIBRE_BASE_STYLE: 'pinned-style', loadMapLibreRuntime() { loadCount++;
       return rejectLoad ? Promise.reject(new Error('load failed')) : delayedLoad ? runtimePromise : Promise.resolve(runtime); } };
@@ -157,6 +166,8 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
   }
   return { maps, timers, inspections, observers, get loadCount() { return loadCount; },
     get presentationCount() { return presentationCount; },
+    get phasePreparationCount() { return phasePreparationCount; }, get phaseReadCount() { return phaseReadCount; },
+    get standalonePhaseReadCount() { return standalonePhaseReadCount; },
     node, cityProps: () => node(n => n.type === CityReferenceStub)?.props ?? null,
     changeColor(value) { const select = node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode');
       assert.ok(select, 'actual map color select'); select.props.onChange({ target: { value }, currentTarget: { value } }); flush(); },
@@ -621,7 +632,8 @@ for (const largerSecondChild of [false, true]) test(`parent label keeps exact re
   assert.equal(parent[0].properties.anchor_basis, 'retained_exterior_ring_vertex');
   labels.forEach((label, index) => assert.deepEqual(label.geometry, expected[index].geometry));
   assert.deepEqual(map.getLayer('custom-cohort-group-labels-text').layout['text-field'],
-    ['step', ['zoom'], ['coalesce', ['get', 'subdivision_label'], ['get', 'label']], 15, ['get', 'label']]);
+    ['step', ['zoom'], ['coalesce', ['get', 'subdivision_label'], ['get', 'label']], 15,
+      ['coalesce', ['get', 'phase_label'], ['get', 'label']]]);
   assert.equal(JSON.stringify(props), original);
 });
 
@@ -801,4 +813,107 @@ test('a changed retained subject geometry replaces its point exactly, while remo
   h.emit('click', { features: [previous] }, 'custom-cohort-subject-parcels-text'); assert.deepEqual(calls, []);
   h.emit('click', { features: [source.data.features[0]] }, 'custom-cohort-subject-parcels-text');
   assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
+});
+
+function countyAliasPhaseFixture() {
+  const props = fixture();
+  props.catalog.pockets[0].label = 'MONICA PARK 1'; props.catalog.pockets[1].label = 'MONICA PARK 2';
+  props.catalog.pockets.push({ id: 'recorded-cad:alpha-large', label: 'MONICA PARK 1', county: 'DALLAS COUNTY',
+    account_ids: ['D', 'E', 'F'], member_count: 3 },
+  { id: 'recorded-cad:beta-tiny', label: 'MONICA PARK 2', county: 'DALLAS COUNTY', account_ids: ['G'], member_count: 1 });
+  props.catalog.coverage.assigned_account_count = 6; props.catalog.coverage.discovery_member_count = 7;
+  for (const [i, account_id] of ['D', 'E', 'F', 'G'].entries()) props.group.parcel_map.geojson.features.push({
+    type: 'Feature', id: `gis.dcad_parcels:${i + 4}`, properties: { object_id: String(i + 4), account_id, selected: false },
+    geometry: polygon(-96.5 + i / 100) });
+  props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
+  assert.equal(props.subdivisionFamilies.families.length, 1, 'real helper groups duplicate phase suffixes under supported county aliases');
+  return props;
+}
+
+test('near labels consolidate county-alias phase contributions using the largest retained anchor and stable leaf-ID tie break', async () => {
+  const props = countyAliasPhaseFixture(), original = JSON.stringify(props), h = harness(); await h.ready(props);
+  const map = h.maps[0], labels = map.getSource('custom-cohort-group-labels').data.features;
+  const phases = buildCustomCohortSubdivisionPhases(props.catalog, props.subdivisionFamilies.families[0]);
+  assert.equal(phases.length, 2); assert.deepEqual(phases.map(phase => phase.member_count), [4, 2]);
+  const near = labels.filter(label => label.properties.phase_label);
+  assert.deepEqual(near.map(label => [label.properties.pocket_id, label.properties.phase_label]),
+    [['recorded-cad:alpha-large', 'MONICA PARK 1'], ['recorded-cad:beta', 'MONICA PARK 2']]);
+  assert.equal(labels.filter(label => label.properties.subdivision_label).length, 1);
+  assert.equal(labels.find(label => label.properties.subdivision_label).properties.pocket_id, 'recorded-cad:alpha-large', 'far anchor remains largest original child');
+  const originalLabels = buildCustomCohortMapPresentation(props).labels.features;
+  near.forEach(label => {
+    const retained = originalLabels.find(candidate => candidate.properties.pocket_id === label.properties.pocket_id);
+    assert.deepEqual(label.geometry, retained.geometry);
+    assert.equal(label.properties.account_id, retained.properties.account_id); assert.equal(label.properties.parcel_id, retained.properties.parcel_id);
+    assert.equal(label.properties.label, retained.properties.label, 'literal original label is not overwritten');
+  });
+  assert.equal(JSON.stringify(props), original);
+});
+
+test('near phase highlight covers large and tiny county counterparts while preserving each leaf inclusion color', async () => {
+  const props = countyAliasPhaseFixture(), h = harness(); await h.ready(props);
+  const phase = buildCustomCohortSubdivisionPhases(props.catalog, props.subdivisionFamilies.families[0])
+    .find(row => row.pocket_ids.includes('recorded-cad:alpha'));
+  assert.equal(phase.pocket_ids.length, 2);
+  const map = h.maps[0], labels = map.getSource('custom-cohort-group-labels'), labelData = labels.data;
+  h.render({ ...props, inspectedPocketIds: phase.pocket_ids });
+  assert.deepEqual(['A', 'B', 'C', 'D', 'E', 'F', 'G'].map(account => painted(map, account).inspected), [true, false, false, true, true, true, false]);
+  assert.deepEqual(['A', 'D', 'E', 'F'].map(account => painted(map, account).selected), [true, false, false, false]);
+  assert.equal(painted(map, 'D').fillColor, '#94a3b8');
+  assert.equal(labels.data, labelData); assert.equal(labels.replacements.length, 0);
+  assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0); assert.equal(map.fits.length, 1);
+});
+
+for (const order of ['parcel_first', 'label_first']) test(`consolidated phase label activates once over tiny counterpart in ${order} order`, async () => {
+  const calls = [], props = { ...countyAliasPhaseFixture(), onActivatePocket: (...args) => calls.push(args),
+    onInspectPocket: id => calls.push(['legacy', id]), onInspectAccount: id => calls.push(['account', id]),
+    onSave: () => assert.fail('Map must not write selections') }, h = harness(); await h.ready(props);
+  const map = h.maps[0], point = { x: 1, y: 1 }, label = { properties: { pocket_id: 'recorded-cad:alpha-large' } };
+  map.camera.zoom = 15; map.renderedLabelHits = [label];
+  const parcel = () => h.emit('click', { point, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
+  const text = () => h.emit('click', { point, features: [label] }, 'custom-cohort-group-labels-text');
+  if (order === 'parcel_first') { parcel(); text(); } else { text(); parcel(); }
+  assert.deepEqual(calls, [['recorded-cad:alpha-large', 'phase']], 'one original leaf callback, not a synthetic phase ID or a duplicate inclusion request');
+  const phase = buildCustomCohortSubdivisionPhases(props.catalog, props.subdivisionFamilies.families[0])
+    .find(candidate => candidate.pocket_ids.includes(calls[0][0]));
+  assert.deepEqual(new Set(phase.pocket_ids), new Set(['recorded-cad:alpha', 'recorded-cad:alpha-large']));
+  assert.equal(phase.member_count, 4);
+});
+
+test('hidden duplicate phase label is not clickable and cannot suppress its valid original footprint', async () => {
+  const calls = [], props = { ...countyAliasPhaseFixture(), onActivatePocket: (...args) => calls.push(args) }, h = harness(); await h.ready(props);
+  const map = h.maps[0], point = { x: 2, y: 2 }, hidden = { properties: { pocket_id: 'recorded-cad:alpha' } };
+  map.camera.zoom = 15; map.renderedLabelHits = [hidden];
+  h.emit('click', { point, features: [hidden] }, 'custom-cohort-group-labels-text');
+  h.emit('click', { point, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
+  assert.deepEqual(calls, [['recorded-cad:alpha', 'phase']]);
+  map.camera.zoom = 12; h.emit('zoom'); map.camera.zoom = 17; h.emit('zoom');
+  assert.equal(calls.length, 1); assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
+});
+
+test('many map families share one actual phase metadata preparation per projection, with none on zoom or highlight', async () => {
+  const props = fixture(), count = 64;
+  props.catalog.pockets = Array.from({ length: count }, (_, i) => ({ id: `recorded-cad:separate-${String(i).padStart(3, '0')}`,
+    label: `Separate ${i} North`, county: 'Dallas', account_ids: [i === 0 ? 'A' : `X${i}`], member_count: 1 }));
+  props.catalog.coverage = { discovery_member_count: count + 1, assigned_account_count: count, unassigned_account_count: 1 };
+  props.catalog.subject_membership.assigned_pocket_id = props.catalog.pockets[0].id;
+  props.group.parcel_map.geojson.features = [...props.catalog.pockets.map((pocket, i) => ({ type: 'Feature', id: `gis.dcad_parcels:${i + 1}`,
+    properties: { object_id: String(i + 1), account_id: pocket.account_ids[0], selected: true }, geometry: polygon(-97 + i / 1000) })),
+  { type: 'Feature', id: 'gis.dcad_parcels:65', properties: { object_id: '65', account_id: 'C', selected: false }, geometry: polygon(-96.9) }];
+  props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
+  assert.equal(props.subdivisionFamilies.families.length, count);
+  const h = harness(); await h.ready(props); const map = h.maps[0];
+  assert.equal(h.phasePreparationCount, 1); assert.equal(h.phaseReadCount, count);
+  assert.equal(h.standalonePhaseReadCount, 0, 'the per-family convenience builder must not reprepare the whole catalog');
+  const labelData = map.getSource('custom-cohort-group-labels').data;
+  map.camera.zoom = 17; h.emit('zoom'); map.camera.zoom = 12; h.emit('zoom');
+  h.render({ ...props, inspectedPocketIds: props.catalog.pockets.slice(0, 3).map(pocket => pocket.id) });
+  h.changeColor('similarity');
+  assert.equal(h.phasePreparationCount, 1); assert.equal(h.phaseReadCount, count);
+  assert.equal(map.getSource('custom-cohort-group-labels').data, labelData);
+  assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
+  const catalog = structuredClone(props.catalog);
+  h.render({ ...props, catalog, subdivisionFamilies: buildCustomCohortSubdivisionFamilies(catalog) });
+  assert.equal(h.phasePreparationCount, 2); assert.equal(h.phaseReadCount, count * 2, 'a new projection receives one independent prepared reader');
+  assert.equal(h.standalonePhaseReadCount, 0);
 });

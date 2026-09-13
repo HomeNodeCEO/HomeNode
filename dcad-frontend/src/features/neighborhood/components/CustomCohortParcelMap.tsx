@@ -8,6 +8,7 @@ import { CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomCohortPreviewGroup, CustomCohortPreviewState } from '../customCohortPreviewController';
 import type { CustomCohortSubdivisionFamilies } from '../customCohortSubdivisionFamilies';
+import { createCustomCohortSubdivisionPhaseReader } from '../customCohortSubdivisionFamilies';
 
 interface Props {
   group: CustomCohortPreviewGroup;
@@ -28,6 +29,7 @@ export const CUSTOM_COHORT_PHASE_ZOOM = 15;
 type ActivationMode = 'subdivision' | 'phase';
 type DisplayLabel = CustomCohortMapLabel & { readonly properties: CustomCohortMapLabel['properties'] & {
   readonly subdivision_label?: string;
+  readonly phase_label?: string;
 } };
 function activationMode(map: ParcelMapRuntimeInstance | null): ActivationMode | null {
   try { const zoom = map?.getZoom(); return typeof zoom === 'number' && Number.isFinite(zoom)
@@ -42,26 +44,36 @@ function subdivisionLabels(labels: readonly CustomCohortMapLabel[], catalog: Che
     || a.context_sha256 !== b.context_sha256) return labels;
   const pockets = new Map(catalog.pockets.map(p => [p.id, p]));
   const anchors = new Map(labels.map(label => [label.properties.pocket_id, label]));
-  const parents = new Map<string, string>(), seen = new Set<string>();
+  const parents = new Map<string, string>(), phases = new Map<string, string>(), seen = new Set<string>();
+  let readPhases: ReturnType<typeof createCustomCohortSubdivisionPhaseReader>;
+  try { readPhases = createCustomCohortSubdivisionPhaseReader(catalog); }
+  catch { return labels; }
+  const chooseAnchor = (ids: readonly string[]) => ids.reduce<string | null>((chosen, id) =>
+    anchors.has(id) && (chosen === null || pockets.get(id)!.member_count > pockets.get(chosen)!.member_count
+      || (pockets.get(id)!.member_count === pockets.get(chosen)!.member_count && id < chosen)) ? id : chosen, null);
   for (const family of model.families) {
-    let chosen: string | null = null;
     for (const id of family.pocket_ids) {
       if (!pockets.has(id) || seen.has(id) || model.family_id_by_pocket_id[id] !== family.id) return labels;
       seen.add(id);
-      if (anchors.has(id) && (chosen === null || pockets.get(id)!.member_count > pockets.get(chosen)!.member_count
-        || (pockets.get(id)!.member_count === pockets.get(chosen)!.member_count && id < chosen))) chosen = id;
     }
+    const chosen = chooseAnchor(family.pocket_ids);
     if (chosen !== null) parents.set(chosen, family.label);
+    try {
+      for (const phase of readPhases(family)) {
+        const anchor = chooseAnchor(phase.pocket_ids);
+        if (anchor !== null) phases.set(anchor, phase.label);
+      }
+    } catch { return labels; } // Optional view grouping cannot replace exact labels with a partial result.
   }
   if (seen.size !== pockets.size) return labels;
   // Keep the exact chosen child's retained point, account and parcel identity.
   // Both levels live in one source; renderer zoom expressions need no setData.
   return labels.map(label => ({ ...label, properties: { ...label.properties,
-    subdivision_label: parents.get(label.properties.pocket_id) ?? '' } }));
+    subdivision_label: parents.get(label.properties.pocket_id) ?? '', phase_label: phases.get(label.properties.pocket_id) ?? '' } }));
 }
 function visibleLabel(label: DisplayLabel, mode: ActivationMode | null): boolean {
-  return mode !== null && (mode === 'phase' || label.properties.subdivision_label === undefined
-    || label.properties.subdivision_label.length > 0);
+  const text = mode === 'phase' ? label.properties.phase_label : label.properties.subdivision_label;
+  return mode !== null && (text === undefined || text.length > 0);
 }
 const COLORS = { included: '#15803d', excluded: '#94a3b8', unresolved: '#d97706', inspected: '#eab308', subject: '#7e22ce' };
 const SIMILARITY_COLORS = [['75–100', '#15803d'], ['50–<75', '#84cc16'], ['25–<50', '#eab308'], ['0–<25', '#ea580c'],
@@ -238,7 +250,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
             // OpenFreeMap serves Noto Sans. MapLibre's implicit Open Sans/Arial
             // stack returns 404s here and forces repeated local glyph fallback.
             layout: { 'text-field': ['step', ['zoom'], ['coalesce', ['get', 'subdivision_label'], ['get', 'label']],
-              CUSTOM_COHORT_PHASE_ZOOM, ['get', 'label']], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 16,
+              CUSTOM_COHORT_PHASE_ZOOM, ['coalesce', ['get', 'phase_label'], ['get', 'label']]], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 16,
               'text-anchor': 'left', 'text-offset': [0.5, 0], 'text-allow-overlap': false, 'text-optional': true },
             paint: { 'text-color': '#3b0764', 'text-halo-color': '#fff8e7', 'text-halo-width': 2 },
           });

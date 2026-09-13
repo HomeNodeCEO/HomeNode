@@ -99,15 +99,18 @@ export function scanOriginalJsonText(text, mode) {
   function stringToken() {
     if (text[at] !== '"') unsupported('invalid_json');
     const start = at++;
+    let escaped = false;
     while (at < text.length) {
       const code = text.charCodeAt(at++);
       if (code === 34) {
-        const value = JSON.parse(text.slice(start, at));
+        // Without escapes the checked token interior is already its exact value.
+        const value = escaped ? JSON.parse(text.slice(start, at)) : text.slice(start + 1, at - 1);
         const bytes = measureOriginalUnicodeBytes(value);
         return { value, bytes };
       }
       if (code < 32) unsupported('invalid_json');
       if (code === 92) {
+        escaped = true;
         const escape = text[at++];
         if (escape === 'u') {
           for (let i = 0; i < 4; i++) {

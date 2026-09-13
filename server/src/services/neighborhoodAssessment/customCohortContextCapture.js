@@ -45,6 +45,7 @@ import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.j
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
 import { buildCustomCohortReportedAssessmentBatched, buildCustomCohortReportedAssessmentWitnessV2Batched } from './customCohortReportedAssessment.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
+import { getCustomCohortRecordedHousingInterpretation } from './customCohortRecordedHousingProfiles.js';
 import { createNeighborhoodAssessmentRepositoryInTransaction, neighborhoodCallerCleanupFailure } from './assessmentRepository.js';
 import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
 import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply,
@@ -525,14 +526,16 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // These bounded originals contain no source rows. A claimed compiled profile
   // is insufficient: the actual retained definition must exist and match.
   const studyOriginal = await readMetadata(refs.study_input);
-  const marked = studyOriginal.study_input_version === 2;
+  const marked = [2, 4].includes(studyOriginal.study_input_version);
+  const housingMarked = [3, 4].includes(studyOriginal.study_input_version);
   const privateCapture = directory.selection_input_version === 2;
   if (![1, 2].includes(directory.selection_input_version)
     || Object.hasOwn(directory, 'private_sales') !== privateCapture
-    || ![1, 2].includes(studyOriginal.study_input_version)
-    || Object.hasOwn(studyOriginal, 'reported_sale_interpretation') !== marked) fail('operation_conflict');
+    || ![1, 2, 3, 4].includes(studyOriginal.study_input_version)
+    || Object.hasOwn(studyOriginal, 'reported_sale_interpretation') !== marked
+    || Object.hasOwn(studyOriginal, 'recorded_housing_interpretation') !== housingMarked) fail('operation_conflict');
   exactKeys(studyOriginal, ['study_input_version', 'usage', 'target', 'effective_date', 'settings', 'source_semantics', 'eligibility',
-    ...(marked ? ['reported_sale_interpretation'] : [])]);
+    ...(marked ? ['reported_sale_interpretation'] : []), ...(housingMarked ? ['recorded_housing_interpretation'] : [])]);
   if (studyOriginal.usage !== 'retained_custom_study_settings' || studyOriginal.eligibility !== 'not_established'
     || studyOriginal.effective_date !== context.effective_date
     || !same(studyOriginal.target, { ...context.scope, report_file_id: context.target.report_file_id,
@@ -542,8 +545,9 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     || !same(studyOriginal.source_semantics, compact.semantics)) fail('operation_conflict');
   const intentOriginal = await readMetadata(directory.acquisition_intent);
   exactKeys(intentOriginal, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at',
-    ...(privateCapture ? ['private_sales_import'] : []), ...(marked ? ['reported_sale_interpretation'] : [])]);
-  if (intentOriginal.intent_version !== (privateCapture ? 2 : 1) + (marked ? 2 : 0)
+    ...(privateCapture ? ['private_sales_import'] : []), ...(marked ? ['reported_sale_interpretation'] : []),
+    ...(housingMarked ? ['recorded_housing_interpretation'] : [])]);
+  if (intentOriginal.intent_version !== (privateCapture ? 2 : 1) + (marked ? 2 : 0) + (housingMarked ? 4 : 0)
     || intentOriginal.operation_id !== reference.context_id
     || !same(intentOriginal.subject_inputs, directory.subject_inputs)
     || !same(intentOriginal.target, studyOriginal.target) || intentOriginal.effective_date !== context.effective_date
@@ -559,6 +563,17 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
     const definition = await blobs.get(original.definition_blob.content_sha256, original.definition_blob.canonical_utf8_bytes);
     if (definition !== installed.definition_blob.canonical_json) fail('operation_conflict');
     reportedInterpretation = installed.profile_ref;
+  }
+  if (housingMarked) {
+    if (![4, 5].includes(compact.mapping_version)) fail('operation_conflict');
+    const installed = getCustomCohortRecordedHousingInterpretation(compact.mapping_version, 2);
+    const original = studyOriginal.recorded_housing_interpretation;
+    exactKeys(original, ['profile_ref', 'definition_blob']);
+    if (!same(original.profile_ref, installed.profile_ref)
+      || !same(intentOriginal.recorded_housing_interpretation, installed.profile_ref)
+      || !same(original.definition_blob, installed.definition_blob.ref)) fail('operation_conflict');
+    const definition = await blobs.get(original.definition_blob.content_sha256, original.definition_blob.canonical_utf8_bytes);
+    if (definition !== installed.definition_blob.canonical_json) fail('operation_conflict');
   }
   const purpose = compact.mapping_version === 5 ? describeNeighborhoodCombinedEvidenceMarketDataPurpose(requestMetadata)
     : compact.mapping_version === 3 ? describeNeighborhoodSaleWitnessMarketDataPurpose(requestMetadata)
@@ -618,6 +633,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   // Trusted constructor setting applies only to NEW attempts. Replays always
   // resolve the original source purpose and interpretation from retained blobs.
   const reportedProfile = sourceMode === 'combined-witness2-v1' ? getCustomCohortReportedSaleWitnessV2Profile().profile_ref : null;
+  // Only NEW acquisitions get this server-selected interpretation. Registered
+  // retries/reopens are selected from their immutable original study above.
+  const housingProfile = getCustomCohortRecordedHousingInterpretation(reportedProfile ? 5 : 4, 2).profile_ref;
   const createReadAccess = reportedProfile ? createNeighborhoodCombinedEvidenceReadAccess : createNeighborhoodCadEvidenceReadAccess;
   const createSourceReader = reportedProfile ? createNeighborhoodDenseCombinedEvidenceSourceReader : createNeighborhoodDenseCadEvidenceSourceReader;
   async function recheckPrivatePolicy(client, input, loaded, budget, exposures = ['none']) {
@@ -915,10 +933,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (study.observation_period.end_date > subject.effective_date) fail('period_after_effective_date');
       const point = await repository.loadRecordedPoint(subjectReference);
       if (point.status !== 'represented') fail('recorded_point_required', point.reason);
-      const body = freeze({ intent_version: (input.privateSalesImport ? 2 : 1) + (reportedProfile ? 2 : 0), operation_id: input.operationId, actor_user_id: input.auth.userId,
+      const body = freeze({ intent_version: (input.privateSalesImport ? 2 : 1) + (reportedProfile ? 2 : 0) + 4, operation_id: input.operationId, actor_user_id: input.auth.userId,
         subject_inputs: subjectReference, target: subject.target, effective_date: subject.effective_date,
         study, created_at: await databaseTime(client),
         ...(reportedProfile ? { reported_sale_interpretation: reportedProfile } : {}),
+        recorded_housing_interpretation: housingProfile,
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
       const reference = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalAssessmentJson(body));
       return { scope, scopeJson, subject, subjectReference, point, intent: { reference, body } };
@@ -997,6 +1016,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
         started_at: read.startedAt, completed_at: read.completedAt,
         ...(reportedProfile ? { reported_sale_interpretation: reportedProfile } : {}),
+        recorded_housing_interpretation: housingProfile,
         ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     });
     return transaction(pool, 'READ COMMITTED', budget, async client => {

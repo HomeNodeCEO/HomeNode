@@ -1,7 +1,7 @@
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import type { CheckedStockComposition, StockCompositionPopulation } from './customCohortStockComposition';
 import { unionCustomCohortStockComposition, stockCompositionOverlap } from './customCohortStockComposition.ts';
-import { STOCK_COMPOSITION_PROFILE } from './customCohortStockCompositionDefinition.ts';
+import { STOCK_COMPOSITION_PROFILE, COUNTY_STOCK_COMPOSITION_PROFILE } from './customCohortStockCompositionDefinition.ts';
 import type { CustomCohortSubdivisionFamilies, CustomCohortSubdivisionFamily } from './customCohortSubdivisionFamilies';
 import { createCustomCohortSubdivisionPhaseReader } from './customCohortSubdivisionFamilies.ts';
 
@@ -16,7 +16,7 @@ interface ComparisonPopulation {
   readonly label: string; readonly pocket_ids: readonly string[]; readonly member_count: number; readonly fields: readonly CompositionField[];
 }
 export type StockCompositionComparison = { readonly status: 'unavailable'; readonly reason: string } | {
-  readonly status: 'available'; readonly context_ref: Context; readonly profile: typeof STOCK_COMPOSITION_PROFILE;
+  readonly status: 'available'; readonly context_ref: Context; readonly profile: CheckedStockComposition['profile'];
   readonly grouping_profile_version: 1;
   readonly reference: { readonly status: 'available' | 'unavailable'; readonly reason: string | null;
     readonly label: string | null; readonly pocket_ids: readonly string[]; readonly member_count: number | null };
@@ -58,9 +58,10 @@ export function createCustomCohortStockCompositionComparison({ catalog, families
   if (families.profile_version !== 1) return () => unavailable('grouping_mismatch');
   if (catalog.status !== 'review_only') return () => unavailable('catalog_incomplete');
   if (!composition) return () => unavailable('composition_unavailable');
-  if (composition.composition_version !== 1 || composition.profile.id !== STOCK_COMPOSITION_PROFILE.id
-    || composition.profile.revision !== STOCK_COMPOSITION_PROFILE.revision
-    || composition.profile.content_sha256 !== STOCK_COMPOSITION_PROFILE.content_sha256) return () => unavailable('profile_mismatch');
+  const profile = composition.composition_version === 1 ? STOCK_COMPOSITION_PROFILE
+    : composition.composition_version === 2 ? COUNTY_STOCK_COMPOSITION_PROFILE : null;
+  if (!profile || composition.profile.id !== profile.id || composition.profile.revision !== profile.revision
+    || composition.profile.content_sha256 !== profile.content_sha256) return () => unavailable('profile_mismatch');
   if (composition.status !== 'available') return () => unavailable(composition.reason);
   const known = new Map(catalog.pockets.map(p => [p.id, p.member_count]));
   if (catalog.unassigned.member_count) known.set('discovery:unassigned', catalog.unassigned.member_count);
@@ -110,7 +111,7 @@ export function createCustomCohortStockCompositionComparison({ catalog, families
       if (!whole && !phase) return unavailable('inspection_union_mismatch');
       if (selectedPocketIds.length > known.size || new Set(selectedPocketIds).size !== selectedPocketIds.length
         || selectedPocketIds.some(id => !known.has(id))) return unavailable('selection_union_mismatch');
-      return freeze({ status: 'available', context_ref: { ...contextRef }, profile: { ...STOCK_COMPOSITION_PROFILE }, grouping_profile_version: 1,
+      return freeze({ status: 'available', context_ref: { ...contextRef }, profile: { ...profile }, grouping_profile_version: 1,
         reference: { status: referencePopulation ? 'available' : 'unavailable', reason: referenceReason,
           label: referenceFamily?.label ?? null, pocket_ids: [...(referenceFamily?.pocket_ids ?? [])].sort(), member_count: referencePopulation?.[0] ?? null },
         subject: subjectCells.map(cell => ({ ...cell })), inspected: describe(whole ? family.label : phase!.label, inspectedPocketIds),

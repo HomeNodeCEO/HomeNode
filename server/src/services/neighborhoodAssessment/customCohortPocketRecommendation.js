@@ -296,7 +296,8 @@ function* recommendationBatches({ context_ref, retained_inputs: input, selection
   // bytes. The catalog owner opts in; no new source read or changed selection.
   if (include_stock_composition && housing) {
     yield;
-    const composition = yield* customCohortStockCompositionBatches({ preview, catalog, subject: result.subject, housing });
+    const composition = yield* customCohortStockCompositionBatches({ preview, catalog, subject: result.subject, housing,
+      ...(housing.housing_version === 2 ? { composition_version: 2 } : {}) });
     if (resultBytes + Buffer.byteLength(JSON.stringify(composition)) + 32 <= P.output_utf8_bytes) {
       result.stock_composition_v1 = composition;
     }

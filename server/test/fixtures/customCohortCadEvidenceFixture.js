@@ -57,7 +57,7 @@ function syntheticCombinedSaleWitness(rawPayload, overrides) {
 export async function cadEvidenceFixture(options = {}) {
   const { parcelOverrides = {}, omitParcelFields = [], legacy = false,
     mappingVersion = 4, saleWitnessFields, saleOverrides = {}, effectiveDate, parcelCount, assignmentFileId,
-    parcelOverridesByIndex = [], recordedProximity = false, extraTransactions = [], saleWitnessesBySourceId = {} } = options;
+    parcelOverridesByIndex = [], accountOverridesByIndex = [], recordedProximity = false, extraTransactions = [], saleWitnessesBySourceId = {} } = options;
   assert.ok(mappingVersion === 4 || mappingVersion === 5, 'exact CAD/combined mapping version required');
   assert.ok(options.authorizeMarketData === undefined || typeof options.authorizeMarketData === 'function', 'synthetic source authorizer must be a function');
   assert.ok(mappingVersion === 5 || saleWitnessFields === undefined && !Object.hasOwn(options, 'rawPayload'), 'sale witness requires mapping5');
@@ -70,13 +70,15 @@ export async function cadEvidenceFixture(options = {}) {
     : await decisionEvidenceFixture({ saleOverrides, effectiveDate, parcelCount, assignmentFileId });
   const old = base.input.retained_inputs;
   const hasInterpretation = Object.hasOwn(options, 'reportedSaleInterpretation');
+  const hasHousingInterpretation = Object.hasOwn(options, 'recordedHousingInterpretation');
   const hasPrivate = Object.hasOwn(options, 'privateSales');
   let originalIntent = old.acquisition_intent;
-  if (hasInterpretation || hasPrivate) {
+  if (hasInterpretation || hasPrivate || hasHousingInterpretation) {
     // Choose a NEW original attempt before combined acquisition/preparation.
     // Never relabel the already-retained base graph or rewrite its intent hash.
-    const body = { ...old.acquisition_intent.body, intent_version: 1 + (hasPrivate ? 1 : 0) + (hasInterpretation ? 2 : 0),
+    const body = { ...old.acquisition_intent.body, intent_version: 1 + (hasPrivate ? 1 : 0) + (hasInterpretation ? 2 : 0) + (hasHousingInterpretation ? 4 : 0),
       ...(hasInterpretation ? { reported_sale_interpretation: structuredClone(options.reportedSaleInterpretation) } : {}),
+      ...(hasHousingInterpretation ? { recorded_housing_interpretation: structuredClone(options.recordedHousingInterpretation) } : {}),
       ...(hasPrivate ? { private_sales_import: { batch_id: options.privateSales.capture.batch.batch_id,
         expected_review_revision: options.privateSales.capture.review.revision } } : {}) };
     originalIntent = { body, reference: await base.store.put(json(body)) };
@@ -89,7 +91,8 @@ export async function cadEvidenceFixture(options = {}) {
     for (const field of omitParcelFields) delete result[field];
     return result;
   });
-  const accounts = sourceRows('accounts'), transactions = [...sourceRows('transactions'), ...structuredClone(extraTransactions)], links = sourceRows('sale_links');
+  const accounts = sourceRows('accounts').map((row, index) => ({ ...row, ...accountOverridesByIndex[index] }));
+  const transactions = [...sourceRows('transactions'), ...structuredClone(extraTransactions)], links = sourceRows('sale_links');
   assert.ok(extraTransactions.every(row => typeof row.source_record_id === 'string' && typeof row.sale_id === 'string'),
     'additional canonical-only rows use the separate legacy fixture option');
   if (mappingVersion === 5) {
@@ -181,6 +184,7 @@ export async function cadEvidenceFixture(options = {}) {
   const originalRetained = { ...old, acquisition: consumeNeighborhoodCachedAcquisition(reader, captureResult),
     acquisition_intent: originalIntent,
     ...(hasInterpretation ? { reported_sale_interpretation: structuredClone(options.reportedSaleInterpretation) } : {}),
+    ...(hasHousingInterpretation ? { recorded_housing_interpretation: structuredClone(options.recordedHousingInterpretation) } : {}),
     ...(hasPrivate ? { private_sales: structuredClone(options.privateSales) } : {}) };
   const refs = await persistCustomCohortCaptureInputs(base.client, base.scopeJson, prepareCustomCohortCaptureInputs(originalRetained));
   const reopened = await loadCustomCohortCaptureInputs(base.client, base.scopeJson, refs);

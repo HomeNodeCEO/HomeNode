@@ -56,7 +56,9 @@ function response(request) {
     context_ref: request.contextRef, selection_revision: request.selection.revision, subject_freshness: 'matched',
     summary: { presentation_version: 1, preview_version: 1, status: 'observations_only', members_included: false,
       contents: 'population_summaries_only', binding: { context_ref: request.contextRef, selection_revision: request.selection.revision,
-        selection_sha256: selectionHash(request.selection) }, all: {}, selected: {}, apply: { status: 'blocked', reasons: ['observation_preview_only'] } },
+        selection_sha256: selectionHash(request.selection) }, all: {}, selected: {},
+      pockets: request.selection.pockets.map(p => ({ id: p.id, label: p.label, result: { account_count: p.account_ids.length } })),
+      apply: { status: 'blocked', reasons: ['observation_preview_only'] } },
     parcel_map: request.include_map ? { status: 'unavailable', reason: 'missing_parcel_geometry', geojson: null,
       geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary' }
       : { status: 'omitted', reason: 'geometry_not_requested' }, apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
@@ -66,10 +68,10 @@ const children = node => (Array.isArray(node?.props?.children) ? node.props.chil
 const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : node && typeof node === 'object' ? children(node).map(text).join('') : '';
-function harness(name = 'CustomCohortWorkspace') {
+function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   const cells = [], effects = [], calls = [], catalogCalls = [], intents = [], timers = new Map();
   const requestWaiters = new Map(), fingerprints = new Set();
-  let cursor = 0, dirty = false, tree, props, serial = 0;
+  let cursor = 0, dirty = false, tree, props, serial = 0, now = 0, fingerprintCount = 0, ownerKey;
   const react = {
     useState(initial) { const i = cursor++; cells[i] ??= { value: typeof initial === 'function' ? initial() : initial };
       return [cells[i].value, next => { const value = typeof next === 'function' ? next(cells[i].value) : next;
@@ -91,7 +93,7 @@ function harness(name = 'CustomCohortWorkspace') {
   const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
     target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
   } }).outputText, module = { exports: {} };
-  new Script(`(function(require,module,exports,setTimeout,clearTimeout){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
+  new Script(`(function(require,module,exports,setTimeout,clearTimeout,JSON){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortPreviewApi') return api;
@@ -101,19 +103,28 @@ function harness(name = 'CustomCohortWorkspace') {
     if (key === '../customCohortSubdivisionFamilies') return subdivisionFamilies;
     if (key === '../customCohortPreviewController') return { ...controller,
       fingerprintCustomCohortSelection: value => {
+        fingerprintCount++;
         const task = controller.fingerprintCustomCohortSelection(value); fingerprints.add(task);
         void task.then(() => fingerprints.delete(task), () => fingerprints.delete(task)); return task;
       },
       createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
-  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, id => timers.delete(id));
+  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; }, id => timers.delete(id),
+  { parse: JSON.parse, stringify: (...args) => { onSerialize?.(args[0]); return JSON.stringify(...args); } });
   function render(next = props) {
     props = next; cursor = 0; dirty = false;
-    const owner = module.exports.default(props); tree = owner.type(owner.props);
+    const owner = module.exports.default(props);
+    if (name === 'CustomCohortPocketInspector' && ownerKey !== owner.key) {
+      // A keyed child remount does not discard the outer component's memo hooks.
+      cells.slice(cursor).forEach(cell => cell?.cleanup?.()); cells.length = cursor; effects.length = 0; ownerKey = owner.key;
+    }
+    tree = owner.type(owner.props);
     effects.splice(0).forEach(fn => fn());
   }
   function flush() { let n = 0; while (dirty) { assert.ok(++n < 20, 'No render loop'); render(); } }
   return { calls, catalogCalls, intents, previewTransport, api,
+    get fingerprintCount() { return fingerprintCount; }, get sessionKey() { return ownerKey; },
+    pendingTimers: () => [...timers.values()],
     props(ids = [groupId(1)], revision = 7) { return { ...input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'session-1',
       workspace: { catalog, selection: { revision, included_recorded_group_ids: ids }, saving: false,
         previewTransport, onSelectionIntent: value => intents.push(value) } }; },
@@ -135,6 +146,15 @@ function harness(name = 'CustomCohortWorkspace') {
     // so they cannot pass merely because a busy CI worker has not finished it.
     async settleFingerprints() { await Promise.allSettled([...fingerprints]); await this.drain(); },
     async tick() { const list = [...timers.entries()].filter(([, t]) => t.delay === 250); list.forEach(([id, t]) => { timers.delete(id); t.fn(); }); await this.drain(); },
+    async advance(ms) {
+      const until = now + ms;
+      for (;;) {
+        const next = [...timers.entries()].filter(([, timer]) => timer.at <= until).sort((a, b) => a[1].at - b[1].at)[0];
+        if (!next) break;
+        const [id, timer] = next; now = timer.at; timers.delete(id); timer.fn(); await this.drain();
+      }
+      now = until; await this.drain();
+    },
     async complete(index = calls.length - 1) { calls[index].resolve(response(calls[index].request)); await this.drain(); },
     async fail(index = calls.length - 1) { calls[index].reject(new Error('synthetic failure')); await this.drain(); },
     unmount() { cells.forEach(cell => cell?.cleanup?.()); },
@@ -238,14 +258,14 @@ test('capacity retry does not silently narrow or increment the saved revision', 
 test('independent capacity refusal does not substitute a summary, load members or change inclusion', { timeout: 10000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
   const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport };
-  h.render(props); await h.waitForRequest(0);
+  h.render(props); await h.tick(); await h.waitForRequest(0);
   h.calls[0].reject(Object.assign(new Error('SECRET'), { status: 422, workspaceCode: 'preview_capacity_exceeded' })); await h.drain();
   assert.match(h.text(), /group exceeds the preview capacity/); assert.match(h.text(), /does not undo saved inclusion choices/);
   assert.doesNotMatch(h.text(), /SECRET/); assert.equal(h.child('CustomCohortStatistics'), undefined);
   assert.equal(h.child('CustomCohortMemberBrowser'), undefined); assert.equal(h.intents.length, 0);
   h.render({ ...props }); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
   h.render({ ...props, paused: true }); h.click('Retry inspection'); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
-  h.render(props); h.click('Retry inspection'); await h.waitForRequest(1);
+  h.render(props); h.click('Retry inspection'); await h.tick(); await h.waitForRequest(1);
   assert.deepEqual(h.calls[1].request, h.calls[0].request); await h.complete(1); assert.ok(h.child('CustomCohortStatistics'));
 });
 
@@ -429,7 +449,7 @@ test('recommended group inspection remains independent and fresh equivalent reco
 });
 test('inspector uses its injected transport once, retains independent selection and aborts on cleanup', { timeout: 10_000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); h.render({ input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport });
-  t.after(() => h.unmount()); await h.waitForRequest(0);
+  t.after(() => h.unmount()); await h.tick(); await h.waitForRequest(0);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0].request.include_map, false);
   assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['B']); await h.complete();
   const members = h.child('CustomCohortMemberBrowser'); assert.ok(members);
@@ -442,6 +462,72 @@ test('inspector uses its injected transport once, retains independent selection 
   assert.equal(h.child('CustomCohortMemberBrowser').group, members.group);
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current'); h.render({ ...h.propsNow, label: 'Beta label' }); await h.drain();
   assert.equal(h.calls.length, 1); h.unmount(); assert.equal(h.calls[0].signal.aborted, true);
+});
+
+test('inspector admits once at250ms, not on render or249ms, without restarting on a label render', { timeout: 10_000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport };
+  h.render(props); await h.settleFingerprints();
+  assert.equal(h.calls.length, 0); assert.equal(h.fingerprintCount, 0);
+  assert.deepEqual(h.pendingTimers().map(timer => timer.at).sort((a, b) => a - b), [250, 65_000]);
+  await h.advance(249); h.render({ ...props, label: 'Beta retained label' }); await h.settleFingerprints();
+  assert.equal(h.calls.length, 0); assert.equal(h.fingerprintCount, 0);
+  await h.advance(1); await h.waitForRequest(0);
+  assert.equal(h.fingerprintCount, 1); assert.equal(h.calls.length, 1);
+  assert.equal(h.calls[0].request.include_map, false);
+  assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['B']);
+  await h.complete(); await h.advance(65_000); await h.settleFingerprints();
+  assert.equal(h.calls.length, 1); assert.equal(h.calls[0].signal.aborted, false);
+  assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+  assert.deepEqual(h.intents, []); assert.deepEqual(h.catalogCalls, []);
+});
+
+test('brief keyed inspection is cancelled before hashing or lane admission; only the replacement is requested', { timeout: 10_000 }, async t => {
+  // Separate harness instances represent React unmounting the old keyed session.
+  const first = harness('CustomCohortPocketInspector'), next = harness('CustomCohortPocketInspector');
+  t.after(() => { first.unmount(); next.unmount(); });
+  first.render({ input, catalog, pocketId: groupId(1), label: 'Alpha', previewTransport: first.previewTransport });
+  const staleAdmission = first.pendingTimers().find(timer => timer.delay === 250).fn;
+  await first.advance(249); first.unmount();
+  assert.deepEqual(first.pendingTimers(), []);
+  staleAdmission(); await first.settleFingerprints(); await first.advance(65_000);
+  assert.equal(first.fingerprintCount, 0); assert.equal(first.calls.length, 0);
+  next.render({ input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: next.previewTransport });
+  await next.advance(249); assert.equal(next.calls.length, 0);
+  await next.advance(1); await next.waitForRequest(0); await next.complete();
+  assert.deepEqual(next.calls[0].request.selection.pockets[0].account_ids, ['B']);
+  assert.equal(next.calls.length, 1); assert.equal(first.child('CustomCohortStatistics'), undefined);
+});
+
+test('pausing before admission cancels both timers; resume debounces only the unfinished inspection', { timeout: 10_000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport };
+  h.render(props); await h.advance(249); h.render({ ...props, paused: true });
+  assert.deepEqual(h.pendingTimers(), []); await h.advance(65_000); await h.settleFingerprints();
+  assert.equal(h.fingerprintCount, 0); assert.equal(h.calls.length, 0);
+  assert.doesNotMatch(h.text(), /could not be inspected/);
+  h.render(props); await h.advance(249); assert.equal(h.calls.length, 0);
+  await h.advance(1); await h.waitForRequest(0); await h.complete();
+  const completed = h.child('CustomCohortStatistics').group;
+  h.render({ ...props, paused: true }); h.render(props); await h.advance(65_000); await h.settleFingerprints();
+  assert.equal(h.calls.length, 1); assert.deepEqual(h.pendingTimers(), []);
+  assert.equal(h.child('CustomCohortStatistics').group, completed);
+});
+
+test('admission consumes the original65s deadline; late success cannot publish and explicit retry debounces again', { timeout: 10_000 }, async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport };
+  h.render(props); await h.advance(250); await h.waitForRequest(0);
+  await h.advance(64_749); assert.equal(h.calls[0].signal.aborted, false);
+  await h.advance(1); assert.equal(h.calls[0].signal.aborted, true);
+  assert.match(h.text(), /could not be inspected/); await h.complete(0);
+  assert.equal(h.child('CustomCohortStatistics'), undefined); assert.equal(h.child('CustomCohortMemberBrowser'), undefined);
+  h.render(props); await h.advance(250); assert.equal(h.calls.length, 1, 'timeout does not implicitly retry');
+  h.click('Retry inspection'); await h.advance(249); assert.equal(h.calls.length, 1);
+  await h.advance(1); await h.waitForRequest(1);
+  assert.deepEqual(h.calls[1].request, h.calls[0].request); assert.equal(h.calls[1].signal.aborted, false);
+  await h.complete(1); assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
+  assert.deepEqual(h.intents, []);
 });
 
 test('read-only quiescence disables direct group/map inspection callbacks and preserves cached inspector identity', async t => {
@@ -472,9 +558,9 @@ test('inspector pause prevents new requests; release resumes only unfinished ins
   const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
   const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: true };
   h.render(props); await h.settleFingerprints(); assert.equal(h.calls.length, 0); assert.match(h.text(), /inspection is paused/);
-  h.render({ ...props, paused: false }); await h.waitForRequest(0); assert.equal(h.calls.length, 1);
+  h.render({ ...props, paused: false }); await h.tick(); await h.waitForRequest(0); assert.equal(h.calls.length, 1);
   h.render(props); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0); assert.equal(h.child('CustomCohortStatistics'), undefined);
-  h.render({ ...props, paused: false }); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
+  h.render({ ...props, paused: false }); await h.tick(); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
   const completed = h.child('CustomCohortStatistics').group;
   h.render(props); assert.equal(h.child('CustomCohortStatistics').group, completed); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
   h.render({ ...props, paused: false }); await h.settleFingerprints(); assert.equal(h.calls.length, 2);
@@ -484,11 +570,11 @@ test('inspector pause prevents new requests; release resumes only unfinished ins
 test('an earlier inspector failure does not implicitly retry on unpause; explicit retry is disabled only while paused', { timeout: 10_000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
   const props = { input, catalog, pocketId: groupId(2), label: 'Beta', previewTransport: h.previewTransport, paused: false };
-  h.render(props); await h.waitForRequest(0); await h.fail(0); assert.equal(h.calls.length, 1);
+  h.render(props); await h.tick(); await h.waitForRequest(0); await h.fail(0); assert.equal(h.calls.length, 1);
   h.render({ ...props, paused: true }); h.click('Retry inspection'); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
   assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Retry inspection').props.disabled, true);
   h.render(props); await h.settleFingerprints(); assert.equal(h.calls.length, 1);
-  h.click('Retry inspection'); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
+  h.click('Retry inspection'); await h.tick(); await h.waitForRequest(1); assert.equal(h.calls.length, 2); await h.complete(1);
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
 });
 
@@ -578,10 +664,126 @@ test('near click on a county-name variant highlights the entire exact phase; exc
 test('subdivision inspector requests one exact union without map or per-phase median averaging', { timeout: 10_000 }, async t => {
   const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
   const props = { input, catalog, pocketId: groupId(1), pocketIds: [groupId(1), groupId(2)], label: 'Parent', previewTransport: h.previewTransport };
-  h.render(props); await h.waitForRequest(0);
+  h.render(props); await h.tick(); await h.waitForRequest(0);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0].request.include_map, false);
   assert.deepEqual(h.calls[0].request.selection.pockets[0].account_ids, ['A', 'B']);
   await h.complete(); assert.equal(h.child('CustomCohortStatistics').selectedOnly, true);
   assert.deepEqual(h.child('CustomCohortMemberBrowser').input.selection, h.calls[0].request.selection);
   h.render({ ...props, pocketIds: [...props.pocketIds] }); await h.drain(); assert.equal(h.calls.length, 1);
+});
+
+test('batch inspector switches parent and phases without requests, preserving exact original input and response binding', async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const inspectionSelection = { revision: 1, pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) };
+  const props = { input, catalog, pocketId: groupId(1), pocketIds: [groupId(1), groupId(2)], label: 'Parent', inspectionSelection,
+    previewTransport: h.previewTransport };
+  h.render(props); await h.tick(); await h.waitForRequest(0);
+  h.render({ ...props, pocketId: groupId(2), pocketIds: undefined, label: 'Beta', inspectedPocketId: groupId(2) });
+  assert.equal(h.calls[0].signal.aborted, false, 'phase switching does not abandon the shared response');
+  await h.complete(); const group = h.child('CustomCohortStatistics').group;
+  assert.equal(h.child('CustomCohortStatistics').pocketOnly, true);
+  assert.equal(h.child('CustomCohortMemberBrowser').pocketId, groupId(2));
+  assert.equal(h.child('CustomCohortMemberBrowser').input.selection, inspectionSelection);
+  h.render({ ...props, inspectionSelection: structuredClone(inspectionSelection) }); await h.tick(); await h.settleFingerprints();
+  assert.equal(h.calls.length, 1); assert.equal(h.child('CustomCohortStatistics').group, group);
+  assert.equal(h.child('CustomCohortStatistics').pocketOnly, false);
+  assert.equal(h.child('CustomCohortMemberBrowser').pocketId, undefined);
+  h.render({ ...props, input: { ...input, selection: { revision: 9, pockets: [] } }, inspectedPocketId: groupId(1) });
+  assert.equal(h.child('CustomCohortStatistics').group, group, 'main inclusion changes do not relabel immutable inspection results');
+  assert.equal(h.intents.length, 0);
+});
+
+test('changed context or batch membership clears checked observations and ignores old responses', async t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const inspectionSelection = { revision: 1, pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) };
+  const props = { input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection, previewTransport: h.previewTransport };
+  h.render(props); await h.tick(); await h.waitForRequest(0);
+  const next = { ...props, input: { ...input, contextRef: { ...ref, context_sha256: 'b'.repeat(64) } } };
+  h.render(next); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0);
+  assert.equal(h.child('CustomCohortStatistics'), undefined);
+  await h.tick(); await h.waitForRequest(1); await h.complete(1);
+  h.render({ ...next, inspectionSelection: { ...inspectionSelection, pockets: inspectionSelection.pockets.slice(1) } });
+  assert.equal(h.child('CustomCohortStatistics'), undefined); await h.tick(); await h.waitForRequest(2); await h.complete(2);
+  assert.equal(h.child('CustomCohortMemberBrowser').input.selection.pockets.length, 1);
+});
+
+test('frozen batch identity serializes once across phase-only renders; equal copies preserve the structural session', async t => {
+  const serialized = [];
+  const h = harness('CustomCohortPocketInspector', { onSerialize(value) {
+    if (Array.isArray(value) && value[5]?.[0] === 'phase-batch') serialized.push(value[5][1]);
+  } }); t.after(() => h.unmount());
+  const freezeSelection = value => Object.freeze({ revision: value.revision,
+    pockets: Object.freeze(value.pockets.map(p => Object.freeze({ ...p, account_ids: Object.freeze([...p.account_ids]) }))) });
+  const inspectionSelection = freezeSelection({ revision: 1,
+    pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) });
+  const props = { input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection, previewTransport: h.previewTransport };
+  h.render(props); const originalKey = h.sessionKey;
+  assert.deepEqual(serialized, [inspectionSelection]);
+  assert.equal(originalKey, JSON.stringify([input.accountId, input.assignmentFileId, ref.context_id,
+    ref.context_revision, ref.context_sha256, ['phase-batch', inspectionSelection]]), 'original key bytes are unchanged');
+  await h.tick(); await h.waitForRequest(0);
+  for (let i = 0; i < 12; i++) h.render({ ...props, pocketId: groupId(i % 2 + 1),
+    inspectedPocketId: groupId(i % 2 + 1), label: `Phase ${i % 2 + 1}` });
+  assert.equal(serialized.length, 1); assert.equal(h.sessionKey, originalKey); assert.equal(h.calls[0].signal.aborted, false);
+  await h.complete(); const group = h.child('CustomCohortStatistics').group;
+  assert.equal(serialized.length, 1, 'response state renders do not traverse the frozen batch again');
+  const copied = freezeSelection(structuredClone(inspectionSelection));
+  const copiedProps = { ...props, inspectionSelection: copied };
+  h.render(copiedProps); h.render({ ...copiedProps, membersPaused: true, inspectedPocketId: groupId(2) });
+  h.render({ ...copiedProps, input: { ...input, selection: { revision: 9, pockets: [] } } });
+  await h.tick(); await h.settleFingerprints();
+  assert.deepEqual(serialized, [inspectionSelection, copied]); assert.equal(h.sessionKey, originalKey);
+  assert.equal(h.child('CustomCohortStatistics').group, group); assert.equal(h.calls.length, 1);
+  const changed = freezeSelection({ ...copied, pockets: copied.pockets.slice(1) });
+  h.render({ ...copiedProps, inspectionSelection: changed });
+  assert.deepEqual(serialized, [inspectionSelection, copied, changed]); assert.notEqual(h.sessionKey, originalKey);
+  assert.equal(h.child('CustomCohortStatistics'), undefined); assert.equal(h.calls[0].signal.aborted, true);
+  await h.tick(); await h.waitForRequest(1); await h.complete(1);
+  assert.equal(h.child('CustomCohortMemberBrowser').input.selection, changed); assert.equal(serialized.length, 3);
+});
+
+test('memoized batch key retains every original account, assignment and context binding', t => {
+  const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+  const inspectionSelection = Object.freeze({ revision: 1, pockets: Object.freeze([]) });
+  const props = { input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection, paused: true };
+  h.render(props); const originalKey = h.sessionKey;
+  for (const changedInput of [{ ...input, accountId: 'B' }, { ...input, assignmentFileId: '9007199254740994' },
+    ...Object.entries({ context_id: '10000000-0000-4000-8000-000000000002', context_revision: '2', context_sha256: 'b'.repeat(64) })
+      .map(([key, value]) => ({ ...input, contextRef: { ...ref, [key]: value } }))]) {
+    h.render({ ...props, input: changedInput }); const changedRef = changedInput.contextRef;
+    assert.notEqual(h.sessionKey, originalKey);
+    assert.equal(h.sessionKey, JSON.stringify([changedInput.accountId, changedInput.assignmentFileId,
+      changedRef.context_id, changedRef.context_revision, changedRef.context_sha256, ['phase-batch', inspectionSelection]]));
+    h.render(props); assert.equal(h.sessionKey, originalKey);
+  }
+  assert.equal(h.calls.length, 0);
+});
+
+test('only capacity failure requests standalone fallback; malformed, auth and timeout failures stay closed', async t => {
+  const inspectionSelection = { revision: 1, pockets: catalog.pockets.map(p => ({ id: p.id, label: p.label, account_ids: p.account_ids })) };
+  for (const kind of ['capacity', 'missing', 'count', 'duplicate', 'wrong-label', 'authentication', 'authorization', 'transport-timeout', 'deadline']) {
+    let fallback = 0;
+    const h = harness('CustomCohortPocketInspector'); t.after(() => h.unmount());
+    h.render({ input, catalog, pocketId: groupId(1), label: 'Parent', inspectionSelection,
+      previewTransport: h.previewTransport, onBatchUnavailable: () => fallback++ });
+    await h.tick(); await h.waitForRequest(0);
+    if (kind === 'capacity') h.calls[0].reject(Object.assign(new Error('secret'), { status: 422, workspaceCode: 'preview_capacity_exceeded' }));
+    else if (kind === 'authentication' || kind === 'authorization') h.calls[0].reject(Object.assign(new Error('secret'), {
+      status: kind === 'authentication' ? 401 : 403, workspaceCode: 'request_failed' }));
+    else if (kind === 'transport-timeout') h.calls[0].reject(Object.assign(new Error('secret'), { status: 504, name: 'TimeoutError' }));
+    else if (kind === 'deadline') { await h.advance(65_000); assert.equal(h.calls[0].signal.aborted, true); await h.complete(0); }
+    else {
+      const bad = response(h.calls[0].request);
+      if (kind === 'missing') bad.summary.pockets.pop();
+      if (kind === 'count') bad.summary.pockets[0].result.account_count++;
+      if (kind === 'duplicate') bad.summary.pockets[1] = bad.summary.pockets[0];
+      if (kind === 'wrong-label') bad.summary.pockets[0].label = 'different';
+      h.calls[0].resolve(bad);
+    }
+    await h.drain(); assert.equal(h.child('CustomCohortStatistics'), undefined); assert.equal(h.child('CustomCohortMemberBrowser'), undefined);
+    const expectedFallback = kind === 'capacity' ? 1 : 0;
+    assert.equal(fallback, expectedFallback, kind); assert.doesNotMatch(h.text(), /secret/);
+    await h.tick(); await h.settleFingerprints();
+    assert.equal(h.calls.length, 1, `${kind} does not retry implicitly`); assert.equal(fallback, expectedFallback, kind); h.unmount();
+  }
 });

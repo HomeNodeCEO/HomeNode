@@ -5,6 +5,7 @@ import { createRequire } from 'node:module';
 import { Script } from 'node:vm';
 import * as locationHelpers from '../src/features/neighborhood/customCohortSubdivisionLocationReview.ts';
 import * as familyHelpers from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
+import * as inspectionHelpers from '../src/features/neighborhood/customCohortSubdivisionInspection.ts';
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ts = requireRuntime('typescript');
 const file = new URL('../src/features/neighborhood/components/CustomCohortSubdivisionDialog.tsx', import.meta.url);
@@ -32,6 +33,7 @@ function harness(count = 3) {
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortSubdivisionLocationReview') return locationHelpers;
     if (key === '../customCohortSubdivisionFamilies') return familyHelpers;
+    if (key === '../customCohortSubdivisionInspection') return inspectionHelpers;
     assert.equal(key, './CustomCohortPocketInspector'); return { default: Inspector, __esModule: true };
   }, module, module.exports, document, Element);
   const phases = Array.from({ length: count }, (_, i) => ({ id: phaseId(i), label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 1,
@@ -79,6 +81,17 @@ test('phase inspection passes one exact leaf, excludes only explicit phase and c
   h.click('Include phase MONICA PARK 2'); assert.deepEqual(h.actions, [['include', [phaseId(1)]]]);
   h.click('Exclude phase MONICA PARK 1'); assert.deepEqual(h.actions.at(-1), ['exclude', [phaseId(0)]]);
   h.click('View whole subdivision'); assert.deepEqual(h.actions.at(-1), ['inspect', null]); h.close();
+});
+
+test('parent and phase views share one complete inspection selection; private and capacity fallback keep independent inspection', () => {
+  const h = harness(); h.render(); const batch = h.inspector().inspectionSelection;
+  assert.equal(batch.pockets.length, 3); assert.equal(h.inspector().inspectedPocketId, undefined);
+  h.render({ ...h.props, phaseId: phaseId(1) });
+  assert.equal(h.inspector().inspectionSelection, batch); assert.equal(h.inspector().inspectedPocketId, phaseId(1));
+  assert.deepEqual(h.actions, []); h.inspector().onBatchUnavailable(); h.render();
+  assert.equal(h.inspector().inspectionSelection, undefined); assert.equal(h.inspector().pocketId, phaseId(1)); h.close();
+  const privateView = harness(); privateView.render({ ...privateView.props, catalog: { ...privateView.props.catalog, private_sales: {} } });
+  assert.equal(privateView.inspector().inspectionSelection, undefined); privateView.close();
 });
 test('blocked state guards direct selection and inspection callbacks and preserves colors/classes', () => {
   const h = harness(); h.render({ ...h.props, phaseId: phaseId(1), selectionDisabled: true, inspectionsPaused: true });

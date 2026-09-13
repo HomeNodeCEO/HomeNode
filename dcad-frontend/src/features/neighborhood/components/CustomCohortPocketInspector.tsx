@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { requestCustomCohortObservationPreview, requestCustomCohortMembers } from '../customCohortPreviewApi';
 import type { CustomCohortMemberTransport } from '../customCohortPreviewTransport';
 import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransport';
@@ -14,6 +14,9 @@ import CustomCohortMemberBrowser from './CustomCohortMemberBrowser';
 interface Props { input: CustomCohortPreviewInput; catalog: CheckedPocketCatalog; pocketId: string; label: string;
   /** Original recorded leaf IDs only; one exact union, never averages of phase summaries. */
   pocketIds?: readonly string[];
+  /** Dialog-local batch; phase switching changes presentation, not its binding. */
+  inspectionSelection?: CustomCohortPreviewInput['selection'];
+  inspectedPocketId?: string; onBatchUnavailable?: () => void;
   previewTransport?: typeof requestCustomCohortObservationPreview; paused?: boolean;
   memberTransport?: CustomCohortMemberTransport; membersPaused?: boolean }
 const amount = (value: number) => value.toLocaleString('en-US');
@@ -51,16 +54,23 @@ function RecordedCadDetails({ evidence, pocketId }: { evidence: CheckedCadRecord
  * its map again. Keyed identity prevents an old group's numbers flashing on click. */
 export default function CustomCohortPocketInspector(props: Props) {
   const ref = props.input.contextRef;
-  return <InspectorSession key={JSON.stringify([props.input.accountId, props.input.assignmentFileId,
-    ref.context_id, ref.context_revision, ref.context_sha256, props.pocketId,
-    props.pocketIds ? [...props.pocketIds].sort() : null])} {...props} />;
+  // The dialog's batch is frozen. Phase-only renders keep its identity, while
+  // copied equal batches still produce the same structural session key.
+  const batchKey = useMemo(() => props.inspectionSelection ? JSON.stringify([
+    props.input.accountId, props.input.assignmentFileId, ref.context_id, ref.context_revision,
+    ref.context_sha256, ['phase-batch', props.inspectionSelection],
+  ]) : null, [props.input.accountId, props.input.assignmentFileId, ref.context_id,
+    ref.context_revision, ref.context_sha256, props.inspectionSelection]);
+  return <InspectorSession key={batchKey ?? JSON.stringify([props.input.accountId, props.input.assignmentFileId,
+    ref.context_id, ref.context_revision, ref.context_sha256,
+    [props.pocketId, props.pocketIds ? [...props.pocketIds].sort() : null]])} {...props} />;
 }
 function InspectorSession(props: Props) {
   const cad = props.catalog.recommendation?.cad_recorded_evidence;
   const sameCadContext = cad && Object.entries(props.input.contextRef).every(([key, expected]) =>
     cad.binding.context_ref[key as keyof typeof props.input.contextRef] === expected);
   const [input] = useState(() => ({ ...props.input,
-    selection: selectionFromRecordedGroups(props.catalog, props.pocketIds ?? [props.pocketId], 1) }));
+    selection: props.inspectionSelection ?? selectionFromRecordedGroups(props.catalog, props.pocketIds ?? [props.pocketId], 1) }));
   const [group, setGroup] = useState<ReturnType<typeof checkCustomCohortSummaryResponse> | null>(null);
   const [error, setError] = useState<'request_failed' | 'capacity_exceeded' | null>(null);
   const [retry, setRetry] = useState(0);
@@ -69,28 +79,51 @@ function InspectorSession(props: Props) {
   const paused = props.paused === true;
   const transport = useRef(props.previewTransport ?? requestCustomCohortObservationPreview);
   transport.current = props.previewTransport ?? requestCustomCohortObservationPreview;
+  const batchFallback = useRef(props.onBatchUnavailable); batchFallback.current = props.onBatchUnavailable;
+  const batch = props.inspectionSelection !== undefined;
   useEffect(() => {
     if (paused || completed.current || failedRetry.current === retry) return;
     let active = true; const abort = new AbortController();
     setGroup(null); setError(null);
     const timeout = setTimeout(() => { abort.abort(); if (active) { failedRetry.current = retry; setError('request_failed'); } }, 65_000);
-    void (async () => {
-      const hash = await fingerprintCustomCohortSelection(input);
+    // Brief inspections do not enter the shared request lane. This delay still
+    // consumes the existing deadline; once admitted, lane ownership is unchanged.
+    const admission = setTimeout(() => {
       if (!active || abort.signal.aborted) return;
-      const value = await transport.current({ ...input, include_map: false }, { signal: abort.signal });
-      if (!active || abort.signal.aborted) return;
-      const record = value as Record<string, unknown> | null;
-      const omitted = record?.parcel_map as Record<string, unknown> | null;
-      if (omitted?.status !== 'omitted' || omitted.reason !== 'geometry_not_requested') throw new Error('Unexpected inspection geometry');
-      const checked = checkCustomCohortSummaryResponse(value, input, hash);
-      completed.current = true; setGroup(checked);
-    })().catch(error => { if (active && !abort.signal.aborted) { failedRetry.current = retry;
-      setError(isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : 'request_failed'); } }).finally(() => clearTimeout(timeout));
-    return () => { active = false; clearTimeout(timeout); abort.abort(); };
-  }, [input, retry, paused]);
+      void (async () => {
+        const hash = await fingerprintCustomCohortSelection(input);
+        if (!active || abort.signal.aborted) return;
+        const value = await transport.current({ ...input, include_map: false }, { signal: abort.signal });
+        if (!active || abort.signal.aborted) return;
+        const record = value as Record<string, unknown> | null;
+        const omitted = record?.parcel_map as Record<string, unknown> | null;
+        if (omitted?.status !== 'omitted' || omitted.reason !== 'geometry_not_requested') throw new Error('Unexpected inspection geometry');
+        const checked = checkCustomCohortSummaryResponse(value, input, hash);
+        if (batch) {
+          // There is no per-phase private supplement contract. Reinspect the
+          // requested phase independently instead of showing parent totals.
+          if (checked.private_sales) { failedRetry.current = retry; batchFallback.current?.(); setError('request_failed'); return; }
+          const results = checked.summary.pockets;
+          if (!Array.isArray(results) || results.length !== input.selection.pockets.length) throw new Error('Incomplete phase summaries');
+          for (const pocket of input.selection.pockets) {
+            const matches = results.filter(p => p && typeof p === 'object' && !Array.isArray(p) && p.id === pocket.id);
+            const found = matches[0] as Record<string, unknown> | undefined;
+            const result = found?.result as Record<string, unknown> | undefined;
+            if (matches.length !== 1 || found?.label !== pocket.label || result?.account_count !== pocket.account_ids.length) throw new Error('Mismatched phase summary');
+          }
+        }
+        completed.current = true; setGroup(checked);
+      })().catch(error => { if (active && !abort.signal.aborted) { failedRetry.current = retry;
+        if (batch && isCustomCohortPreviewCapacityError(error)) batchFallback.current?.();
+        setError(isCustomCohortPreviewCapacityError(error) ? 'capacity_exceeded' : 'request_failed'); } }).finally(() => clearTimeout(timeout));
+    }, 250);
+    return () => { active = false; clearTimeout(admission); clearTimeout(timeout); abort.abort(); };
+  }, [input, retry, paused, batch]);
+  const inspectedPocketId = batch ? props.inspectedPocketId : undefined;
   return <section className="space-y-2 rounded-xl border border-violet-200 p-3 print:hidden" aria-label={`Inspect ${props.label}`}>
     <h4 className="font-semibold">Inside {props.label}</h4>
     <p className="text-sm">Independent statistics inspection. This request does not itself change inclusion; use the selection controls to include or exclude groups.</p>
+    {batch && <p className="text-xs text-slate-600">Subdivision and phase summaries share one checked capture. Switching phases reuses these observations; opening record pages still verifies their exact population.</p>}
     {paused && <p role="status">Group inspection is paused while the report is being saved or finalized. Any displayed observations are retained from this context.</p>}
     {!group && !error && !paused && <p role="status">Loading this group’s observations…</p>}
     {error && <div role="alert"><p>{error === 'capacity_exceeded'
@@ -98,8 +131,10 @@ function InspectorSession(props: Props) {
       : 'This group could not be inspected. This failed inspection does not undo saved inclusion choices.'}</p>
       <button type="button" className="hn-action-secondary btn btn-sm normal-case" disabled={paused}
         onClick={() => { if (!paused) setRetry(n => n + 1); }}>Retry inspection</button></div>}
-    {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly />}
+    {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly
+      pocketOnly={inspectedPocketId !== undefined} pocketId={inspectedPocketId} />}
     {group && <CustomCohortMemberBrowser input={input} group={group} paused={paused || props.membersPaused === true}
+      pocketId={inspectedPocketId}
       memberTransport={props.memberTransport ?? requestCustomCohortMembers} />}
     {cad && sameCadContext && (!props.pocketIds || props.pocketIds.length === 1)
       && <RecordedCadDetails evidence={cad} pocketId={props.pocketIds?.[0] ?? props.pocketId} />}

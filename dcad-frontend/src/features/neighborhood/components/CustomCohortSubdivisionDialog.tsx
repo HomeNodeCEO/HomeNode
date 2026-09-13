@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import type { CustomCohortSubdivisionFamily, CustomCohortSubdivisionFamilies } from '../customCohortSubdivisionFamilies';
 import { buildCustomCohortSubdivisionPhases } from '../customCohortSubdivisionFamilies';
+import { buildCustomCohortSubdivisionInspection } from '../customCohortSubdivisionInspection';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomCohortPreviewInput, CustomCohortPreviewGroup } from '../customCohortPreviewController';
 import { buildCustomCohortSubdivisionFamilyLocationReview } from '../customCohortSubdivisionLocationReview';
@@ -24,6 +25,7 @@ export default function CustomCohortSubdivisionDialog(props: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const [page, setPage] = useState(0);
   const [search, setSearch] = useState('');
+  const [batchUnavailable, setBatchUnavailable] = useState(false);
   useEffect(() => {
     const dialog = dialogRef.current, previousFocus = document.activeElement;
     dialog?.showModal();
@@ -38,6 +40,7 @@ export default function CustomCohortSubdivisionDialog(props: Props) {
   }) : null, [props.families, catalog, props.mapGroup, family.id]);
   const familyIds = new Set(family.pocket_ids), selectedIds = new Set(included);
   const phases = useMemo(() => buildCustomCohortSubdivisionPhases(catalog, family), [catalog, family]);
+  const inspectionSelection = useMemo(() => buildCustomCohortSubdivisionInspection(catalog, family), [catalog, family]);
   const selectedLeafCount = family.pocket_ids.filter(id => selectedIds.has(id)).length;
   const selectedCount = phases.filter(p => p.pocket_ids.every(id => selectedIds.has(id))).length;
   const selectedAccounts = catalog.pockets.reduce((sum, p) => sum + (familyIds.has(p.id) && selectedIds.has(p.id) ? p.member_count : 0), 0);
@@ -107,6 +110,8 @@ export default function CustomCohortSubdivisionDialog(props: Props) {
       </details>}
       <CustomCohortPocketInspector input={props.input} catalog={catalog} pocketId={phase?.id ?? family.pocket_ids[0]}
         pocketIds={phase ? phase.pocket_ids.length > 1 ? phase.pocket_ids : undefined : family.pocket_ids} label={phase?.label ?? family.label} previewTransport={props.previewTransport}
+        inspectionSelection={batchUnavailable ? undefined : inspectionSelection ?? undefined}
+        inspectedPocketId={phase?.id} onBatchUnavailable={() => setBatchUnavailable(true)}
         paused={props.inspectionsPaused} memberTransport={props.memberTransport} membersPaused={props.selectionDisabled} />
     </div>
   </dialog>;

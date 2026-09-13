@@ -6,6 +6,8 @@ interface Props {
   freshness: CustomCohortPreviewState['freshness'];
   pocketId?: string | null;
   selectedOnly?: boolean;
+  /** Show only the exact pocket result of a checked multi-phase inspection. */
+  pocketOnly?: boolean;
 }
 type Row = Record<string, unknown>;
 const object = (value: unknown): Row => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
@@ -65,7 +67,7 @@ function Population({ value, title }: { value: unknown; title: string }) {
 
 /** Display the server-formatted observation summary without recalculating,
  * relabeling its median as predominant, or inferring a reliability score. */
-export default function CustomCohortStatistics({ group, freshness, pocketId, selectedOnly = false }: Props) {
+export default function CustomCohortStatistics({ group, freshness, pocketId, selectedOnly = false, pocketOnly = false }: Props) {
   if (!group) return <p role="status" className="text-sm text-slate-600 print:hidden">No captured statistics are available yet.</p>;
   const summary = group.summary;
   const pockets = Array.isArray(summary.pockets) ? summary.pockets.map(object) : [];
@@ -83,13 +85,14 @@ export default function CustomCohortStatistics({ group, freshness, pocketId, sel
       </p>}
       {freshness === 'stale' && <p role="status" className="mt-2 text-sm text-amber-800">Previous coherent results — the changed selection has not completed. These numbers still match the displayed map.</p>}
     </div>
-    <div className={`grid gap-3 ${selectedOnly ? '' : '2xl:grid-cols-2'}`}>
+    {!pocketOnly && <div className={`grid gap-3 ${selectedOnly ? '' : '2xl:grid-cols-2'}`}>
       {!selectedOnly && <Population value={summary.all} title="All captured observations" />}
       <Population value={summary.selected} title="Selected observations" />
-    </div>
-    {pocketId && (pocket ? <Population value={pocket.result} title={`Inspected group: ${text(pocket.label)}`} />
+    </div>}
+    {(pocketId || pocketOnly) && (pocket ? <Population value={pocket.result} title={`Inspected group: ${text(pocket.label)}`} />
       : <p role="status" className="rounded-lg border border-amber-200 p-3 text-sm">This group's statistics are not part of the displayed result. Inspect it separately; inclusion has not been changed.</p>)}
-    {group.private_sales && <CustomCohortPrivateSalesStatistics observations={group.private_sales} freshness={freshness} selectedOnly={selectedOnly} />}
+    {!pocketOnly && group.private_sales && <CustomCohortPrivateSalesStatistics observations={group.private_sales} freshness={freshness} selectedOnly={selectedOnly} />}
+    {pocketOnly && group.private_sales && <p role="status" className="text-xs text-amber-800">Private CSV observations require a separate phase inspection; subdivision totals are not phase statistics.</p>}
     <p className="text-xs text-slate-600">Median is a descriptive midpoint, not a supported predominant value. COD describes dispersion, not reliability. Similarity, housing eligibility, market eligibility, trends, and report readiness have not been established. Missing values remain unavailable. This preview cannot be applied to the report.</p>
   </section>;
 }

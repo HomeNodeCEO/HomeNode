@@ -21,7 +21,7 @@ const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOption
 
 // Real row mapping, retained capture builder, numeric preview and public page
 // formatter; no synthetic browser DTOs or new source-authority assumptions.
-function fixture({ accountCount = 2, saleCount = 3, empty = false, revision = 7, assignmentFileId = '17', hash = 'a' } = {}) {
+function fixture({ accountCount = 2, saleCount = 3, empty = false, split = false, revision = 7, assignmentFileId = '17', hash = 'a' } = {}) {
   const accountIds = Array.from({ length: accountCount }, (_, i) => `A${String(i).padStart(3, '0')}`);
   const target = { ...contextFixture().target, account_id: accountIds[0], assignment_file_id: assignmentFileId };
   const scope = Object.fromEntries(['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'].map(key => [key, target[key]]));
@@ -44,7 +44,8 @@ function fixture({ accountCount = 2, saleCount = 3, empty = false, revision = 7,
       observed_at: captured_at, historical_availability: 'unknown' },
     projection: { id: `test-${role}`, revision: 'fixture-v2', definition: { role }, complete: true, input_row_count: records.length, output_record_count: records.length }, records })) });
   const contextRef = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: hash.repeat(64) };
-  const selection = { revision, pockets: empty ? [] : [{ id: 'inspected', label: 'Inspected recorded group', account_ids: accountIds }] };
+  const selection = { revision, pockets: empty ? [] : split ? accountIds.map((id, i) => ({ id: `phase:${i}`, label: `Phase ${i}`, account_ids: [id] }))
+    : [{ id: 'inspected', label: 'Inspected recorded group', account_ids: accountIds }] };
   const preview = buildCustomCohortObservationPreview({ context_ref: contextRef, selection,
     retained_inputs: { subject: { target, effective_date: '2024-06-30' }, study: { observation_period: { start_date: '2024-01-01', end_date: '2024-06-30' } },
       spatial: { query_complete: true, account_ids: accountIds, parcels: parcels.map(p => ({ object_id: p.object_id, account_id: p.account_id })) },
@@ -135,6 +136,31 @@ test('mount is lazy, explicit opening uses exact selected count and equivalent p
   h.render({ ...h.props(), memberTransport: (...args) => h.transport(...args) }); await h.settle(); assert.equal(h.calls.length, 1);
   h.click('Hide records'); assert.doesNotMatch(h.text(), /CAD account A000/); h.click('Show records'); await h.settle();
   assert.equal(h.calls.length, 1); assert.match(h.text(), /CAD account A000/); h.unmount();
+});
+
+test('phase paging uses the original batch fingerprint and exact pocket population; switching clears prior rows', async t => {
+  const f = fixture({ split: true }), h = harness(f); t.after(() => h.unmount());
+  h.render({ ...h.props(), pocketId: 'phase:0' }); h.click('Show records'); await h.wait(0);
+  assert.deepEqual(h.calls[0].population, { group: 'pocket', pocket_id: 'phase:0', kind: 'stock' });
+  assert.equal(h.calls[0].input, f.input); assert.equal(h.calls[0].input.selection.pockets.length, 2);
+  await h.complete(0); assert.match(h.text(), /records 1–1 of 1/); assert.match(h.text(), /CAD account A000/);
+  assert.doesNotMatch(h.text(), /CAD account A001/);
+  h.render({ ...h.props(), pocketId: 'phase:1' });
+  assert.doesNotMatch(h.text(), /CAD account A000/); assert.equal(h.calls.length, 1);
+  h.click('Show records'); await h.wait(1); await h.complete(1);
+  assert.deepEqual(h.calls[1].population, { group: 'pocket', pocket_id: 'phase:1', kind: 'stock' });
+  assert.match(h.text(), /CAD account A001/); assert.doesNotMatch(h.text(), /CAD account A000/);
+  h.render({ ...h.props(), pocketId: 'missing' }); assert.match(h.text(), /Record inspection is unavailable/);
+  assert.equal(h.calls.length, 2);
+});
+
+test('phase paging rejects another phase or the parent population even when their counts agree', async t => {
+  for (const wrong of [{ group: 'pocket', pocket_id: 'phase:1', kind: 'stock' }, { group: 'selected', kind: 'stock' }]) {
+    const f = fixture({ split: true }), h = harness(f); t.after(() => h.unmount());
+    h.render({ ...h.props(), pocketId: 'phase:0' }); h.click('Show records'); await h.wait(0);
+    h.calls[0].resolve(f.response(wrong, h.calls[0].page)); await h.drain();
+    assert.match(h.text(), /could not be verified/); assert.doesNotMatch(h.text(), /CAD account A00/); h.unmount();
+  }
 });
 
 test('capacity refusal on Next retains the checked page without changing count or silently shortening the population', { timeout: 10000 }, async t => {

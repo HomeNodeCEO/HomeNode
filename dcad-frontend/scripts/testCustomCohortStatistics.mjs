@@ -79,6 +79,17 @@ test('actual formatter values reach both population columns with no numeric reco
   assert.match(gla[0], /1 missing/); assert.match(gla[1], /0 missing/);
   assert.match(html, /data-selection-revision="7"/); assert.equal(JSON.stringify(group), before);
 });
+
+test('pocket-only inspection shows only its exact phase result without rebinding the parent or falling back', () => {
+  const group = fixture(), before = JSON.stringify(group);
+  const html = render(group, { pocketId: 'alpha', pocketOnly: true });
+  assert.match(html, /Inspected group: Alpha recorded group/);
+  assert.doesNotMatch(html, /aria-label="(?:All captured observations|Selected observations)"/);
+  assert.equal(metricRows(html, 'gla_sqft').length, 1); assert.match(html, /40 recorded transactions/);
+  assert.equal(JSON.stringify(group), before);
+  const absent = render(group, { pocketId: 'unknown', pocketOnly: true });
+  assert.equal(metricRows(absent, 'gla_sqft').length, 0); assert.match(absent, /statistics are not part/);
+});
 test('unknown currency, temporal applicability and descriptive COD are not turned into appraisal conclusions', () => {
   const html = render(fixture());
   assert.doesNotMatch(html, /\$|USD/); assert.match(html, /Currency not established/);

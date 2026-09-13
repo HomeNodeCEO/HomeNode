@@ -377,6 +377,10 @@ test("neighborhood persistence: real PostgreSQL canonical identities, publicatio
     // dispatch; otherwise this test alone would downgrade the migrated guards.
     const observationSql = await readFile(new URL("../migrations/20261017_neighborhood_reported_observations.sql", import.meta.url), "utf8");
     await pool.query(observationSql); await pool.query(observationSql);
+    // Reinstall the current generated-column-aware guards after replaying the
+    // historical definitions; never leave the test database on downgraded guards.
+    const projectionSql = await readFile(new URL("../migrations/20261019_neighborhood_revision_contract_projection.sql", import.meta.url), "utf8");
+    await pool.query(projectionSql); await pool.query(projectionSql);
     assert.equal(Number((await pool.query("SELECT count(*) AS count FROM app.neighborhood_assessment_jobs WHERE status IN ('queued','running','retry')")).rows[0].count), 0,
       "Use a dedicated, idle *_test database; pending jobs are not cleaned up or claimed from another run");
 

@@ -205,12 +205,21 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
     }
   }
   const dense = customCohortObservationRecordLimit(retained.acquisition) > 100_000;
-  const cad = yield* population('selected-cad-accounts', selected.map(row => ({ id: row.account_id, accounts: [row.account_id],
-    data: dense ? { retained_account_observation_reference: denseReportedAccountReference(row) }
-      : { captured_account_observations: row } })), preview.captured_at,
+  // Selected rows are owned frozen preview observations. Keep the completed
+  // private array (and every full-row reference hash) before population source
+  // creation, as with the original map; only scheduling changes between rows.
+  let cadRows = [];
+  for (const row of selected) {
+    cadRows.push({ id: row.account_id, accounts: [row.account_id],
+      data: dense ? { retained_account_observation_reference: denseReportedAccountReference(row) }
+        : { captured_account_observations: row } });
+    if (cadRows.length % 125 === 0) yield;
+  }
+  const cad = yield* population('selected-cad-accounts', cadRows, preview.captured_at,
   { source_snapshots: preview.source_snapshots, source_basis: 'current_cad_observations_not_historical_housing_stock',
     ...(dense ? { member_representation: 'retained-account-observation-reference-v1' } : {}) },
   'Selected retained CAD accounts; current reported characteristics, not verified economic-property inventory', true);
+  cadRows = null; // Release temporary wrappers at the original map argument's lifetime boundary.
   yield;
   const year = Number(effective.slice(0, 4));
   for (const [field, name, unit] of [['gla_sqft', 'current_cad_living_area', 'ft2'], ['site_area_sqft', 'current_cad_parcel_area', 'ft2'],

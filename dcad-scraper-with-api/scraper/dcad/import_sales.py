@@ -62,6 +62,7 @@ OPTIONAL_SOURCE_HEADERS = [
 # these cells literal and separate from the legacy cleaned/hash inputs. A unit
 # in this payload describes this source row, never an older COALESCE-held value.
 OPTIONAL_RAW_EVIDENCE_HEADERS = [
+    "StandardStatus",
     "ClosePrice",
     "Currency",
     "PriceCurrency",

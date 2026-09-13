@@ -48,3 +48,9 @@ for (const name of ['CustomCohortWorkspace', 'CustomCohortPocketInspector']) {
 test('disabled exploration does not mount request ownership', () => {
   const { Component } = component('CustomCohortWorkspace'); assert.equal(Component({ ...props(), enabled: false }), null);
 });
+test('parent inspector union identity ignores ordering but remounts for any changed phase membership', () => {
+  const { Component } = component('CustomCohortPocketInspector'), p = { ...props(), pocketIds: ['phase-a', 'phase-b'] };
+  assert.equal(Component(p).key, Component({ ...p, pocketIds: ['phase-b', 'phase-a'] }).key);
+  assert.notEqual(Component(p).key, Component({ ...p, pocketIds: ['phase-a', 'phase-c'] }).key);
+  assert.notEqual(Component(p).key, Component({ ...p, pocketIds: undefined }).key);
+});

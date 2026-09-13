@@ -12,6 +12,8 @@ import CustomCohortStatistics from './CustomCohortStatistics';
 import CustomCohortMemberBrowser from './CustomCohortMemberBrowser';
 
 interface Props { input: CustomCohortPreviewInput; catalog: CheckedPocketCatalog; pocketId: string; label: string;
+  /** Original recorded leaf IDs only; one exact union, never averages of phase summaries. */
+  pocketIds?: readonly string[];
   previewTransport?: typeof requestCustomCohortObservationPreview; paused?: boolean;
   memberTransport?: CustomCohortMemberTransport; membersPaused?: boolean }
 const amount = (value: number) => value.toLocaleString('en-US');
@@ -50,14 +52,15 @@ function RecordedCadDetails({ evidence, pocketId }: { evidence: CheckedCadRecord
 export default function CustomCohortPocketInspector(props: Props) {
   const ref = props.input.contextRef;
   return <InspectorSession key={JSON.stringify([props.input.accountId, props.input.assignmentFileId,
-    ref.context_id, ref.context_revision, ref.context_sha256, props.pocketId])} {...props} />;
+    ref.context_id, ref.context_revision, ref.context_sha256, props.pocketId,
+    props.pocketIds ? [...props.pocketIds].sort() : null])} {...props} />;
 }
 function InspectorSession(props: Props) {
   const cad = props.catalog.recommendation?.cad_recorded_evidence;
   const sameCadContext = cad && Object.entries(props.input.contextRef).every(([key, expected]) =>
     cad.binding.context_ref[key as keyof typeof props.input.contextRef] === expected);
   const [input] = useState(() => ({ ...props.input,
-    selection: selectionFromRecordedGroups(props.catalog, [props.pocketId], 1) }));
+    selection: selectionFromRecordedGroups(props.catalog, props.pocketIds ?? [props.pocketId], 1) }));
   const [group, setGroup] = useState<ReturnType<typeof checkCustomCohortSummaryResponse> | null>(null);
   const [error, setError] = useState<'request_failed' | 'capacity_exceeded' | null>(null);
   const [retry, setRetry] = useState(0);
@@ -87,17 +90,18 @@ function InspectorSession(props: Props) {
   }, [input, retry, paused]);
   return <section className="space-y-2 rounded-xl border border-violet-200 p-3 print:hidden" aria-label={`Inspect ${props.label}`}>
     <h4 className="font-semibold">Inside {props.label}</h4>
-    <p className="text-sm">Independent inspection only. Opening this group does not include or exclude it.</p>
+    <p className="text-sm">Independent statistics inspection. This request does not itself change inclusion; use the selection controls to include or exclude groups.</p>
     {paused && <p role="status">Group inspection is paused while the report is being saved or finalized. Any displayed observations are retained from this context.</p>}
     {!group && !error && !paused && <p role="status">Loading this group’s observations…</p>}
     {error && <div role="alert"><p>{error === 'capacity_exceeded'
-      ? 'This group exceeds the preview capacity and cannot be inspected here. Try another recorded group; record paging does not reduce this summary limit. The main selection has not changed.'
-      : 'This group could not be inspected. The main selection has not changed.'}</p>
+      ? 'This group exceeds the preview capacity and cannot be inspected here. Try another recorded group; record paging does not reduce this summary limit. This failed inspection does not undo saved inclusion choices.'
+      : 'This group could not be inspected. This failed inspection does not undo saved inclusion choices.'}</p>
       <button type="button" className="hn-action-secondary btn btn-sm normal-case" disabled={paused}
         onClick={() => { if (!paused) setRetry(n => n + 1); }}>Retry inspection</button></div>}
     {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly />}
     {group && <CustomCohortMemberBrowser input={input} group={group} paused={paused || props.membersPaused === true}
       memberTransport={props.memberTransport ?? requestCustomCohortMembers} />}
-    {cad && sameCadContext && <RecordedCadDetails evidence={cad} pocketId={props.pocketId} />}
+    {cad && sameCadContext && (!props.pocketIds || props.pocketIds.length === 1)
+      && <RecordedCadDetails evidence={cad} pocketId={props.pocketIds?.[0] ?? props.pocketId} />}
   </section>;
 }

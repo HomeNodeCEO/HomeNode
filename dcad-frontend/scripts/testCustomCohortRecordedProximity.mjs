@@ -7,6 +7,7 @@ import { createRequire } from 'node:module';
 import { fileURLToPath } from 'node:url';
 import { Script } from 'node:vm';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import * as subdivisionFamilies from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
 import { checkCustomCohortPocketRecommendation as check } from '../src/features/neighborhood/customCohortPocketRecommendation.ts';
 import { decisionEvidenceFixture } from '../../server/test/fixtures/customCohortDecisionEvidenceFixture.js';
@@ -218,11 +219,12 @@ let requests = 0, intents = 0;
 new Script(`(function(require,module,exports){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
   if (key === 'react' || key === 'react/jsx-runtime') return runtime(key);
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
+  if (key === '../customCohortSubdivisionFamilies') return subdivisionFamilies;
   if (key === '../customCohortPreviewController') return controller;
   if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortOperation() { requests++; assert.fail('No render-time request'); },
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
-  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector'].includes(key));
+  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector', './CustomCohortSubdivisionDialog'].includes(key));
   return { __esModule: true, default: () => null };
 }, module, module.exports);
 function render(f) {

@@ -117,6 +117,21 @@ test('generic pool repository has no cooperative publication API', () => {
   assert.equal(Object.hasOwn(repository, 'publishBatched'), false);
 });
 
+for (const location of ['member', 'source']) test(`deep ${location} descendants reach bounded JSON refusal without exhausting the seal call stack`, async () => {
+  const f = fixture(), db = database(f), descendants = [];
+  let nested = {};
+  for (let index = 0; index < 20000; index++) { nested = { child: nested }; descendants.push(nested); }
+  if (location === 'member') f.members[0].member_data.deep = nested;
+  else f.sources[0].payload.deep = nested;
+  const expected = await captureError(() => prepareNeighborhoodPublication(f.input, f.members, f.sources));
+  const actual = await captureError(() => publish(db, f, 'publishBatched'));
+  assert.match(expected.message, /json_limit/);
+  assertSameError(actual, expected);
+  assert.ok(descendants.every(Object.isFrozen));
+  assert.equal(db.calls.length, 0, 'invalid depth must fail before opening a savepoint');
+  assert.equal((await publish(db, fixture(), 'publishBatched')).promoted, true, 'failed sealing/validation must release the reservation');
+});
+
 for (const count of [124, 125, 126, 251]) test(`${count} accounts keep complete member batches and exact SQL order across real event-loop yields`, async () => {
   const original = expandedFixture(count), scheduled = structuredClone(original), before = json(scheduled);
   const a = database(original), b = database(scheduled);

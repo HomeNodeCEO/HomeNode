@@ -329,8 +329,17 @@ export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
   repository.publishBatched = (claim, assessmentInput, members, sources, { check = () => {} } = {}) => exclusive(async () => {
     const seen = new WeakSet();
     const seal = value => {
-      if (value && typeof value === 'object' && !seen.has(value)) {
-        seen.add(value); Object.values(value).forEach(seal); Object.freeze(value);
+      const pending = [[value, false]];
+      while (pending.length) {
+        const [current, visited] = pending.pop();
+        if (!current || typeof current !== 'object') continue;
+        if (visited) { Object.freeze(current); continue; }
+        if (seen.has(current)) continue;
+        seen.add(current); pending.push([current, true]);
+        const children = Object.values(current);
+        // Preserve the original left-to-right, child-before-parent traversal
+        // without consuming call-stack depth before bounded JSON validation.
+        for (let index = children.length - 1; index >= 0; index--) pending.push([children[index], false]);
       }
     };
     check(); seal([claim, assessmentInput, members, sources]); check();

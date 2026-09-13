@@ -14,6 +14,7 @@ import { createCustomCohortSelectionRepository } from './customCohortSelectionRe
 import { prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { representCustomCohortSubjectPoint } from './customCohortSubjectPoint.js';
 import { getCustomNeighborhoodMaterialProfile } from './customMaterialProfile.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
 import { prepareNeighborhoodSelectorInput, prepareNeighborhoodDiscoveryChoice,
   NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V2,
   NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY, NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
@@ -79,6 +80,12 @@ function array(value, max) { check(Array.isArray(value) && value.length <= max, 
 function reference(value) {
   closed(value, ['content_sha256', 'canonical_utf8_bytes']);
   return blobRef(value.content_sha256, value.canonical_utf8_bytes);
+}
+function reportedInterpretation(value) {
+  const profile = getCustomCohortReportedSaleWitnessV2Profile();
+  closed(value, ['id', 'revision', 'content_sha256']);
+  check(same(value, profile.profile_ref), 'reported_interpretation_mismatch');
+  return profile;
 }
 function timestamp(value) {
   const result = decodeNeighborhoodOriginalValue('utc6', 'present', value);
@@ -322,8 +329,10 @@ async function prepareInputBatchesAsync(input, { check = () => {}, afterBatch = 
 
 function* prepareInputBatches(input, retainValues = false, representation = blob, loadedSources) {
   const hasPrivate = Object.hasOwn(input, 'private_sales');
+  const hasReportedInterpretation = Object.hasOwn(input, 'reported_sale_interpretation');
   closed(input, ['acquisition', 'spatial', 'subject', 'subject_reference', 'selector', 'study', 'acquisition_intent', 'started_at', 'completed_at',
-    ...(hasPrivate ? ['private_sales'] : [])]);
+    ...(hasPrivate ? ['private_sales'] : []), ...(hasReportedInterpretation ? ['reported_sale_interpretation'] : [])]);
+  const reportedProfile = hasReportedInterpretation ? reportedInterpretation(input.reported_sale_interpretation) : null;
   const { acquisition, spatial, subject, subject_reference: subjectRef, selector, study, acquisition_intent: intent } = input;
   closed(acquisition, ['version', 'provenance', 'authority', 'captured_query_request', 'compact_metadata_json', 'capture_result']);
   check(acquisition.version === 1 && acquisition.provenance === 'original_cached_reader_invocation' && acquisition.authority === 'not_established');
@@ -362,8 +371,10 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
     : definition.discovery.radius_metres === (discovery?.radius_metres ?? '4828.032'));
   closed(intent, ['reference', 'body']);
   closed(intent.body, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at',
-    ...(hasPrivate ? ['private_sales_import'] : [])]);
-  check(intent.body.intent_version === (hasPrivate ? 2 : 1) && UUID.test(intent.body.operation_id) && typeof intent.body.actor_user_id === 'string'
+    ...(hasPrivate ? ['private_sales_import'] : []), ...(hasReportedInterpretation ? ['reported_sale_interpretation'] : [])]);
+  check(intent.body.intent_version === (hasPrivate ? 2 : 1) + (hasReportedInterpretation ? 2 : 0)
+    && (!hasReportedInterpretation || same(intent.body.reported_sale_interpretation, reportedProfile.profile_ref))
+    && UUID.test(intent.body.operation_id) && typeof intent.body.actor_user_id === 'string'
     && intent.body.actor_user_id.trim().length > 0 && intent.body.actor_user_id.length <= 200
     && same(intent.body.subject_inputs, subjectRef) && same(intent.body.target, subject.target)
     && intent.body.effective_date === subject.effective_date && same(intent.body.study, study));
@@ -385,6 +396,7 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
       rows: yield* b.pages('private_sales_rows', supplement.rows, 10000, false) };
   }
   const compact = JSON.parse(acquisition.compact_metadata_json);
+  check(!hasReportedInterpretation || compact.mapping_version === 5, 'reported_interpretation_mapping_required');
   check(input.started_at <= timestamp(compact.capture_observed_at) && compact.capture_observed_at <= input.completed_at
     && timestamp(spatial.snapshot.transaction_started_at) <= input.started_at, 'chronology_mismatch');
   const query = buildCohortLocalQueryEvidenceV1(acquisition.compact_metadata_json, JSON.stringify(request.account_ids), result.selection_sha256);
@@ -413,8 +425,12 @@ function* prepareInputBatches(input, retainValues = false, representation = blob
   const subjectDependencies = b.add({ subject_dependencies_version: 1, usage: 'retained_custom_subject_dependencies',
     subject_inputs: subjectRef, material_input: subject.material_input,
     material_profile: { profile_ref: profile.profile_ref, definition_blob: profile.definition_blob.ref }, recorded_point: b.add(point) });
-  const studyInput = b.add({ study_input_version: 1, usage: 'retained_custom_study_settings', target: subject.target,
-    effective_date: subject.effective_date, settings: study, source_semantics: compact.semantics, eligibility: 'not_established' });
+  if (reportedProfile) check(same(b.text(reportedProfile.definition_blob.canonical_json), reportedProfile.definition_blob.ref),
+    'reported_interpretation_mismatch');
+  const studyInput = b.add({ study_input_version: reportedProfile ? 2 : 1, usage: 'retained_custom_study_settings', target: subject.target,
+    effective_date: subject.effective_date, settings: study, source_semantics: compact.semantics, eligibility: 'not_established',
+    ...(reportedProfile ? { reported_sale_interpretation: { profile_ref: reportedProfile.profile_ref,
+      definition_blob: reportedProfile.definition_blob.ref } } : {}) });
   const capture = result.source_capture;
   const sourcePayloads = [];
   for (const source of capture.sources) {
@@ -592,6 +608,17 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
     check(entries.length === Number(manifest.entry_count), 'invalid_directory'); return entries;
   };
   const selection = await read(refs.selection_input), studyBlob = await read(refs.study_input);
+  check([1, 2].includes(studyBlob.study_input_version)
+    && Object.hasOwn(studyBlob, 'reported_sale_interpretation') === (studyBlob.study_input_version === 2),
+  'reported_interpretation_mismatch');
+  let reportedProfile = null;
+  if (studyBlob.study_input_version === 2) {
+    const original = studyBlob.reported_sale_interpretation;
+    closed(original, ['profile_ref', 'definition_blob']);
+    reportedProfile = reportedInterpretation(original.profile_ref);
+    check(same(reference(original.definition_blob), reportedProfile.definition_blob.ref), 'reported_interpretation_mismatch');
+    check(await text(original.definition_blob) === reportedProfile.definition_blob.canonical_json, 'reported_interpretation_mismatch');
+  }
   check([1, 2].includes(selection.selection_input_version) && selection.usage === 'retained_original_custom_capture_inputs');
   check(Object.hasOwn(selection, 'private_sales') === (selection.selection_input_version === 2), 'private_binding_mismatch');
   await read(refs.snapshot_evidence);
@@ -647,7 +674,8 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
     selector: { ...await read(selection.selector.metadata), query_input: await read(selection.selector.query_input),
       account_roster: { ...await read(selection.selector.roster_metadata), account_ids: await pages(selection.selector.account_ids, 'selector_accounts', L.accounts) } },
     study: studyBlob.settings, acquisition_intent: { reference: selection.acquisition_intent, body: await read(selection.acquisition_intent) },
-    started_at: selection.started_at, completed_at: selection.completed_at };
+    started_at: selection.started_at, completed_at: selection.completed_at,
+    ...(reportedProfile ? { reported_sale_interpretation: reportedProfile.profile_ref } : {}) };
   if (selection.selection_input_version === 2) {
     closed(selection.private_sales, ['metadata', 'authorization', 'rows']);
     input.private_sales = { capture: { ...await read(selection.private_sales.metadata),

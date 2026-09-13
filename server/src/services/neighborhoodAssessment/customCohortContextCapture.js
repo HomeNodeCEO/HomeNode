@@ -19,8 +19,10 @@ import { prepareCustomCohortContextReference } from './customCohortContextContra
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
-  describeNeighborhoodSaleWitnessMarketDataPurpose } from './cachedReadAccess.js';
-import { createNeighborhoodDenseCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
+  describeNeighborhoodSaleWitnessMarketDataPurpose, createNeighborhoodCombinedEvidenceReadAccess,
+  describeNeighborhoodCombinedEvidenceMarketDataPurpose } from './cachedReadAccess.js';
+import { createNeighborhoodDenseCadEvidenceSourceReader, createNeighborhoodDenseCombinedEvidenceSourceReader,
+  consumeNeighborhoodCachedAcquisition } from './cachedSourceReader.js';
 import { NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, prepareNeighborhoodSelectorInput,
   prepareNeighborhoodDiscoveryChoice, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY,
   NEIGHBORHOOD_CITY_PARCEL_PREDICATE } from './selectorInputProfile.js';
@@ -41,7 +43,8 @@ import { createCustomCohortReviewRepository } from './customCohortReviewReposito
 import { buildCustomCohortSupportedInputs } from './customCohortSupportedInputs.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
-import { buildCustomCohortReportedAssessmentBatched } from './customCohortReportedAssessment.js';
+import { buildCustomCohortReportedAssessmentBatched, buildCustomCohortReportedAssessmentWitnessV2Batched } from './customCohortReportedAssessment.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
 import { createNeighborhoodAssessmentRepositoryInTransaction } from './assessmentRepository.js';
 import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
 import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply,
@@ -498,11 +501,51 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // Choose the source projection from its original immutable query metadata,
   // never today's producer default. v3 cannot reopen under a narrower v2 grant;
   // CAD-only v4 keeps the original market-data purpose without MLS witnesses.
-  if (compact.reader_version !== 'local-capture-v3' || ![1, 2, 3, 4].includes(compact.mapping_version)
+  if (compact.reader_version !== 'local-capture-v3' || ![1, 2, 3, 4, 5].includes(compact.mapping_version)
     || !same(compact.scope, requestMetadata.scope) || compact.effective_date !== requestMetadata.effective_date
     || !same(compact.authorization?.target, requestMetadata.target)
     || !same(compact.authorization?.market_decision, requestMetadata.market_decision)) fail('operation_conflict');
-  const purpose = compact.mapping_version === 3 ? describeNeighborhoodSaleWitnessMarketDataPurpose(requestMetadata)
+  // Metadata-only callers must also verify the persisted interpretation choice.
+  // These bounded originals contain no source rows. A claimed compiled profile
+  // is insufficient: the actual retained definition must exist and match.
+  const studyOriginal = await readMetadata(refs.study_input);
+  const marked = studyOriginal.study_input_version === 2;
+  const privateCapture = directory.selection_input_version === 2;
+  if (![1, 2].includes(directory.selection_input_version)
+    || Object.hasOwn(directory, 'private_sales') !== privateCapture
+    || ![1, 2].includes(studyOriginal.study_input_version)
+    || Object.hasOwn(studyOriginal, 'reported_sale_interpretation') !== marked) fail('operation_conflict');
+  exactKeys(studyOriginal, ['study_input_version', 'usage', 'target', 'effective_date', 'settings', 'source_semantics', 'eligibility',
+    ...(marked ? ['reported_sale_interpretation'] : [])]);
+  if (studyOriginal.usage !== 'retained_custom_study_settings' || studyOriginal.eligibility !== 'not_established'
+    || studyOriginal.effective_date !== context.effective_date
+    || !same(studyOriginal.target, { ...context.scope, report_file_id: context.target.report_file_id,
+      workflow_type: 'custom_appraisal', assignment_file_id: context.target.workflow_target_id,
+      snapshot_version: previous.body.target.snapshot_version })
+    || !same(studyOriginal.settings?.observation_period, requestMetadata.observation_period)
+    || !same(studyOriginal.source_semantics, compact.semantics)) fail('operation_conflict');
+  const intentOriginal = await readMetadata(directory.acquisition_intent);
+  exactKeys(intentOriginal, ['intent_version', 'operation_id', 'actor_user_id', 'subject_inputs', 'target', 'effective_date', 'study', 'created_at',
+    ...(privateCapture ? ['private_sales_import'] : []), ...(marked ? ['reported_sale_interpretation'] : [])]);
+  if (intentOriginal.intent_version !== (privateCapture ? 2 : 1) + (marked ? 2 : 0)
+    || intentOriginal.operation_id !== reference.context_id
+    || !same(intentOriginal.subject_inputs, directory.subject_inputs)
+    || !same(intentOriginal.target, studyOriginal.target) || intentOriginal.effective_date !== context.effective_date
+    || !same(intentOriginal.study, studyOriginal.settings)) fail('operation_conflict');
+  let reportedInterpretation = null;
+  if (marked) {
+    const installed = getCustomCohortReportedSaleWitnessV2Profile();
+    const original = studyOriginal.reported_sale_interpretation;
+    exactKeys(original, ['profile_ref', 'definition_blob']);
+    if (compact.mapping_version !== 5 || !same(original.profile_ref, installed.profile_ref)
+      || !same(intentOriginal.reported_sale_interpretation, installed.profile_ref)
+      || !same(original.definition_blob, installed.definition_blob.ref)) fail('operation_conflict');
+    const definition = await blobs.get(original.definition_blob.content_sha256, original.definition_blob.canonical_utf8_bytes);
+    if (definition !== installed.definition_blob.canonical_json) fail('operation_conflict');
+    reportedInterpretation = installed.profile_ref;
+  }
+  const purpose = compact.mapping_version === 5 ? describeNeighborhoodCombinedEvidenceMarketDataPurpose(requestMetadata)
+    : compact.mapping_version === 3 ? describeNeighborhoodSaleWitnessMarketDataPurpose(requestMetadata)
     : describeNeighborhoodCachedMarketDataPurpose(requestMetadata);
   const decision = await boundedPolicy(authorizeMarketData, client, input.auth, context, purpose, budget, exposure);
   if (!same({ decision_id: decision.decision_id, policy_revision: decision.policy_revision }, requestMetadata.market_decision)) fail('market_policy_changed');
@@ -527,7 +570,7 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   }
   // Review persistence will reopen the original graph in this same transaction.
   // Keep its preceding rights check, without allocating/validating it twice.
-  const metadata = { context, purpose, decision, privateAuthorization, header: previous };
+  const metadata = { context, purpose, decision, privateAuthorization, header: previous, reportedInterpretation };
   const beforeLoadResult = beforeLoad === null ? null : await beforeLoad(metadata);
   const retained = loadInputs ? await loadCustomCohortCaptureInputs(client, scopeJson, refs) : null;
   // A checkpoint is editor intent, not authority to relabel a retained study.
@@ -550,11 +593,17 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
  */
 export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   authorizePrivateSales = async () => ({ allowed: false }),
-  authorizeReportedObservations = async () => ({ allowed: false }) } = {}) {
+  authorizeReportedObservations = async () => ({ allowed: false }), sourceMode = 'cad4' } = {}) {
+  if (!['cad4', 'combined-witness2-v1'].includes(sourceMode)) throw new TypeError('custom_cohort_capture_source_mode_invalid');
   if (typeof pool?.connect !== 'function' || typeof authorizeMarketData !== 'function'
     || typeof authorizeReportedObservations !== 'function') {
     throw new TypeError('custom_cohort_capture_dependencies_required');
   }
+  // Trusted constructor setting applies only to NEW attempts. Replays always
+  // resolve the original source purpose and interpretation from retained blobs.
+  const reportedProfile = sourceMode === 'combined-witness2-v1' ? getCustomCohortReportedSaleWitnessV2Profile().profile_ref : null;
+  const createReadAccess = reportedProfile ? createNeighborhoodCombinedEvidenceReadAccess : createNeighborhoodCadEvidenceReadAccess;
+  const createSourceReader = reportedProfile ? createNeighborhoodDenseCombinedEvidenceSourceReader : createNeighborhoodDenseCadEvidenceSourceReader;
   async function recheckPrivatePolicy(client, input, loaded, budget, exposures = ['none']) {
     if (!loaded.privateAuthorization) return;
     for (const exposure of exposures) {
@@ -850,9 +899,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (study.observation_period.end_date > subject.effective_date) fail('period_after_effective_date');
       const point = await repository.loadRecordedPoint(subjectReference);
       if (point.status !== 'represented') fail('recorded_point_required', point.reason);
-      const body = freeze({ intent_version: input.privateSalesImport ? 2 : 1, operation_id: input.operationId, actor_user_id: input.auth.userId,
+      const body = freeze({ intent_version: (input.privateSalesImport ? 2 : 1) + (reportedProfile ? 2 : 0), operation_id: input.operationId, actor_user_id: input.auth.userId,
         subject_inputs: subjectReference, target: subject.target, effective_date: subject.effective_date,
         study, created_at: await databaseTime(client),
+        ...(reportedProfile ? { reported_sale_interpretation: reportedProfile } : {}),
         ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) });
       const reference = await createNeighborhoodCohortBlobRepository(client, scope.organization_id).put(canonicalAssessmentJson(body));
       return { scope, scopeJson, subject, subjectReference, point, intent: { reference, body } };
@@ -890,11 +940,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           : { radius_metres: spatial.radius_metres, distance_semantics: 'postgis_geography_spheroid_v1', parcel_predicate: 'all_intersecting_parcels' },
         roster: { complete: true, account_count: spatial.account_ids.length, account_ids: spatial.account_ids } });
       if (selector.status !== 'prepared') fail('selector_incomplete', selector.reason);
-      // New Custom captures retain the installed CAD-field projection (mapping4).
-      // Its market-data purpose and complete-sale closure are unchanged. Existing
-      // contexts reopen using their original mapping version; no recapture or
-      // retrospective relabeling is performed during read/retry.
-      const access = createNeighborhoodCadEvidenceReadAccess({
+      // The chosen issuer/reader pair must agree; denied expanded rights never
+      // fall back to the old projection. Registered contexts replay above.
+      const access = createReadAccess({
         resolveAuthorizedAssignment: async () => { assertTarget(await resolveTarget(client, input, false), subject.target); return context; },
         resolveTrustedSelection: async () => ({ ...selector.selection, account_ids: selector.account_roster.account_ids }),
         authorizeMarketData: async (auth, current, requestedPurpose) => {
@@ -913,7 +961,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       return phase('source', async () => {
         const grants = await phase('source_authorization', () => access.prepare(input.auth, { target: context.target,
           selection_reference: { id: input.operationId, revision: 1 }, observation_period: input.observationPeriod, knowledge_cutoff: null }));
-        const reader = createNeighborhoodDenseCadEvidenceSourceReader(pool, { access });
+        const reader = createSourceReader(pool, { access });
         const result = await phase('source_read', async () => captured(await reader.captureInSnapshot(client, { ...grants.request, auth: input.auth,
           selection_grant: grants.selection_grant, market_grant: grants.market_grant },
         { deadline: budget.deadline, signal: budget.signal }), 'source'));
@@ -932,6 +980,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       return prepareCustomCohortCaptureInputsBatched({ acquisition, spatial: read.spatial, subject,
         subject_reference: subjectReference, selector: read.selector, study, acquisition_intent: intent,
         started_at: read.startedAt, completed_at: read.completedAt,
+        ...(reportedProfile ? { reported_sale_interpretation: reportedProfile } : {}),
         ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     });
     return transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -1005,7 +1054,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       effective_date: loaded.retained.context.effective_date, data_cutoff: loaded.retained.context.effective_date };
     const identity = { assessment_id: randomUUID(), assessment_revision: 1, attachment_id: randomUUID(), attachment_revision: 1 };
     budget.check();
-    const prepared = await buildCustomCohortReportedAssessmentBatched({ context_ref: input.contextRef,
+    const buildReported = loaded.retained.reportedInterpretation
+      ? buildCustomCohortReportedAssessmentWitnessV2Batched : buildCustomCohortReportedAssessmentBatched;
+    const prepared = await buildReported({ context_ref: input.contextRef,
       retained_inputs: loaded.retained.retained.retained_inputs, selection: active.selection, target,
       catalog_version: customWorkspaceCatalogVersion(loaded.workspace.checkpoint),
       preparation_identity: identity, report_geography: loaded.reportGeography, derived_at: loaded.derivedAt,

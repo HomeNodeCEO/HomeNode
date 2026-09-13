@@ -1,6 +1,7 @@
 import express from 'express';
 import { environmentFlag } from '../util/requestPerformance.js';
 import { createCustomNeighborhoodSourcePolicy } from '../security/customNeighborhoodSourcePolicy.js';
+import { createCustomNeighborhoodWitness2SourcePolicy } from '../security/customNeighborhoodWitness2SourcePolicy.js';
 import { authorizeCustomNeighborhoodPrivateSales } from '../security/customNeighborhoodPrivateSalesPolicy.js';
 import { authorizeCustomNeighborhoodReportObservations } from '../security/customNeighborhoodReportObservationPolicy.js';
 import { jsonErrorHandler } from '../security/httpSecurity.js';
@@ -16,15 +17,23 @@ function invalidConfiguration() {
   });
 }
 
+function sourceMode(value) {
+  if (value === undefined) return 'cad4';
+  if (value !== 'cad4' && value !== 'combined-witness2-v1') throw invalidConfiguration();
+  return value;
+}
+
 /** Parse before creating application resources. These independently supplied
  * source revisions identify the approved source mix; they do not grant rights.
- * The existing policy constructor owns the closed profile grammar. */
+ * Both fixed policy constructors validate the closed profile grammar. */
 export function createCustomNeighborhoodConfiguration(environment = process.env) {
   try {
     if (!environmentFlag(environment.CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED)) {
       // An unused profile must not prevent an explicitly disabled deployment.
       return Object.freeze({ enabled: false, sourceProfile: null });
     }
+    const mode = environment.CUSTOM_NEIGHBORHOOD_SOURCE_MODE;
+    sourceMode(mode);
     const encoded = environment.CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_JSON;
     if (typeof encoded !== 'string' || !encoded.trim()
       || Buffer.byteLength(encoded, 'utf8') > CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES) {
@@ -32,9 +41,11 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
     }
     const sourceProfile = JSON.parse(encoded);
     createCustomNeighborhoodSourcePolicy(sourceProfile);
+    createCustomNeighborhoodWitness2SourcePolicy(sourceProfile);
     sourceProfile.providerRevisions.forEach(Object.freeze);
     Object.freeze(sourceProfile.providerRevisions);
-    return Object.freeze({ enabled: true, sourceProfile: Object.freeze(sourceProfile) });
+    return Object.freeze({ enabled: true, sourceProfile: Object.freeze(sourceProfile),
+      ...(mode === undefined ? {} : { sourceMode: mode }) });
   } catch {
     // Never attach parser input, provider identifiers, driver errors or causes.
     throw invalidConfiguration();
@@ -42,7 +53,7 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
 }
 
 /** Mount once AFTER the existing application boundary and workfile routes.
- * No authentication, CSRF, global parser, limiter or capture-profile replacement.
+ * No authentication, CSRF, global parser or limiter replacement.
  * Disabled mode creates no coordinator/policy and never touches the cohort pool.
  */
 export function createCustomNeighborhoodApplicationRouter({ pool, configuration } = {}) {
@@ -51,15 +62,24 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
   const enabled = configuration.enabled;
   let cohortService;
   if (enabled) {
-    let authorizeMarketData;
+    let authorizeMarketData, mode;
     try {
+      mode = sourceMode(configuration.sourceMode);
       const encoded = JSON.stringify(configuration.sourceProfile);
       if (typeof encoded !== 'string'
         || Buffer.byteLength(encoded, 'utf8') > CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES) throw invalidConfiguration();
-      authorizeMarketData = createCustomNeighborhoodSourcePolicy(configuration.sourceProfile);
+      const legacy = createCustomNeighborhoodSourcePolicy(configuration.sourceProfile);
+      const witness2 = createCustomNeighborhoodWitness2SourcePolicy(configuration.sourceProfile);
+      // Replay chooses source rights from its original purpose, never from the
+      // mode for NEW captures. Any projection is exclusively the fixed witness2
+      // evaluator's responsibility; malformed/older projections cannot fall
+      // back to the narrower legacy grant.
+      authorizeMarketData = (client, auth, context, purpose, requested) =>
+        (Object.hasOwn(purpose ?? {}, 'source_projection') ? witness2 : legacy)(client, auth, context, purpose, requested);
     } catch { throw invalidConfiguration(); }
-    // Keep the installed owner's current mapping2 producer and real scoped policy.
-    cohortService = createCustomCohortContextCapture({ pool, authorizeMarketData,
+    // The absent mode preserves the installed CAD4 producer. This switch does
+    // not install source grants or change how existing retained purposes route.
+    cohortService = createCustomCohortContextCapture({ pool, authorizeMarketData, sourceMode: mode,
       authorizePrivateSales: authorizeCustomNeighborhoodPrivateSales,
       authorizeReportedObservations: authorizeCustomNeighborhoodReportObservations });
   }

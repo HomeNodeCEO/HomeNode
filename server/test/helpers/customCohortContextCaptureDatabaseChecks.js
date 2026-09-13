@@ -23,6 +23,7 @@ import { canonicalAssessmentJson as json } from '../../src/services/neighborhood
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { runCustomCohortPrivateSalesDatabaseChecks } from './customCohortPrivateSalesDatabaseChecks.js';
+import { runCustomCohortWitness2OwnerDatabaseChecks } from './customCohortWitness2OwnerDatabaseChecks.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -129,6 +130,10 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1', [organization])).rows[0].count, blobsBefore);
     await assert.rejects(capture.capture({ ...request, observationPeriod: { start_date: '2022-01-01', end_date: '2024-06-30' } }), /operation_conflict/);
     checks.push('exact authorized replay without source reread or extra evidence; changed operation input refused');
+
+    checks.push(...(await runCustomCohortWitness2OwnerDatabaseChecks({ pool, auth, grant,
+      scope: { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: account },
+      legacyRequest: request, legacyResult: result })).checks);
 
     const previewRequest = { auth, accountId: account, assignmentFileId: assignment, contextRef: result.context_ref,
       selection: { revision: 1, pockets: [{ id: 'subject-area', label: 'Subject area', account_ids: [account] }] } };

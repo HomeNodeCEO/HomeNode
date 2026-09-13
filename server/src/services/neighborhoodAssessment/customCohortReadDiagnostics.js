@@ -27,6 +27,10 @@ const FAMILIES = [
 ];
 export function customCohortReadDiagnostic(action, error) {
   if (!['catalog', 'preview', 'members', 'reported-proposal'].includes(action) || !(error instanceof Error)) return null;
+  if (action === 'reported-proposal' && !error.outcome_unknown && error.code === 'CUSTOM_COHORT_CAPTURE_FAILED'
+    && ['deadline_exceeded', 'cancelled'].includes(error.reason)) {
+    return { action, family: 'coordinator', check: error.reason };
+  }
   if (action === 'reported-proposal' && ['neighborhood_publication_bytes', 'neighborhood_publication_storage_bytes',
     'neighborhood_member_row_bytes', 'neighborhood_member_row_storage_bytes'].includes(error.code)) {
     return { action, family: 'publication', check: error.code.slice('neighborhood_'.length) };

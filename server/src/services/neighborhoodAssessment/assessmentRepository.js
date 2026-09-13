@@ -7,6 +7,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const HASH = /^[a-f0-9]{64}$/;
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const MEMBER_CHECKPOINT = 125;
+const CALLER_CLEANUP_FAILURES = new WeakMap();
 const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 const copy = value => {
   const result = JSON.parse(canonicalAssessmentJson(value));
@@ -280,6 +281,12 @@ export function createNeighborhoodAssessmentRepository(pool) {
   return repositoryWithTransaction(operation => transaction(pool, operation));
 }
 
+/** One-level internal lookup only for this module's exact cleanup aggregate.
+ * Copies, lookalikes and arbitrary nested errors carry no such provenance. */
+export function neighborhoodCallerCleanupFailure(error) {
+  return CALLER_CLEANUP_FAILURES.get(error) ?? null;
+}
+
 /** Explicit exclusive caller transaction only; never a simulated nested pool. */
 export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
   if (typeof client?.query !== 'function' || typeof client?.release !== 'function') fail('caller_client_required');
@@ -301,7 +308,11 @@ export function createNeighborhoodAssessmentRepositoryInTransaction(client) {
         try {
           await client.query('ROLLBACK TO SAVEPOINT neighborhood_repository_owner');
           await client.query('RELEASE SAVEPOINT neighborhood_repository_owner');
-        } catch (cleanup) { throw new AggregateError([error, cleanup], 'neighborhood_caller_cleanup_failed'); }
+        } catch (cleanup) {
+          const failure = new AggregateError([error, cleanup], 'neighborhood_caller_cleanup_failed');
+          CALLER_CLEANUP_FAILURES.set(failure, Object.freeze({ primary: error, cleanup }));
+          throw failure;
+        }
       }
       throw error;
     } finally { active = false; }

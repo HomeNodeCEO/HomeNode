@@ -45,7 +45,7 @@ import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.j
 import { buildCustomCohortReportPreparation } from './customCohortReportPreparation.js';
 import { buildCustomCohortReportedAssessmentBatched, buildCustomCohortReportedAssessmentWitnessV2Batched } from './customCohortReportedAssessment.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
-import { createNeighborhoodAssessmentRepositoryInTransaction } from './assessmentRepository.js';
+import { createNeighborhoodAssessmentRepositoryInTransaction, neighborhoodCallerCleanupFailure } from './assessmentRepository.js';
 import { getNeighborhoodAttachment, persistNeighborhoodAttachment } from './applicationRepository.js';
 import { buildCustomNeighborhoodReportCandidate, prepareCustomNeighborhoodReportApply,
   prepareCustomNeighborhoodReportReplacement, CUSTOM_REPORTED_OBSERVATION_MAPPER_VERSION } from './customReportMapping.js';
@@ -63,16 +63,19 @@ const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/;
 const TARGET_FIELDS = ['organization_id', 'report_file_id', 'assignment_file_id', 'account_id'];
 const DEPENDENCIES = ['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'];
 const LIMITS = Object.freeze({ ...CUSTOM_COHORT_OPERATION_LIMITS, connect_ms: 3000, query_ms: 6000, cleanup_ms: 1000 });
+const OWNER_INTERRUPTION_REASONS = new WeakMap();
 const same = (a, b) => canonicalAssessmentJson(a) === canonicalAssessmentJson(b);
 const freeze = value => {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
 };
 function fail(reason, detail, captureCounts) {
-  throw Object.assign(new Error(`custom_cohort_capture_${reason}`), {
+  const error = Object.assign(new Error(`custom_cohort_capture_${reason}`), {
     code: 'CUSTOM_COHORT_CAPTURE_FAILED', reason, ...(detail ? { detail } : {}),
     ...(captureCounts ? { capture_counts: captureCounts } : {}),
   });
+  if (reason === 'deadline_exceeded' || reason === 'cancelled') OWNER_INTERRUPTION_REASONS.set(error, reason);
+  throw error;
 }
 function exactKeys(value, keys) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype
@@ -350,7 +353,7 @@ async function connect(pool, budget) {
 async function transaction(pool, mode, budget, execute) {
   budget.check();
   const raw = await connect(pool, budget);
-  let open = false, closed = false, discard = null, connectionError = null, commitAttempted = false;
+  let open = false, closed = false, discard = null, connectionError = null, commitAttempted = false, outcomeUnknown = false;
   // A checked-out pg client can emit a socket/idle-timeout error while pure
   // work runs between queries. Own that event until release; never allow an
   // unhandled EventEmitter error to terminate the web process.
@@ -392,16 +395,29 @@ async function transaction(pool, mode, budget, execute) {
       discard ||= error;
       throw Object.assign(error, { outcome_unknown: true });
     }
+    const cleanupFailure = neighborhoodCallerCleanupFailure(error);
+    outcomeUnknown = Boolean(error?.outcome_unknown || cleanupFailure?.primary?.outcome_unknown
+      || cleanupFailure?.cleanup?.outcome_unknown);
     if (open && !discard) {
       try { await raw.query({ text: 'ROLLBACK', query_timeout: LIMITS.cleanup_ms }); }
       catch (rollbackError) { discard = rollbackError; }
+    }
+    // Only after the existing outer cleanup/discard decision, preserve a typed
+    // owner interruption hidden by our repository's failed savepoint cleanup.
+    // Keep the aggregate and both children; never inspect arbitrary wrappers.
+    if (outcomeUnknown) Object.assign(error, { outcome_unknown: true });
+    else if (cleanupFailure) {
+      const primary = cleanupFailure.primary, reason = OWNER_INTERRUPTION_REASONS.get(primary);
+      if (reason && primary.code === 'CUSTOM_COHORT_CAPTURE_FAILED' && primary.reason === reason) {
+        Object.assign(error, { code: primary.code, reason });
+      }
     }
     throw error;
   } finally {
     closed = true;
     try { raw.release(discard || undefined); }
     catch (releaseError) {
-      if (commitAttempted) throw Object.assign(releaseError, { outcome_unknown: true });
+      if (commitAttempted || outcomeUnknown) throw Object.assign(releaseError, { outcome_unknown: true });
       throw releaseError;
     }
     finally { raw.off?.('error', connectionFailed); }

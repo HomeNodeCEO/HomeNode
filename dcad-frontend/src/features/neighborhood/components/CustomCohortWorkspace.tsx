@@ -7,9 +7,11 @@ import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransp
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
   customCohortCountyNameMatches, CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
+import { buildCustomCohortSubdivisionFamilies, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics from './CustomCohortStatistics';
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
+import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
 
 export interface CustomCohortControlledWorkspace {
   readonly catalog: CheckedPocketCatalog;
@@ -63,12 +65,18 @@ function WorkspaceSession(props: Props) {
   const [localRevision, setRevision] = useState(1);
   const [retry, setRetry] = useState(0);
   const [inspected, setInspected] = useState<string | null>(null);
+  const [inspectedFamilyId, setInspectedFamilyId] = useState<string | null>(null);
+  const [inspectedPhaseId, setInspectedPhaseId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
   const controller = useRef<ReturnType<typeof createCustomCohortPreviewController> | null>(null);
   const controlled = props.workspace !== undefined;
   const catalog = props.workspace?.catalog ?? localCatalog;
+  const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
+  const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
+  const highlightedIds = useMemo(() => inspectedFamily ? inspectedPhaseId ? [inspectedPhaseId] : inspectedFamily.pocket_ids : undefined,
+    [inspectedFamily, inspectedPhaseId]);
   const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
   const revision = props.workspace?.selection.revision ?? localRevision;
   const saving = props.workspace?.saving ?? false;
@@ -131,6 +139,24 @@ function WorkspaceSession(props: Props) {
     else { setIncluded(ids); setRevision(n => n + 1); }
   };
   const toggle = (id: string) => choose(included.includes(id) ? included.filter(value => value !== id) : [...included, id]);
+  const includeGroups = (ids: readonly string[]) => {
+    const added = ids.filter(id => !included.includes(id));
+    if (added.length) choose([...included, ...added]);
+  };
+  const excludeGroups = (ids: readonly string[]) => {
+    const removed = new Set(ids), next = included.filter(id => !removed.has(id));
+    if (next.length !== included.length) choose(next);
+  };
+  const activatePocket = (id: string, mode: 'subdivision' | 'phase') => {
+    if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
+    const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
+    setInspected(id);
+    setInspectedFamilyId(family?.id ?? null);
+    setInspectedPhaseId(mode === 'phase' ? id : null);
+    // Only an intentional broad-view click includes the family. Zooming,
+    // inspection and reopening never fill back in an appraiser's exclusions.
+    if (mode === 'subdivision') includeGroups(family?.pocket_ids ?? [id]);
+  };
   const recommendation = desired ? catalog?.recommendation ?? null : null;
   const reviewById = new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket]));
   const groups = catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
@@ -138,6 +164,7 @@ function WorkspaceSession(props: Props) {
       county: 'Needs review', count: catalog.unassigned.member_count }] : [])]
     .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
   const selectedGroup = groups.find(p => p.id === inspected);
+  const selectedFamily = subdivisionFamilies && inspected ? customCohortSubdivisionFamilyForPocket(subdivisionFamilies, inspected) : null;
   const countyMatches = useMemo(() => catalog && inspected ? customCohortCountyNameMatches(catalog, inspected) : [], [catalog, inspected]);
   const subjectCountyMatches = useMemo(() => catalog?.subject_membership.assigned_pocket_id
     ? customCohortCountyNameMatches(catalog, catalog.subject_membership.assigned_pocket_id) : [], [catalog]);
@@ -251,7 +278,9 @@ function WorkspaceSession(props: Props) {
         onClick={() => { if (!selectionDisabled) setRetry(n => n + 1); }}>Retry preview</button>}
       <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
         {group ? <CustomCohortParcelMap group={group} catalog={catalog} freshness={freshness}
-          inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) setInspected(id); }}
+          subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
+          onActivatePocket={activatePocket}
+          inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
           onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
           : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
         <aside className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
@@ -293,6 +322,9 @@ function WorkspaceSession(props: Props) {
               Recorded-name grouping requires review; builder, HOA dues, amenities and legal phases are not inferred.</p>
             <button type="button" className={button} disabled={selectionDisabled} onClick={() => toggle(selectedGroup.id)}>
               {included.includes(selectedGroup.id) ? 'Exclude this group' : 'Include this group'}</button>
+            {selectedFamily && selectedFamily.pocket_ids.length > 1 && <button type="button" className={button} disabled={inspectionsPaused}
+              onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(selectedFamily.id); setInspectedPhaseId(null); } }}>
+              Review subdivision and phases</button>}
             {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
               <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
               <p>{countyMatches.length.toLocaleString('en-US')} groups · {countyMatches.reduce((sum, p) => sum + p.member_count, 0).toLocaleString('en-US')} accounts.
@@ -306,7 +338,15 @@ function WorkspaceSession(props: Props) {
         </aside>
       </div>
       <CustomCohortStatistics group={group} freshness={freshness} />
-      {selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
+      {inspectedFamily && desired && <CustomCohortSubdivisionDialog key={inspectedFamily.id}
+        family={inspectedFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
+        selectionDisabled={selectionDisabled} inspectionsPaused={inspectionsPaused} previewTransport={transport}
+        memberTransport={props.workspace?.memberTransport} onInclude={includeGroups} onExclude={excludeGroups}
+        onInspectPhase={id => { if (!inspectionsPaused && (id === null || inspectedFamily.pocket_ids.includes(id))) {
+          setInspectedPhaseId(id); setInspected(id ?? inspectedFamily.pocket_ids[0]);
+        } }}
+        onClose={() => { setInspectedFamilyId(null); setInspected(null); setInspectedPhaseId(null); }} />}
+      {!inspectedFamily && selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
         pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
         memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}
     </>}

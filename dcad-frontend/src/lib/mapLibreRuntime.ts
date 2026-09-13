@@ -10,7 +10,7 @@ export interface ParcelMapClick {
 }
 export interface ParcelMapRuntimeInstance {
   on: {
-    (event: 'load' | 'error' | 'idle', callback: () => void): void;
+    (event: 'load' | 'error' | 'idle' | 'zoom', callback: () => void): void;
     (event: 'click', layer: string, callback: (event: ParcelMapClick) => void): void;
     (event: 'mouseenter' | 'mouseleave', layer: string, callback: () => void): void;
   };

@@ -11,6 +11,8 @@ interface Props {
   input: CustomCohortPreviewInput;
   group: ReturnType<typeof checkCustomCohortSummaryResponse>;
   paused?: boolean;
+  /** The exact pocket descriptor from the original, unchanged batch response. */
+  pocketId?: string;
   memberTransport: CustomCohortMemberTransport;
 }
 type Row = Record<string, unknown>;
@@ -24,16 +26,23 @@ const object = (value: unknown): Row => value !== null && typeof value === 'obje
 const count = (value: number) => value.toLocaleString('en-US');
 const button = 'rounded-lg border border-amber-300 bg-purple-50 px-3 py-2 text-xs font-medium text-purple-950 hover:border-amber-500 hover:bg-purple-100 focus-visible:outline focus-visible:outline-2 focus-visible:outline-purple-600 disabled:cursor-not-allowed disabled:opacity-50';
 
-function expectations(group: Props['group']): Record<CustomCohortMemberKind, CustomCohortMemberExpectation> | null {
-  const selected = object(group.summary.selected), result = {} as Record<CustomCohortMemberKind, CustomCohortMemberExpectation>;
+function expectations(group: Props['group'], pocketId?: string): Record<CustomCohortMemberKind, CustomCohortMemberExpectation> | null {
+  const pockets = Array.isArray(group.summary.pockets) ? group.summary.pockets.map(object) : [];
+  const matches = pocketId === undefined ? [] : pockets.filter(p => p.id === pocketId);
+  if (pocketId !== undefined && matches.length !== 1) return null;
+  const selected = object(pocketId === undefined ? group.summary.selected : matches[0].result);
+  const result = {} as Record<CustomCohortMemberKind, CustomCohortMemberExpectation>;
   for (const kind of Object.keys(LABELS) as CustomCohortMemberKind[]) {
     const source = object(selected[kind === 'omitted_transactions' ? 'transactions' : kind]);
     const descriptor = object(source[kind === 'omitted_transactions' ? 'omitted_inspection' : 'inspection']);
     const population = object(descriptor.population), total = descriptor.total_count;
-    if (population.group !== 'selected' || population.kind !== kind || Object.keys(population).length !== 2
+    if (population.group !== (pocketId === undefined ? 'selected' : 'pocket') || population.kind !== kind
+      || Object.keys(population).length !== (pocketId === undefined ? 2 : 3)
+      || (pocketId !== undefined && population.pocket_id !== pocketId)
       || descriptor.maximum_page_size !== LIMIT || !Number.isSafeInteger(total) || Number(total) < 0 || Number(total) > 100000
       || total !== source[kind === 'omitted_transactions' ? 'omitted_count' : 'member_count']) return null;
-    result[kind] = { group: 'selected', kind, total_count: Number(total) };
+    result[kind] = pocketId === undefined ? { group: 'selected', kind, total_count: Number(total) }
+      : { group: 'pocket', pocket_id: pocketId, kind, total_count: Number(total) };
   }
   return result;
 }
@@ -47,9 +56,9 @@ function aligned(input: Props['input'], group: Props['group']): boolean {
 /** Explicit, read-only inspection of the very same captured summary. A changed
  * context or selection remounts closed; no request is made by merely mounting. */
 export default function CustomCohortMemberBrowser(props: Props) {
-  const populations = expectations(props.group);
+  const populations = expectations(props.group, props.pocketId);
   if (!populations || !aligned(props.input, props.group)) return <p role="status" className="text-xs text-amber-800 print:hidden">Record inspection is unavailable for this summary. Refresh the pocket information first.</p>;
-  const key = JSON.stringify([props.input, props.group.binding, props.group.summary.selected,
+  const key = JSON.stringify([props.input, props.group.binding, props.pocketId ?? null, populations, props.group.summary.selected,
     props.group.summary.effective_date, props.group.summary.observation_period, props.group.summary.captured_at]);
   return <MemberSession key={key} {...props} populations={populations} />;
 }
@@ -92,7 +101,9 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
         const hash = await fingerprintCustomCohortSelection(snapshot.input);
         if (!current()) return;
         if (hash !== snapshot.group.binding.selectionFingerprint) throw new TypeError('summary_selection_changed');
-        const value = await transport.current(snapshot.input, { group: 'selected', kind: intent.kind }, intent.page, { signal: abort.signal });
+        const population = expected.group === 'pocket' ? { group: 'pocket' as const, pocket_id: expected.pocket_id, kind: intent.kind }
+          : { group: 'selected' as const, kind: intent.kind };
+        const value = await transport.current(snapshot.input, population, intent.page, { signal: abort.signal });
         if (!current()) return;
         const checked = checkCustomCohortMemberPage(value, snapshot.input, hash, expected, intent.page, intent.previous);
         const summary = snapshot.group.summary, period = object(summary.observation_period);

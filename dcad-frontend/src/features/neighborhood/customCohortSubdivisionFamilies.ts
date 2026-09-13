@@ -85,20 +85,27 @@ function equivalentCountyNameLeaves(members: readonly Candidate[]): boolean {
 }
 
 function compatibleFamily(members: readonly Candidate[]): boolean {
-  if (members.length < 2 || members.some(item => !item.parsed)
-    || new Set(members.map(item => item.parsed!.basis)).size !== 1) return false;
+  if (members.length < 2 || members.some(item => !item.parsed)) return false;
   const slots = new Map<string, Candidate[]>();
   for (const item of members) {
-    const slot = `${item.parsed!.suffix}:${item.parsed!.section ?? ''}`;
+    // Bare 3 and PH 3 can share a review parent, never an assumed phase ID.
+    // Within either grammar, unexplained duplicate slots remain ambiguous.
+    const slot = `${item.parsed!.basis}:${item.parsed!.suffix}:${item.parsed!.section ?? ''}`;
     const entries = slots.get(slot) ?? [];
     entries.push(item); slots.set(slot, entries);
   }
   return [...slots.values()].every(equivalentCountyNameLeaves);
 }
 
+function familyBasis(members: readonly Candidate[]): ParsedName['basis'] {
+  return members.some(item => item.parsed!.basis === 'candidate_numbered_name')
+    ? 'candidate_numbered_name' : 'explicit_phase_name';
+}
+
 function candidateOrder(a: Candidate, b: Candidate): number {
   return (a.parsed?.suffix ?? 0) - (b.parsed?.suffix ?? 0)
-    || (a.parsed?.section ?? 0) - (b.parsed?.section ?? 0) || compare(a.pocket.id, b.pocket.id);
+    || (a.parsed?.section ?? 0) - (b.parsed?.section ?? 0)
+    || compare(a.parsed?.basis ?? '', b.parsed?.basis ?? '') || compare(a.pocket.id, b.pocket.id);
 }
 
 function familyFromCandidates(members: readonly Candidate[], basis: CustomCohortSubdivisionFamily['basis']): CustomCohortSubdivisionFamily {
@@ -163,11 +170,11 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
     for (const item of members) { ensure(!assigned.has(item.pocket.id)); assigned.add(item.pocket.id); }
   }
   for (const members of buckets.values()) {
-    // Mixed explicit/bare forms or unexplained repeated phase/section slots
-    // make the whole candidate family ambiguous. An unqualified base remains
+    // Unexplained repeated slots within either grammar make the candidate
+    // family ambiguous. An unqualified base remains
     // its own standalone leaf, never an assumed phase absorbed into the family.
     if (!compatibleFamily(members)) continue;
-    add(members, members[0].parsed!.basis);
+    add(members, familyBasis(members));
   }
   for (const candidate of candidates) if (!assigned.has(candidate.pocket.id)) add([candidate], 'standalone');
   ensure(assigned.size === catalog.pockets.length);
@@ -213,7 +220,7 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
     const bucket = first.parsed && first.countyKey !== null
       ? familyBuckets.get(JSON.stringify([first.countyKey, first.parsed.key])) : undefined;
     const grouped = bucket !== undefined, members = bucket ?? [first];
-    const expected = familyFromCandidates(members, grouped ? first.parsed!.basis : 'standalone');
+    const expected = familyFromCandidates(members, grouped ? familyBasis(members) : 'standalone');
     ensure(family.id === expected.id && family.label === expected.label && family.county === expected.county
       && family.basis === expected.basis && family.member_count === expected.member_count
       && familyIds.size === expected.pocket_ids.length && expected.pocket_ids.every(id => familyIds.has(id)));

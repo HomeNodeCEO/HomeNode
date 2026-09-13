@@ -583,6 +583,68 @@ function phasedProps(h, ids = [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGN
   props.workspace.catalog = { ...catalog, pockets: catalog.pockets.map((p, i) => ({ ...p, label: `MONICA PARK ${i + 1}` })) };
   return props;
 }
+function mixedWillowProps(h, ids = [groupId(1), groupId(3), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], revision = 7) {
+  const props = h.props(ids, revision), r = catalogResponse();
+  const rows = [['WILLOW RUN NO 5', 1], ['WILLOW RUN 3', 1], ['WILLOW RUN 5', 145],
+    ['WILLOW RUN PH 2', 67], ['WILLOW RUN 4', 26], ['WILLOW RUN PH 1', 65], ['WILLOW RUN PH 3', 3]];
+  r.catalog.pockets = rows.map(([label, member_count], index) => ({ id: groupId(index + 1), label,
+    county: index % 2 ? 'DALLAS COUNTY' : 'Dallas', member_count, disposition: 'needs_review',
+    account_ids: Array.from({ length: member_count }, (_, member) => index === 2 && member === 0 ? 'A' : `Willow-${index}-${member}`) }));
+  r.catalog.coverage = { discovery_member_count: 309, assigned_account_count: 308, unassigned_account_count: 1 };
+  r.catalog.subject_membership.assigned_pocket_id = groupId(3);
+  props.workspace.catalog = catalogHelpers.checkCustomCohortPocketCatalog(r, input);
+  return props;
+}
+
+test('mixed bare/PH Willow list review opens the complete 307-account family without saving; explicit union retains unrelated leaves', async t => {
+  const h = harness(); t.after(() => h.unmount()); const props = mixedWillowProps(h), before = JSON.stringify(props.workspace.catalog);
+  h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
+  const originalGroup = h.child('CustomCohortStatistics').group;
+  const card = h.nodes().find(node => node.type === 'button' && text(node).startsWith('WILLOW RUN 5145 accounts'));
+  assert.ok(card, 'the literal WILLOW RUN 5 row remains inspectable'); card.props.onClick(); await h.drain();
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(3));
+  h.click('Review subdivision and phases');
+  const dialog = h.child('CustomCohortSubdivisionDialog');
+  assert.equal(dialog.family.label, 'WILLOW RUN'); assert.equal(dialog.family.basis, 'candidate_numbered_name');
+  assert.equal(dialog.family.member_count, 307);
+  assert.deepEqual([...dialog.family.pocket_ids].sort(), [2, 3, 4, 5, 6, 7].map(groupId));
+  assert.equal(dialog.family.pocket_ids.includes(groupId(1)), false, 'NO 5 remains a separate original leaf');
+  assert.deepEqual(h.intents, []); assert.equal(h.calls.length, 1, 'opening family review is not a save or main-preview request');
+  dialog.onInspectPhase(groupId(2)); await h.drain();
+  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(2)]);
+  h.child('CustomCohortSubdivisionDialog').onInspectPhase(groupId(7)); await h.drain();
+  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(7)], 'bare 3 and PH 3 are not one phase');
+  assert.deepEqual(h.intents, []);
+  h.child('CustomCohortSubdivisionDialog').onInclude(dialog.family.pocket_ids); await h.drain();
+  const expected = [1, 2, 3, 4, 5, 6, 7].map(groupId).concat(catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP).sort();
+  assert.equal(h.intents.length, 1); assert.deepEqual([...h.intents[0]].sort(), expected);
+  assert.deepEqual(h.intents[0].slice(0, 3), props.workspace.selection.included_recorded_group_ids,
+    'the unrelated NO 5 leaf and unassigned group retain their original IDs and ordering');
+  assert.equal(h.child('CustomCohortStatistics').group, originalGroup, 'saved statistics wait for coherent selection acknowledgment');
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents[0] } } });
+  await h.tick(); await h.waitForRequest(1); await h.complete();
+  const allAccounts = [...props.workspace.catalog.pockets.flatMap(pocket => pocket.account_ids), 'C'].sort();
+  assert.equal(allAccounts.length, 309); assert.deepEqual(h.calls[1].request.selection.pockets[0].account_ids, allAccounts);
+  assert.equal(JSON.stringify(props.workspace.catalog), before, 'review never rewrites original labels, counts, account arrays or leaf IDs');
+});
+
+test('mixed bare/PH Willow broad activation unions all six original leaves once and preserves separate NO 5 plus unrelated selection', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const unrelated = [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], props = mixedWillowProps(h, unrelated);
+  h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'subdivision'); await h.drain();
+  const dialog = h.child('CustomCohortSubdivisionDialog');
+  assert.equal(dialog.family.member_count, 307); assert.equal(dialog.family.pocket_ids.length, 6);
+  assert.equal(h.intents.length, 1); assert.deepEqual(h.intents[0], [...unrelated, ...dialog.family.pocket_ids]);
+  assert.deepEqual([...h.intents[0]].sort(), [1, 2, 3, 4, 5, 6, 7].map(groupId).concat(catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP).sort());
+  assert.deepEqual(dialog.included, unrelated, 'no optimistic saved membership is invented');
+  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, dialog.family.pocket_ids);
+  h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents[0] } } });
+  await h.tick(); await h.waitForRequest(1); await h.complete();
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(7), 'subdivision'); await h.drain();
+  assert.equal(h.intents.length, 1, 'an already included mixed family is not written again');
+});
+
 test('broad click includes entire subdivision in one saved intent, preserves unrelated IDs and awaits coherent ACK', async t => {
   const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h);
   h.render(props); await h.tick(); await h.complete();

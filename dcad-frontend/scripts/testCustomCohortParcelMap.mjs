@@ -815,6 +815,68 @@ test('a changed retained subject geometry replaces its point exactly, while remo
   assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
 });
 
+function mixedWillowMapFixture() {
+  const props = fixture(), id = number => `recorded-cad:${String(number).padStart(64, '0')}`;
+  const rows = [['WILLOW RUN NO 5', 1], ['WILLOW RUN 3', 1], ['WILLOW RUN 5', 145],
+    ['WILLOW RUN PH 2', 67], ['WILLOW RUN 4', 26], ['WILLOW RUN PH 1', 65], ['WILLOW RUN PH 3', 3]];
+  props.catalog.pockets = rows.map(([label, member_count], index) => ({ id: id(index + 1), label,
+    county: index % 2 ? 'DALLAS COUNTY' : 'Dallas', member_count,
+    account_ids: Array.from({ length: member_count }, (_, member) => index === 2 && member === 0 ? 'A' : `Willow-${index}-${member}`) }));
+  props.catalog.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+  props.catalog.coverage = { discovery_member_count: 308, assigned_account_count: 308, unassigned_account_count: 0 };
+  props.catalog.subject_membership.assigned_pocket_id = id(3);
+  props.group.parcel_map.geojson.features = props.catalog.pockets.flatMap(pocket => pocket.account_ids).map((account_id, index) => ({
+    type: 'Feature', id: `gis.dcad_parcels:${index + 1}`, properties: { object_id: String(index + 1), account_id, selected: account_id === 'A' },
+    geometry: polygon(-97 + index / 10_000),
+  }));
+  props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
+  return { props, id };
+}
+
+test('mixed bare/PH Willow map retains one 307-account broad family, standalone NO 5, and distinct raw 3 versus PH 3 near labels', async t => {
+  const { props, id } = mixedWillowMapFixture(), before = JSON.stringify(props), h = harness(); t.after(() => h.unmount());
+  await h.ready(props);
+  const family = props.subdivisionFamilies.families.find(item => item.label === 'WILLOW RUN');
+  assert.ok(family); assert.equal(family.basis, 'candidate_numbered_name'); assert.equal(family.member_count, 307);
+  assert.deepEqual([...family.pocket_ids].sort(), [2, 3, 4, 5, 6, 7].map(id));
+  const separate = props.subdivisionFamilies.families.find(item => item.pocket_ids.includes(id(1)));
+  assert.equal(separate.basis, 'standalone'); assert.equal(separate.member_count, 1);
+  const map = h.maps[0], labels = map.getSource('custom-cohort-group-labels').data.features;
+  const broad = labels.filter(label => label.properties.subdivision_label === 'WILLOW RUN');
+  assert.equal(broad.length, 1); assert.equal(broad[0].properties.pocket_id, id(3), 'largest original 145-account leaf anchors the broad label');
+  assert.equal(broad[0].properties.label, 'WILLOW RUN 5', 'the broad alias never overwrites the retained raw name');
+  assert.equal(labels.find(label => label.properties.pocket_id === id(1)).properties.subdivision_label, 'WILLOW RUN NO 5');
+  const phases = buildCustomCohortSubdivisionPhases(props.catalog, family);
+  assert.equal(phases.length, 6);
+  assert.deepEqual(Object.fromEntries(phases.map(phase => [phase.label, phase.member_count])), {
+    'WILLOW RUN 3': 1, 'WILLOW RUN 5': 145, 'WILLOW RUN PH 2': 67,
+    'WILLOW RUN 4': 26, 'WILLOW RUN PH 1': 65, 'WILLOW RUN PH 3': 3,
+  });
+  for (const pocket of props.catalog.pockets) {
+    const label = labels.find(item => item.properties.pocket_id === pocket.id);
+    assert.equal(label.properties.phase_label, pocket.label); assert.equal(label.properties.label, pocket.label);
+  }
+  assert.deepEqual(phases.find(phase => phase.label === 'WILLOW RUN 3').pocket_ids, [id(2)]);
+  assert.deepEqual(phases.find(phase => phase.label === 'WILLOW RUN PH 3').pocket_ids, [id(7)]);
+  const originalLabels = buildCustomCohortMapPresentation(props).labels.features;
+  labels.forEach((label, index) => assert.deepEqual(label.geometry, originalLabels[index].geometry));
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 308);
+  assert.equal(JSON.stringify(props), before, 'display grouping does not rewrite original parcels or catalog membership');
+});
+
+test('mixed bare/PH Willow actual broad and near map clicks emit original leaf IDs without collapsing equal-number raw phases', async t => {
+  const { props, id } = mixedWillowMapFixture(), calls = [], h = harness(); t.after(() => h.unmount());
+  props.onActivatePocket = (...args) => calls.push(args);
+  await h.ready(props); const map = h.maps[0];
+  const click = pocketId => h.emit('click', { features: [{ properties: { pocket_id: pocketId } }] }, 'custom-cohort-group-labels-text');
+  map.camera.zoom = 14; click(id(3)); assert.deepEqual(calls, [[id(3), 'subdivision']]);
+  map.camera.zoom = 15; click(id(2)); click(id(7));
+  assert.deepEqual(calls.slice(1), [[id(2), 'phase'], [id(7), 'phase']]);
+  map.camera.zoom = 14; click(id(1)); assert.deepEqual(calls.at(-1), [id(1), 'subdivision']);
+  assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
+  assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
+});
+
 function countyAliasPhaseFixture() {
   const props = fixture();
   props.catalog.pockets[0].label = 'MONICA PARK 1'; props.catalog.pockets[1].label = 'MONICA PARK 2';

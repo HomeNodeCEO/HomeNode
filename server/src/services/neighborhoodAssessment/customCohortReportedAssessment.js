@@ -5,7 +5,8 @@ import { buildCustomCohortIndexedObservationPreview,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
-import { buildCustomCohortReportedSharedSales } from './customCohortReportedSharedSales.js';
+import { buildCustomCohortReportedSharedSales, buildCustomCohortReportedSharedSalesWitnessV2 } from './customCohortReportedSharedSales.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortReportGeographyForReportedAssessment } from './customCohortReportGeography.js';
 import { buildCustomNeighborhoodReportCandidate } from './customReportMapping.js';
@@ -68,7 +69,17 @@ function proposalBinding(value, target) {
  * economic-property inference, temporal promotion, or report writes occur here.
  */
 export function buildCustomCohortReportedAssessment(input) {
-  const stages = reportedAssessmentStages(input);
+  return buildReportedAssessment(input, false);
+}
+
+/** Dormant explicit profile; not selected by the current workflow owner or by
+ * a mapping-version comparison. Original report entry points remain unchanged. */
+export function buildCustomCohortReportedAssessmentWitnessV2(input) {
+  return buildReportedAssessment(input, true);
+}
+
+function buildReportedAssessment(input, useWitness) {
+  const stages = reportedAssessmentStages(input, useWitness);
   while (true) { const step = stages.next(); if (step.done) return step.value; }
 }
 
@@ -76,6 +87,14 @@ export function buildCustomCohortReportedAssessment(input) {
  * The owner performs fresh revision/rights checks before publication afterward.
  * Seal descendants before yielding; a shallow-frozen caller is insufficient. */
 export async function buildCustomCohortReportedAssessmentBatched(input, { check = () => {} } = {}) {
+  return buildReportedAssessmentBatched(input, check, false);
+}
+
+export async function buildCustomCohortReportedAssessmentWitnessV2Batched(input, { check = () => {} } = {}) {
+  return buildReportedAssessmentBatched(input, check, true);
+}
+
+async function buildReportedAssessmentBatched(input, check, useWitness) {
   const seen = new WeakSet();
   const seal = value => {
     if (value && typeof value === 'object' && !seen.has(value)) {
@@ -83,14 +102,14 @@ export async function buildCustomCohortReportedAssessmentBatched(input, { check 
     }
   };
   check(); seal(input); check();
-  const stages = reportedAssessmentStages(input);
+  const stages = reportedAssessmentStages(input, useWitness);
   try {
     while (true) { check(); const step = stages.next(); check(); if (step.done) return step.value; await yieldToRequests(); }
   } finally { stages.return(); }
 }
 
 function* reportedAssessmentStages({ context_ref, retained_inputs, selection, target,
-  preparation_identity: identity, report_geography, derived_at, proposal_binding, catalog_version = 1 }) {
+  preparation_identity: identity, report_geography, derived_at, proposal_binding, catalog_version = 1 }, useWitness) {
   // Distinguish independently authorized proposal operations without changing
   // their observations or inventing a later clock. This is audit identity, not
   // source truth, report rights or reviewer licensure. Omission preserves the
@@ -209,10 +228,12 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
       : { state: 'observed', exact_value: String(year - Number(cell.exact_value)) };
   }), 'years'));
   yield;
-  const shared = buildCustomCohortReportedSharedSales({ retained_inputs: retained, selected_account_ids: preview.selected.account_ids });
+  const shared = (useWitness ? buildCustomCohortReportedSharedSalesWitnessV2 : buildCustomCohortReportedSharedSales)(
+    { retained_inputs: retained, selected_account_ids: preview.selected.account_ids });
   const sharedSales = population('selected-shared-source-records', shared.rows, shared.captured_at,
     { source_snapshots: preview.source_snapshots, disposition_counts: shared.disposition_counts,
-      source_basis: 'locally_stored_source_records_not_canonical_transactions' },
+      source_basis: 'locally_stored_source_records_not_canonical_transactions',
+      ...(useWitness ? { interpretation: getCustomCohortReportedSaleWitnessV2Profile() } : {}) },
     'Selected locally stored closed source records; reported dates and full observed account associations, not verified sale events',
     false, 'retained_source_account_associations');
   for (const [measurement, metric] of Object.entries(shared.metrics)) distribution(sharedSales, measurement, metric);

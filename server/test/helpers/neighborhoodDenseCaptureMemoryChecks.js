@@ -5,9 +5,10 @@ import pg from 'pg';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA } from '../fixtures/neighborhoodCachedSourceSchemaFixture.js';
 import { createTestCachedReadAccess } from '../fixtures/neighborhoodCachedReadAccessFixture.js';
-import { createNeighborhoodCadEvidenceReadAccess } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
-import { createNeighborhoodDenseCadEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
-import { captureNeighborhoodSpatialMembershipStream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { createNeighborhoodCadEvidenceReadAccess, createNeighborhoodCombinedEvidenceReadAccess } from '../../src/services/neighborhoodAssessment/cachedReadAccess.js';
+import { createNeighborhoodDenseCadEvidenceSourceReader, createNeighborhoodDenseCombinedEvidenceSourceReader,
+  consumeNeighborhoodCachedAcquisition } from '../../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { captureNeighborhoodSpatialMembershipStream, captureNeighborhoodSpatialMembershipCompact } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 import { resolveNeighborhoodCachedTransactionClosure } from '../../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js';
 import { prepareNeighborhoodSelectorInputV1, NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1 } from '../../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { createCustomCohortSubjectRepository } from '../../src/services/neighborhoodAssessment/customCohortSubjectRepository.js';
@@ -23,14 +24,37 @@ import { customCohortOpeningSelection, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } fr
 import { buildCustomCohortPocketRecommendationBatched } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation } from '../../src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { deriveCustomCohortRecordedProximity } from '../../src/services/neighborhoodAssessment/customCohortRecordedProximity.js';
+import { getCustomCohortReportedSaleWitnessV2Profile } from '../../src/services/neighborhoodAssessment/customCohortReportedSaleWitnessV2.js';
+
+// Test-only dispatch. These are the actual issuer/reader/encoder functions, not
+// another source or persistence implementation. Defaults retain the old fixture.
+export function neighborhoodDenseCaptureProfile(sourceMode = 'cad4', spatialEncoding = 'expanded') {
+  assert.ok(['cad4', 'combined-witness2-v1'].includes(sourceMode), 'dense_source_mode_invalid');
+  assert.ok(['expanded', 'fixed_fields_v1'].includes(spatialEncoding), 'dense_spatial_encoding_invalid');
+  const combined = sourceMode === 'combined-witness2-v1';
+  const interpretation = combined ? getCustomCohortReportedSaleWitnessV2Profile() : null;
+  return Object.freeze({ sourceMode, spatialEncoding, mappingVersion: combined ? 5 : 4, interpretation,
+    accessFactory: combined ? createNeighborhoodCombinedEvidenceReadAccess : createNeighborhoodCadEvidenceReadAccess,
+    readerFactory: combined ? createNeighborhoodDenseCombinedEvidenceSourceReader : createNeighborhoodDenseCadEvidenceSourceReader,
+    captureSpatial: spatialEncoding === 'fixed_fields_v1' ? captureNeighborhoodSpatialMembershipCompact : captureNeighborhoodSpatialMembershipStream,
+    intentFields: Object.freeze({ intent_version: combined ? 3 : 1,
+      ...(combined ? { reported_sale_interpretation: interpretation.profile_ref } : {}) }),
+    captureFields: Object.freeze(combined ? { reported_sale_interpretation: interpretation.profile_ref } : {}),
+  });
+}
 
 // Explicit opt-in native synthetic measurement. Create a new migrated *_test
 // database before capture, then run reopen in a SEPARATE process. No live source,
 // report Apply, worker activation or generalized cleanup occurs here.
-export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {}, currentEffectiveDate = false }) {
+// Optional reported callbacks expose neutral synchronous interval ordinals,
+// not inferred semantic stages. Runners record exact source provenance separately.
+export async function measureNeighborhoodDenseCapture({ connectionString, phase, retained, beforeWork = async () => {}, currentEffectiveDate = false,
+  sourceMode = 'cad4', spatialEncoding = 'expanded', onReportedDiagnostic }) {
+  const profile = neighborhoodDenseCaptureProfile(sourceMode, spatialEncoding);
   const target = checkedNeighborhoodDatabaseUrl(connectionString, process.env.NODE_ENV);
   assert.ok(['capture', 'reopen', 'preview', 'opening', 'recommendation', 'reported'].includes(phase));
   assert.equal(typeof currentEffectiveDate, 'boolean');
+  assert.ok(onReportedDiagnostic === undefined || typeof onReportedDiagnostic === 'function');
   const pool = new pg.Pool({ connectionString: target.connectionString, max: 2, connectionTimeoutMillis: 3000,
     statement_timeout: 5000, application_name: 'synthetic_dense_capture_memory' });
   const stages = [], started = performance.now(), delay = monitorEventLoopDelay({ resolution: 10 });
@@ -58,10 +82,29 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
       const opened = await tx('REPEATABLE READ READ ONLY', client => loadCustomCohortCaptureInputs(client, json(retained.scope), retained.refs));
       assert.deepEqual(opened.summary, retained.summary); assert.deepEqual(opened.refs, retained.refs);
       stage('reopened'); result = { summary: opened.summary };
+      if (profile.interpretation) {
+        const { checkDenseWitness2Capture } = await import('./customCohortDenseReportedChecks.js');
+        assert.equal(retained.source_mode, sourceMode); assert.equal(retained.spatial_encoding, spatialEncoding);
+        result.combined_evidence = checkDenseWitness2Capture(opened.retained_inputs);
+        assert.deepEqual(result.combined_evidence, retained.combined_evidence);
+        assert.equal(opened.retained_inputs.spatial.parcel_encoding ?? 'expanded', spatialEncoding);
+        // The actual scoped loader already verifies the original definition
+        // text/hash before source pages. Check the retained graph shape too.
+        await tx('REPEATABLE READ READ ONLY', async client => {
+          const store = createNeighborhoodCohortBlobRepository(client, retained.scope.organization_id);
+          const study = JSON.parse(await store.get(retained.refs.study_input.content_sha256, retained.refs.study_input.canonical_utf8_bytes));
+          assert.equal(study.study_input_version, 2);
+          assert.deepEqual(study.reported_sale_interpretation, { profile_ref: profile.interpretation.profile_ref,
+            definition_blob: profile.interpretation.definition_blob.ref });
+          const definition = profile.interpretation.definition_blob;
+          assert.equal(await store.get(definition.ref.content_sha256, definition.ref.canonical_utf8_bytes), definition.canonical_json);
+        });
+      } else assert.equal(Object.hasOwn(opened.retained_inputs, 'reported_sale_interpretation'), false,
+        'do not reopen an interpreted fixture through a legacy capacity run');
       if (phase === 'reported') {
         const { checkDenseReportedPreparation } = await import('./customCohortDenseReportedChecks.js');
         result.reported = await checkDenseReportedPreparation({ retained: opened.retained_inputs,
-          query: (text, values) => pool.query(text, values) });
+          query: (text, values) => pool.query(text, values), onDiagnostic: onReportedDiagnostic });
         stage('reported_preparation');
       }
       if (phase === 'preview' || phase === 'opening' || phase === 'recommendation') {
@@ -170,6 +213,19 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         await client.query(`INSERT INTO core.sales_source_records(id,primary_account_id,record_type,source_record_hash,close_date,current_price,loaded_at)
           SELECT n+1,'DENSE-'||lpad(n::text,6,'0'),'closed_sale',repeat('b',64),'2024-03-01',250000+n,now()
           FROM generate_series(0,$1::int-1) n WHERE n%37=0`, [accountCount]);
+        if (profile.interpretation) {
+          const { denseWitness2FixtureCases } = await import('./customCohortDenseReportedChecks.js');
+          const cases = denseWitness2FixtureCases();
+          // All 1,030 sources participate (103 of each fixed case). These are
+          // literal synthetic payloads, not an NTREIS dictionary or grant.
+          // Surviving typed values deliberately disagree with the witnesses.
+          await client.query(`UPDATE core.sales_source_records SET
+            raw_payload=$1::jsonb -> (((id-1)/37)%10)::int,
+            source_name='Synthetic combined witness capacity',source_filename='dense-witness2-fixture.csv',
+            source_sha256=repeat('c',64),source_row_number=((id-1)/37+2)::int,
+            mls_status='Active',living_area=9999,lot_size_area=8888,year_built=1980,days_on_market=99`,
+          [JSON.stringify(cases.map(item => item.raw))]);
+        }
         await client.query(`INSERT INTO core.sales(id,source_record_id,account_id,closing_date,sale_price,source,loaded_at)
           SELECT id,id,primary_account_id,close_date,current_price,'Synthetic dense',now() FROM core.sales_source_records`);
         await client.query(`INSERT INTO core.sale_parcels(id,source_record_id,source_position,parcel_sequence,account_id,is_resolved,loaded_at)
@@ -183,14 +239,14 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
         const subject = await subjects.load(subjectRef), point = await subjects.loadRecordedPoint(subjectRef);
         assert.equal(point.status, 'represented');
         const study = { profile_id: NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1, observation_period: period, knowledge_cutoff: null };
-        const body = { intent_version: 1, operation_id: operation, actor_user_id: actor, subject_inputs: subjectRef,
+        const body = { ...profile.intentFields, operation_id: operation, actor_user_id: actor, subject_inputs: subjectRef,
           target: subject.target, effective_date: subject.effective_date, study, created_at: await time(client) };
         return { subject, subjectRef, point, study, intent: { body, reference: await createNeighborhoodCohortBlobRepository(client, org).put(json(body)) } };
       });
       const context = { target: { report_file_id: reportId, workflow_type: 'custom_appraisal', workflow_target_id: result.scope.assignment_file_id },
         scope: { organization_id: org, appraisal_case_id: caseId, subject_snapshot_id: snapshotId, account_id: account }, effective_date: effectiveDate };
       const read = await tx('REPEATABLE READ READ ONLY', async client => {
-        const startedAt = await time(client), spatial = await captureNeighborhoodSpatialMembershipStream(client, first.point.geometry_input);
+        const startedAt = await time(client), spatial = await profile.captureSpatial(client, first.point.geometry_input);
         assert.equal(spatial.status, 'captured', spatial.reason); assert.equal(spatial.parcels.length, parcelCount); assert.equal(spatial.account_ids.length, accountCount);
         stage('spatial');
         const selector = prepareNeighborhoodSelectorInputV1({ profile_id: first.study.profile_id, ...context,
@@ -199,26 +255,32 @@ export async function measureNeighborhoodDenseCapture({ connectionString, phase,
           roster: { complete: true, account_count: accountCount, account_ids: spatial.account_ids } });
         assert.equal(selector.status, 'prepared');
         const access = createTestCachedReadAccess({ ...context, selection: selector.selection, account_ids: spatial.account_ids,
-          observation_period: period, knowledge_cutoff: null }, { accessFactory: createNeighborhoodCadEvidenceReadAccess,
+          observation_period: period, knowledge_cutoff: null }, { accessFactory: profile.accessFactory,
           resolveTransactionClosure: async () => {
             const closure = await resolveNeighborhoodCachedTransactionClosure(client, { selected_account_ids: spatial.account_ids, source_revision: 'synthetic-native-dense-v1' });
             assert.equal(closure.status, 'captured'); assert.deepEqual(closure.snapshot, spatial.snapshot); return closure.transaction_closure;
           } });
-        const issued = await access.prepare(), reader = createNeighborhoodDenseCadEvidenceSourceReader({ connect() { assert.fail('caller owns snapshot'); } }, { access: access.access });
+        const issued = await access.prepare(), reader = profile.readerFactory({ connect() { assert.fail('caller owns snapshot'); } }, { access: access.access });
         const captured = await reader.captureInSnapshot(client, { ...issued.request, auth: access.auth,
           selection_grant: issued.selection_grant, market_grant: issued.market_grant });
         assert.equal(captured.status, 'captured', JSON.stringify({ reasons: captured.incomplete_reasons, counts: captured.counts })); assert.deepEqual(captured.snapshot, spatial.snapshot);
         return { acquisition: consumeNeighborhoodCachedAcquisition(reader, captured), spatial, selector, startedAt, completedAt: await time(client) };
       });
       stage('captured');
-      const prepared = await prepareCustomCohortCaptureInputsBatched({ acquisition: read.acquisition, spatial: read.spatial,
+      const captureInput = { acquisition: read.acquisition, spatial: read.spatial,
         subject: first.subject, subject_reference: first.subjectRef, selector: read.selector, study: first.study,
-        acquisition_intent: first.intent, started_at: read.startedAt, completed_at: read.completedAt });
+        acquisition_intent: first.intent, started_at: read.startedAt, completed_at: read.completedAt, ...profile.captureFields };
+      const prepared = await prepareCustomCohortCaptureInputsBatched(captureInput);
       stage('prepared');
       const refs = await tx('READ COMMITTED', client => persistCustomCohortCaptureInputs(client, scopeJson, prepared));
       stage('persisted'); result = { ...result, refs, summary: prepared.summary, source_counts: read.acquisition.capture_result.counts };
+      if (profile.interpretation) {
+        const { checkDenseWitness2Capture } = await import('./customCohortDenseReportedChecks.js');
+        result.combined_evidence = checkDenseWitness2Capture(captureInput);
+      }
     }
     return { database: target.databaseName, phase, ...result, stages, elapsed_ms: performance.now() - started,
+      ...(profile.interpretation ? { evidence_pipeline_only: true, source_mode: sourceMode, spatial_encoding: spatialEncoding } : {}),
       max_rss_kib: process.resourceUsage().maxRSS, event_loop_p99_ms: delay.percentile(99) / 1e6,
       event_loop_max_ms: delay.max / 1e6, production_connections: 0 };
   } finally { delay.disable(); await pool.end(); }

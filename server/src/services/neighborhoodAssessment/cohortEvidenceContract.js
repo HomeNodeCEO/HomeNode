@@ -157,9 +157,10 @@ function metadata(value) {
   exact(value.reader_version, 'local-capture-v3');
   // The query envelope is unchanged. Admit original v1 bytes as v1 and new
   // physical/housing/DOM projections as v2, or the separately authorized stored
-  // scalar-witness projection as v3, or the CAD-only field projection as v4;
+  // scalar-witness projection as v3, CAD-only fields as v4, or the separately
+  // authorized combined CAD/witness2 projection as v5;
   // never relabel retained evidence or infer source meaning from its version.
-  if (![1, 2, 3, 4].includes(value.mapping_version)) invalid('invalid_value');
+  if (![1, 2, 3, 4, 5].includes(value.mapping_version)) invalid('invalid_value');
   shape(value.scope, ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id']);
   for (const key of ['organization_id', 'appraisal_case_id', 'subject_snapshot_id']) uuid(value.scope[key]);
   sourceText(value.scope.account_id, 64, true);
@@ -173,9 +174,9 @@ function metadata(value) {
   exact(value.selection_method, 'exact_selected_accounts_all_source_links_no_event_filter');
   exact(value.provider_coverage, 'unknown');
   shape(value.limits, Object.keys(READER_LIMITS));
-  // Old bytes retain their exact declared budget; only installed CAD mapping4
+  // Old bytes retain their exact declared budget; installed CAD mappings4/5
   // can declare the larger budget. This is byte admission, never source access.
-  for (const [key, maximum] of Object.entries(value.mapping_version === 4 ? DENSE_CAD_CACHE_READER_LIMITS : READER_LIMITS)) integer(value.limits[key], 1, maximum);
+  for (const [key, maximum] of Object.entries([4, 5].includes(value.mapping_version) ? DENSE_CAD_CACHE_READER_LIMITS : READER_LIMITS)) integer(value.limits[key], 1, maximum);
   shape(value.capabilities, Object.keys(RELATIONS));
   for (const [key, relation] of Object.entries(RELATIONS)) {
     const capability = value.capabilities[key];

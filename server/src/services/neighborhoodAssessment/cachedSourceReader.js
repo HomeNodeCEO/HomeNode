@@ -13,10 +13,13 @@ import { CACHED_TRANSACTION_IDENTITY_SQL, CACHED_TRANSACTION_IDENTITY_ORDER,
 import { CACHED_ROW_MAPPING_VERSION, mapCachedAccountRow, mapCachedParcelRow,
   mapCachedSaleLinkRow, mapCachedSaleRow } from './cachedRowMappings.js';
 import { CACHED_SALE_WITNESS_SQL } from './cachedSaleWitness.js';
+import { CACHED_SALE_WITNESS_V2_SQL } from './cachedSaleWitnessV2.js';
 import { CACHED_WITNESS_MAPPING_VERSION, mapWitnessParcelRow, mapWitnessAccountRow,
   mapWitnessSaleRow, mapWitnessSaleLinkRow } from './cachedRowMappingsV3.js';
 import { CACHED_CAD_EVIDENCE_MAPPING_VERSION, CACHED_CAD_EVIDENCE_FIELDS, mapCadEvidenceParcelRow,
   mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
+import { CACHED_COMBINED_EVIDENCE_MAPPING_VERSION, mapCombinedEvidenceParcelRow, mapCombinedEvidenceAccountRow,
+  mapCombinedEvidenceSaleRow, mapCombinedEvidenceSaleLinkRow } from './cachedRowMappingsV5.js';
 
 export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
@@ -164,6 +167,19 @@ const CAD_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_CAD_EVIDENCE_MA
     transactions:mapCadEvidenceSaleRow,sale_links:mapCadEvidenceSaleLinkRow}),
 });
 
+// Dormant combined preservation only. Reuse the exact CAD SELECT and the same
+// all-date sale joins/keysets, projecting only witness2's bounded fixed scalars.
+// Neither the raw payload nor a caller-selected field list crosses this reader.
+const COMBINED_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_COMBINED_EVIDENCE_MAPPING_VERSION,
+  tables:Object.freeze({ ...CAD_EVIDENCE_PROFILE.tables,source_records:WITNESS_PROFILE.tables.source_records }),
+  parcelsSql:CAD_EVIDENCE_PROFILE.parcelsSql,
+  transactionsSql:`${transactionParts[0]},src.mls_status AS source_mls_status,
+    src.source_row_number,${CACHED_SALE_WITNESS_V2_SQL} AS source_raw_witness
+    FROM core.sales_source_records src${transactionParts[1]}`,
+  mappers:Object.freeze({parcels:mapCombinedEvidenceParcelRow,accounts:mapCombinedEvidenceAccountRow,
+    transactions:mapCombinedEvidenceSaleRow,sale_links:mapCombinedEvidenceSaleLinkRow}),
+});
+
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
   if (!row || row.isolation!=='repeatable read' || row.read_only!=='on' || row.explicit_transaction!==true
@@ -288,6 +304,15 @@ export function createNeighborhoodCadEvidenceSourceReader(pool, { limits: overri
 // Separate opt-in factory; original mapping2/3/4 reader defaults stay unchanged.
 export function createNeighborhoodDenseCadEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
   return createSourceReader(pool,{limits:overrides,access},{ ...CAD_EVIDENCE_PROFILE, dense: true });
+}
+/** Dormant mapping5 requires its own expanded-purpose capability. Existing
+ * factories, coordinator defaults and successful original captures stay intact. */
+export function createNeighborhoodCombinedEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},COMBINED_EVIDENCE_PROFILE);
+}
+/** Same installed dense ceilings and account batching, not wider admission. */
+export function createNeighborhoodDenseCombinedEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
+  return createSourceReader(pool,{limits:overrides,access},{ ...COMBINED_EVIDENCE_PROFILE, dense: true });
 }
 function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');

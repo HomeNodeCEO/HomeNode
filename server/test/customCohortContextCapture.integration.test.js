@@ -8,6 +8,8 @@ import { runCustomWorkspaceCheckpointDatabaseChecks } from './helpers/customWork
 import { runCustomCohortReviewDatabaseChecks } from './helpers/customCohortReviewDatabaseChecks.js';
 import { runCachedSaleWitnessDatabaseChecks } from './helpers/cachedSaleWitnessDatabaseChecks.js';
 import { runCachedSaleWitnessReaderDatabaseChecks } from './helpers/cachedSaleWitnessReaderDatabaseChecks.js';
+import { runCachedSaleWitnessV2DatabaseChecks } from './helpers/cachedSaleWitnessV2DatabaseChecks.js';
+import { runCachedCombinedEvidenceReaderDatabaseChecks } from './helpers/cachedCombinedEvidenceReaderDatabaseChecks.js';
 import { runCustomCohortDiscoveryDatabaseChecks } from './helpers/customCohortDiscoveryDatabaseChecks.js';
 import { runNeighborhoodSourceIdQueryDatabaseChecks } from './helpers/neighborhoodSourceIdQueryDatabaseChecks.js';
 
@@ -29,9 +31,11 @@ test('Custom context capture composes real discovery, retention, source policy, 
       client.connection?.stream?.remoteAddress, target.databaseName);
     await runCustomNeighborhoodSourcePolicyDatabaseChecks(client);
     await runCachedSaleWitnessDatabaseChecks(client);
+    await runCachedSaleWitnessV2DatabaseChecks(client);
   } finally { await client.end(); }
   await runCustomWorkspaceCheckpointDatabaseChecks(target.connectionString);
   await runCustomCohortReviewDatabaseChecks(target.connectionString);
   await runCachedSaleWitnessReaderDatabaseChecks(target.connectionString);
+  await runCachedCombinedEvidenceReaderDatabaseChecks(target.connectionString);
   await runCustomCohortDiscoveryDatabaseChecks(target.connectionString);
 });

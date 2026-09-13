@@ -4,6 +4,7 @@ import { hasApplicationPermission } from '../../security/applicationAccess.js';
 import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } from './contract.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
 import { CACHED_SALE_WITNESS_FIELDS } from './cachedSaleWitness.js';
+import { CACHED_SALE_WITNESS_V2_VERSION, CACHED_SALE_WITNESS_V2_FIELDS } from './cachedSaleWitnessV2.js';
 
 // Runtime capabilities only. None of these maps, issuers, or mint operations is
 // exported. Copying/serializing a token never preserves its authority.
@@ -191,13 +192,22 @@ export function describeNeighborhoodSaleWitnessMarketDataPurpose(request) {
     fields: [...CACHED_SALE_WITNESS_FIELDS],
   } });
 }
-const purposeFor = (request, mappingVersion) => mappingVersion === 3
-  ? describeNeighborhoodSaleWitnessMarketDataPurpose(request) : describeNeighborhoodCachedMarketDataPurpose(request);
+/** Dormant combined CAD/scalar projection. An older licensed-market purpose
+ * cannot authorize these additional literal fields or the new witness version. */
+export function describeNeighborhoodCombinedEvidenceMarketDataPurpose(request) {
+  return frozen({ ...describeNeighborhoodCachedMarketDataPurpose(request), source_projection: {
+    id: 'cached-combined-evidence-v1', mapping_version: 5, witness_version: CACHED_SALE_WITNESS_V2_VERSION,
+    fields: [...CACHED_SALE_WITNESS_V2_FIELDS],
+  } });
+}
+const purposeFor = (request, mappingVersion) => mappingVersion === 5
+  ? describeNeighborhoodCombinedEvidenceMarketDataPurpose(request) : mappingVersion === 3
+    ? describeNeighborhoodSaleWitnessMarketDataPurpose(request) : describeNeighborhoodCachedMarketDataPurpose(request);
 
 /** Verify the ORIGINAL server-composition authority, not an injected verifier. */
 export function assertNeighborhoodCachedReadAccess(access, mappingVersion = 2) {
   if (!access || !authorities.has(access)) deny('authority_required');
-  if (![2, 3, 4].includes(mappingVersion) || authorities.get(access).mappingVersion !== mappingVersion) deny('mapping_profile_mismatch');
+  if (![2, 3, 4, 5].includes(mappingVersion) || authorities.get(access).mappingVersion !== mappingVersion) deny('mapping_profile_mismatch');
   return access;
 }
 
@@ -235,6 +245,12 @@ export function createNeighborhoodSaleWitnessReadAccess(options) {
  * This does not broaden a v2/v3 capability or any source-rights policy. */
 export function createNeighborhoodCadEvidenceReadAccess(options) {
   return createReadAccess(options, 4);
+}
+
+/** Explicit opt-in only. Current production source policy denies the expanded
+ * purpose; existing v2/v3/v4 issuers cannot mint a combined capability. */
+export function createNeighborhoodCombinedEvidenceReadAccess(options) {
+  return createReadAccess(options, 5);
 }
 
 function createReadAccess(options, mappingVersion) {

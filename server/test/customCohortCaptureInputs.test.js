@@ -8,10 +8,13 @@ import { prepareCustomCohortCaptureInputs as prepare, persistCustomCohortCapture
 import { createNeighborhoodCohortBlobRepository } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { captureNeighborhoodSpatialMembership } from '../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 import { createNeighborhoodCachedSourceReader, createNeighborhoodSaleWitnessSourceReader, createNeighborhoodDenseCadEvidenceSourceReader,
-  consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
-import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
+  createNeighborhoodDenseCombinedEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess,
+  createNeighborhoodCombinedEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { CACHED_CAD_EVIDENCE_FIELDS, hasOriginalPrimitiveCadMappingReceipt } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
+import { CACHED_SALE_WITNESS_V2_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitnessV2.js';
+import { hasOriginalPrimitiveCombinedMappingReceipt } from '../src/services/neighborhoodAssessment/cachedRowMappingsV5.js';
 import { prepareNeighborhoodSelectorInputV1 } from '../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { customCohortRepositoryFixture, customCohortScopeOf } from './fixtures/customCohortRepositoryFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
@@ -58,9 +61,11 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
       .filter(p => values[2] === null || BigInt(p.object_id) > BigInt(values[2])).slice(0, values[3]).map(payload => ({ payload })) };
     if (tag === 'scope') return { rows: [{ case_date: subject.effective_date, snapshot_date: subject.effective_date,
       effective_date: subject.effective_date, captured_at: MS, captured_at_precise: NOW }] };
-    if (tag === 'capabilities') return { rows: mappingVersion === 3 ? [...CATALOG,
-      ...['mls_status', 'source_row_number', 'raw_payload'].map(column => ({ relation: 'core.sales_source_records', column }))]
-      : mappingVersion === 4 ? [...CATALOG, ...CACHED_CAD_EVIDENCE_FIELDS.map(column => ({ relation: 'gis.dcad_parcels', column }))] : CATALOG };
+    if (tag === 'capabilities') return { rows: [...CATALOG,
+      ...([3, 5].includes(mappingVersion) ? ['mls_status', 'source_row_number', 'raw_payload']
+        .map(column => ({ relation: 'core.sales_source_records', column })) : []),
+      ...([4, 5].includes(mappingVersion) ? CACHED_CAD_EVIDENCE_FIELDS
+        .map(column => ({ relation: 'gis.dcad_parcels', column })) : [])] };
     let rows;
     switch (tag) {
       case 'parcels': { const selected = new Set(values[0]); rows = parcels.filter(p => selected.has(p.account_id) && BigInt(p.object_id) > BigInt(values[1])).slice(0, values[2]).map(p => ({
@@ -80,7 +85,7 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
       default: assert.fail(`Unexpected source query ${tag}`);
     }
     if (mappingVersion === 3 && tag === 'parcels') rows = rows.map(({ geometry_sha256, ...projected }) => projected);
-    if (mappingVersion === 4 && tag === 'parcels') rows = rows.map(({ geometry_sha256, ...projected }) => ({ ...projected,
+    if ([4, 5].includes(mappingVersion) && tag === 'parcels') rows = rows.map(({ geometry_sha256, ...projected }) => ({ ...projected,
       class_code: '1', class_description: 'SINGLE FAMILY RESIDENCES', use_description: cadText,
       structure_type: 'Synthetic source literal', built_up: true }));
     if (mappingVersion === 3 && tag === 'transactions') rows = rows.map(row => ({ ...row,
@@ -88,6 +93,15 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
         witness_version: 1, root_state: 'sql_null', root_json_type: null,
         fields: Object.fromEntries(CACHED_SALE_WITNESS_FIELDS.map(key => [key,
           { state: 'payload_unavailable', json_type: null, value_text: null, utf8_bytes: null }])) } }));
+    if (mappingVersion === 5 && tag === 'transactions') rows = rows.map(row => ({ ...row,
+      source_mls_status: ' Closed ', source_row_number: 4, source_raw_witness: {
+        witness_version: 2, root_state: 'object', root_json_type: 'object',
+        fields: Object.fromEntries(CACHED_SALE_WITNESS_V2_FIELDS.map(key => {
+          const literal = { ClosePrice: '9007199254740993.123400', Currency: 'USD', PriceCurrency: 'CAD',
+            CurrentPriceCurrency: ' EUR ', ClosePriceCurrency: '', LivingArea: '170.5', LivingAreaUnits: 'Square Meters' }[key];
+          return [key, literal === undefined ? { state: 'absent', json_type: null, value_text: null, utf8_bytes: null }
+            : { state: 'scalar', json_type: 'string', value_text: literal, utf8_bytes: Buffer.byteLength(literal) }];
+        })) } }));
     return { rows: rows.map(payload => ({ payload, row_bytes: Buffer.byteLength(JSON.stringify(payload)) })) };
   } };
   const spatial = await captureNeighborhoodSpatialMembership(cacheClient, point.geometry_input);
@@ -105,13 +119,20 @@ async function fixture({ parcelCount = 2, linkCount = 1, accountCount = 2, omitA
   const access = createTestCachedReadAccess({ target, scope: readScope, effective_date: subject.effective_date,
     selection: selector.selection, account_ids: accountIds, ...study }, {
     ...(mappingVersion === 4 ? { accessFactory: createNeighborhoodCadEvidenceReadAccess } : {}),
+    ...(mappingVersion === 5 ? { accessFactory: createNeighborhoodCombinedEvidenceReadAccess,
+      authorizeMarketData: async (_auth, _context, purpose) => {
+        assert.equal(purpose.source_projection.mapping_version, 5);
+        assert.equal(purpose.source_projection.witness_version, 2);
+        return { allowed: true, decision_id: 'explicit-synthetic-combined', policy_revision: 'explicit-synthetic-combined-v1' };
+      } } : {}),
     ...(mappingVersion === 3 ? { accessFactory: createNeighborhoodSaleWitnessReadAccess,
       authorizeMarketData: async (_auth, _context, purpose) => {
         assert.equal(purpose.source_projection.mapping_version, 3);
         return { allowed: true, decision_id: 'explicit-synthetic-witness', policy_revision: 'explicit-synthetic-witness-v1' };
       } } : {}), transactionClosure: {
     source_revision: 'original-fixture-closure-v1', transactions: [transaction], links, legacy: [] } });
-  const factory = mappingVersion === 4 ? createNeighborhoodDenseCadEvidenceSourceReader
+  const factory = mappingVersion === 5 ? createNeighborhoodDenseCombinedEvidenceSourceReader
+    : mappingVersion === 4 ? createNeighborhoodDenseCadEvidenceSourceReader
     : mappingVersion === 3 ? createNeighborhoodSaleWitnessSourceReader : createNeighborhoodCachedSourceReader;
   const issued = await access.prepare(), reader = factory({ connect() { assert.fail('must use owner'); } }, { access: access.access });
   const result = await reader.captureInSnapshot(cacheClient, { ...issued.request, auth: access.auth,
@@ -298,6 +319,44 @@ test('original mapping3 retains and reopens its own exact witnesses, metadata an
   assert.equal(rows[0].data.raw_projection.source_raw_witness.root_state, 'sql_null');
   assert.equal(rows[0].data.data.market_eligible, null);
   assert.equal(JSON.parse((await fixture()).input.acquisition.compact_metadata_json).mapping_version, 2);
+});
+
+test('combined mapping5 retains exact CAD and conflicting raw sales witnesses through complete paged replay', async () => {
+  const f = await fixture({ mappingVersion: 5, parcelCount: 1001, cadText: '  Recorded CAD observation  ' });
+  const original = structuredClone(f.input), prepared = prepare(f.input);
+  const batched = await prepareBatched(f.input);
+  assert.deepEqual(batched, prepared, 'sync and sealed batched preservation produce the same references');
+  const refs = await persist(f.client, f.scopeJson, batched), reopened = await load(f.client, f.scopeJson, refs);
+  assert.deepEqual(reopened.retained_inputs, original);
+  assert.equal(JSON.parse(reopened.retained_inputs.acquisition.compact_metadata_json).mapping_version, 5);
+  const sources = reopened.retained_inputs.acquisition.capture_result.source_capture.sources;
+  const rows = role => sources.filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
+  const parcel = rows('parcels')[0].data, sale = rows('transactions')[0].data;
+  assert.equal(parcel.raw_projection.use_description, '  Recorded CAD observation  ');
+  assert.equal(parcel.raw_projection.built_up, true);
+  assert.equal(sale.raw_projection.source_raw_witness.fields.ClosePrice.value_text, '9007199254740993.123400');
+  assert.equal(sale.raw_projection.source_raw_witness.fields.ClosePriceCurrency.value_text, '');
+  assert.equal(sale.raw_projection.source_raw_witness.fields.PriceCurrency.value_text, 'CAD');
+  assert.equal(sale.data.sale_price, 275000, 'raw observations do not repair or relabel surviving typed prices');
+  assert.equal(sale.data.gla_sqft_at_sale, null); assert.equal(sale.data.market_eligible, null);
+  assert.equal(hasOriginalPrimitiveCombinedMappingReceipt(parcel, 'parcel', 5), false, 'reopened evidence must remap');
+  assert.throws(() => consumeNeighborhoodCachedAcquisition(f.reader, reopened.retained_inputs.acquisition.capture_result), /original_capture_required/);
+  for (const version of [2, 3, 4]) assert.equal(JSON.parse((await fixture({ mappingVersion: version })).input.acquisition.compact_metadata_json).mapping_version, version);
+});
+
+for (const [label, mutate] of [
+  ['retained witness literal', row => { row.raw_projection.source_raw_witness.fields.PriceCurrency.value_text = 'EUR'; }],
+  ['witness version', row => { row.raw_projection.source_raw_witness.witness_version = 1; }],
+  ['wrapper version', row => { row.data.cached_mapping_version = 4; }],
+  ['projection digest', row => { row.data.cached_projection_sha256 = 'f'.repeat(64); }],
+]) test(`combined capture refuses changed ${label} before persistence`, async () => {
+  const f = await fixture({ mappingVersion: 5 }), changed = structuredClone(f.input);
+  const source = changed.acquisition.capture_result.source_capture.sources.find(s => s.payload.projection.definition.role === 'transactions');
+  mutate(source.payload.records[0].data);
+  const calls = f.state.calls.length;
+  assert.throws(() => prepare(changed));
+  await assert.rejects(prepareBatched(changed));
+  assert.equal(f.state.calls.length, calls);
 });
 
 for (const parcelCount of [2, 1001]) test(`retains/reopens complete original graph with ${parcelCount} spatial rows`, async () => {

@@ -97,7 +97,13 @@ for (const dense of [false, true]) for (const count of [0, 124, 125, 126, 250, 2
     }));
     const catalog = drain(customCohortSelectionCatalogBatches({ retained_inputs: f.input.retained_inputs,
       preview: f.discovery, catalog_version: f.input.catalog_version }));
-    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125) + 2 * shared.checkpoints + 2 * (catalog.checkpoints + 1));
+    // Each preview visits one selection, CAD, account and spatial row per
+    // account in this fixture. Six grouping passes share one visit budget;
+    // these fixtures have no transaction/link rows. Both previews run with
+    // the same complete retained sources, independently of selected pockets.
+    const previewGroupingChecks = 4 * Math.floor(4 * count / 125);
+    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125) + 2 * shared.checkpoints
+      + 2 * (catalog.checkpoints + 1) + previewGroupingChecks);
     assert.deepEqual(result, expected); assert.equal(digest(result), oldHash); assert.equal(JSON.stringify(f.input), before);
     const members = cadMembers(result), originals = new Map(customCohortObservationMembers(f.discovery, f.discovery.all, 'stock')
       .map(row => [row.account_id, row]));

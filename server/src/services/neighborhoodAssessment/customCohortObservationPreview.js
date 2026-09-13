@@ -74,14 +74,18 @@ const refs = rows => {
   for (const row of rows) for (const ref of row.source_references) map.set(`${ref.source_ref}\n${ref.record_id}`, ref);
   return [...map.values()].sort((a, b) => compare(a.source_ref, b.source_ref) || compare(a.record_id, b.record_id));
 };
-const groupBy = (rows, key) => {
+function* groupByBatches(rows, key, work) {
   const result = new Map();
   for (const row of rows) {
-    const id = key(row); if (id === null || id === undefined) continue;
-    if (!result.has(id)) result.set(id, []); result.get(id).push(row);
+    const id = key(row);
+    if (id !== null && id !== undefined) {
+      if (!result.has(id)) result.set(id, []); result.get(id).push(row);
+    }
+    // Include skipped keys and carry the budget across all grouping passes.
+    if (++work.visited % 125 === 0) yield;
   }
   return result;
-};
+}
 
 // Decimal keys detect disagreements that IEEE-754 conversion would hide. Exact
 // retained primitives stay available beside the Number used by exactDistribution.
@@ -278,17 +282,22 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
   routes.clear(); seen.clear(); sourceSnapshots.clear();
   check(roleRows.size === 6, 'source_roles_missing');
   check(JSON.stringify(sorted(roleRows.get('selection').map(row => row.data.account_id))) === JSON.stringify(sorted(roster)), 'selection_source_mismatch');
-  const parcelRows = groupBy(roleRows.get('parcels'), row => row.data.account_id);
-  const accountRows = groupBy(roleRows.get('accounts'), row => row.data.account_id);
-  const selectedRows = groupBy(roleRows.get('selection'), row => row.data.account_id);
+  const groupingWork = { visited: 0 };
+  const parcelRows = yield* groupByBatches(roleRows.get('parcels'), row => row.data.account_id, groupingWork);
+  const accountRows = yield* groupByBatches(roleRows.get('accounts'), row => row.data.account_id, groupingWork);
+  const selectedRows = yield* groupByBatches(roleRows.get('selection'), row => row.data.account_id, groupingWork);
   bounded(input.spatial.parcels, L.source_records, 'spatial_parcels');
   // Only these two identities are consumed here; do not inflate the complete
   // compact seven-field roster merely to group account membership.
   const spatialRows = new Map();
   for (const row of iterateSpatialParcels(input.spatial)) {
-    if (row.account_id === null || row.account_id === undefined) continue;
-    if (!spatialRows.has(row.account_id)) spatialRows.set(row.account_id, []);
-    spatialRows.get(row.account_id).push(row.object_id);
+    if (row.account_id !== null && row.account_id !== undefined) {
+      if (!spatialRows.has(row.account_id)) spatialRows.set(row.account_id, []);
+      spatialRows.get(row.account_id).push(row.object_id);
+    }
+    // Keep the shared decoder's full array/tuple checks; only schedule after
+    // consuming a row, including legacy rows with no usable account identity.
+    if (++groupingWork.visited % 125 === 0) yield;
   }
   const stock = [];
   for (const account_id of sorted(roster)) {
@@ -299,14 +308,16 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
       observations: Object.fromEntries(Object.entries(CAD).map(([key, [field, policy]]) => [key, observe(rows.map(row => row.raw[field]), policy)])),
       source_references: refs([...rows, ...accountRows.get(account_id) ?? [], ...selectedRows.get(account_id) ?? []]) });
   }
-  const transactionRows = roleRows.get('transactions'), linkRows = groupBy(roleRows.get('sale_links'), row => row.data.source_record_id);
+  const transactionRows = roleRows.get('transactions');
+  const linkRows = yield* groupByBatches(roleRows.get('sale_links'), row => row.data.source_record_id, groupingWork);
   const linksFor = rows => sorted(rows.map(row => row.data.source_record_id).filter(present)).flatMap(id => {
     const links = linkRows.get(id) ?? []; meter('member', links.length); return links;
   });
   const associations = (rows, links) => sorted([...rows.flatMap(row => [row.data.primary_account_id, row.raw.primary_account_id]),
     ...links.map(row => row.data.account_id)].filter(present));
   const canonical = [];
-  for (const [id, rows] of [...groupBy(transactionRows, row => row.data.canonical_transaction_id)].sort(([a], [b]) => compare(a, b))) {
+  for (const [id, rows] of [...(yield* groupByBatches(transactionRows, row => row.data.canonical_transaction_id, groupingWork))]
+    .sort(([a], [b]) => compare(a, b))) {
     if (canonical.length % 125 === 0) yield;
     const links = linksFor(rows), dates = sorted(rows.map(row => row.data.sale_date).filter(present));
     const sale_date = dates.length === 1 && rows.every(row => row.data.sale_date === dates[0]) ? dates[0] : null;
@@ -325,7 +336,8 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
       capability_gaps: sorted([...rows, ...links].flatMap(row => row.capability_gaps)), source_references: refs([...rows, ...links]) });
   }
   const sourceMembers = [];
-  for (const [id, rows] of [...groupBy(transactionRows, row => row.data.source_record_id)].sort(([a], [b]) => compare(a, b))) {
+  for (const [id, rows] of [...(yield* groupByBatches(transactionRows, row => row.data.source_record_id, groupingWork))]
+    .sort(([a], [b]) => compare(a, b))) {
     if (sourceMembers.length % 125 === 0) yield;
     const links = linksFor(rows); meter('measurement', rows.length * Object.keys(sourceFields).length);
     sourceMembers.push({ source_record_id: id, canonical_transaction_ids: sorted(rows.map(row => row.data.canonical_transaction_id).filter(present)),

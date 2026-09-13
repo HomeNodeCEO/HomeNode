@@ -27,6 +27,12 @@ The existing synchronous APIs and asynchronous owner consume the same kernels.
   Complete catalog/selection work is separated from the second preview's
   startup. The existing county/name IDs, full unresolved-roster fallbacks and
   independent internal/public output-byte checks remain unchanged.
+- Observation-preview grouping and spatial membership iteration yield after
+  each 125 visited rows, including rows with absent grouping identities. One
+  invocation-local counter spans all six grouping passes and the spatial pass.
+  Spatial membership still uses the original complete decoder, including its
+  full array preflight and all seven tuple fields; nothing is read as a partial
+  tuple merely because this consumer uses only account and parcel identities.
 
 The report owner's original deep input seal, checks before and after each
 iterator step, cancellation cleanup and final authorization remain in place.

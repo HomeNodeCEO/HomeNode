@@ -1,4 +1,5 @@
 import { useLocation } from 'react-router-dom';
+import { selectCustomAssignmentFile, customAssignmentHref, parseCustomAssignmentFileId, CUSTOM_ASSIGNMENT_REQUEST_ERROR } from '@/lib/customAssignmentNavigation';
 import { lazy, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useState, useRef } from 'react';
 import type { ReactNode } from 'react';
 import * as api from '@/lib/api';
@@ -159,15 +160,11 @@ export default function ComparableSalesAnalysis() {
     const p = new URLSearchParams(location.search);
     return p.get('propertyId') || '';
   }, [location.search]);
-  const requestedAssignmentFileId = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    const parsed = Number(params.get('assignmentFileId'));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const requestedAssignmentFileId = useMemo(() => parseCustomAssignmentFileId(location.search), [location.search]);
   useEffect(() => {
     window.scrollTo({ top: 0, left: 0, behavior: 'auto' });
   }, [propertyId]);
-  // Read the property-report condition choice and normalize it to a valid UAD C1-C6 rating.
+  // Normalize the Property Report condition choice to a UAD C1-C6 rating.
   const conditionCode = useMemo(() => {
     const p = new URLSearchParams(location.search);
     return p.get('condCode') || '';
@@ -326,17 +323,16 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const selectionIsCurrent = () => (
       !cancelled && workfileSelectionGenerationRef.current === selectionGeneration
     );
-    if (!propertyId) {
-      setWorkfileSaveStatus('A property account is required.');
+    if (!propertyId || requestedAssignmentFileId === null) {
+      setWorkfileSaveStatus(requestedAssignmentFileId === null ? CUSTOM_ASSIGNMENT_REQUEST_ERROR : 'A property account is required.');
+      setWorkfileReady(false);
       return () => { cancelled = true; };
     }
     setWorkfileSaveStatus('Loading appraisal workfile...');
     void loadAssignmentFiles(propertyId)
       .then(async (response) => {
         if (!selectionIsCurrent()) return;
-        const assignmentFile = requestedAssignmentFileId
-          ? response.files.find((file) => file.id === requestedAssignmentFileId) || null
-          : response.latest_file;
+        const assignmentFile = selectCustomAssignmentFile(response, propertyId, requestedAssignmentFileId);
         if (!assignmentFile) {
           setWorkfileSaveStatus('Create an appraisal file on the Property Report before selecting comparables.');
           setWorkfileReady(false);
@@ -2955,11 +2951,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               File My Protest
             </a>
             <a
-              href={`/AppraisalReport?propertyId=${encodeURIComponent(propertyId)}${
-                activeAssignmentFile
-                  ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
-                  : ''
-              }`}
+              href={customAssignmentHref('/AppraisalReport', propertyId, requestedAssignmentFileId, activeAssignmentFile)}
               className="hn-action-primary inline-flex items-center gap-2 px-4 py-2 rounded-md border"
               aria-label="Generate Full Appraisal PDF"
             >
@@ -2967,7 +2959,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               Full Appraisal PDF
             </a>
             <a
-              href={propertyId ? `/report/${encodeURIComponent(propertyId)}` : '/'}
+              href={propertyId ? customAssignmentHref('/report', propertyId, requestedAssignmentFileId, activeAssignmentFile) : '/'}
               className="hn-action-secondary btn normal-case px-4 py-2 rounded-md border"
             >
               Close Report
@@ -2992,7 +2984,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
               </div>
             </div>
             <a
-              href={`/report/${encodeURIComponent(propertyId)}`}
+              href={customAssignmentHref('/report', propertyId, requestedAssignmentFileId, activeAssignmentFile)}
               className="hn-action-secondary rounded-md border px-3 py-2 text-xs font-semibold"
             >
               {marketConditionsDraft ? 'Review Market Analysis' : 'Complete Market Analysis'}

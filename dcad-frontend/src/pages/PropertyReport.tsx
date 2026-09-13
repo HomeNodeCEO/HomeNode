@@ -1,6 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "react-router-dom";
+import { customAssignmentHref, parseCustomAssignmentFileId } from "@/lib/customAssignmentNavigation";
 import {
   editorCredentialForRequest,
   forgetEditorCredential,
@@ -3339,11 +3340,7 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/ComparableSalesAnalysis?propertyId=${encodeURIComponent(accountId)}${
-                    activeAssignmentFile
-                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
-                      : ""
-                  }`
+                ? customAssignmentHref("/ComparableSalesAnalysis", accountId, requestedAssignmentFileId, activeAssignmentFile)
                 : "#"
             }
             aria-label="Sales Comparison Approach"
@@ -3359,11 +3356,7 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/CostApproach?propertyId=${encodeURIComponent(accountId)}${
-                    activeAssignmentFile
-                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
-                      : ""
-                  }`
+                ? customAssignmentHref("/CostApproach", accountId, requestedAssignmentFileId, activeAssignmentFile)
                 : "#"
             }
             aria-label="Cost Approach"
@@ -3379,11 +3372,7 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/IncomeApproach?propertyId=${encodeURIComponent(accountId)}${
-                    activeAssignmentFile
-                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
-                      : ""
-                  }`
+                ? customAssignmentHref("/IncomeApproach", accountId, requestedAssignmentFileId, activeAssignmentFile)
                 : "#"
             }
             aria-label="Income Approach"
@@ -3399,11 +3388,7 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/FinalReconciliation?propertyId=${encodeURIComponent(accountId)}${
-                    activeAssignmentFile
-                      ? `&assignmentFileId=${encodeURIComponent(String(activeAssignmentFile.id))}`
-                      : ""
-                  }`
+                ? customAssignmentHref("/FinalReconciliation", accountId, requestedAssignmentFileId, activeAssignmentFile)
                 : "#"
             }
             aria-label="Final Reconciliation"
@@ -3426,11 +3411,7 @@ function AddressHero({
           <a
             href={
               accountId
-                ? `/AppraisalReport?propertyId=${encodeURIComponent(accountId)}${
-                    appraisalReportAssignmentFile
-                      ? `&assignmentFileId=${encodeURIComponent(String(appraisalReportAssignmentFile.id))}`
-                      : ""
-                  }`
+                ? customAssignmentHref("/AppraisalReport", accountId, requestedAssignmentFileId, appraisalReportAssignmentFile)
                 : "#"
             }
             aria-label="Full Appraisal PDF"
@@ -3501,11 +3482,7 @@ export default function PropertyReport() {
     const params = new URLSearchParams(location.search);
     return params.get("account_id") || params.get("account") || "";
   }, [location.search, routeAccountId]);
-  const requestedAssignmentFileId = useMemo(() => {
-    const params = new URLSearchParams(location.search);
-    const parsed = Number(params.get("assignmentFileId"));
-    return Number.isSafeInteger(parsed) && parsed > 0 ? parsed : null;
-  }, [location.search]);
+  const requestedAssignmentFileId = useMemo(() => parseCustomAssignmentFileId(location.search), [location.search]);
 
   const account = presetAccount;
   const { detail, reloadDetail } = usePropertyReportDetail<DcadDetail>({

@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { selectCustomAssignmentFile, CUSTOM_ASSIGNMENT_REQUEST_ERROR } from '../src/lib/customAssignmentNavigation.ts';
 import { customNeighborhoodPdfReadinessErrors as readiness,
   customNeighborhoodBrowserPrintReadinessErrors as printReadiness } from '../src/features/neighborhood/customNeighborhoodPdfReadiness.ts';
 import { matchCustomNeighborhoodAcceptedResponse as match } from '../src/features/neighborhood/customNeighborhoodAcceptedState.ts';
@@ -305,10 +306,11 @@ for (const status of ['accepted', 'signed']) test(`actual ${status} preview note
 
 function acceptedLoadHarness({ accepted, signed = false, workfile } = {}) {
   const f = reportedObservationReportFixture(), calls = [], states = [], files = [], loading = [];
-  const assignment = { id: f.match.assignmentFileId }, generation = { current: 1 };
+  const assignment = { id: f.match.assignmentFileId, account_id: f.match.accountId }, generation = { current: 1 };
   const env = { propertyId: f.match.accountId, requestedAssignmentFileId: assignment.id,
     applicationSession: { synthetic: true }, assignmentSelectionGenerationRef: generation,
-    loadAssignmentFiles: async accountId => { calls.push(['files', accountId]); return { files: [assignment], latest_file: assignment }; },
+    selectCustomAssignmentFile, CUSTOM_ASSIGNMENT_REQUEST_ERROR, setPrintBlocker() {},
+    loadAssignmentFiles: async accountId => { calls.push(['files', accountId]); return { account_id: accountId, files: [assignment], latest_file: assignment }; },
     loadCustomAppraisalWorkfile: async (...args) => { calls.push(['workfile', ...args]); return workfile ?? {
       account_id: f.match.accountId, workfile: { assignment_file_id: assignment.id, status: signed ? 'signed' : 'draft',
         sections: { neighborhood_assessment: f.section } },

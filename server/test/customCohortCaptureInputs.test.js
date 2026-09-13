@@ -10,7 +10,7 @@ import { captureNeighborhoodSpatialMembership } from '../src/services/neighborho
 import { createNeighborhoodCachedSourceReader, createNeighborhoodSaleWitnessSourceReader, createNeighborhoodDenseCadEvidenceSourceReader,
   consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
-import { CACHED_CAD_EVIDENCE_FIELDS } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
+import { CACHED_CAD_EVIDENCE_FIELDS, hasOriginalPrimitiveCadMappingReceipt } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { prepareNeighborhoodSelectorInputV1 } from '../src/services/neighborhoodAssessment/selectorInputProfile.js';
 import { customCohortRepositoryFixture, customCohortScopeOf } from './fixtures/customCohortRepositoryFixture.js';
@@ -153,6 +153,16 @@ test('batched preparation honors cancellation before publishing any preparation 
 test('initial preparation receipts preserve exact graph/counts and do not survive as source authority', async () => {
   const f = await fixture({ parcelCount: 1001, mappingVersion: 4 });
   const original = structuredClone(f.input), expected = prepare(original);
+  const cadRows = input => input.acquisition.capture_result.source_capture.sources.flatMap(source => {
+    const role = source.payload.projection.definition.role;
+    return ['parcels', 'accounts'].includes(role) ? source.payload.records.map(row => ({
+      data: row.data, kind: role === 'parcels' ? 'parcel' : 'account',
+    })) : [];
+  });
+  assert.equal(cadRows(f.input).length, 1003);
+  assert.ok(cadRows(f.input).every(({ data, kind }) => hasOriginalPrimitiveCadMappingReceipt(data, kind, 4)));
+  assert.ok(cadRows(original).every(({ data, kind }) => !hasOriginalPrimitiveCadMappingReceipt(data, kind, 4)),
+    'copied/reopened evidence must take the complete mapper validation path');
   const actual = await prepareBatched(f.input);
   assert.deepEqual(actual, expected);
   assert.deepEqual(await prepareBatched(f.input), expected);
@@ -161,6 +171,33 @@ test('initial preparation receipts preserve exact graph/counts and do not surviv
   const changed = structuredClone(original);
   changed.acquisition.capture_result.source_capture.references[0].record_sources[0].source_ref = 'forged';
   await assert.rejects(prepareBatched(changed), /binding_mismatch/);
+  assert.equal(f.state.calls.length, 0);
+});
+
+test('original primitive mapper identity never skips source and routing validation', async () => {
+  const f = await fixture({ mappingVersion: 4 });
+  for (const change of [
+    input => { input.acquisition.capture_result.source_capture.sources[0].id = 'forged'; },
+    input => { input.acquisition.capture_result.source_capture.references[0].record_sources[0].source_ref = 'forged'; },
+  ]) {
+    const changed = structuredClone(f.input);
+    const sources = changed.acquisition.capture_result.source_capture.sources;
+    const originals = f.input.acquisition.capture_result.source_capture.sources;
+    let recognized = 0;
+    for (const [index, source] of sources.entries()) {
+      const kind = source.payload.projection.definition.role === 'parcels' ? 'parcel'
+        : source.payload.projection.definition.role === 'accounts' ? 'account' : null;
+      if (!kind) continue;
+      for (const [rowIndex, row] of source.payload.records.entries()) {
+        row.data = originals[index].payload.records[rowIndex].data;
+        assert.equal(hasOriginalPrimitiveCadMappingReceipt(row.data, kind, 4), true);
+        recognized++;
+      }
+    }
+    assert.equal(recognized, 4);
+    change(changed);
+    await assert.rejects(prepareBatched(changed), /binding_mismatch/);
+  }
   assert.equal(f.state.calls.length, 0);
 });
 

@@ -12,6 +12,10 @@ export const CACHED_CAD_EVIDENCE_LIMITS = Object.freeze({
   text_utf8_bytes: 4096, row_utf8_bytes: 1_000_000, nodes: 100_000, depth: 40,
 });
 const L = CACHED_CAD_EVIDENCE_LIMITS;
+// Deterministic mapper replay only, never original acquisition, source rights,
+// storage validation or subject/scope authority. Weak keys retain no encoded
+// copy, transferable token or extra field on the evidence wrapper.
+const ORIGINAL_PRIMITIVE_MAPPINGS = new WeakMap();
 const freeze = value => {
   if (value && typeof value === 'object' && !Object.isFrozen(value)) {
     Object.values(value).forEach(freeze); Object.freeze(value);
@@ -82,10 +86,28 @@ function map(input, kind, mapper) {
   assertNeighborhoodJsonbStorage(raw);
   const gaps = new Set(original.capability_gaps);
   if (selected.unretained) gaps.add('projection_fields_not_retained');
-  return freeze({ record_id: original.record_id, data: { ...original.data,
+  const result = freeze({ record_id: original.record_id, data: { ...original.data,
     cached_mapping_version: CACHED_CAD_EVIDENCE_MAPPING_VERSION,
     cached_projection_sha256: assessmentEvidenceDigest({ mapping_version: CACHED_CAD_EVIDENCE_MAPPING_VERSION,
       projection_kind: kind, raw_projection: raw }) }, raw_projection: raw, capability_gaps: [...gaps].sort() });
+  // Base mapping canonicalizes/parses retained raw before deriving any data or
+  // gaps. Primitive parcel/account fields therefore replay identically, with
+  // no nested traversal-order budget differences. Discarded fields cannot be
+  // certified: their gap is intentionally absent from replayed raw evidence.
+  if ((kind === 'parcel' || kind === 'account') && !selected.unretained
+    && !gaps.has('projection_fields_not_retained') && Object.values(raw).every(value => value === null
+      || typeof value === 'string' || typeof value === 'boolean' || (typeof value === 'number' && Number.isFinite(value)))) {
+    ORIGINAL_PRIMITIVE_MAPPINGS.set(result, kind);
+  }
+  return result;
+}
+
+/** Read-only identity lookup for an exact, successfully frozen mapper output.
+ * Copies/reopens, nested rows and other kinds/versions require normal replay.
+ * This does not inspect caller properties or invoke proxy/accessor hooks. */
+export function hasOriginalPrimitiveCadMappingReceipt(mappedWrapper, kind, mappingVersion) {
+  if ((kind !== 'parcel' && kind !== 'account') || mappingVersion !== CACHED_CAD_EVIDENCE_MAPPING_VERSION) return false;
+  return ORIGINAL_PRIMITIVE_MAPPINGS.get(mappedWrapper) === kind;
 }
 
 /** Additive current-mirror evidence only. Four text columns are stored import

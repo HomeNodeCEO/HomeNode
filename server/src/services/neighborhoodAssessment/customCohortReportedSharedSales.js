@@ -8,6 +8,8 @@ export const CUSTOM_COHORT_REPORTED_SHARED_SALES_LIMITS = Object.freeze({
   account_links: 250000, output_utf8_bytes: 32000000,
 });
 const L = CUSTOM_COHORT_REPORTED_SHARED_SALES_LIMITS;
+const CHECKPOINT = 125;
+const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
 const present = value => value !== null && value !== undefined && !(typeof value === 'string' && !value.trim());
@@ -78,13 +80,14 @@ function metric(rows, name, unit, heterogeneous = false) {
     median: !n ? null : n % 2 ? unscale(values[middle]) : unscale((values[middle - 1] + values[middle]) * 5n, 13) };
 }
 
-function sameSourceWitness(originals, effective) {
+function* sameSourceWitnessBatches(originals, effective, work) {
   let originalText = null, witness;
   for (const row of originals) {
     const checked = prepareCachedSaleWitnessV2(row.raw.source_raw_witness);
     const text = canonicalAssessmentJson(checked);
     check(originalText === null || text === originalText, 'source_witness_mismatch');
     originalText = text; witness = checked;
+    if (++work.checked % CHECKPOINT === 0) yield;
   }
   return interpretCustomCohortReportedSaleWitnessV2(witness, effective);
 }
@@ -113,17 +116,29 @@ function witnessedMetric(rows, name, fixedUnit) {
  * unit/currency could belong to a different observation than a retained value.
  */
 export function buildCustomCohortReportedSharedSales(input = {}) {
-  return buildReportedSharedSales(input, false);
+  return drain(customCohortReportedSharedSalesBatches(input));
 }
 
-/** Explicit dormant local-observation profile. Never selected by a numeric
- * mapping-version upgrade or an external authority flag. The workflow owner,
- * report assembly and existing default entry point do not call this export. */
+/** Explicit local-observation profile. Never selected by a numeric mapping-
+ * version upgrade or an external authority flag. Report assembly dispatches
+ * this profile only from its admitted retained marker, not the default API. */
 export function buildCustomCohortReportedSharedSalesWitnessV2(input = {}) {
-  return buildReportedSharedSales(input, true);
+  return drain(customCohortReportedSharedSalesWitnessV2Batches(input));
 }
 
-function buildReportedSharedSales({ retained_inputs: input, selected_account_ids }, useWitness) {
+/** Internal iterator bridges for an owner that has sealed all caller-reachable
+ * inputs before suspension. The owner retains scheduling, budget/cancellation,
+ * cleanup and final authorization duties. Yields expose no partial records or
+ * validation authority; synchronous APIs drain these exact same kernels. */
+export function customCohortReportedSharedSalesBatches(input = {}) {
+  return reportedSharedSalesBatches(input, false);
+}
+
+export function customCohortReportedSharedSalesWitnessV2Batches(input = {}) {
+  return reportedSharedSalesBatches(input, true);
+}
+
+function* reportedSharedSalesBatches({ retained_inputs: input, selected_account_ids }, useWitness) {
   const acquisition = input?.acquisition, result = acquisition?.capture_result, capture = result?.source_capture;
   check(result?.query_complete === true && capture?.status === 'ready' && input?.spatial?.query_complete === true, 'retained_capture');
   const version = customCohortObservationMappingVersion(acquisition), effective = assessmentDate(input.subject.effective_date, 'effective_date');
@@ -152,8 +167,10 @@ function buildReportedSharedSales({ retained_inputs: input, selected_account_ids
   for (const route of bounded(capture.references, L.chunks, 'route_limit')) {
     for (const ref of bounded(route.record_sources, L.records, 'route_record_limit')) {
       check(++routeCount <= recordLimit, 'route_record_limit'); routes.add(`${ref.source_ref}\n${ref.record_id}`);
+      if (routeCount % CHECKPOINT === 0) yield;
     }
   }
+  yield;
   let recordCount = 0, legacyCount = 0;
   for (const source of bounded(capture.sources, L.chunks, 'chunk_limit')) {
     const definition = source.payload.projection.definition, role = definition.role;
@@ -161,6 +178,8 @@ function buildReportedSharedSales({ retained_inputs: input, selected_account_ids
     check(['selection', 'parcels', 'accounts', 'transactions', 'sale_links', 'gis_sync'].includes(role) && snapshots.has(source.id), 'source_role'); roles.add(role);
     for (const row of bounded(source.payload.records, L.records, 'record_limit')) {
       check(++recordCount <= recordLimit, 'record_limit');
+      // Count every role and legacy row, including the continue paths below.
+      if (recordCount % CHECKPOINT === 0) yield;
       const key = `${role}\n${row.record_id}`;
       check(!seen.has(key) && routes.has(`${source.id}\n${row.record_id}`), 'source_routing'); seen.add(key);
       if (!['transactions', 'sale_links'].includes(role)) continue;
@@ -176,13 +195,18 @@ function buildReportedSharedSales({ retained_inputs: input, selected_account_ids
     }
   }
   check(roles.size === 6, 'source_roles_missing');
+  yield;
   const dispositions = { included: 0, outside_selection: 0, outside_period: 0, nonclosed: 0, unknown_record_type: 0,
     conflicting_record_type: 0, missing_close_date: 0, invalid_close_date: 0, conflicting_close_date: 0,
     associations_unavailable: 0, legacy_source_record_unavailable: legacyCount,
     ...(useWitness ? { unsupported_close_date: 0 } : {}) };
-  const rows = []; let outputBytes = 16384, links = 0;
+  const rows = [], witnessWork = { checked: 0 }; let outputBytes = 16384, links = 0, groupCount = 0;
   for (const [id, originals] of [...groups].sort(([a], [b]) => compare(a, b))) {
-    const interpretation = useWitness ? sameSourceWitness(originals, effective) : null;
+    // Excluded groups consume the same bounded traversal and witness checks.
+    if (groupCount++ % CHECKPOINT === 0) yield;
+    // Invocation-local work survives group boundaries: many short duplicate
+    // groups must not accumulate an unbounded witness-validation interval.
+    const interpretation = useWitness ? yield* sameSourceWitnessBatches(originals, effective, witnessWork) : null;
     const associatedLinks = linksBySource.get(id) ?? [];
     const accounts = sorted([...originals.flatMap(row => [account(row.raw.primary_account_id), account(row.data.primary_account_id)]),
       ...associatedLinks.map(row => account(row.data.account_id))].filter(value => value !== null));
@@ -216,6 +240,7 @@ function buildReportedSharedSales({ retained_inputs: input, selected_account_ids
     outputBytes += Buffer.byteLength(JSON.stringify(member)) + 1;
     check(outputBytes <= L.output_utf8_bytes, 'output_limit'); rows.push(member);
   }
+  yield;
   const output = { captured_at: capturedAt, rows, metrics: Object.fromEntries(Object.entries(FIELDS)
     .map(([name, [, , unit]]) => [name, useWitness ? witnessedMetric(rows, name, unit) : metric(rows, name, unit)])), disposition_counts: dispositions,
   ...(useWitness ? { interpretation_profile_ref: getCustomCohortReportedSaleWitnessV2Profile().profile_ref } : {}) };

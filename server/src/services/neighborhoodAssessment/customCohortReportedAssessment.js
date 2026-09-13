@@ -5,7 +5,7 @@ import { customCohortIndexedObservationPreviewBatches,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
-import { buildCustomCohortReportedSharedSales, buildCustomCohortReportedSharedSalesWitnessV2 } from './customCohortReportedSharedSales.js';
+import { customCohortReportedSharedSalesBatches, customCohortReportedSharedSalesWitnessV2Batches } from './customCohortReportedSharedSales.js';
 import { getCustomCohortReportedSaleWitnessV2Profile } from './customCohortReportedSaleWitnessV2.js';
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortReportGeographyForReportedAssessment } from './customCohortReportGeography.js';
@@ -238,7 +238,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
       : { state: 'observed', exact_value: String(year - Number(cell.exact_value)) };
   }), 'years'));
   yield;
-  const shared = (useWitness ? buildCustomCohortReportedSharedSalesWitnessV2 : buildCustomCohortReportedSharedSales)(
+  const shared = yield* (useWitness ? customCohortReportedSharedSalesWitnessV2Batches : customCohortReportedSharedSalesBatches)(
     { retained_inputs: retained, selected_account_ids: preview.selected.account_ids });
   const sharedSales = yield* population('selected-shared-source-records', shared.rows, shared.captured_at,
     { source_snapshots: preview.source_snapshots, disposition_counts: shared.disposition_counts,

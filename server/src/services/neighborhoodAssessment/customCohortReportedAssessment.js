@@ -1,7 +1,7 @@
 import { assessmentEvidenceDigest as digest, buildNeighborhoodAssessment } from './contract.js';
-import { neighborhoodMemberContentDigest, neighborhoodMemberSetDigest, prepareNeighborhoodPublication } from './assessmentRepository.js';
+import { neighborhoodMemberContentDigestBatches, neighborhoodMemberSetDigest, prepareNeighborhoodPublicationBatches } from './assessmentRepository.js';
 import { REPORTED_OBSERVATION_PROFILE, REPORTED_OBSERVATION_PROFILE_ID } from './reportedObservationContract.js';
-import { buildCustomCohortIndexedObservationPreview,
+import { customCohortIndexedObservationPreviewBatches,
   customCohortObservationMembers } from './customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPrivateSalesObservations } from './customCohortPrivateSales.js';
@@ -72,8 +72,9 @@ export function buildCustomCohortReportedAssessment(input) {
   return buildReportedAssessment(input, false);
 }
 
-/** Dormant explicit profile; not selected by the current workflow owner or by
- * a mapping-version comparison. Original report entry points remain unchanged. */
+/** Explicit profile selected by the workflow owner only from its admitted
+ * retained interpretation marker, never by a mapping-version comparison.
+ * Original report entry points remain unchanged. */
 export function buildCustomCohortReportedAssessmentWitnessV2(input) {
   return buildReportedAssessment(input, true);
 }
@@ -128,7 +129,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
   check(Number.isSafeInteger(selection?.revision) && selection.revision > 0
     && Array.isArray(selection.included_recorded_group_ids)
     && new Set(selection.included_recorded_group_ids).size === selection.included_recorded_group_ids.length, 'selection');
-  const discovery = buildCustomCohortIndexedObservationPreview({ context_ref, retained_inputs: retained,
+  const discovery = yield* customCohortIndexedObservationPreviewBatches({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets: [] } });
   yield;
   const catalog = buildCustomCohortSelectionCatalog({ retained_inputs: retained, preview: discovery, catalog_version });
@@ -144,7 +145,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
     .flatMap(id => groups.get(id).account_ids))].sort(compare);
   const pockets = selectedAccounts.length ? [{ id: 'reported-selected-accounts',
     label: 'Selected retained accounts', account_ids: selectedAccounts }] : [];
-  const preview = buildCustomCohortIndexedObservationPreview({ context_ref, retained_inputs: retained,
+  const preview = yield* customCohortIndexedObservationPreviewBatches({ context_ref, retained_inputs: retained,
     selection: { revision: selection.revision, pockets } });
   yield;
   const selected = customCohortObservationMembers(preview, preview.selected, 'stock');
@@ -165,13 +166,13 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
       visibility: 'assignment', scope: target.scope, valid_from: null, valid_to: null, observed_at, historical_availability: 'unknown' });
     return id;
   };
-  function population(id, rows, capturedAt, payload, definition, account = false, membershipBasis = 'reviewed_source_record_matches') {
+  function* population(id, rows, capturedAt, payload, definition, account = false, membershipBasis = 'reviewed_source_record_matches') {
     const sourceId = addSource(`${id}:observations`, { reported_observation_source_version: 2, binding, ...payload }, capturedAt, definition);
     const added = rows.map(row => ({ population_id: id, member_unit: account ? 'account' : 'source_record',
       member_id: row.id, account_ids: row.accounts, member_data: { source_refs: [sourceId], ...row.data } }));
     members.push(...added);
     const captureId = addSource(`${id}:members`, { capture_type: 'neighborhood_population_members_v2', ...profile,
-      population_id: id, member_unit: account ? 'account' : 'source_record', member_content_sha256: neighborhoodMemberContentDigest(added, profile) },
+      population_id: id, member_unit: account ? 'account' : 'source_record', member_content_sha256: yield* neighborhoodMemberContentDigestBatches(added, profile) },
     capturedAt, 'Exact retained reported-observation member content');
     const p = { id, revision: String(selection.revision), kind: account ? 'account_observations' : 'source_record_observations',
       member_unit: account ? 'account' : 'source_record', definition,
@@ -204,7 +205,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
     }
   }
   const dense = customCohortObservationRecordLimit(retained.acquisition) > 100_000;
-  const cad = population('selected-cad-accounts', selected.map(row => ({ id: row.account_id, accounts: [row.account_id],
+  const cad = yield* population('selected-cad-accounts', selected.map(row => ({ id: row.account_id, accounts: [row.account_id],
     data: dense ? { retained_account_observation_reference: denseReportedAccountReference(row) }
       : { captured_account_observations: row } })), preview.captured_at,
   { source_snapshots: preview.source_snapshots, source_basis: 'current_cad_observations_not_historical_housing_stock',
@@ -230,7 +231,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
   yield;
   const shared = (useWitness ? buildCustomCohortReportedSharedSalesWitnessV2 : buildCustomCohortReportedSharedSales)(
     { retained_inputs: retained, selected_account_ids: preview.selected.account_ids });
-  const sharedSales = population('selected-shared-source-records', shared.rows, shared.captured_at,
+  const sharedSales = yield* population('selected-shared-source-records', shared.rows, shared.captured_at,
     { source_snapshots: preview.source_snapshots, disposition_counts: shared.disposition_counts,
       source_basis: 'locally_stored_source_records_not_canonical_transactions',
       ...(useWitness ? { interpretation: getCustomCohortReportedSaleWitnessV2Profile() } : {}) },
@@ -242,7 +243,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
     const dispositions = new Map(privateSales.rows.map(row => [row.receipt_id, row]));
     const rows = privateCapture.rows.filter(row => dispositions.get(row.receipt_id)?.disposition === 'included');
     check(rows.length === privateSales.selected.included_source_record_count, 'private_member_count');
-    const sales = population('selected-private-source-records', rows.map(row => ({ id: `${privateCapture.batch.batch_id}:${row.receipt_id}`,
+    const sales = yield* population('selected-private-source-records', rows.map(row => ({ id: `${privateCapture.batch.batch_id}:${row.receipt_id}`,
       accounts: row.review.account_ids, data: { retained_private_record: row,
         reported_close_date: row.record_data.values.close_date } })), privateSales.captured_at,
     { batch: privateSales.binding.batch, review: privateSales.binding.review, source_interpretation: privateSales.source_interpretation,
@@ -269,7 +270,7 @@ function* reportedAssessmentStages({ context_ref, retained_inputs, selection, ta
       'selected_data_may_differ_from_broad_manual_boundary', 'dispersion_is_not_reliability',
       ...(privateSales ? [] : ['no_assignment_private_sales_capture'])] } });
   yield;
-  const publication = prepareNeighborhoodPublication(assessment, members, sources);
+  const publication = yield* prepareNeighborhoodPublicationBatches(assessment, members, sources);
   yield;
   const candidate = buildCustomNeighborhoodReportCandidate({ assessment: publication.assessment, target: { ...target,
     attachment_id: identity.attachment_id, attachment_revision: identity.attachment_revision,

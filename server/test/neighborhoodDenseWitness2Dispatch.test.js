@@ -24,18 +24,32 @@ const shared = (f, build = buildCustomCohortReportedSharedSalesWitnessV2) => bui
 const combined = (options = {}) => cadEvidenceFixture({ mappingVersion: 5, rawPayload: cases[0].raw,
   reportedSaleInterpretation: profile.profile_ref, ...options });
 
-test('optional reported diagnostic observer emits neutral ordinals and guards callback count only', () => {
-  const rows = []; let tick = 100;
-  const observer = createDenseReportedStageObserver(row => rows.push(row), () => tick++);
-  for (let i = 0; i < 18; i++) observer.check();
-  observer.complete();
-  assert.deepEqual(rows.map(row => row.name), Array.from({ length: 9 }, (_, index) => `builder_synchronous_interval_${index + 1}`));
-  assert.deepEqual(rows.map(row => row.interval_ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
-  assert.ok(rows.every(row => row.elapsed_ms === 1 && row.end_ms - row.start_ms === 1
-    && row.kind === 'synchronous_builder_interval' && row.observer_version === 2));
-  assert.throws(() => observer.check(), /check count changed/);
-  assert.throws(() => createDenseReportedStageObserver(() => {}).complete(), /check count changed/);
+test('optional reported diagnostic observer admits variable pairs with neutral ordinals only', () => {
+  for (const count of [2, 4, 20, 202]) {
+    const rows = []; let tick = 100;
+    const observer = createDenseReportedStageObserver(row => rows.push(row), () => tick++);
+    for (let i = 0; i < count; i++) observer.check();
+    observer.complete();
+    const ordinals = Array.from({ length: count / 2 }, (_, index) => index + 1);
+    assert.deepEqual(rows.map(row => row.name), ordinals.map(ordinal => `builder_synchronous_interval_${ordinal}`));
+    assert.deepEqual(rows.map(row => row.interval_ordinal), ordinals);
+    assert.ok(rows.every(row => row.elapsed_ms === 1 && row.end_ms - row.start_ms === 1
+      && row.kind === 'synchronous_builder_interval' && row.observer_version === 3));
+  }
+  const partial = createDenseReportedStageObserver(() => {});
+  assert.throws(() => partial.complete(), /incomplete check pairs/);
+  partial.check(); assert.throws(() => partial.complete(), /incomplete check pairs/);
+  partial.check(); assert.doesNotThrow(() => partial.complete());
   assert.throws(() => createDenseReportedStageObserver(null));
+});
+
+test('neutral diagnostic output remains bounded independently of production source/report limits', () => {
+  let emitted = 0, finalOrdinal;
+  const observer = createDenseReportedStageObserver(row => { emitted++; finalOrdinal = row.interval_ordinal; }, () => 1);
+  for (let index = 0; index < 100_000; index++) observer.check();
+  observer.complete();
+  assert.equal(emitted, 50_000); assert.equal(finalOrdinal, 50_000);
+  assert.throws(() => observer.check(), /diagnostic check limit/);
 });
 
 // Small original source acquisition/retention fixtures and the real cooperative
@@ -69,14 +83,22 @@ for (const mappingVersion of [4, 5]) test(`real mapping${mappingVersion} report 
     report_geography: geography, derived_at: derivedAt };
   const builder = denseReportedAssessmentBuilder(originals), expected = await builder(input), before = json(input), rows = [];
   assert.equal(expected.status, 'ready');
+  // Pinned from the preceding unscheduled capacity tree: timing observations
+  // must not alter the fixed reported methodology or witness interpretation.
+  assert.equal(hash(expected.assessment.methodology.configuration), '018d4f574c36ef973ad21289048703e9b106d7c25f13d0e651202df2f7bade16');
+  if (mappingVersion === 5) assert.equal(profile.profile_ref.content_sha256,
+    '831e8a1eced98b9cc8dcee3a7f4b85ec182241ff44c8de355523c0a21609283e');
+  let referenceCalls = 0;
+  const counted = await builder(input, { check() { referenceCalls++; } });
+  assert.deepEqual(counted, expected);
   let calls = 0, tick = 100;
   const observer = createDenseReportedStageObserver(row => rows.push(row), () => tick++);
   const result = await builder(input, { check() { calls++; observer.check(); } });
   observer.complete();
-  assert.equal(calls, 18); assert.equal(rows.length, 9);
-  assert.deepEqual(rows.map(row => row.interval_ordinal), [1, 2, 3, 4, 5, 6, 7, 8, 9]);
+  assert.equal(calls, referenceCalls); assert.ok(calls > 0 && calls % 2 === 0); assert.equal(rows.length, calls / 2);
+  assert.deepEqual(rows.map(row => row.interval_ordinal), Array.from({ length: calls / 2 }, (_, index) => index + 1));
   for (const [index, row] of rows.entries()) assert.deepEqual(row, { name: `builder_synchronous_interval_${index + 1}`,
-    kind: 'synchronous_builder_interval', observer_version: 2, interval_ordinal: index + 1,
+    kind: 'synchronous_builder_interval', observer_version: 3, interval_ordinal: index + 1,
     start_ms: 100 + index * 2, end_ms: 101 + index * 2, elapsed_ms: 1 });
   assert.deepEqual(result, expected); assert.equal(json(result), json(expected)); assert.equal(json(input), before);
 });

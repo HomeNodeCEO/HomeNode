@@ -5,7 +5,7 @@ import { buildCustomCohortReportedAssessment as build, buildCustomCohortReported
 import { assessmentEvidenceDigest as digest } from '../src/services/neighborhoodAssessment/contract.js';
 import { buildCustomCohortIndexedObservationPreview as preview, customCohortIndexedObservationPreviewBatches as previewBatches,
   customCohortObservationMembers } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
-import { buildCustomCohortSelectionCatalog } from '../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { buildCustomCohortSelectionCatalog, customCohortSelectionCatalogBatches } from '../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCohortObservationRecordLimit } from '../src/services/neighborhoodAssessment/customCohortObservationMapping.js';
 import { customCohortReportedSharedSalesBatches } from '../src/services/neighborhoodAssessment/customCohortReportedSharedSales.js';
 import { recommendationFixture } from './fixtures/customCohortDenseRecommendationFixture.js';
@@ -72,10 +72,14 @@ function firstReferenceCheck(input, accounts) {
     selection: { revision: 1, pockets: [] } }));
   const selected = drain(previewBatches({ context_ref: input.context_ref, retained_inputs: input.retained_inputs,
     selection: { revision: 1, pockets: [{ id: 'reported-selected-accounts', label: 'Selected retained accounts', account_ids: accounts }] } }));
+  const catalog = drain(customCohortSelectionCatalogBatches({ retained_inputs: input.retained_inputs,
+    preview: discovery.value, catalog_version: input.catalog_version }));
   // Actual current wrapper: two seal checks, paired next checks, and one
-  // explicit report yield after each delegated preview. The next post-check
+  // explicit report yields after previews and before selected-preview startup.
+  // The independently delegated catalog contributes its actual checkpoints.
+  // The next post-check
   // is the first new 125-row reference checkpoint, not a global stage label.
-  return 2 + 2 * (discovery.checkpoints + 1 + selected.checkpoints + 1 + 1);
+  return 2 + 2 * (discovery.checkpoints + 1 + catalog.checkpoints + 1 + selected.checkpoints + 1 + 1);
 }
 
 for (const dense of [false, true]) for (const count of [0, 124, 125, 126, 250, 251]) {
@@ -86,12 +90,14 @@ for (const dense of [false, true]) for (const count of [0, 124, 125, 126, 250, 2
     let checks = 0;
     const result = await batched(f.input, { check() { checks++; } });
     // The separate shared-sales scheduling change delegates its own existing
-    // kernel now. Account for those exact checkpoints without weakening the
+    // kernel now, as does the catalog. Account for those exact checkpoints without weakening the
     // original full-result hash or the 125-account reference budget.
     const shared = drain(customCohortReportedSharedSalesBatches({
       retained_inputs: f.input.retained_inputs, selected_account_ids: f.accounts,
     }));
-    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125) + 2 * shared.checkpoints);
+    const catalog = drain(customCohortSelectionCatalogBatches({ retained_inputs: f.input.retained_inputs,
+      preview: f.discovery, catalog_version: f.input.catalog_version }));
+    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125) + 2 * shared.checkpoints + 2 * (catalog.checkpoints + 1));
     assert.deepEqual(result, expected); assert.equal(digest(result), oldHash); assert.equal(JSON.stringify(f.input), before);
     const members = cadMembers(result), originals = new Map(customCohortObservationMembers(f.discovery, f.discovery.all, 'stock')
       .map(row => [row.account_id, row]));

@@ -22,6 +22,11 @@ The existing synchronous APIs and asynchronous owner consume the same kernels.
   counter across all groups so many short duplicate groups cannot evade the
   125-wrapper budget. All six source roles and every duplicate's complete
   witness are still checked before selection filters are applied.
+- Report catalog construction yields every 125 CAD source rows and resolved
+  roster accounts through the same kernel used by synchronous catalog APIs.
+  Complete catalog/selection work is separated from the second preview's
+  startup. The existing county/name IDs, full unresolved-roster fallbacks and
+  independent internal/public output-byte checks remain unchanged.
 
 The report owner's original deep input seal, checks before and after each
 iterator step, cancellation cleanup and final authorization remain in place.

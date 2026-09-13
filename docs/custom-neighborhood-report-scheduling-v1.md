@@ -16,6 +16,12 @@ The existing synchronous APIs and asynchronous owner consume the same kernels.
   original preview row, including facts outside the displayed metrics. Normal
   full-row reports retain their original representation and ordering. Temporary
   assembly wrappers are released after the population is complete.
+- Shared-sales route and source-record traversal yields every 125 records,
+  including non-sale and source-less records. Source groups, including excluded
+  groups, also yield every 125 groups. Witness validation uses one per-invocation
+  counter across all groups so many short duplicate groups cannot evade the
+  125-wrapper budget. All six source roles and every duplicate's complete
+  witness are still checked before selection filters are applied.
 
 The report owner's original deep input seal, checks before and after each
 iterator step, cancellation cleanup and final authorization remain in place.
@@ -35,8 +41,9 @@ legacy/Witness2 report hashes are pinned in regression tests.
 ## Measurement limits
 
 This does not make every operation asynchronous. Sorting, member-set hashing,
-individual bounded row/source processing and reported-sales interpretation
-still have synchronous portions. Follow-up
+individual bounded row/source processing, per-group association/observation
+scans, final metric aggregation and serialization/freezing remain synchronous.
+Record checkpoints are not a maximum wall-time guarantee. Follow-up
 dense measurements must report the longest processing interval and health
 probe delay as well as total elapsed time. Test-helper setup/assertion work is
 not production-owner work. Callback ordinals must not be presented as semantic

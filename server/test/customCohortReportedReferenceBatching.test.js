@@ -7,6 +7,7 @@ import { buildCustomCohortIndexedObservationPreview as preview, customCohortInde
   customCohortObservationMembers } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog } from '../src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { customCohortObservationRecordLimit } from '../src/services/neighborhoodAssessment/customCohortObservationMapping.js';
+import { customCohortReportedSharedSalesBatches } from '../src/services/neighborhoodAssessment/customCohortReportedSharedSales.js';
 import { recommendationFixture } from './fixtures/customCohortDenseRecommendationFixture.js';
 import { customCohortReportedAssessmentFixture } from './fixtures/customCohortReportedAssessmentFixture.js';
 
@@ -84,7 +85,13 @@ for (const dense of [false, true]) for (const count of [0, 124, 125, 126, 250, 2
     assert.equal(expected.status, 'ready'); assert.equal(digest(expected), oldHash);
     let checks = 0;
     const result = await batched(f.input, { check() { checks++; } });
-    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125));
+    // The separate shared-sales scheduling change delegates its own existing
+    // kernel now. Account for those exact checkpoints without weakening the
+    // original full-result hash or the 125-account reference budget.
+    const shared = drain(customCohortReportedSharedSalesBatches({
+      retained_inputs: f.input.retained_inputs, selected_account_ids: f.accounts,
+    }));
+    assert.equal(checks, oldChecks + 2 * Math.floor(count / 125) + 2 * shared.checkpoints);
     assert.deepEqual(result, expected); assert.equal(digest(result), oldHash); assert.equal(JSON.stringify(f.input), before);
     const members = cadMembers(result), originals = new Map(customCohortObservationMembers(f.discovery, f.discovery.all, 'stock')
       .map(row => [row.account_id, row]));

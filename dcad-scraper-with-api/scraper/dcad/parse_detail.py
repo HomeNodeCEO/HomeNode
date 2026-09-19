@@ -267,9 +267,14 @@ _IMPROVEMENT_ABSENCE = {
 
 def _improvement_table_in_section(soup: BeautifulSoup, phrases: List[str], matches):
     """Never borrow the next section's grid, including a numbered Land grid."""
+    def heading_text(tag: Tag) -> str:
+        # Linked/emphasized words remain separate, unlike the general _txt
+        # helper used by other established field parsers.
+        return clean_text(tag.get_text(" ", strip=True))
+
     headings = soup.select(_IMPROVEMENT_HEADINGS)
     header = next((h for h in headings if any(
-        re.fullmatch(re.escape(phrase) + r"(?:\s*\([^)]*\))?", _txt(h, ""), re.I)
+        re.fullmatch(re.escape(phrase) + r"(?:\s*\([^)]*\))?", heading_text(h), re.I)
         for phrase in phrases
     )), None)
     if header is None:
@@ -282,7 +287,7 @@ def _improvement_table_in_section(soup: BeautifulSoup, phrases: List[str], match
     ])
     boundaries = {id(h) for h in headings if h is not header and all(p is not header for p in h.parents)
                   and (h.name not in {"b", "strong", "label"}
-                       or re.sub(r"\s*\([^)]*\)$", "", _txt(h, "").lower()) in section_titles)}
+                       or re.sub(r"\s*\([^)]*\)$", "", heading_text(h).lower()) in section_titles)}
     for node in header.find_all_next(True):
         if id(node) in boundaries:
             break

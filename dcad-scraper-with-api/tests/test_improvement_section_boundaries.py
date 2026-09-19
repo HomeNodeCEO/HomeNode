@@ -152,6 +152,30 @@ class ImprovementSectionBoundaryTests(unittest.TestCase):
         self.assertEqual(detail["primary_improvements"]["living_area_sqft"], 1331)
         self.assertEqual(len(detail["secondary_improvements"]), 1)
 
+    def test_inline_main_heading_selects_its_table_instead_of_headerless_fallback(self):
+        unrelated = '<table><tr><th>Year Built</th><td>1800</td></tr></table>'
+        heading = '<span class="DtlSectionHdr">Main <a>Improvement</a> (Current 2027)</span>'
+        soup = BeautifulSoup(unrelated + heading + MAIN + ADDITIONAL_HEADER + NO_ADDITIONAL + LAND,
+                             "html.parser")
+        self.assertEqual(parse_main_improvement(soup)["year_built"], 1989)
+
+    def test_inline_additional_heading_selects_its_own_generic_grid(self):
+        generic = ADDITIONAL.replace(' id="ResImp1_dgImp"', '')
+        unrelated = generic.replace('<td>1</td>', '<td>9</td>')
+        heading = '<strong>Additional <a>Improvements</a> (Current 2027)</strong>'
+        soup = BeautifulSoup(unrelated + heading + generic + LAND, "html.parser")
+        rows = parse_additional_improvements(_resolve_additional_improvements_table(soup))
+        self.assertEqual([row["imp_num"] for row in rows], ["1"])
+
+    def test_inline_next_section_titles_still_prevent_borrowing_their_grid(self):
+        for tag in ("b", "strong", "label"):
+            with self.subTest(tag=tag):
+                heading = f'<{tag}>Additional <a>Improvements</a> (Current 2027)</{tag}>'
+                detail = parse_detail_html(MAIN_HEADER + NO_MAIN + heading + ADDITIONAL + LAND)
+                self.assertEqual(detail["primary_improvements"], {})
+                self.assertEqual(detail["improvement_sections"]["main"], "explicitly_absent")
+                self.assertEqual(detail["secondary_improvements"][0]["year_built"], 1995)
+
     def test_new_evidence_does_not_bypass_other_cleanup_gates_or_clear_genuine_data(self):
         detail = parse_detail_html(page())
         calls = cleanup_fixtures.CleanupPersistenceTests().capture_upsert(detail)

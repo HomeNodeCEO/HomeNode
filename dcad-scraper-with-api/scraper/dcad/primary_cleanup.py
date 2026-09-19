@@ -12,11 +12,14 @@ from dcad.field_completeness import (
     STRUCTURE_NULLISH_TEXT,
     STRUCTURE_ZERO_PATTERN,
     decimal_or_none,
-    state_code_is_vacant,
 )
 
 
 PRIMARY_ALIASES = ("primary_improvements", "main_improvement", "main_improvements", "primary")
+# This mutation path is deliberately narrower than general classification.
+# Only the complete DCAD label verified for this legacy signature is accepted;
+# near matches such as NOT VACANT or an unfamiliar code preserve the row.
+EXPLICIT_VACANT_CODES = frozenset({"SFR - VACANT LOTS/TRACTS"})
 EXTRA_AMENITY_FIELDS = ("basement", "sprinkler", "spa", "pool", "sauna",
                         "fence_type", "deck", "basement_raw")
 
@@ -30,7 +33,8 @@ def vacant_zero_cleanup_year(detail: Mapping) -> int | None:
         return None
     land = detail.get("land_detail")
     if not isinstance(land, list) or not land or any(
-        not isinstance(row, Mapping) or not state_code_is_vacant(row.get("state_code"))
+        not isinstance(row, Mapping)
+        or " ".join(str(row.get("state_code") or "").upper().split()) not in EXPLICIT_VACANT_CODES
         for row in land
     ):
         return None

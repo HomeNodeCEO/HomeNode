@@ -130,6 +130,17 @@ class FreshVacantCleanupGateTests(unittest.TestCase):
         del detail["tax_year"]
         self.assertIsNone(vacant_zero_cleanup_year(detail))
 
+    def test_only_exact_normalized_source_code_authorizes_cleanup(self):
+        for code in ("NOT VACANT", "NON-VACANT", "SFR - NOT VACANT LOTS/TRACTS",
+                     "SFR - VACANT LOTS/TRACTS IMPROVED", "VACANT", "LOTS/TRACTS"):
+            with self.subTest(code=code):
+                detail = vacant_detail()
+                detail["land_detail"][0]["state_code"] = code
+                self.assertIsNone(vacant_zero_cleanup_year(detail))
+        detail = vacant_detail()
+        detail["land_detail"][0]["state_code"] = "  sfr  -  vacant lots/tracts  "
+        self.assertEqual(vacant_zero_cleanup_year(detail), 2025)
+
 
 class CleanupPersistenceTests(unittest.TestCase):
     def test_postgres_fixtures_are_table_free_and_use_exact_generated_predicates(self):
@@ -186,6 +197,22 @@ class CleanupPersistenceTests(unittest.TestCase):
         self.assertIn("INSERT INTO core.primary_improvements", writes[0][0])
         self.assertEqual(writes[0][1]["foundation"], "SLAB")
         self.assertEqual(writes[0][1]["living_area_sqft"], 1500)
+
+    def test_truthy_main_with_only_normalized_absences_does_not_insert(self):
+        for primary in ({"foundation": None}, {"foundation": " ", "year_built": "bad"},
+                        {"building_class": "N/A", "living_area_sqft": "--"}):
+            calls = self.capture_upsert({"primary_improvements": primary})
+            self.assertFalse(any("primary_improvements" in sql for sql, _ in calls))
+
+    def test_explicit_zero_or_false_normalized_values_remain_valid_upsert_inputs(self):
+        for primary, field, expected in (({"baths_full": 0}, "baths_full", 0),
+                                         ({"basement": False}, "basement", False)):
+            calls = self.capture_upsert({"primary_improvements": primary})
+            writes = [(sql, params) for sql, params in calls if "INSERT INTO core.primary_improvements" in sql]
+            self.assertEqual(len(writes), 1)
+            self.assertEqual(writes[0][1][field], expected)
+            self.assertEqual(set(text(writes[0][0]).compile(dialect=postgresql.dialect()).params),
+                             set(writes[0][1]), "Every original INSERT bind is still supplied")
 
     def test_sql_rechecks_entire_stored_signature_and_preserves_ambiguous_values(self):
         sql = vacant_zero_cleanup_sql("core.primary_improvements")

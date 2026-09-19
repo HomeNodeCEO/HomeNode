@@ -205,7 +205,24 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
         deck = to_text_or_none(primary.get("deck"))
         basement_raw = to_text_or_none(primary.get("basement_raw"))
 
-        if (_SCHEMA or "").lower() == "core" and primary:
+        primary_values = {
+            "construction_type": construction_type, "percent_complete": percent_complete,
+            "year_built": year_built, "effective_year_built": effective_year_built,
+            "actual_age": actual_age, "depreciation": depreciation, "desirability": desirability,
+            "stories": stories_text, "living_area_sqft": living_area_sqft,
+            "total_living_area": total_living_area, "bedroom_count": bedroom_count,
+            "bath_count": bath_count, "basement": basement, "kitchens": kitchens,
+            "wetbars": wetbars, "fireplaces": fireplaces, "sprinkler": sprinkler,
+            "spa": spa, "pool": pool, "sauna": sauna, "air_conditioning": air_conditioning,
+            "heating": heating, "foundation": foundation, "roof_material": roof_material,
+            "roof_type": roof_type, "exterior_material": exterior_material, "fence_type": fence_type,
+            "number_units": number_units, "building_class": building_class,
+            "desirability_raw": desirability_raw, "desirability_id": desirability_id,
+            "total_area_sqft": total_area_sqft, "stories_raw": stories_raw,
+            "baths_full": baths_full, "baths_half": baths_half, "deck": deck,
+            "basement_raw": basement_raw,
+        }
+        if (_SCHEMA or "").lower() == "core" and any(value is not None for value in primary_values.values()):
             s.execute(
                 text(
                     f"""
@@ -266,46 +283,7 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                       basement_raw = COALESCE(EXCLUDED.basement_raw, {_tbl('primary_improvements')}.basement_raw)
                     """
                 ),
-                {
-                    "account_id": account_id,
-                    "construction_type": construction_type,
-                    "percent_complete": percent_complete,
-                    "year_built": year_built,
-                    "effective_year_built": effective_year_built,
-                    "actual_age": actual_age,
-                    "depreciation": depreciation,
-                    "desirability": desirability,
-                    "stories": stories_text,
-                    "living_area_sqft": living_area_sqft,
-                    "total_living_area": total_living_area,
-                    "bedroom_count": bedroom_count,
-                    "bath_count": bath_count,
-                    "basement": basement,
-                    "kitchens": kitchens,
-                    "wetbars": wetbars,
-                    "fireplaces": fireplaces,
-                    "sprinkler": sprinkler,
-                    "spa": spa,
-                    "pool": pool,
-                    "sauna": sauna,
-                    "air_conditioning": air_conditioning,
-                    "heating": heating,
-                    "foundation": foundation,
-                    "roof_material": roof_material,
-                    "roof_type": roof_type,
-                    "exterior_material": exterior_material,
-                    "fence_type": fence_type,
-                    "number_units": number_units,
-                    "building_class": building_class,
-                    "desirability_raw": desirability_raw,
-                    "desirability_id": desirability_id,
-                    "total_area_sqft": total_area_sqft,
-                    "stories_raw": stories_raw,
-                    "baths_full": baths_full,
-                    "baths_half": baths_half,
-                    "deck": deck,
-                    "basement_raw": basement_raw,
-                },
+                {"account_id": account_id, **primary_values},
             )
 
         if (_SCHEMA or "").lower() == "core":

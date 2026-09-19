@@ -40,16 +40,20 @@ const plainData = mapped => Object.fromEntries(Object.entries(mapped.data)
 // are read. This checks native SQL, not a substitute for complete-reader tests.
 async function checkDenseParcelTransport(client, legacySql, denseSql) {
   const suffix = sql => {
-    const parts = sql.split('), encoded AS (');
+    const marker=sql.includes('), encoded AS MATERIALIZED (') ? '), encoded AS MATERIALIZED (' : '), encoded AS (';
+    const parts = sql.split(marker);
     assert.equal(parts.length, 2, 'the checked reader transport anchor must be unique');
-    return `), encoded AS (${parts[1]}`;
+    return `${marker}${parts[1]}`;
   };
+  const oldDenseSql=legacySql.replace('CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END',
+    `CASE WHEN octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`
+    + ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES} THEN payload ELSE NULL END`);
   const generated = sql => `WITH projected AS MATERIALIZED (
     WITH geometry AS MATERIALIZED (SELECT encode(ST_AsEWKB(ST_Multi(ST_Buffer(
       ST_SetSRID(ST_MakePoint(-96.8,32.8),4326),0.002,$1::int))),'hex') AS stored_geometry_ewkb)
     SELECT id::text AS object_id,stored_geometry_ewkb FROM geometry CROSS JOIN generate_series(1,$2::int) id
     ${suffix(sql)}`;
-  const dense = generated(denseSql), legacy = generated(legacySql);
+  const dense = generated(denseSql), legacy = generated(legacySql), oldDense = generated(oldDenseSql);
   const single = (await client.query(dense, [600, 1])).rows;
   assert.equal(single.length, 1); assert.ok(single[0].payload);
   assert.ok(single[0].row_bytes > 64000 && single[0].row_bytes <= DENSE_CAD_CACHE_READER_LIMITS.row_bytes);
@@ -77,6 +81,45 @@ async function checkDenseParcelTransport(client, legacySql, denseSql) {
   assert.ok(fallbackPage.reduce((sum,row) => sum + row.row_bytes,0) <= DENSE_CAD_SQL_PAGE_BYTES);
   assert.deepEqual(fallbackPage.map(row => row.row_bytes),fastPage.slice(0,251).map(row => row.row_bytes),
     'the smaller transport accepts the same exact native rows, without geometry rewriting');
+  for (const [parameters,expected] of [[[600,1],single],[[1100,1],excessiveRow],[[600,251],excessivePage],
+    [[300,501],fastPage],[[300,251],fallbackPage]]) {
+    assert.deepEqual((await client.query(oldDense,parameters)).rows,expected,
+      'materializing encoding/measurement preserves every exact native geometry, count, byte size and null sentinel');
+  }
+  // Exact PostgreSQL JSONB byte boundaries, not JS JSON.stringify estimates.
+  // Padding is synthetic diagnostic data; production projection stays unchanged.
+  const boundary = sql => `WITH projected AS MATERIALIZED (
+    SELECT id::text AS object_id,repeat('x',$1::int + CASE WHEN id=$2::int THEN $3::int ELSE 0 END
+      - octet_length(jsonb_build_object('object_id',id::text,'padding','')::text)) AS padding
+    FROM generate_series(1,$2::int) id ${suffix(sql)}`;
+  for(const [bytes,count,extra,accepted] of [[128000,1,0,true],[128001,1,0,false],
+    [64000,251,0,true],[64000,251,1,false]]) {
+    const actual=(await client.query(boundary(denseSql),[bytes,count,extra])).rows;
+    const previous=(await client.query(boundary(oldDenseSql),[bytes,count,extra])).rows;
+    assert.deepEqual(actual,previous,'exact row/page boundary parity with the original dense transport');
+    assert.equal(actual.length,count);
+    assert.equal(actual.reduce((sum,row)=>sum+row.row_bytes,0),bytes*count+extra);
+    assert.ok(actual.every(row=>accepted?row.payload!==null:row.payload===null));
+  }
+  // Force bounded temporary-file spills for a large but accepted geometry page.
+  // Restore the caller's setting even after a failure; no table/data writes.
+  const setting=(await client.query("SELECT current_setting('work_mem') AS value")).rows[0].value;
+  let spill;
+  try {
+    await client.query("SELECT set_config('work_mem','64kB',true)");
+    const exact=(await client.query(dense,[300,251])).rows;
+    assert.deepEqual(exact,fallbackPage,'spilling cannot alter exact geometry or row/page metering');
+    assert.deepEqual((await client.query(oldDense,[300,251])).rows,exact);
+    const plans=[];
+    for(const sql of [oldDense,dense]) {
+      const plan=(await client.query(`EXPLAIN (ANALYZE,BUFFERS,FORMAT JSON,TIMING OFF) ${sql}`,[300,251])).rows[0]['QUERY PLAN'][0];
+      plans.push({execution_ms:plan['Execution Time'],temp_written_blocks:plan.Plan['Temp Written Blocks']??0,
+        temp_read_blocks:plan.Plan['Temp Read Blocks']??0,rows:plan.Plan['Actual Rows']});
+    }
+    assert.ok(plans[1].temp_written_blocks>0,'the large-page materialized transport must actually exercise disk spill');
+    assert.equal(plans[1].rows,251); spill={work_mem:'64kB',previous:plans[0],materialized:plans[1]};
+  } finally { await client.query("SELECT set_config('work_mem',$1,true)",[setting]); }
+  return spill;
 }
 
 /** Read-only continuation of the exact preceding synthetic coordinator fixture.
@@ -127,10 +170,26 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
       account_ids: [ACCOUNT, OTHER].sort(compare), effective_date: owner.effective_date,
       observation_period: { start_date: '2023-07-01', end_date: owner.effective_date }, knowledge_cutoff: null };
     const calls = []; let connects = 0, releases = 0;
-    const observed = { query(statement, values) {
-      calls.push({ sql: typeof statement === 'string' ? statement : statement.text,
+    let priorDenseTransport=null,scopeObservation=null,fixedScopeObservation=null;
+    const observed = { async query(statement, values) {
+      const supplied=typeof statement === 'string' ? statement : statement.text;
+      const sql=priorDenseTransport && supplied.includes('/* neighborhood-cache:parcels */')
+        ? priorDenseTransport : supplied;
+      calls.push({ sql,
         values: structuredClone((typeof statement === 'string' ? values : statement.values) ?? []) });
-      return client.query(statement, values);
+      const result=await client.query(typeof statement === 'string' ? sql : {...statement,text:sql},values);
+      if(sql.includes('/* neighborhood-cache:scope */')) {
+        if(fixedScopeObservation) {
+          // Replaying the transport in one snapshot must hold the diagnostic
+          // observation clock fixed to compare full capture hashes. Still run
+          // the actual scoped SQL and verify every non-clock result cell.
+          const omitClock=rows=>rows.map(({captured_at,captured_at_precise,...row})=>row);
+          assert.deepEqual(omitClock(result.rows),omitClock(fixedScopeObservation));
+          return {...result,rows:structuredClone(fixedScopeObservation)};
+        }
+        scopeObservation=structuredClone(result.rows);
+      }
+      return result;
     }, release() { releases++; assert.fail('reader/closure must not release the caller-owned client'); } };
     const forbiddenPool = { async connect() { connects++; assert.fail('caller-owned capture must not connect'); } };
     const projection = { id: 'cached-combined-evidence-v1', mapping_version: 5,
@@ -211,13 +270,33 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
         baseline = result; baselineTrace = keys; baselineParcelSql = parcelSql; continue;
       }
       assert.deepEqual(keys, baselineTrace, 'combined projection preserves every authorized query tag, parameter, cursor and page boundary');
-      const legacyGuard = 'CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END';
-      const denseGuard = `CASE WHEN octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`
-        + ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES} THEN payload ELSE NULL END`;
-      assert.equal(parcelSql, mode === 'dense5' ? baselineParcelSql.replace(legacyGuard, denseGuard) : baselineParcelSql,
-        'exact CAD4 projection, membership and ordering remain unchanged; only dense parcel transport has extra headroom');
+      const parcelProjection=baselineParcelSql.split('), encoded AS (');
+      assert.equal(parcelProjection.length,2);
+      const denseTransport=`), encoded AS MATERIALIZED (
+        SELECT to_jsonb(projected) AS payload FROM projected), measured AS MATERIALIZED (
+        SELECT payload,octet_length(payload::text) AS row_bytes FROM encoded)
+        SELECT CASE WHEN row_bytes<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes} AND sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}
+          THEN payload ELSE NULL END AS payload,row_bytes FROM measured ORDER BY (payload->>'object_id')::bigint`;
+      assert.equal(parcelSql, mode === 'dense5' ? parcelProjection[0]+denseTransport : baselineParcelSql,
+        'exact CAD4 projection/keysets unchanged; only dense parcel encoding/size are materialized behind the same guards');
       if (mode === 'dense5') {
         denseParcelSql = parcelSql;
+        priorDenseTransport=baselineParcelSql.replace('CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END',
+          `CASE WHEN octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`
+          + ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES} THEN payload ELSE NULL END`);
+        fixedScopeObservation=scopeObservation;
+        try {
+          const previousAccess=accessFor(true),previousPrepared=await previousAccess.prepare();
+          const previousReader=createNeighborhoodDenseCombinedEvidenceSourceReader(forbiddenPool,
+            {access:previousAccess.access,limits:{page_size:1}});
+          const previous=await previousReader.captureInSnapshot(observed,{...previousPrepared.request,auth,
+            selection_grant:previousPrepared.selection_grant,market_grant:previousPrepared.market_grant},{deadline});
+          assert.equal(previous.status,'captured');
+          assert.deepEqual(previous.source_capture,result.source_capture,'same-limit native captures retain every exact record, chunk and content hash');
+          assert.deepEqual(previous.query_evidence,result.query_evidence,'transport SQL does not alter retained query evidence');
+          assert.equal(previous.selection_sha256,result.selection_sha256);
+          assert.equal(previous.counts.bytes,result.counts.bytes); assert.equal(previous.counts.records,result.counts.records);
+        } finally { priorDenseTransport=null; fixedScopeObservation=null; }
         const nonparcel = trace.filter(({ sql }) => sql.includes('/* neighborhood-cache:')
           && sql.includes('), encoded AS (') && !sql.includes('/* neighborhood-cache:parcels */'));
         assert.ok(nonparcel.length > 0);
@@ -289,18 +368,20 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
         assert.equal(source.payload.upstream.upstream_content_sha256, upstream.digest('hex'));
       }
     }
-    await checkDenseParcelTransport(client, baselineParcelSql, denseParcelSql);
+    const denseParcelSpill=await checkDenseParcelTransport(client, baselineParcelSql, denseParcelSql);
     const state = (await client.query(CACHED_TRANSACTION_SNAPSHOT_SQL)).rows[0];
     assert.equal(state.isolation, 'repeatable read'); assert.equal(state.read_only, 'on');
     assert.equal(state.snapshot, baseline.snapshot.snapshot); assert.equal(state.backend_pid, baseline.snapshot.backend_pid);
     assert.ok(calls.every(({ sql }) => !/\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|BEGIN|COMMIT|ROLLBACK|SET)\b/i.test(sql)));
     assert.equal(connects, 0); assert.equal(releases, 0);
-    checks.push('standard combined reader retains exact CAD4 SQL; dense reader changes only the bounded transport guard with exact authorized keysets in one RR/RO snapshot');
+    checks.push('standard combined reader retains exact CAD4 SQL; dense parcels materialize only encoding/size with identical projection, guards and authorized keysets in one RR/RO snapshot');
     checks.push('native dense transport preserves a valid >64KB exact geometry, retains legacy refusal, and withholds oversized rows and complete oversized pages');
+    checks.push('native dense old/new encoding has exact row/page byte-boundary parity and identical large-page geometry under a verified low-work_mem disk spill');
+    checks.push('native dense prior/new transport has identical complete source captures, content hashes and query evidence at the same limits and fixed observation clock');
     checks.push('native combined rows preserve every CAD4 typed/raw field and no-source currency/unit/price gaps; original source witness remains SQL-null');
     checks.push('foreign v3/v4 minted grants fail before queries; V5 original-only handoff and query/chunk/row hashes verify without retention or activation');
     await client.query('ROLLBACK'); began = false;
-    return { checks };
+    return { checks,dense_parcel_spill:denseParcelSpill };
   } finally {
     if (client) {
       if (began) try { await client.query('ROLLBACK'); } catch (error) { discard = error; }

@@ -164,8 +164,8 @@ test('dense parcel headroom preserves complete exact EWKB and records the actual
   for (const entry of result.source_capture.sources) assert.equal(entry.payload.projection.definition.limits.row_bytes,DENSE_CAD_CACHE_READER_LIMITS.row_bytes);
   assert.equal(prepareCohortLocalQueryEvidenceV1(JSON.stringify(result.query_evidence)).status,'syntax_valid');
   const sql=dense.calls.find(call=>call.tag==='parcels').text;
-  assert.ok(sql.includes(`octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`));
-  assert.ok(sql.includes(`sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}`));
+  assert.ok(sql.includes(`row_bytes<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`));
+  assert.ok(sql.includes(`sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}`));
   assert.match(sql,/encode\(ST_AsEWKB\(geom\),'hex'\)/); assert.doesNotMatch(sql,/ST_Simplify|ST_Snap|ST_Reduce|substring|substr/i);
   assert.equal(dense.calls.filter(call=>call.tag==='parcels').length,1);
   const legacy=fake({data:{...dense.data},readerFactory:createNeighborhoodCadEvidenceSourceReader,
@@ -173,6 +173,44 @@ test('dense parcel headroom preserves complete exact EWKB and records the actual
   const refused=await legacy.reader.capture(request());
   assert.equal(refused.status,'incomplete'); assert.deepEqual(refused.incomplete_reasons,['row_bytes_limit']);
   assert.equal(refused.source_capture,null); assert.doesNotMatch(legacy.calls.find(call=>call.tag==='parcels').text,/ OVER /);
+});
+
+test('only dense parcels materialize encoding and size; every fixed projection and nonparcel SQL remains unchanged',async () => {
+  const data={transactions:[transaction()],links:[link()]};
+  const dense=denseCad({data,limits:{page_size:250}});
+  const legacy=fake({data:{...dense.data},readerFactory:createNeighborhoodCadEvidenceSourceReader,
+    accessFactory:createNeighborhoodCadEvidenceReadAccess});
+  const current=await dense.reader.capture(request()), original=await legacy.reader.capture(request());
+  assert.equal(current.status,'captured'); assert.equal(original.status,'captured');
+  const sql=dense.calls.find(call=>call.tag==='parcels').text;
+  const old=legacy.calls.find(call=>call.tag==='parcels').text;
+  assert.equal(sql.split('), encoded AS MATERIALIZED (')[0],old.split('), encoded AS (')[0]);
+  assert.equal((sql.match(/to_jsonb\(projected\)/g)??[]).length,1);
+  assert.equal((sql.match(/octet_length\(payload::text\)/g)??[]).length,1);
+  assert.match(sql, /encoded AS MATERIALIZED \([\s\S]*measured AS MATERIALIZED \(/);
+  assert.match(sql, /SELECT payload,octet_length\(payload::text\) AS row_bytes FROM encoded/);
+  assert.match(sql, /FROM measured ORDER BY \(payload->>'object_id'\)::bigint$/);
+  assert.doesNotMatch(sql,/selected_ids|page_ids|JOIN page|ST_Simplify/);
+  for(const call of legacy.calls.filter(call=>!['parcels','settings'].includes(call.tag))) {
+    const actual=dense.calls.find(value=>value.tag===call.tag);
+    assert.ok(actual,call.tag);
+    assert.equal(actual.text.replace(` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}`,''),call.text,call.tag);
+    assert.deepEqual(actual.values,call.values,call.tag);
+  }
+  for(const role of ['selection','parcels','accounts','transactions','sale_links','gis_sync'])
+    assert.deepEqual(records(current,role),records(original,role));
+});
+
+for(const size of [128000,128001]) test(`dense parcel measured row boundary ${size} keeps fail-closed retention`,async () => {
+  const db=denseCad({intercept:({tag})=>tag==='parcels'
+    ?{rows:[{payload:size===128000?cadParcel():null,row_bytes:size}]}:undefined});
+  const result=await db.reader.capture(request());
+  assert.equal(result.status,size===128000?'captured':'incomplete');
+  if(size===128001) {
+    assert.equal(result.source_capture,null); assert.deepEqual(result.incomplete_reasons,['row_bytes_limit']);
+    assert.equal(result.counts.records,1);
+  }
+  assert.equal(db.calls.filter(call=>call.tag==='parcels').length,1);
 });
 
 test('retained legacy dense limits and every small-row evidence record stay unchanged', async () => {

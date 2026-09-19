@@ -58,6 +58,26 @@ function expandedPopulation(view, population) {
   }
   return result;
 }
+function expectedIndexedMemberWork(old, next) {
+  const oldOccurrences = populations(old).flatMap(population => [
+    ...population.stock.members, ...population.transactions.members, ...population.transactions.omitted,
+    ...population.source_reported.members,
+  ]).reduce((n, row) => n + 1 + row.source_references.length + (row.associated_account_ids?.length ?? 0), 0);
+  const linkVisits = old.work.member_work - oldOccurrences;
+  assert.ok(linkVisits >= 0, 'construction link traversal remains charged');
+  const tables = Object.values(next.member_tables), views = populations(next);
+  const refs = tables.flat().reduce((n, row) => n + row.source_references.length + (row.associated_account_ids?.length ?? 0), 0);
+  const candidates = views.length * tables.reduce((n, rows) => n + rows.length, 0);
+  let associations = 0;
+  for (const population of views) {
+    const chosen = new Set(population.account_ids);
+    if (population !== next.all) for (const row of [...next.member_tables.transactions, ...next.member_tables.source_reported]) {
+      for (const id of row.associated_account_ids) { associations++; if (chosen.has(id)) break; }
+    }
+    for (const row of members(next, population, 'transactions')) associations += 2 * row.associated_account_ids.length;
+  }
+  return linkVisits + refs + candidates + associations;
+}
 function assertParity(args) {
   const old = expanded(args), next = indexed(args);
   const { preview_version, representation, member_tables, work, ...nextFields } = next;
@@ -65,7 +85,8 @@ function assertParity(args) {
   assert.deepEqual({ ...nextFields, preview_version: 1, all: expandedPopulation(next, next.all),
     selected: expandedPopulation(next, next.selected), pockets: next.pockets.map(pocket => ({ ...pocket,
       result: expandedPopulation(next, pocket.result) })) }, oldFields);
-  for (const key of ['source_records', 'measurement_values', 'member_work']) assert.equal(work[key], oldWork[key]);
+  for (const key of ['source_records', 'measurement_values']) assert.equal(work[key], oldWork[key]);
+  assert.equal(work.member_work, expectedIndexedMemberWork(old, next));
   assert.ok(Buffer.byteLength(JSON.stringify(next)) <= work.output_utf8_bytes_bound);
   assert.ok(work.output_utf8_bytes_bound <= L.output_utf8_bytes);
   for (let i = 0; i < populations(old).length; i++) for (const kind of kinds) {
@@ -74,7 +95,7 @@ function assertParity(args) {
   return next;
 }
 
-test('both representations share exact observations, metrics, provenance and work except serialized bytes', () => {
+test('both representations share exact observations, metrics and provenance with representation-specific member work', () => {
   const args = fixture(), before = JSON.stringify(args), next = assertParity(args);
   assert.equal(next.preview_version, 2); assert.equal(next.representation, 'indexed_members_v1');
   assert.equal(JSON.stringify(args), before);

@@ -19,7 +19,10 @@ from sqlalchemy import Engine, text
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
 from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
 from dcad.fetch import browser
-from dcad.field_completeness import parsed_verification_row, verification_presence
+from dcad.field_completeness import (
+    parsed_verification_row, primary_structure_sql,
+    verification_not_applicable, verification_presence,
+)
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
 
@@ -637,7 +640,37 @@ def queue_missing_fields_after_success(
     conn.execute(
         text(
             f"""
-            WITH missing AS (
+            WITH property_evidence AS (
+                SELECT EXISTS (
+                    SELECT 1 FROM {primary_improvements} improvement
+                    WHERE improvement.account_id = :account_id
+                      AND {primary_structure_sql("improvement")}
+                ) AS has_primary_structure,
+                EXISTS (
+                    SELECT 1 FROM {value_summary} value
+                    WHERE value.account_id = :account_id
+                      AND value.improvement_value > 0
+                ) AS has_positive_improvement_value,
+                EXISTS (
+                    SELECT 1 FROM {land_detail}
+                    WHERE account_id = :account_id
+                      AND upper(state_code) LIKE '%VACANT%'
+                ) AS has_vacant_code,
+                EXISTS (
+                    SELECT 1 FROM {land_detail}
+                    WHERE account_id = :account_id
+                      AND NULLIF(btrim(state_code), '') IS NOT NULL
+                      AND upper(state_code) NOT LIKE '%VACANT%'
+                ) AS has_nonvacant_code,
+                EXISTS (
+                    SELECT 1 FROM {value_summary} value
+                    WHERE value.account_id = :account_id
+                      AND value.market_value > 0
+                      AND value.market_value::text NOT IN ('NaN', 'Infinity', '-Infinity')
+                      AND value.land_value = value.market_value
+                      AND (value.improvement_value IS NULL OR value.improvement_value = 0)
+                ) AS has_equal_land_market
+            ), missing AS (
                 SELECT array_remove(ARRAY[
                            CASE WHEN NOT EXISTS (
                                SELECT 1
@@ -657,52 +690,13 @@ def queue_missing_fields_after_success(
                                  AND living_area_sqft IS NOT NULL
                                  AND living_area_sqft > 0
                             ) AND NOT (
-                               EXISTS (
-                                   SELECT 1
-                                   FROM {land_detail}
-                                   WHERE account_id = :account_id
-                                     AND upper(state_code) LIKE '%VACANT%'
-                               )
-                               AND NOT EXISTS (
-                                   SELECT 1
-                                   FROM {land_detail}
-                                   WHERE account_id = :account_id
-                                     AND NULLIF(btrim(state_code), '') IS NOT NULL
-                                     AND upper(state_code) NOT LIKE '%VACANT%'
-                                )
-                            ) AND NOT (
-                                NOT EXISTS (
-                                    SELECT 1
-                                    FROM {primary_improvements} improvement
-                                    WHERE improvement.account_id = :account_id
-                                      AND (
-                                          NULLIF(btrim(improvement.construction_type), '') IS NOT NULL
-                                          OR improvement.percent_complete IS NOT NULL
-                                          OR improvement.year_built IS NOT NULL
-                                          OR improvement.effective_year_built IS NOT NULL
-                                          OR improvement.actual_age IS NOT NULL
-                                          OR improvement.depreciation IS NOT NULL
-                                          OR NULLIF(btrim(improvement.desirability), '') IS NOT NULL
-                                          OR NULLIF(btrim(improvement.stories), '') IS NOT NULL
-                                          OR improvement.living_area_sqft IS NOT NULL
-                                          OR improvement.total_living_area IS NOT NULL
-                                          OR improvement.bedroom_count IS NOT NULL
-                                          OR improvement.bath_count IS NOT NULL
-                                          OR improvement.number_units IS NOT NULL
-                                          OR NULLIF(btrim(improvement.building_class), '') IS NOT NULL
-                                          OR improvement.total_area_sqft IS NOT NULL
-                                      )
-                                )
-                                AND EXISTS (
-                                    SELECT 1
-                                    FROM {value_summary} value
-                                    WHERE value.account_id = :account_id
-                                      AND value.market_value IS NOT NULL
-                                      AND value.market_value > 0
-                                      AND value.land_value = value.market_value
-                                )
+                                NOT has_primary_structure
+                                AND NOT has_positive_improvement_value
+                                AND NOT (has_vacant_code AND has_nonvacant_code)
+                                AND (has_vacant_code OR has_equal_land_market)
                             ) THEN 'gla' END
                        ], NULL)::text[] AS fields
+                FROM property_evidence
             )
             INSERT INTO {queue} AS existing (
                 account_id, status, requested_fields, remaining_fields,
@@ -1428,17 +1422,7 @@ def missing_required_fields(
                        p.building_class,
                        COALESCE(NULLIF(p.living_area_sqft, 0),
                                 NULLIF(p.total_living_area, 0), p.total_area_sqft) AS gla,
-                       (NULLIF(btrim(p.construction_type), '') IS NOT NULL
-                        OR p.percent_complete IS NOT NULL OR p.year_built IS NOT NULL
-                        OR p.effective_year_built IS NOT NULL OR p.actual_age IS NOT NULL
-                        OR p.depreciation IS NOT NULL
-                        OR NULLIF(btrim(p.desirability), '') IS NOT NULL
-                        OR NULLIF(btrim(p.stories), '') IS NOT NULL
-                        OR p.living_area_sqft IS NOT NULL OR p.total_living_area IS NOT NULL
-                        OR p.bedroom_count IS NOT NULL OR p.bath_count IS NOT NULL
-                        OR p.number_units IS NOT NULL
-                        OR NULLIF(btrim(p.building_class), '') IS NOT NULL
-                        OR p.total_area_sqft IS NOT NULL) AS has_primary_improvement,
+                       {primary_structure_sql("p")} AS has_primary_improvement,
                        land.land_area, land.state_codes, land.has_land_details,
                        parties.ownership_percentage,
                        COALESCE(l.deed_transfer_date::text, l.deed_transfer_raw) AS deed_transfer
@@ -1471,9 +1455,14 @@ def missing_required_fields(
     if row is None or not row["snapshot_is_fresh"] or not isinstance(row["parsed_detail"], dict):
         raise RuntimeError("Field verification requires a fresh parsed snapshot written since this claim")
     normalized = verification_presence(row)
-    parsed = verification_presence(parsed_verification_row(row["parsed_detail"]))
+    parsed_row = parsed_verification_row(row["parsed_detail"])
+    parsed = verification_presence(parsed_row)
     presence = {field: present and parsed.get(field, False)
                 for field, present in normalized.items()}
+    # Missing improvement fields are N/A only when fresh parsed evidence and
+    # normalized data agree on vacancy; one-sided vacancy cannot erase a flag.
+    not_applicable = verification_not_applicable(row) & verification_not_applicable(parsed_row)
+    presence.update({field: True for field in not_applicable})
     return fields_still_missing(requested_fields, presence)
 
 
@@ -1507,7 +1496,10 @@ def mark_field_repair_result(
             )
         else:
             status = "succeeded"
-            reason = "All requested fields are present in normalized data and fresh parsed evidence"
+            reason = (
+                "All requested fields verified present or not applicable for confirmed vacant land "
+                "using normalized data and fresh parsed evidence"
+            )
         conn.execute(
             text(
                 f"""

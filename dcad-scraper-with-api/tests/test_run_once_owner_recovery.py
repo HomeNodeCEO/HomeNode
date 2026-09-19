@@ -57,6 +57,7 @@ class RunOnceOwnerRecoveryTests(unittest.TestCase):
             "property_location": {"address": "100 SAMPLE LN"},
             "value_summary": {"market_value": 300000},
             "owner": {
+                "source_year": 2027, "source_heading": "Owner (Current 2027)",
                 "owner_name": "EXAMPLE AVERY &",
                 "mailing_address": "100 SAMPLE LN, DALLAS, TEXAS 752010001",
                 "multi_owner": [
@@ -64,7 +65,7 @@ class RunOnceOwnerRecoveryTests(unittest.TestCase):
                 ],
             },
         }
-        history = {"owner_history": [{"owner_lines": [
+        history = {"owner_history": [{"observed_year": 2027, "owner_lines": [
             "EXAMPLE AVERY & MORGAN 100 SAMPLE LN DALLAS TEXAS 752010001"
         ]}]}
         self.scrape_with_mocks(detail, history)
@@ -88,6 +89,25 @@ class RunOnceOwnerRecoveryTests(unittest.TestCase):
             },
         }
         history = {"owner_history": []}
+        original = deepcopy((detail, history))
+        self.scrape_with_mocks(detail, history)
+        self.assertEqual((detail, history), original)
+
+    def test_prior_year_history_never_becomes_current_owner_before_raw_save(self):
+        detail = {
+            "tax_year": 2026,
+            "property_location": {"address": "100 SAMPLE LN"},
+            "value_summary": {"market_value": 300000},
+            "owner": {
+                "source_year": 2027, "source_heading": "Owner (Current 2027)",
+                "owner_name": "SYNTHETIC AVERY &",
+                "mailing_address": "100 SAMPLE LN, DALLAS TX 75201",
+                "multi_owner": [{"owner_name": "SYNTHETIC AVERY &", "ownership_pct": "100%"}],
+            },
+        }
+        history = {"owner_history": [{"observed_year": 2026, "owner_lines": [
+            "SYNTHETIC AVERY & MORGAN 100 SAMPLE LN DALLAS TX 75201"
+        ]}]}
         original = deepcopy((detail, history))
         self.scrape_with_mocks(detail, history)
         self.assertEqual((detail, history), original)

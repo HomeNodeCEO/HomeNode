@@ -25,6 +25,8 @@ def synthetic_detail():
         "tax_year": 2026,
         "property_location": {"address": "100 EXAMPLE WAY"},
         "owner": {
+            "source_year": 2027, "source_heading": "Owner (Current 2027)",
+            "parties_source_heading": "Multi-Owner (Current 2027)",
             "owner_name": "SYNTHETIC OWNER A / SYNTHETIC OWNER B",
             "mailing_address": "200 EXAMPLE AVENUE, SAMPLE CITY, TX 75000",
             "multi_owner": [

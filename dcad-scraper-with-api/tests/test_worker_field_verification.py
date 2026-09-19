@@ -196,15 +196,18 @@ class WorkerFieldVerificationTests(unittest.TestCase):
                     worker.missing_required_fields(FakeEngine(row), self.config, self.account_id,
                                                    ("missing_mailing_address",))
 
-    def test_sql_binds_owners_land_parties_and_values_to_the_fresh_snapshot_year(self):
+    def test_sql_binds_owners_to_source_year_and_other_fields_to_fresh_snapshot_year(self):
+        from scraper.dcad.owner_source import owner_source_year_sql
         engine = self.verification_engine()
         worker.missing_required_fields(engine, self.config, self.account_id, ("owner",))
         sql = engine.calls[0][0]
         for clause in ("ORDER BY fetched_at DESC, tax_year DESC",
-                       "r.fetched_at >= q.last_attempt_at", "o.tax_year = r.tax_year",
+                       "r.fetched_at >= q.last_attempt_at", f"o.tax_year = {owner_source_year_sql('r')}",
                        "v.certified_year = r.tax_year", "l.tax_year = r.tax_year"):
             self.assertIn(clause, sql)
-        self.assertEqual(sql.count("WHERE account_id = r.account_id AND tax_year = r.tax_year"), 2)
+        self.assertEqual(sql.count("WHERE account_id = r.account_id AND tax_year = r.tax_year"), 1)
+        self.assertIn(f"WHERE account_id = r.account_id AND tax_year = {owner_source_year_sql('r')}", sql)
+        self.assertNotIn("o.tax_year = r.tax_year", sql)
 
     def test_claim_absorbs_exact_flags_for_existing_legacy_jobs(self):
         engine = FakeEngine({"account_id": self.account_id, "attempts": 0,

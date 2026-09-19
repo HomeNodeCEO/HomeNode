@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup, Tag, NavigableString
 from .normalize import clean_text, to_bool, to_num, to_sqft, pct_to_num
 
 
-PARSER_VERSION = "2025-09-07d"  # used only for debugging/verification
+PARSER_VERSION = "2026-09-19-owner-source-year"  # used only for debugging/verification
 
 
 # ------------------------------------------------------------
@@ -908,6 +908,7 @@ def parse_property_location(soup: BeautifulSoup) -> Dict[str, Any]:
     return {"address": address, "subject_address": address, "neighborhood": neighborhood, "mapsco": mapsco}
 
 def parse_owner(soup: BeautifulSoup) -> Dict[str, Any]:
+    from .owner_source import heading_year
     owner_span = soup.find(id="lblOwner")
     owner_name = None
     mailing_address = None
@@ -1035,6 +1036,14 @@ def parse_owner(soup: BeautifulSoup) -> Dict[str, Any]:
     out = {"owner_name": owner_name or "N/A", "multi_owner": multi_owner}
     # Always include mailing_address key for downstream consistency (may be None)
     out["mailing_address"] = mailing_address if mailing_address else None
+    # These headings describe current ownership, not the certified value year.
+    # Retain the original section label so an undated/conflicting source cannot
+    # silently acquire the valuation year when normalized later.
+    owner_heading = clean_text(owner_span.get_text(" ", strip=True)) if owner_span else None
+    parties_span = soup.find(id="lblMultiOwner")
+    parties_heading = clean_text(parties_span.get_text(" ", strip=True)) if parties_span else None
+    out.update(source_year=heading_year(owner_heading), source_heading=owner_heading,
+               parties_source_heading=parties_heading)
     return out
 
 def parse_legal_description(soup: BeautifulSoup) -> Dict[str, Any]:

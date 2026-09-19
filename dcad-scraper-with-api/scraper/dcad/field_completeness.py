@@ -5,6 +5,8 @@ from decimal import Decimal, InvalidOperation
 import re
 from typing import Any, Mapping
 
+from .owner_source import owner_source_year, owner_withheld
+
 
 NULLISH_TEXT = {"", "N/A", "NA", "NONE", "NULL", "UNASSIGNED", "N\\A", "-", "--"}
 VACANT_STATE_CODE_TERMS = ("VACANT", "VAC LOT", "VAC. LOT", "LOTS/TRACTS")
@@ -255,6 +257,7 @@ def parsed_verification_row(detail: Mapping[str, Any]) -> dict[str, Any]:
     return {
         "address": location.get("address") or location.get("subject_address"),
         "tax_year": detail.get("tax_year"),
+        "owner_source_year": owner_source_year(owner) if not owner_withheld(owner) else None,
         "owner_name": owner.get("owner_name"),
         "mailing_address": owner.get("mailing_address"),
         "ownership_percentage": sum(percentages) if percentages and all(
@@ -295,16 +298,18 @@ def verification_presence(row: Mapping[str, Any]) -> dict[str, bool]:
 
     codes = normalized_state_codes(row.get("state_codes"))
     vacant = classify_property(row)[0] == "vacant"
+    owner_dated = bool(re.fullmatch(r"[1-9][0-9]{3}", str(row.get("owner_source_year"))))
+    owner_dated = owner_dated and not owner_withheld({"owner_name": row.get("owner_name")})
     exact = {
         "address": meaningful(row.get("address")),
         "tax_year": positive(row.get("tax_year")),
         "market_value": nonnegative(row.get("market_value")),
         "land_value": nonnegative(row.get("land_value")),
         "land_area": positive(row.get("land_area")),
-        "owner_name": meaningful(row.get("owner_name"))
+        "owner_name": owner_dated and meaningful(row.get("owner_name"))
         and not bool(re.search(r"&\s*$", str(row.get("owner_name") or ""))),
-        "mailing_address": meaningful(row.get("mailing_address")),
-        "ownership_percentage": nonnegative(row.get("ownership_percentage")),
+        "mailing_address": owner_dated and meaningful(row.get("mailing_address")),
+        "ownership_percentage": owner_dated and nonnegative(row.get("ownership_percentage")),
         "state_code": bool(codes),
         "deed_transfer": meaningful(row.get("deed_transfer")),
         "improvement_value": nonnegative(row.get("improvement_value")),

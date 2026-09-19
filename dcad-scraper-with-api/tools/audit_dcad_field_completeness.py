@@ -19,6 +19,8 @@ from typing import Any
 import psycopg2
 from psycopg2.extras import RealDictCursor
 
+from scraper.dcad.owner_source import owner_name_key, owner_source_year_sql
+
 from scraper.dcad.field_completeness import (
     assess_field_completeness,
     COMMON_REQUIRED_FIELDS,
@@ -131,7 +133,7 @@ ORDER BY account_id LIMIT %(page_size)s
 
 ACCOUNT_AUDIT_SQL = f"""
 SELECT t.account_id, raw.fetched_at, raw.raw -> 'detail' AS parsed_detail,
-       a.address, owner.owner_name, owner.mailing_address,
+       a.address, owner.owner_name, owner.mailing_address, owner.tax_year AS owner_source_year,
        parties.ownership_percentage,
        {primary_structure_sql("improvement")} AS has_primary_improvement,
        improvement.building_class,
@@ -153,7 +155,7 @@ LEFT JOIN LATERAL (
 ) raw ON true
 LEFT JOIN core.accounts a ON a.account_id = t.account_id
 LEFT JOIN core.owner_summary owner
-  ON owner.account_id = t.account_id AND owner.tax_year = raw.tax_year
+  ON owner.account_id = t.account_id AND owner.tax_year = {owner_source_year_sql("raw")}
 LEFT JOIN core.primary_improvements improvement ON improvement.account_id = t.account_id
 LEFT JOIN core.value_summary_current value
   ON value.account_id = t.account_id AND value.certified_year = raw.tax_year
@@ -167,7 +169,7 @@ LEFT JOIN LATERAL (
 LEFT JOIN LATERAL (
     SELECT CASE WHEN count(*) > 0 AND count(*) = count(ownership_pct)
                 THEN sum(ownership_pct) END AS ownership_percentage
-    FROM core.owner_parties WHERE account_id = t.account_id AND tax_year = raw.tax_year
+    FROM core.owner_parties WHERE account_id = t.account_id AND tax_year = {owner_source_year_sql("raw")}
 ) parties ON true
 LEFT JOIN app.dcad_scrape_state state ON state.account_id = t.account_id
 LEFT JOIN app.dcad_field_repair_queue q ON q.account_id = t.account_id
@@ -197,6 +199,13 @@ def bounded_assessment(row: dict[str, Any]) -> FieldCompletenessAssessment:
     if isinstance(codes, str):
         codes = codes.split(" | ")
     normalized = {**row, "state_codes": codes}
+    detail = row.get("parsed_detail")
+    parsed_owner = parsed_verification_row(detail) if isinstance(detail, dict) else {}
+    parsed_owner_year = parsed_owner.get("owner_source_year")
+    if (parsed_owner_year is None or not owner_name_key(parsed_owner.get("owner_name"))
+            or normalized.get("owner_source_year") != parsed_owner_year
+            or owner_name_key(normalized.get("owner_name")) != owner_name_key(parsed_owner.get("owner_name"))):
+        normalized["owner_source_year"] = None
     assessment = assess_field_completeness({
         **normalized, "state_codes": " | ".join(str(code) for code in codes if code),
     })

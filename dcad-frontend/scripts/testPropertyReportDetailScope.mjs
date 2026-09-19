@@ -130,7 +130,7 @@ for (const [label, changes] of [['file', { assignmentFileId: 12 }], ['account', 
     const oldReload = h.current.reloadDetail;
     const immediate = h.render(h.initial(changes), false);
     assert.equal(immediate.detail, null, 'no previous-owner data before effects run');
-    await oldReload; assert.equal(h.calls.length, 1, 'old callback cannot issue work for discarded owner');
+    await oldReload(); assert.equal(h.calls.length, 1, 'old callback cannot issue work for discarded owner');
     h.commit(); assert.equal(h.calls.length, 2);
     const nextRequest = new URL(h.calls[1].url);
     assert.equal(nextRequest.pathname, `/api/accounts/${changes.accountId ?? h.initial().accountId}`);

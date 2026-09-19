@@ -1719,6 +1719,7 @@ def claim_next_reconciliation(
     worker_id: str,
 ) -> Optional[dict[str, object]]:
     reconciliations = _reconciliations_table(config)
+    campaign = _campaign_table(config)
     sql = text(
         f"""
         WITH candidate AS (
@@ -1727,6 +1728,12 @@ def claim_next_reconciliation(
             WHERE status IN ('pending_search', 'retry')
               AND next_attempt_at <= now()
               AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+              AND EXISTS (
+                  SELECT 1
+                  FROM {campaign} c
+                  WHERE c.campaign_key = :campaign_key
+                    AND c.outage_paused_until IS NULL
+              )
             ORDER BY next_attempt_at, created_at
             FOR UPDATE SKIP LOCKED
             LIMIT 1
@@ -1748,7 +1755,11 @@ def claim_next_reconciliation(
     with engine.begin() as conn:
         row = conn.execute(
             sql,
-            {"lease_minutes": config.lease_minutes, "worker_id": worker_id},
+            {
+                "lease_minutes": config.lease_minutes,
+                "worker_id": worker_id,
+                "campaign_key": config.campaign_key,
+            },
         ).mappings().first()
     return dict(row) if row else None
 
@@ -2295,14 +2306,16 @@ def advance_campaign_if_complete(
             return None
 
         if current["phase"] == "initial_missing":
-            remaining = int(
+            remaining = bool(
                 conn.execute(
                     text(
                         f"""
-                        SELECT count(*)
-                        FROM {targets}
-                        WHERE initial_missing
-                          AND initial_completed_at IS NULL
+                        SELECT EXISTS (
+                            SELECT 1
+                            FROM {targets}
+                            WHERE initial_missing
+                              AND initial_completed_at IS NULL
+                        )
                         """
                     )
                 ).scalar_one()
@@ -2352,13 +2365,15 @@ def advance_campaign_if_complete(
             return {"event_type": "initial_missing_complete", **payload}
 
         cycle_number = int(current["cycle_number"])
-        remaining = int(
+        remaining = bool(
             conn.execute(
                 text(
                     f"""
-                    SELECT count(*)
-                    FROM {targets}
-                    WHERE last_completed_cycle < :cycle_number
+                    SELECT EXISTS (
+                        SELECT 1
+                        FROM {targets}
+                        WHERE last_completed_cycle < :cycle_number
+                    )
                     """
                 ),
                 {"cycle_number": cycle_number},
@@ -2608,6 +2623,52 @@ def process_field_repair_safely(
         )
 
 
+def process_next_idle_auxiliary(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+    next_queue: int,
+) -> Optional[int]:
+    """Process at most one idle repair, rotating fairly among due queues.
+
+    The normal campaign cadence remains based on main-account attempts. This
+    separate cursor prevents a continuously populated repair queue from
+    starving the others while no main account is due.
+    """
+    queues = (
+        (
+            claim_next_owner_recovery,
+            lambda claim: process_owner_recovery_safely(
+                engine, config, worker_id, *claim
+            ),
+        ),
+        (
+            claim_next_field_repair,
+            lambda claim: process_field_repair_safely(
+                engine, config, worker_id, *claim
+            ),
+        ),
+        (
+            claim_next_reconciliation,
+            lambda claim: process_reconciliation_claim_safely(engine, config, claim),
+        ),
+        (
+            claim_next_market_value_recheck,
+            lambda claim: process_market_value_recheck_safely(
+                engine, config, worker_id, *claim
+            ),
+        ),
+    )
+    for offset in range(len(queues)):
+        queue_index = (next_queue + offset) % len(queues)
+        claim_next, process = queues[queue_index]
+        claim = claim_next(engine, config, worker_id)
+        if claim is not None:
+            process(claim)
+            return (queue_index + 1) % len(queues)
+    return None
+
+
 def run_worker(config: WorkerConfig, once: bool = False) -> int:
     if not os.getenv("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is not set")
@@ -2641,6 +2702,7 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
         0 if once else config.owner_recovery_every_accounts
     )
     processed_since_field_repair = 0 if once else config.field_repair_every_accounts
+    next_idle_queue = 0
     while not _stop_requested:
         if (
             not once
@@ -2693,45 +2755,22 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
 
         claim = claim_next_account(engine, config, worker_id)
         if claim is None:
-            owner_claim = claim_next_owner_recovery(engine, config, worker_id)
-            if owner_claim is not None:
-                process_owner_recovery_safely(
-                    engine, config, worker_id, *owner_claim
-                )
-                if once:
-                    return 0
-                _sleep(config.delay_seconds)
-                continue
-            field_claim = claim_next_field_repair(engine, config, worker_id)
-            if field_claim is not None:
-                process_field_repair_safely(engine, config, worker_id, *field_claim)
-                if once:
-                    return 0
-                _sleep(config.delay_seconds)
-                continue
-            recovery_claim = claim_next_reconciliation(engine, config, worker_id)
-            if recovery_claim is not None:
-                process_reconciliation_claim_safely(engine, config, recovery_claim)
-                if once:
-                    return 0
-                _sleep(config.delay_seconds)
-                continue
-            market_value_claim = claim_next_market_value_recheck(
-                engine, config, worker_id
-            )
-            if market_value_claim is not None:
-                process_market_value_recheck_safely(
-                    engine, config, worker_id, *market_value_claim
-                )
-                if once:
-                    return 0
-                _sleep(config.delay_seconds)
-                continue
+            # Completion depends only on validated campaign targets, not on
+            # whether unrelated legacy repair queues happen to be empty.
             event = advance_campaign_if_complete(engine, config)
             if event is not None:
                 _log_campaign_event(event)
                 if once:
                     return 0
+                continue
+            idle_cursor = process_next_idle_auxiliary(
+                engine, config, worker_id, next_idle_queue
+            )
+            if idle_cursor is not None:
+                next_idle_queue = idle_cursor
+                if once:
+                    return 0
+                _sleep(config.delay_seconds)
                 continue
             if once:
                 return 0

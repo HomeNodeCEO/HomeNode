@@ -15,6 +15,7 @@ function deferred() {
 test("account detail sections launch independent indexed lookups concurrently", async () => {
   const calls = [];
   const pending = [];
+  const fetchCalls = [];
   const pool = {
     query(sql, params) {
       const request = deferred();
@@ -25,7 +26,10 @@ test("account detail sections launch independent indexed lookups concurrently", 
   };
 
   const loading = loadAccountDetailSections(pool, "26572500130160000", {
-    fetchImpl: async () => ({ ok: true, json: async () => ({ features: [] }) }),
+    fetchImpl: async (...args) => {
+      fetchCalls.push(args);
+      return { ok: true, json: async () => ({ features: [] }) };
+    },
   });
   assert.equal(calls.length, 9);
   assert.ok(calls.every((call) => call.params[0] === "26572500130160000"));
@@ -48,6 +52,7 @@ test("account detail sections launch independent indexed lookups concurrently", 
   pending.forEach((request, index) => request.resolve({ rows: responses[index] }));
 
   const result = await loading;
+  assert.equal(fetchCalls.length, 1, "missing building class uses the explicit mocked fallback");
   assert.equal(result.primaryImprovement.living_area_sqft, 1800);
   assert.equal(result.housingProfile.housing_type, "Single Family Detached");
   assert.equal(result.owner.owner_name, "OWNER");
@@ -113,7 +118,11 @@ test("latest raw DCAD snapshot fills normalized CAD fields that are still blank"
     },
   };
 
-  const result = await loadAccountDetailSections(pool, "221508800I0190000");
+  const fetchCalls = [];
+  const result = await loadAccountDetailSections(pool, "221508800I0190000", {
+    fetchImpl: async (...args) => { fetchCalls.push(args); throw new Error("unexpected_external_fallback"); },
+  });
+  assert.equal(fetchCalls.length, 0);
   assert.equal(result.primaryImprovement.living_area_sqft, 1812);
   assert.equal(result.primaryImprovement.building_class, "14");
   assert.equal(result.owner.owner_name, "AARON PLACE OWNER");
@@ -172,6 +181,7 @@ test("missing historical fields use the official DCAD parcel fallback", async ()
 });
 test("optional land and secondary-improvement failures preserve the account response", async () => {
   const errors = [];
+  const fetchCalls = [];
   const pool = {
     query(sql) {
       if (/FROM core\.land_detail/.test(sql)) return Promise.reject(new Error("land unavailable"));
@@ -184,15 +194,17 @@ test("optional land and secondary-improvement failures preserve the account resp
 
   const result = await loadAccountDetailSections(pool, "ACCOUNT", {
     logger: { error: (...args) => errors.push(args) },
-    fetchImpl: async () => { throw new Error("should not query for a non-DCAD id"); },
+    fetchImpl: async (...args) => { fetchCalls.push(args); throw new Error("should not query for a non-DCAD id"); },
   });
 
+  assert.equal(fetchCalls.length, 0);
   assert.deepEqual(result.landRows, []);
   assert.deepEqual(result.additionalImprovements, []);
   assert.equal(errors.length, 2);
 });
 
 test("required section failures still fail the account request", async () => {
+  const fetchCalls = [];
   const pool = {
     query(sql) {
       if (/FROM core\.owner_summary/.test(sql)) return Promise.reject(new Error("owner failed"));
@@ -201,9 +213,12 @@ test("required section failures still fail the account request", async () => {
   };
 
   await assert.rejects(
-    () => loadAccountDetailSections(pool, "ACCOUNT", { logger: { error() {} } }),
+    () => loadAccountDetailSections(pool, "ACCOUNT", { logger: { error() {} },
+      fetchImpl: async (...args) => { fetchCalls.push(args); throw new Error("unexpected_external_fallback"); },
+    }),
     /owner failed/,
   );
+  assert.equal(fetchCalls.length, 0);
 });
 
 function currentRawOwner(overrides = {}) {
@@ -231,8 +246,18 @@ async function ownerSections({ normalized, raw, attributes = {}, snapshotYear = 
       if (!live) throw new Error("unexpected_external_fallback");
       return { ok: true, json: async () => ({ features: [{ attributes: live }] }) };
     } });
+  // The loader tolerates fallback failures, so throwing in the mock alone is
+  // insufficient. Every offline caller must assert outside that catch path.
+  if (!live) assert.equal(fetches.length, 0, "offline owner fixture must not request an external fallback");
   return { result, queries, fetches };
 }
+
+test("offline owner fixture detects a swallowed unexpected fallback failure", async () => {
+  await assert.rejects(
+    ownerSections({ accountId: "98765432101234567" }),
+    /offline owner fixture must not request an external fallback/,
+  );
+});
 
 test("normalized owner parties are bound to the selected summary year, not an independent latest year", async () => {
   const normalized = { owner_name: "STORED OWNER", mailing_address: "100 STORED ST", tax_year: 2026,

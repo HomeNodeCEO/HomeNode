@@ -168,6 +168,7 @@ function harness(t, db, initialSection, overrides = {}) {
   };
   const Host = compile('components/CustomNeighborhoodWorkspaceHost.tsx', {
     react, 'react/jsx-runtime': jsx, '../customWorkspaceLifecycle': lifecycle,
+    '../customWorkspaceCheckpoint': checkpoint,
     '../customWorkspaceRequestLane': lane, './CustomCohortWorkspace': { default: WorkspaceStub, __esModule: true },
     './CustomReportedObservationAdoption': { default: AdoptionStub, __esModule: true },
     '../../../data/neighborhoodCityBoundaries.json': { default: cityCatalog, __esModule: true },
@@ -193,6 +194,9 @@ function harness(t, db, initialSection, overrides = {}) {
     workspace: () => walk(tree).find(node => node.type === WorkspaceStub)?.props,
     adoption: () => walk(tree).find(node => node.type === AdoptionStub),
     button(label) { return walk(tree).find(node => node.type === 'button' && text(node) === label); },
+    dates(start, end) { const inputs = walk(tree).filter(node => node.type === 'input' && node.props.type === 'date');
+      assert.equal(inputs.length, 2); inputs[0].props.onChange({ target: { value: start } });
+      inputs[1].props.onChange({ target: { value: end } }); flush(); },
     radius(value) { const select = walk(tree).find(node => node.type === 'select'); assert.ok(select);
       assert.equal(Boolean(select.props.disabled), false); select.props.onChange({ target: { value } }); flush(); },
     click(label) { const node = this.button(label); assert.ok(node, label); assert.equal(Boolean(node.props.disabled), false, `${label} enabled`);
@@ -207,6 +211,93 @@ function harness(t, db, initialSection, overrides = {}) {
   };
 }
 const kinds = db => db.calls.map(call => call.kind);
+
+for (const dates of [
+  { start_date: '2026-09-20', end_date: '2026-09-19' },
+  { start_date: '2023-02-29', end_date: '2024-02-29' },
+  { start_date: '2024-02-29', end_date: '' },
+]) test(`invalid displayed period ${JSON.stringify(dates)} never allocates an operation and is editable without reload`, async t => {
+  const uuid = t.mock.method(globalThis.crypto, 'randomUUID');
+  const db = server(), h = harness(t, db, undefined, { initialPeriod: dates }); await h.settle();
+  assert.deepEqual(kinds(db), []); assert.equal(uuid.mock.callCount(), 0);
+  assert.match(h.text(), /Choose valid observation start and end dates/);
+  const start = h.button('Start 3-mile exploration'); assert.equal(start.props.disabled, true);
+  start.props.onClick(); await h.settle();
+  assert.equal(await h.controls.useReviewedSales({ batch_id: OLD, expected_review_revision: 1 }), false);
+  assert.deepEqual(kinds(db), []); assert.equal(uuid.mock.callCount(), 0);
+  assert.equal(db.file(TARGET).section, undefined); assert.equal(await h.controls.flush(), true);
+  h.dates(PERIOD.start_date, PERIOD.end_date); h.click('Start 3-mile exploration'); await h.settle();
+  assert.deepEqual(kinds(db), ['save', 'capture', 'catalog', 'save']);
+  assert.equal(uuid.mock.callCount(), 1); assert.doesNotMatch(h.text(), /Choose valid observation/);
+  assert.deepEqual(db.calls.find(call => call.kind === 'capture').body.observation_period, PERIOD);
+  assert.equal(await h.controls.flush(), true);
+});
+
+for (const [code, guidance] of [
+  ['neighborhood_service_busy', 'neighborhood processing is busy'],
+  ['neighborhood_request_interrupted', 'Loading the saved study was interrupted'],
+]) test(`catalog ${code} preserves pending UUID and requires explicit recovery, not another capture`, async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('catalog', (call, respond) => call.body.context_ref.context_id === OLD ? respond()
+    : json({ error: code, detail: 'SECRET database text' }, 503));
+  h.click('Capture a new 3-mile study'); await h.settle();
+  const pending = copy(db.file(TARGET).section.value.pending_capture);
+  assert.ok(h.text().includes(guidance)); assert.doesNotMatch(h.text(), /SECRET|database text/);
+  assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
+  assert.equal(h.button('Resume saved capture').props.disabled, true);
+  h.button('Resume saved capture').props.onClick(); await h.settle();
+  assert.equal(db.calls.filter(call => call.kind === 'capture').length, 1);
+  h.click('Reload saved choices'); await h.settle();
+  assert.deepEqual(db.file(TARGET).section.value.pending_capture, pending);
+  assert.equal(h.button('Resume saved capture').props.disabled, false); assert.equal(await h.controls.flush(), false);
+  db.overrides.delete('catalog'); h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(db.calls.filter(call => call.kind === 'capture').map(call => call.body.operation_id), [pending.operation_id, pending.operation_id]);
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(db.maxOpen, 1);
+  assert.equal(await h.controls.flush(), true);
+});
+
+for (const [status, code, guidance] of [
+  [401, 'authentication_required', 'Sign in again'],
+  [409, 'custom_appraisal_section_revision_conflict', 'changed in another request'],
+  [409, 'custom_appraisal_workfile_signed', 'signed and no longer accepts workspace changes'],
+]) test(`pending save ${status}/${code} has fixed guidance and never calls capture`, async t => {
+  const db = server(); db.overrides.set('save', () => json({ error: code, detail: 'SECRET ownership data' }, status));
+  const h = harness(t, db); await h.settle();
+  assert.ok(h.text().includes(guidance)); assert.doesNotMatch(h.text(), /SECRET|ownership data/);
+  assert.deepEqual(kinds(db), ['save']); assert.equal(db.file(TARGET).section, undefined);
+  assert.equal(await h.controls.flush(), false); assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
+});
+
+test('unknown catalog and pending-save refusals remain generic and never display raw server text', async t => {
+  for (const kind of ['catalog', 'save']) {
+    const db = server(); db.overrides.set(kind, () => json({ error: 'neighborhood_service_busy\n', detail: 'SECRET' }, 503));
+    const h = harness(t, db); await h.settle();
+    assert.match(h.text(), /The neighborhood workspace could not finish updating/);
+    assert.doesNotMatch(h.text(), /SECRET|neighborhood processing is busy/);
+    assert.equal(await h.controls.flush(), false); h.unmount();
+  }
+});
+
+test('fresh absent reload after uncertain pending save allows explicit same-UUID recovery without creating another operation', async t => {
+  const uuid = t.mock.method(globalThis.crypto, 'randomUUID');
+  const db = server(); db.overrides.set('save', () => { throw new Error('SECRET failed before a confirmed save'); });
+  const h = harness(t, db); await h.settle();
+  const pending = copy(db.calls[0].body.value.pending_capture), accepted = copy(db.file(TARGET).accepted);
+  assert.deepEqual(kinds(db), ['save']); assert.equal(uuid.mock.callCount(), 1);
+  assert.equal(db.file(TARGET).section, undefined); assert.equal(await h.controls.flush(), false);
+  h.click('Reload saved choices'); await h.settle();
+  assert.deepEqual(kinds(db), ['save', 'read']); assert.match(h.text(), /pending study choice has not been confirmed/);
+  assert.equal(h.button('Resume saved capture').props.disabled, false);
+  assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
+  assert.equal(await h.controls.flush(), false); assert.equal(uuid.mock.callCount(), 1);
+  db.overrides.delete('save'); h.click('Resume saved capture'); await h.settle();
+  assert.deepEqual(kinds(db), ['save', 'read', 'save', 'capture', 'catalog', 'save']);
+  assert.deepEqual(db.calls.filter(call => call.kind === 'save').slice(0, 2).map(call => call.body.value.pending_capture), [pending, pending]);
+  assert.equal(db.calls.find(call => call.kind === 'capture').body.operation_id, pending.operation_id);
+  assert.equal(uuid.mock.callCount(), 1); assert.equal(await h.controls.flush(), true);
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(db.maxOpen, 1);
+});
 
 test('capacity after new capture preserves pending UUID, old study, exact reload and explicit set-aside CAS', async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();

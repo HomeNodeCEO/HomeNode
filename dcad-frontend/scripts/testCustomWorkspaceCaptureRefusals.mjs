@@ -82,14 +82,19 @@ for (const [status, serverCode, workspaceCode] of REFUSALS) {
       await assert.rejects(apiFor(wrong, { error: serverCode }).api.capture(input(), io()), rejection('request_failed', wrong));
     }
   });
-  test(`${serverCode} does not widen other API methods or report Apply errors`, async () => {
+  test(`${serverCode} has only explicit operation-specific mappings and never widens report Apply errors`, async () => {
     const f = apiFor(status, { error: serverCode, detail: 'secret' });
     const requests = [() => f.api.read(TARGET, io()),
       () => f.api.save({ target: TARGET, sectionKey: 'neighborhood_workspace', value: initialSection().value, expectedRevision: 5 }, io()),
       () => f.api.catalog(previewInput, io()), () => f.api.preview({ ...previewInput, include_map: true }, io()),
       () => f.api.members(previewInput, { group: 'selected', kind: 'stock' }, { limit: 50, after_member_id: null }, io()),
       () => f.api.reportedOperation({ target: TARGET, operation: 'reported-apply', body: {} }, io())];
-    for (const request of requests) await assert.rejects(request(), rejection('request_failed', status));
+    const expected = ['request_failed',
+      serverCode === 'authentication_required' ? 'save_authentication_required' : 'request_failed',
+      serverCode === 'neighborhood_service_busy' ? 'catalog_service_busy'
+        : serverCode === 'neighborhood_request_interrupted' ? 'catalog_interrupted' : 'request_failed',
+      'request_failed', 'request_failed', 'request_failed'];
+    for (let index = 0; index < requests.length; index++) await assert.rejects(requests[index](), rejection(expected[index], status));
     assert.equal(f.requests.length, requests.length);
   });
 }

@@ -342,6 +342,31 @@ test('all HTTP methods sanitize private server messages while preserving HTTP st
     }
   }
 });
+for (const [operation, status, errorCode, workspaceCode] of [
+  ['catalog', 503, 'neighborhood_service_busy', 'catalog_service_busy'],
+  ['catalog', 503, 'neighborhood_request_interrupted', 'catalog_interrupted'],
+  ['save', 401, 'authentication_required', 'save_authentication_required'],
+  ['save', 409, 'custom_appraisal_section_revision_conflict', 'save_revision_conflict'],
+  ['save', 409, 'custom_appraisal_workfile_signed', 'save_read_only'],
+]) test(`${operation} recovery maps only exact ${status}/${errorCode}, never server text or another operation`, async () => {
+  const input = operation === 'save' ? saveInput() : previewInput();
+  const f = fixture(() => json({ error: errorCode, detail: 'SECRET' }, status));
+  await assert.rejects(f.api[operation](input, io()), error => error.workspaceCode === workspaceCode
+    && error.status === status && error.message === `custom_workspace_${workspaceCode}` && !error.cause);
+  assert.equal(f.requests.length, 1);
+  for (const [body, responseStatus] of [
+    [{ error: errorCode }, 500], [{ error: `${errorCode}\n` }, status],
+    [{ message: errorCode }, status], [{ error: `${errorCode}: SECRET` }, status],
+  ]) {
+    const unknown = fixture(() => json(body, responseStatus));
+    await assert.rejects(unknown.api[operation](input, io()), error => error.workspaceCode === 'request_failed'
+      && error.status === responseStatus && error.message === 'custom_workspace_request_failed' && !error.cause);
+    assert.equal(unknown.requests.length, 1);
+  }
+  const untouched = fixture(() => json({ error: errorCode }, status));
+  await assert.rejects(untouched.api.read(TARGET, io()), error => error.workspaceCode === 'request_failed');
+  await assert.rejects(untouched.api.preview({ ...previewInput(), include_map: true }, io()), error => error.workspaceCode === 'request_failed');
+});
 test('network, invalid JSON, wrong content type, and editor lookup failures expose no raw message', async () => {
   const cases = [
     fixture(() => { throw new Error('network-private'); }),

@@ -24,6 +24,7 @@ new Script(`(function(require,module,exports){${compiled.outputText}\n})`, { fil
   return catalogHelpers;
 }, module, module.exports);
 const { prepareCustomWorkspaceCheckpoint: prepare, readCustomWorkspaceCheckpoint: read,
+  hasValidCustomWorkspaceObservationPeriod: validPeriod,
   restoreCustomWorkspaceSelection: restore, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION: sectionKey,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS: limits } = module.exports;
 const UUID = '10000000-0000-4000-8000-000000000001', OTHER_UUID = '10000000-0000-4000-8000-000000000002';
@@ -53,6 +54,18 @@ const validValues = () => {
     included_recorded_group_ids: [...Array.from({ length: 128 }, (_, i) => groupId(i)), UNASSIGNED] };
   return [fixture(), activeOnly, pendingOnly, empty, sameOperation, largest, { workspace_version: 1, active: null, pending_capture: null }];
 };
+
+test('capture date admission shares exact checkpoint validation without normalizing or inferring input', () => {
+  for (const value of [period(), { start_date: '2024-02-29', end_date: '2024-02-29' }]) {
+    const before = structuredClone(value); assert.equal(validPeriod(value), true); assert.deepEqual(value, before);
+  }
+  for (const value of [null, undefined, {}, [], { start_date: '', end_date: '' },
+    { start_date: '2023-02-29', end_date: '2024-02-29' }, { start_date: '2024-03-01', end_date: '2024-02-29' },
+    { start_date: ' 2024-01-01', end_date: '2024-02-29' }, { start_date: '2024-1-1', end_date: '2024-02-29' },
+    { ...period(), extra: true }, { get start_date() { throw new Error('must not execute'); }, end_date: '2024-02-29' }]) {
+    assert.equal(validPeriod(value), false);
+  }
+});
 
 test('v5 admits 1024 exact recorded IDs plus unresolved with frontend/backend parity; legacy bounds stay unchanged', () => {
   const value = fixture(); value.workspace_version = 5;

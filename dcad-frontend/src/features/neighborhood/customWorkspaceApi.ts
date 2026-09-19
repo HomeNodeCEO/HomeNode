@@ -46,6 +46,27 @@ const CAPTURE_FAILURES = new Map<string, readonly [number, string]>([
   ['neighborhood_request_interrupted', [503, 'capture_interrupted']],
   ['neighborhood_service_busy', [503, 'capture_service_busy']],
 ]);
+const CATALOG_FAILURES = new Map<string, readonly [number, string]>([
+  ['neighborhood_service_busy', [503, 'catalog_service_busy']],
+  ['neighborhood_request_interrupted', [503, 'catalog_interrupted']],
+]);
+// Existing workfile mutation responses only. Neither a bare HTTP status nor
+// server display text establishes one of these recovery conditions.
+const SAVE_FAILURES = new Map<string, readonly [number, string]>([
+  ['authentication_required', [401, 'save_authentication_required']],
+  ['custom_appraisal_section_revision_conflict', [409, 'save_revision_conflict']],
+  ['custom_appraisal_workfile_signed', [409, 'save_read_only']],
+]);
+async function knownFailure<T>(failures: ReadonlyMap<string, readonly [number, string]>, task: () => Promise<T>): Promise<T> {
+  try { return await task(); }
+  catch (error) {
+    if (error instanceof Error && 'status' in error && 'errorCode' in error && typeof error.errorCode === 'string') {
+      const known = failures.get(error.errorCode);
+      if (known && error.status === known[0]) throw new WorkspaceApiError(known[1], known[0]);
+    }
+    throw error;
+  }
+}
 const requireThat: (ok: unknown, code: string) => asserts ok = (ok, code) => {
   if (!ok) throw new WorkspaceApiError(code);
 };
@@ -152,8 +173,8 @@ export function createCustomWorkspaceApi(options: Options) {
         let value: CustomWorkspaceCheckpoint;
         try { value = prepareCustomWorkspaceCheckpoint(input.value); } catch { throw new WorkspaceApiError('invalid_input'); }
         const key = await editorKey(options, bound, io); checkSignal(io.signal);
-        const envelope = responseIdentity(await workfile.save(bound.accountId, bound.assignmentFileId,
-          { value, expectedRevision: expected, editorKey: key }, io), bound);
+        const envelope = responseIdentity(await knownFailure(SAVE_FAILURES, () => workfile.save(bound.accountId, bound.assignmentFileId,
+          { value, expectedRevision: expected, editorKey: key }, io)), bound);
         responseFile(envelope.assignment_file_id, bound.assignmentFileId);
         const saved = section(envelope.section);
         requireThat(saved.revision === expected + 1 && JSON.stringify(saved.value) === JSON.stringify(value), 'invalid_response');
@@ -204,10 +225,10 @@ export function createCustomWorkspaceApi(options: Options) {
         const mode = Object.hasOwn(input, 'initialPreviewMode');
         requireThat(!mode || (input.initialPreviewMode === 'all_catalog_groups'
           && !Object.hasOwn(input, 'initialPreviewGroups')), 'invalid_input');
-        return cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
+        return knownFailure(CATALOG_FAILURES, () => cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
           ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }),
-          ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}) }, io);
+          ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}) }, io));
       });
     },
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {

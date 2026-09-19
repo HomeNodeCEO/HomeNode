@@ -46,7 +46,8 @@ def complete_mocked_coroutine(coroutine):
 
 
 class ApiOwnerRefreshTests(unittest.TestCase):
-    def refresh(self, parsed_owner, stored_owner=None, persist_result=True, db_owner=None, failure=None):
+    def refresh(self, parsed_owner, stored_owner=None, persist_result=True, db_owner=None, failure=None,
+                secondary_status=None):
         stored = {
             "tax_year": 2026,
             "owner": stored_owner if stored_owner is not None else {
@@ -59,6 +60,7 @@ class ApiOwnerRefreshTests(unittest.TestCase):
             "main_improvement": {"bedroom_count": None, "baths_full": None, "building_class": None},
             "history": {"owner_history": [{"observed_year": 2026}], "exemptions": [{"year": 2026}]},
             "exemptions_table": [{"year": 2026}],
+            "secondary_improvements": [{"imp_num": 1, "imp_type": "RETAINED GARAGE", "area_size": 440}],
         }
         original = deepcopy(stored)
         parsed = {
@@ -67,6 +69,8 @@ class ApiOwnerRefreshTests(unittest.TestCase):
             "property_location": {"address": "10 FRESH SITUS", "neighborhood": "FRESH NEIGHBORHOOD", "mapsco": "A1"},
             "legal_description": {"lines": ["FRESH PLAT", "LOT 10"], "deed_transfer_date": "01/02/2026"},
             "main_improvement": {"bedroom_count": 4, "baths_full": 2, "bath_count": "2", "building_class": "15"},
+            "secondary_improvements": [],
+            "improvement_sections": {"main": "present", "additional": secondary_status},
         }
         engine, reader, writer = MagicMock(), MagicMock(), MagicMock()
         engine.connect.return_value.__enter__.return_value = reader
@@ -142,6 +146,14 @@ class ApiOwnerRefreshTests(unittest.TestCase):
             read_owner.assert_called_once_with(writer, ACCOUNT)
         writer.owner_read = read_owner
         return result.detail, original, parsed, persist, writer
+
+    def test_light_api_refresh_never_replaces_stored_secondary_group(self):
+        for status in ("unresolved", "explicitly_absent", "present", None):
+            with self.subTest(status=status):
+                detail, original, _, _, writer = self.refresh(fresh_owner(), secondary_status=status)
+                self.assertEqual(detail["secondary_improvements"], original["secondary_improvements"])
+                self.assertFalse(any("secondary_improvements" in str(call.args[0])
+                                     for call in writer.execute.call_args_list))
 
     def test_fresh_owner_replaces_group_and_persists_original_bundle_not_valuation_year(self):
         owner = fresh_owner()

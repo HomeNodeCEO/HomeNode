@@ -25,6 +25,7 @@ import { validateCachedTransactionClosure } from './cachedTransactionClosure.js'
 import { decodeNeighborhoodOriginalValue } from './originalValueDecoding.js';
 import { prepareCustomCohortPrivateSalesSupplement } from './customCohortPrivateSales.js';
 import { SPATIAL_TUPLE_LIMITS, spatialParcelEncoding, iterateSpatialParcels } from './spatialMembershipEncoding.js';
+import { withCustomCohortRetentionTiming } from './customCohortRetentionTiming.js';
 
 export const CUSTOM_COHORT_CAPTURE_INPUT_LIMITS = Object.freeze({
   blobs: 4000, references: 12000, logical_utf8_bytes: 512_000_000, page_entries: 250,
@@ -509,6 +510,12 @@ async function transaction(client) {
 /** No connection or transaction lifecycle, context/head/report writes, or grant
  * minting. Owner must roll back any failure and COMMIT before durable success. */
 export async function persistCustomCohortCaptureInputs(client, scopeJson, prepared) {
+  if (typeof client?.query !== 'function' || typeof client.release !== 'function')
+    return persistPreparedInputs(client, scopeJson, prepared);
+  return withCustomCohortRetentionTiming(client, observed => persistPreparedInputs(observed, scopeJson, prepared));
+}
+
+async function persistPreparedInputs(client, scopeJson, prepared) {
   const p = preparedPlans.get(prepared); check(p, 'original_preparation_required');
   check(same(prepareCustomCohortContextScope(scopeJson), p.scope), 'scope_mismatch');
   const started = await transaction(client), store = createNeighborhoodCohortBlobRepository(client, p.scope.organization_id);

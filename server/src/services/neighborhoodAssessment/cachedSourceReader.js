@@ -378,10 +378,21 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       const maximum=profile.dense && tag==='parcels' ? limits.row_bytes
         : Math.min(limits.row_bytes,NEIGHBORHOOD_CACHE_READER_LIMITS.row_bytes);
       const pageGuard=profile.dense ? ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}` : '';
-      const result=await query(tag,`WITH projected AS MATERIALIZED (${sql}), encoded AS (
+      // Dense parcel pages can carry substantial exact EWKB. Fence JSON encoding
+      // and its text byte count separately so the guard, window, return and sort
+      // do not repeatedly encode/measure each same payload. Keep the projection,
+      // keyset and limits unchanged; all other reader SQL stays byte-for-byte.
+      const statement=profile.dense && tag==='parcels'
+        ? `WITH projected AS MATERIALIZED (${sql}), encoded AS MATERIALIZED (
+        SELECT to_jsonb(projected) AS payload FROM projected), measured AS MATERIALIZED (
+        SELECT payload,octet_length(payload::text) AS row_bytes FROM encoded)
+        SELECT CASE WHEN row_bytes<=${maximum} AND sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}
+          THEN payload ELSE NULL END AS payload,row_bytes FROM measured ORDER BY ${ORDER[tag]}`
+        : `WITH projected AS MATERIALIZED (${sql}), encoded AS (
         SELECT to_jsonb(projected) AS payload FROM projected)
         SELECT CASE WHEN octet_length(payload::text)<=${maximum}${pageGuard} THEN payload ELSE NULL END AS payload,
-          octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${ORDER[tag]}`,values);
+          octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${ORDER[tag]}`;
+      const result=await query(tag,statement,values);
       // Independently verify the complete page before retaining even its first
       // row. PostgreSQL returns only sizes/null sentinels when a page is too big.
       // Any stock-page fallback below happens before retention, never by trimming

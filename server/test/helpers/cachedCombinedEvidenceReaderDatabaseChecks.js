@@ -67,6 +67,16 @@ async function checkDenseParcelTransport(client, legacySql, denseSql) {
   assert.ok(excessivePage.every(row => row.row_bytes <= DENSE_CAD_CACHE_READER_LIMITS.row_bytes));
   assert.ok(excessivePage.reduce((sum, row) => sum + row.row_bytes, 0) > DENSE_CAD_SQL_PAGE_BYTES);
   assert.ok(excessivePage.every(row => row.payload === null), 'the entire oversized page, including lookahead, is withheld');
+  const fastPage = (await client.query(dense, [300, 501])).rows;
+  assert.equal(fastPage.length, 501);
+  assert.ok(fastPage.every(row => row.row_bytes <= 64000 && row.payload === null),
+    'individually ordinary rows can exceed the unchanged whole-page budget at the fast size');
+  const fallbackPage = (await client.query(dense, [300, 251])).rows;
+  assert.equal(fallbackPage.length, 251);
+  assert.ok(fallbackPage.every(row => row.payload !== null));
+  assert.ok(fallbackPage.reduce((sum,row) => sum + row.row_bytes,0) <= DENSE_CAD_SQL_PAGE_BYTES);
+  assert.deepEqual(fallbackPage.map(row => row.row_bytes),fastPage.slice(0,251).map(row => row.row_bytes),
+    'the smaller transport accepts the same exact native rows, without geometry rewriting');
 }
 
 /** Read-only continuation of the exact preceding synthetic coordinator fixture.

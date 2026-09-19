@@ -318,6 +318,9 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
   const limits=limitsOf(overrides,profile.dense ? DENSE_CAD_CACHE_READER_LIMITS : undefined);
+  // Only stock pages use the dense fast path. Identity/transaction details keep
+  // their original row bounds and fan-out sentinels even for dense captures.
+  const detailPageSize=Math.min(limits.page_size,NEIGHBORHOOD_CACHE_READER_LIMITS.page_size);
   async function capture(input, owner=null, timing=null) {
     const callerOwned=owner!==null;
     const options=callerOwned ? owner.options : {};
@@ -381,7 +384,8 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
           octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${ORDER[tag]}`,values);
       // Independently verify the complete page before retaining even its first
       // row. PostgreSQL returns only sizes/null sentinels when a page is too big.
-      // No trimming, smaller-page retry, or rewritten geometry can hide a limit.
+      // Any stock-page fallback below happens before retention, never by trimming
+      // a returned prefix or rewriting geometry to hide a row-level limit.
       if (profile.dense) {
         let pageBytes=0;
         for (const row of result) {
@@ -412,11 +416,24 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
     };
     const page=async (tag,sql,values,cursorIndex,cursorOf,onRow) => {
       let cursor=values[cursorIndex];
+      let pageSize=profile.dense && (tag==='parcels' || tag==='accounts') ? limits.page_size : detailPageSize;
+      const limitIndex=values.length-1;
+      values[limitIndex]=pageSize+1;
       while (true) {
-        const result=await rows(tag,sql,values);
-        for (const row of result.slice(0,limits.page_size)) onRow(row);
-        if (result.length<=limits.page_size) return;
-        const next=cursorOf(result[limits.page_size-1]);
+        let result;
+        try { result=await rows(tag,sql,values); }
+        catch (error) {
+          // No row from the refused page was retained. Retry this same cursor
+          // once at the original stock page size, in the same owned snapshot.
+          // Oversized individual rows and all other failures remain terminal.
+          if (profile.dense && pageSize>detailPageSize && INTERNAL_INCOMPLETE.get(error)==='page_bytes_limit') {
+            pageSize=detailPageSize; values[limitIndex]=pageSize+1; continue;
+          }
+          throw error;
+        }
+        for (const row of result.slice(0,pageSize)) onRow(row);
+        if (result.length<=pageSize) return;
+        const next=cursorOf(result[pageSize-1]);
         if (next===cursor) incomplete('nonadvancing_cursor');
         cursor=next; values[cursorIndex]=next;
       }
@@ -459,7 +476,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         const absent=columns.split(' ').filter(column => !present.has(column));
         return [key,{ relation:table,state:!present.size?'absent':absent.length?'unsupported_schema':'available',missing_columns:absent }];
       }));
-      const n=limits.page_size+1;
+      const n=detailPageSize+1;
       const originRuns=new Set();
       let syncState=null;
       if (available('parcels')) {
@@ -499,8 +516,8 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (available('sync_runs')) {
         const ids=[...originRuns].sort(compare);
         const completed=new Set();
-        for (let at=0;at<ids.length;at+=limits.page_size) {
-          const batch=ids.slice(at,at+limits.page_size);
+        for (let at=0;at<ids.length;at+=detailPageSize) {
+          const batch=ids.slice(at,at+detailPageSize);
           const found=await rows('sync-runs',SQL.sync_runs,[batch,batch.length+1]);
           if (found.length>batch.length) incomplete('duplicate_source_identity');
           for (const run of found) { retain('gis_sync',`run:${run.id}`,run);
@@ -534,7 +551,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         let after='0';
         while (true) {
           const found=await rows('source-ids',sourceIdsSql,[request.account_ids,after,n]);
-          const ids=found.slice(0,limits.page_size).map(row => big(row.source_record_id));
+          const ids=found.slice(0,detailPageSize).map(row => big(row.source_record_id));
           if (ids.length) {
             seedIds.push(...ids);
             const identities=await rows('transaction-identities',SQL.transaction_identities,[ids,ids.length+1]);
@@ -544,15 +561,15 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
             let cursor=['0',0,0];
             while (true) {
               const links=await rows('link-identities',SQL.link_identities,[ids,...cursor,n]);
-              for (const row of links.slice(0,limits.page_size)) retainIdentity('links',row);
-              if (links.length<=limits.page_size) break;
-              const last=links[limits.page_size-1];
+              for (const row of links.slice(0,detailPageSize)) retainIdentity('links',row);
+              if (links.length<=detailPageSize) break;
+              const last=links[detailPageSize-1];
               const next=[big(last.source_record_id),last.source_position,last.parcel_sequence];
               if (next.join(':')===cursor.join(':')) incomplete('nonadvancing_cursor');
               cursor=next;
             }
           }
-          if (found.length<=limits.page_size) break;
+          if (found.length<=detailPageSize) break;
           const next=ids.at(-1);
           if (next===after) incomplete('nonadvancing_cursor');
           after=next;
@@ -562,8 +579,8 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         const observedClosure=validateCachedTransactionClosure({selected_account_ids:request.account_ids,
           source_revision:authorized.transaction_closure.source_revision,...identityRows});
         if (observedClosure.closure_sha256!==authorized.transaction_closure.closure_sha256) incomplete('transaction_association_drift');
-        for (let at=0;at<seedIds.length;at+=limits.page_size) {
-          const ids=seedIds.slice(at,at+limits.page_size);
+        for (let at=0;at<seedIds.length;at+=detailPageSize) {
+          const ids=seedIds.slice(at,at+detailPageSize);
             const transactions=await rows('transactions',profile.transactionsSql,[ids,ids.length+1]);
             if (transactions.length>ids.length) incomplete('duplicate_source_identity');
             const seen=new Set();
@@ -572,9 +589,9 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
             let cursor=['0',0,0];
             while (true) {
               const links=await rows('sale-links',SQL.sale_links,[ids,...cursor,n]);
-              for (const row of links.slice(0,limits.page_size)) retain('sale_links',`link:${big(row.parcel_link_id)}`,row);
-              if (links.length<=limits.page_size) break;
-              const last=links[limits.page_size-1];
+              for (const row of links.slice(0,detailPageSize)) retain('sale_links',`link:${big(row.parcel_link_id)}`,row);
+              if (links.length<=detailPageSize) break;
+              const last=links[detailPageSize-1];
               const next=[big(last.source_record_id),last.source_position,last.parcel_sequence];
               if (next.join(':')===cursor.join(':')) incomplete('nonadvancing_cursor');
               cursor=next;

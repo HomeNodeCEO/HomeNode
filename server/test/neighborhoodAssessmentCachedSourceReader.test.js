@@ -3,15 +3,15 @@ import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader,
   createNeighborhoodSaleWitnessSourceReader, createNeighborhoodCadEvidenceSourceReader,
-  createNeighborhoodDenseCadEvidenceSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+  createNeighborhoodDenseCadEvidenceSourceReader, NEIGHBORHOOD_CACHE_READER_VERSION } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { CACHED_CAD_EVIDENCE_FIELDS } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
 import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_SQL_PAGE_BYTES } from '../src/services/neighborhoodAssessment/denseCadCapturePolicy.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
-import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
+import { CACHED_SOURCE_CAPTURE_LIMITS, DENSE_CAD_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
-import { cohortFixtureQueryHash } from './fixtures/neighborhoodCohortLocalQueryEvidenceFixture.js';
+import { cohortFixtureQueryHash, makeCohortLocalQueryMetadata } from './fixtures/neighborhoodCohortLocalQueryEvidenceFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
@@ -176,7 +176,7 @@ test('dense parcel headroom preserves complete exact EWKB and records the actual
 });
 
 test('retained legacy dense limits and every small-row evidence record stay unchanged', async () => {
-  const old=denseCad({limits:{row_bytes:64000}}), current=denseCad();
+  const old=denseCad({limits:{row_bytes:64000,bytes:128000000,page_size:250}}), current=denseCad();
   const before=await old.reader.capture(request()), after=await current.reader.capture(request());
   assert.equal(before.status,'captured'); assert.equal(after.status,'captured');
   const originalBytes=JSON.stringify(before.query_evidence), originalHashes=captureHashes(before);
@@ -184,8 +184,61 @@ test('retained legacy dense limits and every small-row evidence record stay unch
   assert.equal(before.counts.bytes,after.counts.bytes); assert.equal(before.counts.records,after.counts.records);
   assert.equal(prepareCohortLocalQueryEvidenceV1(originalBytes).status,'syntax_valid');
   assert.equal(JSON.stringify(before.query_evidence),originalBytes); assert.deepEqual(captureHashes(before),originalHashes);
-  for (const entry of before.source_capture.sources) assert.equal(entry.payload.projection.definition.limits.row_bytes,64000);
+  for (const entry of before.source_capture.sources) {
+    assert.equal(entry.payload.projection.definition.limits.row_bytes,64000);
+    assert.equal(entry.payload.projection.definition.limits.bytes,128000000);
+    assert.equal(entry.payload.projection.definition.limits.page_size,250);
+  }
   assert.notEqual(before.selection_sha256,after.selection_sha256,'new captures honestly hash their changed budget instead of relabeling old evidence');
+});
+
+test('dense byte admission accepts the exact metered boundary and refuses one byte less without partial evidence',async () => {
+  const data={transactions:[transaction()],links:[link()]};
+  const baseline=await denseCad({data}).reader.capture(request());
+  assert.equal(baseline.status,'captured');
+  const retainedBytes=['selection','parcels','accounts','transactions','sale_links','gis_sync']
+    .flatMap(role=>records(baseline,role)).reduce((sum,row)=>sum+Buffer.byteLength(canonicalAssessmentJson(row)),0);
+  assert.ok(baseline.counts.bytes>retainedBytes,'the aggregate meter also covers independent closure identities');
+  const exact=await denseCad({data,limits:{bytes:baseline.counts.bytes}}).reader.capture(request());
+  assert.equal(exact.status,'captured'); assert.equal(exact.counts.bytes,baseline.counts.bytes);
+  for (const entry of exact.source_capture.sources) assert.equal(entry.payload.projection.definition.limits.bytes,baseline.counts.bytes);
+  const refused=await denseCad({data,limits:{bytes:baseline.counts.bytes-1}}).reader.capture(request());
+  assert.equal(refused.status,'incomplete'); assert.equal(refused.source_capture,null);
+  assert.deepEqual(refused.incomplete_reasons,['byte_limit']);
+  assert.equal(DENSE_CAD_CACHE_READER_LIMITS.bytes,140000000);
+});
+
+test('dense reader record meter leaves bounded envelope and chunk headroom without enlarging downstream limits',()=>{
+  // Conservative simultaneous width maxima, not a valid source-authority claim.
+  // These are the closed successful-reader fields: missing capabilities/gaps
+  // fail before finalization, and arbitrary source text remains metered records.
+  const compact=makeCohortLocalQueryMetadata({workflowType:'uad_3_6',subjectId:'\uffff'.repeat(64)});
+  compact.mapping_version=5;
+  compact.authorization.selection.id='\uffff'.repeat(200);
+  compact.authorization.selection.revision=2147483647;
+  compact.authorization.market_decision.decision_id='\uffff'.repeat(200);
+  compact.authorization.market_decision.policy_revision='\uffff'.repeat(200);
+  compact.authorization.transaction_closure.source_revision='\uffff'.repeat(200);
+  for(const key of ['transaction_count','link_count','legacy_sale_count','account_count','source_record_count'])
+    compact.authorization.transaction_closure[key]=200000;
+  compact.limits={...DENSE_CAD_CACHE_READER_LIMITS};compact.selection_sha256='f'.repeat(64);compact.selected_account_count=50000;
+  const scope=compact.scope,role='transactions',digest='f'.repeat(64),at='9999-12-31T23:59:59.999Z',version=NEIGHBORHOOD_CACHE_READER_VERSION;
+  const envelope={schema_version:1,scope,
+    upstream:{id:`local-cache:${role}`,key:role,state:'present_empty',complete:true,revision:`${version}:${digest}`,
+      upstream_content_sha256:digest,captured_at:at,visibility:'assignment_private',scope,row_count:200000},
+    projection:{id:`cache-${role}`,revision:version,definition:{...compact,role,source_gaps:[]},
+      input_row_count:200000,output_record_count:200000,complete:true},
+    metadata:{id:`local-cache-${role}`,provider:'HomeNode local database projection',revision:version,
+      valid_from:null,valid_to:null,observed_at:at,historical_availability:'unknown'},
+    partition:{index:999,count:1000,record_count:200000},records:[]};
+  const bytes=Buffer.byteLength(canonicalAssessmentJson(envelope));
+  assert.ok(bytes<=6605,'closed reader metadata must stay within this independently measured envelope bound');
+  assert.equal(DENSE_CAD_SOURCE_CAPTURE_LIMITS.input_bytes,144000000);
+  assert.equal(DENSE_CAD_SOURCE_CAPTURE_LIMITS.output_bytes,160000000);
+  assert.ok(DENSE_CAD_CACHE_READER_LIMITS.bytes+6*bytes<DENSE_CAD_SOURCE_CAPTURE_LIMITS.input_bytes);
+  assert.ok(DENSE_CAD_CACHE_READER_LIMITS.bytes+CACHED_SOURCE_CAPTURE_LIMITS.output_captures*bytes
+    +DENSE_CAD_CACHE_READER_LIMITS.records<DENSE_CAD_SOURCE_CAPTURE_LIMITS.output_bytes,
+  'same records plus every possible chunk envelope and record separator fit the existing output budget');
 });
 
 test('new parcel row ceiling still refuses the whole capture without clipping geometry or retrying', async () => {
@@ -201,7 +254,7 @@ test('new parcel row ceiling still refuses the whole capture without clipping ge
 for (const sentinel of [true,false]) test(`dense page guard refuses the entire page including lookahead (SQL sentinel=${sentinel})`, async () => {
   const rows=Math.floor(DENSE_CAD_SQL_PAGE_BYTES/DENSE_CAD_CACHE_READER_LIMITS.row_bytes)+1;
   assert.ok(rows<=251);
-  const db=denseCad({intercept:({tag})=>tag==='parcels'?{rows:Array.from({length:rows},(_,index)=>({
+  const db=denseCad({limits:{page_size:250},intercept:({tag})=>tag==='parcels'?{rows:Array.from({length:rows},(_,index)=>({
     payload:sentinel?null:cadParcel(String(index+1)),row_bytes:DENSE_CAD_CACHE_READER_LIMITS.row_bytes}))}:undefined});
   const result=await db.reader.capture(request());
   assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
@@ -221,6 +274,71 @@ test('dense account and sale projections keep the original 64KB row ceiling', as
     const result=await db.reader.capture(request());
     assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
     assert.deepEqual(result.incomplete_reasons,['row_bytes_limit']); assert.equal(db.calls.at(-1).tag,'rollback');
+  }
+});
+
+test('dense 500-row stock pages preserve every record while identity and sale pages remain bounded at 250', async () => {
+  const ids=[SUBJECT,...Array.from({length:1000},(_,index)=>`PAGE-${String(index).padStart(4,'0')}`)].sort();
+  const data={parcels:ids.map((id,index)=>cadParcel(String(index+1),id)),
+    accounts:ids.map(account_id=>({account_id,subdivision:'Synthetic Plat'})),
+    transactions:Array.from({length:501},(_,index)=>transaction(String(index+1)))};
+  const old=denseCad({limits:{page_size:250},data}), fast=denseCad({data});
+  const before=await old.reader.capture(request({account_ids:ids})), after=await fast.reader.capture(request({account_ids:ids}));
+  assert.equal(before.status,'captured'); assert.equal(after.status,'captured');
+  for (const role of ['selection','parcels','accounts','transactions','sale_links','gis_sync']) assert.deepEqual(records(after,role),records(before,role));
+  assert.equal(after.counts.bytes,before.counts.bytes); assert.equal(after.counts.records,before.counts.records);
+  for (const tag of ['parcels','accounts']) {
+    assert.equal(old.calls.filter(call=>call.tag===tag).length,5);
+    assert.equal(fast.calls.filter(call=>call.tag===tag).length,3);
+    assert.ok(fast.calls.filter(call=>call.tag===tag).every(call=>call.values.at(-1)===501));
+  }
+  for (const tag of ['source-ids','transaction-identities','link-identities','transactions','sale-links','legacy-identities','legacy']) {
+    assert.deepEqual(fast.calls.filter(call=>call.tag===tag).map(call=>call.values),old.calls.filter(call=>call.tag===tag).map(call=>call.values));
+  }
+  assert.equal(prepareCohortLocalQueryEvidenceV1(JSON.stringify(before.query_evidence)).status,'syntax_valid');
+  assert.equal(prepareCohortLocalQueryEvidenceV1(JSON.stringify(after.query_evidence)).status,'syntax_valid');
+  assert.ok(before.source_capture.sources.every(source=>source.payload.projection.definition.limits.page_size===250));
+  assert.ok(after.source_capture.sources.every(source=>source.payload.projection.definition.limits.page_size===500));
+});
+
+for (const tag of ['parcels','accounts']) test(`dense ${tag} page fallback retains no refused prefix and reuses the exact cursor/snapshot`,async () => {
+  const ids=[SUBJECT,...Array.from({length:599},(_,index)=>`FALLBACK-${String(index).padStart(4,'0')}`)].sort();
+  const data={parcels:ids.map((id,index)=>cadParcel(String(index+1),id)),
+    accounts:ids.map(account_id=>({account_id,subdivision:'Synthetic Plat'}))};
+  const expected=denseCad({limits:{page_size:250},data});
+  const candidate=denseCad({data,intercept:({tag:actual,values,data:all})=> {
+    if (actual!==tag) return undefined;
+    const page=all[tag].filter(row=>values[0].includes(row.account_id)
+      && (tag==='parcels'?BigInt(row.object_id)>BigInt(values[1]):row.account_id>values[1]))
+      .sort((a,b)=>tag==='parcels'?numeric(a.object_id,b.object_id):compare(a.account_id,b.account_id)).slice(0,values[2]);
+    const bytes=32065;
+    return {rows:page.map(payload=>({payload:page.length*bytes>DENSE_CAD_SQL_PAGE_BYTES?null:structuredClone(payload),row_bytes:bytes}))};
+  }});
+  const before=await expected.reader.capture(request({account_ids:ids})), after=await candidate.reader.capture(request({account_ids:ids}));
+  assert.equal(before.status,'captured'); assert.equal(after.status,'captured',JSON.stringify(after.incomplete_reasons));
+  for (const role of ['selection','parcels','accounts','transactions','sale_links','gis_sync']) assert.deepEqual(records(after,role),records(before,role));
+  assert.equal(after.counts.bytes,before.counts.bytes); assert.equal(after.counts.records,before.counts.records);
+  const calls=candidate.calls.filter(call=>call.tag===tag);
+  assert.deepEqual(calls.map(call=>call.values.at(-1)),[501,251,251,251]);
+  assert.deepEqual(calls[0].values.slice(0,-1),calls[1].values.slice(0,-1),'the refused page cannot advance its account batch or cursor');
+  assert.equal(candidate.connects,1); assert.equal(candidate.calls.filter(call=>call.tag==='begin').length,1);
+  assert.equal(candidate.calls.filter(call=>call.tag==='commit').length,1); assert.equal(candidate.releases.length,1);
+});
+
+test('dense stock fallback is bounded once and cannot conceal an oversized individual lookahead row',async () => {
+  for (const reason of ['row','page']) {
+    const db=denseCad({intercept:({tag,values})=> {
+      if (tag!=='parcels') return undefined;
+      if (reason==='row') return {rows:Array.from({length:501},(_,index)=>({payload:index===500?null:cadParcel(String(index+1)),
+        row_bytes:index===500?128001:100}))};
+      return {rows:Array.from({length:values[2]},(_,index)=>({payload:null,row_bytes:128000}))};
+    }});
+    const result=await db.reader.capture(request());
+    assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+    assert.deepEqual(result.incomplete_reasons,[reason==='row'?'row_bytes_limit':'page_bytes_limit']);
+    assert.equal(db.calls.filter(call=>call.tag==='parcels').length,reason==='row'?1:2);
+    assert.equal(result.counts.records,1,'no prefix of either refused page is retained');
+    assert.equal(db.calls.at(-1).tag,'rollback'); assert.equal(db.releases.length,1);
   }
 });
 

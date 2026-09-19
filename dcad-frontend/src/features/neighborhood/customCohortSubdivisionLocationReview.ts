@@ -44,7 +44,7 @@ function sameFamily(a: CustomCohortSubdivisionFamily, b: CustomCohortSubdivision
 
 /** Optional, click-time advisory over the SAME complete checked retained map.
  * Memoize by families/catalog/group/familyId at the inspector boundary, not by
- * render count. Read every coordinate of every retained parcel in this family;
+ * render count. Validate every retained coordinate; compute extents only for this family.
  * do not borrow label anchors, centroids, age scores, current data or map pixels.
  * Envelopes are descriptive angular bounds, NOT a distance/identity threshold.
  */
@@ -88,15 +88,17 @@ export function buildCustomCohortSubdivisionFamilyLocationReview({ families, cat
   if (!group) return unavailable('map_unavailable');
   if (!sameContext(group.binding.contextRef, context_ref) || group.binding.accountId !== catalog.subject_membership.account_id) return unavailable('context_mismatch');
   const map = group.parcel_map;
-  if (map.status !== 'available') return unavailable('map_unavailable');
+  if (!map || map.status !== 'available') return unavailable('map_unavailable');
+  if (!map.geojson || map.geojson.type !== 'FeatureCollection' || !Array.isArray(map.geojson.features)
+    || !map.counts || !Number.isSafeInteger(map.counts.coordinates) || map.counts.coordinates < 0) return unavailable('invalid_geometry');
   if (map.geojson.features.length > 100_000 || map.counts.coordinates > 1_000_000) return unavailable('capacity_exceeded');
   const seenParcels = new Set<string>(), allAccounts = new Set<string>();
   const wantedAccounts = new Set([...catalog.pockets.flatMap(pocket => [...pocket.account_ids]), ...catalog.unassigned.account_ids]);
   let coordinates = 0;
   try {
-    function polygon(value: unknown, child: Child) {
+    function polygon(value: unknown, child: Child | undefined) {
       if (!Array.isArray(value) || !value.length) throw new Error('invalid_geometry');
-      child.polygon_component_count++;
+      if (child) child.polygon_component_count++;
       for (const ring of value) {
         if (!Array.isArray(ring) || ring.length < 4) throw new Error('invalid_geometry');
         let previousLongitude: number | null = null;
@@ -105,10 +107,11 @@ export function buildCustomCohortSubdivisionFamilyLocationReview({ families, cat
           if (!Array.isArray(point) || point.length !== 2 || typeof point[0] !== 'number' || typeof point[1] !== 'number'
             || !Number.isFinite(point[0]) || !Number.isFinite(point[1]) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90) throw new Error('invalid_geometry');
           const [longitude, latitude] = point;
-          if (previousLongitude !== null && Math.abs(longitude - previousLongitude) > 180) child.wrapped = true;
+          if (child && previousLongitude !== null && Math.abs(longitude - previousLongitude) > 180) child.wrapped = true;
           previousLongitude = longitude;
           // One mutable private accumulator per child, not two temporary extent
           // objects per coordinate of a large retained map. Freeze only output.
+          if (!child) continue;
           if (child.extent) {
             child.extent.west = Math.min(child.extent.west, longitude); child.extent.east = Math.max(child.extent.east, longitude);
             child.extent.south = Math.min(child.extent.south, latitude); child.extent.north = Math.max(child.extent.north, latitude);
@@ -121,8 +124,7 @@ export function buildCustomCohortSubdivisionFamilyLocationReview({ families, cat
       if (seenParcels.has(objectId) || !wantedAccounts.has(accountId)) throw new Error('map_catalog_mismatch');
       seenParcels.add(objectId); allAccounts.add(accountId);
       const child = childByAccount.get(accountId);
-      if (!child) continue;
-      child.parcel_count++; child.represented.add(accountId);
+      if (child) { child.parcel_count++; child.represented.add(accountId); }
       if (feature.geometry.type === 'Polygon') polygon(feature.geometry.coordinates, child);
       else if (feature.geometry.type === 'MultiPolygon' && Array.isArray(feature.geometry.coordinates) && feature.geometry.coordinates.length) {
         for (const component of feature.geometry.coordinates) polygon(component, child);

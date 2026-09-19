@@ -156,3 +156,25 @@ test('result is detached and deeply immutable, and feature order has no effect',
   assert.throws(() => a.child_extents.pop(), TypeError);
   assert.notEqual(a.context_ref, f.catalog.binding.context_ref);
 });
+
+test('coordinates outside the inspected family still consume the actual map budget', () => {
+  const f = fixture();
+  f.group.parcel_map.geojson.features[3].geometry.coordinates = [Array(1_000_001).fill([10, 10])];
+  f.group.parcel_map.counts.coordinates = 1_000_000;
+  const result = review(f);
+  assert.equal(result.status, 'unavailable'); assert.equal(result.reason, 'capacity_exceeded');
+  assert.equal(result.combined_extent, null);
+});
+
+for (const [label, mutate] of [
+  ['unrelated invalid coordinate', f => { f.group.parcel_map.geojson.features[3].geometry.coordinates[0][0] = [NaN, 10]; }],
+  ['unrelated invalid geometry', f => { f.group.parcel_map.geojson.features[3].geometry = null; }],
+  ['missing features', f => { f.group.parcel_map.geojson.features = null; }],
+  ['missing counts', f => { f.group.parcel_map.counts = null; }],
+  ['invalid declared count', f => { f.group.parcel_map.counts.coordinates = NaN; }],
+]) test(`${label} fails safely without partial family evidence`, () => {
+  const f = fixture(); mutate(f);
+  const result = review(f);
+  assert.equal(result.status, 'unavailable'); assert.equal(result.reason, 'invalid_geometry');
+  assert.equal(result.combined_extent, null);
+});

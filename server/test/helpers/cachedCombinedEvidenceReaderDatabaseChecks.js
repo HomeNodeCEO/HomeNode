@@ -18,7 +18,8 @@ import { assessmentEvidenceDigest, canonicalAssessmentJson }
   from '../../src/services/neighborhoodAssessment/contract.js';
 import { buildCohortLocalQueryEvidenceV1 } from '../../src/services/neighborhoodAssessment/cohortQueryEvidence.js';
 import { prepareCohortLocalQueryEvidenceV1 } from '../../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
-import { DENSE_CAD_CACHE_READER_LIMITS } from '../../src/services/neighborhoodAssessment/denseCadCapturePolicy.js';
+import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_SQL_PAGE_BYTES }
+  from '../../src/services/neighborhoodAssessment/denseCadCapturePolicy.js';
 import { createTestCachedReadAccess } from '../fixtures/neighborhoodCachedReadAccessFixture.js';
 import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection }
   from './neighborhoodCiDatabase.js';
@@ -33,6 +34,40 @@ const recordsOf = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const plainData = mapped => Object.fromEntries(Object.entries(mapped.data)
   .filter(([key]) => !['cached_mapping_version', 'cached_projection_sha256'].includes(key)));
+
+// Exercise the actual executed transport suffix against bounded, generated
+// PostGIS geometry. No tables/fixtures are written, and no application sources
+// are read. This checks native SQL, not a substitute for complete-reader tests.
+async function checkDenseParcelTransport(client, legacySql, denseSql) {
+  const suffix = sql => {
+    const parts = sql.split('), encoded AS (');
+    assert.equal(parts.length, 2, 'the checked reader transport anchor must be unique');
+    return `), encoded AS (${parts[1]}`;
+  };
+  const generated = sql => `WITH projected AS MATERIALIZED (
+    WITH geometry AS MATERIALIZED (SELECT encode(ST_AsEWKB(ST_Multi(ST_Buffer(
+      ST_SetSRID(ST_MakePoint(-96.8,32.8),4326),0.002,$1::int))),'hex') AS stored_geometry_ewkb)
+    SELECT id::text AS object_id,stored_geometry_ewkb FROM geometry CROSS JOIN generate_series(1,$2::int) id
+    ${suffix(sql)}`;
+  const dense = generated(denseSql), legacy = generated(legacySql);
+  const single = (await client.query(dense, [600, 1])).rows;
+  assert.equal(single.length, 1); assert.ok(single[0].payload);
+  assert.ok(single[0].row_bytes > 64000 && single[0].row_bytes <= DENSE_CAD_CACHE_READER_LIMITS.row_bytes);
+  const geometry = single[0].payload.stored_geometry_ewkb;
+  const checked = (await client.query(`SELECT ST_IsValid(geom) AS valid,
+    encode(ST_AsEWKB(geom),'hex') AS exact FROM (SELECT ST_GeomFromEWKB(decode($1,'hex')) AS geom) source`, [geometry])).rows[0];
+  assert.equal(checked.valid, true); assert.equal(checked.exact, geometry);
+  const old = (await client.query(legacy, [600, 1])).rows;
+  assert.equal(old[0].row_bytes, single[0].row_bytes); assert.equal(old[0].payload, null);
+  const excessiveRow = (await client.query(dense, [1100, 1])).rows;
+  assert.ok(excessiveRow[0].row_bytes > DENSE_CAD_CACHE_READER_LIMITS.row_bytes);
+  assert.equal(excessiveRow[0].payload, null);
+  const excessivePage = (await client.query(dense, [600, 251])).rows;
+  assert.equal(excessivePage.length, 251);
+  assert.ok(excessivePage.every(row => row.row_bytes <= DENSE_CAD_CACHE_READER_LIMITS.row_bytes));
+  assert.ok(excessivePage.reduce((sum, row) => sum + row.row_bytes, 0) > DENSE_CAD_SQL_PAGE_BYTES);
+  assert.ok(excessivePage.every(row => row.payload === null), 'the entire oversized page, including lookahead, is withheld');
+}
 
 /** Read-only continuation of the exact preceding synthetic coordinator fixture.
  * No database/schema/row/privilege/retention writes or source-policy activation.
@@ -133,7 +168,7 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
     assert.equal(calls.length, 0); assert.equal(connects, 0);
     checks.push('v3/v4 issuers cannot create a combined reader; combined issuer cannot create an older reader before native queries');
 
-    let baseline, baselineTrace;
+    let baseline, baselineTrace, baselineParcelSql, denseParcelSql;
     for (const mode of ['cad4', 'combined5', 'dense5']) {
       const from = calls.length, access = mode === 'combined5' ? initial : accessFor(mode !== 'cad4');
       const prepared = await access.prepare();
@@ -160,11 +195,27 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
       assert.deepEqual(recordsOf(result, 'accounts').map(row => row.data.raw_projection.account_id).sort(compare), request.account_ids);
       assert.ok(recordsOf(result, 'sale_links').some(row => row.data.raw_projection.account_id === LINKED));
       assert.equal(recordsOf(result, 'transactions').length, 1);
-      if (mode === 'cad4') { baseline = result; baselineTrace = keys; continue; }
-      assert.deepEqual(keys, baselineTrace, 'combined projection preserves every authorized query tag, parameter, cursor and page boundary');
       const parcelSql = trace.find(({ sql }) => sql.includes('/* neighborhood-cache:parcels */')).sql;
-      assert.equal(parcelSql, calls.find(({ sql }) => sql.includes('/* neighborhood-cache:parcels */')).sql,
-        'combined capture executes the exact CAD4 parcel projection');
+      if (mode === 'cad4') {
+        assert.ok(parcelSql.includes('CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END'));
+        baseline = result; baselineTrace = keys; baselineParcelSql = parcelSql; continue;
+      }
+      assert.deepEqual(keys, baselineTrace, 'combined projection preserves every authorized query tag, parameter, cursor and page boundary');
+      const legacyGuard = 'CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END';
+      const denseGuard = `CASE WHEN octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`
+        + ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES} THEN payload ELSE NULL END`;
+      assert.equal(parcelSql, mode === 'dense5' ? baselineParcelSql.replace(legacyGuard, denseGuard) : baselineParcelSql,
+        'exact CAD4 projection, membership and ordering remain unchanged; only dense parcel transport has extra headroom');
+      if (mode === 'dense5') {
+        denseParcelSql = parcelSql;
+        const nonparcel = trace.filter(({ sql }) => sql.includes('/* neighborhood-cache:')
+          && sql.includes('), encoded AS (') && !sql.includes('/* neighborhood-cache:parcels */'));
+        assert.ok(nonparcel.length > 0);
+        for (const { sql } of nonparcel) {
+          assert.ok(sql.includes(`CASE WHEN octet_length(payload::text)<=64000 AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}`),
+            'dense nonparcel projections retain their original 64KB row ceiling');
+        }
+      }
       assert.ok(trace.some(({ sql }) => sql.includes('/* neighborhood-cache:transactions */')
         && sql.includes(CACHED_SALE_WITNESS_V2_SQL) && sql.includes('src.mls_status AS source_mls_status') && sql.includes('src.source_row_number')));
       for (const role of ['parcels', 'accounts', 'transactions', 'sale_links']) {
@@ -228,12 +279,14 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
         assert.equal(source.payload.upstream.upstream_content_sha256, upstream.digest('hex'));
       }
     }
+    await checkDenseParcelTransport(client, baselineParcelSql, denseParcelSql);
     const state = (await client.query(CACHED_TRANSACTION_SNAPSHOT_SQL)).rows[0];
     assert.equal(state.isolation, 'repeatable read'); assert.equal(state.read_only, 'on');
     assert.equal(state.snapshot, baseline.snapshot.snapshot); assert.equal(state.backend_pid, baseline.snapshot.backend_pid);
     assert.ok(calls.every(({ sql }) => !/\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|BEGIN|COMMIT|ROLLBACK|SET)\b/i.test(sql)));
     assert.equal(connects, 0); assert.equal(releases, 0);
-    checks.push('standard/dense combined readers execute CAD4 parcel SQL and exact authorized keysets with witness2 in one verified RR/RO snapshot');
+    checks.push('standard combined reader retains exact CAD4 SQL; dense reader changes only the bounded transport guard with exact authorized keysets in one RR/RO snapshot');
+    checks.push('native dense transport preserves a valid >64KB exact geometry, retains legacy refusal, and withholds oversized rows and complete oversized pages');
     checks.push('native combined rows preserve every CAD4 typed/raw field and no-source currency/unit/price gaps; original source witness remains SQL-null');
     checks.push('foreign v3/v4 minted grants fail before queries; V5 original-only handoff and query/chunk/row hashes verify without retention or activation');
     await client.query('ROLLBACK'); began = false;

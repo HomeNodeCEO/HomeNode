@@ -77,6 +77,7 @@ test('legacy processing starts only after matching file load explicitly reports 
 
 test('integration keeps saved group out of autosave draft and blocks late legacy responses', () => {
   const host = readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
+  const neighborhoodSection = readFileSync(new URL('../src/features/neighborhood/components/CustomNeighborhoodCharacteristicsSection.tsx', import.meta.url), 'utf8');
   const profile = readFileSync(new URL('../src/hooks/useNeighborhoodProfile.ts', import.meta.url), 'utf8');
   const request = readFileSync(new URL('../src/features/neighborhood/loadCustomNeighborhoodAccepted.ts', import.meta.url), 'utf8');
   assert.doesNotMatch(host, /if \(neighborhoodSection\)/);
@@ -84,7 +85,8 @@ test('integration keeps saved group out of autosave draft and blocks late legacy
   assert.doesNotMatch(host, /await loadCustomNeighborhoodAccepted/);
   assert.match(host, /if \(!isCancelled\(\) && acceptedReadGeneration.current === acceptedRead\) setAcceptedNeighborhood\(restored\)/);
   assert.match(host, /enabled: legacyNeighborhoodAllowed/);
-  assert.match(host, /<CustomNeighborhoodAcceptedSummary assessment=\{currentAcceptedNeighborhood.assessment\}/);
+  assert.match(host, /acceptedNeighborhood=\{currentAcceptedNeighborhood\}/);
+  assert.match(neighborhoodSection, /<CustomNeighborhoodAcceptedSummary assessment=\{props.acceptedNeighborhood.assessment\}/);
   assert.doesNotMatch(host, /setAssignmentDraft\([^;]*(?:report_projection|acceptedNeighborhood.assessment)/);
   assert.match(profile, /const isCurrentRequest = \(\) => latestContextRef.current.enabled/);
   assert.match(profile, /if \(!latestContextRef.current.enabled\) return/);

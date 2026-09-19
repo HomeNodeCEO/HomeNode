@@ -1086,7 +1086,11 @@ export default function MarketConditionsAnalysis({
       : 'automatic';
   const [selectedAreaKeys, setSelectedAreaKeys] = useState<
     MarketConditionsAreaKey[]
-  >(() => AREA_OPTIONS.map((option) => option.key));
+  >(() => savedDraft?.selectedAreaKeys?.length
+    ? [...savedDraft.selectedAreaKeys]
+    : AREA_OPTIONS
+      .filter((option) => option.key !== 'custom' || resolvedInitialGeometry !== null)
+      .map((option) => option.key));
   const [asOfDate, setAsOfDate] = useState(
     savedDraft?.asOfDate || todayInputValue(),
   );
@@ -1152,9 +1156,11 @@ export default function MarketConditionsAnalysis({
   const onCustomGeometryChangeRef = useRef(onCustomGeometryChange);
   const onRelevancePocketToggleRef = useRef(onRelevancePocketToggle);
   const onRelevancePocketInspectRef = useRef(onRelevancePocketInspect);
+  const onCompletionChangeRef = useRef(onCompletionChange);
   onCustomGeometryChangeRef.current = onCustomGeometryChange;
   onRelevancePocketToggleRef.current = onRelevancePocketToggle;
   onRelevancePocketInspectRef.current = onRelevancePocketInspect;
+  onCompletionChangeRef.current = onCompletionChange;
   const appraiserModifiedRef = useRef(
     resolvedInitialOrigin === 'appraiser' || resolvedInitialOrigin === 'cleared',
   );
@@ -1451,16 +1457,15 @@ export default function MarketConditionsAnalysis({
         response: analysisResult,
         reconciliation,
       };
-      onCompletionChange?.(draft);
+      onCompletionChangeRef.current?.(draft);
     } else {
-      onCompletionChange?.(null);
+      onCompletionChangeRef.current?.(null);
     }
   }, [
     analysisResult,
     activeContextOverride,
     assignmentFileId,
     asOfDate,
-    onCompletionChange,
     periodMonths,
     reconciliation,
     selectedAreaKeys,

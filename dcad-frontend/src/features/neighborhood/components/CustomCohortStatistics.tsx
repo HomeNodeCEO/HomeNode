@@ -76,9 +76,9 @@ export default function CustomCohortStatistics({ group, freshness, pocketId, sel
   const effectiveDay = utcDay(summary.effective_date, true), captureDay = utcDay(summary.captured_at);
   return <section className="space-y-3 print:hidden" aria-label="Captured observation statistics" data-selection-revision={group.binding.selectionRevision} data-freshness={freshness}>
     <div>
-      <h3 className="font-semibold">Captured observations — not report conclusions</h3>
+      <h3 className="font-semibold">Live neighborhood characteristics and market observations</h3>
       <p className="mt-1 text-xs text-slate-600">Observation period: {text(period.start_date)} through {text(period.end_date)}. Effective date: {text(summary.effective_date)}.</p>
-      <p className="mt-1 text-xs text-slate-600">All and selected results use the same captured context and selection revision {group.binding.selectionRevision}. Provider coverage and historical applicability are not established.</p>
+      <p className="mt-1 text-xs text-slate-600">The displayed map and these statistics use the same captured context and selection revision {group.binding.selectionRevision}; changing a pocket updates them together. Provider coverage and historical applicability are not established.</p>
       {effectiveDay && captureDay && effectiveDay < captureDay && <p className="mt-2 text-sm text-amber-800">
         Current CAD captured on {captureDay} is later than the effective date. Use it as a current reference only;
         historical stock evidence is required for that appraisal date. In-period transaction observations remain available below.

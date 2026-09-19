@@ -132,8 +132,8 @@ function summary(value: Record<string, unknown>, expectedCount: number, subject:
 
 /** Optional, exact-context current CAD observations only. This is not a housing
  * dictionary, a similarity factor, legal boundary, historical fact or Apply grant. */
-export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, catalogVersion: 1 | 2 = 1): CheckedCadRecordedEvidence {
-  const groupLimit = catalogVersion === 2 ? 1025 : 129;
+export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, catalogVersion: 1 | 2 | 3 = 1): CheckedCadRecordedEvidence {
+  const groupLimit = catalogVersion === 3 ? 2049 : catalogVersion === 2 ? 1025 : 129;
   ensure(value !== null && typeof value === 'object');
   const descriptor = Object.getOwnPropertyDescriptor(value, 'status');
   ensure(descriptor?.enumerable && Object.hasOwn(descriptor, 'value'));
@@ -197,6 +197,6 @@ export function checkCustomCohortCadEvidence(value: unknown, catalog: Catalog, c
   }
   const limitations = array(v.limitations, LIMITATIONS.length);
   ensure(limitations.length === LIMITATIONS.length && limitations.every((item, i) => item === LIMITATIONS[i]));
-  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (catalogVersion === 2 ? 2_500_000 : 512_000));
+  ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (catalogVersion >= 2 ? 2_500_000 : 512_000));
   return { cad_baseline_version: 1, mapping_version: v.mapping_version, status: 'available', reason: null, binding, subject, all, pockets };
 }

@@ -14,6 +14,9 @@ export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
 export const CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
   canonical_utf8_bytes: 131_072, group_ids: 1025, recorded_group_ids: 1024,
 });
+export const CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
+  canonical_utf8_bytes: 262_144, group_ids: 2049, recorded_group_ids: 2048,
+});
 export interface CustomWorkspaceObservationPeriod {
   readonly start_date: string; readonly end_date: string;
 }
@@ -32,7 +35,7 @@ export interface CustomWorkspaceActiveCheckpoint {
   readonly discovery?: CustomWorkspaceDiscovery;
 }
 export interface CustomWorkspaceCheckpoint {
-  readonly workspace_version: 1 | 2 | 3 | 4 | 5;
+  readonly workspace_version: 1 | 2 | 3 | 4 | 5 | 6;
   readonly active: CustomWorkspaceActiveCheckpoint | null;
   readonly pending_capture: CustomWorkspacePendingCapture | null;
 }
@@ -53,6 +56,13 @@ const HASH = /^[a-f0-9]{64}$/;
 const RECORDED_GROUP = /^recorded-cad:[a-f0-9]{64}$/;
 const UNASSIGNED = 'discovery:unassigned';
 const LIMITS = CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS;
+export function customWorkspaceCatalogVersion(checkpoint: CustomWorkspaceCheckpoint): 1 | 2 | 3 {
+  return checkpoint.workspace_version === 6 ? 3 : checkpoint.workspace_version === 5 ? 2 : 1;
+}
+function checkpointLimits(version: CustomWorkspaceCheckpoint['workspace_version']) {
+  return version === 6 ? CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS
+    : version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+}
 
 function fail(reason: string): never {
   throw Object.assign(new TypeError('Invalid custom neighborhood workspace checkpoint'), { checkpointReason: reason });
@@ -91,7 +101,7 @@ function context(value: unknown): CustomCohortContextRef {
   return { context_id: record.context_id, context_revision: '1', context_sha256: record.context_sha256 };
 }
 function groups(value: unknown, version: CustomWorkspaceCheckpoint['workspace_version']): readonly string[] {
-  const limits = version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  const limits = checkpointLimits(version);
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > limits.group_ids) fail('group_ids');
   if (Reflect.ownKeys(value).length !== value.length + 1) fail('group_ids');
   const result: string[] = [], seen = new Set<string>(); let recorded = 0;
@@ -131,7 +141,7 @@ function pending(value: unknown, version: CustomWorkspaceCheckpoint['workspace_v
   if (value === null) return null;
   const record = closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
     ...(version === 3 || version === 4 ? ['discovery'] : [])], 'pending_capture',
-  version === 5 ? ['private_sales_import', 'discovery'] : version >= 3 ? ['private_sales_import'] : []);
+  version >= 5 ? ['private_sales_import', 'discovery'] : version >= 3 ? ['private_sales_import'] : []);
   if (typeof record.operation_id !== 'string' || !UUID.test(record.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: record.operation_id, observation_period: period(record.observation_period),
     ...(Object.hasOwn(record, 'private_sales_import') ? { private_sales_import: prepareCustomWorkspacePrivateSalesImport(record.private_sales_import) } : {}),
@@ -145,7 +155,7 @@ function freeze<T>(value: T): T {
  * source bodies, authorization, or accepted report group can be smuggled in. */
 export function prepareCustomWorkspaceCheckpoint(value: unknown): CustomWorkspaceCheckpoint {
   const record = closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (record.workspace_version !== 1 && record.workspace_version !== 2 && record.workspace_version !== 3 && record.workspace_version !== 4 && record.workspace_version !== 5) fail('workspace_version');
+  if (record.workspace_version !== 1 && record.workspace_version !== 2 && record.workspace_version !== 3 && record.workspace_version !== 4 && record.workspace_version !== 5 && record.workspace_version !== 6) fail('workspace_version');
   const result: CustomWorkspaceCheckpoint = { workspace_version: record.workspace_version, active: active(record.active, record.workspace_version), pending_capture: pending(record.pending_capture, record.workspace_version) };
   const current = result.active, next = result.pending_capture;
   if (current && next && current.context_ref.context_id === next.operation_id
@@ -155,7 +165,7 @@ export function prepareCustomWorkspaceCheckpoint(value: unknown): CustomWorkspac
     && JSON.stringify(current.discovery) !== JSON.stringify(next.discovery)) fail('operation_discovery_conflict');
   // Closed ASCII field names/primitives make ordinary JSON and server canonical
   // JSON identical in byte length; key sorting cannot affect this size bound.
-  const limits = result.workspace_version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  const limits = checkpointLimits(result.workspace_version);
   if (new TextEncoder().encode(JSON.stringify(result)).length > limits.canonical_utf8_bytes) fail('checkpoint_bytes');
   return freeze(result);
 }
@@ -189,7 +199,7 @@ export function restoreCustomWorkspaceSelection(section: unknown, catalog: Check
   if (current === null) return freeze({ ...result, status: 'no_active' });
   const invalid = (reason: string): Invalid => freeze({ status: 'invalid', section_revision: null, checkpoint: null, reason });
   if (!catalog) return invalid('catalog_unavailable');
-  if ((result.checkpoint.workspace_version === 5 ? 2 : 1) !== catalog.catalog_version) return invalid('catalog_version_mismatch');
+  if (customWorkspaceCatalogVersion(result.checkpoint) !== catalog.catalog_version) return invalid('catalog_version_mismatch');
   try {
     const expected = current.context_ref, actual = catalog.binding.context_ref;
     if (expected.context_id !== actual.context_id || expected.context_revision !== actual.context_revision
@@ -207,10 +217,38 @@ export function restoreCustomWorkspaceSelection(section: unknown, catalog: Check
 /** Plan a format upgrade, not a save. The owner must CAS-persist and verify the
  * exact ACK before displaying a selection. A legacy capacity fallback meant ALL
  * accounts, not just those without names in the now-complete dense catalog. */
-export function upgradeCustomWorkspaceCatalogCheckpoint(section: unknown, catalog: CheckedPocketCatalog): CustomWorkspaceCheckpoint | null {
+export function upgradeCustomWorkspaceCatalogCheckpoint(section: unknown, catalog: CheckedPocketCatalog,
+  previousCatalog?: CheckedPocketCatalog): CustomWorkspaceCheckpoint | null {
   const saved = readCustomWorkspaceCheckpoint(section);
   if (saved.status !== 'restored' || !saved.checkpoint.active) fail('active_checkpoint_required');
   const previous = saved.checkpoint;
+  if (catalog.catalog_version === 3 && customWorkspaceCatalogVersion(previous) !== 3) {
+    // Explicit upgrade only: prove membership using BOTH versions of the same
+    // retained catalog. In particular old unassigned may mean the whole roster.
+    if (!previousCatalog) fail('previous_catalog_required');
+    const restored = restoreCustomWorkspaceSelection(section, previousCatalog);
+    if (restored.status !== 'restored') fail('catalog_restore_failed');
+    const roster = (value: CheckedPocketCatalog) => [...value.pockets.flatMap(p => p.account_ids), ...value.unassigned.account_ids].sort();
+    if (JSON.stringify(roster(previousCatalog)) !== JSON.stringify(roster(catalog))) fail('catalog_roster_changed');
+    const wanted = new Set(restored.selection.pockets.flatMap(p => p.account_ids));
+    const groups = [...catalog.pockets, ...(catalog.unassigned.member_count
+      ? [{ id: UNASSIGNED, account_ids: catalog.unassigned.account_ids }] : [])];
+    const ids = wanted.size === catalog.coverage.discovery_member_count && wanted.size > 0
+      ? customCohortCatalogGroupIds(catalog)
+      : groups.filter(p => p.account_ids.length > 0 && p.account_ids.every(id => wanted.has(id))).map(p => p.id);
+    const current = previous.active!;
+    const upgraded = prepareCustomWorkspaceCheckpoint({ ...previous, workspace_version: 6, active: { ...current,
+      selection: { revision: current.selection.revision + 1, included_recorded_group_ids: ids } } });
+    const next = restoreCustomWorkspaceSelection({ value: upgraded, revision: saved.section_revision }, catalog);
+    if (next.status !== 'restored') fail('catalog_restore_failed');
+    const selected = new Set(next.selection.pockets.flatMap(p => p.account_ids));
+    if (selected.size !== wanted.size || [...selected].some(id => !wanted.has(id))) fail('catalog_selection_not_representable');
+    return upgraded;
+  }
+  if (previous.workspace_version === 6) {
+    if (restoreCustomWorkspaceSelection(section, catalog).status !== 'restored') fail('catalog_restore_failed');
+    return null;
+  }
   if (previous.workspace_version === 5 || catalog.catalog_version === 1) {
     if (restoreCustomWorkspaceSelection(section, catalog).status !== 'restored') fail('catalog_restore_failed');
     return null;

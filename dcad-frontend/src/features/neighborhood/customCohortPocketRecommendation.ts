@@ -221,8 +221,9 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : []),
     ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : []),
     ...(hasComposition ? ['stock_composition_v1'] : [])]);
-  const dense = r.presentation_version === 2;
-  ensure((dense ? r.recommendation_version === 2 && catalog.catalog_version === 2
+  const dense = r.presentation_version === 2 || r.presentation_version === 3;
+  const groupLimit = r.presentation_version === 3 ? 2049 : dense ? 1025 : 129;
+  ensure((dense ? r.recommendation_version === r.presentation_version && catalog.catalog_version === r.presentation_version
     : r.presentation_version === 1 && r.recommendation_version === 1)
     && (r.status === 'recommendation_for_review' || r.status === 'insufficient_observations')
     && r.basis === 'current_retained_observations' && r.authority === 'not_established'
@@ -253,7 +254,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   ensure(in_discovery === [...known.values()].some(group => group.subject));
   const subjectIds = ids(subject.recorded_group_review_ids), assigned = catalog.subject_membership.assigned_pocket_id;
   ensure(subjectIds.length === (assigned ? 1 : 0) && (!assigned || subjectIds[0] === assigned));
-  const seen = new Set<string>(), pockets = array(r.pockets, dense ? 1025 : 129).map((raw, index) => {
+  const seen = new Set<string>(), pockets = array(r.pockets, groupLimit).map((raw, index) => {
     const group = object(raw, ['id', 'member_count', 'review_rank', 'similarity', 'factor_coverage', 'member_lower_bound_range',
       'suggested_for_review', 'subject_group_review', 'contains_subject', 'meets_review_policy']);
     const id = text(group.id, 100), expected = known.get(id); ensure(expected && !seen.has(id)); seen.add(id);
@@ -267,7 +268,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     return { ...stats, id, review_rank: index + 1, contains_subject, subject_group_review, meets_review_policy, suggested_for_review };
   });
   ensure(seen.size === known.size);
-  const recommended = ids(r.recommended_recorded_group_ids, dense ? 1025 : 129), suggested = pockets.filter(group => group.suggested_for_review).map(group => group.id);
+  const recommended = ids(r.recommended_recorded_group_ids, groupLimit), suggested = pockets.filter(group => group.suggested_for_review).map(group => group.id);
   ensure(recommended.length === suggested.length && recommended.every((id, index) => id === suggested[index]));
   const all = population(object(r.all, ['member_count', 'similarity', 'factor_coverage', 'member_lower_bound_range']), proximityEnabled, housingV3);
   ensure(all.member_count === catalog.coverage.discovery_member_count);
@@ -294,7 +295,7 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const apply = object(r.apply, ['status', 'reasons']); ensure(apply.status === 'blocked');
   array(apply.reasons, 64).forEach(value => text(value));
   const limitations = array(r.limitations, 64).map(value => text(value));
-  const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog, dense ? 2 : 1) : null;
+  const cad = hasCadEvidence ? checkCustomCohortCadEvidence(r.cad_recorded_evidence, catalog, r.presentation_version === 3 ? 3 : dense ? 2 : 1) : null;
   const proximity = proximityEnabled ? recordedProximity(r.recorded_proximity, all, pockets) : null;
   const housing = housingV3 ? recordedHousing(r.recorded_housing, all, pockets) : null;
   if (cad && housing) ensure(cad.mapping_version === housing.mapping_version);

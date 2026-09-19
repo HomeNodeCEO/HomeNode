@@ -63,7 +63,7 @@ function catalog(input, scope, privateInput) {
     ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
-      catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
+      catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(input.contextRef), selection_revision: input.selection.revision },
       pockets: [{ id: GROUP, label: 'Synthetic group', county: 'Synthetic', account_ids: ['SUBJECT'], member_count: 1, disposition: 'needs_review' }],
       unassigned: { account_ids: [], member_count: 0, reason_counts: [] },
@@ -193,7 +193,8 @@ for (const privateInput of [undefined, PRIVATE]) for (const previous of [undefin
       assert.deepEqual(h.calls.map(c => c.kind), ['save', 'capture', 'catalog', 'save']);
       assert.deepEqual(h.calls[0].input.value.active, initial.value.active); assert.equal(h.calls[0].input.value.workspace_version, 4);
       assert.deepEqual(h.calls[1].input.discovery, OTHER); assert.deepEqual(h.db.section.value.active.discovery, OTHER);
-      assert.equal(h.db.section.value.workspace_version, 4); assert.equal(h.owner.getState().status, 'ready');
+      assert.equal(h.db.section.value.workspace_version, 6); assert.equal(h.owner.getState().status, 'ready');
+      assert.equal(h.calls.find(c => c.kind === 'catalog').input.catalogVersion, 3);
       const a = apiHarness(); const result = await a.api.capture({ target: TARGET, operationId: OP, observationPeriod: PERIOD,
         discovery: OTHER, ...(privateInput ? { privateSalesImport: privateInput } : {}) }, io());
       assert.deepEqual(a.requests[0], { assignment_file_id: TARGET.assignmentFileId, operation_id: OP, observation_period: PERIOD,
@@ -202,13 +203,13 @@ for (const privateInput of [undefined, PRIVATE]) for (const previous of [undefin
     } finally { h.owner.dispose(); }
   });
 }
-for (const metres of ['4828.032', '8046.72', '16093.44']) test(`city -> ${metres} uses v4 pending then v3 new active`, async () => {
+for (const metres of ['4828.032', '8046.72', '16093.44']) test(`city -> ${metres} preserves v4 pending then activates v6 with radius scope`, async () => {
   const initial = section(CITY), h = harness({ initialSection: initial });
   try { await h.owner.reopen(); assert.deepEqual(h.owner.getState().selection.pockets, []);
     await h.owner.start(PERIOD, undefined, radius(metres));
     assert.equal(h.calls.find(c => c.kind === 'save').input.value.workspace_version, 4);
     assert.deepEqual(h.calls.find(c => c.kind === 'save').input.value.active, initial.value.active);
-    assert.equal(h.db.section.value.workspace_version, 3); assert.deepEqual(h.db.section.value.active.discovery, radius(metres));
+    assert.equal(h.db.section.value.workspace_version, 6); assert.deepEqual(h.db.section.value.active.discovery, radius(metres));
   } finally { h.owner.dispose(); }
 });
 for (const [label, alter] of [['missing', r => { delete r.discovery; }], ['wrong city', r => { r.discovery = copy(OTHER); }],

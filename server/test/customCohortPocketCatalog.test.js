@@ -77,7 +77,7 @@ for (const size of [887, 1024, 1025]) test(`versioned dense catalog preserves al
 test('catalog version is explicit and smaller v2 catalogs preserve every v1 group identity and member', () => {
   const input = args(), old = build(input), dense = build({ ...input, catalog_version: 2 });
   assert.deepEqual({ ...dense, catalog_version: 1 }, old);
-  for (const version of [0, 3, '2', null]) assert.throws(() => build({ ...input, catalog_version: version }), /catalog_version/);
+  for (const version of [0, 4, '2', null]) assert.throws(() => build({ ...input, catalog_version: version }), /catalog_version/);
 });
 
 test('actual G mappings produce a review-only recorded-name group with complete member union', () => {

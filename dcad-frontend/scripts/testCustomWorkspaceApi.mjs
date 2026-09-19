@@ -68,6 +68,20 @@ test('opening catalog forwards exact saved group IDs without an editor key or re
   assert.equal(f.requests[0].init.cache, 'no-store');
 });
 
+for (const catalogVersion of [1, 2, 3]) test(`saved catalog v${catalogVersion} is forwarded exactly without authorizing a recapture`, async () => {
+  const f = fixture({ status: 'catalog' }), input = { ...previewInput(), catalogVersion, initialPreviewGroups: [] };
+  await f.api.catalog(input, io());
+  assert.equal(f.requests.length, 1); assert.equal(f.keys.length, 0);
+  assert.deepEqual(JSON.parse(f.requests[0].init.body), { assignment_file_id: input.assignmentFileId,
+    context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
+    catalog_version: catalogVersion, initial_preview_groups: [] });
+});
+for (const catalogVersion of [null, false, 0, 4, '3', 3.1, {}, []]) test(`invalid catalog version ${JSON.stringify(catalogVersion)} fails before I/O`, async () => {
+  const f = fixture();
+  await assert.rejects(f.api.catalog({ ...previewInput(), catalogVersion }, io()), error => error.workspaceCode === 'invalid_input');
+  assert.equal(f.requests.length, 0); assert.equal(f.keys.length, 0); assert.equal(f.routes.length, 0);
+});
+
 test('fresh opening forwards only the fixed all-catalog mode with the same target, revision and cancellation', async () => {
   const response = { status: 'catalog', initial_preview: { status: 'preview' } }, f = fixture(response), options = io();
   const input = { ...previewInput(), initialPreviewMode: 'all_catalog_groups' }, original = copy(input);
@@ -165,7 +179,7 @@ for (const [name, mutate] of [
   ['status unknown', b => { b.workfile.status = 'approved'; }], ['status case changed', b => { b.workfile.status = 'SIGNED'; }],
   ['null checkpoint section', b => { b.workfile.sections[SECTION] = null; }],
   ['null checkpoint value', b => { b.workfile.sections[SECTION].value = null; }],
-  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 6; }],
+  ['malformed checkpoint', b => { b.workfile.sections[SECTION].value.workspace_version = 7; }],
   ['zero checkpoint revision', b => { b.workfile.sections[SECTION].revision = 0; }],
   ['wrong section key', b => { b.workfile.sections[SECTION].key = 'neighborhood_assessment'; }],
   ['extra saved metrics', b => { b.workfile.sections[SECTION].value.active.statistics = []; }],

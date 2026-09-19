@@ -240,7 +240,9 @@ export function* customCohortStockCompositionBatches(args = {}) {
   check(ids.length === n && new Set(ids).size === n && ids.every(account => roster.has(account)), 'stock_roster');
   const rawGroups = get(catalog, 'pockets');
   check(Array.isArray(rawGroups) && !isProxy(rawGroups), 'input_limit');
-  if (rawGroups.length > groupLimit - 1) return unavailable('group_limit');
+  // The composition profile's own 1025-group ceiling is unchanged by catalog
+  // v3. Return its bounded diagnostic before the profile-limited array reader.
+  if (rawGroups.length > groupLimit - 1 || rawGroups.length > L.groups) return unavailable('group_limit');
   const groups = list(rawGroups, L.groups).map(group => ({
     id: id(get(group, 'id')), ids: list(get(group, 'account_ids'), L.accounts), n: count(get(group, 'member_count')),
   }));

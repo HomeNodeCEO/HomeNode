@@ -82,6 +82,29 @@ test('v5 admits 1024 exact recorded IDs plus unresolved with frontend/backend pa
   assert.throws(() => prepare(value)); assert.throws(() => serverPrepare(value));
 });
 
+test('v6 admits all 2048 recorded IDs plus unresolved without enlarging v5 or legacy contracts', () => {
+  assert.deepEqual(module.exports.CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS,
+    { canonical_utf8_bytes: 131072, group_ids: 1025, recorded_group_ids: 1024 });
+  assert.deepEqual(module.exports.CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS,
+    { canonical_utf8_bytes: 262144, group_ids: 2049, recorded_group_ids: 2048 });
+  const value = fixture(); value.workspace_version = 6;
+  value.active.selection.included_recorded_group_ids = [...Array.from({ length: 2048 }, (_, i) => groupId(i)), UNASSIGNED];
+  const before = structuredClone(value), checked = prepare(value);
+  assert.deepEqual(checked, serverPrepare(value)); assert.deepEqual(read(section(value)), serverRead(section(value)));
+  assert.deepEqual(value, before); assert.equal(checked.active.selection.included_recorded_group_ids.length, 2049);
+  assert.ok(Buffer.byteLength(JSON.stringify(checked)) > 131072);
+  assert.ok(Buffer.byteLength(JSON.stringify(checked)) < 262144);
+  for (const workspace_version of [1, 2, 3, 4, 5]) {
+    assert.throws(() => prepare({ ...value, workspace_version }));
+    assert.throws(() => serverPrepare({ ...value, workspace_version }));
+  }
+  value.active.selection.included_recorded_group_ids.push(groupId(2048));
+  assert.throws(() => prepare(value)); assert.throws(() => serverPrepare(value));
+  for (const [workspace_version, expected] of [[1, 1], [2, 1], [3, 1], [4, 1], [5, 2], [6, 3]]) {
+    assert.equal(module.exports.customWorkspaceCatalogVersion({ workspace_version }), expected);
+  }
+});
+
 test('v5 preserves optional legacy/radius/city pending intent; no fabricated discovery is needed for upgrade', () => {
   const radius = { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' };
   const city = { profile_id: 'custom-city-polygon-v1', city: { geoid: '4829000', vintage: '2025-01-01', asset_sha256: 'b'.repeat(64) } };
@@ -179,7 +202,7 @@ test('admission copies and deeply freezes intent without sorting or removing sel
   assert.equal(ready.active.selection.included_recorded_group_ids.length, 3); assert.equal(ready.pending_capture.operation_id, OTHER_UUID);
 });
 for (const [name, mutate] of [
-  ['unsupported version', v => { v.workspace_version = 6; }],
+  ['unsupported version', v => { v.workspace_version = 7; }],
   ['string version', v => { v.workspace_version = '1'; }],
   ['missing pending field', v => { delete v.pending_capture; }],
   ['root geometry injection', v => { v.geometry = { type: 'Polygon' }; }],

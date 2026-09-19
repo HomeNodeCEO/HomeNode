@@ -10,26 +10,38 @@ import { buildCustomCohortPocketCatalog } from '../../server/src/services/neighb
 import { buildCustomCohortIndexedObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { recommendationFixture } from '../../server/test/fixtures/customCohortDenseRecommendationFixture.js';
 
-test('all 887 ranked groups cross the real server/browser boundary; corrupt dense responses fail closed', () => {
-  const accounts = Array.from({ length: 887 }, (_, i) => `A${String(i).padStart(5, '0')}`);
+for (const [version, count] of [[2, 887], [3, 1475]]) test(`all ${count} v${version} ranked groups cross the real server/browser boundary; corrupt responses fail closed`, () => {
+  const accounts = Array.from({ length: count }, (_, i) => `A${String(i).padStart(5, '0')}`);
   const f = recommendationFixture({ accounts, subject: accounts[0], mapping4: true });
   const expected = { context_ref: f.context_ref, selection_revision: 1 };
   const preview = buildCustomCohortIndexedObservationPreview({ ...f, selection: { revision: 1, pockets: [] } });
   const catalog = presentCustomCohortPocketCatalog({ preview, expected,
-    catalog: buildCustomCohortPocketCatalog({ retained_inputs: f.retained_inputs, preview, catalog_version: 2 }) });
+    catalog: buildCustomCohortPocketCatalog({ retained_inputs: f.retained_inputs, preview, catalog_version: version }) });
   const recommendation = presentCustomCohortPocketRecommendation({ catalog, expected,
-    recommendation: buildCustomCohortPocketRecommendation({ ...f, catalog_version: 2, observation_preview: preview }) });
+    recommendation: buildCustomCohortPocketRecommendation({ ...f, catalog_version: version, observation_preview: preview,
+      include_stock_composition: version === 3 }) });
   const target = f.retained_inputs.subject.target;
   const input = { accountId: target.account_id, assignmentFileId: target.assignment_file_id,
     contextRef: f.context_ref, selection: { revision: 1, pockets: [] } };
   const response = { status: 'catalog', target: { account_id: target.account_id, assignment_file_id: target.assignment_file_id },
     context_ref: f.context_ref, selection_revision: 1, subject_freshness: 'matched', catalog, recommendation, apply: { status: 'blocked' } };
   const checked = checkCatalog(response, input);
-  assert.equal(checked.recommendation.pockets.length, 887);
-  assert.equal(checked.recommendation.all.member_count, 887);
+  assert.equal(checked.recommendation.pockets.length, count);
+  assert.equal(checked.recommendation.all.member_count, count);
+  assert.equal(checked.recommendation.cad_recorded_evidence.status, 'details_unavailable');
+  assert.equal(checked.recommendation.cad_recorded_evidence.reason, 'presentation_byte_limit');
+  assert.equal(Object.hasOwn(checked.recommendation.cad_recorded_evidence, 'pockets'), false, 'bounded CAD detail fallback is not a named prefix');
+  assert.equal(checked.recommendation.cad_recorded_evidence.pocket_count, count);
+  assert.equal(checked.recommendation.cad_recorded_evidence.member_count, count);
+  if (version === 3) {
+    assert.equal(checked.recommendation.stock_composition_v1.status, 'unavailable');
+    assert.equal(checked.recommendation.stock_composition_v1.reason, 'group_limit');
+    assert.deepEqual(checked.recommendation.stock_composition_v1, recommendation.stock_composition_v1);
+  }
   assert.deepEqual(checked.recommendation.recommended_recorded_group_ids, recommendation.recommended_recorded_group_ids);
   for (const mutate of [r => r.recommendation.pockets.pop(), r => r.recommendation.pockets.reverse(),
-    r => { r.recommendation.pockets[886].member_count++; }, r => { r.catalog.catalog_version = 1; },
+    r => { r.recommendation.pockets[count - 1].member_count++; }, r => { r.catalog.catalog_version = version - 1; },
+    r => { r.recommendation.cad_recorded_evidence.status = 'available'; },
     r => { r.recommendation.presentation_version = 1; }, r => { r.recommendation.recommendation_version = 1; },
     r => { r.recommendation.binding.selection_revision++; }]) {
     const bad = structuredClone(response); mutate(bad); assert.throws(() => checkCatalog(bad, input));

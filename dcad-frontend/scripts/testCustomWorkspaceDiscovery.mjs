@@ -52,7 +52,7 @@ function catalog(input, privateInput) {
     ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
-      catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
+      catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(input.contextRef), selection_revision: input.selection.revision },
       pockets: [{ id: GROUP, label: 'Synthetic group', county: 'Synthetic', account_ids: ['SUBJECT'], member_count: 1, disposition: 'needs_review' }],
       unassigned: { account_ids: [], member_count: 0, reason_counts: [] },
@@ -114,6 +114,7 @@ for (const radius of RADII) for (const privateInput of [null, PRIVATE]) {
       assert.deepEqual(h.calls.map(c => c.kind), ['save', 'capture', 'catalog', 'save']);
       assert.deepEqual(h.calls[0].input.value.active, active()); assert.equal(h.calls[0].input.value.workspace_version, 3);
       assert.deepEqual(h.calls[1].input.discovery, choice(radius)); assert.deepEqual(state.checkpoint.active.discovery, choice(radius));
+      assert.equal(h.calls[2].input.catalogVersion, 3); assert.equal(state.checkpoint.workspace_version, 6);
       assert.equal(state.checkpoint.pending_capture, null); assert.equal(state.status, 'ready'); assert.equal(h.ids, 1);
       assert.deepEqual(state.checkpoint.active.selection.included_recorded_group_ids, [GROUP]);
     } finally { h.owner.dispose(); }
@@ -153,11 +154,13 @@ test('v1/v2 forbid discovery; v3 distinguishes absent discovery from explicit th
   value.pending_capture.discovery = choice('4828.032'); value.pending_capture.observation_period.start_date = '2025-01-01';
   assert.throws(() => prepare(value), e => e.checkpointReason === 'operation_study_conflict');
 });
-test('legacy omitted API and lifecycle retain exact three-mile request/checkpoint shapes', async () => {
+test('omitted discovery preserves exact legacy three-mile capture intent before v6 activation', async () => {
   const a = apiHarness(); await a.api.capture({ target: TARGET, operationId: OP, observationPeriod: PERIOD }, io());
   assert.deepEqual(JSON.parse(a.requests[0].init.body), { assignment_file_id: '37', operation_id: OP, observation_period: PERIOD });
   const h = harness(); try { await h.owner.start(PERIOD); const saved = h.db.section.value;
-    assert.equal(saved.workspace_version, 1); assert.equal(Object.hasOwn(saved.active, 'discovery'), false);
+    assert.equal(h.calls[0].input.value.workspace_version, 1);
+    assert.equal(saved.workspace_version, 6); assert.equal(Object.hasOwn(saved.active, 'discovery'), false);
+    assert.equal(h.calls.find(c => c.kind === 'catalog').input.catalogVersion, 3);
     assert.equal(Object.hasOwn(h.calls.find(c => c.kind === 'capture').input, 'discovery'), false);
   } finally { h.owner.dispose(); }
 });

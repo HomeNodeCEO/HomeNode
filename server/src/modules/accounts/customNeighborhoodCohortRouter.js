@@ -177,16 +177,19 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
     cohortService.inspect({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { population: body.population, page: body.page }, options));
   route('catalog', ['assignment_file_id', 'context_ref', 'selection'], (identity, body, options) => {
+    const versioned = Object.hasOwn(body, 'catalog_version');
+    if (versioned && ![1, 2, 3].includes(body.catalog_version)) invalid();
     const requested = Object.hasOwn(body, 'include_recommendation');
     if (requested && typeof body.include_recommendation !== 'boolean') invalid();
     const modeRequested = Object.hasOwn(body, 'initial_preview_mode');
     if (modeRequested && Object.hasOwn(body, 'initial_preview_groups')) invalid();
     if (modeRequested) prepareCustomCohortOpeningMode(body.initial_preview_mode);
     return cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection,
+      ...(versioned ? { catalogVersion: body.catalog_version } : {}),
       ...(Object.hasOwn(body, 'initial_preview_groups') ? { initialPreviewGroups: body.initial_preview_groups } : {}),
       ...(modeRequested ? { initialPreviewMode: body.initial_preview_mode } : {}),
       ...(requested ? { includeRecommendation: body.include_recommendation } : {}) }, options);
-  }, ['include_recommendation', 'initial_preview_groups', 'initial_preview_mode']);
+  }, ['catalog_version', 'include_recommendation', 'initial_preview_groups', 'initial_preview_mode']);
   // Optional owner methods keep older/default-disabled composition unchanged.
   // Browser input identifies saved intent only; no assessment/member/source JSON.
   if (typeof cohortService.prepareReportedObservations === 'function') route('reported-proposal',

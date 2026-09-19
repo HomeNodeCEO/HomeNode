@@ -125,7 +125,7 @@ function familyFromCandidates(members: readonly Candidate[], basis: CustomCohort
  * Even explicit PHASE names remain recorded-name evidence, not verified plats.
  */
 export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatalog): CustomCohortSubdivisionFamilies {
-  ensure(catalog && (catalog.catalog_version === 1 || catalog.catalog_version === 2)
+  ensure(catalog && (catalog.catalog_version === 1 || catalog.catalog_version === 2 || catalog.catalog_version === 3)
     && (catalog.status === 'review_only' || catalog.status === 'incomplete'));
   const ref = catalog.binding.context_ref;
   const context_ref = Object.freeze({ context_id: ref.context_id, context_revision: ref.context_revision, context_sha256: ref.context_sha256 });
@@ -137,7 +137,7 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
   // The old full unresolved catalog remains the fallback. Never derive a family
   // from a prefix or reinterpret unresolved accounts as a named subdivision.
   if (catalog.status === 'incomplete') return result([]);
-  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 2 ? 1024 : 128));
+  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 3 ? 2048 : catalog.catalog_version === 2 ? 1024 : 128));
   const ids = new Set<string>(), accounts = new Set<string>();
   const candidates: Candidate[] = catalog.pockets.map(pocket => {
     ensure(typeof pocket.id === 'string' && pocket.id.startsWith('recorded-cad:') && pocket.id.length <= 200 && !ids.has(pocket.id));
@@ -188,13 +188,13 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
  * after preparation; there is no account scan or hidden cross-context cache. */
 export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketCatalog):
   (family: CustomCohortSubdivisionFamily) => readonly CustomCohortSubdivisionPhase[] {
-  ensure(catalog && (catalog.catalog_version === 1 || catalog.catalog_version === 2)
+  ensure(catalog && (catalog.catalog_version === 1 || catalog.catalog_version === 2 || catalog.catalog_version === 3)
     && (catalog.status === 'review_only' || catalog.status === 'incomplete'));
   if (catalog.status === 'incomplete') {
     const empty = Object.freeze([]);
     return () => empty;
   }
-  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 2 ? 1024 : 128));
+  ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 3 ? 2048 : catalog.catalog_version === 2 ? 1024 : 128));
   const pocketCount = catalog.pockets.length;
   const candidates = new Map<string, Candidate>(), buckets = new Map<string, Candidate[]>();
   for (const pocket of catalog.pockets) {

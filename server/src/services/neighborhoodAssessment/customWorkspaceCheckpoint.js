@@ -12,8 +12,19 @@ export const CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
 export const CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
   canonical_utf8_bytes: 131_072, group_ids: 1025, recorded_group_ids: 1024,
 });
+export const CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS = Object.freeze({
+  canonical_utf8_bytes: 262_144, group_ids: 2049, recorded_group_ids: 2048,
+});
 export function customWorkspaceCatalogVersion(checkpoint) {
-  return checkpoint.workspace_version === 5 ? 2 : 1;
+  return checkpoint.workspace_version === 6 ? 3 : checkpoint.workspace_version === 5 ? 2 : 1;
+}
+export function customWorkspaceVersionForCatalog(version) {
+  if (![1, 2, 3].includes(version)) fail('catalog_version');
+  return version === 3 ? 6 : version === 2 ? 5 : 1;
+}
+function checkpointLimits(version) {
+  return version === 6 ? CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS
+    : version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
 }
 const UNASSIGNED = 'discovery:unassigned';
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -53,7 +64,7 @@ function context(value) {
   catch { fail('context_ref'); }
 }
 function groups(value, version) {
-  const limits = version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  const limits = checkpointLimits(version);
   if (!Array.isArray(value) || Object.getPrototypeOf(value) !== Array.prototype || value.length > limits.group_ids) fail('group_ids');
   const keys = Reflect.ownKeys(value);
   if (keys.length !== value.length + 1) fail('group_ids');
@@ -70,8 +81,8 @@ function groups(value, version) {
 }
 // Opening a saved dense workspace uses the identical recorded-ID admission as
 // its checkpoint, but is a read: no checkpoint or selection is persisted here.
-export function prepareCustomNeighborhoodRecordedGroupIds(value) {
-  return Object.freeze(groups(value, 5));
+export function prepareCustomNeighborhoodRecordedGroupIds(value, catalogVersion = 2) {
+  return Object.freeze(groups(value, customWorkspaceVersionForCatalog(catalogVersion)));
 }
 function discovery(value, version) {
   if (version === 3) closed(value, ['profile_id', 'radius_metres'], 'discovery');
@@ -107,7 +118,7 @@ function pending(value, version) {
   if (value === null) return null;
   closed(value, ['operation_id', 'observation_period', ...(version === 2 ? ['private_sales_import'] : []),
     ...(version === 3 || version === 4 ? ['discovery'] : [])], 'pending_capture',
-  version === 5 ? ['private_sales_import', 'discovery'] : version >= 3 ? ['private_sales_import'] : []);
+  version >= 5 ? ['private_sales_import', 'discovery'] : version >= 3 ? ['private_sales_import'] : []);
   if (typeof value.operation_id !== 'string' || !UUID.test(value.operation_id)) fail('pending_capture.operation_id');
   return { operation_id: value.operation_id, observation_period: period(value.observation_period),
     ...(version === 2 || (version >= 3 && Object.hasOwn(value, 'private_sales_import'))
@@ -127,7 +138,7 @@ function freeze(value) {
  */
 export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
   closed(value, ['workspace_version', 'active', 'pending_capture'], 'checkpoint');
-  if (![1, 2, 3, 4, 5].includes(value.workspace_version)) fail('workspace_version');
+  if (![1, 2, 3, 4, 5, 6].includes(value.workspace_version)) fail('workspace_version');
   const result = { workspace_version: value.workspace_version, active: active(value.active, value.workspace_version),
     pending_capture: pending(value.pending_capture, value.workspace_version) };
   // Actual capture registers context_id = operationId and rejects changed study
@@ -138,7 +149,7 @@ export function prepareCustomNeighborhoodWorkspaceCheckpoint(value) {
       || current.observation_period.end_date !== next.observation_period.end_date)) fail('operation_study_conflict');
   if (current && next && current.context_ref.context_id === next.operation_id
     && canonicalAssessmentJson(current.discovery ?? null) !== canonicalAssessmentJson(next.discovery ?? null)) fail('operation_discovery_conflict');
-  const limits = result.workspace_version === 5 ? CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS : LIMITS;
+  const limits = checkpointLimits(result.workspace_version);
   if (Buffer.byteLength(canonicalAssessmentJson(result), 'utf8') > limits.canonical_utf8_bytes) fail('checkpoint_bytes');
   normalizeCustomAppraisalSectionValue(result); // Rehearse the actual store's bound, without changing it.
   return freeze(result);

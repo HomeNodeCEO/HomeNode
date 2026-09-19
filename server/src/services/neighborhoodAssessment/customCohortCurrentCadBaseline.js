@@ -48,7 +48,7 @@ function state(value) {
  */
 export function buildCustomCohortCurrentCadBaseline({ retained_inputs: input, preview, groups, catalog_version = 1 } = {}) {
   const groupLimit = customCohortCatalogGroupLimit(catalog_version) + 1;
-  const recordLimit = catalog_version === 2 ? customCohortObservationRecordLimit(input?.acquisition) : L.source_records;
+  const recordLimit = catalog_version >= 2 ? customCohortObservationRecordLimit(input?.acquisition) : L.source_records;
   const mapping = customCohortObservationMappingVersion(input?.acquisition);
   if (mapping !== 4 && mapping !== 5) return null;
   const capture = input.acquisition.capture_result?.source_capture;

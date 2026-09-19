@@ -131,6 +131,28 @@ test('128 groups plus unresolved accounts are not clipped to a 128-pocket submis
   assert.ok(all.pockets[0].account_ids.includes('other'));
 });
 
+for (const count of [1475, 2048]) test(`catalog v3 preserves all ${count} groups and unresolved in one exact union`, () => {
+  const { input, response } = fixture(), altered = structuredClone(response), c = altered.catalog;
+  c.catalog_version = 3;
+  c.pockets = Array.from({ length: count }, (_, i) => ({ id: `recorded-cad:${i.toString(16).padStart(64, '0')}`, label: `Group ${i}`,
+    county: 'Dallas', account_ids: [i ? `id-${i}` : '00001'], member_count: 1, disposition: 'needs_review' }));
+  c.subject_membership.assigned_pocket_id = c.pockets[0].id;
+  c.coverage = { discovery_member_count: count + 1, assigned_account_count: count, unassigned_account_count: 1 };
+  const before = structuredClone(altered), checked = check(altered, input), all = select(checked, groups(checked), 2);
+  assert.equal(checked.pockets.length, count); assert.equal(groups(checked).length, count + 1);
+  assert.deepEqual(all.pockets[0].account_ids, [...c.pockets.flatMap(p => p.account_ids), 'other'].sort());
+  assert.deepEqual(altered, before); assert.equal(all.pockets.length, 1);
+  for (const version of [1, 2]) {
+    c.catalog_version = version; assert.throws(() => check(altered, input), /Invalid/);
+  }
+  c.catalog_version = 3;
+  if (count === 2048) {
+    c.pockets.push({ ...c.pockets[0], id: `recorded-cad:${'f'.repeat(64)}`, account_ids: ['overflow'] });
+    c.coverage.discovery_member_count++; c.coverage.assigned_account_count++;
+    assert.throws(() => check(altered, input), /Invalid/);
+  }
+});
+
 test('unknown, duplicate groups and bad revisions cannot change selection membership', () => {
   const { input, response } = fixture(), catalog = check(response, input), id = catalog.pockets[0].id;
   for (const [ids, revision] of [[['unknown'], 1], [[id, id], 1], [[id], 0], [[id], NaN]]) assert.throws(() => select(catalog, ids, revision));

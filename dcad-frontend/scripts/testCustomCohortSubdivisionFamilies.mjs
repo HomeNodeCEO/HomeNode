@@ -38,6 +38,19 @@ function complete(catalog, model) {
   assert.ok(model.families.every(f => f.pocket_ids.every(id => model.family_id_by_pocket_id[id] === f.id)));
 }
 
+test('v3 retains all 1475 recorded leaves through family and phase presentation without changing the selected union', () => {
+  const { catalog } = fixture(Array.from({ length: 1475 }, (_, i) => `SYNTHETIC PARK PHASE ${i + 1}`),
+    { catalogVersion: 3, unassigned: ['UNRESOLVED'] });
+  const before = JSON.stringify(catalog), model = build(catalog); complete(catalog, model);
+  const phases = model.families.flatMap(phaseReader(catalog));
+  assert.equal(phases.length, 1475);
+  const ids = phases.flatMap(p => p.pocket_ids);
+  assert.deepEqual([...ids].sort(), catalog.pockets.map(p => p.id).sort());
+  const selected = select(catalog, [...ids, 'discovery:unassigned'], 8);
+  assert.deepEqual(selected.pockets[0].account_ids, [...catalog.pockets.flatMap(p => p.account_ids), 'UNRESOLVED'].sort());
+  assert.equal(JSON.stringify(catalog), before);
+});
+
 for (const [labels, name] of [[['MONICA PARK 1', 'MONICA PARK 4'], 'MONICA PARK'],
   [['HOLIDAY PARK NORTH 1', 'HOLIDAY PARK NORTH 6'], 'HOLIDAY PARK NORTH']]) {
   test(`numbered recorded-name candidates preserve original leaves: ${name}`, () => {
@@ -425,7 +438,7 @@ test('bounds, duplicates, and inconsistent assigned counts fail closed', () => {
     c => { c.pockets[0].member_count++; },
     c => { c.coverage.assigned_account_count--; },
     c => { c.pockets = Array(1025).fill(c.pockets[0]); },
-    c => { c.catalog_version = 3; },
+    c => { c.catalog_version = 4; },
   ]) {
     const bad = structuredClone(catalog); mutate(bad); assert.throws(() => build(bad), TypeError);
   }

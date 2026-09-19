@@ -127,7 +127,7 @@ function catalog(input) {
     ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
-      catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
+      catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(input.contextRef), selection_revision: input.selection.revision },
       pockets: [{ id: GROUP, label: 'Synthetic group', county: 'Synthetic', account_ids: ['SUBJECT'], member_count: 1, disposition: 'needs_review' }],
       unassigned: { account_ids: [], member_count: 0, reason_counts: [] },
@@ -149,7 +149,7 @@ for (const [status, serverCode, workspaceCode] of REFUSALS) test(`${serverCode} 
     save: async input => { calls.push({ kind: 'save', input: copy(input) }); assert.equal(input.expectedRevision, db.section.revision);
       db.section = { revision: input.expectedRevision + 1, value: copy(input.value) };
       return { accountId: TARGET.accountId, assignmentFileId: TARGET.assignmentFileId, section: copy(db.section) }; },
-    catalog: async input => { calls.push({ kind: 'catalog' }); return catalog(input); },
+    catalog: async input => { calls.push({ kind: 'catalog', input: copy(input) }); return catalog(input); },
   });
   try {
     await assert.rejects(owner.start(PERIOD), rejection(workspaceCode, status));
@@ -164,5 +164,7 @@ for (const [status, serverCode, workspaceCode] of REFUSALS) test(`${serverCode} 
     assert.deepEqual(calls.filter(c => c.kind === 'capture').map(c => c.body.operation_id), [OP, OP]);
     assert.equal(owner.getState().status, 'ready'); assert.equal(db.section.value.pending_capture, null);
     assert.equal(db.section.revision, initial.revision + 2);
+    assert.deepEqual(calls.filter(c => c.kind === 'catalog').map(c => c.input.catalogVersion), [1, 3]);
+    assert.equal(db.section.value.workspace_version, 6);
   } finally { owner.dispose(); }
 });

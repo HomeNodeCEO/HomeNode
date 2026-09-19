@@ -24,6 +24,11 @@ export interface CustomCohortMapPresentation {
 }
 export const CUSTOM_COHORT_MAP_PRESENTATION_LIMITS = Object.freeze({ groups: 1024, accounts: 50000, parcels: 100000,
   coordinates: 1000000, outputBytes: 2_000_000 });
+// One point label and score per bounded group, not a copy of parcel geometry.
+// Even with twofold JSON string escaping, each point feature is <=3372 bytes,
+// each score <=571 bytes: 2048 labels +2049 scores and envelope <=8,080,092.
+// No parcel geometry is copied; older presentation ceilings stay unchanged.
+export const CUSTOM_COHORT_MAP_PRESENTATION_V3_LIMITS = Object.freeze({ groups: 2048, outputBytes: 8_388_608 });
 const L = CUSTOM_COHORT_MAP_PRESENTATION_LIMITS, encoder = new TextEncoder();
 const check: (ok: unknown) => asserts ok = ok => { if (!ok) throw new TypeError('invalid_custom_cohort_map_presentation'); };
 const compare = (a: string, b: string) => a < b ? -1 : a > b ? 1 : 0;
@@ -55,18 +60,18 @@ function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
 }
 function result(status: CustomCohortMapPresentation['status'], reason: CustomCohortMapPresentation['reason'],
-  scoresByGroup: Record<string, CustomCohortMapScore>, features: CustomCohortMapLabel[], unlabelled: readonly string[]): CustomCohortMapPresentation {
+  scoresByGroup: Record<string, CustomCohortMapScore>, features: CustomCohortMapLabel[], unlabelled: readonly string[], outputBytes: number): CustomCohortMapPresentation {
   const output = { status, reason, scoresByGroup, labels: { type: 'FeatureCollection' as const, features }, unlabelled_group_ids: [...unlabelled] };
-  check(encoder.encode(JSON.stringify(output)).length <= L.outputBytes); return freeze(output);
+  check(encoder.encode(JSON.stringify(output)).length <= outputBytes); return freeze(output);
 }
-function scores(catalog: CheckedPocketCatalog, groups: ReadonlyMap<string, { count: number }>): Record<string, CustomCohortMapScore> {
+function scores(catalog: CheckedPocketCatalog, groups: ReadonlyMap<string, { count: number }>, groupLimit: number): Record<string, CustomCohortMapScore> {
   const result: Record<string, CustomCohortMapScore> = {}, byId = new Map<string, { lower: number | null; upper: number | null; known_weight_percent: number | null }>();
   const descriptor = Object.getOwnPropertyDescriptor(catalog, 'recommendation');
   check(!descriptor || (descriptor.enumerable && Object.hasOwn(descriptor, 'value')));
   const recommendation = descriptor?.value;
   if (recommendation !== null && recommendation !== undefined) {
     const status = field(recommendation, 'status'); check(status === 'recommendation_for_review' || status === 'insufficient_observations');
-    for (const p of array(field(recommendation, 'pockets'), L.groups + 1)) {
+    for (const p of array(field(recommendation, 'pockets'), groupLimit + 1)) {
       const id = text(field(p, 'id'), 200), group = groups.get(id); check(group && !byId.has(id) && count(field(p, 'member_count')) === group.count);
       const similarity = field(p, 'similarity');
       const values = ['lower', 'upper', 'known_weight_percent'].map(key => {
@@ -102,12 +107,14 @@ function coordinateBefore(a: readonly number[], b: readonly number[]): boolean {
 export function buildCustomCohortMapPresentation({ catalog, group }: {
   readonly catalog: CheckedPocketCatalog; readonly group: CustomCohortPreviewGroup;
 }): CustomCohortMapPresentation {
-  const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2);
-  const pockets = array(field(catalog, 'pockets'), version === 2 ? L.groups : 128), pocketIds: string[] = [];
+  const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2 || version === 3);
+  const limits = version === 3 ? CUSTOM_COHORT_MAP_PRESENTATION_V3_LIMITS : L;
+  const groupLimit = version === 3 ? limits.groups : version === 2 ? L.groups : 128;
+  const pockets = array(field(catalog, 'pockets'), groupLimit), pocketIds: string[] = [];
   const groupBinding = field(group, 'binding'), catalogBinding = field(catalog, 'binding');
   const subject = text(field(field(catalog, 'subject_membership'), 'account_id'), 100);
   if (context(field(groupBinding, 'contextRef')) !== context(field(catalogBinding, 'context_ref'))
-    || text(field(groupBinding, 'accountId'), 100) !== subject) return result('unavailable', 'context_mismatch', {}, [], []);
+    || text(field(groupBinding, 'accountId'), 100) !== subject) return result('unavailable', 'context_mismatch', {}, [], [], limits.outputBytes);
   const accounts = new Map<string, string>(), known = new Map<string, { count: number }>();
   const named = new Map<string, { label: string; county: string }>();
   function members(id: string, value: unknown, memberCount: unknown) {
@@ -129,8 +136,8 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
   const coverage = field(catalog, 'coverage'); check(count(field(coverage, 'discovery_member_count')) === accounts.size
     && count(field(coverage, 'unassigned_account_count')) === count(field(unassigned, 'member_count'))
     && count(field(coverage, 'assigned_account_count')) === accounts.size - count(field(unassigned, 'member_count')));
-  const scoreMap = scores(catalog, known), map = field(group, 'parcel_map');
-  if (field(map, 'status') === 'unavailable') return result('unavailable', 'parcel_geometry_unavailable', scoreMap, [], pocketIds);
+  const scoreMap = scores(catalog, known, groupLimit), map = field(group, 'parcel_map');
+  if (field(map, 'status') === 'unavailable') return result('unavailable', 'parcel_geometry_unavailable', scoreMap, [], pocketIds, limits.outputBytes);
   check(field(map, 'status') === 'available');
   const geojson = field(map, 'geojson'); check(field(geojson, 'type') === 'FeatureCollection');
   const features = array(field(geojson, 'features'), L.parcels), candidates = new Map<string, Candidate>();
@@ -155,7 +162,7 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
     check(field(f, 'type') === 'Feature'); const props = field(f, 'properties'), parcel = text(field(f, 'id'), 100);
     check(!parcelIds.has(parcel) && parcel === `gis.dcad_parcels:${text(field(props, 'object_id'), 30)}`); parcelIds.add(parcel);
     const account = text(field(props, 'account_id'), 100), id = accounts.get(account);
-    if (!id) return result('unavailable', 'catalog_geometry_mismatch', {}, [], pocketIds);
+    if (!id) return result('unavailable', 'catalog_geometry_mismatch', {}, [], pocketIds, limits.outputBytes);
     represented.add(account); check(typeof field(props, 'selected') === 'boolean');
     const geometry = field(f, 'geometry'), kind = field(geometry, 'type'); let anchor: readonly [number, number];
     if (kind === 'Polygon') anchor = polygon(field(geometry, 'coordinates'));
@@ -170,7 +177,7 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
     if (!previous || compare(account, previous.account) < 0 || (account === previous.account && compare(parcel, previous.parcel) < 0))
       candidates.set(id, { account, parcel, point: anchor });
   }
-  if (represented.size !== accounts.size) return result('unavailable', 'catalog_geometry_mismatch', {}, [], pocketIds);
+  if (represented.size !== accounts.size) return result('unavailable', 'catalog_geometry_mismatch', {}, [], pocketIds, limits.outputBytes);
   const labels: CustomCohortMapLabel[] = [], unlabelled: string[] = [];
   for (const id of pocketIds) {
     const c = candidates.get(id); if (!c) { unlabelled.push(id); continue; }
@@ -179,5 +186,5 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
       properties: { pocket_id: id, label: name.label, county: name.county, account_id: c.account, parcel_id: c.parcel,
         anchor_basis: 'retained_exterior_ring_vertex' } });
   }
-  return result('available', null, scoreMap, labels, unlabelled);
+  return result('available', null, scoreMap, labels, unlabelled, limits.outputBytes);
 }

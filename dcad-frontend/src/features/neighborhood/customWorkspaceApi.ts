@@ -222,11 +222,13 @@ export function createCustomWorkspaceApi(options: Options) {
     catalog(input: CustomWorkspaceCatalogInput, io: CustomWorkspaceOperationOptions) {
       return observationRead(io.signal, async () => {
         const bound = identity(input.accountId, input.assignmentFileId);
+        requireThat(input.catalogVersion === undefined || [1, 2, 3].includes(input.catalogVersion), 'invalid_input');
         const mode = Object.hasOwn(input, 'initialPreviewMode');
         requireThat(!mode || (input.initialPreviewMode === 'all_catalog_groups'
           && !Object.hasOwn(input, 'initialPreviewGroups')), 'invalid_input');
         return knownFailure(CATALOG_FAILURES, () => cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
+          ...(input.catalogVersion === undefined ? {} : { catalog_version: input.catalogVersion }),
           ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }),
           ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}) }, io));
       });

@@ -5,7 +5,7 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
   customCohortObservationMembers, isCustomCohortObservationPreview } from './customCohortObservationPreview.js';
 import { buildCustomCohortPocketCatalog, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { buildCustomCohortCurrentCadBaseline } from './customCohortCurrentCadBaseline.js';
-import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
+import { prepareCustomNeighborhoodWorkspaceCheckpoint, customWorkspaceVersionForCatalog } from './customWorkspaceCheckpoint.js';
 import { readCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
 import { buildCustomCohortRecordedHousing } from './customCohortRecordedHousing.js';
 import { customCohortStockCompositionBatches } from './customCohortStockComposition.js';
@@ -144,11 +144,11 @@ function* recommendationBatches({ context_ref, retained_inputs: input, selection
   customCohortCatalogGroupLimit(catalog_version);
   check(NEIGHBORHOOD_RELEVANCE_METHODOLOGY_VERSION === P.curve_methodology_version
     && KEYS.every(key => NEIGHBORHOOD_RELEVANCE_WEIGHTS[key] === P.weights[key]), 'curve_policy_changed');
-  const intent = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: catalog_version === 2 ? 5 : 1, active: {
+  const intent = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: customWorkspaceVersionForCatalog(catalog_version), active: {
     context_ref, observation_period: input?.study?.observation_period, selection,
   }, pending_capture: null }).active;
-  check(observation_preview === undefined || catalog_version === 2, 'preview_version');
-  const preview = observation_preview ?? (catalog_version === 2
+  check(observation_preview === undefined || catalog_version >= 2, 'preview_version');
+  const preview = observation_preview ?? (catalog_version >= 2
     ? buildCustomCohortIndexedObservationPreview : buildCustomCohortObservationPreview)({ context_ref: intent.context_ref, retained_inputs: input,
     selection: { revision: intent.selection.revision, pockets: [] } });
   check(isCustomCohortObservationPreview(preview)

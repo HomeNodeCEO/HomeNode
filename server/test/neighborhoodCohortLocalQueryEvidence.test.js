@@ -72,6 +72,18 @@ test('only installed CAD mapping4 admits declared dense budgets; bytes are not s
   }
 });
 
+test('old dense row budgets remain exact and new parcel ceilings are admitted only for installed CAD mappings', () => {
+  for (const version of [4,5]) {
+    const old=changedMetadata(m=>{m.mapping_version=version;m.limits={...DENSE_CAD_CACHE_READER_LIMITS,row_bytes:64000};});
+    const bytes=old.inputJson, hashes=old.bundle.blobs.map(blob=>blob.ref.content_sha256);
+    assertAccepted(old); assert.equal(old.inputJson,bytes); assert.deepEqual(old.bundle.blobs.map(blob=>blob.ref.content_sha256),hashes);
+    assertAccepted(changedMetadata(m=>{m.mapping_version=version;m.limits={...DENSE_CAD_CACHE_READER_LIMITS};}));
+  }
+  for (const version of [1,2,3]) assertFailure(prepare(changedMetadata(m=>{
+    m.mapping_version=version;m.limits.row_bytes=DENSE_CAD_CACHE_READER_LIMITS.row_bytes;
+  }).bundle));
+});
+
 function appendBlob(fixture, blob, copies = 1) {
   const bundle = copy(fixture.bundle);
   for (let index = 0; index < copies; index++) bundle.blobs.push(copy(blob));

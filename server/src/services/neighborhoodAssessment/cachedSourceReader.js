@@ -4,7 +4,7 @@ import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { buildCachedSourceCaptures, buildFrozenCadSourceCaptures } from './cachedSourceCaptures.js';
 import { createCustomSourceReadTiming } from './customSourceReadTiming.js';
-import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_ACCOUNT_BATCH_SIZE } from './denseCadCapturePolicy.js';
+import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_ACCOUNT_BATCH_SIZE, DENSE_CAD_SQL_PAGE_BYTES } from './denseCadCapturePolicy.js';
 import { buildCohortLocalQueryEvidenceV1 } from './cohortQueryEvidence.js';
 import { assertNeighborhoodCachedReadAccess, consumeNeighborhoodCachedReadAccess } from './cachedReadAccess.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
@@ -184,7 +184,7 @@ function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
   if (!row || row.isolation!=='repeatable read' || row.read_only!=='on' || row.explicit_transaction!==true
     || !Number.isSafeInteger(row.backend_pid) || row.backend_pid<1
-    || typeof row.snapshot!=='string' || row.snapshot.length>limits.row_bytes
+    || typeof row.snapshot!=='string' || row.snapshot.length>Math.min(limits.row_bytes,NEIGHBORHOOD_CACHE_READER_LIMITS.row_bytes)
     || !/^\d+:\d+:(?:\d+(?:,\d+)*)?$/.test(row.snapshot)
     || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/.test(row.transaction_started_at ?? '')
     || sourceTime(row.transaction_started_at)===null) incomplete('caller_snapshot_transaction_required');
@@ -372,11 +372,24 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
     const rows=async (tag,sql,values=[]) => {
       // Limit each projected row in PostgreSQL BEFORE sending large geometry or
       // quality arrays to Node. No arbitrary raw_payload/remarks are selected.
-      const maximum=limits.row_bytes;
+      const maximum=profile.dense && tag==='parcels' ? limits.row_bytes
+        : Math.min(limits.row_bytes,NEIGHBORHOOD_CACHE_READER_LIMITS.row_bytes);
+      const pageGuard=profile.dense ? ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}` : '';
       const result=await query(tag,`WITH projected AS MATERIALIZED (${sql}), encoded AS (
         SELECT to_jsonb(projected) AS payload FROM projected)
-        SELECT CASE WHEN octet_length(payload::text)<=${maximum} THEN payload ELSE NULL END AS payload,
+        SELECT CASE WHEN octet_length(payload::text)<=${maximum}${pageGuard} THEN payload ELSE NULL END AS payload,
           octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${ORDER[tag]}`,values);
+      // Independently verify the complete page before retaining even its first
+      // row. PostgreSQL returns only sizes/null sentinels when a page is too big.
+      // No trimming, smaller-page retry, or rewritten geometry can hide a limit.
+      if (profile.dense) {
+        let pageBytes=0;
+        for (const row of result) {
+          if (!Number.isSafeInteger(row.row_bytes) || row.row_bytes<1 || row.row_bytes>maximum) incomplete('row_bytes_limit');
+          pageBytes+=row.row_bytes;
+          if (pageBytes>DENSE_CAD_SQL_PAGE_BYTES) incomplete('page_bytes_limit');
+        }
+      }
       return result.map(row => {
         if (!row.payload || !Number.isSafeInteger(row.row_bytes) || row.row_bytes>maximum) incomplete('row_bytes_limit');
         return row.payload;

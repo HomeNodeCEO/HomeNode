@@ -2,7 +2,9 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import { performance } from 'node:perf_hooks';
 import test from 'node:test';
-import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceReader,
+  createNeighborhoodDenseCadEvidenceSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 
@@ -23,7 +25,7 @@ const state={isolation:'repeatable read',read_only:'on',timezone:'UTC',explicit_
 const transaction={source_record_id:'10',sale_id:'20',primary_account_id:SUBJECT,
   sale_account_id:SUBJECT,source_record_hash:'b'.repeat(64)};
 
-async function fixture({intercept,limits,accessOptions}={}) {
+async function fixture({intercept,limits,accessOptions,readerFactory=createNeighborhoodCachedSourceReader}={}) {
   const calls=[];
   let connects=0,releases=0;
   const access=createTestCachedReadAccess(request,{transactionClosure:{source_revision:'snapshot-fixture-v1',
@@ -59,7 +61,7 @@ async function fixture({intercept,limits,accessOptions}={}) {
     return {rows:data[tag].map(payload => ({payload:structuredClone(payload),row_bytes:Buffer.byteLength(JSON.stringify(payload))}))};
   }};
   const pool={async connect() {connects++;return client;}};
-  const reader=createNeighborhoodCachedSourceReader(pool,{access:access.access,limits});
+  const reader=readerFactory(pool,{access:access.access,limits});
   return {client,reader,input,calls,expectedRequest:prepared.request,
     get connects(){return connects;},get releases(){return releases;}};
 }
@@ -213,6 +215,19 @@ for (const changes of [{isolation:'read committed'},{isolation:'serializable'},{
     assert.deepEqual(db.calls.map(({tag})=>tag),['caller-snapshot']); assertOwned(db);
   });
 }
+test('dense parcel headroom does not relax the snapshot-string ceiling or smaller declared limits',async () => {
+  for (const rowBytes of [undefined,16]) {
+    const maximum=rowBytes??64000;
+    const snapshot=`1:1:${'1,'.repeat(Math.ceil(maximum/2))}1`;
+    const db=await fixture({readerFactory:createNeighborhoodDenseCadEvidenceSourceReader,
+      accessOptions:{accessFactory:createNeighborhoodCadEvidenceReadAccess},
+      limits:rowBytes===undefined?undefined:{row_bytes:rowBytes},
+      intercept:({tag})=>tag==='caller-snapshot'?{rows:[{...state,snapshot}]}:undefined});
+    assertIncomplete(await db.reader.captureInSnapshot(db.client,db.input),'caller_snapshot_transaction_required',db.reader);
+    assert.deepEqual(db.calls.map(({tag})=>tag),['caller-snapshot']); assertOwned(db);
+  }
+});
+
 for (const changes of [{timezone:'America/Chicago'},{statement_ms:0},{statement_ms:5001},
   {lock_ms:0},{lock_ms:1001},{idle_ms:0},{idle_ms:10001}]) {
   test(`caller capture refuses unbounded or incompatible settings ${JSON.stringify(changes)}`,async () => {

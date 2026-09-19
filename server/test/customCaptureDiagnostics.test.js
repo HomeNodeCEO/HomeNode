@@ -35,6 +35,12 @@ test('unknown errors and non-capture owner failures do not produce diagnostics',
   }
 });
 
+test('whole-page source capacity refusal exposes only the fixed capacity code and metered counts', () => {
+  assert.deepEqual(customCaptureDiagnostic(failure('page_bytes_limit',{capture_counts:{queries:7,records:1,bytes:100,
+    account_id:'PRIVATE',geometry:'PRIVATE'}})),{stage:'source',category:'capacity',checks:['page_bytes_limit'],
+    counts:{queries:7,records:1,bytes:100}});
+});
+
 test('compact spatial capacity diagnostics retain both exact byte meters without source data', () => {
   for (const detail of ['byte_limit', 'expanded_byte_limit']) {
     assert.deepEqual(customCaptureDiagnostic(failure(detail, { reason: 'spatial_incomplete',

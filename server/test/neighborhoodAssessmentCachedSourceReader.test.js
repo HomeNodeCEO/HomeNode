@@ -6,6 +6,7 @@ import { consumeNeighborhoodCachedAcquisition, createNeighborhoodCachedSourceRea
   createNeighborhoodDenseCadEvidenceSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
 import { createNeighborhoodSaleWitnessReadAccess, createNeighborhoodCadEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { CACHED_CAD_EVIDENCE_FIELDS } from '../src/services/neighborhoodAssessment/cachedRowMappingsV4.js';
+import { DENSE_CAD_CACHE_READER_LIMITS, DENSE_CAD_SQL_PAGE_BYTES } from '../src/services/neighborhoodAssessment/denseCadCapturePolicy.js';
 import { CACHED_SALE_WITNESS_FIELDS } from '../src/services/neighborhoodAssessment/cachedSaleWitness.js';
 import { CACHED_SOURCE_CAPTURE_LIMITS } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
@@ -129,6 +130,99 @@ function fake(options = {}) {
 const records = (result, role) => result.source_capture.sources
   .filter(source => source.payload.projection.definition.role === role).flatMap(source => source.payload.records);
 const captureHashes = result => result.source_capture.source_snapshots.map(row => row.content_sha256);
+
+// Exact EWKB of a closed, non-self-intersecting circle-shaped MultiPolygon.
+// No simplification or repeated padding bytes stand in for a real large ring.
+function largeParcelGeometry(vertices=2800) {
+  const bytes=Buffer.alloc(26+16*(vertices+1)); let at=0;
+  const byte=value => { bytes.writeUInt8(value,at); at++; };
+  const uint=value => { bytes.writeUInt32LE(value,at); at+=4; };
+  const double=value => { bytes.writeDoubleLE(value,at); at+=8; };
+  byte(1); uint(0x20000006); uint(4326); uint(1);
+  byte(1); uint(3); uint(1); uint(vertices+1);
+  for (let index=0;index<=vertices;index++) {
+    const angle=(index===vertices?0:index)*Math.PI*2/vertices;
+    double(-96.8+0.002*Math.cos(angle)); double(32.8+0.002*Math.sin(angle));
+  }
+  assert.equal(at,bytes.length); return bytes.toString('hex');
+}
+const cadParcel = (objectId='1', accountId=SUBJECT, changes={}) => ({...parcel(objectId,accountId),
+  class_code:'A1',class_description:'Single family',use_description:'Residential',structure_type:null,built_up:true,...changes});
+const denseCad = (options={}) => fake({ readerFactory:createNeighborhoodDenseCadEvidenceSourceReader,
+  accessFactory:createNeighborhoodCadEvidenceReadAccess,...options,data:{
+    catalog:[...CATALOG,...CACHED_CAD_EVIDENCE_FIELDS.map(column => ({relation:'gis.dcad_parcels',column}))],
+    parcels:[cadParcel()],...options.data } });
+
+test('dense parcel headroom preserves complete exact EWKB and records the actual installed budget', async () => {
+  const geometry=largeParcelGeometry(), data={parcels:[cadParcel('1',SUBJECT,{stored_geometry_ewkb:geometry})]};
+  assert.ok(Buffer.byteLength(geometry)>64000);
+  const dense=denseCad({data}), result=await dense.reader.capture(request());
+  assert.equal(result.status,'captured',JSON.stringify(result.incomplete_reasons));
+  assert.equal(records(result,'parcels').length,1);
+  const retained=records(result,'parcels')[0].data.raw_projection.stored_geometry_ewkb;
+  assert.equal(retained,geometry); assert.deepEqual(Buffer.from(retained,'hex'),Buffer.from(geometry,'hex'));
+  for (const entry of result.source_capture.sources) assert.equal(entry.payload.projection.definition.limits.row_bytes,DENSE_CAD_CACHE_READER_LIMITS.row_bytes);
+  assert.equal(prepareCohortLocalQueryEvidenceV1(JSON.stringify(result.query_evidence)).status,'syntax_valid');
+  const sql=dense.calls.find(call=>call.tag==='parcels').text;
+  assert.ok(sql.includes(`octet_length(payload::text)<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes}`));
+  assert.ok(sql.includes(`sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}`));
+  assert.match(sql,/encode\(ST_AsEWKB\(geom\),'hex'\)/); assert.doesNotMatch(sql,/ST_Simplify|ST_Snap|ST_Reduce|substring|substr/i);
+  assert.equal(dense.calls.filter(call=>call.tag==='parcels').length,1);
+  const legacy=fake({data:{...dense.data},readerFactory:createNeighborhoodCadEvidenceSourceReader,
+    accessFactory:createNeighborhoodCadEvidenceReadAccess});
+  const refused=await legacy.reader.capture(request());
+  assert.equal(refused.status,'incomplete'); assert.deepEqual(refused.incomplete_reasons,['row_bytes_limit']);
+  assert.equal(refused.source_capture,null); assert.doesNotMatch(legacy.calls.find(call=>call.tag==='parcels').text,/ OVER /);
+});
+
+test('retained legacy dense limits and every small-row evidence record stay unchanged', async () => {
+  const old=denseCad({limits:{row_bytes:64000}}), current=denseCad();
+  const before=await old.reader.capture(request()), after=await current.reader.capture(request());
+  assert.equal(before.status,'captured'); assert.equal(after.status,'captured');
+  const originalBytes=JSON.stringify(before.query_evidence), originalHashes=captureHashes(before);
+  for (const role of ['selection','parcels','accounts','transactions','sale_links','gis_sync']) assert.deepEqual(records(after,role),records(before,role));
+  assert.equal(before.counts.bytes,after.counts.bytes); assert.equal(before.counts.records,after.counts.records);
+  assert.equal(prepareCohortLocalQueryEvidenceV1(originalBytes).status,'syntax_valid');
+  assert.equal(JSON.stringify(before.query_evidence),originalBytes); assert.deepEqual(captureHashes(before),originalHashes);
+  for (const entry of before.source_capture.sources) assert.equal(entry.payload.projection.definition.limits.row_bytes,64000);
+  assert.notEqual(before.selection_sha256,after.selection_sha256,'new captures honestly hash their changed budget instead of relabeling old evidence');
+});
+
+test('new parcel row ceiling still refuses the whole capture without clipping geometry or retrying', async () => {
+  const geometry=largeParcelGeometry(Math.ceil(DENSE_CAD_CACHE_READER_LIMITS.row_bytes/32)+1);
+  const db=denseCad({data:{parcels:[cadParcel('1',SUBJECT,{stored_geometry_ewkb:geometry})]}});
+  const result=await db.reader.capture(request());
+  assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+  assert.deepEqual(result.incomplete_reasons,['row_bytes_limit']);
+  assert.equal(db.calls.filter(call=>call.tag==='parcels').length,1); assert.equal(db.calls.at(-1).tag,'rollback');
+  assert.equal(db.releases.length,1);
+});
+
+for (const sentinel of [true,false]) test(`dense page guard refuses the entire page including lookahead (SQL sentinel=${sentinel})`, async () => {
+  const rows=Math.floor(DENSE_CAD_SQL_PAGE_BYTES/DENSE_CAD_CACHE_READER_LIMITS.row_bytes)+1;
+  assert.ok(rows<=251);
+  const db=denseCad({intercept:({tag})=>tag==='parcels'?{rows:Array.from({length:rows},(_,index)=>({
+    payload:sentinel?null:cadParcel(String(index+1)),row_bytes:DENSE_CAD_CACHE_READER_LIMITS.row_bytes}))}:undefined});
+  const result=await db.reader.capture(request());
+  assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+  assert.deepEqual(result.incomplete_reasons,['page_bytes_limit']);
+  assert.equal(result.counts.records,1,'only the account selection was charged; no prefix of the rejected parcel page was retained');
+  assert.equal(db.calls.filter(call=>call.tag==='parcels').length,1); assert.equal(db.calls.at(-1).tag,'rollback');
+  assert.equal(db.releases.length,1);
+});
+
+test('dense account and sale projections keep the original 64KB row ceiling', async () => {
+  for (const tag of ['accounts','transactions']) {
+    const db=denseCad({data:tag==='transactions'?{transactions:[transaction()]}:{},intercept:({tag:actual,text})=> {
+      if (actual!==tag) return undefined;
+      assert.match(text,/octet_length\(payload::text\)<=64000/);
+      return {rows:[{payload:{},row_bytes:64001}]};
+    }});
+    const result=await db.reader.capture(request());
+    assert.equal(result.status,'incomplete'); assert.equal(result.source_capture,null);
+    assert.deepEqual(result.incomplete_reasons,['row_bytes_limit']); assert.equal(db.calls.at(-1).tag,'rollback');
+  }
+});
 
 test('dense CAD account batches preserve the complete mapping4 record sets and scope', async () => {
   const ids = [SUBJECT, ...Array.from({ length: 2100 }, (_, n) => `CAD-${String(n).padStart(5, '0')}`)].sort();

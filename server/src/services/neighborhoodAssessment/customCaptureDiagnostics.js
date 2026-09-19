@@ -5,7 +5,7 @@ const STAGES = new Map([
   ['transaction_identity_incomplete', 'transaction_identity'], ['source_incomplete', 'source'],
 ]);
 const CAPACITY = new Set(['account_limit', 'parcel_limit', 'record_limit', 'identity_limit',
-  'byte_limit', 'expanded_byte_limit', 'row_bytes_limit', 'query_limit', 'query_evidence_limit', 'capture_budget_limit',
+  'byte_limit', 'expanded_byte_limit', 'row_bytes_limit', 'page_bytes_limit', 'query_limit', 'query_evidence_limit', 'capture_budget_limit',
   'account_roster_canonical_byte_limit']);
 const INTERRUPTED = new Set(['duration_limit', 'capture_cancelled', 'connection_timeout']);
 const CHECKS = new Set([...CAPACITY, ...INTERRUPTED, 'source_query_unavailable',

@@ -640,7 +640,37 @@ def queue_missing_fields_after_success(
     conn.execute(
         text(
             f"""
-            WITH missing AS (
+            WITH property_evidence AS (
+                SELECT EXISTS (
+                    SELECT 1 FROM {primary_improvements} improvement
+                    WHERE improvement.account_id = :account_id
+                      AND {primary_structure_sql("improvement")}
+                ) AS has_primary_structure,
+                EXISTS (
+                    SELECT 1 FROM {value_summary} value
+                    WHERE value.account_id = :account_id
+                      AND value.improvement_value > 0
+                ) AS has_positive_improvement_value,
+                EXISTS (
+                    SELECT 1 FROM {land_detail}
+                    WHERE account_id = :account_id
+                      AND upper(state_code) LIKE '%VACANT%'
+                ) AS has_vacant_code,
+                EXISTS (
+                    SELECT 1 FROM {land_detail}
+                    WHERE account_id = :account_id
+                      AND NULLIF(btrim(state_code), '') IS NOT NULL
+                      AND upper(state_code) NOT LIKE '%VACANT%'
+                ) AS has_nonvacant_code,
+                EXISTS (
+                    SELECT 1 FROM {value_summary} value
+                    WHERE value.account_id = :account_id
+                      AND value.market_value > 0
+                      AND value.market_value::text NOT IN ('NaN', 'Infinity', '-Infinity')
+                      AND value.land_value = value.market_value
+                      AND (value.improvement_value IS NULL OR value.improvement_value = 0)
+                ) AS has_equal_land_market
+            ), missing AS (
                 SELECT array_remove(ARRAY[
                            CASE WHEN NOT EXISTS (
                                SELECT 1
@@ -660,52 +690,13 @@ def queue_missing_fields_after_success(
                                  AND living_area_sqft IS NOT NULL
                                  AND living_area_sqft > 0
                             ) AND NOT (
-                               EXISTS (
-                                   SELECT 1
-                                   FROM {land_detail}
-                                   WHERE account_id = :account_id
-                                     AND upper(state_code) LIKE '%VACANT%'
-                               )
-                               AND NOT EXISTS (
-                                   SELECT 1
-                                   FROM {land_detail}
-                                   WHERE account_id = :account_id
-                                     AND NULLIF(btrim(state_code), '') IS NOT NULL
-                                     AND upper(state_code) NOT LIKE '%VACANT%'
-                                )
-                            ) AND NOT (
-                                NOT EXISTS (
-                                    SELECT 1
-                                    FROM {primary_improvements} improvement
-                                    WHERE improvement.account_id = :account_id
-                                      AND (
-                                          NULLIF(btrim(improvement.construction_type), '') IS NOT NULL
-                                          OR improvement.percent_complete IS NOT NULL
-                                          OR improvement.year_built IS NOT NULL
-                                          OR improvement.effective_year_built IS NOT NULL
-                                          OR improvement.actual_age IS NOT NULL
-                                          OR improvement.depreciation IS NOT NULL
-                                          OR NULLIF(btrim(improvement.desirability), '') IS NOT NULL
-                                          OR NULLIF(btrim(improvement.stories), '') IS NOT NULL
-                                          OR improvement.living_area_sqft IS NOT NULL
-                                          OR improvement.total_living_area IS NOT NULL
-                                          OR improvement.bedroom_count IS NOT NULL
-                                          OR improvement.bath_count IS NOT NULL
-                                          OR improvement.number_units IS NOT NULL
-                                          OR NULLIF(btrim(improvement.building_class), '') IS NOT NULL
-                                          OR improvement.total_area_sqft IS NOT NULL
-                                      )
-                                )
-                                AND EXISTS (
-                                    SELECT 1
-                                    FROM {value_summary} value
-                                    WHERE value.account_id = :account_id
-                                      AND value.market_value IS NOT NULL
-                                      AND value.market_value > 0
-                                      AND value.land_value = value.market_value
-                                )
+                                NOT has_primary_structure
+                                AND NOT has_positive_improvement_value
+                                AND NOT (has_vacant_code AND has_nonvacant_code)
+                                AND (has_vacant_code OR has_equal_land_market)
                             ) THEN 'gla' END
                        ], NULL)::text[] AS fields
+                FROM property_evidence
             )
             INSERT INTO {queue} AS existing (
                 account_id, status, requested_fields, remaining_fields,

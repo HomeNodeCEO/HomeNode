@@ -36,11 +36,7 @@ const OWNER_SQL = `
       )
       FROM core.owner_parties op
       WHERE op.account_id = os.account_id
-        AND op.tax_year = (
-          SELECT MAX(latest.tax_year)
-          FROM core.owner_parties latest
-          WHERE latest.account_id = os.account_id
-        )
+        AND op.tax_year = os.tax_year
     ), '[]'::json) AS owner_parties
   FROM core.owner_summary os
   WHERE os.account_id = $1
@@ -171,49 +167,95 @@ function mergeSourceRows(preferred, fallback) {
 }
 
 function rawDetailFrom(row) {
-  const detail = row?.detail;
-  if (!detail) return {};
-  if (typeof detail === "object") return detail;
-  try {
-    return JSON.parse(detail);
-  } catch {
-    return {};
-  }
+  return objectFrom(row?.detail);
 }
 
 function objectFrom(value) {
-  if (!value) return {};
-  if (typeof value === "object") return value;
+  if (value && typeof value === "object" && !Array.isArray(value)) return value;
+  if (typeof value !== "string") return {};
   try {
-    return JSON.parse(value);
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
   } catch {
     return {};
   }
 }
 
-function parcelOwnerFrom(attributes, taxYear) {
-  const ownerName = [attributes.OWNERNME1, attributes.OWNERNME2]
-    .filter(hasSourceValue)
-    .map((value) => String(value).trim())
-    .join(" ");
+function ownerName(value) {
+  if (typeof value !== "string") return null;
+  const name = value.trim(), key = name.replace(/\s+/g, " ").toUpperCase();
+  if (!key || key.endsWith("&") || ["N/A", "NA", "N\\A", "NONE", "NULL", "UNKNOWN", "NOT REPORTED", "UNASSIGNED", "-", "--",
+    "WITHHELD", "CONFIDENTIAL", "REDACTED", "NOT AVAILABLE", "OWNER WITHHELD",
+    "OWNER INFORMATION WITHHELD", "OWNER INFORMATION CONFIDENTIAL"].includes(key)) return null;
+  if (key.length <= 500
+    && /^OWNER WITHHELD PER SEC\.?#?\s*25\.025 OR 25\.026 OF TEXAS PROPERTY TAX CODE\.?$/.test(key)) return null;
+  return name;
+}
+
+function ownerYear(value) {
+  if (!["string", "number"].includes(typeof value) || !/^[1-9][0-9]{3}$/.test(String(value))) return null;
+  return Number(value);
+}
+
+function rawOwnerYear(owner) {
+  const year = ownerYear(owner.source_year);
+  const headingYear = (value, expression) => typeof value === "string" && value.length <= 200
+    ? ownerYear(expression.exec(value.trim())?.[1]) : null;
+  if (year === null || headingYear(owner.source_heading, /^Owner\s*\(\s*Current\s+([1-9][0-9]{3})\s*\)$/i) !== year) return null;
+  if (owner.parties_source_heading != null
+    && headingYear(owner.parties_source_heading, /^Multi[- ]Owner\s*\(\s*Current\s+([1-9][0-9]{3})\s*\)$/i) !== year) return null;
+  return year;
+}
+
+function ownerParties(value, year) {
+  if (value == null) return [];
+  if (!Array.isArray(value) || value.some(party => !party || typeof party !== "object"
+    || Array.isArray(party) || !ownerName(party.owner_name)
+    || (party.tax_year != null && ownerYear(party.tax_year) !== year))) return null;
+  return value;
+}
+
+function normalizedOwnerFrom(owner) {
+  const name = ownerName(owner?.owner_name);
+  if (!name) return null;
+  const year = ownerYear(owner.tax_year), parties = ownerParties(owner.owner_parties, year);
+  if (!parties) return null;
+  return { owner_name: name, mailing_address: typeof owner.mailing_address === "string"
+    && hasSourceValue(owner.mailing_address) ? owner.mailing_address : null,
+    tax_year: year, source_year: year, owner_parties: parties };
+}
+
+// Owner name, address and parties are a single source group. Never fill one
+// owner's missing fields with another source/year's observations.
+function selectOwner(normalized, raw, parcel) {
+  if (normalized?.source_year != null && (raw?.source_year == null || normalized.source_year >= raw.source_year)) return normalized;
+  if (raw?.source_year != null) return raw;
+  return normalized || raw || parcel || null;
+}
+
+function parcelOwnerFrom(attributes) {
+  const names = [attributes.OWNERNME1, attributes.OWNERNME2].filter(hasSourceValue);
+  if (names.some(value => !ownerName(value))) return null;
+  const name = names.map(value => value.trim()).join(" ");
+  const postalValue = value => (typeof value === "string" || (typeof value === "number" && Number.isFinite(value)))
+    && hasSourceValue(value);
   const postalCode = [attributes.PSTLZIP5, attributes.PSTLZIP4]
-    .filter(hasSourceValue)
+    .filter(postalValue)
     .map((value) => String(value).trim())
     .join("-");
   const mailingAddress = [
     attributes.PSTLADDRESS,
     attributes.PSTLCITY,
-    [attributes.PSTLSTATE, postalCode].filter(hasSourceValue).join(" "),
-  ].filter(hasSourceValue).map((value) => String(value).trim()).join(", ");
-  if (!ownerName && !mailingAddress) return null;
-  return {
-    owner_name: ownerName || null,
+    [attributes.PSTLSTATE, postalCode].filter(postalValue).join(" "),
+  ].filter(postalValue).map((value) => String(value).trim()).join(", ");
+  return normalizedOwnerFrom({
+    owner_name: name || null,
     mailing_address: mailingAddress || null,
-    tax_year: taxYear ?? null,
-    owner_parties: ownerName
-      ? [{ owner_name: ownerName, ownership_pct: null }]
+    tax_year: null,
+    owner_parties: name
+      ? [{ owner_name: name, ownership_pct: null }]
       : [],
-  };
+  });
 }
 
 function parcelImprovementFrom(attributes) {
@@ -228,20 +270,23 @@ function parcelImprovementFrom(attributes) {
   return Object.values(fallback).some(hasSourceValue) ? fallback : null;
 }
 
-function ownerFromRaw(detail, taxYear) {
+function ownerFromRaw(detail) {
   const owner = detail?.owner;
-  if (!owner || typeof owner !== "object") return null;
-  const ownerParties = Array.isArray(owner.multi_owner)
-    ? owner.multi_owner.filter((party) => hasSourceValue(party?.owner_name))
-    : [];
-  const ownerName = hasSourceValue(owner.owner_name)
-    ? owner.owner_name
-    : ownerParties.map((party) => String(party.owner_name).trim()).join(" & ");
+  if (!owner || typeof owner !== "object" || Array.isArray(owner)) return null;
+  const name = ownerName(owner.owner_name);
+  // Legacy party-only records can still be shown coherently, but cannot prove
+  // that the missing owner summary belongs to the dated current-owner heading.
+  const year = name ? rawOwnerYear(owner) : null;
+  const parties = ownerParties(owner.multi_owner, year);
+  if (!parties || (hasSourceValue(owner.owner_name) && !name)) return null;
+  const displayName = name || parties.map(party => party.owner_name.trim()).join(" & ");
+  if (!displayName) return null;
   return {
-    owner_name: ownerName || null,
-    mailing_address: hasSourceValue(owner.mailing_address) ? owner.mailing_address : null,
-    tax_year: taxYear ?? null,
-    owner_parties: ownerParties,
+    owner_name: displayName,
+    mailing_address: typeof owner.mailing_address === "string" && hasSourceValue(owner.mailing_address) ? owner.mailing_address : null,
+    tax_year: year,
+    source_year: year,
+    owner_parties: parties,
   };
 }
 
@@ -335,8 +380,9 @@ export async function loadAccountDetailSections(
   const rawDetail = rawDetailFrom(rawRow);
   let parcelAttributes = objectFrom(rawRow?.source_attributes);
   const normalizedImprovement = rowsFrom(improvementResult)[0] || null;
-  const normalizedOwner = rowsFrom(ownerResult)[0] || null;
-  const preliminaryRawOwner = ownerFromRaw(rawDetail, rawRow?.tax_year);
+  const normalizedOwner = normalizedOwnerFrom(rowsFrom(ownerResult)[0]);
+  const preliminaryRawOwner = ownerFromRaw(rawDetail);
+  let parcelOwner = parcelOwnerFrom(parcelAttributes);
   const preliminaryRawImprovement = mergeSourceRows(
     rawDetail.primary_improvements
       || rawDetail.main_improvement
@@ -344,18 +390,17 @@ export async function loadAccountDetailSections(
       || null,
     parcelImprovementFrom(parcelAttributes),
   );
-  const preliminaryOwner = mergeSourceRows(
-    preliminaryRawOwner,
-    parcelOwnerFrom(parcelAttributes, rawRow?.tax_year),
-  );
+  const preliminaryOwner = selectOwner(normalizedOwner, preliminaryRawOwner, parcelOwner);
   if (
     (!hasSourceValue(normalizedImprovement?.building_class)
       && !hasSourceValue(preliminaryRawImprovement?.building_class))
-    || (!hasSourceValue(normalizedOwner?.owner_name)
-      && !hasSourceValue(preliminaryOwner?.owner_name))
+    || !hasSourceValue(preliminaryOwner?.owner_name)
   ) {
     try {
       const liveAttributes = await fetchDcadAttributes(accountId, fetchImpl);
+      // A building-class lookup may also return a different owner. Keep cached
+      // and live owner groups separate even while unrelated CAD fields merge.
+      parcelOwner ||= parcelOwnerFrom(liveAttributes);
       parcelAttributes = mergeSourceRows(parcelAttributes, liveAttributes) || {};
     } catch (error) {
       logger?.warn?.("DCAD account fallback lookup failed", error?.message || error);
@@ -368,16 +413,7 @@ export async function loadAccountDetailSections(
     || null,
     parcelImprovementFrom(parcelAttributes),
   );
-  const rawOwner = mergeSourceRows(
-    preliminaryRawOwner,
-    parcelOwnerFrom(parcelAttributes, rawRow?.tax_year),
-  );
-  const owner = mergeSourceRows(normalizedOwner, rawOwner);
-  if (owner) {
-    owner.owner_parties = hasSourceValue(normalizedOwner?.owner_parties)
-      ? normalizedOwner.owner_parties
-      : rawOwner?.owner_parties || [];
-  }
+  const owner = selectOwner(normalizedOwner, preliminaryRawOwner, parcelOwner);
   const rawLegal = rawDetail.legal_description && typeof rawDetail.legal_description === "object"
     ? {
         tax_year: rawRow?.tax_year ?? null,

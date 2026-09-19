@@ -257,7 +257,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       const allFrom = calls.length, allExposureFrom = exposures.length;
       const allResponse = await post('catalog', { ...body, initial_preview_mode: 'all_catalog_groups' });
       assert.equal(allResponse.status, 200); assert.equal(allResponse.headers.get('cache-control'), 'no-store');
-      const allText = await allResponse.text(); assert.ok(Buffer.byteLength(allText) <= 31_000_000);
+      const allText = await allResponse.text(); assert.ok(Buffer.byteLength(allText) <= 39_000_000);
       assert.deepEqual(JSON.parse(allText), explicitOpening, 'native all-catalog mode is the exact explicit-all opening');
       assert.equal(evidenceReadsSince(allFrom), ordinaryReads, 'all-catalog opening must not reload the retained graph for its preview');
       assert.deepEqual(exposures.slice(allExposureFrom), ['report_observation_catalog', 'report_observation_summary',

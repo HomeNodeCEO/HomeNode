@@ -1,9 +1,12 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { buildCustomCohortParcelMap as build, buildCustomCohortParcelMapBatched as batched, CUSTOM_COHORT_PARCEL_MAP_LIMITS as LIMITS }
+import { buildCustomCohortParcelMap as build, buildCustomCohortParcelMapBatched as batched,
+  buildCustomCohortParcelGeometryIndex as index, CUSTOM_COHORT_PARCEL_MAP_LIMITS as LIMITS,
+  CUSTOM_COHORT_DENSE_PARCEL_MAP_LIMITS as DENSE_LIMITS }
   from '../src/services/neighborhoodAssessment/customCohortParcelMap.js';
 import { mapCachedParcelRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
+import { mapCombinedEvidenceParcelRow } from '../src/services/neighborhoodAssessment/cachedRowMappingsV5.js';
 
 const HASH = 'a'.repeat(64);
 const clone = value => structuredClone(value);
@@ -59,6 +62,72 @@ function expectUnavailable(result, reason) {
   assert.equal(result.geojson, null);
   assert.equal(Object.hasOwn(result, 'counts'), false, 'never advertise partial success counts');
 }
+
+// Pure-kernel fixture with actual mapping5 wrappers. Production still requires
+// the owner/hash/rights-verified retention loader before this display adapter.
+function denseFixture(specs) {
+  const input = fixture(specs);
+  input.acquisition.compact_metadata_json = JSON.stringify({ reader_version: 'local-capture-v3',
+    mapping_version: 5, limits: { records: 150_000 } });
+  sources(input)[0].payload.projection.definition.mapping_version = 5;
+  sources(input)[0].payload.records = specs.map(p => ({ record_id: `parcel:${p.id}`,
+    data: mapCombinedEvidenceParcelRow({ object_id: p.id, account_id: p.account, source_record_hash: HASH,
+      stored_geometry_ewkb: p.bytes.toString('hex'), class_code: null, class_description: null,
+      use_description: null, structure_type: null, built_up: null }) }));
+  return input;
+}
+
+test('dense retained map and native index preserve all 900k vertices without widening old captures', () => {
+  const ring = Array.from({ length: 30_000 }, (_, i) => [-96 + i % 2, 32]); ring[ring.length - 1] = ring[0];
+  const bytes = polygon([ring]);
+  const specs = Array.from({ length: 30 }, (_, i) => ({ id: String(i + 1), account: 'R-001', bytes }));
+  const result = map(denseFixture(specs), []), native = index({ retained_inputs: denseFixture(specs), selected_account_ids: [] });
+  assert.equal(result.status, 'available'); assert.equal(native.status, 'available');
+  assert.equal(result.counts.coordinates, 900_000); assert.equal(result.geojson.features.length, 30);
+  assert.deepEqual(native.counts, result.counts);
+  assert.ok(result.geojson.features.every(f => f.properties.selected === false));
+  assert.deepEqual(result.geojson.features.at(-1).geometry.coordinates[0], ring);
+  assert.equal(native.parcels.at(-1).geometry_ewkb, bytes.toString('hex'));
+  assert.equal(native.parcels.at(-1).geometry_sha256, digest(bytes));
+  expectUnavailable(map(fixture(specs)), 'capacity_exceeded');
+  for (const metadata of [
+    { reader_version: 'local-capture-v3', mapping_version: 3, limits: { records: 150_000 } },
+    { reader_version: 'local-capture-v3', mapping_version: 5, limits: { records: 100_000 } },
+    { reader_version: 'local-capture-v3', mapping_version: 5, limits: { records: 200_001 } },
+  ]) {
+    const input = denseFixture(specs); input.acquisition.compact_metadata_json = JSON.stringify(metadata);
+    expectUnavailable(map(input), 'capacity_exceeded');
+  }
+});
+
+test('dense GeoJSON supports the measured 29MB class and still refuses above its 32MB cap', () => {
+  const ring = Array.from({ length: 20_000 }, (_, i) => [-96.12345678901234 + i % 2, 32.123456789012345]);
+  ring[ring.length - 1] = ring[0]; const bytes = polygon([ring]);
+  const specs = Array.from({ length: 40 }, (_, i) => ({ id: String(i + 1), account: 'R-001', bytes }));
+  const result = map(denseFixture(specs.slice(0, 35)));
+  assert.equal(result.status, 'available'); assert.equal(result.counts.coordinates, 700_000);
+  assert.ok(result.counts.geojson_bytes > LIMITS.geojson_bytes && result.counts.geojson_bytes < DENSE_LIMITS.geojson_bytes);
+  assert.equal(result.counts.geojson_bytes, Buffer.byteLength(JSON.stringify(result.geojson)));
+  assert.deepEqual(result.geojson.features.at(-1).geometry.coordinates[0], ring);
+  expectUnavailable(map(denseFixture(specs)), 'capacity_exceeded');
+  assert.equal(index({ retained_inputs: denseFixture(specs) }).reason, 'capacity_exceeded');
+});
+
+test('dense geometry admission keeps per-parcel, aggregate EWKB, identity and malformed-metadata guards', () => {
+  assert.equal(DENSE_LIMITS.geometry_bytes, LIMITS.geometry_bytes);
+  assert.equal(DENSE_LIMITS.total_geometry_bytes, LIMITS.total_geometry_bytes);
+  assert.equal(DENSE_LIMITS.parcels, LIMITS.parcels);
+  const specs = [{ id: '1', account: 'R-001', bytes: polygon() }];
+  const broken = denseFixture(specs); broken.acquisition.compact_metadata_json = '{';
+  expectUnavailable(map(broken), 'invalid_retained_inputs');
+  const mismatch = denseFixture(specs); mismatch.spatial.parcels[0].geometry_sha256 = 'b'.repeat(64);
+  expectUnavailable(map(mismatch), 'parcel_identity_mismatch');
+  const oversized = clone(denseFixture(specs)); raw(oversized).stored_geometry_ewkb = '00'.repeat(LIMITS.geometry_bytes + 1);
+  expectUnavailable(map(oversized), 'capacity_exceeded');
+  const ring = Array.from({ length: 30_000 }, (_, i) => [-96 + i % 2, 32]); ring[ring.length - 1] = ring[0];
+  const bytes = polygon([ring]);
+  expectUnavailable(map(denseFixture(Array.from({ length: 34 }, (_, i) => ({ id: String(i + 1), account: 'R-001', bytes })))), 'capacity_exceeded');
+});
 
 test('joins distinct original reader and mapper identities without relabeling either', () => {
   const input = fixture(), id = input.spatial.parcels[0].object_id, before = clone(rows(input)[0]);

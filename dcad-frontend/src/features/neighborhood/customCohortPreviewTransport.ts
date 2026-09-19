@@ -7,9 +7,9 @@ interface Options {
 }
 const REQUEST_BYTES = 4_000_000;
 const RESPONSE_BYTES = 18_000_000;
-// Exact parcel geometry (24MB) plus the unchanged 2MB summary and envelope.
+// Exact dense parcel geometry (32MB) plus the unchanged 2MB summary and envelope.
 // This applies only to map previews; catalog/member/request limits stay intact.
-const MAP_PREVIEW_RESPONSE_BYTES = 27_000_000;
+const MAP_PREVIEW_RESPONSE_BYTES = 35_000_000;
 const OPENING_RESPONSE_BYTES = REQUEST_BYTES + MAP_PREVIEW_RESPONSE_BYTES;
 const ERROR_BYTES = 16_000;
 const STREAM_CHUNKS = 65_536;

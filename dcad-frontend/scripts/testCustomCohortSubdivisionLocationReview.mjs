@@ -140,8 +140,8 @@ test('complete family within an incomplete overall map does not claim complete c
   assert.equal(review(f).reason, 'map_catalog_mismatch');
 });
 
-test('existing feature/coordinate budgets remain exact without a threshold increase', () => {
-  const f = fixture(); f.group.parcel_map.counts.coordinates = 500_001;
+test('dense coordinate budget is bounded at one million while the feature limit remains unchanged', () => {
+  const f = fixture(); f.group.parcel_map.counts.coordinates = 1_000_001;
   assert.equal(review(f).reason, 'capacity_exceeded');
   const g = fixture(); g.group.parcel_map.geojson.features = Array(100_001).fill(g.group.parcel_map.geojson.features[0]);
   assert.equal(review(g).reason, 'capacity_exceeded');
@@ -155,4 +155,26 @@ test('result is detached and deeply immutable, and feature order has no effect',
   assert.throws(() => { a.combined_extent.west = 0; }, TypeError);
   assert.throws(() => a.child_extents.pop(), TypeError);
   assert.notEqual(a.context_ref, f.catalog.binding.context_ref);
+});
+
+test('coordinates outside the inspected family still consume the actual map budget', () => {
+  const f = fixture();
+  f.group.parcel_map.geojson.features[3].geometry.coordinates = [Array(1_000_001).fill([10, 10])];
+  f.group.parcel_map.counts.coordinates = 1_000_000;
+  const result = review(f);
+  assert.equal(result.status, 'unavailable'); assert.equal(result.reason, 'capacity_exceeded');
+  assert.equal(result.combined_extent, null);
+});
+
+for (const [label, mutate] of [
+  ['unrelated invalid coordinate', f => { f.group.parcel_map.geojson.features[3].geometry.coordinates[0][0] = [NaN, 10]; }],
+  ['unrelated invalid geometry', f => { f.group.parcel_map.geojson.features[3].geometry = null; }],
+  ['missing features', f => { f.group.parcel_map.geojson.features = null; }],
+  ['missing counts', f => { f.group.parcel_map.counts = null; }],
+  ['invalid declared count', f => { f.group.parcel_map.counts.coordinates = NaN; }],
+]) test(`${label} fails safely without partial family evidence`, () => {
+  const f = fixture(); mutate(f);
+  const result = review(f);
+  assert.equal(result.status, 'unavailable'); assert.equal(result.reason, 'invalid_geometry');
+  assert.equal(result.combined_extent, null);
 });

@@ -243,6 +243,10 @@ class BoundedScopeValidationTests(unittest.TestCase):
             {"batch_size": 1, "after_account_id": "not-an-account"},
             {"batch_size": 1, "limit": 0}, {"batch_size": 1, "limit": 501},
             {"full_scan": True, "apply": True},
+            {"account_ids": [ACCOUNT_ID], "full_scan_statement_timeout_seconds": 120},
+            {"batch_size": 1, "full_scan_statement_timeout_seconds": 120},
+            *({"full_scan": True, "full_scan_statement_timeout_seconds": value}
+              for value in (0, -1, 121, True, 15.5, "120")),
         )
         with patch.dict(audit.os.environ, {"DATABASE_URL": SYNTHETIC_DATABASE_URL}):
             for arguments in invalid_arguments:
@@ -397,7 +401,10 @@ class ReadOnlyAuditCursor:
 
     def execute(self, statement, parameters=None):
         self.connection.events.append(("execute", statement, parameters))
-        if statement in ("SET LOCAL statement_timeout = '15s'", "SET LOCAL lock_timeout = '1s'"):
+        if statement in (
+            "SET LOCAL statement_timeout = '1s'", "SET LOCAL statement_timeout = '15s'",
+            "SET LOCAL statement_timeout = '120s'", "SET LOCAL lock_timeout = '1s'",
+        ):
             self.results = []
             return
         if self.connection.read_error is not None:
@@ -592,6 +599,63 @@ class BoundedRunTests(unittest.TestCase):
         self.assertFalse(result["scope"]["partial"])
         self.assertEqual(connection.events[0], ("set_session", {"readonly": True}))
         self.assertNotIn(("commit",), connection.events)
+        self.assertEqual(result["scope"]["statement_timeout_seconds"], 15)
+        self.assertIn(("execute", "SET LOCAL statement_timeout = '15s'", None), connection.events)
+
+    def test_full_scan_reports_omissions_but_never_advertises_runnable_candidates(self):
+        incomplete = healthy_row(account_id=SECOND_ACCOUNT_ID, mailing_address=None)
+        # Match the legacy full-scan projection: no queue state or parsed JSON.
+        for key in ("field_repair_status", "field_repair_requested_fields",
+                    "field_repair_remaining_fields", "parsed_detail"):
+            incomplete.pop(key)
+        with patch.object(audit, "candidate_action") as action:
+            result, _connection = self.run_offline(
+                [healthy_row(), incomplete], full_scan=True, limit=1,
+            )
+        action.assert_not_called()
+        self.assertEqual(result["totals"]["repair_candidates"], 1)
+        self.assertEqual(result["missing_fields"]["mailing_address"], 1)
+        self.assertEqual(result["candidate_actions"], {"not_classified": 2})
+        self.assertEqual(result["repair_candidates_selected"], 0)
+        self.assertEqual(result["repair_accounts_queued"], 0)
+        self.assertEqual(result["apply_results"], [])
+
+    def test_full_scan_timeout_override_is_explicit_finite_and_set_before_query(self):
+        for seconds in (1, 120):
+            with self.subTest(seconds=seconds):
+                result, connection = self.run_offline(
+                    [healthy_row()], full_scan=True,
+                    full_scan_statement_timeout_seconds=seconds,
+                )
+                self.assertEqual(result["scope"]["statement_timeout_seconds"], seconds)
+                setting = ("execute", f"SET LOCAL statement_timeout = '{seconds}s'", None)
+                named_cursor = ("cursor", (), {"name": "dcad_field_completeness_audit"})
+                self.assertLess(connection.events.index(setting), connection.events.index(named_cursor))
+                self.assertIn(("execute", "SET LOCAL lock_timeout = '1s'", None), connection.events)
+                self.assertEqual(connection.events[0], ("set_session", {"readonly": True}))
+                self.assertNotIn(("commit",), connection.events)
+                self.assertEqual(connection.events[-2:], [("rollback",), ("close",)])
+
+    def test_bounded_read_and_apply_statement_timeouts_remain_fifteen_seconds(self):
+        for scope in ({"account_ids": [ACCOUNT_ID]}, {"batch_size": 1}):
+            with self.subTest(scope=scope):
+                with patch.object(audit, "apply_account", return_value="insert"):
+                    result, connection = self.run_offline(
+                        [healthy_row(mailing_address=None)], apply=True, **scope,
+                    )
+                settings = [event[1] for event in connection.events
+                            if event[0] == "execute" and "statement_timeout" in event[1]]
+                self.assertEqual(settings, ["SET LOCAL statement_timeout = '15s'"] * 2)
+                self.assertEqual(result["scope"]["statement_timeout_seconds"], 15)
+
+    def test_full_scan_read_failure_still_rolls_back_and_closes_without_a_report(self):
+        connection = ReadOnlyAuditConnection([], read_error=RuntimeError("Synthetic full-scan timeout"))
+        with patch.dict(audit.os.environ, {"DATABASE_URL": SYNTHETIC_DATABASE_URL}):
+            with patch.object(audit.psycopg2, "connect", return_value=connection):
+                with self.assertRaisesRegex(RuntimeError, "Synthetic full-scan timeout"):
+                    audit.run(full_scan=True, full_scan_statement_timeout_seconds=120)
+        self.assertNotIn(("commit",), connection.events)
+        self.assertEqual(connection.events[-2:], [("rollback",), ("close",)])
 
     def test_read_error_rolls_back_and_closes_the_connection(self):
         connection = ReadOnlyAuditConnection([], read_error=RuntimeError("Synthetic read failure"))

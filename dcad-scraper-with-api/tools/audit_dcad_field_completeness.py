@@ -122,6 +122,7 @@ ORDER BY t.account_id
 # Deliberately select IDs before inspecting details. The keyset uses the target
 # primary key; every expensive detail read below is restricted to one account.
 MAX_BATCH_SIZE = 500
+MAX_FULL_SCAN_STATEMENT_TIMEOUT_SECONDS = 120
 KEYSET_SQL = """
 SELECT account_id FROM app.dcad_residential_targets
 WHERE account_id > %(after_account_id)s
@@ -334,6 +335,7 @@ def run(
     *, apply: bool = False, limit: int | None = None,
     account_ids: list[str] | None = None, batch_size: int | None = None,
     after_account_id: str | None = None, full_scan: bool = False,
+    full_scan_statement_timeout_seconds: int | None = None,
 ) -> dict[str, Any]:
     if sum((account_ids is not None, batch_size is not None, full_scan)) != 1:
         raise ValueError("Choose exactly one scope: account_ids, batch_size, or full_scan")
@@ -352,6 +354,16 @@ def run(
         raise ValueError("after_account_id must be an ASCII alphanumeric account ID")
     if full_scan and apply:
         raise ValueError("full_scan is reporting-only; apply a reviewed bounded scope instead")
+    if full_scan_statement_timeout_seconds is not None:
+        if not full_scan:
+            raise ValueError("full_scan_statement_timeout_seconds requires full_scan")
+        if (type(full_scan_statement_timeout_seconds) is not int
+                or not 1 <= full_scan_statement_timeout_seconds <= MAX_FULL_SCAN_STATEMENT_TIMEOUT_SECONDS):
+            raise ValueError(
+                "full_scan_statement_timeout_seconds must be an integer between 1 and "
+                f"{MAX_FULL_SCAN_STATEMENT_TIMEOUT_SECONDS}"
+            )
+    statement_timeout_seconds = full_scan_statement_timeout_seconds or 15
     if account_ids is not None:
         if not account_ids or len(account_ids) > MAX_BATCH_SIZE:
             raise ValueError(f"Provide between 1 and {MAX_BATCH_SIZE} account IDs")
@@ -381,6 +393,7 @@ def run(
         "after_account_id": after_account_id,
         "next_after_account_id": None,
         "has_more": None,
+        "statement_timeout_seconds": statement_timeout_seconds,
     }
 
     def inspect_row(row: dict[str, Any]) -> None:
@@ -397,16 +410,19 @@ def run(
             by_date[day][f"missing_{field}"] += 1
             if len(samples[field]) < 20:
                 samples[field].append(str(row["account_id"]))
-        action = "not_improved_candidate"
+        # The legacy full-scan SELECT has neither queue obligations nor parsed
+        # snapshots. Its field counts cannot establish a runnable queue action.
+        action = "not_classified" if full_scan else "not_improved_candidate"
         if assessment.repair_required:
             totals["repair_candidates"] += 1
             by_date[day]["repair_candidates"] += 1
-            action = candidate_action(row, assessment.missing_fields)
-            if action in {"insert", "merge", "reopen"}:
-                if len(candidates) < (limit or MAX_BATCH_SIZE):
-                    candidates.append(str(row["account_id"]))
-                else:
-                    action = "defer_apply_limit"
+            if not full_scan:
+                action = candidate_action(row, assessment.missing_fields)
+                if action in {"insert", "merge", "reopen"}:
+                    if len(candidates) < (limit or MAX_BATCH_SIZE):
+                        candidates.append(str(row["account_id"]))
+                    else:
+                        action = "defer_apply_limit"
         actions[action] += 1
         if not full_scan:
             detail = row.get("parsed_detail")
@@ -425,7 +441,9 @@ def run(
     try:
         connection.set_session(readonly=True)
         with connection.cursor() as cursor:
-            cursor.execute("SET LOCAL statement_timeout = '15s'")
+            # Only an explicit full-report option can extend this finite guard.
+            # A named cursor applies it per SQL command/FETCH, not to total runtime.
+            cursor.execute(f"SET LOCAL statement_timeout = '{statement_timeout_seconds}s'")
             cursor.execute("SET LOCAL lock_timeout = '1s'")
             if batch_size is not None:
                 cursor.execute(KEYSET_SQL, {"after_account_id": after_account_id or "",
@@ -510,6 +528,10 @@ def main() -> int:
     scope.add_argument("--batch-size", type=int, help="Read one target keyset page (1-500 accounts)")
     scope.add_argument("--full-scan", action="store_true",
                        help="Explicit, potentially expensive full-campaign report; cannot --apply")
+    parser.add_argument(
+        "--full-scan-statement-timeout-seconds", type=int,
+        help="Only with --full-scan: per SQL command/FETCH timeout, 1-120 seconds (default 15); not a total runtime limit",
+    )
     parser.add_argument("--after-account-id", help="Exclusive keyset cursor; requires --batch-size")
     parser.add_argument(
         "--apply",
@@ -534,6 +556,7 @@ def main() -> int:
             apply=args.apply, limit=args.limit, account_ids=args.account_ids,
             batch_size=args.batch_size, after_account_id=args.after_account_id,
             full_scan=args.full_scan,
+            full_scan_statement_timeout_seconds=args.full_scan_statement_timeout_seconds,
         )
     except ValueError as error:
         parser.error(str(error))

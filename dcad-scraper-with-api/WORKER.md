@@ -140,7 +140,17 @@ queued as improved-property repairs.
 
 `--full-scan` explicitly opts into the legacy, potentially expensive whole
 campaign report and cannot be combined with `--apply`. It uses independent
-latest-year aggregates rather than bounded snapshot-aligned reads. Do not use
+latest-year aggregates and legacy improvement predicates rather than bounded
+snapshot-aligned reads. Its omission counts are diagnostic, not an authoritative
+enqueue list: queue actions are `not_classified` and selected candidates remain
+zero because the report does not fetch queue obligations or parsed snapshots.
+All reads default to a 15-second statement timeout. Only an explicit full scan
+may opt into `--full-scan-statement-timeout-seconds N` (integer 1-120); bounded
+reads and apply transactions always keep 15 seconds. The 1-second lock timeout
+and read-only full-scan transaction are unchanged. This timeout applies per SQL
+command, including server-cursor `FETCH`, not to the report's total runtime;
+raising it does not guarantee the legacy global scan will finish. Prefer
+bounded scopes for production pilots. Do not use
 the legacy `queue_field_repairs.py` as a read-only probe: its default executes
 writes before rollback, its `--limit` does not bound the underlying audit, and
 it can reset non-leased retry history.

@@ -79,6 +79,11 @@ function period(value: unknown): CustomWorkspaceObservationPeriod {
   if (start_date > end_date) fail('observation_period');
   return { start_date, end_date };
 }
+/** Use the checkpoint's exact date rules before offering a new capture. This
+ * performs no inference, UUID allocation, or persistence. */
+export function hasValidCustomWorkspaceObservationPeriod(value: unknown): value is CustomWorkspaceObservationPeriod {
+  try { period(value); return true; } catch { return false; }
+}
 function context(value: unknown): CustomCohortContextRef {
   const record = closed(value, ['context_id', 'context_revision', 'context_sha256'], 'context_ref');
   if (typeof record.context_id !== 'string' || !UUID.test(record.context_id) || record.context_revision !== '1'

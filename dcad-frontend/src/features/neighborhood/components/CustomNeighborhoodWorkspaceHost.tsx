@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { createCustomWorkspaceLifecycle } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceLifecycleState, CustomWorkspaceOperationOptions, CustomWorkspaceTarget } from '../customWorkspaceLifecycle';
 import type { CustomWorkspaceObservationPeriod, CustomWorkspacePrivateSalesImport, CustomWorkspaceDiscovery } from '../customWorkspaceCheckpoint';
+import { hasValidCustomWorkspaceObservationPeriod } from '../customWorkspaceCheckpoint';
 import { createCustomWorkspaceRequestLane, CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS } from '../customWorkspaceRequestLane';
 import type { createCustomWorkspaceApi } from '../customWorkspaceApi';
 import type { CustomCohortPreviewRequest } from '../customCohortPreviewController';
@@ -30,6 +31,14 @@ interface Props {
   onAccepted?: () => Promise<boolean>;
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
+const PERIOD_GUIDANCE = 'Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.';
+const WORKSPACE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
+  catalog_service_busy: 'The saved study could not finish loading because neighborhood processing is busy. Reload saved choices; if a pending capture remains, use “Resume saved capture” to recover that same operation.',
+  catalog_interrupted: 'Loading the saved study was interrupted. Reload saved choices; if a pending capture remains, use “Resume saved capture” to recover that same operation.',
+  save_authentication_required: 'Sign in again, then reload saved choices before continuing. The workspace save was not authorized.',
+  save_revision_conflict: 'The saved neighborhood choices changed in another request. Reload saved choices before continuing; do not overwrite them with this older selection.',
+  save_read_only: 'This appraisal file is signed and no longer accepts workspace changes. Reload this appraisal file before continuing.',
+});
 const CAPTURE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
   capture_authentication_required: 'Sign in again, then reload saved choices before resuming the same saved capture.',
   capture_access_denied: 'Your current access does not allow this capture. Confirm assignment and source access, then reload saved choices before resuming the same saved capture.',
@@ -102,6 +111,7 @@ function HostSession(props: Props) {
   const reloadAbort = useRef<AbortController | null>(null);
   const reportAbort = useRef<AbortController | null>(null);
   const period = useRef({ start_date: start, end_date: end }); period.current = { start_date: start, end_date: end };
+  const validPeriod = hasValidCustomWorkspaceObservationPeriod(period.current);
 
   function captureDiscovery(): CustomWorkspaceDiscovery | undefined {
     const selected = scopeRef.current;
@@ -140,8 +150,10 @@ function HostSession(props: Props) {
           const cityFailure = code === 'city_subject_outside_scope' ? 'The subject is outside the selected city polygon.'
             : code === 'city_source_unavailable' ? 'The selected city polygon is unavailable for capture.' : null;
           const guidance = typeof code === 'string' && Object.hasOwn(CAPTURE_GUIDANCE, code) ? CAPTURE_GUIDANCE[code] : null;
+          const workspaceGuidance = typeof code === 'string' && Object.hasOwn(WORKSPACE_GUIDANCE, code) ? WORKSPACE_GUIDANCE[code] : null;
           setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. This capture has not applied anything to the report.`
             : guidance ? `${guidance} This capture has not applied anything to the report.`
+            : workspaceGuidance ? `${workspaceGuidance} This update has not applied anything to the report.`
             : code === 'preview_capacity_exceeded' ? 'This captured study exceeds the preview capacity before its recorded groups can be loaded. Reload saved choices before resolving any pending capture. If the previous study reopens, set aside the pending capture before explicitly choosing a smaller study. Retrying the same oversized study may reach the same limit. This update has not applied anything to the report.'
             : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing. This update has not applied anything to the report.'); }
       }
@@ -170,7 +182,7 @@ function HostSession(props: Props) {
     owner.current = lifecycle; restoreScope(lifecycle.getState()); setState(lifecycle.getState());
     initial.registerControls?.({ target: initial.target,
       useReviewedSales: reference => {
-        if (!live.current || generation.current !== epoch || reportUncertainRef.current || reportRecoveryRef.current || !period.current.start_date || !period.current.end_date)
+        if (!live.current || generation.current !== epoch || reportUncertainRef.current || reportRecoveryRef.current || !hasValidCustomWorkspaceObservationPeriod(period.current))
           return Promise.resolve(false);
         return act(() => lifecycle.start(period.current, reference, captureDiscovery()));
       },
@@ -190,7 +202,7 @@ function HostSession(props: Props) {
     // operation is shown for explicit same-UUID recovery, never replaced.
     const first = lifecycle.getState();
     if (first.checkpoint?.active) act(() => lifecycle.reopen());
-    else if (first.status === 'idle' && !first.checkpoint?.pending_capture && initial.initialPeriod) act(() => lifecycle.start(initial.initialPeriod!));
+    else if (first.status === 'idle' && !first.checkpoint?.pending_capture && hasValidCustomWorkspaceObservationPeriod(initial.initialPeriod)) act(() => lifecycle.start(initial.initialPeriod!));
     return () => {
       live.current = false; generation.current = epoch + 1; currentAction.current = null;
       reloadAbort.current?.abort(); reportAbort.current?.abort(); lifecycle.dispose(); requests.dispose();
@@ -228,8 +240,12 @@ function HostSession(props: Props) {
   });
   const saving = !state || actionPending || state.operation_pending || state.status === 'busy';
   const busy = saving || readOnly || locked;
+  // A checked absent reload cannot prove that the original pending save never
+  // committed. The lifecycle retains its UUID for an explicit same-op resume.
+  const recoverablePendingSave = state?.status === 'error' && state.recovery === 'resume_pending'
+    && state.error === 'pending_save_unconfirmed';
   const blockedReason = readOnly || locked ? 'read_only'
-    : actionFailed.current || message || state?.status === 'invalid' || state?.status === 'error'
+    : actionFailed.current || message || state?.status === 'invalid' || (state?.status === 'error' && !recoverablePendingSave)
       || (state?.recovery && state.recovery !== 'resume_pending') ? 'reload_required'
     : state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending' ? 'pending_capture'
     : state?.status !== 'ready' && state?.status !== 'idle' ? 'reload_required' : null;
@@ -306,8 +322,9 @@ function HostSession(props: Props) {
           {entry.name} — {entry.discovery.city.vintage} polygon</option>)}</optgroup>
         {!installedScope && <option value={scopeKey(scope)} disabled>{scopeLabel(scope)} — retained; not installed for new capture</option>}
       </select></label>
-      <button type="button" className={button} disabled={busy || !start || !end || !installedScope || Boolean(explorationBlocked)}
-        onClick={() => { if (!explorationBlocked) act(() => owner.current!.start({ start_date: start, end_date: end }, undefined, captureDiscovery())); }}>
+      <button type="button" className={button} disabled={busy || !validPeriod || !installedScope || Boolean(explorationBlocked)}
+        onClick={() => { const requestedPeriod = { ...period.current };
+          if (!explorationBlocked && hasValidCustomWorkspaceObservationPeriod(requestedPeriod)) act(() => owner.current!.start(requestedPeriod, undefined, captureDiscovery())); }}>
         {scope?.profile_id === 'custom-city-polygon-v1' ? `Capture ${scopeLabel(scope)} study`
           : active ? `Capture a new ${scopeKey(scope)}-mile study` : `Start ${scopeKey(scope)}-mile exploration`}</button>
       <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
@@ -320,6 +337,7 @@ function HostSession(props: Props) {
         title="Clear only this pending choice. Keep the previous study, source evidence, and accepted report."
         onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
     </div>
+    {(start || end) && !validPeriod && <p role="alert" className="text-sm">{PERIOD_GUIDANCE}</p>}
     <p className="text-xs text-slate-600">{active ? `Displayed study: ${scopeLabel(active.discovery)}. ` : ''}
       Changing this choice only changes the next capture. City studies use the dated installed polygon, not mailing-city names or the map's reference control.
       Complete cached membership is not proof of complete provider coverage. Available records in the requested area are considered within the observation period;
@@ -328,7 +346,9 @@ function HostSession(props: Props) {
       ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
         ? 'Neighborhood choices saved to this appraisal file.' : 'Neighborhood exploration has not changed the accepted report.'}</p>
     {(message || state?.status === 'invalid' || state?.status === 'error') && <p role="alert" className="text-sm">
-      {message ?? 'The saved neighborhood workspace needs to be reloaded or reviewed before continuing. No default selection was substituted.'}</p>}
+      {message ?? (recoverablePendingSave
+        ? 'The pending study choice has not been confirmed. Use “Resume saved capture” to recover the same operation, or set it aside.'
+        : 'The saved neighborhood workspace needs to be reloaded or reviewed before continuing. No default selection was substituted.')}</p>}
     {reportRecovery && <p role="alert" className="text-sm">The report request did not finish in time. Once it settles, retry the same report request or reload its accepted group below. Saving and finalizing remain paused.</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}

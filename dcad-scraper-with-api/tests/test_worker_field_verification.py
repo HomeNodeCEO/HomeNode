@@ -12,7 +12,7 @@ sys.path.insert(0, str(SCRAPER_ROOT))
 
 from dcad import worker  # noqa: E402
 from dcad.data_quality import CompletenessAssessment  # noqa: E402
-from dcad.field_completeness import parsed_verification_row  # noqa: E402
+from dcad.field_completeness import parsed_verification_row, primary_structure_sql  # noqa: E402
 from test_field_verification import synthetic_detail  # noqa: E402
 from tools import audit_dcad_field_completeness as audit  # noqa: E402
 
@@ -104,6 +104,90 @@ class WorkerFieldVerificationTests(unittest.TestCase):
             self.verification_engine(), self.config, self.account_id, ("missing_future_field",),
         ), ("missing_future_field",))
 
+    def vacant_detail(self):
+        detail = synthetic_detail()
+        detail["primary_improvements"] = {"building_class": None, "living_area_sqft": None,
+                                          "basement": "NONE", "pool": "NONE", "sprinkler": "NONE"}
+        detail["value_summary"].update(market_value=100, land_value=100, improvement_value=0)
+        detail["land_detail"] = [{"state_code": "SFR - VACANT LOTS/TRACTS", "area_sqft": 43560}]
+        return detail
+
+    def vacant_engine(self, detail=None):
+        detail = self.vacant_detail() if detail is None else detail
+        normalized = parsed_verification_row(detail)
+        normalized.update(parsed_detail=detail, snapshot_is_fresh=True)
+        return FakeEngine(normalized)
+
+    def test_fresh_raw_and_normalized_vacancy_waive_improvement_only_obligations(self):
+        engine = self.vacant_engine()
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id,
+            ("gla", "missing_gla", "missing_building_class", "missing_improvement_value"),
+        ), ())
+
+    def test_equal_positive_values_and_no_main_can_waive_fields_without_vacant_code(self):
+        detail = self.vacant_detail()
+        detail["land_detail"][0]["state_code"] = "RESIDENTIAL"
+        self.assertEqual(worker.missing_required_fields(
+            self.vacant_engine(detail), self.config, self.account_id, ("missing_building_class", "missing_gla"),
+        ), ())
+
+    def test_one_sided_vacancy_cannot_clear_absent_building_class(self):
+        engine = self.vacant_engine()
+        engine.row["building_class"] = "14"
+        engine.row["has_primary_improvement"] = True
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id, ("missing_building_class",),
+        ), ("missing_building_class",))
+        engine = self.vacant_engine()
+        engine.row["parsed_detail"] = synthetic_detail()
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id, ("missing_building_class",),
+        ), ("missing_building_class",))
+
+    def test_mixed_raw_state_codes_cannot_clear_improvement_obligations(self):
+        engine = self.vacant_engine()
+        engine.row["parsed_detail"]["land_detail"].append({"state_code": "SFR - RESIDENCE", "area_sqft": 0})
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id, ("missing_building_class", "missing_gla"),
+        ), ("missing_building_class", "missing_gla"))
+
+    def test_vacancy_does_not_waive_zero_land_area_or_other_missing_fields(self):
+        detail = self.vacant_detail()
+        detail["land_detail"][0]["area_sqft"] = 0
+        detail["legal_description"]["deed_transfer_date"] = None
+        self.assertEqual(worker.missing_required_fields(
+            self.vacant_engine(detail), self.config, self.account_id,
+            ("missing_building_class", "missing_land_area", "missing_deed_transfer", "missing_future_field"),
+        ), ("missing_land_area", "missing_deed_transfer", "missing_future_field"))
+
+    def test_vacancy_still_requires_a_fresh_snapshot(self):
+        engine = self.vacant_engine()
+        engine.row["snapshot_is_fresh"] = False
+        with self.assertRaisesRegex(RuntimeError, "fresh parsed snapshot"):
+            worker.missing_required_fields(engine, self.config, self.account_id, ("missing_building_class",))
+
+    def test_fresh_foundation_roof_baths_only_do_not_waive_class_or_gla(self):
+        engine = self.vacant_engine()
+        detail = engine.row["parsed_detail"]
+        detail["primary_improvements"] = {"foundation": "SLAB", "roof_type": "GABLE", "baths_full": 2}
+        detail["land_detail"][0]["state_code"] = "RESIDENTIAL"
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id, ("missing_building_class", "missing_gla"),
+        ), ("missing_building_class", "missing_gla"))
+
+    def test_normalized_structure_signal_alone_still_blocks_vacant_waiver(self):
+        engine = self.vacant_engine()
+        engine.row["has_primary_improvement"] = True
+        self.assertEqual(worker.missing_required_fields(
+            engine, self.config, self.account_id, ("missing_building_class", "missing_gla"),
+        ), ("missing_building_class", "missing_gla"))
+
+    def test_verification_sql_uses_shared_meaningful_structure_predicate(self):
+        engine = self.vacant_engine()
+        worker.missing_required_fields(engine, self.config, self.account_id, ("missing_building_class",))
+        self.assertIn(primary_structure_sql("p") + " AS has_primary_improvement", engine.calls[0][0])
+
     def test_stale_missing_or_invalid_snapshot_is_a_retryable_error(self):
         for row in (None, {"snapshot_is_fresh": False, "parsed_detail": synthetic_detail()},
                     {"snapshot_is_fresh": True, "parsed_detail": None}):
@@ -162,6 +246,8 @@ class WorkerFieldVerificationTests(unittest.TestCase):
             engine, self.config, self.account_id, (), fields,
         ), ())
         self.assertEqual(engine.calls[1][1]["status"], "succeeded")
+        self.assertIn("verified present or not applicable for confirmed vacant land",
+                      engine.calls[1][1]["reason"])
         self.assertEqual(engine.calls[2][1]["quality_flags"], [])
 
     def test_market_updates_only_own_the_market_flags(self):

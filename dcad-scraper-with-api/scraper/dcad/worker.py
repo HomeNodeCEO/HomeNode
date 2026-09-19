@@ -19,7 +19,10 @@ from sqlalchemy import Engine, text
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
 from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
 from dcad.fetch import browser
-from dcad.field_completeness import parsed_verification_row, verification_presence
+from dcad.field_completeness import (
+    parsed_verification_row, primary_structure_sql,
+    verification_not_applicable, verification_presence,
+)
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
 
@@ -1428,17 +1431,7 @@ def missing_required_fields(
                        p.building_class,
                        COALESCE(NULLIF(p.living_area_sqft, 0),
                                 NULLIF(p.total_living_area, 0), p.total_area_sqft) AS gla,
-                       (NULLIF(btrim(p.construction_type), '') IS NOT NULL
-                        OR p.percent_complete IS NOT NULL OR p.year_built IS NOT NULL
-                        OR p.effective_year_built IS NOT NULL OR p.actual_age IS NOT NULL
-                        OR p.depreciation IS NOT NULL
-                        OR NULLIF(btrim(p.desirability), '') IS NOT NULL
-                        OR NULLIF(btrim(p.stories), '') IS NOT NULL
-                        OR p.living_area_sqft IS NOT NULL OR p.total_living_area IS NOT NULL
-                        OR p.bedroom_count IS NOT NULL OR p.bath_count IS NOT NULL
-                        OR p.number_units IS NOT NULL
-                        OR NULLIF(btrim(p.building_class), '') IS NOT NULL
-                        OR p.total_area_sqft IS NOT NULL) AS has_primary_improvement,
+                       {primary_structure_sql("p")} AS has_primary_improvement,
                        land.land_area, land.state_codes, land.has_land_details,
                        parties.ownership_percentage,
                        COALESCE(l.deed_transfer_date::text, l.deed_transfer_raw) AS deed_transfer
@@ -1471,9 +1464,14 @@ def missing_required_fields(
     if row is None or not row["snapshot_is_fresh"] or not isinstance(row["parsed_detail"], dict):
         raise RuntimeError("Field verification requires a fresh parsed snapshot written since this claim")
     normalized = verification_presence(row)
-    parsed = verification_presence(parsed_verification_row(row["parsed_detail"]))
+    parsed_row = parsed_verification_row(row["parsed_detail"])
+    parsed = verification_presence(parsed_row)
     presence = {field: present and parsed.get(field, False)
                 for field, present in normalized.items()}
+    # Missing improvement fields are N/A only when fresh parsed evidence and
+    # normalized data agree on vacancy; one-sided vacancy cannot erase a flag.
+    not_applicable = verification_not_applicable(row) & verification_not_applicable(parsed_row)
+    presence.update({field: True for field in not_applicable})
     return fields_still_missing(requested_fields, presence)
 
 
@@ -1507,7 +1505,10 @@ def mark_field_repair_result(
             )
         else:
             status = "succeeded"
-            reason = "All requested fields are present in normalized data and fresh parsed evidence"
+            reason = (
+                "All requested fields verified present or not applicable for confirmed vacant land "
+                "using normalized data and fresh parsed evidence"
+            )
         conn.execute(
             text(
                 f"""

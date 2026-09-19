@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import re
+from decimal import Decimal
 from typing import Any, Dict, List, Optional
 
 from bs4 import BeautifulSoup, Tag, NavigableString
@@ -463,6 +464,27 @@ def parse_additional_improvements(tbl: Tag | None) -> List[Dict[str, Any]]:
 # (unchanged from earlier v2)
 # ------------------------------------------------------------
 
+def parse_land_area(area_text: str) -> Dict[str, Any]:
+    """Retain source units and normalize only explicitly recognized area units."""
+    raw = clean_text(area_text)
+    match = re.fullmatch(r"([+-]?(?:\d[\d,]*(?:\.\d*)?|\.\d+))\s*(.*?)", raw)
+    value = to_num(match.group(1)) if match else None
+    source_unit = match.group(2).strip() if match else None
+    unit = re.sub(r"[\s.]", "", (source_unit or "").upper())
+    square_feet = None
+    if value is not None and value.is_finite() and value >= 0:
+        if unit in {"ACRE", "ACRES", "AC"}:
+            square_feet = value * Decimal("43560")
+        elif unit in {"SQUAREFEET", "SQUAREFOOT", "SQFT", "SF", "FT2", "FT²"}:
+            square_feet = value
+    return {
+        "area_raw": raw or None,
+        "area_value": value,
+        "area_unit": source_unit or None,
+        "area_sqft": square_feet,
+    }
+
+
 def parse_land_detail_from_table(tbl: Tag | None) -> List[Dict[str, Any]]:
     out: List[Dict[str, Any]] = []
     if not tbl:
@@ -471,18 +493,16 @@ def parse_land_detail_from_table(tbl: Tag | None) -> List[Dict[str, Any]]:
     if len(trs) <= 1:
         return out
     for tr in trs[1:]:
-        tds = [clean_text(td.get_text()) for td in tr.find_all("td")]
+        tds = [clean_text(td.get_text(" ", strip=True)) for td in tr.find_all("td")]
         if len(tds) >= 11:
             number = to_num(tds[0]) if tds[0] else None
-            area_txt = tds[5] or ""
-            area_num_part = clean_text(area_txt).split()[0] if area_txt else ""
             out.append({
                 "number": number,
                 "state_code": tds[1] or "N/A",
                 "zoning": tds[2] or "N/A",
                 "frontage_ft": to_num(tds[3]),
                 "depth_ft": to_num(tds[4]),
-                "area_sqft": to_sqft(area_num_part) if area_num_part else 0,
+                **parse_land_area(tds[5]),
                 "pricing_method": tds[6] or "N/A",
                 "unit_price": tds[7] or "N/A",
                 "market_adjustment_pct": tds[8] or "N/A",

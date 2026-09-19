@@ -10,7 +10,12 @@ sys.path.insert(0, str(SCRAPER_PATH))
 from dcad.field_completeness import (  # noqa: E402
     COMMON_REQUIRED_FIELDS,
     IMPROVED_REQUIRED_FIELDS,
+    PRIMARY_STRUCTURE_FIELDS,
+    classify_property,
     parsed_verification_row,
+    primary_structure_present,
+    primary_structure_sql,
+    verification_not_applicable,
     verification_presence,
 )
 
@@ -203,6 +208,7 @@ class VerificationPresenceTests(unittest.TestCase):
             state_codes=["RESIDENTIAL"],
             has_primary_improvement=False,
             gla=None,
+            building_class=None,
             land_value=100000,
             market_value=100000,
             improvement_value=0,
@@ -280,6 +286,106 @@ class VerificationPresenceTests(unittest.TestCase):
         presence = verification_presence(parsed_verification_row(synthetic_detail()))
         self.assertFalse(presence.get("missing_unsupported_field", False))
         self.assertFalse(presence.get("unsupported_field", False))
+
+
+class VacantApplicabilityTests(unittest.TestCase):
+    def vacant_row(self, **changes):
+        row = parsed_verification_row(synthetic_detail())
+        row.update(state_codes=["SFR - VACANT LOTS/TRACTS"], has_primary_improvement=False,
+                   improvement_value=0, market_value=100, land_value=100,
+                   building_class=None, gla=None)
+        row.update(changes)
+        return row
+
+    def test_vacant_waives_only_improvement_obligations_not_claiming_field_presence(self):
+        row = self.vacant_row()
+        self.assertEqual(verification_not_applicable(row), frozenset({
+            "gla", "missing_gla", "building_class", "missing_building_class",
+            "improvement_value", "missing_improvement_value",
+        }))
+        self.assertFalse(verification_presence(row)["missing_building_class"])
+        self.assertFalse(verification_presence(row)["missing_gla"])
+
+    def test_equal_positive_values_without_main_improvement_support_vacancy(self):
+        row = self.vacant_row(state_codes=["RESIDENTIAL"], improvement_value=None)
+        self.assertIn("missing_building_class", verification_not_applicable(row))
+
+    def test_empty_main_parser_defaults_do_not_establish_a_structure(self):
+        from bs4 import BeautifulSoup
+        from dcad.parse_detail import parse_main_improvement
+        detail = synthetic_detail()
+        primary = parse_main_improvement(BeautifulSoup("<html><body></body></html>", "html.parser"))
+        detail["primary_improvements"] = primary
+        detail["land_detail"] = [{"state_code": "RESIDENTIAL", "area_sqft": 7500}]
+        detail["value_summary"].update(market_value=100, land_value=100, improvement_value=0)
+        row = parsed_verification_row(detail)
+        self.assertFalse(row["has_primary_improvement"])
+        self.assertEqual(classify_property(row), ("vacant", "land_equals_market_without_main_improvement"))
+        self.assertIn("missing_building_class", verification_not_applicable(row))
+
+    def test_mixed_state_codes_and_coarse_vacant_flag_do_not_waive_fields(self):
+        for codes in (["SFR - VACANT LOTS/TRACTS", "SFR - RESIDENCE"],
+                      "SFR - VACANT LOTS/TRACTS | SFR - RESIDENCE"):
+            row = self.vacant_row(state_codes=codes, explicit_vacant_state_code=True)
+            self.assertEqual(classify_property(row)[0], "indeterminate")
+            self.assertFalse(verification_not_applicable(row))
+
+    def test_main_or_positive_improvement_evidence_overrides_vacant_code(self):
+        for changes in ({"has_primary_improvement": True}, {"improvement_value": 1},
+                        {"building_class": "14"}, {"gla": 100}):
+            with self.subTest(changes=changes):
+                row = self.vacant_row(**changes)
+                self.assertEqual(classify_property(row)[0], "improved")
+                self.assertFalse(verification_not_applicable(row))
+
+    def test_zero_or_unknown_values_do_not_prove_value_only_vacancy(self):
+        for value in (0, None, "N/A", "NaN", -1):
+            with self.subTest(value=value):
+                row = self.vacant_row(state_codes=[], market_value=value, land_value=value)
+                self.assertEqual(classify_property(row)[0], "indeterminate")
+                self.assertFalse(verification_not_applicable(row))
+
+    def test_actual_structure_only_fields_prevent_false_vacancy(self):
+        structures = {
+            "foundation": "SLAB", "roof_type": "GABLE", "roof_material": "COMPOSITION",
+            "exterior_material": "BRICK", "baths_full": 2, "baths_half": 1,
+            "kitchens": 1, "heating": "CENTRAL", "air_conditioning": "CENTRAL",
+            "wetbars": 1, "fireplaces": 1,
+        }
+        for field, value in structures.items():
+            for codes in (["RESIDENTIAL"], ["SFR - VACANT LOTS/TRACTS"],
+                          ["SFR - VACANT LOTS/TRACTS", "SFR - RESIDENCE"]):
+                with self.subTest(field=field, codes=codes):
+                    detail = synthetic_detail()
+                    detail["primary_improvements"] = {field: value}
+                    detail["value_summary"].update(market_value=100, land_value=100, improvement_value=0)
+                    detail["land_detail"] = [{"state_code": code, "area_sqft": 500} for code in codes]
+                    row = parsed_verification_row(detail)
+                    self.assertTrue(row["has_primary_improvement"])
+                    self.assertEqual(classify_property(row)[0], "improved")
+                    self.assertFalse(verification_not_applicable(row))
+                    self.assertFalse(verification_presence(row)["missing_gla"])
+                    self.assertFalse(verification_presence(row)["missing_building_class"])
+
+    def test_structural_nullish_values_and_amenity_defaults_are_not_buildings(self):
+        for value in (None, "", "  N/A ", "UNKNOWN", "NONE", "--", "NaN", False):
+            with self.subTest(value=value):
+                primary = dict.fromkeys(PRIMARY_STRUCTURE_FIELDS, value)
+                primary.update(basement="NONE", pool="NONE", spa="NONE", sauna="NONE",
+                               sprinkler="NONE", deck="NONE")
+                self.assertFalse(primary_structure_present(primary))
+        self.assertTrue(primary_structure_present({"baths_full": 0}))
+
+    def test_normalized_sql_and_raw_predicate_share_fields_and_nullish_rules(self):
+        sql = primary_structure_sql("improvement")
+        for field in PRIMARY_STRUCTURE_FIELDS:
+            self.assertIn(f"improvement.{field}::text", sql)
+        self.assertIn("'N/A'", sql)
+        self.assertIn("'UNKNOWN'", sql)
+        self.assertIn("upper(btrim(COALESCE(", sql)
+        self.assertNotIn("improvement.pool", sql)
+        with self.assertRaisesRegex(ValueError, "Invalid primary-improvement table alias"):
+            primary_structure_sql("p); DROP TABLE accounts; --")
 
 
 if __name__ == "__main__":

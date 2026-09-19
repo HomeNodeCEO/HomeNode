@@ -47,9 +47,12 @@ both processes and stops the service if either process exits unexpectedly.
     owner/land/GLA lanes. A repair succeeds only when every requested field is
     present in normalized data and in a parsed snapshot written since the
     repair claim. Year-indexed owner, party, land, legal, and value records are
-    matched to that snapshot year. Unknown requests stay unresolved. The
-    legacy vacant-land GLA exception does not waive an explicit `missing_gla`
-    request. Requests added during a fetch remain pending for another check.
+    matched to that snapshot year. Unknown requests stay unresolved.
+    Improvement-only obligations, including an explicit `missing_gla`, may be
+    marked not applicable only when the fresh parsed snapshot and normalized
+    data independently agree the parcel is vacant without contradictory
+    structure/value or mixed-code evidence. This is not a claim that the field
+    is present. Requests added during a fetch remain pending for another check.
 13. Fresh parsed evidence is not original HTML or per-field provenance, and an
     overlapping scrape can write the latest snapshot. Presence verification
     does not certify value equality or prove which scrape repaired a field.
@@ -72,8 +75,6 @@ python -m dcad.import_residential_targets "C:\path\to\DCAD Accounts.csv"
 python -m dcad.import_sales "C:\path\to\sales.csv" --source-name "Garland MLS two-year sales" --dry-run
 python -m dcad.worker --once
 python -m dcad.worker
-python ..\tools\queue_field_repairs.py
-python ..\tools\queue_field_repairs.py --apply
 ```
 
 See `SALES_IMPORT.md` for the full sales-source, parcel-link, and enriched-view
@@ -97,9 +98,62 @@ The outage circuit defaults can be tuned with
 conservative so an individual bad account cannot pause the campaign.
 
 `SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS` controls the repair cadence and defaults
-to `100`. The queue audit is rollback-only unless `--apply` is supplied. Use
-`--fields owner land gla` to select fields and `--limit N` for a controlled
-sample.
+to `100`.
+
+### Bounded exact-field audits
+
+Run the audit from `dcad-scraper-with-api` (one directory above `scraper`):
+
+```powershell
+python -m tools.audit_dcad_field_completeness --account-ids 00000000000000001 00000000000000002
+python -m tools.audit_dcad_field_completeness --batch-size 100
+python -m tools.audit_dcad_field_completeness --batch-size 100 --after-account-id 00000000000000100
+python -m tools.audit_dcad_field_completeness --account-ids 00000000000000001 --apply
+```
+
+Account-ID and keyset scopes are capped at 500 accounts. Keyset reads select
+IDs first, using the target primary key; each subsequent detail query restricts
+raw/owner/land/party reads to one account and aligns normalized years with the
+latest fetched snapshot. Verify account/year indexes and the scoped query plan
+with read-only `EXPLAIN` before a production pilot. All reported counts describe
+only the chosen scope; `scope.next_after_account_id` and `scope.has_more` support
+deliberate paging. `--limit` caps apply candidates, not reads within the scope.
+No worker is started and no campaign completion markers are reset.
+
+The default uses a database-enforced read-only transaction. `--apply` first
+audits read-only, then rechecks each selected account under short row locks and
+commits one account at a time. Leased or locked work is deferred, pending/retry
+attempts and schedules are retained, and requests/quality flags are unioned
+without erasing unrelated obligations. Unchanged reruns do not mutate queue
+rows. A succeeded row is reopened only for a newly discovered exact field;
+already-requested regressions need review. All `source_missing` rows are
+deferred, including new omissions, until source-versus-parser review is done.
+An error stops the batch, reports earlier committed outcomes and the failing
+account, and exits nonzero; a rerun safely skips unchanged queued work.
+
+Stored field omissions are reported separately from parsed snapshot evidence.
+Neither missing JSON nor the `source_missing` status proves source absence, and
+the audit does not infer land area from dimensions or synthesize owner shares.
+Healthy stored fields are not queued just because an older parsed snapshot
+omitted them. Vacant/indeterminate parcels are reported, not automatically
+queued as improved-property repairs.
+
+`--full-scan` explicitly opts into the legacy, potentially expensive whole
+campaign report and cannot be combined with `--apply`. It uses independent
+latest-year aggregates and legacy improvement predicates rather than bounded
+snapshot-aligned reads. Its omission counts are diagnostic, not an authoritative
+enqueue list: queue actions are `not_classified` and selected candidates remain
+zero because the report does not fetch queue obligations or parsed snapshots.
+All reads default to a 15-second statement timeout. Only an explicit full scan
+may opt into `--full-scan-statement-timeout-seconds N` (integer 1-120); bounded
+reads and apply transactions always keep 15 seconds. The 1-second lock timeout
+and read-only full-scan transaction are unchanged. This timeout applies per SQL
+command, including server-cursor `FETCH`, not to the report's total runtime;
+raising it does not guarantee the legacy global scan will finish. Prefer
+bounded scopes for production pilots. Do not use
+the legacy `queue_field_repairs.py` as a read-only probe: its default executes
+writes before rollback, its `--limit` does not bound the underlying audit, and
+it can reset non-leased retry history.
 
 Campaign progress is available from the public API at `/scrape/status`.
 

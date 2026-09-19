@@ -301,13 +301,12 @@ class WorkerFieldVerificationTests(unittest.TestCase):
 
     def test_audit_queue_merges_requests_and_retains_unrelated_account_flags(self):
         cursor = Mock()
+        cursor.fetchone.return_value = {"account_id": self.account_id}
         candidates = [(self.account_id, ["missing_mailing_address"], ["owner", "missing_mailing_address"])]
-        with patch.object(audit, "insert_candidates") as insert:
-            self.assertEqual(audit.queue_candidates(cursor, candidates), 1)
-        insert.assert_called_once_with(cursor, candidates)
+        self.assertEqual(audit.queue_candidates(cursor, candidates), 1)
         self.assertIn("existing.requested_fields || EXCLUDED.requested_fields",
                       cursor.execute.call_args_list[0].args[0])
-        self.assertIn("COALESCE(account.data_quality_flags, ARRAY[]::text[]) || repair.flags",
+        self.assertIn("COALESCE(account.data_quality_flags, ARRAY[]::text[]) || %(flags)s::text[]",
                       cursor.execute.call_args_list[1].args[0])
         self.assertIn("JOIN latest_owner latest", audit.AUDIT_SQL)
         self.assertIn("JOIN latest_land_year latest USING (account_id, tax_year)", audit.AUDIT_SQL)

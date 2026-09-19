@@ -11,7 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from dcad.primary_cleanup import vacant_zero_cleanup_sql, vacant_zero_cleanup_year
-from dcad.owner_source import owner_bundle_is_usable, owner_name_key, owner_source_year
+from dcad.owner_source import heading_year, owner_bundle_is_usable, owner_name_key, owner_source_year, owner_withheld
 
 log = logging.getLogger("dcad.upsert")
 
@@ -177,6 +177,15 @@ def persist_owner_bundle(connection, account_id: str, owner: Dict[str, Any]) -> 
                 """), {"account_id": account_id, "tax_year": year,
                        "owner_name": party_name, "ownership_pct": ownership_pct})
     return True
+
+
+def _owner_year_log_value(value: Any) -> Optional[int]:
+    # Diagnostics may contain years, never arbitrary raw source text/objects.
+    if type(value) is int and 1000 <= value <= 9999:
+        return value
+    if isinstance(value, str) and len(value) == 4 and value.isascii() and value.isdecimal() and value[0] != "0":
+        return int(value)
+    return None
 
 
 def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, Any]) -> None:
@@ -411,7 +420,20 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
         # -------- owner_summary and owner_parties --------
         if (_SCHEMA or "").lower() == "core":
             owner = (detail or {}).get("owner") or {}
-            persist_owner_bundle(s, account_id, owner)
+            owner_saved = persist_owner_bundle(s, account_id, owner)
+            if (owner_saved is False and isinstance(owner, dict)
+                    and owner_name_key(owner.get("owner_name")) not in {None, "UNKNOWN", "NOT REPORTED"}
+                    and not owner_withheld(owner) and owner_source_year(owner) is None):
+                # A meaningful owner without proven provenance needs diagnosis,
+                # unlike normal empty/withheld observations or older-year refusal.
+                # Parse headings to years only: a changed heading could contain
+                # owner/address text and must never be copied into worker logs.
+                log.warning("Owner persistence skipped: unverified source year %s", json.dumps({
+                    "account_id": account_id,
+                    "source_year": _owner_year_log_value(owner.get("source_year")),
+                    "source_heading_year": heading_year(owner.get("source_heading")),
+                    "parties_source_heading_year": heading_year(owner.get("parties_source_heading"), "parties"),
+                }, ensure_ascii=True, separators=(",", ":")))
 
             # ARB hearing
             arb = (detail or {}).get("arb_hearing") or {}

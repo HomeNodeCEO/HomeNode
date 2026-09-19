@@ -1,4 +1,5 @@
 from copy import deepcopy
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -239,6 +240,75 @@ class OwnerPersistenceTests(unittest.TestCase):
                        if "INSERT INTO core.value_summary" in str(call.args[0])]
         self.assertEqual(len(value_calls), 2)
         self.assertTrue(all(call.args[1]["certified_year"] == 2026 for call in value_calls))
+
+
+class OwnerProvenanceWarningTests(unittest.TestCase):
+    def upsert_warning(self, fresh, saved=False):
+        detail = synthetic_detail(); detail["owner"] = fresh
+        session = MagicMock()
+        with patch.object(upsert, "_SCHEMA", "core"), patch.object(upsert, "get_engine", return_value=object()), \
+             patch.object(upsert, "get_session", return_value=session), \
+             patch.object(upsert, "persist_owner_bundle", return_value=saved) as save, \
+             patch.object(upsert.log, "warning") as warning:
+            upsert.upsert_parsed(ACCOUNT, detail, {})
+        save.assert_called_once_with(session.__enter__.return_value, ACCOUNT, fresh or {})
+        return warning
+
+    def test_refused_meaningful_owner_without_source_year_warns_without_private_values(self):
+        fresh = owner(); fresh["source_year"] = None
+        warning = self.upsert_warning(fresh)
+        warning.assert_called_once()
+        message, encoded = warning.call_args.args
+        self.assertEqual(message, "Owner persistence skipped: unverified source year %s")
+        self.assertEqual(json.loads(encoded), {"account_id": ACCOUNT, "source_year": None,
+            "source_heading_year": 2027, "parties_source_heading_year": 2027})
+        self.assertNotIn(fresh["owner_name"], encoded)
+        self.assertNotIn(fresh["mailing_address"], encoded)
+
+    def test_missing_or_mismatched_heading_warns_with_only_safe_year_primitives(self):
+        cases = [
+            {"source_heading": None}, {"source_heading": "Owner (Current 2026)"},
+            {"parties_source_heading": "Multi-Owner (Current 2026)"},
+            {"source_year": "2027", "source_heading": "not an owner heading"},
+        ]
+        for changes in cases:
+            with self.subTest(changes=changes):
+                fresh = owner(); fresh.update(changes)
+                warning = self.upsert_warning(fresh)
+                warning.assert_called_once()
+                payload = json.loads(warning.call_args.args[1])
+                self.assertEqual(payload["account_id"], ACCOUNT)
+                self.assertEqual(payload["source_year"], 2027)
+                self.assertTrue(all(value is None or type(value) is int for key, value in payload.items() if key != "account_id"))
+
+    def test_untrusted_diagnostic_values_never_leak_names_addresses_or_unbounded_text(self):
+        private = "PRIVATE OWNER 999 PRIVATE STREET\nINJECTED LOG " * 100
+        for bad_year in (private, {"owner_name": private}, [private], True, 2027.5, 10000, "0270"):
+            with self.subTest(value_type=type(bad_year).__name__):
+                fresh = owner(); fresh.update(source_year=bad_year, source_heading=private,
+                                               parties_source_heading={"mailing_address": private})
+                warning = self.upsert_warning(fresh)
+                warning.assert_called_once()
+                encoded = warning.call_args.args[1]
+                self.assertLess(len(encoded), 200)
+                self.assertNotIn("PRIVATE", encoded)
+                self.assertNotIn("INJECTED", encoded)
+                self.assertNotIn("\n", encoded)
+                self.assertEqual(json.loads(encoded), {"account_id": ACCOUNT, "source_year": None,
+                    "source_heading_year": None, "parties_source_heading_year": None})
+
+    def test_expected_empty_placeholder_withheld_and_valid_dated_refusals_are_silent(self):
+        cases = [None, {}, [], owner(), owner(2026), owner(name=WITHHELD_TEXT)]
+        for name in (None, "", "N/A", "UNKNOWN", "NOT REPORTED", "TRUNCATED &", "WITHHELD", "CONFIDENTIAL"):
+            fresh = owner(name=name); fresh["source_year"] = None
+            cases.append(fresh)
+        fresh = owner(); fresh.update(source_year=None, multi_owner=[{"owner_name": WITHHELD_TEXT}])
+        cases.append(fresh)
+        for fresh in cases:
+            with self.subTest(fresh=fresh):
+                self.upsert_warning(fresh).assert_not_called()
+        fresh = owner(); fresh["source_year"] = None
+        self.upsert_warning(fresh, saved=True).assert_not_called()
 
 
 class OwnerVerificationYearTests(unittest.TestCase):

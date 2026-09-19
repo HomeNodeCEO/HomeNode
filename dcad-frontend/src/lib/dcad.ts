@@ -11,6 +11,7 @@ import {
   type AccountRow,
 } from './api';
 import { mapAccountDetailToLegacy } from './legacyDcadDetail';
+import { CUSTOM_ASSIGNMENT_REQUEST_ERROR } from './customAssignmentNavigation';
 
 // Health endpoint (proxied to the app server)
 export async function getHealth(): Promise<unknown> {
@@ -47,11 +48,19 @@ export const search = searchByAddress;
  * - Calls the new getProperty(countyId, accountId).
  * - Defaults countyId to 1 (Dallas).
  */
-export async function fetchDetail(accountId: string, countyId = 1) {
+export async function fetchDetail(
+  accountId: string,
+  countyId = 1,
+  { assignmentFileId }: { assignmentFileId?: number | null } = {},
+) {
   void countyId;
+  if (assignmentFileId !== undefined
+    && (!Number.isSafeInteger(assignmentFileId) || !assignmentFileId || assignmentFileId < 1)) {
+    throw new Error(CUSTOM_ASSIGNMENT_REQUEST_ERROR);
+  }
   // Database-backed detail only (no scraper). Map DB result to the legacy detail shape
   const normalizedAccountId = (accountId || '').trim();
-  const data = await getAccountDb(normalizedAccountId);
+  const data = await getAccountDb(normalizedAccountId, { assignmentFileId });
   return mapAccountDetailToLegacy(data);
 }
 

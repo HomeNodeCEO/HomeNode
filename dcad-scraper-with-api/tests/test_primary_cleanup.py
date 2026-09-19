@@ -214,6 +214,26 @@ class CleanupPersistenceTests(unittest.TestCase):
             self.assertEqual(set(text(writes[0][0]).compile(dialect=postgresql.dialect()).params),
                              set(writes[0][1]), "Every original INSERT bind is still supplied")
 
+    def test_nonfinite_numeric_values_never_create_primary_rows_or_bind_values(self):
+        for value in ("NaN", "sNaN", "Infinity", "-Infinity", float("inf"), Decimal("NaN")):
+            with self.subTest(value=value):
+                self.assertIsNone(upsert.to_decimal_or_none(value))
+                self.assertIsNone(upsert.to_int_or_none(value))
+                primary = {"percent_complete": value, "depreciation": value, "year_built": value}
+                self.assertFalse(any("primary_improvements" in sql for sql, _ in
+                                     self.capture_upsert({"primary_improvements": primary})))
+                primary["foundation"] = "SLAB"
+                writes = [(sql, params) for sql, params in self.capture_upsert({"primary_improvements": primary})
+                          if "INSERT INTO core.primary_improvements" in sql]
+                self.assertEqual(len(writes), 1)
+                for key in ("percent_complete", "depreciation", "year_built"):
+                    self.assertIsNone(writes[0][1][key])
+
+    def test_finite_decimal_normalization_is_preserved(self):
+        for value, expected in (("0", "0"), ("98.5%", "98.5"), ("$1,234.56", "1234.56"),
+                                ("(25.5)", "-25.5"), (Decimal("12.75"), "12.75")):
+            self.assertEqual(upsert.to_decimal_or_none(value), Decimal(expected))
+
     def test_sql_rechecks_entire_stored_signature_and_preserves_ambiguous_values(self):
         sql = vacant_zero_cleanup_sql("core.primary_improvements")
         compiled = text(sql).compile(dialect=postgresql.dialect())

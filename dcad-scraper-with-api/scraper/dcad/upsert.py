@@ -63,7 +63,7 @@ def to_int_or_none(v: Any) -> Optional[int]:
         if s == "":
             return None
         return int(float(s))
-    except (ValueError, TypeError):
+    except (ValueError, TypeError, OverflowError):
         return None
 
 def to_decimal_or_none(v: Any) -> Optional[Decimal]:
@@ -77,7 +77,8 @@ def to_decimal_or_none(v: Any) -> Optional[Decimal]:
             s = "-" + s[1:-1]
         if s == "":
             return None
-        return Decimal(s)
+        value = Decimal(s)
+        return value if value.is_finite() else None
     except (InvalidOperation, ValueError, TypeError):
         return None
 

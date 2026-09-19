@@ -3473,6 +3473,7 @@ function AddressHero({
 
 export default function PropertyReport() {
   const location = useLocation();
+  const applicationAuth = useApplicationAuth();
   const { accountId: routeAccountId } = useParams<{ accountId?: string }>();
   const reportOpenedAt = useRef(performance.now());
   const subjectVisibleReported = useRef(false);
@@ -3483,10 +3484,20 @@ export default function PropertyReport() {
     return params.get("account_id") || params.get("account") || "";
   }, [location.search, routeAccountId]);
   const requestedAssignmentFileId = useMemo(() => parseCustomAssignmentFileId(location.search), [location.search]);
+  const detailSessionKey = JSON.stringify([
+    applicationAuth.session?.user_id ?? null,
+    applicationAuth.session?.organizations ?? [],
+    applicationAuth.configured,
+    applicationAuth.required,
+  ]);
 
   const account = presetAccount;
   const { detail, reloadDetail } = usePropertyReportDetail<DcadDetail>({
     accountId: account,
+    assignmentFileId: requestedAssignmentFileId,
+    sessionKey: detailSessionKey,
+    enabled: applicationAuth.ready && !applicationAuth.bootstrapError
+      && (!applicationAuth.required || Boolean(applicationAuth.session)),
     onError: (error) => {
       console.error(error);
       window.alert(error instanceof Error ? error.message : "Import failed");

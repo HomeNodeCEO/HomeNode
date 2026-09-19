@@ -45,7 +45,7 @@ function catalog(input) {
     ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
-      catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
+      catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(input.contextRef), selection_revision: input.selection.revision },
       pockets: ['SUBJECT', 'B'].map((id, index) => ({ id: groupId(index + 1), disposition: 'needs_review', label: `Synthetic group ${index}`,
         county: 'Synthetic', account_ids: [id], member_count: 1 })),
@@ -103,10 +103,33 @@ const privateCaptured = input => ({ ...captured(input), private_sales_import: co
 
 function denseCatalog(input) {
   const result = catalog(input), c = result.catalog;
-  c.catalog_version = 2;
+  c.catalog_version = input.catalogVersion ?? 2;
   c.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i + 1), disposition: 'needs_review', label: `Group ${i}`,
     county: 'Dallas', account_ids: [i === 0 ? 'SUBJECT' : `A${i}`], member_count: 1 }));
   c.coverage = { discovery_member_count: 888, assigned_account_count: 887, unassigned_account_count: 1 };
+  return result;
+}
+
+function catalogV3(input) {
+  const result = denseCatalog(input), c = result.catalog;
+  c.catalog_version = 3;
+  c.pockets = Array.from({ length: 1475 }, (_, i) => ({ id: groupId(i + 1), disposition: 'needs_review', label: `Group ${i}`,
+    county: 'Dallas', account_ids: [i === 0 ? 'SUBJECT' : `A${i}`], member_count: 1 }));
+  c.coverage = { discovery_member_count: 1476, assigned_account_count: 1475, unassigned_account_count: 1 };
+  return result;
+}
+// The old bounded contract placed the entire over-limit roster in unresolved;
+// it did not expose a named prefix of the newer grouping.
+function pinnedDenseCatalog(input) {
+  const result = catalogV3(input);
+  if (input.catalogVersion === 1 || input.catalogVersion === 2) {
+    const c = result.catalog;
+    c.catalog_version = input.catalogVersion; c.status = 'incomplete';
+    c.unassigned.account_ids = [...c.pockets.flatMap(p => p.account_ids), ...c.unassigned.account_ids].sort();
+    c.unassigned.member_count = 1476; c.pockets = [];
+    c.coverage = { discovery_member_count: 1476, assigned_account_count: 0, unassigned_account_count: 1476 };
+    c.subject_membership.assigned_pocket_id = null; c.subject_membership.status = 'catalog_incomplete';
+  }
   return result;
 }
 
@@ -116,7 +139,7 @@ function ordinaryPendingSection() {
   return result;
 }
 function openingCatalog(input, kind) {
-  const result = kind === 'dense887' ? denseCatalog(input) : catalog(input), c = result.catalog;
+  const result = kind === 'dense1475' ? catalogV3(input) : kind === 'dense887' ? denseCatalog(input) : catalog(input), c = result.catalog;
   if (kind === 'empty' || kind === 'unassigned-only') {
     const accounts = kind === 'empty' ? [] : ['C', 'SUBJECT'];
     c.pockets = []; c.unassigned = { account_ids: accounts, member_count: accounts.length, reason_counts: [] };
@@ -128,7 +151,7 @@ function openingCatalog(input, kind) {
   }
   return result;
 }
-for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', 'empty', 'unassigned-only', 'dense887']) {
+for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', 'empty', 'unassigned-only', 'dense887', 'dense1475']) {
   test(`${resume ? 'resumed' : 'fresh'} combined opening conserves the complete ${kind} catalog in one read`, async () => {
     let original, before;
     const h = harness({ initialSection: resume ? ordinaryPendingSection() : undefined, loadCatalog(input) {
@@ -139,8 +162,9 @@ for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', '
       assert.deepEqual(h.calls.map(c => c.kind), resume ? ['capture', 'catalog', 'save'] : ['save', 'capture', 'catalog', 'save']);
       const request = h.calls.find(c => c.kind === 'catalog').input;
       assert.equal(request.initialPreviewMode, 'all_catalog_groups'); assert.equal(Object.hasOwn(request, 'initialPreviewGroups'), false);
+      assert.equal(request.catalogVersion, 3, 'new captures explicitly opt into v3 without changing old-client defaults');
       assert.deepEqual(request.selection, { revision: 1, pockets: [] });
-      const expectedIds = kind === 'dense887' ? [...Array.from({ length: 887 }, (_, i) => groupId(i + 1)), 'discovery:unassigned']
+      const expectedIds = kind.startsWith('dense') ? [...Array.from({ length: kind === 'dense1475' ? 1475 : 887 }, (_, i) => groupId(i + 1)), 'discovery:unassigned']
         : kind === 'empty' ? [] : kind === 'unassigned-only' ? ['discovery:unassigned']
         : [groupId(1), groupId(2), ...(kind === 'mixed' ? ['discovery:unassigned'] : [])];
       const expectedAccounts = [...original.catalog.pockets.flatMap(p => p.account_ids), ...original.catalog.unassigned.account_ids].sort();
@@ -153,7 +177,7 @@ for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', '
       assert.equal(state.checkpoint.pending_capture, null); assert.equal(h.ids, resume ? 0 : 1);
       assert.equal(h.maxOpen, 1); assert.equal(JSON.stringify(original), before, 'opaque response is not rewritten');
       assert.ok(Object.isFrozen(state.initial_preview) && Object.isFrozen(state.initial_preview.input.selection));
-      assert.equal(state.checkpoint.workspace_version, kind === 'dense887' ? 5 : 1);
+      assert.equal(state.checkpoint.workspace_version, 6);
     } finally { h.controller.dispose(); }
   });
 }
@@ -179,12 +203,12 @@ test('combined opening remains unpublished until the exact active-save CAS ackno
     return commit(input);
   } });
   try {
-    await h.controller.reopen(); const work = h.controller.start(PERIOD); await entered.promise;
+    const prior = await h.controller.reopen(); const work = h.controller.start(PERIOD); await entered.promise;
     assert.equal(h.controller.getState().phase, 'saving_active');
     assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
-    assert.equal(h.controller.getState().initial_preview, null);
+    assert.equal(h.controller.getState().initial_preview, prior.initial_preview);
     assert.deepEqual(h.db.section.value.active, initial.value.active);
-    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    assert.ok(!h.states.some(s => s.initial_preview?.input.contextRef.context_id === OPERATION || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
     held.resolve(); const ready = await work;
     assert.equal(ready.status, 'ready'); assert.equal(ready.initial_preview.value.fixture, 'opening');
     assert.equal(ready.section_revision, initial.revision + 2);
@@ -208,7 +232,7 @@ for (const badAck of ['target', 'revision', 'value']) test(`combined opening rej
     assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
     assert.equal(h.controller.getState().checkpoint.pending_capture.operation_id, OPERATION);
     assert.equal(h.controller.getState().initial_preview, null); assert.equal(h.controller.getState().recovery, 'reload');
-    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    assert.ok(!h.states.some(s => s.initial_preview?.input.contextRef.context_id === OPERATION || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
     await rejects(h.controller.resumePending(), 'recovery_required');
     await h.reload(); assert.equal(h.controller.getState().status, 'ready');
     assert.equal(h.calls.filter(c => c.kind === 'capture').length, 1, 'fresh saved-section recovery must not recapture');
@@ -229,7 +253,7 @@ test('late failed active save cannot publish the timed-out combined opening or r
     assert.deepEqual(h.db.section.value.active, initial.value.active);
     assert.deepEqual(h.controller.getState().checkpoint.active, initial.value.active);
     assert.equal(h.controller.getState().initial_preview, null); assert.equal(h.controller.getState().recovery, 'reload');
-    assert.ok(!h.states.some(s => s.initial_preview || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
+    assert.ok(!h.states.some(s => s.initial_preview?.input.contextRef.context_id === OPERATION || (s.status === 'ready' && s.checkpoint.active.context_ref.context_id === OPERATION)));
     assert.equal(h.calls.filter(c => c.kind === 'catalog' && c.input.contextRef.context_id === OPERATION).length, 1);
   } finally { held.resolve(); h.controller.dispose(); }
 });
@@ -256,11 +280,12 @@ test('real retained producers cross combined transport, fresh lifecycle ACK and 
       requests.push({ url, init }); assert.match(url, /\/catalog$/);
       const body = JSON.parse(init.body);
       assert.equal(body.initial_preview_mode, 'all_catalog_groups'); assert.equal(Object.hasOwn(body, 'initial_preview_groups'), false);
+      assert.equal(body.catalog_version, 3);
       assert.deepEqual(body.selection, { revision: 1, pockets: [] }); assert.deepEqual(body.context_ref, f.context_ref);
       const expected = { context_ref: f.context_ref, selection_revision: body.selection.revision };
       const preview = buildCustomCohortObservationPreview({ context_ref: f.context_ref, retained_inputs, selection: body.selection });
       const catalog = presentCustomCohortPocketCatalog({ expected, preview,
-        catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: 2 }) });
+        catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: 3 }) });
       const selection = customCohortOpeningSelection(catalog, customCohortOpeningGroupIds(catalog), 1);
       const common = { target: { account_id: target.accountId, assignment_file_id: target.assignmentFileId },
         context_ref: f.context_ref, selection_revision: 1, subject_freshness: 'matched',
@@ -274,7 +299,8 @@ test('real retained producers cross combined transport, fresh lifecycle ACK and 
   const catalogTransport = createCustomCohortJsonTransport(adapters);
   const owner = create({ target, onChange() {}, operationId: () => f.context_ref.context_id,
     catalog: (input, io) => catalogTransport(input.accountId, 'catalog', { assignment_file_id: input.assignmentFileId,
-      context_ref: input.contextRef, selection: input.selection, include_recommendation: true, initial_preview_mode: input.initialPreviewMode }, io),
+      context_ref: input.contextRef, selection: input.selection, catalog_version: input.catalogVersion,
+      include_recommendation: true, initial_preview_mode: input.initialPreviewMode }, io),
     capture: async input => { assert.equal(input.operationId, f.context_ref.context_id); return { status: 'registered', reused: false,
       context_ref: f.context_ref, source_query_complete: true, discovery: { radius_metres: '4828.032',
         account_count: f.accountIds.length, parcel_count: f.parcels.length } }; },
@@ -287,7 +313,7 @@ test('real retained producers cross combined transport, fresh lifecycle ACK and 
   try {
     const work = owner.start(retained_inputs.study.observation_period); await entered.promise;
     assert.equal(owner.getState().initial_preview, null); assert.equal(section.value.active, null);
-    ack.resolve(); const ready = await work; assert.equal(ready.status, 'ready'); assert.equal(ready.checkpoint.workspace_version, 5);
+    ack.resolve(); const ready = await work; assert.equal(ready.status, 'ready'); assert.equal(ready.checkpoint.workspace_version, 6);
     const timers = new Map(); let sequence = 0;
     previewController = createCustomCohortPreviewController({ initialResponse: ready.initial_preview,
       fingerprint: async canonical => createHash('sha256').update(canonical).digest('hex'),
@@ -314,6 +340,7 @@ for (const ids of [[groupId(1), groupId(2), 'discovery:unassigned'], []]) test(`
   const state = await h.controller.reopen();
   assert.deepEqual(h.calls.map(c => c.kind), ['catalog']);
   assert.deepEqual(h.calls[0].input.initialPreviewGroups, ids);
+  assert.equal(h.calls[0].input.catalogVersion, 2);
   assert.equal(Object.hasOwn(h.calls[0].input, 'initialPreviewMode'), false);
   assert.deepEqual(state.initial_preview.input.selection, state.selection);
   assert.equal(state.initial_preview.value.fixture, 'opening');
@@ -327,71 +354,168 @@ for (const ids of [[groupId(1), groupId(2), 'discovery:unassigned'], []]) test(`
   h.controller.dispose(); assert.equal(h.controller.getState().initial_preview, null);
 });
 
-test('v5 refuses a missing opening response; legacy requests keep the independent preview path', async () => {
-  const initialSection = legacyDenseSection([]); initialSection.value.workspace_version = 5;
-  const h = harness({ initialSection, loadCatalog: input => { const result = denseCatalog(input); delete result.initial_preview; return result; } });
+for (const [version, load] of [[1, catalog], [5, denseCatalog], [6, catalogV3]]) test(`v${version} refuses a missing opening response without saving`, async () => {
+  const initialSection = legacyDenseSection([]); initialSection.value.workspace_version = version;
+  const h = harness({ initialSection, loadCatalog: input => { const result = load(input); delete result.initial_preview; return result; } });
   await rejects(h.controller.reopen(), 'opening_preview_missing');
   assert.equal(h.controller.getState().catalog, null); assert.equal(h.controller.getState().initial_preview, null);
-  const legacy = harness({ initialSection: activeSection() });
-  const state = await legacy.controller.reopen(); assert.equal(state.initial_preview, null);
-  assert.equal(Object.hasOwn(legacy.calls[0].input, 'initialPreviewGroups'), false);
+  assert.deepEqual(h.calls.map(c => c.kind), ['catalog']);
+  assert.deepEqual(h.calls[0].input.initialPreviewGroups, []);
+  assert.equal(h.calls[0].input.catalogVersion, version === 6 ? 3 : version === 5 ? 2 : 1);
+  h.controller.dispose();
 });
 function legacyDenseSection(included = ['discovery:unassigned']) {
   const s = activeSection(); s.value.active.selection.included_recorded_group_ids = included; return s;
 }
-test('dense catalog upgrade is CAS-saved before any ready preview, never recaptures or loses members', async () => {
+for (const version of [1, 5]) test(`v${version} reopens pinned whole-unresolved before explicit v3 upgrade is CAS-saved without losing members`, async () => {
   const held = deferred(); let saves = 0;
-  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog,
+  const initialSection = legacyDenseSection(); initialSection.value.workspace_version = version;
+  const h = harness({ initialSection, loadCatalog: pinnedDenseCatalog,
     save: async (input, opts, commit) => { if (++saves === 1) await held.promise; return commit(input); } });
-  const reopening = h.controller.reopen(); await drain();
+  const original = await h.controller.reopen();
+  assert.deepEqual(h.calls.map(c => c.kind), ['catalog']); assert.equal(h.calls[0].input.catalogVersion, version === 5 ? 2 : 1);
+  assert.deepEqual(h.db.section, initialSection); assert.equal(original.catalog.pockets.length, 0);
+  assert.equal(original.catalog.status, 'incomplete');
+  assert.equal(original.selection.pockets[0].account_ids.length, 1476);
+  const upgrading = h.controller.upgradeGrouping(); await drain();
   assert.equal(h.controller.getState().phase, 'upgrading_catalog_checkpoint');
-  assert.equal(h.controller.getState().selection, null); assert.ok(!h.states.some(s => s.status === 'ready'));
-  held.resolve(); await reopening;
-  assert.deepEqual(h.calls.map(c => c.kind), ['catalog', 'save']); assert.equal(h.ids, 0);
-  assert.equal(h.db.section.revision, 6); assert.equal(h.db.section.value.workspace_version, 5);
+  assert.deepEqual(h.controller.getState().checkpoint, original.checkpoint);
+  assert.equal(h.controller.getState().catalog, original.catalog); assert.deepEqual(h.db.section, initialSection);
+  assert.ok(!h.states.some(s => s.status === 'ready' && s.catalog?.catalog_version === 3));
+  const request = h.calls[1].input;
+  assert.equal(request.catalogVersion, 3); assert.deepEqual(request.contextRef, context(OLD));
+  assert.equal(request.selection.revision, 10);
+  assert.equal(Object.hasOwn(request, 'initialPreviewMode'), false); assert.equal(Object.hasOwn(request, 'initialPreviewGroups'), false);
+  assert.equal(h.calls[2].input.expectedRevision, initialSection.revision);
+  held.resolve(); await upgrading;
+  assert.deepEqual(h.calls.map(c => c.kind), ['catalog', 'catalog', 'save']); assert.equal(h.ids, 0);
+  assert.equal(h.db.section.revision, 6); assert.equal(h.db.section.value.workspace_version, 6);
   assert.equal(h.db.section.value.active.selection.revision, 10);
-  assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
-  await h.reload(); assert.equal(saves, 1); assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+  assert.deepEqual(h.controller.getState().selection.pockets[0].account_ids, original.selection.pockets[0].account_ids);
+  assert.equal(h.controller.getState().catalog.pockets.length, 1475); assert.equal(h.controller.getState().initial_preview, null);
+  await h.reload(); assert.equal(saves, 1); assert.equal(h.calls.at(-1).input.catalogVersion, 3);
+  assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 1476);
   await h.controller.setGroups([groupId(1)]);
   assert.deepEqual(h.controller.getState().selection.pockets[0].account_ids, ['SUBJECT']);
   await h.reload(); assert.deepEqual(h.controller.getState().selection.pockets[0].account_ids, ['SUBJECT']);
+  h.controller.dispose();
 });
-test('dense upgrade preserves explicit exclusion of all, and rejects impossible legacy named selections', async () => {
-  const empty = harness({ initialSection: legacyDenseSection([]), loadCatalog: denseCatalog }); await empty.controller.reopen();
-  assert.deepEqual(empty.controller.getState().selection.pockets, []); assert.equal(empty.db.section.value.workspace_version, 5);
-  const bad = harness({ initialSection: activeSection(), loadCatalog: denseCatalog });
+test('explicit v3 upgrade preserves exclusion of all; pinned legacy unknown groups never save', async () => {
+  const empty = harness({ initialSection: legacyDenseSection([]), loadCatalog: pinnedDenseCatalog }); await empty.controller.reopen();
+  await empty.controller.upgradeGrouping();
+  assert.deepEqual(empty.controller.getState().selection.pockets, []); assert.equal(empty.db.section.value.workspace_version, 6);
+  const bad = harness({ initialSection: activeSection(), loadCatalog: pinnedDenseCatalog });
   await rejects(bad.controller.reopen(), 'operation_failed');
   assert.deepEqual(bad.calls.map(c => c.kind), ['catalog']); assert.equal(bad.controller.getState().selection, null);
+  empty.controller.dispose(); bad.controller.dispose();
+});
+
+test('explicit upgrade preserves a strict selected subset when new groups split the old selected leaf', async () => {
+  const h = harness({ initialSection: activeSection(), loadCatalog(input) {
+    const result = catalog(input), c = result.catalog;
+    if (input.catalogVersion === 1) {
+      c.pockets[1].account_ids = ['B', 'C']; c.pockets[1].member_count = 2;
+      c.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+      c.coverage.assigned_account_count = 3; c.coverage.unassigned_account_count = 0;
+    }
+    return result;
+  } });
+  try {
+    const old = await h.controller.reopen(); assert.deepEqual(old.selection.pockets[0].account_ids, ['B', 'C']);
+    const next = await h.controller.upgradeGrouping();
+    assert.deepEqual(next.selection.pockets[0].account_ids, ['B', 'C']);
+    assert.deepEqual(next.checkpoint.active.selection.included_recorded_group_ids, [groupId(2), 'discovery:unassigned']);
+    assert.equal(next.checkpoint.active.selection.revision, 10); assert.equal(next.section_revision, 6);
+    assert.deepEqual(next.checkpoint.active.context_ref, old.checkpoint.active.context_ref);
+    assert.deepEqual(next.checkpoint.active.observation_period, old.checkpoint.active.observation_period);
+    assert.deepEqual(h.calls.map(c => c.kind), ['catalog', 'catalog', 'save']);
+  } finally { h.controller.dispose(); }
+});
+
+for (const reason of ['merged selected and excluded', 'changed roster', 'changed context', 'wrong response version'])
+  test(`explicit upgrade rejects ${reason} before any save or recapture`, async () => {
+    const initial = activeSection(), h = harness({ initialSection: initial, loadCatalog(input) {
+      const result = catalog(input), c = result.catalog;
+      if (input.catalogVersion === 3) {
+        if (reason === 'merged selected and excluded') {
+          c.pockets[1].account_ids = ['B', 'C']; c.pockets[1].member_count = 2;
+          c.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+          c.coverage.assigned_account_count = 3; c.coverage.unassigned_account_count = 0;
+        }
+        if (reason === 'changed roster') c.unassigned.account_ids = ['D'];
+        if (reason === 'changed context') result.context_ref.context_id = OPERATION;
+        if (reason === 'wrong response version') c.catalog_version = 2;
+      }
+      return result;
+    } });
+    try {
+      await h.controller.reopen(); await assert.rejects(h.controller.upgradeGrouping());
+      assert.deepEqual(h.db.section, initial); assert.deepEqual(h.calls.map(c => c.kind), ['catalog', 'catalog']);
+      assert.equal(h.controller.getState().selection, null);
+      assert.ok(!h.states.some(s => s.status === 'ready' && s.catalog?.catalog_version === 3));
+    } finally { h.controller.dispose(); }
+  });
+
+for (const mode of ['no active', 'not reopened', 'pending capture', 'already v3']) test(`grouping upgrade is unavailable with ${mode}`, async () => {
+  let initial = mode === 'no active' ? undefined : mode === 'pending capture' ? ordinaryPendingSection() : activeSection();
+  if (mode === 'already v3') initial.value.workspace_version = 6;
+  const h = harness({ initialSection: initial });
+  try {
+    if (mode === 'pending capture' || mode === 'already v3') await h.controller.reopen();
+    const before = copy(h.db.section), count = h.calls.length;
+    await rejects(h.controller.upgradeGrouping(), 'grouping_upgrade_unavailable');
+    assert.equal(h.calls.length, count); assert.deepEqual(h.db.section, before);
+  } finally { h.controller.dispose(); }
+});
+
+for (const [savedVersion, wrongVersion] of [[1, 2], [5, 3], [6, 2]]) test(`v${savedVersion} reopen refuses a server catalog version drift to ${wrongVersion}`, async () => {
+  const initial = activeSection(); initial.value.workspace_version = savedVersion;
+  const h = harness({ initialSection: initial, loadCatalog(input) { const result = catalog(input); result.catalog.catalog_version = wrongVersion; return result; } });
+  try {
+    await rejects(h.controller.reopen(), 'catalog_version_mismatch');
+    assert.deepEqual(h.db.section, initial); assert.deepEqual(h.calls.map(c => c.kind), ['catalog']);
+  } finally { h.controller.dispose(); }
+});
+
+test('fresh acquisition cannot publish a legacy catalog response to its explicit v3 request', async () => {
+  const h = harness({ loadCatalog(input) { const result = catalog(input); result.catalog.catalog_version = 2; return result; } });
+  try {
+    await rejects(h.controller.start(PERIOD), 'catalog_version_mismatch');
+    assert.deepEqual(h.calls.map(c => c.kind), ['save', 'capture', 'catalog']);
+    assert.equal(h.db.section.value.active, null); assert.equal(h.calls.at(-1).input.catalogVersion, 3);
+  } finally { h.controller.dispose(); }
 });
 test('uncertain dense upgrade ACK requires fresh reload; a committed upgrade is never replayed or called failed', async () => {
-  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog, save(input, opts, commit) {
+  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: pinnedDenseCatalog, save(input, opts, commit) {
     commit(input); throw new Error('lost ACK');
   } });
-  await rejects(h.controller.reopen(), 'operation_failed');
+  await h.controller.reopen(); await rejects(h.controller.upgradeGrouping(), 'operation_failed');
   assert.equal(h.controller.getState().recovery, 'reload'); assert.equal(h.controller.getState().selection, null);
   await rejects(h.controller.reopen(), 'recovery_required');
   await h.reload(); assert.equal(h.controller.getState().status, 'ready');
-  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1); assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
+  assert.equal(h.calls.filter(c => c.kind === 'save').length, 1); assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 1476);
+  assert.equal(h.calls.at(-1).input.catalogVersion, 3); h.controller.dispose();
 });
 for (const badAck of ['target', 'revision', 'value']) test(`dense upgrade rejects wrong ${badAck} ACK before preview`, async () => {
-  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: denseCatalog, save(input, opts, commit) {
+  const h = harness({ initialSection: legacyDenseSection(), loadCatalog: pinnedDenseCatalog, save(input, opts, commit) {
     const ack = commit(input);
     if (badAck === 'target') ack.assignmentFileId = '1';
     if (badAck === 'revision') ack.section.revision++;
     if (badAck === 'value') ack.section.value.active.selection.included_recorded_group_ids = [];
     return ack;
   } });
-  await assert.rejects(h.controller.reopen()); assert.equal(h.controller.getState().recovery, 'reload');
-  assert.equal(h.controller.getState().selection, null); assert.ok(!h.states.some(s => s.status === 'ready'));
+  await h.controller.reopen(); await assert.rejects(h.controller.upgradeGrouping()); assert.equal(h.controller.getState().recovery, 'reload');
+  assert.equal(h.controller.getState().selection, null); assert.ok(!h.states.some(s => s.status === 'ready' && s.catalog?.catalog_version === 3));
+  h.controller.dispose();
 });
-test('new dense capture writes v5 and preserves it while the next radius capture is pending', async () => {
+test('new dense capture writes v6 and preserves it while the next radius capture is pending', async () => {
   let captures = 0;
   const h = harness({ loadCatalog: denseCatalog, operationId: n => n === 1 ? OPERATION : OLD,
     capture(input) { if (++captures > 1) throw new Error('offline'); return captured(input); } });
-  await h.controller.start(PERIOD); assert.equal(h.db.section.value.workspace_version, 5);
+  await h.controller.start(PERIOD); assert.equal(h.db.section.value.workspace_version, 6);
   assert.equal(h.controller.getState().selection.pockets[0].account_ids.length, 888);
   await rejects(h.controller.start(PERIOD, undefined, { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' }), 'operation_failed');
-  assert.equal(h.db.section.value.workspace_version, 5); assert.equal(h.db.section.value.active.selection.included_recorded_group_ids.length, 888);
+  assert.equal(h.db.section.value.workspace_version, 6); assert.equal(h.db.section.value.active.selection.included_recorded_group_ids.length, 888);
 });
 
 const pendingSection = (active = true) => ({ revision: 6, value: { workspace_version: 2,
@@ -488,11 +612,11 @@ test('private start saves version2 pending exact batch/review before capture and
   held.resolve(); const result = await task;
   assert.deepEqual(h.calls.map(call => call.kind), ['save', 'capture', 'catalog', 'save']);
   assert.deepEqual(h.calls[1].input.privateSalesImport, PRIVATE); assert.equal(h.calls[1].input.operationId, OPERATION);
-  assert.equal(result.checkpoint.workspace_version, 2); assert.equal(result.checkpoint.pending_capture, null);
+  assert.equal(result.checkpoint.workspace_version, 6); assert.equal(result.checkpoint.pending_capture, null);
   assert.deepEqual(Object.keys(result.checkpoint.active).sort(), ['context_ref', 'observation_period', 'selection']);
   assert.equal(h.maxOpen, 1); assert.equal(h.ids, 1);
   await h.controller.setGroups([]); assert.deepEqual(h.controller.getState().selection.pockets, []);
-  assert.equal(h.db.section.value.workspace_version, 2);
+  assert.equal(h.db.section.value.workspace_version, 6);
 });
 
 test('stored private pending resumes same UUID/revision after a fresh lifecycle without generating an operation', async () => {

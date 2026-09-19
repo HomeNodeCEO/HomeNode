@@ -55,7 +55,7 @@ function catalog(account, body) {
     ...(body.initial_preview_mode === 'all_catalog_groups' || Object.hasOwn(body, 'initial_preview_groups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(body.context_ref), selection_revision: body.selection.revision, apply: { status: 'blocked' }, catalog: {
-      catalog_version: 1, status: 'review_only', apply: { status: 'blocked' },
+      catalog_version: body.catalog_version ?? 2, status: 'review_only', apply: { status: 'blocked' },
       binding: { context_ref: copy(body.context_ref), selection_revision: body.selection.revision },
       pockets: [account, 'B'].map((id, index) => ({ id: groupId(index + 1), disposition: 'needs_review', label: `Synthetic group ${index}`,
         county: 'Synthetic', account_ids: [id], member_count: 1 })),
@@ -392,7 +392,7 @@ test('city -> three-mile study preserves old city until activation and retains e
   h.click('Capture a new 3-mile study'); await h.settle();
   assert.equal(db.calls[1].body.value.workspace_version, 4); assert.deepEqual(db.calls[1].body.value.active, initial.value.active);
   assert.deepEqual(db.calls[2].body.discovery, { profile_id: 'custom-suburban-radius-v2', radius_metres: '4828.032' });
-  assert.equal(db.file(TARGET).section.value.workspace_version, 3); assert.match(h.text(), /Displayed study: 3-mile radius/);
+  assert.equal(db.file(TARGET).section.value.workspace_version, 6); assert.match(h.text(), /Displayed study: 3-mile radius/);
   assert.equal(await h.controls.flush(), true);
 });
 
@@ -526,7 +526,7 @@ test('private CSV city capture uses the exact chosen polygon; save barrier still
   assert.equal(await h.controls.useReviewedSales(reference), false); assert.deepEqual(kinds(db), ['catalog']);
   h.controls.setReadOnly(false); await h.settle(); assert.equal(await h.controls.useReviewedSales(reference), true); await h.settle();
   const call = db.calls.find(c => c.kind === 'capture'); assert.deepEqual(call.body.discovery, scope);
-  assert.deepEqual(call.body.private_sales_import, reference); assert.equal(db.file(TARGET).section.value.workspace_version, 4);
+  assert.deepEqual(call.body.private_sales_import, reference); assert.equal(db.file(TARGET).section.value.workspace_version, 6);
   assert.match(h.text(), /Displayed study: Duncanville city polygon/); assert.equal(db.maxOpen, 1); assert.equal(await h.controls.flush(), true);
 });
 
@@ -584,7 +584,7 @@ test('private CSV capture uses the displayed next radius without converting it t
   const task = h.controls.useReviewedSales(reference); await h.settle(); assert.equal(await task, true);
   const capture = db.calls.find(call => call.kind === 'capture');
   assert.deepEqual(capture.body.private_sales_import, reference); assert.equal(capture.body.discovery.radius_metres, '8046.72');
-  assert.equal(db.file(TARGET).section.value.workspace_version, 3);
+  assert.equal(db.file(TARGET).section.value.workspace_version, 6);
 });
 
 test('member pages share the owned lane, preserve report data, and quiesce with Save Everything', async t => {
@@ -655,6 +655,45 @@ test('first rendered capture durably saves pending before source read and exact 
   assert.equal(db.file(TARGET).section.revision, 2); assert.equal(db.maxOpen, 1);
   assert.deepEqual(db.file(TARGET).accepted, { revision: 7, value: { synthetic_accepted_report_marker: 'unchanged' } });
   assert.equal(await h.controls.flush(), true); assert.equal(h.workspace().workspace.saving, false);
+});
+
+test('rendered grouping upgrade is explicit, preserves all 1475 accounts, and waits for CAS without capture or report changes', async t => {
+  const initial = activeSection(['discovery:unassigned']); initial.value.workspace_version = 5;
+  const db = server(initial), accounts = Array.from({ length: 1475 }, (_, i) => i ? `A${i}` : TARGET.accountId);
+  db.overrides.set('catalog', call => {
+    const response = catalog(call.account, call.body), c = response.catalog, latest = call.body.catalog_version === 3;
+    c.pockets = latest ? accounts.map((id, i) => ({ id: groupId(i + 1), disposition: 'needs_review',
+      label: `Synthetic ${i}`, county: 'Dallas', account_ids: [id], member_count: 1 })) : [];
+    c.status = latest ? 'review_only' : 'incomplete';
+    c.unassigned = { account_ids: latest ? [] : [...accounts].sort(), member_count: latest ? 0 : accounts.length, reason_counts: [] };
+    c.coverage = { discovery_member_count: accounts.length, assigned_account_count: latest ? accounts.length : 0,
+      unassigned_account_count: latest ? 0 : accounts.length };
+    c.subject_membership.assigned_pocket_id = latest ? groupId(1) : null;
+    c.subject_membership.status = latest ? 'matched' : 'catalog_incomplete';
+    return json(response);
+  });
+  const h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted), held = deferred();
+  assert.deepEqual(kinds(db), ['catalog']); assert.equal(db.calls[0].body.catalog_version, 2);
+  assert.deepEqual(db.file(TARGET).section, initial);
+  assert.ok(h.button('Update grouping from saved capture'));
+  db.overrides.set('save', async (_call, respond) => { await held.promise; return respond(); });
+  h.click('Update grouping from saved capture'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'catalog', 'save']);
+  assert.equal(db.calls[1].body.catalog_version, 3); assert.deepEqual(db.calls[1].body.context_ref, initial.value.active.context_ref);
+  assert.equal(db.calls[2].body.expected_revision, initial.revision);
+  assert.deepEqual(db.file(TARGET).section, initial);
+  assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
+  held.resolve(); await h.settle();
+  const saved = db.file(TARGET).section;
+  assert.equal(saved.value.workspace_version, 6); assert.equal(saved.revision, initial.revision + 1);
+  assert.deepEqual(saved.value.active.selection, { revision: 10,
+    included_recorded_group_ids: accounts.map((_, i) => groupId(i + 1)) });
+  assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(h.button('Update grouping from saved capture'), undefined);
+  assert.equal(await h.controls.flush(), true);
+  h.click('Reload saved choices'); await h.settle();
+  assert.deepEqual(kinds(db), ['catalog', 'catalog', 'save', 'read', 'catalog']);
+  assert.equal(db.calls.at(-1).body.catalog_version, 3); assert.deepEqual(db.file(TARGET).section, saved);
 });
 
 test('selection intent renders saving immediately and flush waits for exact empty CAS acknowledgement', async t => {

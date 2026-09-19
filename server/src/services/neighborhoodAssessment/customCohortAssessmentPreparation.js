@@ -3,7 +3,7 @@ import { canonicalAssessmentJson as json } from './contract.js';
 import { neighborhoodMemberSetDigest } from './assessmentRepository.js';
 import { prepareCustomCohortContextHeader, prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { prepareCustomCohortCaptureInputs, CUSTOM_COHORT_CAPTURE_INPUT_LIMITS } from './customCohortCaptureInputs.js';
-import { prepareCustomNeighborhoodWorkspaceCheckpoint } from './customWorkspaceCheckpoint.js';
+import { prepareCustomNeighborhoodWorkspaceCheckpoint, customWorkspaceVersionForCatalog } from './customWorkspaceCheckpoint.js';
 import { buildCustomCohortObservationPreview } from './customCohortObservationPreview.js';
 import { buildCustomCohortSelectionCatalog, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 
@@ -94,7 +94,7 @@ export function prepareCustomCohortAssessmentPreparation(input) {
   const { expected, retained_inputs: retained } = input;
   const header = prepareCustomCohortContextHeader(input.context_header_json);
   const target = prepareCustomCohortContextScope(json(expected.target));
-  const active = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: catalogVersion === 2 ? 5 : 1,
+  const active = prepareCustomNeighborhoodWorkspaceCheckpoint({ workspace_version: customWorkspaceVersionForCatalog(catalogVersion),
     active: { context_ref: expected.context_ref, observation_period: expected.observation_period, selection: input.selection },
     pending_capture: null }).active;
   check(same(header.context_ref, active.context_ref), 'context_mismatch');
@@ -147,6 +147,6 @@ export function prepareCustomCohortAssessmentPreparation(input) {
       ...(selected.size ? [] : ['empty_selection']), ...(catalog.catalog_complete ? [] : ['recorded_group_catalog_incomplete']),
       ...preview.support_gaps] },
   };
-  check(Buffer.byteLength(json(result)) <= (catalogVersion === 2 ? 131_072 : L.output_utf8_bytes), 'output_limit');
+  check(Buffer.byteLength(json(result)) <= (catalogVersion === 3 ? 262_144 : catalogVersion === 2 ? 131_072 : L.output_utf8_bytes), 'output_limit');
   return freeze(result);
 }

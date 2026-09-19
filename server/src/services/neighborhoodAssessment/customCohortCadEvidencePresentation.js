@@ -164,7 +164,7 @@ export function presentCustomCohortCadEvidence({ evidence, expected, pockets, me
     binding: { context_ref: JSON.parse(json(expected.context_ref)), captured_at: expected.captured_at },
     comparison_basis: evidence.comparison_basis, temporal_basis: evidence.temporal_basis };
   const result = { ...metadata, status: 'available', reason: null, subject, all, pockets: summaries, limitations: [...LIMITATIONS] };
-  check(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= (catalog_version === 2 ? 2_500_000 : 512_000), 'byte_budget');
+  check(Number.isSafeInteger(maximumBytes) && maximumBytes > 0 && maximumBytes <= (catalog_version >= 2 ? 2_500_000 : 512_000), 'byte_budget');
   if (bytes(result) > maximumBytes) for (const population of [all, ...summaries]) {
     for (const field of Object.values(population.fields)) if (field.distribution.status === 'complete') {
       Object.assign(field.distribution, { status: 'details_unavailable', reason: 'presentation_byte_limit', entries: null });

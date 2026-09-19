@@ -200,8 +200,9 @@ export function createCustomWorkspaceSectionTransport(options: Options) {
       // limit than the exact value submitted; this grants no save authority.
       if (typeof value !== 'string') throw new Error('Invalid custom workspace checkpoint size');
       const valueBytes = encoder.encode(value).length;
-      if (valueBytes > 131_072) throw new Error('Invalid custom workspace checkpoint size');
-      const checkpointLimit = JSON.parse(value)?.workspace_version === 5 ? 131_072 : 32_768;
+      if (valueBytes > 262_144) throw new Error('Invalid custom workspace checkpoint size');
+      const workspaceVersion = JSON.parse(value)?.workspace_version;
+      const checkpointLimit = workspaceVersion === 6 ? 262_144 : workspaceVersion === 5 ? 131_072 : 32_768;
       if (valueBytes > checkpointLimit) throw new Error('Invalid custom workspace checkpoint size');
       // Serialize once before awaiting authentication/network; caller mutations
       // cannot change the value paired with this expected revision.

@@ -114,13 +114,13 @@ function housingSummary(value, all, pockets) {
  */
 export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected, maximumBytes } = {}) {
   const version = recommendation?.recommendation_version;
-  check([1, 2].includes(version) && recommendation.authority === 'not_established'
+  check([1, 2, 3].includes(version) && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
-  check([1, 2].includes(catalog?.catalog_version) && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
-  check(version !== 2 || catalog.catalog_version === 2, 'catalog_version');
-  const byteLimit = maximumBytes ?? (version === 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes);
+  check([1, 2, 3].includes(catalog?.catalog_version) && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
+  check(version === 1 || catalog.catalog_version === version, 'catalog_version');
+  const byteLimit = maximumBytes ?? (version >= 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes);
   check(Number.isSafeInteger(byteLimit) && byteLimit >= 0
-    && byteLimit <= (version === 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes), 'byte_limit');
+    && byteLimit <= (version >= 2 ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes), 'byte_limit');
   const v2 = recommendation.policy?.id === POLICY_V2.id, v3 = recommendation.policy?.id === POLICY_V3.id;
   const policy = v3 ? POLICY_V3 : v2 ? POLICY_V2 : POLICY;
   check(json(recommendation.policy) === json(policy), 'policy');
@@ -221,7 +221,7 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
  * existing exposures still happens before/after this helper in the owner.
  */
 function compositionAllowed({ catalog, retained_inputs }) {
-  check([1, 2].includes(catalog?.catalog_version) && typeof catalog.catalog_complete === 'boolean'
+  check([1, 2, 3].includes(catalog?.catalog_version) && typeof catalog.catalog_complete === 'boolean'
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog');
   if (!catalog.catalog_complete) return false;
   const temporal = customCohortCurrentStockSupport({ effective_date: retained_inputs?.subject?.effective_date,
@@ -232,7 +232,7 @@ function kernelArgs({ catalog, expected, retained_inputs, recorded_proximity, ob
   return { context_ref: expected.context_ref, retained_inputs, catalog_version: catalog.catalog_version,
     include_stock_composition: true,
     selection: { revision: expected.selection_revision, included_recorded_group_ids: [] },
-    ...(catalog.catalog_version === 2 && observation_preview ? { observation_preview } : {}),
+    ...(catalog.catalog_version >= 2 && observation_preview ? { observation_preview } : {}),
     ...(recorded_proximity === undefined ? {} : { recorded_proximity }) };
 }
 function compose(args, recommendation) {
@@ -240,7 +240,7 @@ function compose(args, recommendation) {
   catch (error) {
     // The entire optional recommendation is omitted, never a ranked prefix.
     // Invalid bindings/denominators still fail; only explicit byte exhaustion is optional.
-    if (args.catalog.catalog_version === 2 && error.reason === 'output_byte_limit') return null;
+    if (args.catalog.catalog_version >= 2 && error.reason === 'output_byte_limit') return null;
     throw error;
   }
 }

@@ -48,6 +48,20 @@ test('cohort router requires actual display/inspection owner methods', () => {
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
 });
 
+test('catalog version is optional, explicitly pinned, and rejects unsupported versions before owner work', async t => {
+  const { request, calls } = await start(t);
+  assert.equal((await request('catalog')).status, 200);
+  assert.equal(Object.hasOwn(calls[0].args[0], 'catalogVersion'), false);
+  for (const catalog_version of [1, 2, 3]) {
+    assert.equal((await request('catalog', { ...bodies.catalog, catalog_version })).status, 200);
+    assert.equal(calls.at(-1).args[0].catalogVersion, catalog_version);
+  }
+  for (const catalog_version of [0, 4, '3', null, false, {}, []]) {
+    assert.equal((await request('catalog', { ...bodies.catalog, catalog_version })).status, 400);
+  }
+  assert.equal(calls.length, 4);
+});
+
 test('catalog validation diagnostics preserve the public response and cannot leak error details', async t => {
   const logged = [];
   const { request } = await start(t, { logger: { warn: (...args) => logged.push(args) }, methods: {

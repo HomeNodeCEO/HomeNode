@@ -59,6 +59,27 @@ test('exact group means/coverage are copied, not reranked or converted into indi
   result.labels.features.forEach(label => pointOnOriginal(label, f)); frozen(result);
   assert.equal(JSON.stringify(f), before); assert.equal(Object.isFrozen(f.group), false);
 });
+
+test('v3 presents all 1475 exact group anchors without extending the v2 group contract', () => {
+  const f = fixture(), count = 1475;
+  delete f.catalog.recommendation;
+  f.catalog.catalog_version = 3;
+  f.catalog.pockets = Array.from({ length: count }, (_, i) => ({ id: `recorded-cad:${i.toString(16).padStart(64, '0')}`,
+    label: `Synthetic ${i}`, county: 'Dallas', account_ids: [i === 0 ? 'A' : `A${i}`], member_count: 1 }));
+  f.catalog.subject_membership.assigned_pocket_id = f.catalog.pockets[0].id;
+  f.catalog.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+  f.catalog.coverage = { discovery_member_count: count, assigned_account_count: count, unassigned_account_count: 0 };
+  f.group.parcel_map.geojson.features = f.catalog.pockets.map((p, i) => feature(i + 1, p.account_ids[0]));
+  f.group.parcel_map.counts = { parcels: count, accounts: count, selected_accounts: count, coordinates: count * 5,
+    geometry_bytes: count * 128, geojson_bytes: Buffer.byteLength(JSON.stringify(f.group.parcel_map.geojson)) };
+  const before = JSON.stringify(f), result = build(f);
+  assert.equal(result.status, 'available'); assert.equal(result.labels.features.length, count);
+  assert.deepEqual(result.labels.features.map(p => p.properties.pocket_id).sort(), f.catalog.pockets.map(p => p.id).sort());
+  assert.deepEqual(result.unlabelled_group_ids, []); result.labels.features.forEach(p => pointOnOriginal(p, f));
+  assert.equal(JSON.stringify(f), before);
+  f.catalog.catalog_version = 2;
+  assert.throws(() => build(f), TypeError);
+});
 test('selection flags and current revision may change without changing static scores or label geometry', () => {
   const f = fixture(), initial = build(f);
   f.group.binding.selectionRevision++; f.group.binding.selectionFingerprint = 'c'.repeat(64);

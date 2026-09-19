@@ -34,7 +34,7 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
-  CUSTOM_COHORT_DENSE_CATALOG_VERSION } from './customCohortPocketCatalog.js';
+  CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { buildCustomCohortPocketRecommendationPresentationBatched,
   CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES } from './customCohortPocketRecommendationPresentation.js';
 import { deriveCustomCohortRecordedProximity } from './customCohortRecordedProximity.js';
@@ -876,7 +876,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       await recheckPrivatePolicy(client, input, loaded, budget, [...new Set([exposure, ...additionalExposures, 'report_observation_summary'])]);
       let response = envelope({ ...content, ...(privatePresentation ? { private_sales: privatePresentation } : {}) });
-      if (content.recommendation?.presentation_version === 2) {
+      if ([2, 3].includes(content.recommendation?.presentation_version)) {
         const { initial_preview: _opening, ...catalogWithPrivateSales } = response;
         if (Buffer.byteLength(JSON.stringify(catalogWithPrivateSales)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
           // Final envelope accounting includes private-source summaries and owner
@@ -1302,6 +1302,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }, preview(value, options = {}) {
     return runPreview(value, options);
   }, async catalog(value, options = {}) {
+    // Saved workspaces pin their catalog semantics. Only a fresh opening or an
+    // explicit user upgrade requests latest; never reinterpret old unassigned.
+    // Omitted wire versions stay v2 for already-open clients during rollout.
+    const catalogVersion = value && Object.hasOwn(value, 'catalogVersion')
+      ? value.catalogVersion : CUSTOM_COHORT_DENSE_CATALOG_VERSION;
+    customCohortCatalogGroupLimit(catalogVersion);
     // Preserve the original method/response when omitted. The optional summary
     // uses the two EXISTING exposures; no source-policy key/grant is widened.
     const requested = value && Object.hasOwn(value, 'includeRecommendation');
@@ -1312,14 +1318,14 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (explicitGroups && modeRequested) fail('invalid_input');
     if (modeRequested) prepareCustomCohortOpeningMode(value.initialPreviewMode);
     const opening = explicitGroups || modeRequested;
-    const groups = explicitGroups ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups) : null;
-    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode'].includes(key)));
+    const groups = explicitGroups ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups, catalogVersion) : null;
+    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['catalogVersion', 'includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode'].includes(key)));
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget) => {
         const catalog = presentCustomCohortPocketCatalog({
-          catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: CUSTOM_COHORT_DENSE_CATALOG_VERSION }), preview, expected,
+          catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: catalogVersion }), preview, expected,
         });
         const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
         const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };

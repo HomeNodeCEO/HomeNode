@@ -74,6 +74,34 @@ test('omitted/false recommendations preserve exact legacy catalog and only catal
   assert.ok(!state.calls.includes('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY'));
 });
 
+test('retained opening pins requested catalog versions and preserves omitted-version wire compatibility', async () => {
+  const { service, input, state, f } = await setup();
+  const retainedBefore = json(f.input.retained_inputs);
+  for (const catalogVersion of [1, 2, 3]) {
+    const first = await service.catalog({ ...input, catalogVersion });
+    assert.equal(first.catalog.catalog_version, catalogVersion);
+    const ids = customCohortOpeningGroupIds(first.catalog);
+    const selected = customCohortOpeningSelection(first.catalog, ids, input.selection.revision);
+    const ordinary = await service.present({ ...input, selection: selected });
+    const opening = await service.catalog({ ...input, catalogVersion, initialPreviewGroups: ids });
+    assert.equal(opening.catalog.catalog_version, catalogVersion);
+    assert.deepEqual(opening.initial_preview, ordinary);
+    assert.deepEqual(opening.catalog, first.catalog);
+    assert.deepEqual(opening.catalog.pockets.flatMap(p => p.account_ids).sort(), [...f.accountIds].sort());
+  }
+  assert.equal((await service.catalog(input)).catalog.catalog_version, 2);
+  assert.equal(json(f.input.retained_inputs), retainedBefore);
+  assert.ok(!state.calls.some(sql => /\b(?:INSERT\s+INTO|UPDATE\s+(?:app|core)\.|DELETE\s+FROM)/i.test(sql)));
+});
+
+test('unknown catalog versions fail before retained checkout', async () => {
+  const { service, input, state } = await setup();
+  for (const catalogVersion of [0, 4, '3', null, false]) {
+    await assert.rejects(service.catalog({ ...input, catalogVersion }), /catalog_version/);
+  }
+  assert.equal(state.connects, 0);
+});
+
 test('optional baseline uses both existing exposures before retained rows and after current-material check', async () => {
   const { service, input, state } = await setup();
   const result = await service.catalog({ ...input, includeRecommendation: true });

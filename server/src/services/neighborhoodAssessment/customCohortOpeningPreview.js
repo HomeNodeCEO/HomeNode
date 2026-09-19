@@ -13,8 +13,8 @@ export function prepareCustomCohortOpeningMode(value) {
   return value;
 }
 
-export function prepareCustomCohortOpeningGroups(value) {
-  try { return prepareCustomNeighborhoodRecordedGroupIds(value); }
+export function prepareCustomCohortOpeningGroups(value, catalogVersion = 2) {
+  try { return prepareCustomNeighborhoodRecordedGroupIds(value, catalogVersion); }
   catch { throw Object.assign(new TypeError('custom_cohort_invalid_input'), { reason: 'invalid_input' }); }
 }
 

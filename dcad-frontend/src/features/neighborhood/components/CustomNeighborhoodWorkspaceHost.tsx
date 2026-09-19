@@ -329,6 +329,10 @@ function HostSession(props: Props) {
           : active ? `Capture a new ${scopeKey(scope)}-mile study` : `Start ${scopeKey(scope)}-mile exploration`}</button>
       <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
         onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
+      {state?.status === 'ready' && state.catalog && state.catalog.catalog_version < 3 && !state.checkpoint?.pending_capture && <button
+        type="button" className={button} disabled={busy || Boolean(explorationBlocked)}
+        title="Use the newer grouping capacity for this same saved capture only if every selected account is preserved. No new capture or report change."
+        onClick={() => { if (!explorationBlocked) act(() => owner.current!.upgradeGrouping()); }}>Update grouping from saved capture</button>}
       {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
         disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
         onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}

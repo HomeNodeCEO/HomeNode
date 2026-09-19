@@ -102,8 +102,8 @@ function coordinateBefore(a: readonly number[], b: readonly number[]): boolean {
 export function buildCustomCohortMapPresentation({ catalog, group }: {
   readonly catalog: CheckedPocketCatalog; readonly group: CustomCohortPreviewGroup;
 }): CustomCohortMapPresentation {
-  const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2);
-  const pockets = array(field(catalog, 'pockets'), version === 2 ? L.groups : 128), pocketIds: string[] = [];
+  const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2 || version === 3);
+  const pockets = array(field(catalog, 'pockets'), version === 3 ? 2048 : version === 2 ? L.groups : 128), pocketIds: string[] = [];
   const groupBinding = field(group, 'binding'), catalogBinding = field(catalog, 'binding');
   const subject = text(field(field(catalog, 'subject_membership'), 'account_id'), 100);
   if (context(field(groupBinding, 'contextRef')) !== context(field(catalogBinding, 'context_ref'))

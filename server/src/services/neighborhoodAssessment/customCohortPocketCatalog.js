@@ -13,12 +13,16 @@ const L = CUSTOM_COHORT_POCKET_CATALOG_LIMITS;
 const CHECKPOINT = 125;
 const drain = stages => { let step; do { step = stages.next(); } while (!step.done); return step.value; };
 // Keep v1 replay semantics: its unresolved group can represent the entire
-// discovery roster after 128 names. Only explicitly versioned owners use v2.
+// discovery roster after 128 names. v2 retains its 1024-name fallback as well;
+// only an explicit v3 request admits the larger grouping ceiling.
 export const CUSTOM_COHORT_DENSE_CATALOG_VERSION = 2;
 export const CUSTOM_COHORT_DENSE_CATALOG_GROUP_LIMIT = 1024;
+export const CUSTOM_COHORT_LATEST_CATALOG_VERSION = 3;
+export const CUSTOM_COHORT_CATALOG_V3_GROUP_LIMIT = 2048;
 export function customCohortCatalogGroupLimit(version = 1) {
-  check(version === 1 || version === 2, 'catalog_version');
-  return version === 2 ? CUSTOM_COHORT_DENSE_CATALOG_GROUP_LIMIT : L.pockets;
+  check(version === 1 || version === 2 || version === 3, 'catalog_version');
+  return version === 3 ? CUSTOM_COHORT_CATALOG_V3_GROUP_LIMIT
+    : version === 2 ? CUSTOM_COHORT_DENSE_CATALOG_GROUP_LIMIT : L.pockets;
 }
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
@@ -230,7 +234,7 @@ function* pocketCatalogBatches({ retained_inputs: input, preview, catalog_versio
  * All membership is returned once; byte overflow never clips a group/roster.
  */
 export function presentCustomCohortPocketCatalog({ catalog, preview, expected } = {}) {
-  check([1, 2].includes(catalog?.catalog_version) && ['review_only', 'incomplete'].includes(catalog.status)
+  check([1, 2, 3].includes(catalog?.catalog_version) && ['review_only', 'incomplete'].includes(catalog.status)
     && catalog.authority === 'not_established' && catalog.apply?.status === 'blocked', 'catalog_required');
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(expected?.context_ref));
   check(canonicalAssessmentJson(catalog.binding.context_ref) === canonicalAssessmentJson(context)

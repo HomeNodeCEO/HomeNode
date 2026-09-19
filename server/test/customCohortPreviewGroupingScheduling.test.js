@@ -84,9 +84,10 @@ function argsOf(f, shape = 'empty') {
   return { context_ref: f.input.expected.context_ref, retained_inputs: f.input.retained_inputs, selection: { revision: 9, pockets } };
 }
 
-// Original full JSON hashes/key order, exact bytes, work and checkpoint counts
-// captured from fd65f630 before production edits. Compact and expanded spatial
-// encodings must produce the identical output for each preview representation.
+// Original full JSON hashes/key order, exact bytes and checkpoint counts captured
+// from fd65f630. Only indexed member-work accounting is normalized back to that
+// original counter for the old golden hash; every other byte must still match.
+// The new counter is asserted separately, never normalized in production.
 const GOLDENS = {
   '2-empty': ['f35f3573c8824deb574b1ace6c361600521290de79bdf891f81062ba70df6116', '16c59190896370ec4130fab66ce3a44eedf6bee84e67558b6772fa9db29b6871'],
   '2-subset': ['9842069ca4e6e4b61f60b73e4283ee91946d00c07f1b40385b855fb53e02e909', 'c8f8917cb95b6ee0b221205c66bf934c4cf972ff2aa09f33c284f70b94a64b92'],
@@ -99,9 +100,9 @@ const GOLDENS = {
   '5-overlap': ['2d30dcea4a48fa2900f7cf1789391fb202f843a389e5a9057f5840dd60dfa23c', '5fbaf4aa139fa14b5dca7bbc252ca17c3ab850732069c1d354ce828b67344ace'],
 };
 const SHAPES = {
-  empty: { bytes: [33187, 33356], bounds: [39686, 39749], measurement: 38, member: 20, yields: 8 },
-  subset: { bytes: [46190, 44006], bounds: [52641, 50349], measurement: 46, member: 28, yields: 9 },
-  overlap: { bytes: [67252, 54546], bounds: [73658, 60839], measurement: 80, member: 60, yields: 10 },
+  empty: { bytes: [33187, 33356], bounds: [39686, 39749], measurement: 38, member: [20, 32], yields: 8 },
+  subset: { bytes: [46190, 44006], bounds: [52641, 50349], measurement: 46, member: [28, 40], yields: 9 },
+  overlap: { bytes: [67252, 54546], bounds: [73658, 60839], measurement: 80, member: [60, 52], yields: 10 },
 };
 for (const version of [2, 4, 5]) for (const shape of ['empty', 'subset', 'overlap']) {
   test(`mapping${version} ${shape}: original full legacy/indexed bytes and work survive both spatial encodings`, async () => {
@@ -111,10 +112,11 @@ for (const version of [2, 4, 5]) for (const shape of ['empty', 'subset', 'overla
       seal(input); const before = fingerprint(input);
       for (const [index, build] of [legacy, indexed].entries()) {
         const output = build(input);
-        assert.deepEqual(fingerprint(output), [spec.bytes[index], GOLDENS[`${version}-${shape}`][index]]);
+        assert.deepEqual(fingerprint({ ...output, work: { ...output.work, member_work: spec.member[0] } }),
+          [spec.bytes[index], GOLDENS[`${version}-${shape}`][index]]);
         assert.deepEqual(output, expected[index]); frozen(output);
         assert.deepEqual(output.work, { source_records: 10, measurement_values: spec.measurement,
-          member_work: spec.member, output_utf8_bytes_bound: spec.bounds[index] });
+          member_work: spec.member[index], output_utf8_bytes_bound: spec.bounds[index] });
       }
       const completed = drain(batches(input));
       assert.equal(completed.yields, spec.yields + Math.floor(visitCount(input) / 125));
@@ -148,9 +150,9 @@ for (const [rawCount, [oldYields, bytes, hash, bound]] of Object.entries(BOUNDAR
     assert.equal(visitCount(input), 4 * count);
     assert.equal(completed.yields, oldYields + Math.floor(4 * count / 125));
     assert.equal(originalYields(completed.result), oldYields);
-    assert.deepEqual(fingerprint(completed.result), [bytes, hash]);
+    assert.deepEqual(fingerprint({ ...completed.result, work: { ...completed.result.work, member_work: 4 * count } }), [bytes, hash]);
     assert.deepEqual(completed.result.work, { source_records: 3 * count, measurement_values: 8 * count,
-      member_work: 4 * count, output_utf8_bytes_bound: bound });
+      member_work: 5 * count, output_utf8_bytes_bound: bound });
     assert.deepEqual(completed.result, indexed(input));
   });
 }

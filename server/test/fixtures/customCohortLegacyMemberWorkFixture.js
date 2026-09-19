@@ -1,9 +1,15 @@
-import { assessmentDate, canonicalAssessmentJson } from './contract.js';
+// TEST-ONLY frozen pre-optimization kernel. Never imported by production code.
+// Source commit: 907b7247df03862259feccc8b54ac023375cab90
+// Original Git blob: 95cea6d7cdd86324b583ed5af707036533d5cc5a
+// Only import paths and the explicitly test-only member-work ceiling parameter
+// differ from that source. Default behavior keeps the original 500000 refusal.
+// The raised ceiling is an independent output oracle, not a production policy.
+import { assessmentDate, canonicalAssessmentJson } from '../../src/services/neighborhoodAssessment/contract.js';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
-import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
-import { exactDistribution, finiteNumberOrNull } from './statistics.js';
-import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from './customCohortObservationMapping.js';
-import { iterateSpatialParcels } from './spatialMembershipEncoding.js';
+import { prepareCustomCohortContextReference } from '../../src/services/neighborhoodAssessment/customCohortContextContract.js';
+import { exactDistribution, finiteNumberOrNull } from '../../src/services/neighborhoodAssessment/statistics.js';
+import { customCohortObservationMappingVersion, customCohortObservationProjectionMatches, customCohortObservationRecordLimit } from '../../src/services/neighborhoodAssessment/customCohortObservationMapping.js';
+import { iterateSpatialParcels } from '../../src/services/neighborhoodAssessment/spatialMembershipEncoding.js';
 
 export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
   source_chunks: 1000, source_records: 100000, accounts: 50000, pockets: 128,
@@ -192,7 +198,7 @@ export async function buildCustomCohortIndexedObservationPreviewBatched(args, { 
   } finally { iterator.return(); }
 }
 
-function* observationBatches({ context_ref, retained_inputs: input, selection }, indexed) {
+function* observationBatches({ context_ref, retained_inputs: input, selection }, indexed, oracleMemberWorkLimit = L.member_work) {
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(context_ref));
   const capture = input?.acquisition?.capture_result?.source_capture;
   check(input?.acquisition?.capture_result?.query_complete === true && capture?.status === 'ready'
@@ -257,7 +263,7 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
   };
   const meter = (field, amount) => {
     if (field === 'measurement') { measurementWork += amount; check(measurementWork <= L.measurement_work, 'measurement_work_limit'); }
-    else { memberWork += amount; check(memberWork <= L.member_work, 'member_work_limit'); }
+    else { memberWork += amount; check(memberWork <= oracleMemberWorkLimit, 'member_work_limit'); }
   };
   const seen = new Set();
   for (const source of bounded(capture.sources, L.source_chunks, 'source_chunks')) {
@@ -351,11 +357,6 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
   const ordinals = indexed ? new WeakMap() : null;
   if (indexed) for (const rows of Object.values(memberTables)) for (const [index, row] of rows.entries()) {
     if (index % 125 === 0) yield;
-    // Indexed populations carry only ordinals. Their immutable provenance is
-    // traversed/serialized here once, not once for every overlapping population.
-    // Charge the complete reference/association closure before serialization.
-    // Association scans needed by populations are charged again at each visit.
-    meter('member', row.source_references.length + (row.associated_account_ids?.length ?? 0));
     ordinals.set(row, index); chargeOutput(row);
   }
   const indicesOf = rows => rows.map(row => ordinals.get(row));
@@ -370,37 +371,17 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
       partially_observed_count: cells.filter(cell => cell.state === 'observed' && cell.missing_record_count > 0).length,
       cod_interpretation: 'descriptive_dispersion_not_reliability' };
   }
-  const intersects = (ids, set) => ids.some(id => {
-    if (indexed) meter('member', 1);
-    return set.has(id);
-  });
-  const populationMembers = (rows, includes) => rows.filter(row => {
-    // Count actual candidate visits, not only matching members. Repeated scans
-    // of mostly nonmatching populations must not evade the finite work budget.
-    if (indexed) meter('member', 1);
-    return includes(row);
-  });
-  const associatedAccountCount = (events, chosen) => {
-    if (!indexed) return new Set(events.flatMap(row => chosen
-      ? row.associated_account_ids.filter(account => chosen.has(account)) : row.associated_account_ids)).size;
-    const accounts = new Set();
-    for (const row of events) for (const account of row.associated_account_ids) {
-      meter('member', 1);
-      if (!chosen || chosen.has(account)) accounts.add(account);
-    }
-    return accounts.size;
-  };
+  const intersects = (ids, set) => ids.some(id => set.has(id));
   function population(id, ids, all = false) {
-    const chosen = new Set(ids), accounts = populationMembers(stock, row => chosen.has(row.account_id));
-    const considered = populationMembers(canonical, row => all || intersects(row.associated_account_ids, chosen));
+    const chosen = new Set(ids), accounts = stock.filter(row => chosen.has(row.account_id));
+    const considered = canonical.filter(row => all || intersects(row.associated_account_ids, chosen));
     const events = considered.filter(row => row.disposition === 'in_period');
-    const sources = populationMembers(sourceMembers, row => all || intersects(row.associated_account_ids, chosen));
-    if (!indexed) {
-      meter('member', accounts.length + considered.length + sources.length);
-      // Preserve the expanded representation's occurrence-based accounting.
-      meter('member', [...accounts, ...considered, ...sources].reduce((n, row) => n + row.source_references.length
-        + (row.associated_account_ids?.length ?? 0), 0));
-    }
+    const sources = sourceMembers.filter(row => all || intersects(row.associated_account_ids, chosen));
+    meter('member', accounts.length + considered.length + sources.length);
+    // Charge association/reference traversal as well as top-level rows, so a
+    // large package repeated through many overlapping pockets stays bounded.
+    meter('member', [...accounts, ...considered, ...sources].reduce((n, row) => n + row.source_references.length
+      + (row.associated_account_ids?.length ?? 0), 0));
     if (!indexed) for (const row of [...accounts, ...considered, ...sources]) chargeOutput(row);
     const result = { id, account_ids: ids,
       stock: { definition: 'Selected retained parcel-backed accounts; current CAD observations, not proven housing stock at the effective date',
@@ -412,8 +393,8 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
           [key, distribution(accounts, row => row.observations[key], label, unit)])) },
       transactions: { definition: 'In-period stored canonical transactions; associated accounts are observed identities, not verified economic-property membership',
         member_unit: 'canonical_transaction', member_count: events.length, observation_period: { ...period, date_basis: 'stored_canonical_closing_date' },
-        unique_associated_account_count: associatedAccountCount(events),
-        unique_selected_associated_account_count: associatedAccountCount(events, chosen),
+        unique_associated_account_count: new Set(events.flatMap(row => row.associated_account_ids)).size,
+        unique_selected_associated_account_count: new Set(events.flatMap(row => row.associated_account_ids.filter(account => chosen.has(account)))).size,
         package_evidence_transaction_count: events.filter(row => row.multiple_parcel_evidence).length,
         market_eligible_count: null, ...(indexed ? { member_indices: indicesOf(events),
           omitted_indices: indicesOf(considered.filter(row => row.disposition !== 'in_period')) }
@@ -485,4 +466,11 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
     return result;
   }
   return freeze(result);
+}
+
+
+export function legacyIndexedMemberWorkOracle(args, memberWorkLimit = 500000) {
+  if (![500000, 2000000].includes(memberWorkLimit)) throw new Error('unsupported_test_oracle_ceiling');
+  const iterator = observationBatches(args, true, memberWorkLimit);
+  while (true) { const step = iterator.next(); if (step.done) return step.value; }
 }

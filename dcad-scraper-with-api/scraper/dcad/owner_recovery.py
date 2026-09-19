@@ -5,6 +5,8 @@ from __future__ import annotations
 import re
 from typing import Any, Optional
 
+from .owner_source import owner_source_year
+
 
 HISTORY_ADDRESS_RE = re.compile(
     r"\b\d{1,6}\s+"
@@ -109,6 +111,9 @@ def repair_owner_from_history(
     owner = detail.get("owner") if isinstance(detail, dict) else None
     if not isinstance(owner, dict):
         return False
+    source_year = owner_source_year(owner)
+    if source_year is None:
+        return False
     summary_name = str(owner.get("owner_name") or "").strip()
     parties = owner.get("multi_owner")
     if not re.search(r"&\s*$", summary_name) or not isinstance(parties, list):
@@ -122,7 +127,11 @@ def repair_owner_from_history(
     owner_history = history.get("owner_history") if isinstance(history, dict) else None
     if not isinstance(owner_history, list) or not owner_history:
         return False
-    lines = owner_history[0].get("owner_lines") if isinstance(owner_history[0], dict) else None
+    latest = owner_history[0]
+    if (not isinstance(latest, dict) or type(latest.get("observed_year")) is not int
+            or latest["observed_year"] != source_year):
+        return False
+    lines = latest.get("owner_lines")
     if not isinstance(lines, list) or not lines:
         return False
     history_line = " ".join(str(line) for line in lines if str(line).strip())
@@ -144,6 +153,14 @@ def repair_owner_from_history(
     if not recovered:
         return False
 
+    # Keep the source values that this same-year recovery changes. The complete
+    # history source remains alongside detail in the retained raw snapshot.
+    owner["history_recovery"] = {
+        "observed_year": source_year,
+        "original_owner_name": owner.get("owner_name"),
+        "original_mailing_address": owner.get("mailing_address"),
+        "original_party_owner_name": parties[0].get("owner_name"),
+    }
     owner["owner_name"] = recovered
     parties[0]["owner_name"] = recovered
     if clean_mailing:

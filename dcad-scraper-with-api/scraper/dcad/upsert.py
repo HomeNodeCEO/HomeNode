@@ -11,6 +11,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from dcad.primary_cleanup import vacant_zero_cleanup_sql, vacant_zero_cleanup_year
+from dcad.owner_source import owner_bundle_is_usable, owner_name_key, owner_source_year
 
 log = logging.getLogger("dcad.upsert")
 
@@ -109,6 +110,74 @@ def collapse_owner_parties(
         elif pct is not None:
             collapsed[key] = (display_name, min(Decimal("100"), existing_pct + pct))
     return list(collapsed.values())
+
+def persist_owner_bundle(connection, account_id: str, owner: Dict[str, Any]) -> bool:
+    """Persist one explicitly dated fresh owner group in the caller transaction.
+
+    owner_summary retains separate source years. owner_parties is only a current
+    projection (its unique key omits year); never replace it with an older group.
+    Both writer paths take the same account lock before checking current years.
+    Missing/withheld provenance performs no write and cannot certify a repair.
+    """
+    if not owner_bundle_is_usable(owner):
+        return False
+    year = owner_source_year(owner)
+    name_key = owner_name_key(owner.get("owner_name"))
+    parties = owner.get("multi_owner")
+    if parties is None:
+        parties = []
+    name = owner["owner_name"].strip()
+    locked = connection.execute(text(f"SELECT account_id FROM {_tbl('accounts')} "
+        "WHERE account_id = :account_id FOR UPDATE"), {"account_id": account_id}).scalar_one_or_none()
+    if locked != account_id:
+        return False
+    current = connection.execute(text(f"""
+        SELECT recent.tax_year, recent.owner_name,
+               (SELECT max(p.tax_year) FROM {_tbl('owner_parties')} p
+                WHERE p.account_id = :account_id) AS party_year
+        FROM (SELECT 1) anchor LEFT JOIN LATERAL (
+            SELECT tax_year, owner_name FROM {_tbl('owner_summary')}
+            WHERE account_id = :account_id ORDER BY tax_year DESC LIMIT 1
+        ) recent ON true
+        """), {"account_id": account_id}).mappings().one()
+    if any(value is not None and value > year for value in (current["tax_year"], current["party_year"])):
+        return False
+    same_owner = current["tax_year"] == year and owner_name_key(current["owner_name"]) == name_key
+    connection.execute(text(f"""
+        INSERT INTO {_tbl('owner_summary')} (account_id, tax_year, owner_name, mailing_address)
+        VALUES (:account_id, :tax_year, :owner_name, :mailing_address)
+        ON CONFLICT (account_id, tax_year) DO UPDATE SET
+          owner_name = EXCLUDED.owner_name,
+          mailing_address = CASE WHEN :same_owner
+            THEN COALESCE(EXCLUDED.mailing_address, {_tbl('owner_summary')}.mailing_address)
+            ELSE EXCLUDED.mailing_address END
+        """), {"account_id": account_id, "tax_year": year, "owner_name": name,
+               "mailing_address": to_text_or_none(owner.get("mailing_address")), "same_owner": same_owner})
+    # Missing same-owner grid is not evidence that good existing percentages
+    # disappeared. A new owner/year must not inherit the old party projection.
+    collapsed_parties = collapse_owner_parties(parties, None)
+    replace_parties = bool(parties) or not same_owner
+    if same_owner and parties and any(to_decimal_or_none(party.get("ownership_pct")) is None for party in parties):
+        existing_names = connection.execute(text(f"""
+            SELECT owner_name FROM {_tbl('owner_parties')}
+            WHERE account_id = :account_id AND tax_year = :tax_year
+            """), {"account_id": account_id, "tax_year": year}).scalars().all()
+        # A partial grid for precisely the same parties cannot erase a good
+        # group. Preserve it whole; never combine old and fresh percentages.
+        # Fresh raw evidence remains incomplete, so repair verification fails.
+        replace_parties = ({owner_name_key(value) for value in existing_names}
+                           != {owner_name_key(value) for value, _ in collapsed_parties})
+    if replace_parties:
+        connection.execute(text(f"DELETE FROM {_tbl('owner_parties')} WHERE account_id = :account_id"),
+                           {"account_id": account_id})
+        for party_name, ownership_pct in collapsed_parties:
+            connection.execute(text(f"""
+                INSERT INTO {_tbl('owner_parties')} (account_id, tax_year, owner_name, ownership_pct)
+                VALUES (:account_id, :tax_year, :owner_name, :ownership_pct)
+                """), {"account_id": account_id, "tax_year": year,
+                       "owner_name": party_name, "ownership_pct": ownership_pct})
+    return True
+
 
 def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, Any]) -> None:
     engine = get_engine()
@@ -341,62 +410,8 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
 
         # -------- owner_summary and owner_parties --------
         if (_SCHEMA or "").lower() == "core":
-            # determine tax_year from detail
-            try:
-                tax_year = int((detail or {}).get("tax_year")) if (detail or {}).get("tax_year") else None
-            except Exception:
-                tax_year = None
-
             owner = (detail or {}).get("owner") or {}
-            owner_name = to_text_or_none(owner.get("owner_name"))
-            mailing_address = to_text_or_none(owner.get("mailing_address"))
-            owner_parties = owner.get("multi_owner") or []
-            if tax_year:
-                s.execute(
-                    text(
-                        f"""
-                        INSERT INTO {_tbl('owner_summary')} (account_id, tax_year, owner_name, mailing_address)
-                        VALUES (:account_id, :tax_year, :owner_name, :mailing_address)
-                        ON CONFLICT (account_id, tax_year) DO UPDATE SET
-                          owner_name = COALESCE(EXCLUDED.owner_name, {_tbl('owner_summary')}.owner_name),
-                          mailing_address = COALESCE(EXCLUDED.mailing_address, {_tbl('owner_summary')}.mailing_address)
-                        """
-                    ),
-                    {
-                        "account_id": account_id,
-                        "tax_year": tax_year,
-                        "owner_name": owner_name,
-                        "mailing_address": mailing_address,
-                    },
-                )
-                # owner_parties is a current-owner projection. Its production
-                # uniqueness constraint intentionally omits tax_year, so only
-                # deleting the incoming year makes a new-year refresh collide
-                # with last year's otherwise-identical owner. Replace the
-                # account's projection whenever DCAD supplied a usable owner;
-                # leave existing parties untouched on a blank/transient parse.
-                if owner_name or owner_parties:
-                    s.execute(
-                        text(f"DELETE FROM {_tbl('owner_parties')} WHERE account_id = :account_id"),
-                        {"account_id": account_id},
-                    )
-                    for party_name, ownership_pct in collapse_owner_parties(
-                        owner_parties, owner_name
-                    ):
-                        s.execute(
-                            text(
-                                f"""
-                                INSERT INTO {_tbl('owner_parties')} (account_id, tax_year, owner_name, ownership_pct)
-                                VALUES (:account_id, :tax_year, :owner_name, :ownership_pct)
-                                """
-                            ),
-                            {
-                                "account_id": account_id,
-                                "tax_year": tax_year,
-                                "owner_name": party_name,
-                                "ownership_pct": ownership_pct,
-                            },
-                        )
+            persist_owner_bundle(s, account_id, owner)
 
             # ARB hearing
             arb = (detail or {}).get("arb_hearing") or {}

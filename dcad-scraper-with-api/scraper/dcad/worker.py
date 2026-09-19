@@ -25,6 +25,7 @@ from dcad.field_completeness import (
 )
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
+from dcad.owner_source import owner_name_key, owner_source_year_sql
 
 
 log = logging.getLogger("dcad.worker")
@@ -1228,19 +1229,29 @@ def owner_name_is_complete(
 ) -> bool:
     owner_summary = _owner_summary_table(config)
     with engine.connect() as conn:
-        owner_name = conn.execute(
+        row = conn.execute(
             text(
                 f"""
-                SELECT owner_name
-                FROM {owner_summary}
-                WHERE account_id = :account_id
-                ORDER BY tax_year DESC
-                LIMIT 1
+                WITH latest_raw AS (
+                    SELECT account_id, raw, fetched_at FROM {_raw_table(config)}
+                    WHERE account_id = :account_id ORDER BY fetched_at DESC, tax_year DESC LIMIT 1
+                )
+                SELECT o.owner_name, o.tax_year AS owner_source_year,
+                       r.raw -> 'detail' AS parsed_detail,
+                       (r.fetched_at >= q.last_attempt_at) AS snapshot_is_fresh
+                FROM latest_raw r JOIN {_owner_recovery_table(config)} q USING (account_id)
+                LEFT JOIN {owner_summary} o ON o.account_id = r.account_id
+                  AND o.tax_year = {owner_source_year_sql("r")}
                 """
             ),
             {"account_id": account_id},
-        ).scalar_one_or_none()
-    return bool(owner_name and not re.search(r"&\s*$", str(owner_name)))
+        ).mappings().first()
+    if not row or not row["snapshot_is_fresh"] or not isinstance(row["parsed_detail"], dict):
+        return False
+    parsed = parsed_verification_row(row["parsed_detail"])
+    return (row["owner_source_year"] == parsed["owner_source_year"]
+            and verification_presence(row)["owner"] and verification_presence(parsed)["owner"]
+            and owner_name_key(row["owner_name"]) == owner_name_key(parsed["owner_name"]))
 
 
 def mark_owner_recovery_success(
@@ -1416,7 +1427,7 @@ def missing_required_fields(
                 )
                 SELECT r.raw -> 'detail' AS parsed_detail,
                        (r.fetched_at >= q.last_attempt_at) AS snapshot_is_fresh,
-                       a.address, o.owner_name, o.mailing_address,
+                       a.address, o.owner_name, o.mailing_address, o.tax_year AS owner_source_year,
                        v.certified_year AS tax_year,
                        v.market_value, v.land_value, v.improvement_value,
                        p.building_class,
@@ -1430,7 +1441,7 @@ def missing_required_fields(
                 JOIN {_field_repair_table(config)} q USING (account_id)
                 LEFT JOIN {_accounts_table(config)} a USING (account_id)
                 LEFT JOIN {owner_summary} o
-                  ON o.account_id = r.account_id AND o.tax_year = r.tax_year
+                  ON o.account_id = r.account_id AND o.tax_year = {owner_source_year_sql("r")}
                 LEFT JOIN {value_summary} v
                   ON v.account_id = r.account_id AND v.certified_year = r.tax_year
                 LEFT JOIN {primary_improvements} p ON p.account_id = r.account_id
@@ -1446,7 +1457,7 @@ def missing_required_fields(
                     SELECT CASE WHEN count(*) > 0 AND count(*) = count(ownership_pct)
                                 THEN sum(ownership_pct) END AS ownership_percentage
                     FROM {owner_parties}
-                    WHERE account_id = r.account_id AND tax_year = r.tax_year
+                    WHERE account_id = r.account_id AND tax_year = {owner_source_year_sql("r")}
                 ) parties ON true
                 """
             ),
@@ -1457,6 +1468,12 @@ def missing_required_fields(
     normalized = verification_presence(row)
     parsed_row = parsed_verification_row(row["parsed_detail"])
     parsed = verification_presence(parsed_row)
+    if (not owner_name_key(parsed_row["owner_name"])
+            or row.get("owner_source_year") != parsed_row["owner_source_year"]
+            or owner_name_key(row.get("owner_name")) != owner_name_key(parsed_row["owner_name"])):
+        for field in ("owner", "owner_name", "mailing_address", "ownership_percentage",
+                      "missing_owner_name", "missing_mailing_address", "missing_ownership_percentage"):
+            normalized[field] = False
     presence = {field: present and parsed.get(field, False)
                 for field, present in normalized.items()}
     # Missing improvement fields are N/A only when fresh parsed evidence and

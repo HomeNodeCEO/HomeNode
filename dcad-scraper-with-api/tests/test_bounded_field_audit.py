@@ -35,6 +35,8 @@ def healthy_row(**overrides):
             "tax_year": 2026,
             "property_location": {"address": "100 EXAMPLE WAY"},
             "owner": {
+                "source_year": 2027, "source_heading": "Owner (Current 2027)",
+                "parties_source_heading": "Multi-Owner (Current 2027)",
                 "owner_name": "SYNTHETIC OWNER",
                 "mailing_address": "200 EXAMPLE AVENUE",
                 "multi_owner": [{"owner_name": "SYNTHETIC OWNER", "ownership_pct": "100%"}],
@@ -47,6 +49,7 @@ def healthy_row(**overrides):
         "land_area": Decimal("7500"),
         "improvement_value": Decimal("200000"),
         "owner_name": "SYNTHETIC OWNER",
+        "owner_source_year": 2027,
         "mailing_address": "200 EXAMPLE AVENUE",
         "ownership_percentage": Decimal("100"),
         "state_codes": ["SFR - RESIDENCE"],
@@ -109,6 +112,12 @@ class BoundedAssessmentTests(unittest.TestCase):
         result = audit.bounded_assessment(row)
         self.assertNotIn("mailing_address", result.missing_fields)
         self.assertFalse(result.repair_required)
+
+    def test_owner_source_year_or_identity_mismatch_is_not_normalized_completeness(self):
+        for changes in ({"owner_source_year": 2026}, {"owner_name": "DIFFERENT SAME YEAR OWNER"}):
+            with self.subTest(changes=changes):
+                result = audit.bounded_assessment(healthy_row(**changes))
+                self.assertTrue({"owner_name", "mailing_address", "ownership_percentage"}.issubset(result.missing_fields))
 
     def test_all_vacant_codes_without_improvements_are_not_queued(self):
         result = audit.bounded_assessment(healthy_row(
@@ -265,12 +274,15 @@ class BoundedSqlTests(unittest.TestCase):
         self.assertNotIn("SELECT DISTINCT ON", sql.upper())
         self.assertIn("WHERE r.account_id = t.account_id", sql)
         self.assertEqual(
-            sql.count("WHERE account_id = t.account_id AND tax_year = raw.tax_year"), 2,
+            sql.count("WHERE account_id = t.account_id AND tax_year = raw.tax_year"), 1,
         )
 
-    def test_owner_value_legal_land_and_parties_share_the_snapshot_year(self):
+    def test_owner_and_parties_use_source_year_while_values_and_legal_keep_snapshot_year(self):
+        from scraper.dcad.owner_source import owner_source_year_sql
         sql = audit.ACCOUNT_AUDIT_SQL
-        self.assertIn("owner.tax_year = raw.tax_year", sql)
+        self.assertIn(f"owner.tax_year = {owner_source_year_sql('raw')}", sql)
+        self.assertIn(f"WHERE account_id = t.account_id AND tax_year = {owner_source_year_sql('raw')}", sql)
+        self.assertNotIn("owner.tax_year = raw.tax_year", sql)
         self.assertIn("value.certified_year = raw.tax_year", sql)
         self.assertIn("legal.tax_year = raw.tax_year", sql)
         self.assertIn("ORDER BY r.fetched_at DESC, r.tax_year DESC LIMIT 1", sql)

@@ -45,12 +45,16 @@ try:
     from ..dcad.parse_detail import parse_detail_html  # type: ignore
     from ..dcad.history_service import build_history_for_account  # type: ignore
     from ..dcad.upsert import get_engine as _get_db_engine, _tbl as _tblname  # type: ignore
+    from ..dcad.upsert import persist_owner_bundle as _persist_owner_bundle  # type: ignore
+    from ..dcad.owner_source import owner_bundle_is_usable, owner_source_year  # type: ignore
     from ..dcad.worker import WorkerConfig as _WorkerConfig, campaign_status as _campaign_status  # type: ignore
 except Exception:
     from utils import normalize_account_id
     from dcad.parse_detail import parse_detail_html
     from dcad.history_service import build_history_for_account  # NEW
     from dcad.upsert import get_engine as _get_db_engine, _tbl as _tblname  # type: ignore
+    from dcad.upsert import persist_owner_bundle as _persist_owner_bundle  # type: ignore
+    from dcad.owner_source import owner_bundle_is_usable, owner_source_year  # type: ignore
     from dcad.worker import WorkerConfig as _WorkerConfig, campaign_status as _campaign_status  # type: ignore
 
 app = FastAPI(title="DCAD Scraper API")
@@ -261,14 +265,12 @@ def _db_owner(conn, account_id: str):
         _sql_text(f"SELECT * FROM {_tblname('owner_summary')} WHERE account_id=:id ORDER BY tax_year DESC LIMIT 1"),
         {"id": account_id},
     ).mappings().first()
+    latest_ty = row.get("tax_year") if row else None
     if row:
-        owner = {"owner_name": row.get("owner_name"), "mailing_address": row.get("mailing_address")}
-    # Determine the latest tax_year in owner_parties and fetch that set
-    ty_row = conn.execute(
-        _sql_text(f"SELECT MAX(tax_year) AS ty FROM {_tblname('owner_parties')} WHERE account_id=:id"),
-        {"id": account_id},
-    ).mappings().first()
-    latest_ty = ty_row.get("ty") if ty_row else None
+        owner = {"owner_name": row.get("owner_name"), "mailing_address": row.get("mailing_address"),
+                 "source_year": latest_ty, "tax_year": latest_ty}
+    # Parties belong to this selected owner-summary year, not an independently
+    # newest year that could attach another owner's parties to this summary.
     multi = []
     if latest_ty is not None:
         parties = conn.execute(
@@ -1091,19 +1093,20 @@ async def get_detail(account_id: str):
                                 for key, value in recovered_characteristics.items():
                                     if db_detail[primary_key].get(key) in (None, ""):
                                         db_detail[primary_key][key] = value
-                    if isinstance(parsed_owner, dict):
-                        db_detail.setdefault("owner", {})
-                        if isinstance(db_detail["owner"], dict):
-                            for key in ("owner_name", "mailing_address"):
-                                value = parsed_owner.get(key)
-                                if (
-                                    value not in (None, "", "N/A")
-                                    and db_detail["owner"].get(key) in (None, "", "N/A")
-                                ):
-                                    db_detail["owner"][key] = value
-                            parsed_parties = parsed_owner.get("multi_owner")
-                            if parsed_parties and not db_detail["owner"].get("multi_owner"):
-                                db_detail["owner"]["multi_owner"] = parsed_parties
+                    # An owner is one fresh source-year group. Never attach a
+                    # new address/party list to a stored name or valuation year.
+                    fresh_owner = None
+                    fresh_year = owner_source_year(parsed_owner)
+                    stored_year = owner.get("source_year") or owner.get("tax_year")
+                    try:
+                        stored_year = int(stored_year) if stored_year is not None and not isinstance(stored_year, bool) else None
+                    except (TypeError, ValueError):
+                        stored_year = None
+                    if (
+                        owner_bundle_is_usable(parsed_owner)
+                        and (stored_year is None or fresh_year >= stored_year)
+                    ):
+                        fresh_owner = parsed_owner
                     # Merge location
                     if parsed_pl:
                         db_detail.setdefault("property_location", {})
@@ -1117,62 +1120,6 @@ async def get_detail(account_id: str):
                             # Ensure subject_address mirrors address
                             addr = db_detail["property_location"].get("address")
                             db_detail["property_location"]["subject_address"] = addr
-                    # Merge owner mailing (prefer parsed; fallback to direct DOM scrape)
-                    if not owner.get("mailing_address"):
-                        mailing = parsed_owner.get("mailing_address") if isinstance(parsed_owner, dict) else None
-                        if not mailing:
-                            try:
-                                soup = BeautifulSoup(detail_html, "lxml")
-                                sp = soup.find(id="lblOwner")
-                                if sp is not None:
-                                    lines = []
-                                    for sib in sp.next_siblings:
-                                        if getattr(sib, "name", None) == "span" and "DtlSectionHdr" in (sib.get("class") or []):
-                                            break
-                                        if isinstance(sib, str):
-                                            t = sib.strip()
-                                            if t:
-                                                lines.append(t)
-                                        else:
-                                            t = (sib.get_text(" ") or "").strip()
-                                            if t:
-                                                lines.append(t)
-                                    # normalize and derive mailing lines
-                                    norm = [re.sub(r"\s+", " ", s).strip() for s in lines if s and s.strip()]
-                                    if norm:
-                                        # helper to detect address-like lines
-                                        def looks_addr(s: str) -> bool:
-                                            s_low = (s or "").lower()
-                                            if any(k in s_low for k in [
-                                                "multi-owner", "owner name", "ownership %", "application received",
-                                                "hs application", "ownership", "owner("
-                                            ]):
-                                                return False
-                                            if re.search(r"\b(tx|texas|[A-Z]{2})\b", s, flags=re.I):
-                                                return True
-                                            if re.search(r"\b\d{5}(?:-\d{4})?\b", s):
-                                                return True
-                                            if re.search(r"^\s*\d+\s+", s):
-                                                return True
-                                            if re.search(r"\b(apt|unit|#|ct|ln|rd|dr|st|ave|blvd|hwy|pkwy|cir|trl|way|lane|drive|court|road)\b", s_low):
-                                                return True
-                                            if "," in s:
-                                                return True
-                                            return False
-
-                                        # if second line is co-owner (no digits / no city/state cues), treat as part of name
-                                        rest = norm[1:]
-                                        if len(norm) > 1 and not looks_addr(norm[1]) and len(norm[1]) <= 40:
-                                            rest = norm[2:]
-                                        if rest:
-                                            addr_lines = [ln for ln in rest if looks_addr(ln)]
-                                            if addr_lines:
-                                                mailing = ", ".join(addr_lines).replace(" ,", ",").strip(", ")
-                            except Exception:
-                                pass
-                        if mailing:
-                            db_detail.setdefault("owner", {})
-                            db_detail["owner"]["mailing_address"] = mailing
                     # Best-effort persist address fields back to accounts for future requests
                     # Merge legal description if missing
                     if need_legal and isinstance(parsed_legal, dict):
@@ -1189,6 +1136,7 @@ async def get_detail(account_id: str):
                             ):
                                 db_detail["legal_description"]["deed_transfer_date"] = parsed_legal.get("deed_transfer_date")
 
+                    persisted_owner = None
                     try:
                         with engine.begin() as conn2:
                             addr = (db_detail.get("property_location") or {}).get("address")
@@ -1203,10 +1151,7 @@ async def get_detail(account_id: str):
                                     subdivisions = lines[0]
                             except Exception:
                                 subdivisions = None
-                            owner_persist = db_detail.get("owner") or {}
-                            owner_name_persist = owner_persist.get("owner_name")
-                            mailing_persist = owner_persist.get("mailing_address")
-                            owner_parties_persist = owner_persist.get("multi_owner") or []
+                            mailing_persist = (db_detail.get("owner") or {}).get("mailing_address")
                             ty = db_detail.get("tax_year") if isinstance(db_detail, dict) else None
                             refreshed_primary = (db_detail.get("main_improvement") or {})
                             if addr or nbh or mco or mailing_persist:
@@ -1214,54 +1159,12 @@ async def get_detail(account_id: str):
                                     _sql_text(f"UPDATE {_tblname('accounts')} SET address=COALESCE(:a,address), neighborhood_code=COALESCE(:n,neighborhood_code), mapsco=COALESCE(:m,mapsco), subdivision=COALESCE(:s, subdivision) WHERE account_id=:id"),
                                     {"a": addr, "n": nbh, "m": mco, "s": subdivisions, "id": account_id},
                                 )
-                            if ty and (owner_name_persist or mailing_persist):
-                                conn2.execute(
-                                    _sql_text(
-                                        f"""
-                                        INSERT INTO {_tblname('owner_summary')} (
-                                          account_id, tax_year, owner_name, mailing_address
-                                        ) VALUES (:id, :tax_year, :owner_name, :mailing_address)
-                                        ON CONFLICT (account_id, tax_year) DO UPDATE SET
-                                          owner_name = COALESCE(EXCLUDED.owner_name, {_tblname('owner_summary')}.owner_name),
-                                          mailing_address = COALESCE(EXCLUDED.mailing_address, {_tblname('owner_summary')}.mailing_address)
-                                        """
-                                    ),
-                                    {
-                                        "id": account_id,
-                                        "tax_year": ty,
-                                        "owner_name": owner_name_persist,
-                                        "mailing_address": mailing_persist,
-                                    },
-                                )
-                            if ty and owner_parties_persist:
-                                conn2.execute(
-                                    _sql_text(
-                                        f"DELETE FROM {_tblname('owner_parties')} WHERE account_id=:id AND tax_year=:tax_year"
-                                    ),
-                                    {"id": account_id, "tax_year": ty},
-                                )
-                                for party in owner_parties_persist:
-                                    party_name = party.get("owner_name") if isinstance(party, dict) else None
-                                    if not party_name:
-                                        continue
-                                    conn2.execute(
-                                        _sql_text(
-                                            f"""
-                                            INSERT INTO {_tblname('owner_parties')} (
-                                              account_id, tax_year, owner_name, ownership_pct
-                                            ) VALUES (
-                                              :id, :tax_year, :owner_name,
-                                              NULLIF(regexp_replace(:ownership_pct, '[^0-9.-]', '', 'g'), '')::numeric
-                                            )
-                                            """
-                                        ),
-                                        {
-                                            "id": account_id,
-                                            "tax_year": ty,
-                                            "owner_name": party_name,
-                                            "ownership_pct": str(party.get("ownership_pct") or ""),
-                                        },
-                                    )
+                            if fresh_owner is not None:
+                                if _persist_owner_bundle(conn2, account_id, fresh_owner) is True:
+                                    # The writer may preserve same-owner mailing
+                                    # and party percentages. Return that coherent
+                                    # persisted group, not the partial raw input.
+                                    persisted_owner = _db_owner(conn2, account_id)
                             # Persist legal description if we have it and know the tax year
                             legal = db_detail.get("legal_description") if isinstance(db_detail, dict) else None
                             if legal and isinstance(legal, dict) and legal.get("lines") and ty:
@@ -1312,6 +1215,11 @@ async def get_detail(account_id: str):
                                         "building_class": refreshed_primary.get("building_class"),
                                     },
                                 )
+                        # Adopt only after every write and the transaction's
+                        # commit succeeded. Refusal, rollback or read failure
+                        # leaves the original snapshot owner untouched.
+                        if persisted_owner is not None:
+                            db_detail["owner"] = persisted_owner
                     except Exception:
                         pass
             except Exception:

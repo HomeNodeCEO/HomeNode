@@ -95,6 +95,9 @@ def test_malformed_br_keeps_owner_and_mailing_before_nested_multi_owner_section(
     )
 
     assert parse_owner(soup) == {
+        "source_year": 2027,
+        "source_heading": "Owner (Current 2027)",
+        "parties_source_heading": "Multi-Owner (Current 2027)",
         "owner_name": "HART ELLEN M & CHRIS P",
         "mailing_address": "6201 SAMPLE DR, DALLAS, TEXAS 752382535",
         "multi_owner": [

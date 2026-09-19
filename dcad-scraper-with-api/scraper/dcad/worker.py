@@ -19,6 +19,7 @@ from sqlalchemy import Engine, text
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
 from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
 from dcad.fetch import browser
+from dcad.field_completeness import parsed_verification_row, verification_presence
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
 
@@ -26,6 +27,28 @@ from dcad.upsert import get_engine
 log = logging.getLogger("dcad.worker")
 _stop_requested = False
 DEFAULT_CAMPAIGN_KEY = "dallas_residential"
+MARKET_QUALITY_FLAGS = ("missing_market_value", "possible_active_protest")
+
+
+def _merged_quality_flags_sql(column: str) -> str:
+    """Replace only explicitly owned flags, atomically with the row update."""
+    return f"""ARRAY(
+        SELECT DISTINCT flag
+        FROM unnest(COALESCE({column}, ARRAY[]::text[])) AS current(flag)
+        WHERE NOT (flag = ANY(CAST(:cleared_flags AS text[])))
+        UNION
+        SELECT unnest(CAST(:quality_flags AS text[]))
+    )"""
+
+
+def _market_quality_status_sql(flags_column: str, status_column: str) -> str:
+    return f"""CASE WHEN EXISTS (
+        SELECT 1 FROM unnest(COALESCE({flags_column}, ARRAY[]::text[])) AS current(flag)
+        WHERE NOT (flag = ANY(CAST(:cleared_flags AS text[])))
+    ) THEN CASE WHEN {status_column} IS NULL OR {status_column}
+                    IN ('complete', 'complete_missing_market_value')
+                THEN 'incomplete' ELSE {status_column} END
+      ELSE :quality_status END"""
 
 
 def _identifier(value: str, label: str) -> str:
@@ -55,7 +78,7 @@ def fields_still_missing(
     """Return requested repair fields that remain absent in stable UI order."""
     return tuple(
         field
-        for field in ("owner", "land", "gla")
+        for field in dict.fromkeys(("owner", "land", "gla", *requested_fields))
         if field in requested_fields and not presence.get(field, False)
     )
 
@@ -694,8 +717,10 @@ def queue_missing_fields_after_success(
             WHERE cardinality(fields) > 0
             ON CONFLICT (account_id) DO UPDATE
             SET status = 'pending',
-                requested_fields = EXCLUDED.requested_fields,
-                remaining_fields = EXCLUDED.remaining_fields,
+                requested_fields = ARRAY(SELECT DISTINCT unnest(
+                    existing.requested_fields || EXCLUDED.requested_fields)),
+                remaining_fields = ARRAY(SELECT DISTINCT unnest(
+                    existing.remaining_fields || EXCLUDED.remaining_fields)),
                 attempts = 0,
                 next_attempt_at = now(),
                 reason = EXCLUDED.reason,
@@ -738,8 +763,8 @@ def mark_success(
             lease_expires_at = NULL,
             worker_id = NULL,
             last_error = NULL,
-            quality_status = :quality_status,
-            quality_flags = CAST(:quality_flags AS text[]),
+            quality_status = {_market_quality_status_sql('quality_flags', 'quality_status')},
+            quality_flags = {_merged_quality_flags_sql('quality_flags')},
             canonical_account_id = :account_id,
             market_value_status = CASE
                 WHEN :market_value_present THEN 'present'
@@ -769,6 +794,8 @@ def mark_success(
             "refresh_days": config.refresh_days,
             "quality_status": quality_status,
             "quality_flags": "{" + ",".join(quality_flags) + "}",
+            "cleared_flags": [*MARKET_QUALITY_FLAGS, "scrape_error", "dcad_reported_no_data",
+                              *(["missing_address"] if assessment.address_present else [])],
             "market_value_present": market_value_present,
             "market_value_recheck_days": config.market_value_recheck_days,
         }
@@ -777,8 +804,8 @@ def mark_success(
             text(
                 f"""
                 UPDATE {_accounts_table(config)}
-                SET data_quality_status = :quality_status,
-                    data_quality_flags = CAST(:quality_flags AS text[]),
+                SET data_quality_status = {_market_quality_status_sql('data_quality_flags', 'data_quality_status')},
+                    data_quality_flags = {_merged_quality_flags_sql('data_quality_flags')},
                     canonical_account_id = NULL
                 WHERE account_id = :account_id
                 """
@@ -881,6 +908,7 @@ def record_market_value_assessment(
         "market_value_recheck_days": config.market_value_recheck_days,
         "quality_status": quality_status,
         "quality_flags": "{" + ",".join(quality_flags) + "}",
+        "cleared_flags": list(MARKET_QUALITY_FLAGS),
     }
     with engine.begin() as conn:
         queue_missing_fields_after_success(conn, config, account_id)
@@ -909,8 +937,8 @@ def record_market_value_assessment(
                     now()
                 )
                 ON CONFLICT (account_id) DO UPDATE
-                SET quality_status = EXCLUDED.quality_status,
-                    quality_flags = EXCLUDED.quality_flags,
+                SET quality_status = {_market_quality_status_sql('existing.quality_flags', 'existing.quality_status')},
+                    quality_flags = {_merged_quality_flags_sql('existing.quality_flags')},
                     market_value_status = EXCLUDED.market_value_status,
                     market_value_attempts = CASE
                         WHEN :market_value_present THEN 0
@@ -931,8 +959,8 @@ def record_market_value_assessment(
             text(
                 f"""
                 UPDATE {_accounts_table(config)}
-                SET data_quality_status = :quality_status,
-                    data_quality_flags = CAST(:quality_flags AS text[])
+                SET data_quality_status = {_market_quality_status_sql('data_quality_flags', 'data_quality_status')},
+                    data_quality_flags = {_merged_quality_flags_sql('data_quality_flags')}
                 WHERE account_id = :account_id
                 """
             ),
@@ -1113,8 +1141,8 @@ def mark_market_value_recheck_failure(
                     lease_expires_at = NULL,
                     worker_id = NULL,
                     last_error = :last_error,
-                    quality_status = 'complete_missing_market_value',
-                    quality_flags = ARRAY['missing_market_value', 'possible_active_protest'],
+                    quality_status = {_market_quality_status_sql('quality_flags', 'quality_status')},
+                    quality_flags = {_merged_quality_flags_sql('quality_flags')},
                     updated_at = now()
                 WHERE account_id = :account_id
                 """
@@ -1123,6 +1151,9 @@ def mark_market_value_recheck_failure(
                 "account_id": account_id,
                 "delay_seconds": delay,
                 "last_error": message,
+                "quality_status": "complete_missing_market_value",
+                "quality_flags": list(MARKET_QUALITY_FLAGS),
+                "cleared_flags": list(MARKET_QUALITY_FLAGS),
             },
         )
     return delay
@@ -1300,10 +1331,21 @@ def claim_next_field_repair(
 ) -> Optional[tuple[str, int, tuple[str, ...]]]:
     queue = _field_repair_table(config)
     campaign = _campaign_table(config)
+    accounts = _accounts_table(config)
     sql = text(
         f"""
         WITH candidate AS (
-            SELECT q.account_id
+            SELECT q.account_id,
+                   ARRAY(
+                       SELECT DISTINCT field
+                       FROM unnest(q.requested_fields || COALESCE(
+                           (SELECT data_quality_flags FROM {accounts}
+                            WHERE account_id = q.account_id), ARRAY[]::text[]
+                       )) AS requested(field)
+                       WHERE field = ANY(q.requested_fields)
+                          OR left(field, 8) = 'missing_'
+                       ORDER BY field
+                   ) AS requested_fields
             FROM {queue} q
             WHERE q.status IN ('pending', 'retry')
               AND q.next_attempt_at <= now()
@@ -1320,6 +1362,7 @@ def claim_next_field_repair(
         )
         UPDATE {queue} q
         SET status = 'leased',
+            requested_fields = c.requested_fields,
             last_attempt_at = now(),
             lease_expires_at = now() + make_interval(mins => :lease_minutes),
             worker_id = :worker_id,
@@ -1353,84 +1396,84 @@ def missing_required_fields(
     account_id: str,
     requested_fields: tuple[str, ...],
 ) -> tuple[str, ...]:
+    """Verify persisted fields and parsed evidence written since this claim.
+
+    COALESCE upserts can retain old values. A normalized value alone therefore
+    cannot prove repair. Concurrent scrapes can write the snapshot; this is not
+    per-worker or per-field provenance. It is parsed evidence, not original HTML,
+    so unresolved results do not establish that DCAD itself omitted the field.
+    """
     owner_summary = _owner_summary_table(config)
     land_detail = _land_detail_table(config)
     primary_improvements = _primary_improvements_table(config)
     value_summary = _value_summary_current_table(config)
+    owner_parties = _qualified_table(config.data_schema, "owner_parties", "owner parties")
+    legal = _qualified_table(config.data_schema, "legal_description_current", "legal description")
     with engine.connect() as conn:
         row = conn.execute(
             text(
                 f"""
-                SELECT EXISTS (
-                           SELECT 1
-                           FROM {owner_summary}
-                           WHERE account_id = :account_id
-                             AND NULLIF(btrim(owner_name), '') IS NOT NULL
-                       ) AS owner_present,
-                       EXISTS (
-                           SELECT 1
-                           FROM {land_detail}
-                           WHERE account_id = :account_id
-                       ) AS land_present,
-                       EXISTS (
-                           SELECT 1
-                           FROM {primary_improvements}
-                           WHERE account_id = :account_id
-                             AND living_area_sqft IS NOT NULL
-                             AND living_area_sqft > 0
-                       ) AS gla_present,
-                       ARRAY(
-                           SELECT state_code
-                           FROM {land_detail}
-                           WHERE account_id = :account_id
-                       ) AS state_codes,
-                       EXISTS (
-                           SELECT 1
-                           FROM {primary_improvements} improvement
-                           WHERE improvement.account_id = :account_id
-                             AND (
-                                 NULLIF(btrim(improvement.construction_type), '') IS NOT NULL
-                                 OR improvement.percent_complete IS NOT NULL
-                                 OR improvement.year_built IS NOT NULL
-                                 OR improvement.effective_year_built IS NOT NULL
-                                 OR improvement.actual_age IS NOT NULL
-                                 OR improvement.depreciation IS NOT NULL
-                                 OR NULLIF(btrim(improvement.desirability), '') IS NOT NULL
-                                 OR NULLIF(btrim(improvement.stories), '') IS NOT NULL
-                                 OR improvement.living_area_sqft IS NOT NULL
-                                 OR improvement.total_living_area IS NOT NULL
-                                 OR improvement.bedroom_count IS NOT NULL
-                                 OR improvement.bath_count IS NOT NULL
-                                 OR improvement.number_units IS NOT NULL
-                                 OR NULLIF(btrim(improvement.building_class), '') IS NOT NULL
-                                 OR improvement.total_area_sqft IS NOT NULL
-                             )
-                       ) AS main_improvement_present,
-                       (
-                           SELECT land_value
-                           FROM {value_summary}
-                           WHERE account_id = :account_id
-                       ) AS land_value,
-                       (
-                           SELECT market_value
-                           FROM {value_summary}
-                           WHERE account_id = :account_id
-                       ) AS market_value
+                WITH latest_raw AS (
+                    SELECT account_id, tax_year, fetched_at, raw
+                    FROM {_raw_table(config)}
+                    WHERE account_id = :account_id
+                    ORDER BY fetched_at DESC, tax_year DESC
+                    LIMIT 1
+                )
+                SELECT r.raw -> 'detail' AS parsed_detail,
+                       (r.fetched_at >= q.last_attempt_at) AS snapshot_is_fresh,
+                       a.address, o.owner_name, o.mailing_address,
+                       v.certified_year AS tax_year,
+                       v.market_value, v.land_value, v.improvement_value,
+                       p.building_class,
+                       COALESCE(NULLIF(p.living_area_sqft, 0),
+                                NULLIF(p.total_living_area, 0), p.total_area_sqft) AS gla,
+                       (NULLIF(btrim(p.construction_type), '') IS NOT NULL
+                        OR p.percent_complete IS NOT NULL OR p.year_built IS NOT NULL
+                        OR p.effective_year_built IS NOT NULL OR p.actual_age IS NOT NULL
+                        OR p.depreciation IS NOT NULL
+                        OR NULLIF(btrim(p.desirability), '') IS NOT NULL
+                        OR NULLIF(btrim(p.stories), '') IS NOT NULL
+                        OR p.living_area_sqft IS NOT NULL OR p.total_living_area IS NOT NULL
+                        OR p.bedroom_count IS NOT NULL OR p.bath_count IS NOT NULL
+                        OR p.number_units IS NOT NULL
+                        OR NULLIF(btrim(p.building_class), '') IS NOT NULL
+                        OR p.total_area_sqft IS NOT NULL) AS has_primary_improvement,
+                       land.land_area, land.state_codes, land.has_land_details,
+                       parties.ownership_percentage,
+                       COALESCE(l.deed_transfer_date::text, l.deed_transfer_raw) AS deed_transfer
+                FROM latest_raw r
+                JOIN {_field_repair_table(config)} q USING (account_id)
+                LEFT JOIN {_accounts_table(config)} a USING (account_id)
+                LEFT JOIN {owner_summary} o
+                  ON o.account_id = r.account_id AND o.tax_year = r.tax_year
+                LEFT JOIN {value_summary} v
+                  ON v.account_id = r.account_id AND v.certified_year = r.tax_year
+                LEFT JOIN {primary_improvements} p ON p.account_id = r.account_id
+                LEFT JOIN {legal} l
+                  ON l.account_id = r.account_id AND l.tax_year = r.tax_year
+                LEFT JOIN LATERAL (
+                    SELECT max(area_sqft) AS land_area, array_agg(state_code) AS state_codes,
+                           count(*) > 0 AS has_land_details
+                    FROM {land_detail}
+                    WHERE account_id = r.account_id AND tax_year = r.tax_year
+                ) land ON true
+                LEFT JOIN LATERAL (
+                    SELECT CASE WHEN count(*) > 0 AND count(*) = count(ownership_pct)
+                                THEN sum(ownership_pct) END AS ownership_percentage
+                    FROM {owner_parties}
+                    WHERE account_id = r.account_id AND tax_year = r.tax_year
+                ) parties ON true
                 """
             ),
             {"account_id": account_id},
-        ).mappings().one()
-    presence = {
-        "owner": bool(row["owner_present"]),
-        "land": bool(row["land_present"]),
-        "gla": bool(row["gla_present"])
-        or state_codes_describe_vacant_land(list(row["state_codes"] or ()))
-        or values_describe_vacant_land(
-            main_improvement_present=bool(row["main_improvement_present"]),
-            land_value=row["land_value"],
-            market_value=row["market_value"],
-        ),
-    }
+        ).mappings().first()
+    if row is None or not row["snapshot_is_fresh"] or not isinstance(row["parsed_detail"], dict):
+        raise RuntimeError("Field verification requires a fresh parsed snapshot written since this claim")
+    normalized = verification_presence(row)
+    parsed = verification_presence(parsed_verification_row(row["parsed_detail"]))
+    presence = {field: present and parsed.get(field, False)
+                for field, present in normalized.items()}
     return fields_still_missing(requested_fields, presence)
 
 
@@ -1439,15 +1482,32 @@ def mark_field_repair_result(
     config: WorkerConfig,
     account_id: str,
     remaining_fields: tuple[str, ...],
-) -> None:
-    status = "source_missing" if remaining_fields else "succeeded"
-    reason = (
-        "DCAD returned a usable property record but still omitted: "
-        + ", ".join(remaining_fields)
-        if remaining_fields
-        else "All requested legacy fields were recovered"
-    )
+    requested_fields: tuple[str, ...] = (),
+) -> tuple[str, ...]:
     with engine.begin() as conn:
+        current_fields = conn.execute(
+            text(f"SELECT requested_fields FROM {_field_repair_table(config)} "
+                 "WHERE account_id = :account_id FOR UPDATE"),
+            {"account_id": account_id},
+        ).scalar_one_or_none() or ()
+        # An audit may have added obligations while the network fetch ran.
+        # Never report those unchecked requests as repaired.
+        unchecked_fields = tuple(
+            field for field in current_fields if field not in requested_fields
+        )
+        remaining_fields = tuple(dict.fromkeys((*remaining_fields, *unchecked_fields)))
+        if unchecked_fields:
+            status = "pending"
+            reason = "New requests added during refresh require another verification: " + ", ".join(unchecked_fields)
+        elif remaining_fields:
+            status = "source_missing"
+            reason = (
+                "Fields still unverified after refresh (source absence versus parser gap is undetermined): "
+                + ", ".join(remaining_fields)
+            )
+        else:
+            status = "succeeded"
+            reason = "All requested fields are present in normalized data and fresh parsed evidence"
         conn.execute(
             text(
                 f"""
@@ -1455,7 +1515,10 @@ def mark_field_repair_result(
                 SET status = :status,
                     remaining_fields = CAST(:remaining_fields AS text[]),
                     attempts = 0,
-                    last_success_at = now(),
+                    next_attempt_at = CASE WHEN :status = 'pending'
+                                           THEN now() ELSE next_attempt_at END,
+                    last_success_at = CASE WHEN :status = 'succeeded'
+                                           THEN now() ELSE last_success_at END,
                     lease_expires_at = NULL,
                     worker_id = NULL,
                     reason = :reason,
@@ -1467,10 +1530,39 @@ def mark_field_repair_result(
             {
                 "account_id": account_id,
                 "status": status,
-                "remaining_fields": "{" + ",".join(remaining_fields) + "}",
+                "remaining_fields": list(remaining_fields),
                 "reason": reason,
             },
         )
+        # A field repair owns only the exact flags it verified. Market/value
+        # bookkeeping must not erase independent owner, mailing or review flags.
+        resolved_flags = [field for field in requested_fields
+                          if field.startswith("missing_") and field not in remaining_fields]
+        remaining_flags = [field for field in remaining_fields if field.startswith("missing_")]
+        params = {
+            "account_id": account_id,
+            "cleared_flags": [*resolved_flags, "field_repair_unresolved"],
+            "quality_flags": [*remaining_flags, *(["field_repair_unresolved"] if remaining_fields else [])],
+            "quality_status": "field_repair_unresolved" if remaining_fields else "complete",
+        }
+        for table, flags, quality in (
+            (_state_table(config), "quality_flags", "quality_status"),
+            (_accounts_table(config), "data_quality_flags", "data_quality_status"),
+        ):
+            merged = _merged_quality_flags_sql(flags)
+            conn.execute(
+                text(f"""
+                    UPDATE {table}
+                    SET {flags} = {merged},
+                        {quality} = CASE
+                            WHEN cardinality({merged}) = 0 THEN 'complete'
+                            WHEN :quality_status = 'complete' THEN 'incomplete'
+                            ELSE :quality_status END
+                    WHERE account_id = :account_id
+                """),
+                params,
+            )
+    return remaining_fields
 
 
 def mark_field_repair_failure(
@@ -2493,7 +2585,9 @@ def process_field_repair_safely(
         return
 
     record_market_value_assessment(engine, config, account_id, assessment)
-    mark_field_repair_result(engine, config, account_id, remaining_fields)
+    remaining_fields = mark_field_repair_result(
+        engine, config, account_id, remaining_fields, requested_fields
+    )
     recovered = reset_outage_circuit(engine, config)
     if recovered:
         log.warning(
@@ -2502,7 +2596,7 @@ def process_field_repair_safely(
         )
     if remaining_fields:
         log.info(
-            "Field repair source missing account_id=%s remaining_fields=%s",
+            "Field repair still unverified account_id=%s remaining_fields=%s",
             account_id,
             remaining_fields,
         )

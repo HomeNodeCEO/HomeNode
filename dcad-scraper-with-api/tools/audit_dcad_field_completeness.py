@@ -3,6 +3,8 @@
 The command is read-only by default. Use ``--apply`` only after reviewing the
 reported classifications and field counts. Vacant parcels are measured but are
 never put in the improved-property repair queue.
+Deploy the matching exact-field verification worker before applying this audit;
+older workers do not understand the detailed ``missing_*`` obligations.
 """
 
 from __future__ import annotations
@@ -40,10 +42,6 @@ WITH latest_raw AS (
            o.mailing_address
     FROM core.owner_summary o
     ORDER BY o.account_id, o.tax_year DESC
-), latest_party_year AS (
-    SELECT account_id, max(tax_year) AS tax_year
-    FROM core.owner_parties
-    GROUP BY account_id
 ), party_stats AS (
     SELECT p.account_id,
            count(*) AS party_count,
@@ -51,7 +49,7 @@ WITH latest_raw AS (
            sum(p.ownership_pct) FILTER (WHERE p.ownership_pct IS NOT NULL)
                AS ownership_percentage
     FROM core.owner_parties p
-    JOIN latest_party_year latest
+    JOIN latest_owner latest
       ON latest.account_id = p.account_id
      AND latest.tax_year = p.tax_year
     GROUP BY p.account_id
@@ -62,6 +60,10 @@ WITH latest_raw AS (
            COALESCE(p.living_area_sqft, p.total_living_area, p.total_area_sqft) AS gla
     FROM core.primary_improvements p
     ORDER BY p.account_id
+), latest_land_year AS (
+    SELECT account_id, max(tax_year) AS tax_year
+    FROM core.land_detail
+    GROUP BY account_id
 ), land_stats AS (
     SELECT l.account_id,
            string_agg(DISTINCT NULLIF(btrim(l.state_code), ''), ' | ')
@@ -72,6 +74,7 @@ WITH latest_raw AS (
                OR upper(COALESCE(l.state_code, '')) LIKE '%LOTS/TRACTS%')
                AS explicit_vacant_state_code
     FROM core.land_detail l
+    JOIN latest_land_year latest USING (account_id, tax_year)
     GROUP BY l.account_id
 )
 SELECT t.account_id,
@@ -193,8 +196,10 @@ def queue_candidates(
                 WHEN existing.status = 'leased' THEN existing.worker_id
                 ELSE NULL
             END,
-            requested_fields = EXCLUDED.requested_fields,
-            remaining_fields = EXCLUDED.remaining_fields,
+            requested_fields = ARRAY(SELECT DISTINCT unnest(
+                existing.requested_fields || EXCLUDED.requested_fields)),
+            remaining_fields = ARRAY(SELECT DISTINCT unnest(
+                existing.remaining_fields || EXCLUDED.remaining_fields)),
             reason = EXCLUDED.reason,
             last_error = CASE
                 WHEN existing.status = 'leased' THEN existing.last_error
@@ -207,7 +212,8 @@ def queue_candidates(
         """
         UPDATE core.accounts account
         SET data_quality_status = 'field_repair_queued',
-            data_quality_flags = repair.flags
+            data_quality_flags = ARRAY(SELECT DISTINCT unnest(
+                COALESCE(account.data_quality_flags, ARRAY[]::text[]) || repair.flags))
         FROM dcad_field_repair_candidates repair
         WHERE account.account_id = repair.account_id
         """

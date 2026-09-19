@@ -29,8 +29,10 @@ both processes and stops the service if either process exits unexpectedly.
 8. Completed accounts missing owner, land, or GLA can be placed in a separate
    field-repair queue. By default the worker processes one repair after every
    100 normal campaign accounts, so repair work does not materially delay the
-   missing-first campaign. A successful DCAD response that still omits a field
-   is classified as `source_missing` rather than retried forever.
+   missing-first campaign. A usable response whose requested fields remain
+   unverified is classified as `source_missing` rather than retried forever.
+   This legacy status does not prove DCAD omitted the field: a parser or
+   persistence gap can produce the same outcome.
 9. Every newly successful scrape runs a database-only owner, land, and GLA
    presence check. Any remaining gap is added to the same throttled repair lane;
    the check does not make an additional DCAD request.
@@ -41,6 +43,19 @@ both processes and stops the service if either process exits unexpectedly.
     data and the current land value equals the total market value. This covers
     vacant lots that retain a generic residential state code; a positive market
     value and both signals are required to avoid hiding improved-property gaps.
+12. Field-level audits retain exact `missing_*` requests alongside the legacy
+    owner/land/GLA lanes. A repair succeeds only when every requested field is
+    present in normalized data and in a parsed snapshot written since the
+    repair claim. Year-indexed owner, party, land, legal, and value records are
+    matched to that snapshot year. Unknown requests stay unresolved. The
+    legacy vacant-land GLA exception does not waive an explicit `missing_gla`
+    request. Requests added during a fetch remain pending for another check.
+13. Fresh parsed evidence is not original HTML or per-field provenance, and an
+    overlapping scrape can write the latest snapshot. Presence verification
+    does not certify value equality or prove which scrape repaired a field.
+    Existing historical success/source-missing rows are not bulk reset by a
+    worker deployment; a reviewed, separately applied audit is needed to
+    requeue them. No repair lease/scheduling policy is changed by these checks.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on

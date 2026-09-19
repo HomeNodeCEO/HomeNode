@@ -111,11 +111,28 @@ class FieldCompletenessTests(unittest.TestCase):
             repair_request_fields(
                 ("owner_name", "land_area", "building_class", "deed_transfer")
             ),
-            ("owner", "land", "gla"),
+            (
+                "owner", "land", "gla", "missing_owner_name", "missing_land_area",
+                "missing_building_class", "missing_deed_transfer",
+            ),
         )
 
     def test_general_detail_omission_uses_complete_detail_lane(self):
-        self.assertEqual(repair_request_fields(("deed_transfer",)), ("gla",))
+        self.assertEqual(
+            repair_request_fields(("deed_transfer",)), ("gla", "missing_deed_transfer")
+        )
+
+    def test_unsupported_field_is_retained_as_an_exact_obligation(self):
+        self.assertEqual(
+            repair_request_fields(("unsupported_field",)),
+            ("gla", "missing_unsupported_field"),
+        )
+
+    def test_repeated_missing_fields_do_not_duplicate_requests(self):
+        self.assertEqual(
+            repair_request_fields(("mailing_address", "mailing_address")),
+            ("owner", "missing_mailing_address"),
+        )
 
 
 if __name__ == "__main__":

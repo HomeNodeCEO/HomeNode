@@ -166,8 +166,10 @@ def run(*, apply: bool = False, fields: list[str] | None = None, limit: int | No
                 {limit_sql}
                 ON CONFLICT (account_id) DO UPDATE
                 SET status = 'pending',
-                    requested_fields = EXCLUDED.requested_fields,
-                    remaining_fields = EXCLUDED.remaining_fields,
+                    requested_fields = ARRAY(SELECT DISTINCT unnest(
+                        queue.requested_fields || EXCLUDED.requested_fields)),
+                    remaining_fields = ARRAY(SELECT DISTINCT unnest(
+                        queue.remaining_fields || EXCLUDED.remaining_fields)),
                     attempts = 0,
                     next_attempt_at = now(),
                     reason = EXCLUDED.reason,

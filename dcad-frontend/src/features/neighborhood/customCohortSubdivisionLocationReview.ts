@@ -89,7 +89,7 @@ export function buildCustomCohortSubdivisionFamilyLocationReview({ families, cat
   if (!sameContext(group.binding.contextRef, context_ref) || group.binding.accountId !== catalog.subject_membership.account_id) return unavailable('context_mismatch');
   const map = group.parcel_map;
   if (map.status !== 'available') return unavailable('map_unavailable');
-  if (map.geojson.features.length > 100_000 || map.counts.coordinates > 500_000) return unavailable('capacity_exceeded');
+  if (map.geojson.features.length > 100_000 || map.counts.coordinates > 1_000_000) return unavailable('capacity_exceeded');
   const seenParcels = new Set<string>(), allAccounts = new Set<string>();
   const wantedAccounts = new Set([...catalog.pockets.flatMap(pocket => [...pocket.account_ids]), ...catalog.unassigned.account_ids]);
   let coordinates = 0;
@@ -101,7 +101,7 @@ export function buildCustomCohortSubdivisionFamilyLocationReview({ families, cat
         if (!Array.isArray(ring) || ring.length < 4) throw new Error('invalid_geometry');
         let previousLongitude: number | null = null;
         for (const point of ring) {
-          if (++coordinates > 500_000) throw new Error('capacity_exceeded');
+          if (++coordinates > 1_000_000) throw new Error('capacity_exceeded');
           if (!Array.isArray(point) || point.length !== 2 || typeof point[0] !== 'number' || typeof point[1] !== 'number'
             || !Number.isFinite(point[0]) || !Number.isFinite(point[1]) || Math.abs(point[0]) > 180 || Math.abs(point[1]) > 90) throw new Error('invalid_geometry');
           const [longitude, latitude] = point;

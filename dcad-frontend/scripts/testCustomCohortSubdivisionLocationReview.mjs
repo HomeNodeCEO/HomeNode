@@ -140,8 +140,8 @@ test('complete family within an incomplete overall map does not claim complete c
   assert.equal(review(f).reason, 'map_catalog_mismatch');
 });
 
-test('existing feature/coordinate budgets remain exact without a threshold increase', () => {
-  const f = fixture(); f.group.parcel_map.counts.coordinates = 500_001;
+test('dense coordinate budget is bounded at one million while the feature limit remains unchanged', () => {
+  const f = fixture(); f.group.parcel_map.counts.coordinates = 1_000_001;
   assert.equal(review(f).reason, 'capacity_exceeded');
   const g = fixture(); g.group.parcel_map.geojson.features = Array(100_001).fill(g.group.parcel_map.geojson.features[0]);
   assert.equal(review(g).reason, 'capacity_exceeded');

@@ -35,7 +35,7 @@ test('catalog/member/capture operations share cancellation and smaller response 
 });
 
 for (const payload of [{ initial_preview_groups: [] }, { initial_preview_mode: 'all_catalog_groups' }])
-test(`only explicit catalog opening ${Object.keys(payload)[0]} accepts the unchanged combined 31MB envelope`, async () => {
+test(`only explicit catalog opening ${Object.keys(payload)[0]} accepts the bounded combined 39MB envelope`, async () => {
   const signal = new AbortController().signal;
   const transport = createCustomCohortJsonTransport({ urlFor: p => p,
     request: async () => json({ initial_preview: { synthetic: 'x'.repeat(4_100_000) } }) });
@@ -44,7 +44,7 @@ test(`only explicit catalog opening ${Object.keys(payload)[0]} accepts the uncha
   await assert.rejects(transport('A', 'catalog', {}, { signal }), /too large/);
   let cancelled = false;
   const oversized = createCustomCohortJsonTransport({ urlFor: p => p,
-    request: async () => responseStream(stream([encoded(`"${'x'.repeat(31_000_000)}"`)], {
+    request: async () => responseStream(stream([encoded(`"${'x'.repeat(39_000_000)}"`)], {
       onCancel: () => { cancelled = true; }, hanging: true })) });
   await assert.rejects(oversized('A', 'catalog', payload, { signal }), /too large/); assert.equal(cancelled, true);
 });
@@ -68,27 +68,35 @@ for (const groups of [undefined, null, [], ['discovery:unassigned']]) {
   });
 }
 
-test('both opening forms retain the exact 31MB Content-Length boundary without widening ordinary catalog responses', async () => {
+test('both opening forms retain the exact 39MB Content-Length boundary without widening ordinary catalog responses', async () => {
   for (const payload of [{ initial_preview_groups: [] }, { initial_preview_mode: 'all_catalog_groups' }]) {
-    let declared = 31_000_000, cancelled = 0;
+    let declared = 39_000_000, cancelled = 0;
     const transport = createCustomCohortJsonTransport({ urlFor: p => p,
       request: async () => responseStream(stream([encoded('{}')], { onCancel: () => cancelled++ }), { 'content-length': String(declared) }) });
     const options = { signal: new AbortController().signal };
     assert.deepEqual(await transport('A', 'catalog', payload, options), {});
     declared++; await assert.rejects(transport('A', 'catalog', payload, options), /too large/);
     assert.equal(cancelled, 1);
-    declared = 31_000_000; await assert.rejects(transport('A', 'catalog', {}, options), /too large/);
+    declared = 39_000_000; await assert.rejects(transport('A', 'catalog', {}, options), /too large/);
     assert.equal(cancelled, 2);
   }
 });
 
-test('dense map preview has a bounded 27MB envelope, not an unbounded download', async () => {
+test('dense map preview has a bounded 35MB envelope, not an unbounded download', async () => {
   let cancelled = false;
   const transport = createCustomCohortPreviewTransport({ urlFor: p => p,
-    request: async () => responseStream(stream([encoded(`"${'x'.repeat(27_000_000)}"`)], {
+    request: async () => responseStream(stream([encoded(`"${'x'.repeat(35_000_000)}"`)], {
       onCancel: () => { cancelled = true; }, hanging: true })) });
   await assert.rejects(transport(input(), { signal: new AbortController().signal }), /too large/);
   assert.equal(cancelled, true);
+});
+
+test('preview accepts the exact35MB declaration and refuses one byte more before reading', async () => {
+  let declared = 35_000_000, cancelled = 0;
+  const h = harness(async () => responseStream(stream([encoded('{}')], { onCancel: () => cancelled++ }),
+    { 'content-length': String(declared) }));
+  assert.deepEqual(await h.run(), {});
+  declared++; await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
 });
 
 test('generic cohort transport refuses arbitrary operation paths before network access', async () => {
@@ -133,20 +141,20 @@ test('streaming JSON preserves UTF-8 codepoints split across network chunks', as
   assert.deepEqual(await h.run(), { label: 'Élément 🌳' });
 });
 test('oversized declared success response is cancelled without reading the body', async () => {
-  let cancelled = 0; const h = harness(async () => responseStream(stream([], { hanging: true, onCancel: () => cancelled++ }), { 'content-length': '27000001' }));
+  let cancelled = 0; const h = harness(async () => responseStream(stream([], { hanging: true, onCancel: () => cancelled++ }), { 'content-length': '35000001' }));
   await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
 });
 test('actual decoded bytes are capped even when content-length is missing or false', async () => {
   for (const headers of [{}, { 'content-length': '1' }]) {
     let cancelled = 0;
-    const h = harness(async () => responseStream(stream([encoded('"'), new Uint8Array(27_000_000).fill(65)],
+    const h = harness(async () => responseStream(stream([encoded('"'), new Uint8Array(35_000_000).fill(65)],
       { hanging: true, onCancel: () => cancelled++ }), headers));
     await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
   }
 });
-test('the 27MB preview limit is applied to UTF-8 bytes, not character count', async () => {
+test('the 35MB preview limit is applied to UTF-8 bytes, not character count', async () => {
   let cancelled = 0;
-  const h = harness(async () => responseStream(stream([encoded(`"${'界'.repeat(9_000_000)}"`)], { hanging: true, onCancel: () => cancelled++ })));
+  const h = harness(async () => responseStream(stream([encoded(`"${'界'.repeat(11_666_667)}"`)], { hanging: true, onCancel: () => cancelled++ })));
   await assert.rejects(h.run(), /too large/); assert.equal(cancelled, 1);
 });
 test('non-JSON success responses are cancelled without exposing HTML', async () => {

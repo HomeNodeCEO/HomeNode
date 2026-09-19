@@ -62,8 +62,8 @@ interface Options {
   initialResponse?: CustomCohortInitialResponse | null;
 }
 const L = { pockets: 128, accounts: 50_000, memberships: 100_000, selectionBytes: 3_900_000,
-  summaryBytes: 2_000_000, summaryNodes: 150_000, mapBytes: 24_001_024, mapNodes: 3_500_000,
-  features: 100_000, coordinates: 500_000, geojsonBytes: 24_000_000 };
+  summaryBytes: 2_000_000, summaryNodes: 150_000, mapBytes: 32_001_024, mapNodes: 5_500_000,
+  features: 100_000, coordinates: 1_000_000, geojsonBytes: 32_000_000 };
 const HASH = /^[a-f0-9]{64}$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const SEMANTICS = 'current_observed_cached_parcels_not_legal_subdivision_boundary';

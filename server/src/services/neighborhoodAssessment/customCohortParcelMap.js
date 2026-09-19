@@ -10,6 +10,13 @@ export const CUSTOM_COHORT_PARCEL_MAP_LIMITS = Object.freeze({
   // Keep byte, feature, source and per-geometry guards independently bounded.
   coordinates: 500_000, geojson_bytes: 24_000_000,
 });
+// Versioned dense source captures already retain this complete roster. Measured
+// QA: 40,102 parcels / 876,733 coordinates / 29,583,859 GeoJSON bytes. Admit that
+// display without simplifying rings; old captures keep their original guards.
+// The independent 16MB EWKB, feature and per-geometry limits remain unchanged.
+export const CUSTOM_COHORT_DENSE_PARCEL_MAP_LIMITS = Object.freeze({
+  ...CUSTOM_COHORT_PARCEL_MAP_LIMITS, coordinates: 1_000_000, geojson_bytes: 32_000_000,
+});
 const SEMANTICS = 'current_observed_cached_parcels_not_legal_subdivision_boundary';
 const HASH = /^[0-9a-f]{64}$/;
 const HEX = /^[0-9a-fA-F]+$/;
@@ -32,7 +39,7 @@ function freeze(value) {
 // Display-only structural decoder. The retained acquisition's native spatial
 // reader established polygon validity; this is not a topology/coverage check.
 // Do not repair, orient, simplify, join, buffer or transform original rings.
-function decodeGeometry(bytes, budget) {
+function decodeGeometry(bytes, budget, limits) {
   let offset = 0;
   const need = size => { if (size > bytes.length - offset) unavailable('invalid_geometry'); };
   function geometry(nested = false) {
@@ -53,7 +60,7 @@ function decodeGeometry(bytes, budget) {
     if (!size) unavailable('invalid_geometry');
     // Every ring/part needs at least four coordinate pairs. Check before loops
     // and allocations; the coordinate budget is shared by the complete map.
-    if (size > Math.floor((LIMITS.coordinates - budget.coordinates) / 4)) unavailable('capacity_exceeded');
+    if (size > Math.floor((limits.coordinates - budget.coordinates) / 4)) unavailable('capacity_exceeded');
     if (kind === 6) {
       need(size * 77); // Minimum child Polygon: header + one four-point ring.
       const polygons = [];
@@ -65,7 +72,7 @@ function decodeGeometry(bytes, budget) {
     for (let i = 0; i < size; i++) {
       const count = uint();
       if (count < 4) unavailable('invalid_geometry');
-      if (count > LIMITS.coordinates - budget.coordinates) unavailable('capacity_exceeded');
+      if (count > limits.coordinates - budget.coordinates) unavailable('capacity_exceeded');
       need(count * 16);
       budget.coordinates += count;
       const ring = [];
@@ -193,6 +200,8 @@ function* parcelMapBatches(options, indexOnly = false) {
     const { retained_inputs: input, selected_account_ids: selected } = options;
     if (!object(input)) unavailable('invalid_retained_inputs');
     const roster = rosterOf(input.spatial, selected), rows = yield* parcelRows(input, roster);
+    const limits = customCohortObservationRecordLimit(input.acquisition) > LIMITS.source_records
+      ? CUSTOM_COHORT_DENSE_PARCEL_MAP_LIMITS : LIMITS;
     const budget = { geometry_bytes: 0, coordinates: 0 };
     const geojson = { type: 'FeatureCollection', features: [] };
     const geometryIndex = [];
@@ -210,9 +219,9 @@ function* parcelMapBatches(options, indexOnly = false) {
       if (createHash('sha256').update(bytes).digest('hex') !== parcel.geometry_sha256) unavailable('parcel_identity_mismatch');
       const feature = { type: 'Feature', id: `gis.dcad_parcels:${id}`,
         properties: { object_id: id, account_id: parcel.account_id, selected: roster.selected.has(parcel.account_id) },
-        geometry: decodeGeometry(bytes, budget) };
+        geometry: decodeGeometry(bytes, budget, limits) };
       jsonBytes += Buffer.byteLength(JSON.stringify(feature)) + (parcelCount ? 1 : 0);
-      if (jsonBytes > LIMITS.geojson_bytes) unavailable('capacity_exceeded');
+      if (jsonBytes > limits.geojson_bytes) unavailable('capacity_exceeded');
       if (indexOnly) geometryIndex.push({ object_id: id, account_id: parcel.account_id,
         geometry_sha256: parcel.geometry_sha256, source_record_hash: parcel.source_record_hash,
         component_count: feature.geometry.type === 'Polygon' ? 1 : feature.geometry.coordinates.length,

@@ -77,7 +77,7 @@ test('opening catalog passes recorded IDs only and expands only its explicitly r
   const response = await sized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] });
   assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
   assert.equal((await response.json()).initial_preview.synthetic.length, 4_100_000);
-  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(31_000_000) }) } });
+  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(39_000_000) }) } });
   assert.equal((await oversized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] })).status, 422);
 });
 
@@ -107,7 +107,7 @@ test('fresh opening mode is exact, exclusive, and uses the existing combined env
   const response = await sized.request('catalog', { ...bodies.catalog, ...mode });
   assert.equal(response.status, 200);
   assert.equal((await response.json()).initial_preview.synthetic.length, 2_050_000);
-  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(31_000_000) }) } });
+  const oversized = await start(t, { methods: { catalog: async () => ({ initial_preview: 'x'.repeat(39_000_000) }) } });
   const refused = await oversized.request('catalog', { ...bodies.catalog, ...mode });
   assert.equal(refused.status, 422);
   assert.deepEqual(await refused.json(), { error: 'neighborhood_catalog_incomplete',

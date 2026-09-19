@@ -1,10 +1,10 @@
 import { prepareCustomNeighborhoodRecordedGroupIds } from './customWorkspaceCheckpoint.js';
 
-// One bounded catalog (4MB) plus one bounded map/summary preview (27MB).
+// One bounded catalog (4MB) plus one bounded dense map/summary preview (35MB).
 // The individual views retain their limits; only the explicit opening response
 // may carry both. Nothing is cached across requests or authorization decisions.
-export const CUSTOM_COHORT_OPENING_RESPONSE_BYTES = 31_000_000;
-export const CUSTOM_COHORT_OPENING_PREVIEW_BYTES = 27_000_000;
+export const CUSTOM_COHORT_OPENING_RESPONSE_BYTES = 39_000_000;
+export const CUSTOM_COHORT_OPENING_PREVIEW_BYTES = 35_000_000;
 
 export function prepareCustomCohortOpeningMode(value) {
   if (value !== 'all_catalog_groups') {

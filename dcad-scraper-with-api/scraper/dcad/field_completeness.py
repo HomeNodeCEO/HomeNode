@@ -40,8 +40,21 @@ PRIMARY_STRUCTURE_FIELDS = (
     "heating", "air_conditioning", "baths_full", "baths_half", "kitchens",
     "wetbars", "fireplaces", "desirability_raw", "desirability_id",
 )
+PRIMARY_NUMERIC_STRUCTURE_FIELDS = frozenset({
+    "percent_complete", "year_built", "effective_year_built", "actual_age",
+    "depreciation", "living_area_sqft", "total_living_area", "bedroom_count",
+    "bath_count", "number_units", "total_area_sqft", "baths_full", "baths_half",
+    "kitchens", "wetbars", "fireplaces", "desirability_id",
+})
+PRIMARY_STORY_FIELDS = frozenset({"stories", "stories_raw"})
+# Shared Python/PostgreSQL grammar avoids casts of arbitrary text (including
+# enormous exponents). Zero/negative/NaN numeric placeholders prove no structure.
+STRUCTURE_NUMBER_PATTERN = r"^[+-]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$"
+STRUCTURE_POSITIVE_PATTERN = r"^[+]?([0-9]+([.][0-9]*)?|[.][0-9]+)([eE][+-]?[0-9]+)?$"
+STRUCTURE_ZERO_PATTERN = r"^[+-]?(0+([.]0*)?|[.]0+)([eE][+-]?[0-9]+)?$"
 STRUCTURE_NULLISH_TEXT = NULLISH_TEXT | {
-    "UNKNOWN", "NOT AVAILABLE", "NOT APPLICABLE", "NAN", "INFINITY", "-INFINITY",
+    "UNKNOWN", "NOT AVAILABLE", "NOT APPLICABLE", "NAN", "SNAN",
+    "INFINITY", "+INFINITY", "-INFINITY", "INF", "+INF", "-INF",
     "TRUE", "FALSE",
 }
 
@@ -66,7 +79,14 @@ def primary_structure_present(row: Mapping[str, Any]) -> bool:
     """Recognize actual structural attributes, never absent amenity defaults."""
     for field in PRIMARY_STRUCTURE_FIELDS:
         value = row.get(field)
-        if value is not None and str(value).strip().upper() not in STRUCTURE_NULLISH_TEXT:
+        normalized = str(value).strip() if value is not None else ""
+        if field in PRIMARY_NUMERIC_STRUCTURE_FIELDS or (
+            field in PRIMARY_STORY_FIELDS and re.fullmatch(STRUCTURE_NUMBER_PATTERN, normalized)
+        ):
+            if (re.fullmatch(STRUCTURE_POSITIVE_PATTERN, normalized)
+                    and not re.fullmatch(STRUCTURE_ZERO_PATTERN, normalized)):
+                return True
+        elif normalized.upper() not in STRUCTURE_NULLISH_TEXT:
             return True
     return False
 
@@ -81,10 +101,20 @@ def primary_structure_sql(table_alias: str) -> str:
         raise ValueError("Invalid primary-improvement table alias")
     nullish = ", ".join("'" + value.replace("'", "''") + "'"
                         for value in sorted(STRUCTURE_NULLISH_TEXT))
-    return "(" + " OR ".join(
-        f"upper(btrim(COALESCE({table_alias}.{field}::text, ''))) NOT IN ({nullish})"
-        for field in PRIMARY_STRUCTURE_FIELDS
-    ) + ")"
+    predicates = []
+    for field in PRIMARY_STRUCTURE_FIELDS:
+        value = f"btrim(COALESCE({table_alias}.{field}::text, ''))"
+        numeric = (f"({value} ~ '{STRUCTURE_POSITIVE_PATTERN}' "
+                   f"AND {value} !~ '{STRUCTURE_ZERO_PATTERN}')")
+        meaningful_text = f"upper({value}) NOT IN ({nullish})"
+        if field in PRIMARY_NUMERIC_STRUCTURE_FIELDS:
+            predicates.append(numeric)
+        elif field in PRIMARY_STORY_FIELDS:
+            predicates.append(f"(CASE WHEN {value} ~ '{STRUCTURE_NUMBER_PATTERN}' "
+                              f"THEN {numeric} ELSE {meaningful_text} END)")
+        else:
+            predicates.append(meaningful_text)
+    return "(" + " OR ".join(predicates) + ")"
 
 
 def decimal_or_none(value: Any) -> Decimal | None:

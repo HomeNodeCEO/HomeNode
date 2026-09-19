@@ -10,6 +10,8 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
+from dcad.primary_cleanup import vacant_zero_cleanup_sql, vacant_zero_cleanup_year
+
 log = logging.getLogger("dcad.upsert")
 
 _SCHEMA = os.getenv("DB_SCHEMA") or os.getenv("DCAD_SCHEMA") or os.getenv("PGSCHEMA")
@@ -203,7 +205,7 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
         deck = to_text_or_none(primary.get("deck"))
         basement_raw = to_text_or_none(primary.get("basement_raw"))
 
-        if (_SCHEMA or "").lower() == "core":
+        if (_SCHEMA or "").lower() == "core" and primary:
             s.execute(
                 text(
                     f"""
@@ -305,6 +307,14 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
                     "basement_raw": basement_raw,
                 },
             )
+
+        if (_SCHEMA or "").lower() == "core":
+            cleanup_year = vacant_zero_cleanup_year(detail or {})
+            if cleanup_year is not None:
+                s.execute(
+                    text(vacant_zero_cleanup_sql(_tbl('primary_improvements'))),
+                    {"account_id": account_id, "vacant_revaluation_year": cleanup_year},
+                )
 
         # -------- secondary_improvements (core mapping) --------
         sec_list = (detail or {}).get("secondary_improvements") or []

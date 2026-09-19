@@ -56,6 +56,14 @@ async function fixture({ radius, parcels, invalid = [], invalidResult = false, o
   return { f, calls, kernel, proximity, input, response, checked: catalogHelpers.checkCustomCohortPocketCatalog(response, input) };
 }
 const accept = (r, f) => check(r, f.checked, f.response.catalog.binding.selection_sha256);
+const unavailableExplanations = {
+  subject_point_unavailable: 'The captured subject location is missing or cannot be used for this calculation. Distances remain unknown.',
+  retained_map_unavailable: 'The saved parcel geometry could not be validated for this calculation. Distances remain unknown.',
+  retained_binding_mismatch: 'The saved subject location, discovery area, and parcel evidence could not be matched for this calculation. Distances remain unknown.',
+  capacity_exceeded: 'The captured study exceeds the current proximity calculation limit. Its parcel map may still be available; distances remain unknown for the whole study.',
+  native_query_failed: 'The recorded-point distance calculation could not be completed. Distances remain unknown.',
+  native_result_invalid: 'The distance calculation did not return a complete, valid result. Distances remain unknown.',
+};
 
 test('v1 original checked DTO hash is unchanged and does not invent recorded proximity', async () => {
   const f = await fixture({ v1: true }), value = f.checked.recommendation;
@@ -115,6 +123,19 @@ for (const reason of CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS) test(`admits only
   raw.recorded_proximity.reason = reason;
   assert.equal(accept(raw, f).recorded_proximity.reason, reason);
 });
+
+test('unavailable explanations cover exactly the accepted producer reason vocabulary', () => {
+  assert.deepEqual(Object.keys(unavailableExplanations).sort(), [...CUSTOM_COHORT_RECORDED_PROXIMITY_REASONS].sort());
+});
+
+for (const reason of [null, undefined, '', 'arbitrary_server_text', 'constructor', '__proto__', 'toString',
+  'CAPACITY_EXCEEDED', 'capacity_exceeded ', 1, { reason: 'capacity_exceeded' }]) {
+  test(`rejects unchecked unavailable reason ${JSON.stringify(reason)} before component admission`, async () => {
+    const f = await fixture({ old: true }), response = structuredClone(f.response);
+    response.recommendation.recorded_proximity.reason = reason;
+    assert.throws(() => catalogHelpers.checkCustomCohortPocketCatalog(response, f.input), /Invalid pocket recommendation/);
+  });
+}
 
 test('defensive curve unavailability keeps native observed distances separate from scored coverage', async () => {
   const f = await fixture({ old: true }), raw = structuredClone(f.response.recommendation);
@@ -247,6 +268,8 @@ test('actual React renders global and pocket point coverage, not full-property o
   assert.match(html, /not confidence or reliability scores/); assert.doesNotMatch(html, /Housing, comparable distance and verified/);
   assert.equal(html, render(f)); assert.equal(hash(f.checked), before);
   assert.equal(requests, 0); assert.equal(intents, 0); assert.doesNotMatch(html, /checked=""/);
+  assert.doesNotMatch(html, /Recorded point proximity is unavailable for this captured study/);
+  for (const explanation of Object.values(unavailableExplanations)) assert.ok(!html.includes(explanation));
 });
 
 test('unavailable proximity remains visibly unknown, never a zero-distance or hidden denominator', async () => {
@@ -255,4 +278,38 @@ test('unavailable proximity remains visibly unknown, never a zero-distance or hi
   assert.match(html, /Recorded point proximity is unavailable for this captured study/);
   assert.match(html, /Multiple locations and invalid parcel geometry stay unknown/);
   assert.equal(requests, 0); assert.equal(intents, 0);
+});
+
+for (const [reason, explanation] of Object.entries(unavailableExplanations)) {
+  test(`actual React explains admitted ${reason} without altering the retained review`, async () => {
+    const f = await fixture({ old: true }), response = structuredClone(f.response);
+    response.recommendation.recorded_proximity.reason = reason;
+    const checked = catalogHelpers.checkCustomCohortPocketCatalog(response, f.input);
+    const before = hash(checked), beforeRequests = requests, beforeIntents = intents;
+    const html = render({ ...f, checked });
+    assert.ok(html.includes('Recorded point proximity is unavailable for this captured study. '));
+    assert.ok(html.includes(explanation));
+    for (const other of Object.values(unavailableExplanations)) if (other !== explanation) assert.ok(!html.includes(other));
+    assert.ok(html.includes('Recorded point proximity: 0 observed / 2 captured accounts; 2 unknown.'));
+    assert.match(html, /not confidence or reliability scores/);
+    assert.doesNotMatch(html, /checked=""/);
+    assert.equal(hash(checked), before); assert.equal(html, render({ ...f, checked }));
+    assert.equal(requests, beforeRequests); assert.equal(intents, beforeIntents);
+  });
+}
+
+test('defensive rendering never invents a reason or displays unchecked server text', async () => {
+  const f = await fixture({ old: true }), before = hash(f.checked);
+  // Normal catalog admission rejects these values above. Even a bad caller
+  // bypassing that boundary must not select a fallback cause or prototype key.
+  for (const reason of [null, undefined, 'unchecked server text', 'constructor', '__proto__', 'toString']) {
+    const checked = structuredClone(f.checked);
+    checked.recommendation.recorded_proximity.reason = reason;
+    const html = render({ ...f, checked });
+    assert.match(html, /Recorded point proximity is unavailable for this captured study/);
+    assert.ok(html.includes('Recorded point proximity: 0 observed / 2 captured accounts; 2 unknown.'));
+    for (const explanation of Object.values(unavailableExplanations)) assert.ok(!html.includes(explanation));
+    assert.doesNotMatch(html, /unchecked server text|native code|\[object Object\]/);
+  }
+  assert.equal(hash(f.checked), before); assert.equal(requests, 0); assert.equal(intents, 0);
 });

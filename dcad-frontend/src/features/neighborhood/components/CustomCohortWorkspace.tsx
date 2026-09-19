@@ -7,6 +7,7 @@ import { isCustomCohortPreviewCapacityError } from '../customCohortPreviewTransp
 import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionFromRecordedGroups,
   customCohortCountyNameMatches, CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
+import type { CheckedRecordedProximity } from '../customCohortPocketRecommendation';
 import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics from './CustomCohortStatistics';
@@ -40,6 +41,14 @@ const housingLabels = { detached_single_family: 'Detached single-family', townho
   duplex: 'Duplex', apartment: 'Apartment', mobile_home: 'Mobile home', manufactured_home: 'Manufactured home' };
 const housingOrigins = { saved_subject: 'saved subject', retained_subject_public: 'retained public subject observation',
   current_subject_cad: 'current retained subject CAD' };
+const proximityUnavailableReasons = {
+  capacity_exceeded: 'The captured study exceeds the current proximity calculation limit. Its parcel map may still be available; distances remain unknown for the whole study.',
+  subject_point_unavailable: 'The captured subject location is missing or cannot be used for this calculation. Distances remain unknown.',
+  retained_map_unavailable: 'The saved parcel geometry could not be validated for this calculation. Distances remain unknown.',
+  retained_binding_mismatch: 'The saved subject location, discovery area, and parcel evidence could not be matched for this calculation. Distances remain unknown.',
+  native_query_failed: 'The recorded-point distance calculation could not be completed. Distances remain unknown.',
+  native_result_invalid: 'The distance calculation did not return a complete, valid result. Distances remain unknown.',
+} satisfies Record<Exclude<CheckedRecordedProximity['reason'], null>, string>;
 
 /** Independent exploration only. Controlled intent never writes accepted report data.
  * A target, context or session change unmounts all request/map ownership. */
@@ -234,7 +243,11 @@ function WorkspaceSession(props: Props) {
           {recommendation.all.factor_coverage.proximity.unknown_count.toLocaleString('en-US')} unknown.
           {' '}This compares the recorded subject centroid with a point on each retained parcel surface, not an entrance, route or full-property distance.
           {' '}Multiple locations and invalid parcel geometry stay unknown; they are not replaced with a convenient parcel.
-          {recommendation.recorded_proximity.status === 'unavailable' && ' Recorded point proximity is unavailable for this captured study.'}
+          {recommendation.recorded_proximity.status === 'unavailable' && <>
+            {' Recorded point proximity is unavailable for this captured study. '}
+            {recommendation.recorded_proximity.reason && Object.hasOwn(proximityUnavailableReasons, recommendation.recorded_proximity.reason)
+              ? proximityUnavailableReasons[recommendation.recorded_proximity.reason] : ''}
+          </>}
         </p>}
         {recommendation.recorded_housing && <div className="space-y-1 text-xs opacity-80">
           <p>Recorded housing observations: {recommendation.recorded_housing.coverage.observed_count.toLocaleString('en-US')} observed /{' '}

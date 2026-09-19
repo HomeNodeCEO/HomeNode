@@ -895,27 +895,42 @@ def parse_owner(soup: BeautifulSoup) -> Dict[str, Any]:
 
     if owner_span:
         lines: List[str] = []
-        for cur in owner_span.next_siblings:
-            # Stop conditions
+        line_parts: List[str] = []
+
+        def finish_line() -> None:
+            if line_parts:
+                lines.append(clean_text(" ".join(line_parts)))
+                line_parts.clear()
+
+        # Some live DCAD pages close the first <br> only after the entire
+        # owner section. html.parser nests the mailing lines and Multi-Owner
+        # table inside that <br>, so next_siblings/get_text loses the section.
+        # Walk text nodes in document order, preserving <br> boundaries and
+        # stopping before another section, even when it is nested in the <br>.
+        owner_container = owner_span.parent
+        for cur in owner_span.next_elements:
+            if owner_span in cur.parents:
+                continue
+            if owner_container not in cur.parents:
+                break
             name = (getattr(cur, "name", "") or "").lower()
-            if name == "table" and hasattr(cur, "get") and cur.get("id", "") == "MultiOwner1_dgmultiOwner":
-                break
-            if hasattr(cur, "get") and cur.get("class") and "DtlSectionHdr" in (cur.get("class") or []):
-                break
-            # Only collect from Tag-like things
+            if isinstance(cur, Tag):
+                if (
+                    cur.get("id") == "MultiOwner1_dgmultiOwner"
+                    or "DtlSectionHdr" in (cur.get("class") or [])
+                ):
+                    break
+                if name in {"br", "p", "div", "tr", "td", "li"}:
+                    finish_line()
+                continue
             if isinstance(cur, NavigableString):
                 text = clean_text(str(cur))
-            elif hasattr(cur, "get_text"):
-                text = clean_text(cur.get_text(" ").strip())
-            else:
-                text = ""
-            if text:
                 low = text.lower()
-                if "multi-owner" in low:
+                if "multi-owner" in low or ("owner name" in low and "ownership" in low):
                     break
-                if "owner name" in low and "ownership" in low:
-                    break
-                lines.append(text)
+                if text:
+                    line_parts.append(text)
+        finish_line()
         # Heuristic: first line is often the owner name; subsequent lines comprise mailing address
         non_empty = [ln for ln in lines if ln]
         if non_empty:

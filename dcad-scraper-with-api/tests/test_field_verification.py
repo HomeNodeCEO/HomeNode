@@ -374,7 +374,7 @@ class VacantApplicabilityTests(unittest.TestCase):
                 primary.update(basement="NONE", pool="NONE", spa="NONE", sauna="NONE",
                                sprinkler="NONE", deck="NONE")
                 self.assertFalse(primary_structure_present(primary))
-        self.assertTrue(primary_structure_present({"baths_full": 0}))
+        self.assertFalse(primary_structure_present({"baths_full": 0}))
 
     def test_normalized_sql_and_raw_predicate_share_fields_and_nullish_rules(self):
         sql = primary_structure_sql("improvement")

@@ -433,15 +433,36 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
       transactions: { ...result.transactions, members: [], omitted: [] }, source_reported: { ...result.source_reported, members: [] } });
     return result;
   }
+  // The initial catalog recommendation is intentionally represented as one
+  // synthetic pocket containing the complete selected union. Rebuilding that
+  // identical population used to repeat every retained-member scan and could
+  // exhaust the finite work budget after an otherwise successful large-area
+  // capture. Preserve a separately owned result envelope and its exact output
+  // charge, while reusing only the already-computed immutable observations.
+  // Multi-pocket and non-identical selections still take the normal bounded
+  // path, so overlapping/adversarial pocket scans retain their existing limit.
+  function selectedPopulationAlias(source, id, ids) {
+    meter('measurement', source.stock.member_count * Object.keys(CAD).length
+      + source.transactions.member_count
+      + source.source_reported.member_count * Object.keys(sourceFields).length);
+    const result = { ...source, id, account_ids: ids };
+    chargeOutput(result);
+    return result;
+  }
   const union = sorted(pockets.flatMap(pocket => pocket.account_ids));
   const all = population('all_captured_accounts', sorted(roster), true); yield;
   const selected = population('selected_pocket_union', union); yield;
+  const aliasesSelectedPopulation = indexed && pockets.length === 1
+    && pockets[0].account_ids.length === union.length
+    && pockets[0].account_ids.every((id, index) => id === union[index]);
   const pocketMembershipCounts = new Map();
   for (const pocket of pockets) for (const id of pocket.account_ids) pocketMembershipCounts.set(id, (pocketMembershipCounts.get(id) ?? 0) + 1);
   const pocketResults = [];
   for (const pocket of pockets) { yield; pocketResults.push({ ...pocket, disposition: 'needs_review',
     overlap_account_count: pocket.account_ids.filter(id => pocketMembershipCounts.get(id) > 1).length,
-    result: population(pocket.id, pocket.account_ids) }); }
+    result: aliasesSelectedPopulation
+      ? selectedPopulationAlias(selected, pocket.id, pocket.account_ids)
+      : population(pocket.id, pocket.account_ids) }); }
   const snapshots = capture.source_snapshots.map(source => ({ ...source, scope: { ...source.scope } }));
   snapshots.forEach(chargeOutput);
   chargeOutput({ context, target: input.subject.target, pockets: pockets.map(pocket => ({ ...pocket, result: null })), support_gaps: GAPS });

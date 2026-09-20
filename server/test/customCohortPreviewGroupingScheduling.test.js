@@ -101,7 +101,7 @@ const GOLDENS = {
 };
 const SHAPES = {
   empty: { bytes: [33187, 33356], bounds: [39686, 39749], measurement: 38, member: [20, 32], yields: 8 },
-  subset: { bytes: [46190, 44006], bounds: [52641, 50349], measurement: 46, member: [28, 40], yields: 9 },
+  subset: { bytes: [46190, 44006], bounds: [52641, 50349], measurement: 46, member: [28, 32], yields: 9 },
   overlap: { bytes: [67252, 54546], bounds: [73658, 60839], measurement: 80, member: [60, 52], yields: 10 },
 };
 for (const version of [2, 4, 5]) for (const shape of ['empty', 'subset', 'overlap']) {

@@ -8,14 +8,18 @@ import { validateCachedTransactionClosure } from '../src/services/neighborhoodAs
 import { consumeNeighborhoodCachedReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
+import { createClosedSqlPlanGate } from '../src/services/neighborhoodAssessment/closedSqlPlan.js';
 
-const closureReaderSource=readFileSync(new URL('../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js',import.meta.url),'utf8');
-
-test('closure projected-row execution accepts only closed query plans, never runtime SQL text',()=>{
-  assert.match(closureReaderSource,/const CLOSURE_PROJECTIONS=Object\.freeze\(/);
-  assert.match(closureReaderSource,/if \(!Object\.values\(rowPlans\)\.includes\(plan\)\) invalid\('query_plan'\)/);
-  assert.doesNotMatch(closureReaderSource,/const rows=async\s*\([^)]*\bsql\b/);
-  assert.doesNotMatch(closureReaderSource,/\+sql\+/);
+test('closure projected-row execution rejects counterfeit plans before query execution',()=>{
+  const installed=Object.freeze({tag:'source-ids',statement:'SELECT approved',maximum:2048});
+  let queries=0;
+  const gate=createClosedSqlPlanGate({installed},()=>{throw new TypeError('query_plan');});
+  const execute=plan=>{gate.assert(plan);queries++;};
+  execute(gate.plans.installed);
+  for(const counterfeit of [{...installed},{...installed,statement:'SELECT injected'},null]) {
+    assert.throws(()=>execute(counterfeit),/query_plan/);
+  }
+  assert.equal(queries,1,'no counterfeit plan reached the query boundary');
 });
 
 // Query-boundary doubles, not PostgreSQL/MVCC proof. Actual source SQL is shared

@@ -20,6 +20,7 @@ import { CACHED_CAD_EVIDENCE_MAPPING_VERSION, CACHED_CAD_EVIDENCE_FIELDS, mapCad
   mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 import { CACHED_COMBINED_EVIDENCE_MAPPING_VERSION, mapCombinedEvidenceParcelRow, mapCombinedEvidenceAccountRow,
   mapCombinedEvidenceSaleRow, mapCombinedEvidenceSaleLinkRow } from './cachedRowMappingsV5.js';
+import { createClosedSqlPlanGate } from './closedSqlPlan.js';
 
 export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
@@ -381,7 +382,8 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
   const limits=limitsOf(overrides,profile.dense ? DENSE_CAD_CACHE_READER_LIMITS : undefined);
-  const rowPlans=compileRowPlans(profile,limits);
+  const rowPlanGate=createClosedSqlPlanGate(compileRowPlans(profile,limits),()=>invalid('query_plan'));
+  const {plans:rowPlans}=rowPlanGate;
   // Only stock pages use the dense fast path. Identity/transaction details keep
   // their original row bounds and fan-out sentinels even for dense captures.
   const detailPageSize=Math.min(limits.page_size,NEIGHBORHOOD_CACHE_READER_LIMITS.page_size);
@@ -439,7 +441,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
     const rows=async (plan,values=[]) => {
       // Limit each projected row in PostgreSQL BEFORE sending large geometry or
       // quality arrays to Node. No arbitrary raw_payload/remarks are selected.
-      if (!Object.values(rowPlans).includes(plan)) invalid('query_plan');
+      rowPlanGate.assert(plan);
       const result=await query(plan.tag,plan.statement,values);
       // Independently verify the complete page before retaining even its first
       // row. PostgreSQL returns only sizes/null sentinels when a page is too big.

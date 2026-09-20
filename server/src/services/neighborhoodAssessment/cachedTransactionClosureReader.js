@@ -2,6 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { normalizePublicCadastralAccountId } from '../../security/publicCadastralCatalog.js';
 import { canonicalAssessmentJson } from './contract.js';
 import { validateCachedTransactionClosure } from './cachedTransactionClosure.js';
+import { createClosedSqlPlanGate } from './closedSqlPlan.js';
 
 // Shared verbatim with the source reader's independent drift check. Do not add
 // date/resolution filters or discover a second hop from newly linked accounts.
@@ -177,7 +178,8 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
   for (const [key,value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value<1 || value>NEIGHBORHOOD_TRANSACTION_CLOSURE_READER_LIMITS[key]) invalid('limits');
   }
-  const rowPlans=compileClosureRowPlans(limits.row_bytes);
+  const rowPlanGate=createClosedSqlPlanGate(compileClosureRowPlans(limits.row_bytes),()=>invalid('query_plan'));
+  const {plans:rowPlans}=rowPlanGate;
   const closureLimits={accounts:limits.accounts,identity_records:limits.identity_records,bytes:limits.bytes};
   const selected=validateCachedTransactionClosure({selected_account_ids:input.selected_account_ids,
     source_revision:input.source_revision,transactions:[],links:[],legacy:[]},{limits:closureLimits});
@@ -210,7 +212,7 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
   const rows=async(plan,values)=>{
     // SQL limits projected row bytes before transfer. No arbitrary MLS fields,
     // price, date, characteristics, raw payload, geometry or remarks are read.
-    if (!Object.values(rowPlans).includes(plan)) invalid('query_plan');
+    rowPlanGate.assert(plan);
     const result=await query(plan.tag,plan.statement,values);
     if (result.length>values.at(-1)) incomplete('database_page_invalid');
     return result.map(row=>{

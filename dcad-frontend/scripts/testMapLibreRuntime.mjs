@@ -1,16 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript');
-const file = fileURLToPath(new URL('../src/lib/mapLibreRuntime.ts', import.meta.url));
-const code = ts.transpileModule(readFileSync(file, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-}).outputText;
 function environment({ existing = false, loaded = false } = {}) {
   const elements = [], timers = new Map(); let next = 0;
   function element(tagName) {
@@ -28,9 +19,12 @@ function environment({ existing = false, loaded = false } = {}) {
   if (loaded) window.maplibregl = runtime;
   const document = { head: { appendChild(e) { elements.push(e); } }, createElement: element,
     querySelector(selector) { return elements.find(e => e.tagName === (selector.startsWith('link') ? 'link' : 'script')) ?? null; } };
-  const module = { exports: {} };
-  new Script(`(function(module,exports,window,document){${code}\n})`, { filename: file }).runInThisContext()(module, module.exports, window, document);
-  return { ...module.exports, elements, window, timers, runtime,
+  const loadedModule = loadTrustedRepositoryCommonJs(
+    new URL('../src/lib/mapLibreRuntime.ts', import.meta.url),
+    name => { throw new Error(`Unexpected map runtime dependency: ${name}`); },
+    { environment: { window, document } },
+  );
+  return { ...loadedModule, elements, window, timers, runtime,
     script: () => elements.find(e => e.tagName === 'script'),
     finish() { window.maplibregl = runtime; this.script().emit('load'); },
   };

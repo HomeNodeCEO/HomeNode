@@ -14,6 +14,7 @@ const MAX_FACTORIES = 256;
 const MAX_STATEMENTS = 512;
 const MAX_RESULTS = 128;
 const SOURCE_ROOT = realpathSync(fileURLToPath(new URL('../src/', import.meta.url)));
+const COMMONJS_GLOBALS = new Set(['require', 'module', 'exports', '__filename', '__dirname']);
 
 function invalid(reason) {
   throw new TypeError(`invalid_trusted_repository_module:${reason}`);
@@ -132,6 +133,67 @@ export function executeTrustedRepositoryStatements(nodes, environment, resultNam
 }
 
 /**
+ * Loads one named function declaration from a verified repository source file.
+ * Export modifiers are removed by the TypeScript AST printer; callers can only
+ * inject plain, explicitly named dependency values into the function closure.
+ */
+export function executeTrustedRepositoryFunctionDeclaration(node, environment) {
+  const trusted = node && typeof node === 'object' ? trustedNodes.get(node) : undefined;
+  if (!trusted || !ts.isFunctionDeclaration(node)) invalid('function_source');
+  const registeredText = sourceText(trusted.source.slice(trusted.start, trusted.end));
+  const parsed = ts.createSourceFile(
+    'trusted-function.ts',
+    registeredText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const registered = parsed.statements.length === 1 ? parsed.statements[0] : undefined;
+  if (parsed.parseDiagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)
+    || !registered || !ts.isFunctionDeclaration(registered) || !registered.name || !registered.body
+    || registered.modifiers?.some(modifier => ![
+      ts.SyntaxKind.ExportKeyword,
+      ts.SyntaxKind.AsyncKeyword,
+    ].includes(modifier.kind))) {
+    invalid('function_source');
+  }
+  let commonJsReference = false;
+  function inspect(current) {
+    if (ts.isIdentifier(current) && COMMONJS_GLOBALS.has(current.text)) commonJsReference = true;
+    ts.forEachChild(current, inspect);
+  }
+  inspect(registered);
+  if (commonJsReference) invalid('commonjs_global');
+  const name = registered.name.text;
+  if (!IDENTIFIER.test(name)) invalid('function_name');
+  const declaration = ts.factory.updateFunctionDeclaration(
+    registered,
+    registered.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ExportKeyword),
+    registered.asteriskToken,
+    registered.name,
+    registered.typeParameters,
+    registered.parameters,
+    registered.type,
+    registered.body,
+  );
+  const text = sourceText(ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, parsed));
+  const keys = environmentKeys(environment);
+  if (keys.some(key => COMMONJS_GLOBALS.has(key) || key === 'environment' || key === name)) {
+    invalid('environment');
+  }
+  const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
+    + `  const { ${keys.join(', ')} } = environment;\n${text}\n  return ${name};\n};\n`;
+  const compiled = ts.transpileModule(wrapped, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    reportDiagnostics: true,
+  });
+  if (compiled.diagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)) invalid('syntax');
+  const result = loadFactory(compiled.outputText)(environment);
+  if (typeof result !== 'function') invalid('function_result');
+  return result;
+}
+
+/**
  * Loads already-transpiled CommonJS originating from a fixed repository file
  * with an explicit dependency resolver. This preserves the existing isolated,
  * file-backed hook harness.
@@ -154,6 +216,7 @@ export function loadTrustedRepositoryCommonJs(url, dependencyResolver, options =
     trustedCode = trustedCode.split(marker).join(JSON.stringify(options.baseUrl));
   }
   const compiled = ts.transpileModule(trustedCode, {
+    fileName: path,
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     reportDiagnostics: true,
   });

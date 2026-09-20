@@ -1,35 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript'), { renderToStaticMarkup } = requireRuntime('react-dom/server');
-const file = fileURLToPath(new URL('../src/features/neighborhood/components/CustomCohortParcelMap.tsx', import.meta.url));
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-});
+const { renderToStaticMarkup } = requireRuntime('react-dom/server');
 // Execute the actual new pure presentation helper. Only the existing catalog
 // constant is substituted; score/label logic is not replicated in this harness.
-const presentationFile = fileURLToPath(new URL('../src/features/neighborhood/customCohortMapPresentation.ts', import.meta.url));
-const presentationModule = { exports: {} };
-const presentationCompiled = ts.transpileModule(readFileSync(presentationFile, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-});
-new Script(`(function(require,module,exports){${presentationCompiled.outputText}\n})`, { filename: presentationFile }).runInThisContext()(name => {
+const presentationModule = loadTrustedRepositoryCommonJs(
+  new URL('../src/features/neighborhood/customCohortMapPresentation.ts', import.meta.url),
+  name => {
   assert.match(name, /customCohortPocketCatalog(?:\.ts)?$/);
   return { CUSTOM_COHORT_UNASSIGNED_GROUP: 'discovery:unassigned' };
-}, presentationModule, presentationModule.exports);
-const { buildCustomCohortMapPresentation } = presentationModule.exports;
-const familiesFile = fileURLToPath(new URL('../src/features/neighborhood/customCohortSubdivisionFamilies.ts', import.meta.url));
-const familiesModule = { exports: {} };
-const familiesCompiled = ts.transpileModule(readFileSync(familiesFile, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-});
-new Script(`(function(module,exports){${familiesCompiled.outputText}\n})`, { filename: familiesFile }).runInThisContext()(familiesModule, familiesModule.exports);
-const { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases } = familiesModule.exports;
+  },
+);
+const { buildCustomCohortMapPresentation } = presentationModule;
+const familiesModule = loadTrustedRepositoryCommonJs(
+  new URL('../src/features/neighborhood/customCohortSubdivisionFamilies.ts', import.meta.url),
+  name => { throw new Error(`Unexpected subdivision-family dependency: ${name}`); },
+);
+const { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases } = familiesModule;
 const contextRef = { context_id: 'context', context_revision: '1', context_sha256: 'a'.repeat(64) };
 const polygon = x => ({ type: 'Polygon', coordinates: [[[x, 32], [x + .01, 32], [x + .01, 32.01], [x, 32]],
   [[x + .003, 32.003], [x + .005, 32.003], [x + .005, 32.004], [x + .003, 32.003]]] });
@@ -123,30 +113,33 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     clearTimeout(id) { timers.delete(id); }, addEventListener() {}, removeEventListener() {} };
   const observers = [];
   class ResizeObserver { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } }
-  const module = { exports: {} };
   // Child effects/network are covered by its own tests. Here its exact current
   // props let us exercise the map owner's real city-camera callback.
   function CityReferenceStub() { return null; }
-  new Script(`(function(require,module,exports,window,ResizeObserver){${compiled.outputText}\n})`, { filename: file }).runInThisContext()(name => {
+  const loaded = loadTrustedRepositoryCommonJs(
+    new URL('../src/features/neighborhood/components/CustomCohortParcelMap.tsx', import.meta.url),
+    name => {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return requireRuntime(name);
-    if (/\/customCohortMapPresentation(?:\.ts)?$/.test(name)) return { ...presentationModule.exports,
+    if (/\/customCohortMapPresentation(?:\.ts)?$/.test(name)) return { ...presentationModule,
       buildCustomCohortMapPresentation(...args) { presentationCount++; return buildCustomCohortMapPresentation(...args); } };
     if (name.endsWith('/NeighborhoodCityReferenceControl')) return { default: CityReferenceStub };
     if (name.endsWith('/customCohortPocketCatalog')) return { CUSTOM_COHORT_UNASSIGNED_GROUP: 'discovery:unassigned' };
-    if (name.endsWith('/customCohortSubdivisionFamilies')) return { ...familiesModule.exports,
+    if (name.endsWith('/customCohortSubdivisionFamilies')) return { ...familiesModule,
       createCustomCohortSubdivisionPhaseReader(...args) {
-        phasePreparationCount++; const read = familiesModule.exports.createCustomCohortSubdivisionPhaseReader(...args);
+        phasePreparationCount++; const read = familiesModule.createCustomCohortSubdivisionPhaseReader(...args);
         return family => { phaseReadCount++; return read(family); };
       },
       buildCustomCohortSubdivisionPhases(...args) {
-        standalonePhaseReadCount++; return familiesModule.exports.buildCustomCohortSubdivisionPhases(...args);
+        standalonePhaseReadCount++; return familiesModule.buildCustomCohortSubdivisionPhases(...args);
       } };
     assert.equal(name, '../../../lib/mapLibreRuntime');
     return { MAPLIBRE_BASE_STYLE: 'pinned-style', loadMapLibreRuntime() { loadCount++;
       return rejectLoad ? Promise.reject(new Error('load failed')) : delayedLoad ? runtimePromise : Promise.resolve(runtime); } };
-  }, module, module.exports, window, ResizeObserver);
-  const Component = module.exports.default;
+    },
+    { environment: { window, ResizeObserver } },
+  );
+  const Component = loaded.default;
   function attach(node) {
     if (!node || typeof node !== 'object') return;
     if (node.props?.ref) node.props.ref.current ??= {};

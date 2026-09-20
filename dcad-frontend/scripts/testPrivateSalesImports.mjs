@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
 import * as api from '../src/features/neighborhood/privateSalesImports.ts';
 import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentSalesCsv/prepare.js';
 import { proposeAssignmentSalesMatchPage } from '../../server/src/services/assignmentSalesCsv/matchProposals.js';
@@ -11,9 +9,10 @@ import { createPreparedSalesDigest } from '../../server/src/services/assignmentS
 import { checkPrivateSalesMatchProposals } from '../src/features/neighborhood/privateSalesMatchProposals.ts';
 import * as reviewApi from '../src/features/neighborhood/privateSalesReview.ts';
 import * as reviewPendingApi from '../src/features/neighborhood/privateSalesReviewPending.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const runtime = createRequire(new URL('../package.json', import.meta.url));
-const ts = runtime('typescript'), jsx = runtime('react/jsx-runtime');
+const jsx = runtime('react/jsx-runtime');
 const { renderToStaticMarkup } = runtime('react-dom/server');
 const TARGET = { accountId: 'SYNTHETIC', assignmentFileId: 37, sessionKey: 'synthetic-session' };
 const ID = '10000000-0000-4000-8000-000000000001', REPORT = '20000000-0000-4000-8000-000000000001';
@@ -249,22 +248,22 @@ function harness(t, request, store = storage(), timers = { setTimeout, clearTime
       owner.effects.push(() => { effect.cleanup?.(); effect.cleanup = setup(); });
     } },
   };
-  const source = readFileSync(new URL('../src/features/neighborhood/components/PrivateSalesImportsPanel.tsx', import.meta.url), 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
   // The controlled review child has its own interaction tests. These tests
   // exercise the real parent operation/transport lane through its public props.
   const ReviewSlot = () => jsx.jsx('span', { children: 'Private sales review controls' });
-  const module = { exports: {} }, imports = { react, 'react/jsx-runtime': jsx, '../privateSalesImports': api,
+  const imports = { react, 'react/jsx-runtime': jsx, '../privateSalesImports': api,
     '../privateSalesReview': reviewApi, '../privateSalesReviewPending': reviewPendingApi,
     './PrivateSalesReviewPanel': { default: ReviewSlot },
     '@/lib/api': { fetchWithApplicationAuthentication: request, makeUrl: (path, params) => {
       assert.equal(path.includes('?'), false, 'shared makeUrl receives path and params separately');
       const query = new URLSearchParams(params).toString(); return path + (query ? '?' + query : '');
     } } };
-  new Script(`(function(require,module,exports,setTimeout,clearTimeout){${output.outputText}\n})`).runInThisContext()(key => {
-    assert.ok(Object.hasOwn(imports, key)); return imports[key];
-  }, module, module.exports, timers.setTimeout, timers.clearTimeout);
-  const Panel = module.exports.default;
+  const loaded = loadTrustedRepositoryCommonJs(
+    new URL('../src/features/neighborhood/components/PrivateSalesImportsPanel.tsx', import.meta.url),
+    key => { assert.ok(Object.hasOwn(imports, key)); return imports[key]; },
+    { environment: { setTimeout: timers.setTimeout, clearTimeout: timers.clearTimeout } },
+  );
+  const Panel = loaded.default;
   const cleanup = () => { if (fiber) { fiber.live = false; fiber.cells.forEach(cell => cell?.cleanup?.()); fiber = null; } };
   function render(next = props) {
     props = next; dirty = false; const owner = Panel(props);

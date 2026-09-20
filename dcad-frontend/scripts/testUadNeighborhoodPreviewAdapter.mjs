@@ -1,18 +1,13 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { join, posix } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
+import { posix } from 'node:path';
 import { uadNeighborhoodReviewFixture, acceptedUadNeighborhoodReviewFixture,
   prepareSyntheticAcceptance } from './fixtures/uadNeighborhoodReviewFixture.mjs';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 // LOCAL/PURE evidence only. Real retained-fixture builders, reducer, formatter
 // and shared guard are used. No controller, browser, database or source authority
 // is established; committed-shaped fixture responses below are explicitly synthetic.
-const frontend = fileURLToPath(new URL('../', import.meta.url));
-const ts = createRequire(join(frontend, 'package.json'))('typescript');
 const files = {
   adapter: 'src/features/uad/neighborhoodPreviewAdapter.ts',
   owner: 'src/features/uad/neighborhoodReviewModel.ts',
@@ -22,18 +17,14 @@ const files = {
 const allowed = new Set(Object.values(files)), modules = new Map();
 function compiled(path) {
   assert.ok(allowed.has(path), `Unapproved production dependency: ${path}`);
-  if (modules.has(path)) return modules.get(path).exports;
-  const emitted = ts.transpileModule(readFileSync(join(frontend, path), 'utf8'), { fileName: path,
-    reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-  assert.deepEqual((emitted.diagnostics ?? []).filter(row => row.category === ts.DiagnosticCategory.Error), []);
-  const module = { exports: {} }; modules.set(path, module);
-  const require = name => {
+  if (modules.has(path)) return modules.get(path);
+  const loaded = loadTrustedRepositoryCommonJs(new URL(`../${path}`, import.meta.url), name => {
     assert.ok(name.startsWith('.'), `No provider/Node/network import allowed: ${name}`);
-    return compiled(posix.normalize(posix.join(posix.dirname(path), name.replace(/\.ts$/, '') + '.ts')));
-  };
-  new Script(`(function(require,module,exports){\n${emitted.outputText}\n})`, { filename: path })
-    .runInThisContext()(require, module, module.exports);
-  return module.exports;
+    const dependency = posix.normalize(posix.join(posix.dirname(path), name.replace(/\.ts$/, '') + '.ts'));
+    return compiled(dependency);
+  });
+  modules.set(path, loaded);
+  return loaded;
 }
 // One instance per module is essential for the real shared guard's WeakMap.
 const model = compiled(files.owner), shared = compiled(files.shared), formatter = compiled(files.formatter);

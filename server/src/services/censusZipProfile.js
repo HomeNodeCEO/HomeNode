@@ -1,6 +1,11 @@
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
 const DEFAULT_ACS_YEAR = "2024";
 const UNEMPLOYMENT_VARIABLE = "DP03_0009PE";
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const FETCH_TIMEOUT_MS = 10_000;
+const MAX_ZIP_RESPONSE_BYTES = 256 * 1024;
+const MAX_PLACE_TABLE_RESPONSE_BYTES = 2 * 1024 * 1024;
 const profileCache = new Map();
 const placeTableCache = new Map();
 const TEXAS_STATE_FIPS = "48";
@@ -42,6 +47,45 @@ function comparablePlaceName(value) {
     .toLowerCase();
 }
 
+async function fetchCensusPayload(url, {
+  fetchImpl,
+  errorPrefix,
+  maximumBytes,
+}) {
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      headers: {
+        accept: "application/json",
+        "user-agent": "HomeNode neighborhood-characteristics/1.0",
+      },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    throw serviceError(`${errorPrefix}_unavailable`, 502);
+  }
+  if (!response?.ok) {
+    const status = Number.isInteger(response?.status) ? response.status : "unknown";
+    throw serviceError(`${errorPrefix}_http_${status}`, 502);
+  }
+
+  const tooLargeCode = `${errorPrefix}_response_too_large`;
+  const unavailableCode = `${errorPrefix}_response_unavailable`;
+  try {
+    return await readBoundedJsonResponse(response, {
+      maximumBytes,
+      tooLargeCode,
+      unavailableCode,
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (code === tooLargeCode || code === unavailableCode) {
+      throw serviceError(code, 502);
+    }
+    throw serviceError(`${errorPrefix}_invalid_response`, 502);
+  }
+}
+
 export async function fetchCensusZipProfile(
   postalCode,
   {
@@ -66,20 +110,11 @@ export async function fetchCensusZipProfile(
   url.searchParams.set("get", `NAME,${UNEMPLOYMENT_VARIABLE}`);
   url.searchParams.set("for", `zip code tabulation area:${zip}`);
   url.searchParams.set("key", key);
-  const response = await fetchImpl(url, {
-    headers: {
-      accept: "application/json",
-      "user-agent": "HomeNode neighborhood-characteristics/1.0",
-    },
+  const payload = await fetchCensusPayload(url, {
+    fetchImpl,
+    errorPrefix: "census_zip_profile",
+    maximumBytes: MAX_ZIP_RESPONSE_BYTES,
   });
-  if (!response.ok) throw serviceError(`census_zip_profile_http_${response.status}`, 502);
-
-  let payload;
-  try {
-    payload = await response.json();
-  } catch {
-    throw serviceError("census_zip_profile_invalid_response", 502);
-  }
   const headers = Array.isArray(payload?.[0]) ? payload[0] : [];
   const row = Array.isArray(payload?.[1]) ? payload[1] : [];
   const valueIndex = headers.indexOf(UNEMPLOYMENT_VARIABLE);
@@ -142,18 +177,11 @@ export async function fetchCensusCityProfile(
     url.searchParams.set("for", "place:*");
     url.searchParams.set("in", `state:${resolvedState.fips}`);
     url.searchParams.set("key", key);
-    const response = await fetchImpl(url, {
-      headers: {
-        accept: "application/json",
-        "user-agent": "HomeNode neighborhood-characteristics/1.0",
-      },
+    payload = await fetchCensusPayload(url, {
+      fetchImpl,
+      errorPrefix: "census_city_profile",
+      maximumBytes: MAX_PLACE_TABLE_RESPONSE_BYTES,
     });
-    if (!response.ok) throw serviceError(`census_city_profile_http_${response.status}`, 502);
-    try {
-      payload = await response.json();
-    } catch {
-      throw serviceError("census_city_profile_invalid_response", 502);
-    }
     if (useCache) placeTableCache.set(placeTableKey, { cachedAt: now, value: payload });
   }
   const headers = Array.isArray(payload?.[0]) ? payload[0] : [];
@@ -189,6 +217,9 @@ export async function fetchCensusCityProfile(
 export const censusZipProfileInternals = {
   DEFAULT_ACS_YEAR,
   UNEMPLOYMENT_VARIABLE,
+  FETCH_TIMEOUT_MS,
+  MAX_ZIP_RESPONSE_BYTES,
+  MAX_PLACE_TABLE_RESPONSE_BYTES,
   profileCache,
   placeTableCache,
   comparablePlaceName,

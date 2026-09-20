@@ -1,8 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { Script } from 'node:vm';
 import { createHash } from 'node:crypto';
 import * as helpers from '../src/features/neighborhood/customCohortPrivateSales.ts';
 import { checkCustomCohortSummaryResponse, createCustomCohortPreviewController, fingerprintCustomCohortSelection } from '../src/features/neighborhood/customCohortPreviewController.ts';
@@ -11,6 +9,7 @@ import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentS
 import { digestPreparedSalesParts } from '../../server/src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { validateAssignmentSalesReviewCommand } from '../../server/src/services/assignmentSalesCsv/review.js';
 import { buildCustomCohortPrivateSalesObservations, presentCustomCohortPrivateSalesObservations } from '../../server/src/services/neighborhoodAssessment/customCohortPrivateSales.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const uuid = n => `aaaaaaaa-aaaa-4aaa-8aaa-${String(n).padStart(12, '0')}`, clone = v => structuredClone(v);
 const A = '00000000000000001', B = '00000000000000002', C = '00000000000000003';
@@ -63,15 +62,13 @@ function catalogResponse(f) {
     subject_membership: { account_id: A, assigned_pocket_id: null, status: 'unassigned', recorded_label_match_only: true },
     limitations: [], apply: { status: 'blocked' } } };
 }
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript'), React = requireRuntime('react');
+const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), React = requireRuntime('react');
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
 function compile(name, imports) {
-  const file = new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url), module = { exports: {} };
-  const code = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } }).outputText;
-  new Script(`(function(require,module,exports){${code}\n})`, { filename: file.pathname }).runInThisContext()(key => {
+  return loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url), key => {
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     assert.ok(Object.hasOwn(imports, key), `Unexpected side-effect import ${key}`); return imports[key];
-  }, module, module.exports); return module.exports;
+  });
 }
 const privateComponent = compile('CustomCohortPrivateSalesStatistics', { '../customCohortPrivateSales': helpers });
 const Statistics = compile('CustomCohortStatistics', { './CustomCohortPrivateSalesStatistics': privateComponent }).default;

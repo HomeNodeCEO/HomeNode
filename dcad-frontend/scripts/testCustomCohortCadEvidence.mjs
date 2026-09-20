@@ -2,8 +2,6 @@ import test from 'node:test';
 import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import assert from 'node:assert/strict';
 import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { Script } from 'node:vm';
 import * as cadHelpers from '../src/features/neighborhood/customCohortCadEvidence.ts';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
@@ -16,6 +14,7 @@ import { buildCustomCohortPocketRecommendation } from '../../server/src/services
 import { presentCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { presentCustomCohortCadEvidence } from '../../server/src/services/neighborhoodAssessment/customCohortCadEvidencePresentation.js';
 import { CUSTOM_COHORT_CURRENT_CAD_BASELINE_FIELDS } from '../../server/src/services/neighborhoodAssessment/customCohortCurrentCadBaseline.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const base = cadEvidenceFixture(), clone = value => structuredClone(value);
 const check = cadHelpers.checkCustomCohortCadEvidence;
@@ -206,13 +205,10 @@ test('full CAD addon has an exact serialized byte bound even when each list sepa
   assert.throws(() => check(value, checked));
 });
 
-const runtime = createRequire(new URL('../package.json', import.meta.url)), ts = runtime('typescript'), React = runtime('react');
+const runtime = createRequire(new URL('../package.json', import.meta.url)), React = runtime('react');
 const { renderToStaticMarkup } = runtime('react-dom/server');
 const inspectorPath = new URL('../src/features/neighborhood/components/CustomCohortPocketInspector.tsx', import.meta.url);
-const compiled = ts.transpileModule(readFileSync(inspectorPath, 'utf8'), { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText, module = { exports: {} };
-new Script(`(function(require,module,exports){${compiled}\n})`).runInThisContext()(key => {
+const inspector = loadTrustedRepositoryCommonJs(inspectorPath, key => {
   if (key === 'react' || key === 'react/jsx-runtime') return runtime(key);
   if (key === '../customCohortCadEvidence') return cadHelpers;
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
@@ -221,11 +217,11 @@ new Script(`(function(require,module,exports){${compiled}\n})`).runInThisContext
   if (key === '../customCohortPreviewApi') return { requestCustomCohortObservationPreview() { assert.fail('SSR must not fetch'); } };
   if (key === './CustomCohortStatistics' || key === './CustomCohortMemberBrowser') return { default: () => null, __esModule: true };
   assert.fail(`Unexpected Inspector import ${key}`);
-}, module, module.exports);
+});
 const render = (f, options = {}) => {
   const { pocketId = f.checked.pockets[0].id, input = f.input, paused = false } = options;
   const cad = Object.hasOwn(options, 'cad') ? options.cad : f.checked.recommendation.cad_recorded_evidence;
-  return renderToStaticMarkup(React.createElement(module.exports.default, { input, pocketId, label: 'Synthetic pocket', paused,
+  return renderToStaticMarkup(React.createElement(inspector.default, { input, pocketId, label: 'Synthetic pocket', paused,
     catalog: { ...f.checked, recommendation: { ...f.checked.recommendation, cad_recorded_evidence: cad } } }));
 };
 

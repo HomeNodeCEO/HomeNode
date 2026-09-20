@@ -2,10 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as subdivisionFamilies from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
@@ -16,6 +13,7 @@ import { deriveCustomCohortRecordedProximity, CUSTOM_COHORT_RECORDED_PROXIMITY_R
 import { buildCustomCohortPocketRecommendation as build } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation as present } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { presentCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const legacy = decisionEvidenceFixture(), fixtures = new Map();
 const hash = value => createHash('sha256').update(JSON.stringify(value)).digest('hex');
@@ -231,13 +229,9 @@ test('summary accessors and hidden serialization hooks are rejected without exec
 });
 
 const runtime = createRequire(new URL('../package.json', import.meta.url)), React = runtime('react');
-const { renderToStaticMarkup } = runtime('react-dom/server'), ts = runtime('typescript');
-const file = fileURLToPath(new URL('../src/features/neighborhood/components/CustomCohortWorkspace.tsx', import.meta.url));
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText, module = { exports: {} };
+const { renderToStaticMarkup } = runtime('react-dom/server');
 let requests = 0, intents = 0;
-new Script(`(function(require,module,exports){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
+const Workspace = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomCohortWorkspace.tsx', import.meta.url), key => {
   if (key === 'react' || key === 'react/jsx-runtime') return runtime(key);
   if (key === '../customCohortPocketCatalog') return catalogHelpers;
   if (key === '../customCohortSubdivisionFamilies') return subdivisionFamilies;
@@ -247,9 +241,9 @@ new Script(`(function(require,module,exports){${compiled}\n})`, { filename: file
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
   assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector', './CustomCohortSubdivisionDialog'].includes(key));
   return { __esModule: true, default: () => null };
-}, module, module.exports);
+}).default;
 function render(f) {
-  return renderToStaticMarkup(React.createElement(module.exports.default, { ...f.input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'test',
+  return renderToStaticMarkup(React.createElement(Workspace, { ...f.input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'test',
     workspace: { catalog: f.checked, selection: { revision: 7, included_recorded_group_ids: [] }, saving: false,
       previewTransport() { requests++; assert.fail('No render-time request'); }, onSelectionIntent() { intents++; } } }));
 }

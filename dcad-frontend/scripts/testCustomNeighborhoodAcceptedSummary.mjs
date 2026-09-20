@@ -1,41 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import { buildNeighborhoodAssessment } from '../../server/src/services/neighborhoodAssessment/contract.js';
 import { neighborhoodAssessmentFixture } from '../../server/test/fixtures/neighborhoodAssessmentFixture.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-// Compile only the new component in memory; use the installed React SSR runtime.
+// Load only the new component through the trusted repository harness; use the installed React SSR runtime.
 // Core builders below normalize synthetic test evidence, not authorize it.
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript'), React = requireRuntime('react');
+const React = requireRuntime('react');
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
-const componentFile = fileURLToPath(new URL('../src/features/neighborhood/components/CustomNeighborhoodAcceptedSummary.tsx', import.meta.url));
-const compiled = ts.transpileModule(readFileSync(componentFile, 'utf8'), {
-  fileName: componentFile, reportDiagnostics: true,
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-});
-assert.deepEqual((compiled.diagnostics ?? []).filter(item => item.category === ts.DiagnosticCategory.Error), []);
-const module = { exports: {} };
 function loadV2(url) {
-  const fileName = fileURLToPath(url), child = { exports: {} };
-  const output = ts.transpileModule(readFileSync(url, 'utf8'), { fileName,
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
-  new Script(`(function(require,module,exports){\n${output.outputText}\n})`, { filename: fileName }).runInThisContext()(name => {
+  return loadTrustedRepositoryCommonJs(url, name => {
     if (name.startsWith('.')) return loadV2(new URL(name, url));
     assert.ok(['react', 'react/jsx-runtime'].includes(name)); return requireRuntime(name);
-  }, child, child.exports);
-  return child.exports;
+  });
 }
-new Script(`(function(require,module,exports){\n${compiled.outputText}\n})`, { filename: componentFile })
-  .runInThisContext()(name => {
-    if (name === './CustomReportedObservationSummary') return loadV2(new URL('../src/features/neighborhood/components/CustomReportedObservationSummary.tsx', import.meta.url));
-    assert.ok(['react', 'react/jsx-runtime'].includes(name), `Unexpected component dependency: ${name}`);
-    return requireRuntime(name);
-  }, module, module.exports);
-const Component = module.exports.default;
+const summary = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomNeighborhoodAcceptedSummary.tsx', import.meta.url), name => {
+  if (name === './CustomReportedObservationSummary') return loadV2(new URL('../src/features/neighborhood/components/CustomReportedObservationSummary.tsx', import.meta.url));
+  assert.ok(['react', 'react/jsx-runtime'].includes(name), `Unexpected component dependency: ${name}`);
+  return requireRuntime(name);
+});
+const Component = summary.default;
 const render = assessment => renderToStaticMarkup(React.createElement(Component, { assessment }));
 const copy = value => JSON.parse(JSON.stringify(value));
 const fixture = change => {

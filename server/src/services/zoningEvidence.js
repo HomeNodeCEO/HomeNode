@@ -11,8 +11,13 @@ import {
   findZoningDescriptionInPages,
 } from "./documentIntelligence.js";
 import { refreshAccountLocations } from "./accountLocations.js";
+import {
+  readBoundedJsonResponse,
+  readBoundedResponseBuffer,
+} from "../util/boundedResponse.js";
 
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
+const MAX_GIS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 45_000;
 
 function cleanText(value, maximum = 4_000) {
@@ -89,7 +94,11 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
       signal: AbortSignal.timeout(10_000),
     });
     if (!response.ok) throw new Error(`official_zoning_http_${response.status}`);
-    const payload = await response.json();
+    const payload = await readBoundedJsonResponse(response, {
+      maximumBytes: MAX_GIS_RESPONSE_BYTES,
+      tooLargeCode: "official_zoning_response_too_large",
+      unavailableCode: "official_zoning_response_unavailable",
+    });
     if (payload?.error) throw new Error(`official_zoning_${payload.error.code || "query_failed"}`);
     const feature = payload?.features?.[0];
     if (!feature) continue;
@@ -221,13 +230,13 @@ export async function ensureZoningEvidenceSchema(pool) {
   `);
 }
 
-async function fetchOfficialPdf(url) {
+async function fetchOfficialPdf(url, fetchImpl) {
   const parsed = new URL(url);
   if (parsed.protocol !== "https:") throw new Error("zoning_document_requires_https");
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
-    const response = await fetch(parsed, {
+    const response = await fetchImpl(parsed, {
       redirect: "follow",
       signal: controller.signal,
       headers: {
@@ -236,14 +245,12 @@ async function fetchOfficialPdf(url) {
       },
     });
     if (!response.ok) throw new Error(`zoning_document_http_${response.status}`);
-    const declaredLength = Number(response.headers.get("content-length"));
-    if (Number.isFinite(declaredLength) && declaredLength > MAX_DOCUMENT_BYTES) {
-      throw new Error("zoning_document_too_large");
-    }
-    const buffer = Buffer.from(await response.arrayBuffer());
-    if (!buffer.length || buffer.length > MAX_DOCUMENT_BYTES) {
-      throw new Error(buffer.length ? "zoning_document_too_large" : "zoning_document_empty");
-    }
+    const buffer = await readBoundedResponseBuffer(response, {
+      maximumBytes: MAX_DOCUMENT_BYTES,
+      tooLargeCode: "zoning_document_too_large",
+      unavailableCode: "zoning_document_response_unavailable",
+    });
+    if (!buffer.length) throw new Error("zoning_document_empty");
     if (buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
       throw new Error("zoning_document_not_pdf");
     }
@@ -258,13 +265,16 @@ async function fetchOfficialPdf(url) {
   }
 }
 
-export async function syncOfficialZoningDocuments(pool, { logger = console } = {}) {
+export async function syncOfficialZoningDocuments(pool, {
+  logger = console,
+  fetchImpl = globalThis.fetch,
+} = {}) {
   await ensureZoningEvidenceSchema(pool);
   const results = [];
   for (const jurisdiction of DALLAS_COUNTY_ZONING_JURISDICTIONS) {
     for (const document of jurisdiction.documents || []) {
       try {
-        const fetched = await fetchOfficialPdf(document.url);
+        const fetched = await fetchOfficialPdf(document.url, fetchImpl);
         const checksum = createHash("sha256").update(fetched.buffer).digest("hex");
         let extraction;
         try {

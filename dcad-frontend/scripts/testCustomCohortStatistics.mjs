@@ -1,37 +1,27 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import { buildCustomCohortObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { presentCustomCohortPreview } from '../../server/src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { buildCachedSourceCaptures } from '../../server/src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow } from '../../server/src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from '../../server/test/fixtures/customCohortContextFixture.js';
 import * as privateSales from '../src/features/neighborhood/customCohortPrivateSales.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript'), React = requireRuntime('react');
+const React = requireRuntime('react');
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
-const file = fileURLToPath(new URL('../src/features/neighborhood/components/CustomCohortStatistics.tsx', import.meta.url));
-const code = ts.transpileModule(readFileSync(file, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-}).outputText;
-const module = { exports: {} };
-new Script(`(function(require,module,exports){${code}\n})`, { filename: file }).runInThisContext()(name => {
+const statistics = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomCohortStatistics.tsx', import.meta.url), name => {
   if (name === './CustomCohortPrivateSalesStatistics') {
-    const child = { exports: {} }, childCode = ts.transpileModule(readFileSync(new URL('../src/features/neighborhood/components/CustomCohortPrivateSalesStatistics.tsx', import.meta.url), 'utf8'), {
-      compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-    }).outputText;
-    new Script(`(function(require,module,exports){${childCode}\n})`).runInThisContext()(dependency => {
+    return loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomCohortPrivateSalesStatistics.tsx', import.meta.url), dependency => {
       if (dependency === '../customCohortPrivateSales') return privateSales;
       assert.equal(dependency, 'react/jsx-runtime'); return requireRuntime(dependency);
-    }, child, child.exports); return child.exports;
+    });
   }
   assert.equal(name, 'react/jsx-runtime', 'the statistics component has no side-effect dependency'); return requireRuntime(name);
-}, module, module.exports);
-const Component = module.exports.default;
+});
+const Component = statistics.default;
 const render = (group, props = {}) => renderToStaticMarkup(React.createElement(Component, { group, freshness: 'current', ...props }));
 
 // Real v2 source mappings, observation calculator and public formatter feed the

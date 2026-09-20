@@ -1,18 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
 import { makeCustomNeighborhoodPreviewFixture as fixture,
   customFormatterInput, expectedCustomDisplayNotice, copyCustomFixture as copy } from './fixtures/customNeighborhoodPreviewFixture.mjs';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 // Actual frontend modules only, exactly one instance of each. The model's
 // private prepared identity must survive adapter -> real intent-guard calls.
 // Existing pure backend normalization is restricted to the TEST fixture.
-const frontend = fileURLToPath(new URL('../', import.meta.url));
-const ts = createRequire(join(frontend, 'package.json'))('typescript');
 const names = {
   model: 'src/features/neighborhood/neighborhoodPreviewModel.ts',
   formatter: 'src/features/neighborhood/neighborhoodAssessmentDisplay.ts',
@@ -22,18 +16,12 @@ const cache = new Map();
 function compiled(name) {
   if (cache.has(name)) return cache.get(name);
   const relative = names[name]; assert.ok(relative, 'allowlisted production module');
-  const output = ts.transpileModule(readFileSync(join(frontend, relative), 'utf8'), { fileName: relative,
-    reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-  assert.deepEqual((output.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error), []);
-  const module = { exports: {} }; cache.set(name, module.exports);
-  const requireLocal = requested => {
+  const loaded = loadTrustedRepositoryCommonJs(new URL(`../${relative}`, import.meta.url), requested => {
     const allowed = { './neighborhoodPreviewModel': 'model', './neighborhoodAssessmentDisplay': 'formatter' };
     assert.ok(Object.hasOwn(allowed, requested), `Unexpected production import: ${requested}`);
     return compiled(allowed[requested]);
-  };
-  new Script(`(function(require,module,exports){\n${output.outputText}\n})`, { filename: relative })
-    .runInThisContext()(requireLocal, module, module.exports);
-  cache.set(name, module.exports); return module.exports;
+  });
+  cache.set(name, loaded); return loaded;
 }
 const { prepareNeighborhoodPreview: prepare, createNeighborhoodPreviewIntent: intent } = compiled('model');
 const { formatNeighborhoodAssessmentDisplay: format } = compiled('formatter');

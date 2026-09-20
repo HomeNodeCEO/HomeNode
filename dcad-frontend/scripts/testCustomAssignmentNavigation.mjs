@@ -1,11 +1,12 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { Script } from 'node:vm';
 import ts from 'typescript';
 import * as navigation from '../src/lib/customAssignmentNavigation.ts';
 import { selectAssignmentFile } from '../src/lib/assignmentFileSelection.ts';
 import { reportDestination } from '../src/lib/reportDestinations.ts';
+import { executeTrustedRepositoryExpression, loadTrustedRepositoryCommonJs,
+  readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
 const { parseCustomAssignmentFileId: parse, customAssignmentHref: href,
   customAssignmentFileMatches: matches, selectCustomAssignmentFile, CUSTOM_ASSIGNMENT_REQUEST_ERROR } = navigation;
@@ -78,8 +79,7 @@ for (const path of paths) test(`${path} preserves explicit file 8 during loading
 const sources = new Map();
 function source(name) {
   if (!sources.has(name)) {
-    const text = readFileSync(new URL(`../src/${name}.tsx`, import.meta.url), 'utf8');
-    sources.set(name, { text, ast: ts.createSourceFile(`${name}.tsx`, text, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX) });
+    sources.set(name, readTrustedRepositoryTypeScript(new URL(`../src/${name}.tsx`, import.meta.url)));
   }
   return sources.get(name);
 }
@@ -88,16 +88,12 @@ function find(name, predicate) {
   const visit = node => { const selected = predicate(node, ast); if (selected) found.push(selected); ts.forEachChild(node, visit); };
   visit(ast); return found;
 }
-function execute(name, node, env) {
-  const { ast } = source(name);
-  const compiled = ts.transpileModule(`return (${node.getText(ast)});`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
-  }).outputText;
-  return new Function(...Object.keys(env), compiled)(...Object.values(env));
+function execute(node, env) {
+  return executeTrustedRepositoryExpression(node, env);
 }
 function actualExpression(name, predicate, env) {
   const nodes = find(name, predicate); assert.equal(nodes.length, 1, `one actual expression in ${name}`);
-  return execute(name, nodes[0], env);
+  return execute(nodes[0], env);
 }
 const variable = (name, key, env) => actualExpression(name, (node, ast) =>
   ts.isVariableDeclaration(node) && node.name.getText(ast) === key ? node.initializer : null, env);
@@ -113,9 +109,7 @@ function hrefExpression(name, label, env) {
   }, env);
 }
 
-const hookOutput = ts.transpileModule(readFileSync(new URL('../src/hooks/useAssignmentFiles.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-}).outputText;
+const hookSource = new URL('../src/hooks/useAssignmentFiles.ts', import.meta.url);
 function hookHarness(optionsAtStart = {}) {
   const { load = async () => response(), selected } = optionsAtStart;
   const requested = Object.hasOwn(optionsAtStart, 'requested') ? optionsAtStart.requested : 8;
@@ -136,15 +130,14 @@ function hookHarness(optionsAtStart = {}) {
   const imports = { react, '@/lib/assignmentFileSelection': { selectAssignmentFile },
     '@/lib/customAssignmentNavigation': navigation,
     '@/lib/appraisalFileRequests': { loadAssignmentFiles: async (...args) => { requests.push(args); return load(...args); } } };
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){${hookOutput}\n})`).runInThisContext()(key => {
+  const hookExports = loadTrustedRepositoryCommonJs(hookSource, key => {
     assert.ok(Object.hasOwn(imports, key), `unexpected hook dependency ${key}`); return imports[key];
-  }, module, module.exports);
+  });
   let options = { accountId: ACCOUNT, enabled: true, requestedAssignmentFileId: requested,
     onSelectedFile: async (file, isCancelled) => { selectedCalls.push({ file, isCancelled }); return selected?.(file, isCancelled); } };
   function render(patch = {}, runEffects = true) {
     options = { ...options, ...patch }; cursor = 0; dirty = false;
-    current = module.exports.useAssignmentFiles(options);
+    current = hookExports.useAssignmentFiles(options);
     layout.splice(0).forEach(fn => fn()); if (runEffects) normal.splice(0).forEach(fn => fn());
     return current;
   }
@@ -348,9 +341,7 @@ for (const page of ['AppraisalReport', 'ComparableSalesAnalysis']) {
   }
 }
 
-const contextOutput = ts.transpileModule(readFileSync(new URL('../src/hooks/useAppraisalFileContext.ts', import.meta.url), 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
-}).outputText;
+const contextSource = new URL('../src/hooks/useAppraisalFileContext.ts', import.meta.url);
 function contextHarness(options = {}) {
   const calls = [], imports = {
     react: { useMemo: fn => fn() },
@@ -366,12 +357,11 @@ function contextHarness(options = {}) {
       }; },
     },
   };
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){${contextOutput}\n})`).runInThisContext()(key => {
+  const contextExports = loadTrustedRepositoryCommonJs(contextSource, key => {
     assert.ok(Object.hasOwn(imports, key), `unexpected shared context dependency ${key}`); return imports[key];
-  }, module, module.exports);
-  return { calls, request: module.exports.useAppraisalFileRequest,
-    load: requested => module.exports.loadAppraisalFileContext(ACCOUNT, requested) };
+  });
+  return { calls, request: contextExports.useAppraisalFileRequest,
+    load: requested => contextExports.loadAppraisalFileContext(ACCOUNT, requested) };
 }
 
 for (const [search, requestedFileId] of [['?propertyId=%20ACCOUNT%20A%20', undefined],

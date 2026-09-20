@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import { executeTrustedRepositoryExpression, readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 import { selectCustomAssignmentFile, CUSTOM_ASSIGNMENT_REQUEST_ERROR } from '../src/lib/customAssignmentNavigation.ts';
 import { customNeighborhoodPdfReadinessErrors as readiness,
   customNeighborhoodBrowserPrintReadinessErrors as printReadiness } from '../src/features/neighborhood/customNeighborhoodPdfReadiness.ts';
@@ -180,18 +181,15 @@ test('signed server PDF remains available but even confirmed legacy fields canno
   }
 });
 
-const pageSource = readFileSync(new URL('../src/pages/AppraisalReport.tsx', import.meta.url), 'utf8');
-const pageAst = ts.createSourceFile('AppraisalReport.tsx', pageSource, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const { text: pageSource, ast: pageAst } = readTrustedRepositoryTypeScript(
+  new URL('../src/pages/AppraisalReport.tsx', import.meta.url));
 function expression(predicate, environment) {
   const matches = [];
   function visit(node) { const found = predicate(node); if (found) matches.push(found); ts.forEachChild(node, visit); }
   visit(pageAst); assert.equal(matches.length, 1, 'exactly one actual page expression is required');
   // Execute the actual page expression with controlled dependencies. This is a
   // handler/effect regression harness, not a copied implementation or browser.
-  const compiled = ts.transpileModule(`return (${matches[0].getText(pageAst)});`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
-  }).outputText;
-  return new Function(...Object.keys(environment), compiled)(...Object.values(environment));
+  return executeTrustedRepositoryExpression(matches[0], environment);
 }
 const variable = (name, environment) => expression(node =>
   ts.isVariableDeclaration(node) && node.name.getText(pageAst) === name ? node.initializer : null, environment);

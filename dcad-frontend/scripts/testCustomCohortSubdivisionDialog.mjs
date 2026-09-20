@@ -1,20 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
 import * as locationHelpers from '../src/features/neighborhood/customCohortSubdivisionLocationReview.ts';
 import * as familyHelpers from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 import * as inspectionHelpers from '../src/features/neighborhood/customCohortSubdivisionInspection.ts';
 import * as comparisonHelpers from '../src/features/neighborhood/customCohortStockCompositionComparison.ts';
 import { checkCustomCohortStockComposition } from '../src/features/neighborhood/customCohortStockComposition.ts';
 import { STOCK_COMPOSITION_DEFINITION, STOCK_COMPOSITION_PROFILE } from '../src/features/neighborhood/customCohortStockCompositionDefinition.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript');
 const file = new URL('../src/features/neighborhood/components/CustomCohortSubdivisionDialog.tsx', import.meta.url);
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText;
 const kids = n => [n?.props?.children].flat(Infinity);
 const walk = n => n && typeof n === 'object' ? [n, ...kids(n).flatMap(walk)] : [];
 const text = n => typeof n === 'string' || typeof n === 'number' ? String(n) : kids(n).filter(Boolean).map(text).join('');
@@ -30,8 +25,8 @@ function harness(count = 3) {
     useMemo(fn, deps) { const i = cursor++; if (!cells[i] || deps.some((v, index) => !Object.is(v, cells[i].deps[index]))) cells[i] = { value: fn(), deps }; return cells[i].value; },
     useEffect(fn) { const i = cursor++; if (!cells[i]) { cells[i] = true; effects.push(fn); } },
   };
-  const Inspector = () => null, Comparison = () => null, module = { exports: {} };
-  new Script(`(function(require,module,exports,document,HTMLElement){${compiled}\n})`).runInThisContext()(key => {
+  const Inspector = () => null, Comparison = () => null;
+  const component = loadTrustedRepositoryCommonJs(file, key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortSubdivisionLocationReview') return locationHelpers;
@@ -40,7 +35,7 @@ function harness(count = 3) {
     if (key === '../customCohortStockCompositionComparison.ts') return comparisonHelpers;
     if (key === './CustomCohortStockCompositionComparison') return { default: Comparison, __esModule: true };
     assert.equal(key, './CustomCohortPocketInspector'); return { default: Inspector, __esModule: true };
-  }, module, module.exports, document, Element);
+  }, { environment: { document, HTMLElement: Element } });
   const phases = Array.from({ length: count }, (_, i) => ({ id: phaseId(i), label: `MONICA PARK ${i + 1}`, county: 'Dallas', member_count: i + 1,
     account_ids: Array.from({ length: i + 1 }, (_, j) => `synthetic-${i}-${j}`) }));
   const total = phases.reduce((n, p) => n + p.member_count, 0), contextRef = { context_id: 'context', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -55,7 +50,7 @@ function harness(count = 3) {
     onInclude: ids => actions.push(['include', [...ids]]), onExclude: ids => actions.push(['exclude', [...ids]]),
     onInspectPhase: id => actions.push(['inspect', id]), onClose: () => actions.push(['close']) };
   function render(next = current ?? props) {
-    current = next; cursor = 0; tree = module.exports.default(next);
+    current = next; cursor = 0; tree = component.default(next);
     tree.props.ref.current = { showModal() { modalOpens++; }, close() { modalCloses++; } };
     effects.splice(0).forEach(fn => cleanups.push(fn()));
   }

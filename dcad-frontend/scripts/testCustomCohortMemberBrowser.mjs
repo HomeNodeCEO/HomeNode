@@ -1,10 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
 import * as members from '../src/features/neighborhood/customCohortMemberPage.ts';
 import { buildCustomCohortObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
@@ -12,12 +9,9 @@ import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers } from '.
 import { buildCachedSourceCaptures } from '../../server/src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow } from '../../server/src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from '../../server/test/fixtures/customCohortContextFixture.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
-const file = fileURLToPath(new URL('../src/features/neighborhood/components/CustomCohortMemberBrowser.tsx', import.meta.url));
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText;
+const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 
 // Real row mapping, retained capture builder, numeric preview and public page
 // formatter; no synthetic browser DTOs or new source-authority assumptions.
@@ -83,8 +77,7 @@ function harness(f = fixture()) {
     const call = { input, population, page, ...io, resolve, reject }, index = calls.length;
     calls.push(call); waiters.get(index)?.forEach(fn => fn(call)); waiters.delete(index);
   });
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports,setTimeout,clearTimeout){${compiled}\n})`, { filename: file }).runInThisContext()(name => {
+  const component = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomCohortMemberBrowser.tsx', import.meta.url), name => {
     if (name === 'react') return react;
     if (name === 'react/jsx-runtime') return requireRuntime(name);
     if (name === '../customCohortMemberPage') return members;
@@ -93,10 +86,13 @@ function harness(f = fixture()) {
       const digest = controller.fingerprintCustomCohortSelection(value); digests.add(digest);
       void digest.then(() => digests.delete(digest), () => digests.delete(digest)); return digest;
     } };
-  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; }, id => timers.delete(id));
+  }, { environment: {
+    setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay }); return serial; },
+    clearTimeout: id => timers.delete(id),
+  } });
   function unmount() { cells.forEach(cell => cell?.cleanup?.()); cells = []; effects = []; key = undefined; }
   function render(next = props) {
-    props = next; const owner = module.exports.default(props);
+    props = next; const owner = component.default(props);
     if (key !== owner.key) { unmount(); key = owner.key; }
     cursor = 0; dirty = false; tree = expand(typeof owner.type === 'function' ? owner.type(owner.props) : owner);
     effects.splice(0).forEach(fn => fn());

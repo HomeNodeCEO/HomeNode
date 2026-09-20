@@ -1,16 +1,11 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
 import { randomUUID } from 'node:crypto';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const require = createRequire(new URL('../package.json', import.meta.url));
-const ts = require('typescript'), jsx = require('react/jsx-runtime');
-const source = readFileSync(new URL('../src/components/ReportTypeChooser.tsx', import.meta.url), 'utf8');
-const compiled = ts.transpileModule(source, { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText;
+const jsx = require('react/jsx-runtime');
 const children = n => [n?.props?.children].flat(Infinity);
 const walk = n => n && typeof n === 'object' ? [n, ...children(n).flatMap(walk)] : [];
 const text = n => typeof n === 'string' ? n : children(n).map(v => v && typeof v === 'object' ? text(v) : v ?? '').join('');
@@ -37,12 +32,14 @@ function harness() {
       calls.push({account,input}); if(rejectCreate) throw Error('synthetic uncertain response');
       return {report_file:{target_id:'test-target'}};
     }}, '@/lib/reportDestinations':{reportDestination:()=>'/synthetic-report'}};
-  const module={exports:{}};
-  new Script(`(function(require,module,exports,window,crypto){${compiled}\n})`).runInThisContext()(key=>{
+  const chooser = loadTrustedRepositoryCommonJs(new URL('../src/components/ReportTypeChooser.tsx', import.meta.url), key=>{
     assert.ok(Object.hasOwn(imports,key),key); return imports[key];
-  },module,module.exports,{addEventListener(){},removeEventListener(){},location:{assign:v=>destinations.push(v)}},{randomUUID});
+  }, { environment: {
+    window: {addEventListener(){},removeEventListener(){},location:{assign:v=>destinations.push(v)}},
+    crypto: {randomUUID},
+  } });
   const props={subject:{accountId:'SYNTHETIC',address:'100 Test St'},onClose(){}};
-  const render=()=>{cursor=0;tree=module.exports.default(props); for(const effect of effects.splice(0)) effect();};
+  const render=()=>{cursor=0;tree=chooser.default(props); for(const effect of effects.splice(0)) effect();};
   const flush=async()=>{for(let i=0;i<8;i++){render();await Promise.resolve();}};
   const button=label=>walk(tree).find(n=>n.type==='button' && text(n)===label);
   const choose=async label=>{await flush(); const b=walk(tree).find(n=>n.type==='button' && text(n).startsWith(label)); b.props.onClick();await flush();};

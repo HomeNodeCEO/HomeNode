@@ -1,24 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
 function compile(name, imports, globals = {}) {
-  const path = fileURLToPath(new URL(`../src/features/neighborhood/${name}`, import.meta.url));
-  const output = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-  }, reportDiagnostics: true });
-  assert.equal((output.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0);
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports,${Object.keys(globals).join(',')}){${output.outputText}\n})`, { filename: path })
-    .runInThisContext()(key => { assert.ok(Object.hasOwn(imports, key), `Unexpected bridge dependency: ${key}`); return imports[key]; },
-      module, module.exports, ...Object.values(globals));
-  return module.exports;
+  return loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}`, import.meta.url), key => {
+    assert.ok(Object.hasOwn(imports, key), `Unexpected bridge dependency: ${key}`); return imports[key];
+  }, { environment: globals });
 }
 const checkpoint = compile('customWorkspaceCheckpoint.ts', { './customCohortPocketCatalog': catalog,
   './customWorkspaceDiscovery.ts': compile('customWorkspaceDiscovery.ts', {}) });

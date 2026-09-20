@@ -3,7 +3,7 @@ import re
 import time
 from contextlib import contextmanager
 from typing import Generator
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, urljoin, urlparse
 
 import requests
 from bs4 import BeautifulSoup
@@ -23,6 +23,7 @@ DEFAULT_HEADERS = {
 }
 
 MAX_HTML_BYTES = 5 * 1024 * 1024
+MAX_REDIRECTS = 5
 _ALLOWED_HOSTS = {"dallascad.org", "www.dallascad.org"}
 
 
@@ -60,25 +61,34 @@ def _response_text(resp: requests.Response, max_bytes: int = MAX_HTML_BYTES) -> 
     return bytes(body).decode(encoding, errors="replace")
 
 
+def _validate_request_target(url: str) -> None:
+    """Reject an outbound target unless it is HTTPS on the DCAD allowlist."""
+
+    parsed = urlparse(str(url or ""))
+    if (
+        parsed.scheme.lower() != "https"
+        or (parsed.hostname or "").lower() not in _ALLOWED_HOSTS
+    ):
+        raise DcadResponseValidationError("dcad_response_redirect_invalid")
+
+
 def _validate_final_url(
-    resp: requests.Response, expected_path: str, expected_account_id: str
+    url: str, expected_path: str, expected_account_id: str
 ) -> None:
-    for hop in [*(resp.history or []), resp]:
-        hop_url = urlparse(str(hop.url or ""))
-        if (
-            hop_url.scheme.lower() != "https"
-            or (hop_url.hostname or "").lower() not in _ALLOWED_HOSTS
-        ):
-            raise DcadResponseValidationError("dcad_response_redirect_invalid")
-    parsed = urlparse(str(resp.url or ""))
+    """Require the final DCAD path and any URL account marker to agree."""
+
+    _validate_request_target(url)
+    parsed = urlparse(str(url or ""))
     if parsed.path.lower() != expected_path.lower():
         raise DcadResponseValidationError("dcad_response_redirect_invalid")
-    final_account = _account_from_action(str(resp.url or ""))
+    final_account = _account_from_action(str(url or ""))
     if final_account and final_account != expected_account_id:
         raise DcadResponseValidationError("dcad_response_redirect_account_mismatch")
 
 
 def _account_from_action(action: str | None) -> str | None:
+    """Read a case-insensitive ID query parameter from a URL or form action."""
+
     if not action:
         return None
     query = parse_qs(urlparse(action).query)
@@ -89,6 +99,8 @@ def _account_from_action(action: str | None) -> str | None:
 
 
 def _validated_account_id(account_id: str) -> str:
+    """Return an exact Dallas account ID without permitting URL injection."""
+
     value = str(account_id or "").strip()
     if not re.fullmatch(r"[0-9]{17}", value):
         raise ValueError("dcad_account_id_invalid")
@@ -114,13 +126,19 @@ def _validate_account_page(html: str, expected_account_id: str, page: str) -> No
         for marker_id in ("txtAccountNumber", "hdnReschedAcctNum"):
             marker = soup.find(id=marker_id)
             value = str(marker.get("value") or "").strip() if marker is not None else ""
-            if value:
-                account_markers.append(value)
+            if not value:
+                raise DcadResponseValidationError(
+                    f"dcad_{page}_account_identity_missing"
+                )
+            account_markers.append(value)
 
     form = soup.find("form", id="Form1") or soup.find("form", attrs={"name": "Form1"})
-    action_account = _account_from_action(form.get("action") if form is not None else None)
-    if action_account:
-        account_markers.append(action_account)
+    if form is None:
+        raise DcadResponseValidationError(f"dcad_{page}_account_identity_missing")
+    action_account = _account_from_action(form.get("action"))
+    if not action_account:
+        raise DcadResponseValidationError(f"dcad_{page}_account_identity_missing")
+    account_markers.append(action_account)
 
     if not account_markers:
         raise DcadResponseValidationError(f"dcad_{page}_account_identity_missing")
@@ -128,6 +146,8 @@ def _validate_account_page(html: str, expected_account_id: str, page: str) -> No
         raise DcadResponseValidationError(f"dcad_{page}_account_identity_mismatch")
 
 def _new_session() -> requests.Session:
+    """Build a pooled session with retries limited to safe HTTP methods."""
+
     s = requests.Session()
     s.headers.update(DEFAULT_HEADERS)
     retry = Retry(
@@ -165,12 +185,44 @@ def _get(
     page: str,
     timeout: float = 30.0,
 ) -> str:
-    resp = session.get(url, timeout=timeout, stream=True, allow_redirects=True)
-    resp.raise_for_status()
-    _validate_final_url(resp, expected_path, expected_account_id)
-    html = _response_text(resp)
-    _validate_account_page(html, expected_account_id, page)
-    return html
+    """Follow only prevalidated DCAD redirects and always close each response."""
+
+    current_url = url
+    visited: set[str] = set()
+    for redirect_count in range(MAX_REDIRECTS + 1):
+        _validate_request_target(current_url)
+        if current_url in visited:
+            raise DcadResponseValidationError("dcad_response_redirect_invalid")
+        visited.add(current_url)
+
+        resp = session.get(
+            current_url,
+            timeout=timeout,
+            stream=True,
+            allow_redirects=False,
+        )
+        try:
+            response_url = str(resp.url or current_url)
+            if 300 <= int(resp.status_code) < 400:
+                location = resp.headers.get("Location")
+                if not location or redirect_count >= MAX_REDIRECTS:
+                    raise DcadResponseValidationError(
+                        "dcad_response_redirect_invalid"
+                    )
+                next_url = urljoin(response_url, str(location))
+                _validate_request_target(next_url)
+                current_url = next_url
+                continue
+
+            resp.raise_for_status()
+            _validate_final_url(response_url, expected_path, expected_account_id)
+            html = _response_text(resp)
+            _validate_account_page(html, expected_account_id, page)
+            return html
+        finally:
+            resp.close()
+
+    raise DcadResponseValidationError("dcad_response_redirect_invalid")
 
 def get_detail_html(session: requests.Session, account_id: str) -> str:
     """Residential Account Detail HTML."""

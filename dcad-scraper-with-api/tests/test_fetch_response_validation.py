@@ -22,14 +22,20 @@ from dcad.fetch import (  # noqa: E402
 ACCOUNT = "26272500060150000"
 
 
-def response(url: str, html: str, headers: dict[str, str] | None = None) -> requests.Response:
+def response(
+    url: str,
+    html: str,
+    headers: dict[str, str] | None = None,
+    status_code: int = 200,
+) -> requests.Response:
     value = requests.Response()
-    value.status_code = 200
+    value.status_code = status_code
     value.url = url
     value.headers.update(headers or {"Content-Type": "text/html; charset=utf-8"})
     value._content = html.encode("utf-8")
     value._content_consumed = True
     value.encoding = "utf-8"
+    value.close = Mock(wraps=value.close)
     return value
 
 
@@ -66,7 +72,7 @@ class FetchResponseValidationTests(unittest.TestCase):
             f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}",
             timeout=30.0,
             stream=True,
-            allow_redirects=True,
+            allow_redirects=False,
         )
 
     def test_accepts_exact_history_identity(self):
@@ -117,14 +123,59 @@ class FetchResponseValidationTests(unittest.TestCase):
                 ):
                     get_detail_html(session, ACCOUNT)
 
-    def test_rejects_cross_origin_redirect_history(self):
+    def test_rejects_cross_origin_redirect_before_requesting_target(self):
         value = response(
-            f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}",
-            detail_html(),
+            f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}", "",
+            {"Location": "https://example.com/redirect"}, status_code=302,
         )
-        value.history = [response("https://example.com/redirect", "")]
+        session = session_with(value)
         with self.assertRaisesRegex(DcadResponseValidationError, "redirect_invalid"):
-            get_detail_html(session_with(value), ACCOUNT)
+            get_detail_html(session, ACCOUNT)
+        session.get.assert_called_once()
+        value.close.assert_called_once()
+
+    def test_follows_one_prevalidated_dcad_redirect(self):
+        initial_url = f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}"
+        final_url = f"https://dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}"
+        redirect = response(
+            initial_url, "", {"Location": final_url}, status_code=302,
+        )
+        final = response(final_url, detail_html())
+        session = Mock()
+        session.get.side_effect = [redirect, final]
+        self.assertIn("Residential Account", get_detail_html(session, ACCOUNT))
+        self.assertEqual(session.get.call_count, 2)
+        redirect.close.assert_called_once()
+        final.close.assert_called_once()
+
+    def test_rejects_missing_required_form_and_detail_markers(self):
+        cases = (
+            history_html().replace('<form id="Form1"', '<form id="Other"'),
+            detail_html().replace(
+                f'<input id="txtAccountNumber" value="{ACCOUNT}">', ""
+            ),
+            detail_html().replace(
+                f'<input id="hdnReschedAcctNum" value="{ACCOUNT}">', ""
+            ),
+            detail_html().replace(
+                f'action="./AcctDetailRes.aspx?ID={ACCOUNT}"',
+                'action="./AcctDetailRes.aspx"',
+            ),
+        )
+        for html in cases:
+            with self.subTest(html=html[:120]):
+                is_history = "Account History" in html
+                url = (
+                    f"https://www.dallascad.org/AcctHistory.aspx?ID={ACCOUNT}"
+                    if is_history
+                    else f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}"
+                )
+                session = session_with(response(url, html))
+                fetch = get_history_html if is_history else get_detail_html
+                with self.assertRaisesRegex(
+                    DcadResponseValidationError, "account_identity_missing"
+                ):
+                    fetch(session, ACCOUNT)
 
     def test_rejects_invalid_account_id_before_network_access(self):
         session = Mock()
@@ -148,6 +199,7 @@ class FetchResponseValidationTests(unittest.TestCase):
                 ))
                 with self.assertRaises(DcadResponseValidationError):
                     get_detail_html(session, ACCOUNT)
+                session.get.return_value.close.assert_called_once()
 
     def test_rejects_streamed_body_beyond_limit_without_length_header(self):
         value = response(
@@ -157,6 +209,7 @@ class FetchResponseValidationTests(unittest.TestCase):
         value.iter_content = Mock(return_value=iter((b"x" * MAX_HTML_BYTES, b"x")))
         with self.assertRaisesRegex(DcadResponseValidationError, "response_too_large"):
             get_detail_html(session_with(value), ACCOUNT)
+        value.close.assert_called_once()
 
 
 if __name__ == "__main__":

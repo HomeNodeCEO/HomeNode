@@ -20,6 +20,7 @@ import { CACHED_CAD_EVIDENCE_MAPPING_VERSION, CACHED_CAD_EVIDENCE_FIELDS, mapCad
   mapCadEvidenceAccountRow, mapCadEvidenceSaleRow, mapCadEvidenceSaleLinkRow } from './cachedRowMappingsV4.js';
 import { CACHED_COMBINED_EVIDENCE_MAPPING_VERSION, mapCombinedEvidenceParcelRow, mapCombinedEvidenceAccountRow,
   mapCombinedEvidenceSaleRow, mapCombinedEvidenceSaleLinkRow } from './cachedRowMappingsV5.js';
+import { createClosedSqlPlanGate } from './closedSqlPlan.js';
 
 export const NEIGHBORHOOD_CACHE_READER_VERSION = 'local-capture-v3';
 export const NEIGHBORHOOD_CACHE_READER_LIMITS = Object.freeze({
@@ -180,6 +181,69 @@ const COMBINED_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_COMBINED_E
     transactions:mapCombinedEvidenceSaleRow,sale_links:mapCombinedEvidenceSaleLinkRow}),
 });
 
+// PostgreSQL receives only statements compiled from this closed, module-owned
+// projection registry. Request data can select a plan, but can never become SQL
+// text (including a nested SELECT or ORDER BY expression).
+const SMALL_SOURCE_IDS_SQL=selectCachedTransactionSourceIdsSql(0);
+const LARGE_SOURCE_IDS_SQL=selectCachedTransactionSourceIdsSql(NEIGHBORHOOD_CACHE_READER_LIMITS.selected_accounts);
+const ROW_PROJECTIONS=Object.freeze({
+  parcels:Object.freeze([SQL.parcels,CAD_EVIDENCE_PROFILE.parcelsSql]),
+  accounts:Object.freeze([SQL.accounts]),
+  'source-ids':Object.freeze([SMALL_SOURCE_IDS_SQL,LARGE_SOURCE_IDS_SQL]),
+  'transaction-identities':Object.freeze([SQL.transaction_identities]),
+  'link-identities':Object.freeze([SQL.link_identities]),
+  'legacy-identities':Object.freeze([SQL.legacy_identities]),
+  transactions:Object.freeze([SQL.transactions,WITNESS_PROFILE.transactionsSql,COMBINED_EVIDENCE_PROFILE.transactionsSql]),
+  'sale-links':Object.freeze([SQL.sale_links]),
+  legacy:Object.freeze([SQL.legacy]),
+  'sync-state':Object.freeze([SQL.sync_state]),
+  'sync-runs':Object.freeze([SQL.sync_runs]),
+});
+
+function compileRowPlan(tag,projection,maximum,dense=false,denseParcel=false) {
+  if (!Object.hasOwn(ROW_PROJECTIONS,tag) || !ROW_PROJECTIONS[tag].includes(projection)
+    || !Object.hasOwn(ORDER,tag) || !Number.isSafeInteger(maximum) || maximum<1) {
+    throw new Error('neighborhood_cache_query_plan_invalid');
+  }
+  const order=ORDER[tag];
+  const pageGuard=dense && !denseParcel
+    ? ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}` : '';
+  // The only interpolated values are validated module-owned SQL constants and
+  // safe-integer ceilings. No request string is accepted by this compiler.
+  const statement=denseParcel
+    ? `WITH projected AS MATERIALIZED (${projection}), encoded AS MATERIALIZED (
+        SELECT to_jsonb(projected) AS payload FROM projected), measured AS MATERIALIZED (
+        SELECT payload,octet_length(payload::text) AS row_bytes FROM encoded)
+        SELECT CASE WHEN row_bytes<=${maximum} AND sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}
+          THEN payload ELSE NULL END AS payload,row_bytes FROM measured ORDER BY ${order}`
+    : `WITH projected AS MATERIALIZED (${projection}), encoded AS (
+        SELECT to_jsonb(projected) AS payload FROM projected)
+        SELECT CASE WHEN octet_length(payload::text)<=${maximum}${pageGuard} THEN payload ELSE NULL END AS payload,
+          octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${order}`;
+  return Object.freeze({tag,statement,maximum});
+}
+
+function compileRowPlans(profile,limits) {
+  const standardMaximum=Math.min(limits.row_bytes,NEIGHBORHOOD_CACHE_READER_LIMITS.row_bytes);
+  const plan=(tag,projection,maximum=standardMaximum,denseParcel=false) =>
+    compileRowPlan(tag,projection,maximum,profile.dense===true,denseParcel);
+  return Object.freeze({
+    parcels:plan('parcels',profile.parcelsSql??SQL.parcels,
+      profile.dense?limits.row_bytes:standardMaximum,profile.dense===true),
+    accounts:plan('accounts',SQL.accounts),
+    sourceIdsSmall:plan('source-ids',SMALL_SOURCE_IDS_SQL),
+    sourceIdsLarge:plan('source-ids',LARGE_SOURCE_IDS_SQL),
+    transactionIdentities:plan('transaction-identities',SQL.transaction_identities),
+    linkIdentities:plan('link-identities',SQL.link_identities),
+    legacyIdentities:plan('legacy-identities',SQL.legacy_identities),
+    transactions:plan('transactions',profile.transactionsSql),
+    saleLinks:plan('sale-links',SQL.sale_links),
+    legacy:plan('legacy',SQL.legacy),
+    syncState:plan('sync-state',SQL.sync_state),
+    syncRuns:plan('sync-runs',SQL.sync_runs),
+  });
+}
+
 function callerSnapshot(rows, limits) {
   const row=Array.isArray(rows) && rows.length===1 ? rows[0] : null;
   if (!row || row.isolation!=='repeatable read' || row.read_only!=='on' || row.explicit_transaction!==true
@@ -318,6 +382,8 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');
   assertNeighborhoodCachedReadAccess(access,profile.mappingVersion);
   const limits=limitsOf(overrides,profile.dense ? DENSE_CAD_CACHE_READER_LIMITS : undefined);
+  const rowPlanGate=createClosedSqlPlanGate(compileRowPlans(profile,limits),()=>invalid('query_plan'));
+  const {plans:rowPlans}=rowPlanGate;
   // Only stock pages use the dense fast path. Identity/transaction details keep
   // their original row bounds and fan-out sentinels even for dense captures.
   const detailPageSize=Math.min(limits.page_size,NEIGHBORHOOD_CACHE_READER_LIMITS.page_size);
@@ -372,27 +438,11 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (snapshot && canonicalAssessmentJson(current)!==canonicalAssessmentJson(snapshot)) incomplete('caller_snapshot_changed');
       snapshot=current;
     };
-    const rows=async (tag,sql,values=[]) => {
+    const rows=async (plan,values=[]) => {
       // Limit each projected row in PostgreSQL BEFORE sending large geometry or
       // quality arrays to Node. No arbitrary raw_payload/remarks are selected.
-      const maximum=profile.dense && tag==='parcels' ? limits.row_bytes
-        : Math.min(limits.row_bytes,NEIGHBORHOOD_CACHE_READER_LIMITS.row_bytes);
-      const pageGuard=profile.dense ? ` AND sum(octet_length(payload::text)) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}` : '';
-      // Dense parcel pages can carry substantial exact EWKB. Fence JSON encoding
-      // and its text byte count separately so the guard, window, return and sort
-      // do not repeatedly encode/measure each same payload. Keep the projection,
-      // keyset and limits unchanged; all other reader SQL stays byte-for-byte.
-      const statement=profile.dense && tag==='parcels'
-        ? `WITH projected AS MATERIALIZED (${sql}), encoded AS MATERIALIZED (
-        SELECT to_jsonb(projected) AS payload FROM projected), measured AS MATERIALIZED (
-        SELECT payload,octet_length(payload::text) AS row_bytes FROM encoded)
-        SELECT CASE WHEN row_bytes<=${maximum} AND sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}
-          THEN payload ELSE NULL END AS payload,row_bytes FROM measured ORDER BY ${ORDER[tag]}`
-        : `WITH projected AS MATERIALIZED (${sql}), encoded AS (
-        SELECT to_jsonb(projected) AS payload FROM projected)
-        SELECT CASE WHEN octet_length(payload::text)<=${maximum}${pageGuard} THEN payload ELSE NULL END AS payload,
-          octet_length(payload::text) AS row_bytes FROM encoded ORDER BY ${ORDER[tag]}`;
-      const result=await query(tag,statement,values);
+      rowPlanGate.assert(plan);
+      const result=await query(plan.tag,plan.statement,values);
       // Independently verify the complete page before retaining even its first
       // row. PostgreSQL returns only sizes/null sentinels when a page is too big.
       // Any stock-page fallback below happens before retention, never by trimming
@@ -400,13 +450,13 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (profile.dense) {
         let pageBytes=0;
         for (const row of result) {
-          if (!Number.isSafeInteger(row.row_bytes) || row.row_bytes<1 || row.row_bytes>maximum) incomplete('row_bytes_limit');
+          if (!Number.isSafeInteger(row.row_bytes) || row.row_bytes<1 || row.row_bytes>plan.maximum) incomplete('row_bytes_limit');
           pageBytes+=row.row_bytes;
           if (pageBytes>DENSE_CAD_SQL_PAGE_BYTES) incomplete('page_bytes_limit');
         }
       }
       return result.map(row => {
-        if (!row.payload || !Number.isSafeInteger(row.row_bytes) || row.row_bytes>maximum) incomplete('row_bytes_limit');
+        if (!row.payload || !Number.isSafeInteger(row.row_bytes) || row.row_bytes>plan.maximum) incomplete('row_bytes_limit');
         return row.payload;
       });
     };
@@ -425,14 +475,15 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (capabilities[key].state!=='available') { missing.add(`${key}:${capabilities[key].state}`); return false; }
       return true;
     };
-    const page=async (tag,sql,values,cursorIndex,cursorOf,onRow) => {
+    const page=async (plan,values,cursorIndex,cursorOf,onRow) => {
+      const {tag}=plan;
       let cursor=values[cursorIndex];
       let pageSize=profile.dense && (tag==='parcels' || tag==='accounts') ? limits.page_size : detailPageSize;
       const limitIndex=values.length-1;
       values[limitIndex]=pageSize+1;
       while (true) {
         let result;
-        try { result=await rows(tag,sql,values); }
+        try { result=await rows(plan,values); }
         catch (error) {
           // No row from the refused page was retained. Retry this same cursor
           // once at the original stock page size, in the same owned snapshot.
@@ -496,7 +547,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         // snapshot. This avoids binding all 50k IDs again for every 250 rows.
         const batchSize=profile.dense ? DENSE_CAD_ACCOUNT_BATCH_SIZE : request.account_ids.length;
         for (let at=0;at<request.account_ids.length;at+=batchSize) {
-          await page('parcels',profile.parcelsSql??SQL.parcels,[request.account_ids.slice(at,at+batchSize),'-1',n],1,row => big(row.object_id),row => {
+          await page(rowPlans.parcels,[request.account_ids.slice(at,at+batchSize),'-1',n],1,row => big(row.object_id),row => {
             retain('parcels',`parcel:${big(row.object_id)}`,row);
             if (typeof row.sync_run_id==='string' && UUID.test(row.sync_run_id)) originRuns.add(row.sync_run_id);
             else missing.add('parcels:origin_run_unknown');
@@ -508,11 +559,11 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
       if (available('accounts')) {
         const batchSize=profile.dense ? DENSE_CAD_ACCOUNT_BATCH_SIZE : request.account_ids.length;
         for (let at=0;at<request.account_ids.length;at+=batchSize) {
-          await page('accounts',SQL.accounts,[request.account_ids.slice(at,at+batchSize),'',n],1,row => text(row.account_id,'source_account'),row => retain('accounts',`account:${row.account_id}`,row));
+          await page(rowPlans.accounts,[request.account_ids.slice(at,at+batchSize),'',n],1,row => text(row.account_id,'source_account'),row => retain('accounts',`account:${row.account_id}`,row));
         }
       }
       if (available('sync_state')) {
-        const states=await rows('sync-state',SQL.sync_state);
+        const states=await rows(rowPlans.syncState);
         if (states.length!==1) missing.add('parcels:sync_state_unknown');
         else { [syncState]=states; retain('gis_sync','state:dcad_parcels',syncState);
           if (typeof syncState.last_run_id==='string' && UUID.test(syncState.last_run_id)) originRuns.add(syncState.last_run_id);
@@ -529,7 +580,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
         const completed=new Set();
         for (let at=0;at<ids.length;at+=detailPageSize) {
           const batch=ids.slice(at,at+detailPageSize);
-          const found=await rows('sync-runs',SQL.sync_runs,[batch,batch.length+1]);
+          const found=await rows(rowPlans.syncRuns,[batch,batch.length+1]);
           if (found.length>batch.length) incomplete('duplicate_source_identity');
           for (const run of found) { retain('gis_sync',`run:${run.id}`,run);
             const start=sourceTime(run.started_at),end=sourceTime(run.completed_at);
@@ -558,20 +609,21 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
           if (counts.bytes>limits.bytes) incomplete('byte_limit');
           identityRows[group].push(row);
         };
-        const sourceIdsSql=selectCachedTransactionSourceIdsSql(request.account_ids.length);
+        const sourceIdsPlan=selectCachedTransactionSourceIdsSql(request.account_ids.length)===SMALL_SOURCE_IDS_SQL
+          ? rowPlans.sourceIdsSmall : rowPlans.sourceIdsLarge;
         let after='0';
         while (true) {
-          const found=await rows('source-ids',sourceIdsSql,[request.account_ids,after,n]);
+          const found=await rows(sourceIdsPlan,[request.account_ids,after,n]);
           const ids=found.slice(0,detailPageSize).map(row => big(row.source_record_id));
           if (ids.length) {
             seedIds.push(...ids);
-            const identities=await rows('transaction-identities',SQL.transaction_identities,[ids,ids.length+1]);
+            const identities=await rows(rowPlans.transactionIdentities,[ids,ids.length+1]);
             if (identities.length>ids.length) incomplete('duplicate_source_identity');
             if (identities.length<ids.length || ids.some(id => !identities.some(row => row.source_record_id===id))) incomplete('source_identity_missing');
             for (const row of identities) retainIdentity('transactions',row);
             let cursor=['0',0,0];
             while (true) {
-              const links=await rows('link-identities',SQL.link_identities,[ids,...cursor,n]);
+              const links=await rows(rowPlans.linkIdentities,[ids,...cursor,n]);
               for (const row of links.slice(0,detailPageSize)) retainIdentity('links',row);
               if (links.length<=detailPageSize) break;
               const last=links[detailPageSize-1];
@@ -585,21 +637,21 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
           if (next===after) incomplete('nonadvancing_cursor');
           after=next;
         }
-        await page('legacy-identities',SQL.legacy_identities,[request.account_ids,'0',n],1,
+        await page(rowPlans.legacyIdentities,[request.account_ids,'0',n],1,
           row => big(row.sale_id),row => retainIdentity('legacy',row));
         const observedClosure=validateCachedTransactionClosure({selected_account_ids:request.account_ids,
           source_revision:authorized.transaction_closure.source_revision,...identityRows});
         if (observedClosure.closure_sha256!==authorized.transaction_closure.closure_sha256) incomplete('transaction_association_drift');
         for (let at=0;at<seedIds.length;at+=detailPageSize) {
           const ids=seedIds.slice(at,at+detailPageSize);
-            const transactions=await rows('transactions',profile.transactionsSql,[ids,ids.length+1]);
+            const transactions=await rows(rowPlans.transactions,[ids,ids.length+1]);
             if (transactions.length>ids.length) incomplete('duplicate_source_identity');
             const seen=new Set();
             for (const row of transactions) { const id=big(row.source_record_id); seen.add(id); retain('transactions',`source:${id}`,row); }
             if (ids.some(id => !seen.has(id))) incomplete('source_identity_missing');
             let cursor=['0',0,0];
             while (true) {
-              const links=await rows('sale-links',SQL.sale_links,[ids,...cursor,n]);
+              const links=await rows(rowPlans.saleLinks,[ids,...cursor,n]);
               for (const row of links.slice(0,detailPageSize)) retain('sale_links',`link:${big(row.parcel_link_id)}`,row);
               if (links.length<=detailPageSize) break;
               const last=links[detailPageSize-1];
@@ -608,7 +660,7 @@ function createSourceReader(pool, { limits: overrides, access }, profile) {
               cursor=next;
             }
         }
-        await page('legacy',SQL.legacy,[request.account_ids,'0',n],1,row => big(row.sale_id),row => retain('transactions',`legacy:${big(row.sale_id)}`,row));
+        await page(rowPlans.legacy,[request.account_ids,'0',n],1,row => big(row.sale_id),row => retain('transactions',`legacy:${big(row.sale_id)}`,row));
       }
       if (callerOwned) await verifySnapshot();
       else { await query('commit','COMMIT'); began=false; }

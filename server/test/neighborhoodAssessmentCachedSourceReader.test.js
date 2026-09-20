@@ -14,6 +14,7 @@ import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodA
 import { cohortFixtureQueryHash, makeCohortLocalQueryMetadata } from './fixtures/neighborhoodCohortLocalQueryEvidenceFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
+import { createClosedSqlPlanGate } from '../src/services/neighborhoodAssessment/closedSqlPlan.js';
 
 // This is a query-boundary fake, not a PostgreSQL compatibility test. The catalog
 // fixture tracks the reader's literal capabilities while missing-column tests
@@ -22,6 +23,18 @@ const source = readFileSync(new URL('../src/services/neighborhoodAssessment/cach
 const tableDeclaration = source.slice(source.indexOf('const TABLES'), source.indexOf('const SQL'));
 const CATALOG = [...tableDeclaration.matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'\]/g)]
   .flatMap(([, relation, columns]) => columns.split(' ').map(column => ({ relation, column })));
+
+test('projected-row execution rejects counterfeit plans before query execution', () => {
+  const installed=Object.freeze({tag:'parcels',statement:'SELECT approved',maximum:64000});
+  let queries=0;
+  const gate=createClosedSqlPlanGate({installed},()=>{throw new TypeError('query_plan');});
+  const execute=plan=>{gate.assert(plan);queries++;};
+  execute(gate.plans.installed);
+  for (const counterfeit of [{...installed},{...installed,statement:'SELECT injected'},null]) {
+    assert.throws(()=>execute(counterfeit),/query_plan/);
+  }
+  assert.equal(queries,1,'no counterfeit plan reached the query boundary');
+});
 const RUN = '60000000-0000-4000-8000-000000000001';
 const NOW = '2026-09-05T12:00:00.000Z';
 const NOW_PRECISE = '2026-09-05T12:00:00.000000Z';

@@ -190,11 +190,21 @@ test("SQL-shaped feature IDs stay in exact bound JSON without changing partition
   for (const { tag, query } of hostile.calls) {
     assert.equal(query.text.includes(marker), false, `${tag} must not interpolate the feature ID`);
     if (tag === "validate" || tag === "partition") {
-      assert.equal(query.values.length, 2);
+      assert.equal(query.values.length, tag === "validate" ? 2 : 11);
       assert.equal(query.values[0], input.boundary.geometry.ewkb);
       const features = JSON.parse(query.values[1]);
       assert.deepEqual(features, expectedFeatures, `${tag} retains the exact bound feature projection`);
       assert.equal(features.filter(feature => feature.id === marker).length, 1);
+      if (tag === "partition") {
+        assert.deepEqual(query.values.slice(2),[
+          LAND_USE_PARTITION_LIMITS.intermediate_coordinates,LAND_USE_PARTITION_LIMITS.intermediate_components,
+          LAND_USE_PARTITION_LIMITS.class_pairs+1,LAND_USE_PARTITION_LIMITS.class_pairs,
+          LAND_USE_PARTITION_LIMITS.reference_candidates+1,LAND_USE_PARTITION_LIMITS.reference_candidates,
+          LAND_USE_PARTITION_LIMITS.source_references+1,LAND_USE_PARTITION_LIMITS.output_bytes,
+          LAND_USE_KNOWN_CATEGORIES,
+        ]);
+        assert.doesNotMatch(query.text,/\$\{limits\.|\$\{cap\(/);
+      }
     } else {
       assert.equal(JSON.stringify(query.values).includes(marker), false,
         `${tag} cannot carry feature input outside the geometry query parameters`);

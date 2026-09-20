@@ -273,61 +273,64 @@ const VALIDATE_SQL = `WITH ${GEOMETRY_CTES} SELECT
   (SELECT COALESCE(bool_and(ST_SRID(geom)=4326 AND GeometryType(geom) IN ('POLYGON','MULTIPOLYGON')
     AND ST_IsValid(geom) AND NOT ST_IsEmpty(geom) AND ST_IsValid(ST_Transform(geom,26914)) AND ST_Area(ST_Transform(geom,26914))>0),true) FROM feature_input) AS features_valid`;
 
-function partitionSql(limits) {
-  // Category pairs are fixed and capped before pair intersections. Geometry
-  // complexity is checked between overlay stages; DB/worker deadlines still
-  // bound individual native GEOS operations, not an invented operation count.
-  const empty = "ST_GeomFromText('MULTIPOLYGON EMPTY',26914)";
-  const categories = LAND_USE_KNOWN_CATEGORIES.map(category => `('${category}')`).join(",");
-  const cap = alias => `${alias}.coordinates<=${limits.intermediate_coordinates} AND ${alias}.components<=${limits.intermediate_components}`;
-  return `WITH ${GEOMETRY_CTES}, boundary AS MATERIALIZED (SELECT ST_Transform(geom,26914) AS geom FROM boundary_input),
+// Category pairs are fixed and capped before pair intersections. Geometry
+// complexity is checked between overlay stages; DB/worker deadlines still
+// bound individual native GEOS operations, not an invented operation count.
+// Every variable limit and the category roster is a PostgreSQL bind value;
+// request/configuration data can never become executable statement text.
+const PARTITION_SQL = `WITH ${GEOMETRY_CTES}, boundary AS MATERIALIZED (SELECT ST_Transform(geom,26914) AS geom FROM boundary_input),
   features AS MATERIALIZED (SELECT id,category,semantics,ST_Transform(geom,26914) AS geom FROM feature_input),
   raw_clips AS MATERIALIZED (SELECT f.id,f.category,ST_CollectionExtract(ST_Intersection(f.geom,b.geom),3) AS geom
     FROM features f CROSS JOIN boundary b WHERE f.semantics='observed_use' AND f.geom && b.geom),
   clip_stats AS (SELECT COALESCE(sum(ST_NPoints(geom)),0)::integer AS coordinates,
     COALESCE(sum(ST_NumGeometries(geom)),0)::integer AS components FROM raw_clips),
-  clips AS MATERIALIZED (SELECT r.* FROM raw_clips r CROSS JOIN clip_stats s WHERE ${cap("s")} AND ST_Area(r.geom)>0),
+  clips AS MATERIALIZED (SELECT r.* FROM raw_clips r CROSS JOIN clip_stats s
+    WHERE s.coordinates<=$3::integer AND s.components<=$4::integer AND ST_Area(r.geom)>0),
   raw_known AS MATERIALIZED (SELECT category,ST_UnaryUnion(ST_Collect(geom ORDER BY id COLLATE "C")) AS geom
     FROM clips WHERE category IS NOT NULL GROUP BY category),
   known_stats AS (SELECT COALESCE(sum(ST_NPoints(geom)),0)::integer AS coordinates,
     COALESCE(sum(ST_NumGeometries(geom)),0)::integer AS components FROM raw_known),
-  known AS MATERIALIZED (SELECT k.* FROM raw_known k CROSS JOIN known_stats s WHERE ${cap("s")}),
+  known AS MATERIALIZED (SELECT k.* FROM raw_known k CROSS JOIN known_stats s
+    WHERE s.coordinates<=$3::integer AND s.components<=$4::integer),
   pair_candidates AS MATERIALIZED (SELECT a.category AS a,b.category AS b FROM known a JOIN known b
-    ON a.category COLLATE "C"<b.category COLLATE "C" AND a.geom && b.geom LIMIT ${limits.class_pairs + 1}),
+    ON a.category COLLATE "C"<b.category COLLATE "C" AND a.geom && b.geom LIMIT $5::integer),
   pair_count AS (SELECT count(*)::integer AS count FROM pair_candidates),
   pair_intersections AS MATERIALIZED (SELECT ST_CollectionExtract(ST_Intersection(a.geom,b.geom),3) AS geom
     FROM pair_candidates p JOIN known a ON a.category=p.a JOIN known b ON b.category=p.b
-    WHERE (SELECT count FROM pair_count)<=${limits.class_pairs}),
+    WHERE (SELECT count FROM pair_count)<=$6::integer),
   pair_stats AS (SELECT COALESCE(sum(ST_NPoints(geom)),0)::integer AS coordinates,
     COALESCE(sum(ST_NumGeometries(geom)),0)::integer AS components FROM pair_intersections),
   unions AS MATERIALIZED (SELECT
-    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY category COLLATE "C")) FROM known),${empty}) AS known_geom,
+    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY category COLLATE "C")) FROM known),ST_GeomFromText('MULTIPOLYGON EMPTY',26914)) AS known_geom,
     COALESCE((SELECT ST_UnaryUnion(ST_Collect(p.geom ORDER BY encode(ST_AsEWKB(ST_Normalize(p.geom),'NDR'),'hex') COLLATE "C"))
-      FROM pair_intersections p CROSS JOIN pair_stats s WHERE ${cap("s")} AND ST_Area(p.geom)>0),${empty}) AS conflict_geom,
-    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY id COLLATE "C")) FROM clips),${empty}) AS observed_geom,
-    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY id COLLATE "C")) FROM clips WHERE category IS NULL),${empty}) AS unknown_geom),
+      FROM pair_intersections p CROSS JOIN pair_stats s
+      WHERE s.coordinates<=$3::integer AND s.components<=$4::integer AND ST_Area(p.geom)>0),ST_GeomFromText('MULTIPOLYGON EMPTY',26914)) AS conflict_geom,
+    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY id COLLATE "C")) FROM clips),ST_GeomFromText('MULTIPOLYGON EMPTY',26914)) AS observed_geom,
+    COALESCE((SELECT ST_UnaryUnion(ST_Collect(geom ORDER BY id COLLATE "C")) FROM clips WHERE category IS NULL),ST_GeomFromText('MULTIPOLYGON EMPTY',26914)) AS unknown_geom),
   union_stats AS (SELECT (ST_NPoints(known_geom)+ST_NPoints(conflict_geom)+ST_NPoints(observed_geom)+ST_NPoints(unknown_geom))::integer AS coordinates,
     (ST_NumGeometries(known_geom)+ST_NumGeometries(conflict_geom)+ST_NumGeometries(observed_geom)+ST_NumGeometries(unknown_geom))::integer AS components FROM unions),
-  bounded_unions AS MATERIALIZED (SELECT u.* FROM unions u CROSS JOIN union_stats s WHERE ${cap("s")}),
+  bounded_unions AS MATERIALIZED (SELECT u.* FROM unions u CROSS JOIN union_stats s
+    WHERE s.coordinates<=$3::integer AND s.components<=$4::integer),
   raw_buckets AS MATERIALIZED (
-    SELECT c.category,ST_CollectionExtract(ST_Difference(COALESCE(k.geom,${empty}),u.conflict_geom),3) AS geom
-      FROM (VALUES ${categories}) c(category) LEFT JOIN known k ON k.category=c.category CROSS JOIN bounded_unions u
+    SELECT c.category,ST_CollectionExtract(ST_Difference(COALESCE(k.geom,ST_GeomFromText('MULTIPOLYGON EMPTY',26914)),u.conflict_geom),3) AS geom
+      FROM unnest($11::text[]) c(category) LEFT JOIN known k ON k.category=c.category CROSS JOIN bounded_unions u
     UNION ALL SELECT 'unknown_conflict',conflict_geom FROM bounded_unions
     UNION ALL SELECT 'unknown_classification',ST_CollectionExtract(ST_Difference(unknown_geom,known_geom),3) FROM bounded_unions
     UNION ALL SELECT 'unknown_uncovered',ST_CollectionExtract(ST_Difference(b.geom,u.observed_geom),3) FROM boundary b CROSS JOIN bounded_unions u),
   bucket_stats AS (SELECT COALESCE(sum(ST_NPoints(geom)),0)::integer AS coordinates,
     COALESCE(sum(ST_NumGeometries(geom)),0)::integer AS components FROM raw_buckets),
-  buckets AS MATERIALIZED (SELECT r.* FROM raw_buckets r CROSS JOIN bucket_stats s WHERE ${cap("s")}),
+  buckets AS MATERIALIZED (SELECT r.* FROM raw_buckets r CROSS JOIN bucket_stats s
+    WHERE s.coordinates<=$3::integer AND s.components<=$4::integer),
   ref_candidates AS MATERIALIZED (SELECT b.category,c.id FROM buckets b JOIN clips c ON b.geom && c.geom
     WHERE (b.category=c.category OR (b.category='unknown_conflict' AND c.category IS NOT NULL)
-      OR (b.category='unknown_classification' AND c.category IS NULL)) LIMIT ${limits.reference_candidates + 1}),
+      OR (b.category='unknown_classification' AND c.category IS NULL)) LIMIT $7::integer),
   ref_candidate_count AS (SELECT count(*)::integer AS count FROM ref_candidates),
   refs AS MATERIALIZED (SELECT r.category,r.id FROM ref_candidates r JOIN buckets b ON b.category=r.category JOIN clips c ON c.id=r.id
-    WHERE (SELECT count FROM ref_candidate_count)<=${limits.reference_candidates}
-      AND ST_Area(ST_Intersection(b.geom,c.geom))>0 LIMIT ${limits.source_references + 1}),
+    WHERE (SELECT count FROM ref_candidate_count)<=$8::integer
+      AND ST_Area(ST_Intersection(b.geom,c.geom))>0 LIMIT $9::integer),
   bucket_values AS (SELECT b.category,ST_Area(b.geom) AS area_m2,
     COALESCE((SELECT jsonb_agg(r.id ORDER BY r.id COLLATE "C") FROM refs r WHERE r.category=b.category),'[]'::jsonb) AS source_feature_ids FROM buckets b),
-  partition_union AS (SELECT COALESCE(ST_UnaryUnion(ST_Collect(geom ORDER BY category COLLATE "C")),${empty}) AS geom FROM buckets),
+  partition_union AS (SELECT COALESCE(ST_UnaryUnion(ST_Collect(geom ORDER BY category COLLATE "C")),ST_GeomFromText('MULTIPOLYGON EMPTY',26914)) AS geom FROM buckets),
   size_diagnostics AS (SELECT GREATEST(c.coordinates,k.coordinates,p.coordinates,u.coordinates,b.coordinates)::integer AS intermediate_coordinate_count,
     GREATEST(c.components,k.components,p.components,u.components,b.components)::integer AS intermediate_component_count
     FROM clip_stats c CROSS JOIN known_stats k CROSS JOIN pair_stats p CROSS JOIN union_stats u CROSS JOIN bucket_stats b),
@@ -350,8 +353,7 @@ function partitionSql(limits) {
       'observed_feature_ids',COALESCE((SELECT jsonb_agg(id ORDER BY id COLLATE "C") FROM clips),'[]'::jsonb))) AS value
     FROM boundary b CROSS JOIN unions u CROSS JOIN partition_union p CROSS JOIN size_diagnostics s),
   sized AS (SELECT value,octet_length(value::text)::integer AS payload_bytes FROM payload)
-  SELECT CASE WHEN payload_bytes<=${limits.output_bytes} THEN value ELSE NULL END AS payload,payload_bytes FROM sized`;
-}
+  SELECT CASE WHEN payload_bytes<=$10::integer THEN value ELSE NULL END AS payload,payload_bytes FROM sized`;
 
 function versionsOf(row) {
   exact(row, ["postgis_version", "geos_version", "proj_version", "auth_name", "auth_srid", "proj4text", "srtext"], "engine_metadata");
@@ -530,10 +532,13 @@ export function createNeighborhoodPostgisLandUsePartition(pool, { limits: option
       const features = input.features.map(feature => ({ id: feature.id, semantics: feature.semantics, ewkb: feature.geometry.ewkb,
         category: feature.semantics === "observed_use" && feature.classification.status === "supported" &&
           support(feature, input.effective_date, input.knowledge_cutoff) === "supported" ? feature.classification.category : null }));
-      const values = [input.boundary.geometry.ewkb, JSON.stringify(features)];
-      const validation = await query("validate", VALIDATE_SQL, values);
+      const geometryValues = [input.boundary.geometry.ewkb, JSON.stringify(features)];
+      const validation = await query("validate", VALIDATE_SQL, geometryValues);
       if (validation.length !== 1 || validation[0].boundary_valid !== true || validation[0].features_valid !== true) stop("invalid_polygon_geometry");
-      const rows = await query("partition", partitionSql(limits), values);
+      const partitionValues = [...geometryValues,limits.intermediate_coordinates,limits.intermediate_components,
+        limits.class_pairs+1,limits.class_pairs,limits.reference_candidates+1,limits.reference_candidates,
+        limits.source_references+1,limits.output_bytes,[...LAND_USE_KNOWN_CATEGORIES]];
+      const rows = await query("partition", PARTITION_SQL, partitionValues);
       if (rows.length !== 1) stop("invalid_partition_result");
       const partition = partitionOf(rows[0], input, limits);
       output.performed_policy = { ...input.policy, kernel_version: LAND_USE_PARTITION_VERSION, supported_projection_window: WINDOW,

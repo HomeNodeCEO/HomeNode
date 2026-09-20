@@ -8,6 +8,19 @@ import { validateCachedTransactionClosure } from '../src/services/neighborhoodAs
 import { consumeNeighborhoodCachedReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
+import { createClosedSqlPlanGate } from '../src/services/neighborhoodAssessment/closedSqlPlan.js';
+
+test('closure projected-row execution rejects counterfeit plans before query execution',()=>{
+  const installed=Object.freeze({tag:'source-ids',statement:'SELECT approved',maximum:2048});
+  let queries=0;
+  const gate=createClosedSqlPlanGate({installed},()=>{throw new TypeError('query_plan');});
+  const execute=plan=>{gate.assert(plan);queries++;};
+  execute(gate.plans.installed);
+  for(const counterfeit of [{...installed},{...installed,statement:'SELECT injected'},null]) {
+    assert.throws(()=>execute(counterfeit),/query_plan/);
+  }
+  assert.equal(queries,1,'no counterfeit plan reached the query boundary');
+});
 
 // Query-boundary doubles, not PostgreSQL/MVCC proof. Actual source SQL is shared
 // with the independent reader; native composed acquisition is a separate check.
@@ -223,4 +236,3 @@ test('shared monotonic deadline/cancellation stop before SQL or after a bounded 
   incomplete(await run(db,request(),{deadline:performance.now()+15}),'duration_limit');
   assert.ok(db.calls.every(call=>call.query_timeout>0&&call.query_timeout<=15));owned(db);
 });
-

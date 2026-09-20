@@ -297,16 +297,20 @@ for (const stage of ['flush', 'readiness']) for (const changed of ['dirty', 'sav
   });
 }
 test('the exploration host is a single print-hidden sibling, not a DeferredReportSection child', () => {
+  const sectionSource = readFileSync(new URL('../src/features/neighborhood/components/CustomNeighborhoodCharacteristicsSection.tsx', import.meta.url), 'utf8');
+  const sectionAst = ts.createSourceFile('CustomNeighborhoodCharacteristicsSection.tsx', sectionSource,
+    ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
   const hosts = [];
   function walk(node, ancestors = []) {
-    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(ast) === 'CustomNeighborhoodWorkspaceHost') hosts.push([...ancestors, node]);
+    if (ts.isJsxSelfClosingElement(node) && node.tagName.getText(sectionAst) === 'CustomNeighborhoodWorkspaceHost') hosts.push([...ancestors, node]);
     ts.forEachChild(node, child => walk(child, [...ancestors, node]));
   }
-  walk(ast); assert.equal(hosts.length, 1);
-  assert.ok(hosts[0].at(-1).getStart(ast) < source.indexOf('label="Neighborhood Characteristics"'),
-    'exploration precedes the neighborhood section and its appraiser-defined map');
+  walk(sectionAst); assert.equal(hosts.length, 1);
+  assert.ok(hosts[0].at(-1).getStart(sectionAst) < sectionSource.indexOf('aria-label="Applied neighborhood characteristics"'),
+    'exploration precedes the applied neighborhood boundary and statistics');
   const jsxAncestors = hosts[0].filter(ts.isJsxElement);
-  assert.equal(jsxAncestors.some(node => node.openingElement.tagName.getText(ast) === 'DeferredReportSection'), false);
-  assert.ok(jsxAncestors.some(node => node.openingElement.attributes.getText(ast).includes('print:hidden')));
+  assert.equal(jsxAncestors.some(node => node.openingElement.tagName.getText(sectionAst) === 'DeferredReportSection'), false);
+  assert.ok(jsxAncestors.some(node => node.openingElement.attributes.getText(sectionAst).includes('print:hidden')));
+  assert.equal((source.match(/<CustomNeighborhoodCharacteristicsSection/g) ?? []).length, 1);
   assert.match(source, /VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true"/);
 });

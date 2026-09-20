@@ -93,9 +93,9 @@ const MobileSketchReview = lazy(() => import("@/components/MobileSketchReview"))
 const NeighborhoodCharacteristicsContent = lazy(
   () => import("@/components/NeighborhoodCharacteristicsContent"),
 );
-const CustomNeighborhoodAcceptedSummary = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedSummary"));
-const CustomNeighborhoodAcceptedOutline = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodAcceptedOutline"));
-const CustomNeighborhoodWorkspaceHost = lazy(() => import("@/features/neighborhood/components/CustomNeighborhoodWorkspaceHost"));
+const CustomNeighborhoodCharacteristicsSection = lazy(
+  () => import("@/features/neighborhood/components/CustomNeighborhoodCharacteristicsSection"),
+);
 const PrivateSalesImportsPanel = lazy(() => import("@/features/neighborhood/components/PrivateSalesImportsPanel"));
 // Default-off display gate; server/source owner authorization remains independent.
 const CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED = import.meta.env.VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true";
@@ -740,7 +740,7 @@ function AddressHero({
   };
 
   const updateMarketConditions = (draft: MarketConditionsDraft | null) => {
-    if (!legacyNeighborhoodAllowedRef.current) return;
+    if (!legacyNeighborhoodAllowedRef.current && !CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED) return;
     setMarketConditionsDraft(draft);
     if (!draft) return;
     if (accountId && activeAssignmentFile) {
@@ -2270,9 +2270,10 @@ function AddressHero({
             title="Subject Identification"
             subtitle="Parcel, ownership, and recorded legal information"
             {...sectionEditProps("report.subject_identification")}
+            compact
             className="order-1"
           >
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+            <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4">
               <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
               <SummaryField label="County" value={county} />
               <SummaryField label="Subdivision" value={subdivision} />
@@ -2280,7 +2281,7 @@ function AddressHero({
                 label="Ownership Percentage"
                 value={
                   ownerParties.length ? (
-                    <div className="space-y-1.5">
+                    <div className="space-y-0.5">
                       {ownerParties.map((party, index) => (
                         <div key={`${party.owner_name}-share-${index}`}>
                           {formatOwnershipPercent(party.ownership_pct)}
@@ -2302,7 +2303,7 @@ function AddressHero({
                 label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
                 value={
                   ownerParties.length ? (
-                    <div className="space-y-1.5">
+                    <div className="space-y-0.5">
                       {ownerParties.map((party, index) => (
                         <div key={`${party.owner_name}-${index}`}>
                           {displayValue(party.owner_name)}
@@ -2361,7 +2362,7 @@ function AddressHero({
               />
             </div>
 
-            <div className={`mt-5 rounded-xl border p-4 ${
+            <div className={`mt-3 rounded-xl border p-3 ${
               zoningEvidence?.review_required
                 ? "border-amber-300 bg-amber-50/70"
                 : "border-slate-200 bg-white/70"
@@ -2405,7 +2406,7 @@ function AddressHero({
               ) : null}
 
               {zoningEvidenceOpen && zoningEvidence?.jurisdiction ? (
-                <div className="mt-4 grid gap-4 border-t border-slate-200 pt-4 xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,1fr)]">
+                <div className="mt-3 grid gap-3 border-t border-slate-200 pt-3 xl:grid-cols-[minmax(0,1.7fr)_minmax(22rem,1fr)]">
                   <div className="min-w-0">
                     {selectedZoningDocument ? (
                       <>
@@ -2541,128 +2542,106 @@ function AddressHero({
               ) : null}
             </div>
 
-            <div className="mt-5 rounded-xl border border-slate-200 bg-white/70 p-4">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-900">Occupancy</h3>
-                  <p className="mt-1 text-xs text-slate-500">Assignment-specific occupancy of the subject.</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => void saveAssignmentFromSection()}
-                  className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
-                  disabled={assignmentSaveDisabled}
-                >
-                  {savingAssignmentFile ? "Saving..." : "Save Occupancy"}
-                </button>
-              </div>
-              {assignmentSaveMessage ? (
-                <p className="mt-2 text-xs leading-5 text-slate-600">{assignmentSaveMessage}</p>
-              ) : null}
-              <div className="mt-3 grid gap-2 sm:grid-cols-4">
-                {OCCUPANCY_OPTIONS.map(([value, label]) => (
-                  <CheckboxChoice
-                    key={value}
-                    checked={assignmentDraft.occupancy === value}
-                    label={label}
-                    onChange={(checked) => updateAssignment("occupancy", checked ? value : "")}
-                  />
-                ))}
-              </div>
-              {assignmentDraft.occupancy === "unknown" ? (
-                <label className="mt-3 block">
-                  <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                    Unknown Occupancy Explanation
-                  </span>
-                  <textarea
-                    className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
-                    value={assignmentDraft.occupancy_explanation || ""}
-                    onChange={(event) => updateAssignment("occupancy_explanation", event.target.value)}
-                    placeholder="Explain why occupancy could not be confirmed"
-                  />
-                </label>
-              ) : null}
-            </div>
-
-            <div className="mt-5 rounded-xl border border-slate-200 bg-white/70 p-4">
-              <div className="mb-3">
-                <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
-                <p className="mt-1 text-xs text-slate-500">
-                  {activeAssignmentFile
-                    ? `Saving to appraisal file ${activeAssignmentFile.file_number}.`
-                    : "Enter a new file number above before saving changes."}
-                </p>
-              </div>
-              <div className="max-w-xs">
-                <CheckboxChoice
-                  checked={Boolean(assignmentDraft.pud)}
-                  label="PUD"
-                  onChange={(checked) => updateAssignment("pud", checked)}
-                />
-              </div>
-              {assignmentDraft.pud ? (
-                <div className="mt-4 space-y-4">
-                  <label className="block max-w-sm">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      HOA Dues Amount
-                    </span>
-                    <input
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      className="input input-bordered mt-1 w-full bg-white"
-                      value={assignmentDraft.hoa_dues_amount ?? ""}
-                      onChange={(event) =>
-                        updateAssignment("hoa_dues_amount", event.target.value)
-                      }
-                      placeholder="Dollar amount"
-                    />
-                  </label>
+            <div className="mt-3 grid gap-3 lg:grid-cols-2">
+              <details className="rounded-xl border border-slate-200 bg-white/70">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 [&::-webkit-details-marker]:hidden">
                   <div>
-                    <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      HOA Dues Frequency
-                    </div>
-                    <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-4">
-                      {HOA_FREQUENCY_OPTIONS.map(([value, label]) => (
-                        <CheckboxChoice
-                          key={value}
-                          checked={assignmentDraft.hoa_frequency === value}
-                          label={label}
-                          onChange={(checked) =>
-                            updateAssignment("hoa_frequency", checked ? value : "")
-                          }
-                        />
-                      ))}
-                    </div>
+                    <h3 className="text-sm font-semibold text-slate-900">Occupancy</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Assignment-specific occupancy</p>
                   </div>
-                  <label className="block">
-                    <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
-                      HOA Explanation
-                    </span>
-                    <textarea
-                      className="textarea textarea-bordered mt-1 min-h-20 w-full bg-white"
-                      value={assignmentDraft.hoa_explanation || ""}
-                      onChange={(event) =>
-                        updateAssignment("hoa_explanation", event.target.value)
-                      }
-                      placeholder="Required when dues are unavailable or the frequency is Other"
-                    />
-                  </label>
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-950">
+                    {OCCUPANCY_OPTIONS.find(([value]) => value === assignmentDraft.occupancy)?.[1] || "Review"}
+                  </span>
+                </summary>
+                <div className="border-t border-slate-200 p-3">
+                  <div className="grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+                    {OCCUPANCY_OPTIONS.map(([value, label]) => (
+                      <CheckboxChoice
+                        key={value}
+                        compact
+                        checked={assignmentDraft.occupancy === value}
+                        label={label}
+                        onChange={(checked) => updateAssignment("occupancy", checked ? value : "")}
+                      />
+                    ))}
+                  </div>
+                  {assignmentDraft.occupancy === "unknown" ? (
+                    <label className="mt-3 block">
+                      <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">
+                        Unknown Occupancy Explanation
+                      </span>
+                      <textarea
+                        className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
+                        value={assignmentDraft.occupancy_explanation || ""}
+                        onChange={(event) => updateAssignment("occupancy_explanation", event.target.value)}
+                        placeholder="Explain why occupancy could not be confirmed"
+                      />
+                    </label>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500">{assignmentSaveMessage}</span>
+                    <button type="button" onClick={() => void saveAssignmentFromSection()}
+                      className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                      disabled={assignmentSaveDisabled}>
+                      {savingAssignmentFile ? "Saving..." : "Save Occupancy"}
+                    </button>
+                  </div>
                 </div>
-              ) : null}
-              <div className="mt-4 flex flex-wrap items-center justify-between gap-3">
-                <span className="text-xs text-slate-500">
-                  {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
-                </span>
-                <button
-                  type="button"
-                  onClick={() => void saveAssignmentFromSection()}
-                  className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
-                  disabled={assignmentSaveDisabled}
-                >
-                  {savingAssignmentFile ? "Saving..." : "Save PUD / HOA"}
-                </button>
-              </div>
+              </details>
+
+              <details className="rounded-xl border border-slate-200 bg-white/70">
+                <summary className="flex cursor-pointer list-none items-center justify-between gap-3 p-3 [&::-webkit-details-marker]:hidden">
+                  <div>
+                    <h3 className="text-sm font-semibold text-slate-900">PUD and HOA</h3>
+                    <p className="mt-0.5 text-xs text-slate-500">Association and dues details</p>
+                  </div>
+                  <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-950">
+                    {assignmentDraft.pud ? "PUD / HOA review" : "Not marked PUD"}
+                  </span>
+                </summary>
+                <div className="border-t border-slate-200 p-3">
+                  <div className="max-w-xs">
+                    <CheckboxChoice compact checked={Boolean(assignmentDraft.pud)} label="PUD"
+                      onChange={(checked) => updateAssignment("pud", checked)} />
+                  </div>
+                  {assignmentDraft.pud ? (
+                    <div className="mt-3 space-y-3">
+                      <label className="block max-w-sm">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">HOA Dues Amount</span>
+                        <input type="number" min="0" step="0.01" className="input input-bordered input-sm mt-1 w-full bg-white"
+                          value={assignmentDraft.hoa_dues_amount ?? ""}
+                          onChange={(event) => updateAssignment("hoa_dues_amount", event.target.value)} placeholder="Dollar amount" />
+                      </label>
+                      <div>
+                        <div className="text-xs font-semibold uppercase tracking-wide text-slate-600">HOA Dues Frequency</div>
+                        <div className="mt-1.5 grid gap-1.5 sm:grid-cols-2 xl:grid-cols-4">
+                          {HOA_FREQUENCY_OPTIONS.map(([value, label]) => (
+                            <CheckboxChoice key={value} compact checked={assignmentDraft.hoa_frequency === value} label={label}
+                              onChange={(checked) => updateAssignment("hoa_frequency", checked ? value : "")} />
+                          ))}
+                        </div>
+                      </div>
+                      <label className="block">
+                        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">HOA Explanation</span>
+                        <textarea className="textarea textarea-bordered textarea-sm mt-1 min-h-16 w-full bg-white"
+                          value={assignmentDraft.hoa_explanation || ""}
+                          onChange={(event) => updateAssignment("hoa_explanation", event.target.value)}
+                          placeholder="Required when dues are unavailable or the frequency is Other" />
+                      </label>
+                    </div>
+                  ) : null}
+                  <div className="mt-3 flex flex-wrap items-center justify-between gap-2">
+                    <span className="text-xs text-slate-500">
+                      {assignmentSaveMessage || (assignmentDirty ? "Unsaved assignment changes" : "No unsaved changes")}
+                    </span>
+                    <button type="button" onClick={() => void saveAssignmentFromSection()}
+                      className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg shadow-sm"
+                      disabled={assignmentSaveDisabled}>
+                      {savingAssignmentFile ? "Saving..." : "Save PUD / HOA"}
+                    </button>
+                  </div>
+                </div>
+              </details>
             </div>
           </SummarySection>
 
@@ -3146,54 +3125,36 @@ function AddressHero({
             </div>
           </SummarySection>
 
-          {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED && (
-            <div className="order-3 print:hidden">
-              <SummarySection
-                title="Neighborhood Pocket Exploration"
-                subtitle="Saved review choices; separate from the accepted neighborhood report"
-              >
-                {neighborhoodWorkspace.message && <p role={neighborhoodWorkspace.status === "unavailable" ? "alert" : "status"}
-                  className="mb-3 text-sm">{neighborhoodWorkspace.message}</p>}
-                {neighborhoodWorkspace.status === "unavailable" && <button type="button"
-                  className="hn-action-secondary btn btn-sm normal-case"
-                  onClick={neighborhoodWorkspace.retry}>Reload neighborhood workspace</button>}
-                {/* Not deferred through beforeprint/prepare-report: printing must
-                    never create a capture. The bridge owns one exact session. */}
-                {neighborhoodWorkspace.hostProps && <Suspense fallback={<LazyReportContent label="saved neighborhood workspace" />}>
-                  <CustomNeighborhoodWorkspaceHost {...neighborhoodWorkspace.hostProps} />
-                </Suspense>}
-              </SummarySection>
-            </div>
-          )}
-
-          <DeferredReportSection
-            label="Neighborhood Characteristics"
-            className="order-3"
-            minimumHeight={300}
-            onReady={() => setNeighborhoodSectionReady(true)}
-          >
-            <SummarySection
-              title="Neighborhood Characteristics"
-              subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
-              manuallyVerified={Boolean(activeAssignmentFile)}
-            >
+          {CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED ? (
+            <div className="order-3">
               <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
-                {!legacyNeighborhoodAllowed ? (
-                  currentAcceptedNeighborhood?.status === "accepted" ? (
-                    <div className="space-y-3">
-                      <CustomNeighborhoodAcceptedOutline assessment={currentAcceptedNeighborhood.assessment} />
-                      <CustomNeighborhoodAcceptedSummary assessment={currentAcceptedNeighborhood.assessment} />
-                    </div>
-                  ) : (
-                    <p role="status" className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
-                      {currentAcceptedNeighborhood?.message || (assignmentFilesError
-                        ? "The appraisal files could not be loaded. Reload to retry before changing neighborhood data."
-                        : assignmentFilesLoaded && !activeAssignmentFile
-                          ? "Choose or start an appraisal file to review and save its neighborhood analysis."
-                          : "Loading the saved neighborhood selection...")}
-                    </p>
-                  )
-                ) : <NeighborhoodCharacteristicsContent
+                <CustomNeighborhoodCharacteristicsSection
+                  workspace={neighborhoodWorkspace}
+                  acceptedNeighborhood={currentAcceptedNeighborhood}
+                  assignmentFilesError={Boolean(assignmentFilesError)}
+                  assignmentFilesLoaded={assignmentFilesLoaded}
+                  hasActiveAssignmentFile={Boolean(activeAssignmentFile)}
+                  accountId={accountId}
+                  assignmentFileId={activeAssignmentFile?.id || null}
+                  marketConditionsDraft={marketConditionsDraft}
+                  onMarketConditionsChange={updateMarketConditions}
+                />
+              </Suspense>
+            </div>
+          ) : (
+            <DeferredReportSection
+              label="Neighborhood Characteristics"
+              className="order-3"
+              minimumHeight={300}
+              onReady={() => setNeighborhoodSectionReady(true)}
+            >
+              <SummarySection
+                title="Neighborhood Characteristics"
+                subtitle="Present land use, neighborhood factors, market ranges, and assignment boundary review"
+                manuallyVerified={Boolean(activeAssignmentFile)}
+              >
+                <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
+                  <NeighborhoodCharacteristicsContent
               automaticAnalysisEnabled={!CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED}
               accountId={accountId}
               assignmentFileId={activeAssignmentFile?.id || null}
@@ -3235,10 +3196,11 @@ function AddressHero({
               }}
               onMarketConditionsChange={updateMarketConditions}
               onSave={() => void saveAssignmentFromSection()}
-                />}
-              </Suspense>
-            </SummarySection>
-          </DeferredReportSection>
+                  />
+                </Suspense>
+              </SummarySection>
+            </DeferredReportSection>
+          )}
 
           {detailLoaded && accountId && activeAssignmentFile?.account_id === accountId
             && applicationAuth.ready && !applicationAuth.bootstrapError && applicationAuth.session?.user_id && (

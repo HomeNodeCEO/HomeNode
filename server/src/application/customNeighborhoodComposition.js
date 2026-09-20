@@ -6,6 +6,7 @@ import { authorizeCustomNeighborhoodPrivateSales } from '../security/customNeigh
 import { authorizeCustomNeighborhoodReportObservations } from '../security/customNeighborhoodReportObservationPolicy.js';
 import { jsonErrorHandler } from '../security/httpSecurity.js';
 import { createCustomCohortContextCapture } from '../services/neighborhoodAssessment/customCohortContextCapture.js';
+import { createCustomNeighborhoodSubjectEvidenceRecovery } from '../services/neighborhoodAssessment/customSubjectEvidenceRecovery.js';
 import { createCustomNeighborhoodCohortRouter } from '../modules/accounts/customNeighborhoodCohortRouter.js';
 
 export const CUSTOM_NEIGHBORHOOD_SOURCE_PROFILE_MAX_BYTES = 16_384;
@@ -82,6 +83,7 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
     cohortService = createCustomCohortContextCapture({ pool, authorizeMarketData, sourceMode: mode,
       authorizePrivateSales: authorizeCustomNeighborhoodPrivateSales,
       authorizeReportedObservations: authorizeCustomNeighborhoodReportObservations });
+    cohortService = createCustomNeighborhoodSubjectEvidenceRecovery({ pool, cohortService });
   }
   const router = express.Router();
   // Global JSON errors precede authentication by existing application design.

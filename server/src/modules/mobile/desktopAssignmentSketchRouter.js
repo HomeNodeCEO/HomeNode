@@ -3,6 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
 import {
+  createAssignmentInspectionSketch,
   getAssignmentInspectionSketch,
   saveAssignmentInspectionSketch,
 } from "./desktopSketches.js";
@@ -28,6 +29,7 @@ export function createDesktopAssignmentSketchRouter({
   resolveAccountId = resolveCanonicalAccountId,
   normalizeAssignmentId = normalizeAssignmentFileId,
   getSketch = getAssignmentInspectionSketch,
+  createSketch = createAssignmentInspectionSketch,
   saveSketch = saveAssignmentInspectionSketch,
   renderSvg = renderSketchSvg,
   renderPdf = renderSketchPdf,
@@ -57,7 +59,11 @@ export function createDesktopAssignmentSketchRouter({
   if (typeof resolveAccountId !== "function" || typeof normalizeAssignmentId !== "function") {
     throw new TypeError("desktop_assignment_sketch_identity_service_required");
   }
-  if (typeof getSketch !== "function" || typeof saveSketch !== "function") {
+  if (
+    typeof getSketch !== "function"
+    || typeof createSketch !== "function"
+    || typeof saveSketch !== "function"
+  ) {
     throw new TypeError("desktop_assignment_sketch_service_required");
   }
   if (typeof renderSvg !== "function" || typeof renderPdf !== "function") {
@@ -127,6 +133,71 @@ export function createDesktopAssignmentSketchRouter({
     "/api/accounts/:id/assignment-files/:fileId/mobile-sketch/report.pdf",
     (req, res) => loadArtifact(req, res, "pdf"),
   );
+
+  /** Start a measured sketch on desktop using the canonical mobile sketch model. */
+  router.post("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req, res) => {
+    const requestedId = String(req.params.id || "").trim();
+    if (!ACCOUNT_ID_PATTERN.test(requestedId)) {
+      return res.status(400).json({ error: "invalid_account_id" });
+    }
+    if (!requireEditor(req, res)) return undefined;
+    if (!req.mobileAuth?.userId) return res.status(401).json({ error: "authentication_required" });
+    try {
+      const assignmentFileId = normalizeAssignmentId(req.params.fileId, { required: true });
+      await Promise.all([
+        accountQualityReady,
+        propertyEnrichmentReady,
+        ensureAssignmentFilesAvailable(),
+        ensureCustomAppraisalWorkfilesAvailable(),
+      ]);
+      const canonicalId = await resolveAccountId(pool, requestedId);
+      const reviewStatus = normalizeSketchReviewStatus(req.body?.sketch?.review_status);
+      const permission = reviewStatus === "appraiser_confirmed" ? "sign" : "write";
+      if (!await requireAssignmentAccess(
+        req,
+        res,
+        canonicalId,
+        assignmentFileId,
+        permission,
+      )) return undefined;
+      const result = await createSketch(
+        pool,
+        req.mobileAuth,
+        canonicalId,
+        assignmentFileId,
+        req.body,
+      );
+      return res.status(201).json({ ok: true, ...result });
+    } catch (error) {
+      if (error?.message === "invalid_assignment_file_id") {
+        return res.status(400).json({ error: error.message });
+      }
+      if (
+        error?.message === "assignment_report_file_not_found"
+        || error?.message === "report_file_not_found"
+      ) {
+        return res.status(404).json({ error: "assignment_report_file_not_found" });
+      }
+      if (
+        String(error?.message || "").startsWith("invalid_")
+        || String(error?.message || "").startsWith("duplicate_")
+        || error?.message === "sketch_not_ready_for_confirmation"
+        || error?.message === "sketch_operation_conflict"
+        || error?.message === "sketch_revision_conflict"
+        || error?.message === "sketch_identity_conflict"
+        || error?.message === "inspection_session_completed_conflict"
+      ) {
+        return res.status(
+          String(error?.message || "").includes("conflict") ? 409 : 400,
+        ).json({ error: error.message });
+      }
+      if (error?.message === "authentication_required") {
+        return res.status(401).json({ error: error.message });
+      }
+      logger.error?.("assignment sketch desktop creation failed", error);
+      return res.status(500).json({ error: "assignment_sketch_creation_failed" });
+    }
+  });
 
   /** Review a mobile sketch on desktop without overwriting an earlier revision. */
   router.patch("/api/accounts/:id/assignment-files/:fileId/mobile-sketch", async (req, res) => {

@@ -4,6 +4,7 @@ const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
 const DEFAULT_FETCH_TIMEOUT_MILLISECONDS = 5_000;
+const MAX_OIDC_JSON_BYTES = 256 * 1024;
 const ORIGINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const MAX_ORIGINAL_RECORD_BYTES = 16_384;
 // Neither proofs nor their minting operations are exported or attached to auth.
@@ -73,6 +74,44 @@ function providerUnavailable(code) {
   const error = new Error(code);
   error.statusCode = 503;
   return error;
+}
+
+async function readBoundedJsonResponse(response, maximumBytes) {
+  const contentLength = response.headers?.get?.("content-length")?.trim();
+  if (/^\d+$/.test(contentLength || "") && Number(contentLength) > maximumBytes) {
+    try {
+      await response.body?.cancel?.();
+    } catch {
+      // The response is already rejected; cancellation is best-effort cleanup.
+    }
+    throw new Error("response_too_large");
+  }
+
+  if (!response.body || typeof response.body.getReader !== "function") {
+    throw new Error("response_body_unavailable");
+  }
+  const reader = response.body.getReader();
+  const buffer = Buffer.allocUnsafe(maximumBytes);
+  let bytesRead = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array) || bytesRead + value.byteLength > maximumBytes) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The bounded read has already failed; cancellation is best-effort cleanup.
+        }
+        throw new Error("response_too_large");
+      }
+      buffer.set(value, bytesRead);
+      bytesRead += value.byteLength;
+    }
+    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+  } finally {
+    reader.releaseLock();
+  }
 }
 
 function accessTokenError(diagnostic = "unspecified") {
@@ -214,7 +253,7 @@ export function createOidcAccessTokenVerifier({
         signal: controller.signal,
       });
       if (!response?.ok) throw providerUnavailable(code);
-      return await response.json();
+      return await readBoundedJsonResponse(response, MAX_OIDC_JSON_BYTES);
     } catch {
       throw providerUnavailable(code);
     } finally {

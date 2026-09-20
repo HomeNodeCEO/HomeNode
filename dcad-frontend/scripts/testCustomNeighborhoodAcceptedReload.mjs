@@ -1,14 +1,9 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const require = createRequire(import.meta.url), ts = require('typescript');
 const path = new URL('../src/features/neighborhood/useCustomNeighborhoodAcceptedReload.ts', import.meta.url);
-const output = ts.transpileModule(readFileSync(path, 'utf8'), { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-} }).outputText;
 const deferred = () => { let resolve; const promise = new Promise(value => { resolve = value; }); return { promise, resolve }; };
 function harness({ workfile, accepted } = {}) {
   const cells = [], calls = [], results = [], cleanup = [];
@@ -23,13 +18,12 @@ function harness({ workfile, accepted } = {}) {
       calls.push(['accepted', ...args]); return accepted ? accepted() : { status: 'accepted', accountId: args[0], assignmentFileId: args[1] };
     } },
   };
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){${output}\n})`).runInThisContext()(key => {
+  const acceptedReload = loadTrustedRepositoryCommonJs(path, key => {
     assert.ok(Object.hasOwn(imports, key), key); return imports[key];
-  }, module, module.exports);
+  });
   const file = { current: { id: 41 } }, generation = { current: 1 }, readGeneration = { current: 0 };
   return { file, generation, readGeneration, calls, results,
-    render(account = 'SUBJECT') { cursor = 0; return module.exports.useCustomNeighborhoodAcceptedReload(account, file, generation, value => results.push(value), readGeneration); },
+    render(account = 'SUBJECT') { cursor = 0; return acceptedReload.useCustomNeighborhoodAcceptedReload(account, file, generation, value => results.push(value), readGeneration); },
     unmount() { cleanup.forEach(fn => fn?.()); },
   };
 }

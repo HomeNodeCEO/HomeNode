@@ -1,29 +1,24 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import { createHash } from 'node:crypto';
 import { checkReportedObservationAssessment, formatReportedObservationDecimal } from '../src/features/neighborhood/customReportedObservationPresentation.ts';
 import { matchCustomNeighborhoodAcceptedResponse, customNeighborhoodLegacyAllowed } from '../src/features/neighborhood/customNeighborhoodAcceptedState.ts';
 import { reportedObservationReportFixture } from '../../server/test/fixtures/reportedObservationReportFixture.js';
 import { neighborhoodAssessmentFixture } from '../../server/test/fixtures/neighborhoodAssessmentFixture.js';
 import { buildNeighborhoodAssessment } from '../../server/src/services/neighborhoodAssessment/contract.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const runtime = createRequire(new URL('../package.json', import.meta.url)), ts = runtime('typescript'), React = runtime('react');
+const runtime = createRequire(new URL('../package.json', import.meta.url)), React = runtime('react');
 const { renderToStaticMarkup } = runtime('react-dom/server');
 const loaded = new Map();
 function load(url) {
-  const path = fileURLToPath(url); if (loaded.has(path)) return loaded.get(path);
-  const module = { exports: {} };
-  const output = ts.transpileModule(readFileSync(url, 'utf8'), { fileName: path,
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
-  new Script(`(function(require,module,exports){${output.outputText}\n})`, { filename: path }).runInThisContext()(name => {
+  const key = url.href; if (loaded.has(key)) return loaded.get(key);
+  const result = loadTrustedRepositoryCommonJs(url, name => {
     if (name.startsWith('.')) return load(new URL(/\.[jt]sx?$/.test(name) ? name : `${name}.tsx`, url));
     assert.ok(['react', 'react/jsx-runtime'].includes(name)); return runtime(name);
-  }, module, module.exports);
-  loaded.set(path, module.exports); return module.exports;
+  });
+  loaded.set(key, result); return result;
 }
 const Summary = load(new URL('../src/features/neighborhood/components/CustomNeighborhoodAcceptedSummary.tsx', import.meta.url)).default;
 const render = value => renderToStaticMarkup(React.createElement(Summary, { assessment: value }));

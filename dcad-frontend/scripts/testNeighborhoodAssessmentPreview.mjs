@@ -1,43 +1,21 @@
 import assert from 'node:assert/strict';
-import test, { after } from 'node:test';
+import test from 'node:test';
 import { createRequire } from 'node:module';
-import { readFileSync, writeFileSync, mkdtempSync, rmSync } from 'node:fs';
-import { tmpdir } from 'node:os';
-import { resolve, join, sep } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
 import { makeNeighborhoodAssessmentPreviewFixture as fixture } from './fixtures/neighborhoodAssessmentPreviewFixture.mjs';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-// Only the two new local modules are transpiled. Existing installed runtime
-// packages are resolved normally; no build, network, browser or server import.
-const frontend = fileURLToPath(new URL('../', import.meta.url));
-const requireRuntime = createRequire(join(frontend, 'package.json'));
-const ts = requireRuntime('typescript');
+// Only the two new local modules are loaded by the trusted repository harness.
+// Existing installed runtime packages are resolved normally; no build,
+// network, browser or server import.
+const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const React = requireRuntime('react');
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
-const scratchParent = resolve(tmpdir());
-const scratch = mkdtempSync(join(scratchParent, 'homenode-preview-test-'));
-after(() => {
-  assert.ok(resolve(scratch).startsWith(scratchParent + sep));
-  assert.ok(resolve(scratch).split(sep).at(-1).startsWith('homenode-preview-test-'));
-  rmSync(scratch, { recursive: true, force: true });
-});
 function compiled(relative, imports = {}) {
-  const source = readFileSync(join(frontend, relative), 'utf8');
-  const result = ts.transpileModule(source, { fileName: relative, reportDiagnostics: true,
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
-  assert.deepEqual((result.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error), []);
-  const output = join(scratch, relative.split('/').at(-1).replace(/\.tsx?$/, '.cjs'));
-  writeFileSync(output, result.outputText);
-  const module = { exports: {} };
-  const localRequire = name => {
+  return loadTrustedRepositoryCommonJs(new URL(`../${relative}`, import.meta.url), name => {
     if (Object.hasOwn(imports, name)) return imports[name];
     assert.ok(['react', 'react/jsx-runtime'].includes(name), `Unexpected preview dependency: ${name}`);
     return requireRuntime(name);
-  };
-  new Script(`(function(require,module,exports){\n${result.outputText}\n})`, { filename: output })
-    .runInThisContext()(localRequire, module, module.exports);
-  return module.exports;
+  });
 }
 const model = compiled('src/features/neighborhood/neighborhoodPreviewModel.ts');
 const Component = compiled('src/features/neighborhood/components/NeighborhoodAssessmentPreview.tsx', {

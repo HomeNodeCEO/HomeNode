@@ -2,20 +2,16 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
+const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 function component(name) {
-  const file = fileURLToPath(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url));
-  const source = readFileSync(file, 'utf8'), code = ts.transpileModule(source, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-  }).outputText;
-  const module = { exports: {} };
+  const file = new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url);
+  const source = readFileSync(file, 'utf8');
   // Only the public keyed wrapper executes. Child effects/transport are not run.
-  new Script(`(function(require,module,exports){${code}\n})`, { filename: file }).runInThisContext()(id =>
-    id === 'react/jsx-runtime' ? requireRuntime(id) : id === 'react' ? { useMemo: factory => factory() } : {}, module, module.exports);
-  return { Component: module.exports.default, source };
+  const loaded = loadTrustedRepositoryCommonJs(file, id =>
+    id === 'react/jsx-runtime' ? requireRuntime(id) : id === 'react' ? { useMemo: factory => factory() } : {});
+  return { Component: loaded.default, source };
 }
 const contextRef = { context_id: 'same-context', context_revision: '1', context_sha256: 'same-hash' };
 const props = () => ({ enabled: true, sessionKey: 'session', accountId: 'A', assignmentFileId: '17', contextRef,

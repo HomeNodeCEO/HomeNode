@@ -1,22 +1,14 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as discovery from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const ts = createRequire(new URL('../package.json', import.meta.url))('typescript');
 function compile(name, imports) {
-  const file = new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url);
-  const result = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-  } }), module = { exports: {} };
-  new Script(`(function(require,module,exports){${result.outputText}\n})`).runInThisContext()(key => {
+  return loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url), key => {
     assert.ok(Object.hasOwn(imports, key), key); return imports[key];
-  }, module, module.exports);
-  return module.exports;
+  });
 }
 const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalog,
   './customWorkspaceDiscovery.ts': discovery });

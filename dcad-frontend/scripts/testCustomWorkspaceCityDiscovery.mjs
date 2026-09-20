@@ -1,12 +1,10 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as discoveryHelpers from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
 import { privateSalesSummaryFixture } from './fixtures/customPrivateSalesSummaryFixture.mjs';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint as serverPrepare,
   readCustomNeighborhoodWorkspaceCheckpoint as serverRead } from '../../server/src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js';
 import { prepareCustomCityDiscoveryChoice as serverCity } from '../../server/src/services/neighborhoodAssessment/customCityDiscovery.js';
@@ -16,18 +14,10 @@ import { buildCustomCohortPocketRecommendation } from '../../server/src/services
 import { presentCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { presentCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 
-const ts = createRequire(new URL('../package.json', import.meta.url))('typescript');
 function compile(name, imports) {
-  const file = fileURLToPath(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url));
-  const result = ts.transpileModule(readFileSync(file, 'utf8'), {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }, reportDiagnostics: true,
-  });
-  assert.equal((result.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0);
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){${result.outputText}\n})`, { filename: file }).runInThisContext()(key => {
+  return loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url), key => {
     assert.ok(Object.hasOwn(imports, key), `unexpected dependency: ${key}`); return imports[key];
-  }, module, module.exports);
-  return module.exports;
+  });
 }
 const checkpoint = compile('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers,
   './customWorkspaceDiscovery.ts': discoveryHelpers });

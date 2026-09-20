@@ -97,6 +97,19 @@ class WorkerSchedulingTests(unittest.TestCase):
         for name in ("verify_state_schema", "bootstrap_existing_successes", "target_account_count"):
             self.stack.enter_context(patch.object(worker, name, return_value=0))
         self.stack.enter_context(patch.object(worker, "campaign_status", return_value={}))
+        self.stack.enter_context(
+            patch.object(worker, "seed_parser_canaries", return_value=0)
+        )
+        self.stack.enter_context(
+            patch.object(worker, "claim_due_parser_canary", return_value=None)
+        )
+        self.stack.enter_context(
+            patch.object(
+                worker,
+                "parser_canary_status",
+                return_value={"blocked": False},
+            )
+        )
         self.sleep = self.stack.enter_context(patch.object(worker, "_sleep"))
         self.advance = self.stack.enter_context(patch.object(
             worker, "advance_campaign_if_complete", return_value=None

@@ -60,6 +60,10 @@ jobs:
       - run: npm run quality:source
       - run: npm run build:checked
       - run: npm test
+      - name: Verify rendered Property Report section order
+        run: |
+          npm install --no-save --package-lock=false --ignore-scripts playwright@1.57.0
+          npm run test:browser:property-report-layout
 
   uad-migration:
     runs-on: ubuntu-latest

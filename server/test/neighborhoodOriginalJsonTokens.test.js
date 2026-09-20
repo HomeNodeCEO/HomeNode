@@ -181,6 +181,14 @@ test('numeric and Unicode helper admission cannot invoke supplied objects', () =
   assert.equal(touched, 0);
   assert.equal(bytes('aé€😀'), 10);
 });
+test('Unicode byte measurement enforces its fixed cap across code-point widths', () => {
+  const exactAstral = '😀'.repeat(ORIGINAL_JSON_TOKEN_LIMITS.input_bytes / 4);
+  assert.equal(bytes(exactAstral), ORIGINAL_JSON_TOKEN_LIMITS.input_bytes);
+  failure(() => bytes(exactAstral + 'a'), 'limit_exceeded', 'input_bytes');
+  for (const surrogate of ['\ud800', '\udfff', '\ud800x', '\udfff\ud800']) {
+    failure(() => bytes(surrogate), 'unsupported', 'invalid_unicode');
+  }
+});
 test('foreign failures, revoked proxies and Error getters cannot spoof private metadata', () => {
   let touched = 0;
   const foreign = new Error('private input');

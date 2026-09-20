@@ -1,19 +1,28 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import ts from 'typescript';
 import { marketAreaOriginFromSource, resolveInitialMarketAreaGeometry } from '../src/lib/marketAreaGeometry.ts';
+import { executeTrustedRepositoryExpression, readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
 // Execute the actual trusted local handler body with controlled callbacks. This
 // verifies origin and side-effect wiring, not browser interaction or saved-source
 // authority. Geometry validation/admission remains with its existing owner.
-const source = readFileSync(new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const start = source.indexOf('  const handleCustomGeometryChange = useCallback((');
-const bodyStart = source.indexOf('  ) => {', start) + '  ) => {'.length;
-const end = source.indexOf('\n  }, [\n    applyGeneratedBoundary,', bodyStart);
-assert.ok(start >= 0 && bodyStart > start && end > bodyStart, 'actual boundary-change handler remains present');
-const handler = new Function('bindings', 'geometry', 'origin', `const {
-  generatedBoundary, applyGeneratedBoundary, onAssignmentChange, setGeneratedBoundaryMessage
-} = bindings; ${source.slice(bodyStart, end)}`);
+const { text: source, ast } = readTrustedRepositoryTypeScript(
+  new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url),
+);
+const handlers = [];
+function findHandler(node) {
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'handleCustomGeometryChange') handlers.push(node);
+  ts.forEachChild(node, findHandler);
+}
+findHandler(ast);
+assert.equal(handlers.length, 1, 'actual boundary-change handler remains present exactly once');
+assert.ok(handlers[0].initializer, 'boundary-change handler remains initialized');
+const handlerExpression = handlers[0].initializer;
+const handler = (bindings, geometryValue, origin) => executeTrustedRepositoryExpression(handlerExpression, {
+  useCallback: callback => callback,
+  ...bindings,
+})(geometryValue, origin);
 const geometry = { type: 'Polygon', coordinates: [[[-96.7, 32.8], [-96.69, 32.8], [-96.69, 32.81], [-96.7, 32.8]]] };
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
 freeze(geometry);

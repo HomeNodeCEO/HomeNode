@@ -1,37 +1,38 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
+import ts from 'typescript';
 import { automaticBoundaryRestoreState } from '../src/lib/neighborhoodBoundaryRestore.ts';
 import { neighborhoodSelectionStatisticsPatch } from '../src/lib/neighborhoodCharacteristics.ts';
+import {
+  executeTrustedRepositoryStatements,
+  loadTrustedRepositoryCommonJs,
+  readTrustedRepositoryTypeScript,
+} from './trustedRepositoryModuleHarness.mjs';
 
 // Controlled execution of the actual component callback/effect bodies, without
 // JSX or map mounting. These are callback/effect tests, not browser tests.
-const source = readFileSync(new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const start = source.indexOf('  const [landUseAnalysis,');
-const end = source.indexOf('  return (\n    <div className="space-y-3">', start);
-assert.ok(start >= 0 && end > start);
-const body = stripTypeScriptTypes(`function component() { ${source.slice(start, end)} }`).slice('function component() {'.length, -1);
-const safetySource = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/useNeighborhoodRequestSafety.ts', import.meta.url), 'utf8'));
-const safetyBody = safetySource.slice(safetySource.indexOf('function analyticalContext')).replace('export function useNeighborhoodRequestSafety', 'function useNeighborhoodRequestSafety');
-const createComponent = new Function('bindings', `const {
-  useState, useRef, useMemo, useCallback, useEffect, useLayoutEffect,
-  getNeighborhoodBoundary, runNeighborhoodBoundaryGeneration, runNeighborhoodRelevanceGeneration, runNeighborhoodLandUseAnalysis,
-  automaticBoundaryRestoreState, applyPocketOverrides, recommendPocketSelection, summarizePockets,
-  neighborhoodBoundaryReadinessErrors, parseNumber, determineNeighborhoodValuePosition,
-  calculateNeighborhoodRepresentativeness, hasSavedNeighborhoodLandUseProfile, neighborhoodSelectionStatisticsPatch
-} = bindings;
-${safetyBody}
-return function render({ accountId, assignmentFileId, assignmentDraft, marketConditionsDraft, automaticAnalysisEnabled = true,
-  onAssignmentChange: onParentAssignmentChange, onBoundarySuggestionsChange }) {
-  const DISCOVERY_ENVELOPE_METHODOLOGY_VERSION = 6;
-  const valuePositionContext = { concludedValue: null };
-  ${body}
-  return { generateSuggestedBoundary, analyzeRelevantPropertyDataset, analyzePresentLandUse, handleCustomGeometryChange,
-    setPocketIncluded, resetPocketOverrides, applyRecommendedPocketSelection,
-    generatedBoundary, generatedBoundaryLoading, generatedBoundaryMessage,
-    relevanceAssessment, relevanceLoading, relevanceMessage };
-}`);
+const { ast } = readTrustedRepositoryTypeScript(
+  new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url),
+);
+const components = [];
+function findComponent(node) {
+  if (ts.isFunctionDeclaration(node) && node.name?.text === 'NeighborhoodCharacteristicsContent') components.push(node);
+  ts.forEachChild(node, findComponent);
+}
+findComponent(ast);
+assert.equal(components.length, 1, 'neighborhood component exists exactly once');
+const statements = [...components[0].body.statements];
+const start = statements.findIndex(statement => ts.isVariableStatement(statement)
+  && statement.declarationList.declarations.some(declaration => declaration.name.getText(ast).includes('landUseAnalysis')));
+const end = statements.findIndex((statement, index) => index > start && ts.isReturnStatement(statement));
+assert.ok(start >= 0 && end > start, 'component callback/effect statements remain available');
+const harnessStatements = statements.slice(start, end);
+const resultNames = [
+  'generateSuggestedBoundary', 'analyzeRelevantPropertyDataset', 'analyzePresentLandUse', 'handleCustomGeometryChange',
+  'setPocketIncluded', 'resetPocketOverrides', 'applyRecommendedPocketSelection',
+  'generatedBoundary', 'generatedBoundaryLoading', 'generatedBoundaryMessage',
+  'relevanceAssessment', 'relevanceLoading', 'relevanceMessage',
+];
 const geometry = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
 const editedGeometry = { type: 'Polygon', coordinates: [[[0, 0], [2, 0], [2, 2], [0, 0]]] };
 const draft = {
@@ -62,13 +63,20 @@ function harness({ automatic = false, initialDraft = draft, automaticAnalysisEna
       if (!isAutomatic || automatic) effects.push(() => { previous?.cleanup?.(); slots[i].cleanup = callback(); });
     }
   };
-  const component = createComponent({
+  const react = {
     useState: initial => { const i = cursor++; slots[i] ||= { value: initial };
       return [slots[i].value, value => { slots[i].value = typeof value === 'function' ? value(slots[i].value) : value; }]; },
     useRef: value => { const i = cursor++; return slots[i] ||= { current: value }; },
     useMemo: (callback, deps) => { const i = cursor++; if (!slots[i] || !equal(deps, slots[i].deps)) slots[i] = { deps, value: callback() }; return slots[i].value; },
     useCallback: (callback, deps) => { const i = cursor++; if (!slots[i] || !equal(deps, slots[i].deps)) slots[i] = { deps, value: callback }; return slots[i].value; },
     useEffect: effect('passive'), useLayoutEffect: effect('layout'),
+  };
+  const { useNeighborhoodRequestSafety } = loadTrustedRepositoryCommonJs(
+    new URL('../src/hooks/useNeighborhoodRequestSafety.ts', import.meta.url),
+    name => { assert.equal(name, 'react'); return react; },
+  );
+  const bindings = {
+    ...react,
     getNeighborhoodBoundary: request('lookup'), runNeighborhoodBoundaryGeneration: request('boundary'), runNeighborhoodRelevanceGeneration: request('relevance'),
     runNeighborhoodLandUseAnalysis: request('land-use'),
     automaticBoundaryRestoreState, neighborhoodSelectionStatisticsPatch,
@@ -80,7 +88,22 @@ function harness({ automatic = false, initialDraft = draft, automaticAnalysisEna
     recommendPocketSelection: () => ({ removedSystemPocketIds: ['recommended'], recommendedPocketIds: [], recommendedPocketCount: 1 }),
     summarizePockets: () => [], neighborhoodBoundaryReadinessErrors: () => [], parseNumber: () => null,
     determineNeighborhoodValuePosition: () => ({ ready: false }), calculateNeighborhoodRepresentativeness: () => ({}), hasSavedNeighborhoodLandUseProfile: () => savedLandUse,
-  });
+    useNeighborhoodRequestSafety,
+  };
+  const component = ({ accountId, assignmentFileId, assignmentDraft, marketConditionsDraft,
+    automaticAnalysisEnabled: enabled = true, onAssignmentChange, onBoundarySuggestionsChange }) =>
+    executeTrustedRepositoryStatements(harnessStatements, {
+      ...bindings,
+      accountId,
+      assignmentFileId,
+      assignmentDraft,
+      marketConditionsDraft,
+      automaticAnalysisEnabled: enabled,
+      onParentAssignmentChange: onAssignmentChange,
+      onBoundarySuggestionsChange,
+      DISCOVERY_ENVELOPE_METHODOLOGY_VERSION: 6,
+      valuePositionContext: { concludedValue: null },
+    }, resultNames);
   const onAssignmentChange = (key, value) => { assignments.push([options.assignmentFileId, key, value]); currentDraft = { ...currentDraft, [key]: value }; };
   const onBoundarySuggestionsChange = value => suggestions.push(value);
   const render = (updates = {}, flushEffects = true) => {

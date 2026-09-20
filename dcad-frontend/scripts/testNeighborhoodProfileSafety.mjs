@@ -1,19 +1,6 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
-
-// Execute the trusted local hook with controlled React primitives/promises.
-// This is hook/effect-level regression coverage, not a browser/render test.
-const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/useNeighborhoodProfile.ts', import.meta.url), 'utf8'));
-const bodyStart = source.indexOf('function profileSignature(');
-assert.ok(bodyStart >= 0, 'profile helper and hook remain available');
-const createHook = new Function('bindings', `const {
-  useState, useRef, useCallback, useEffect, getNeighborhoodProfile,
-  DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE, marketTrendFromChange,
-  retainCurrentDraftWhenUnchanged, cloneEditorValue, hasValue, window
-} = bindings; ${source.slice(bodyStart).replace('export function useNeighborhoodProfile', 'function useNeighborhoodProfile')}
-return useNeighborhoodProfile;`);
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const geometry = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
 const differentGeometry = { type: 'Polygon', coordinates: [[[0, 0], [2, 0], [2, 2], [0, 0]]] };
@@ -46,7 +33,7 @@ function harness(draft = ordinary, extraOptions = {}) {
   const equal = (a, b) => a?.length === b?.length && a.every((item, index) => Object.is(item, b[index]));
   const slot = () => cursor++;
   const setAssignmentDraft = update => { currentDraft = typeof update === 'function' ? update(currentDraft) : update; };
-  const hook = createHook({
+  const react = {
     useRef: value => { const i = slot(); return slots[i] ||= { current: value }; },
     useState: initial => { const i = slot(); if (!slots[i]) slots[i] = { value: initial };
       return [slots[i].value, next => { slots[i].value = typeof next === 'function' ? next(slots[i].value) : next; if (typeof next === 'string') messages.push(next); }]; },
@@ -55,12 +42,29 @@ function harness(draft = ordinary, extraOptions = {}) {
       const previous = slots[i]; slots[i] = { deps, cleanup: previous?.cleanup };
       effects.push(() => { previous?.cleanup?.(); slots[i].cleanup = effect(); });
     } },
-    getNeighborhoodProfile: (...args) => new Promise((resolve, reject) => requests.push({ args, resolve, reject })),
-    DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE: 'Default narrative', marketTrendFromChange: () => 'stable',
-    retainCurrentDraftWhenUnchanged: (a, b) => JSON.stringify(a) === JSON.stringify(b) ? a : b,
-    cloneEditorValue: structuredClone, hasValue: value => value !== '' && value !== null && value !== undefined,
-    window: { setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout: () => {} },
-  });
+  };
+  const dependencies = {
+    react,
+    '@/lib/api': { getNeighborhoodProfile: (...args) => new Promise((resolve, reject) => requests.push({ args, resolve, reject })) },
+    '@/lib/neighborhoodCharacteristics': {
+      DEFAULT_NEIGHBORHOOD_BOUNDARY_NARRATIVE: 'Default narrative', marketTrendFromChange: () => 'stable',
+    },
+    '@/lib/customAppraisalAutosave': {
+      retainCurrentDraftWhenUnchanged: (a, b) => JSON.stringify(a) === JSON.stringify(b) ? a : b,
+    },
+    '@/lib/propertyReportAssignment': { cloneEditorValue: structuredClone },
+    '@/lib/propertyReportPresentation': { hasValue: value => value !== '' && value !== null && value !== undefined },
+  };
+  const { useNeighborhoodProfile: hook } = loadTrustedRepositoryCommonJs(
+    new URL('../src/hooks/useNeighborhoodProfile.ts', import.meta.url),
+    name => {
+      assert.ok(Object.hasOwn(dependencies, name), `Unexpected runtime import: ${name}`);
+      return dependencies[name];
+    },
+    { environment: { window: {
+      setTimeout: callback => { timers.push(callback); return timers.length; }, clearTimeout: () => {},
+    } } },
+  );
   let options = { accountId: 'account', assignmentFileId: 12, customMarketStudy: null,
     marketConditionsDraft: { asOfDate: '2026-09-01', periodMonths: 12, savedAt: 'version-one' },
     sectionReady: false, assignmentFilesLoading: false, assignmentFilesLoaded: true, ...extraOptions };

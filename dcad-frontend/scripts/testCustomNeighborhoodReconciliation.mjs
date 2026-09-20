@@ -1,9 +1,9 @@
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
-import { stripTypeScriptTypes } from 'node:module';
 import test from 'node:test';
 import { applyCustomAppraisalRemoteConflicts, reconcileCustomAppraisalDraft } from '../src/lib/customAppraisalAutosave.ts';
 import { assignmentDraftFromDetail } from '../src/lib/propertyReportAssignment.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const base = {
   neighborhood_boundary_geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [0, 1], [0, 0]]] },
@@ -163,13 +163,18 @@ test('pending ordinary field choices also survive an unrelated document update',
 });
 
 test('pending-choice state is visible to asynchronous approval before the next render', () => {
-  // Execute the trusted local hook body with controlled React primitives. The
-  // state setter is deliberately queued, so only the synchronous ref is current.
-  const source = stripTypeScriptTypes(readFileSync(new URL('../src/hooks/useAssignmentConflictKeys.ts', import.meta.url), 'utf8'));
-  const body = source.slice(source.indexOf('export function')).replace('export function', 'function');
-  const load = new Function('useState', 'useRef', 'useCallback', `${body}; return useAssignmentConflictKeys;`);
   const queued = [];
-  const hook = load(initial => [initial, value => queued.push(value)], initial => ({ current: initial }), callback => callback);
+  const { useAssignmentConflictKeys: hook } = loadTrustedRepositoryCommonJs(
+    new URL('../src/hooks/useAssignmentConflictKeys.ts', import.meta.url),
+    name => {
+      assert.equal(name, 'react');
+      return {
+        useState: initial => [initial, value => queued.push(value)],
+        useRef: initial => ({ current: initial }),
+        useCallback: callback => callback,
+      };
+    },
+  );
   const [displayed, setKeys, ref] = hook();
   const pending = ['neighborhood_sale_count'];
   setKeys(pending);

@@ -16,10 +16,12 @@ test('dense first-open full union of 39700 stock and 2500 sales preserves exact 
   // original calculations. Production receives no override and keeps 500000.
   const expected=legacy(args,2000000),actual=indexed(args);
   assert.equal(expected.work.member_work,521400);
-  assert.equal(actual.work.member_work,288200);
+  assert.equal(actual.work.member_work,233500);
   assert.ok(actual.work.member_work<L.member_work);
   const {work:oldWork,...oldOutput}=expected,{work:newWork,...newOutput}=actual;
   assert.deepEqual(newOutput,oldOutput,'all observations/statistics/provenance/indices and support gaps remain exact');
+  assert.notStrictEqual(actual.selected,actual.pockets[0].result,
+    'the selected and pocket populations remain separately owned envelopes');
   assert.equal(newWork.source_records,oldWork.source_records);
   assert.equal(newWork.measurement_values,oldWork.measurement_values);
   assert.equal(newWork.output_utf8_bytes_bound,oldWork.output_utf8_bytes_bound);

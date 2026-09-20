@@ -66,10 +66,14 @@ function expectedIndexedMemberWork(old, next) {
   const linkVisits = old.work.member_work - oldOccurrences;
   assert.ok(linkVisits >= 0, 'construction link traversal remains charged');
   const tables = Object.values(next.member_tables), views = populations(next);
+  const selectedAlias = next.pockets.length === 1
+    && next.pockets[0].result.account_ids.length === next.selected.account_ids.length
+    && next.pockets[0].result.account_ids.every((id, index) => id === next.selected.account_ids[index]);
+  const scannedViews = selectedAlias ? views.slice(0, 2) : views;
   const refs = tables.flat().reduce((n, row) => n + row.source_references.length + (row.associated_account_ids?.length ?? 0), 0);
-  const candidates = views.length * tables.reduce((n, rows) => n + rows.length, 0);
+  const candidates = scannedViews.length * tables.reduce((n, rows) => n + rows.length, 0);
   let associations = 0;
-  for (const population of views) {
+  for (const population of scannedViews) {
     const chosen = new Set(population.account_ids);
     if (population !== next.all) for (const row of [...next.member_tables.transactions, ...next.member_tables.source_reported]) {
       for (const id of row.associated_account_ids) { associations++; if (chosen.has(id)) break; }

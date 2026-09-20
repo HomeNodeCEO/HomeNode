@@ -33,17 +33,17 @@ export function measureOriginalUnicodeBytes(text) {
   if (arguments.length !== 1 || typeof text !== 'string') stop('invalid_input', 'invalid_argument');
   if (text.length > LIMITS.input_bytes) limit('input_bytes');
   let bytes = 0;
-  for (let i = 0; i < text.length; i++) {
-    const code = text.charCodeAt(i);
+  // Iterate Unicode scalars only after the fixed UTF-16 admission cap. This
+  // avoids using an attacker-controlled property as a loop bound while still
+  // rejecting the lone surrogates that PostgreSQL cannot store losslessly.
+  for (const character of text) {
+    const code = character.codePointAt(0);
     if (code === 0) unsupported('invalid_unicode');
     if (code < 0x80) bytes++;
     else if (code < 0x800) bytes += 2;
-    else if (code >= 0xd800 && code <= 0xdbff) {
-      const next = text.charCodeAt(++i);
-      if (!(next >= 0xdc00 && next <= 0xdfff)) unsupported('invalid_unicode');
-      bytes += 4;
-    } else if (code >= 0xdc00 && code <= 0xdfff) unsupported('invalid_unicode');
-    else bytes += 3;
+    else if (code >= 0xd800 && code <= 0xdfff) unsupported('invalid_unicode');
+    else if (code <= 0xffff) bytes += 3;
+    else bytes += 4;
     if (bytes > LIMITS.input_bytes) limit('input_bytes');
   }
   return bytes;

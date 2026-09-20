@@ -23,8 +23,16 @@ export async function readBoundedResponseBuffer(response, {
     throw new Error(tooLargeCode);
   }
 
-  const reader = response?.body?.getReader?.();
-  if (!reader) throw new Error(unavailableCode);
+  const body = response?.body;
+  if (!body || response?.bodyUsed || body.locked || typeof body.getReader !== "function") {
+    throw new Error(unavailableCode);
+  }
+  let reader;
+  try {
+    reader = body.getReader();
+  } catch {
+    throw new Error(unavailableCode);
+  }
   let buffer = Buffer.allocUnsafe(Math.max(
     1,
     Math.min(maximumBytes, advertisedBytes || 64 * 1024),

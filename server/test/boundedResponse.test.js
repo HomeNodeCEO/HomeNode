@@ -70,3 +70,46 @@ test("bounded response refuses missing streams and invalid limits", async () => 
     { message: "invalid_response_byte_limit" },
   );
 });
+
+test("bounded response normalizes consumed and locked body failures", async () => {
+  const consumed = new Response("already read");
+  await consumed.text();
+  await assert.rejects(
+    () => readBoundedResponseBuffer(consumed, {
+      maximumBytes: 32,
+      unavailableCode: "fixture_unavailable",
+    }),
+    { message: "fixture_unavailable" },
+  );
+
+  const locked = new Response("locked");
+  const reader = locked.body.getReader();
+  try {
+    await assert.rejects(
+      () => readBoundedResponseBuffer(locked, {
+        maximumBytes: 32,
+        unavailableCode: "fixture_unavailable",
+      }),
+      { message: "fixture_unavailable" },
+    );
+  } finally {
+    await reader.cancel();
+    reader.releaseLock();
+  }
+
+  await assert.rejects(
+    () => readBoundedResponseBuffer({
+      bodyUsed: false,
+      body: {
+        locked: false,
+        getReader() {
+          throw new TypeError("synthetic reader acquisition failure");
+        },
+      },
+    }, {
+      maximumBytes: 32,
+      unavailableCode: "fixture_unavailable",
+    }),
+    { message: "fixture_unavailable" },
+  );
+});

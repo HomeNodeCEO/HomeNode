@@ -1,32 +1,25 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as discoveryHelpers from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { prepareCustomNeighborhoodWorkspaceCheckpoint as serverPrepare,
   readCustomNeighborhoodWorkspaceCheckpoint as serverRead,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION as serverSection,
   CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS as serverLimits } from '../../server/src/services/neighborhoodAssessment/customWorkspaceCheckpoint.js';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
-const file = fileURLToPath(new URL('../src/features/neighborhood/customWorkspaceCheckpoint.ts', import.meta.url));
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS }, reportDiagnostics: true,
-});
-assert.equal((compiled.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0);
-const module = { exports: {} };
-new Script(`(function(require,module,exports){${compiled.outputText}\n})`, { filename: file }).runInThisContext()(name => {
-  if (name === './customWorkspaceDiscovery.ts') return discoveryHelpers;
-  assert.equal(name, './customCohortPocketCatalog', 'checkpoint helpers cannot import persistence or authentication');
-  return catalogHelpers;
-}, module, module.exports);
+const checkpointModule = loadTrustedRepositoryCommonJs(
+  new URL('../src/features/neighborhood/customWorkspaceCheckpoint.ts', import.meta.url),
+  name => {
+    if (name === './customWorkspaceDiscovery.ts') return discoveryHelpers;
+    assert.equal(name, './customCohortPocketCatalog', 'checkpoint helpers cannot import persistence or authentication');
+    return catalogHelpers;
+  },
+);
 const { prepareCustomWorkspaceCheckpoint: prepare, readCustomWorkspaceCheckpoint: read,
   hasValidCustomWorkspaceObservationPeriod: validPeriod,
   restoreCustomWorkspaceSelection: restore, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION: sectionKey,
-  CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS: limits } = module.exports;
+  CUSTOM_NEIGHBORHOOD_WORKSPACE_CHECKPOINT_LIMITS: limits } = checkpointModule;
 const UUID = '10000000-0000-4000-8000-000000000001', OTHER_UUID = '10000000-0000-4000-8000-000000000002';
 const groupId = n => `recorded-cad:${n.toString(16).padStart(64, '0')}`;
 const UNASSIGNED = 'discovery:unassigned';
@@ -83,9 +76,9 @@ test('v5 admits 1024 exact recorded IDs plus unresolved with frontend/backend pa
 });
 
 test('v6 admits all 2048 recorded IDs plus unresolved without enlarging v5 or legacy contracts', () => {
-  assert.deepEqual(module.exports.CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS,
+  assert.deepEqual(checkpointModule.CUSTOM_NEIGHBORHOOD_DENSE_WORKSPACE_CHECKPOINT_LIMITS,
     { canonical_utf8_bytes: 131072, group_ids: 1025, recorded_group_ids: 1024 });
-  assert.deepEqual(module.exports.CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS,
+  assert.deepEqual(checkpointModule.CUSTOM_NEIGHBORHOOD_V6_WORKSPACE_CHECKPOINT_LIMITS,
     { canonical_utf8_bytes: 262144, group_ids: 2049, recorded_group_ids: 2048 });
   const value = fixture(); value.workspace_version = 6;
   value.active.selection.included_recorded_group_ids = [...Array.from({ length: 2048 }, (_, i) => groupId(i)), UNASSIGNED];
@@ -101,7 +94,7 @@ test('v6 admits all 2048 recorded IDs plus unresolved without enlarging v5 or le
   value.active.selection.included_recorded_group_ids.push(groupId(2048));
   assert.throws(() => prepare(value)); assert.throws(() => serverPrepare(value));
   for (const [workspace_version, expected] of [[1, 1], [2, 1], [3, 1], [4, 1], [5, 2], [6, 3]]) {
-    assert.equal(module.exports.customWorkspaceCatalogVersion({ workspace_version }), expected);
+    assert.equal(checkpointModule.customWorkspaceCatalogVersion({ workspace_version }), expected);
   }
 });
 
@@ -118,7 +111,7 @@ test('v5 preserves optional legacy/radius/city pending intent; no fabricated dis
 test('legacy whole-unresolved migration retains ALL dense members and explicit empty selection, never a partial named prefix', () => {
   const dense = catalog(); dense.catalog_version = 2;
   dense.pockets = Array.from({ length: 887 }, (_, i) => ({ id: groupId(i), label: `Group ${i}`, county: 'Dallas', account_ids: [`A${i}`], member_count: 1 }));
-  const upgrade = module.exports.upgradeCustomWorkspaceCatalogCheckpoint;
+  const upgrade = checkpointModule.upgradeCustomWorkspaceCatalogCheckpoint;
   for (const included of [[UNASSIGNED], []]) {
     const value = fixture(); value.pending_capture = null; value.active.selection.included_recorded_group_ids = included;
     assert.equal(restore(section(value), dense).reason, 'catalog_version_mismatch');

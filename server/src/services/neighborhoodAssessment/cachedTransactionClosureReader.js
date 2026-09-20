@@ -52,6 +52,38 @@ export const CACHED_TRANSACTION_IDENTITY_ORDER = Object.freeze({
   'link-identities':"(payload->>'source_record_id')::bigint,(payload->>'source_position')::smallint,(payload->>'parcel_sequence')::smallint",
   'legacy-identities':"(payload->>'sale_id')::bigint",
 });
+const CLOSURE_PROJECTIONS=Object.freeze({
+  'source-ids':Object.freeze([CACHED_TRANSACTION_IDENTITY_SQL.source_ids,LARGE_ROSTER_SOURCE_IDS_SQL]),
+  'transaction-identities':Object.freeze([CACHED_TRANSACTION_IDENTITY_SQL.transaction_identities]),
+  'link-identities':Object.freeze([CACHED_TRANSACTION_IDENTITY_SQL.link_identities]),
+  'legacy-identities':Object.freeze([CACHED_TRANSACTION_IDENTITY_SQL.legacy_identities]),
+});
+
+function compileClosureRowPlan(tag,projection,maximum) {
+  if (!Object.hasOwn(CLOSURE_PROJECTIONS,tag) || !CLOSURE_PROJECTIONS[tag].includes(projection)
+    || !Object.hasOwn(CACHED_TRANSACTION_IDENTITY_ORDER,tag)
+    || !Number.isSafeInteger(maximum) || maximum<1) {
+    throw new Error('neighborhood_closure_query_plan_invalid');
+  }
+  const order=CACHED_TRANSACTION_IDENTITY_ORDER[tag];
+  // Module-owned projections and order expressions are closed above. The only
+  // nonconstant fragment is a validated safe-integer byte ceiling.
+  const statement='WITH projected AS MATERIALIZED ('+projection+'), encoded AS ('
+    +'SELECT to_jsonb(projected) AS payload FROM projected) SELECT CASE WHEN octet_length(payload::text)<='
+    +maximum+' THEN payload ELSE NULL END AS payload,octet_length(payload::text) AS row_bytes'
+    +' FROM encoded ORDER BY '+order;
+  return Object.freeze({tag,statement,maximum});
+}
+
+function compileClosureRowPlans(maximum) {
+  return Object.freeze({
+    sourceIdsSmall:compileClosureRowPlan('source-ids',CACHED_TRANSACTION_IDENTITY_SQL.source_ids,maximum),
+    sourceIdsLarge:compileClosureRowPlan('source-ids',LARGE_ROSTER_SOURCE_IDS_SQL,maximum),
+    transactionIdentities:compileClosureRowPlan('transaction-identities',CACHED_TRANSACTION_IDENTITY_SQL.transaction_identities,maximum),
+    linkIdentities:compileClosureRowPlan('link-identities',CACHED_TRANSACTION_IDENTITY_SQL.link_identities,maximum),
+    legacyIdentities:compileClosureRowPlan('legacy-identities',CACHED_TRANSACTION_IDENTITY_SQL.legacy_identities,maximum),
+  });
+}
 export const CACHED_TRANSACTION_SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
   current_setting('transaction_read_only') AS read_only, current_setting('TimeZone') AS timezone,
   transaction_timestamp() < statement_timestamp() AS explicit_transaction,
@@ -145,6 +177,7 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
   for (const [key,value] of Object.entries(limits)) {
     if (!Number.isSafeInteger(value) || value<1 || value>NEIGHBORHOOD_TRANSACTION_CLOSURE_READER_LIMITS[key]) invalid('limits');
   }
+  const rowPlans=compileClosureRowPlans(limits.row_bytes);
   const closureLimits={accounts:limits.accounts,identity_records:limits.identity_records,bytes:limits.bytes};
   const selected=validateCachedTransactionClosure({selected_account_ids:input.selected_account_ids,
     source_revision:input.source_revision,transactions:[],links:[],legacy:[]},{limits:closureLimits});
@@ -174,16 +207,14 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
     if (snapshot && canonicalAssessmentJson(current)!==canonicalAssessmentJson(snapshot)) incomplete('caller_snapshot_changed');
     snapshot=current;
   };
-  const rows=async(tag,sql,values)=>{
+  const rows=async(plan,values)=>{
     // SQL limits projected row bytes before transfer. No arbitrary MLS fields,
     // price, date, characteristics, raw payload, geometry or remarks are read.
-    const result=await query(tag,'WITH projected AS MATERIALIZED ('+sql+'), encoded AS ('
-      +'SELECT to_jsonb(projected) AS payload FROM projected) SELECT CASE WHEN octet_length(payload::text)<='
-      +limits.row_bytes+' THEN payload ELSE NULL END AS payload,octet_length(payload::text) AS row_bytes'
-      +' FROM encoded ORDER BY '+CACHED_TRANSACTION_IDENTITY_ORDER[tag],values);
+    if (!Object.values(rowPlans).includes(plan)) invalid('query_plan');
+    const result=await query(plan.tag,plan.statement,values);
     if (result.length>values.at(-1)) incomplete('database_page_invalid');
     return result.map(row=>{
-      if (!row.payload || !Number.isSafeInteger(row.row_bytes) || row.row_bytes<1 || row.row_bytes>limits.row_bytes) incomplete('row_bytes_limit');
+      if (!row.payload || !Number.isSafeInteger(row.row_bytes) || row.row_bytes<1 || row.row_bytes>plan.maximum) incomplete('row_bytes_limit');
       charge(row.row_bytes); return row.payload;
     });
   };
@@ -213,10 +244,11 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
     // Two separate probes reject autocommit even with RR/RO session defaults.
     await verifySnapshot();await verifySnapshot();
     const n=limits.page_size+1;
-    const sourceIdsSql=selectCachedTransactionSourceIdsSql(selected.selected_account_ids.length);
+    const sourceIdsPlan=selectCachedTransactionSourceIdsSql(selected.selected_account_ids.length)===CACHED_TRANSACTION_IDENTITY_SQL.source_ids
+      ? rowPlans.sourceIdsSmall : rowPlans.sourceIdsLarge;
     let after='0';
     while (true) {
-      const found=await rows('source-ids',sourceIdsSql,[selected.selected_account_ids,after,n]);
+      const found=await rows(sourceIdsPlan,[selected.selected_account_ids,after,n]);
       let previous=after;
       for (const row of found) {
         const id=positiveId(row.source_record_id);
@@ -227,7 +259,7 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
       if (ids.length) {
         counts.source_records+=ids.length;
         if (counts.source_records>limits.identity_records) incomplete('identity_limit');
-        const identities=await rows('transaction-identities',CACHED_TRANSACTION_IDENTITY_SQL.transaction_identities,[ids,ids.length+1]);
+        const identities=await rows(rowPlans.transactionIdentities,[ids,ids.length+1]);
         // Preserve the reader's canonical one-sale-per-source gate. The general
         // closure validator's broader syntax is not permission to truncate here.
         const foundIds=new Set(identities.map(row=>row.source_record_id));
@@ -236,7 +268,7 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
         for (const row of identities) retain('transactions',row);
         let cursor=['0',0,0];
         while (true) {
-          const links=await rows('link-identities',CACHED_TRANSACTION_IDENTITY_SQL.link_identities,[ids,...cursor,n]);
+          const links=await rows(rowPlans.linkIdentities,[ids,...cursor,n]);
           let previousCursor=cursor;
           for (const row of links) {
             const next=linkCursor(row);
@@ -254,7 +286,7 @@ export async function resolveNeighborhoodCachedTransactionClosure(client,input,o
     }
     after='0';
     while (true) {
-      const legacy=await rows('legacy-identities',CACHED_TRANSACTION_IDENTITY_SQL.legacy_identities,[selected.selected_account_ids,after,n]);
+      const legacy=await rows(rowPlans.legacyIdentities,[selected.selected_account_ids,after,n]);
       let previous=after;
       for (const row of legacy) {
         const id=positiveId(row.sale_id);

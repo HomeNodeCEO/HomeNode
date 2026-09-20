@@ -9,6 +9,15 @@ import { consumeNeighborhoodCachedReadAccess } from '../src/services/neighborhoo
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { ASSESSMENT_SCOPE } from './fixtures/neighborhoodAssessmentFixture.js';
 
+const closureReaderSource=readFileSync(new URL('../src/services/neighborhoodAssessment/cachedTransactionClosureReader.js',import.meta.url),'utf8');
+
+test('closure projected-row execution accepts only closed query plans, never runtime SQL text',()=>{
+  assert.match(closureReaderSource,/const CLOSURE_PROJECTIONS=Object\.freeze\(/);
+  assert.match(closureReaderSource,/if \(!Object\.values\(rowPlans\)\.includes\(plan\)\) invalid\('query_plan'\)/);
+  assert.doesNotMatch(closureReaderSource,/const rows=async\s*\([^)]*\bsql\b/);
+  assert.doesNotMatch(closureReaderSource,/\+sql\+/);
+});
+
 // Query-boundary doubles, not PostgreSQL/MVCC proof. Actual source SQL is shared
 // with the independent reader; native composed acquisition is a separate check.
 const transaction=(id,primary,sale=null,saleAccount=null)=>({source_record_id:id,sale_id:sale,
@@ -223,4 +232,3 @@ test('shared monotonic deadline/cancellation stop before SQL or after a bounded 
   incomplete(await run(db,request(),{deadline:performance.now()+15}),'duration_limit');
   assert.ok(db.calls.every(call=>call.query_timeout>0&&call.query_timeout<=15));owned(db);
 });
-

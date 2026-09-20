@@ -22,6 +22,13 @@ const source = readFileSync(new URL('../src/services/neighborhoodAssessment/cach
 const tableDeclaration = source.slice(source.indexOf('const TABLES'), source.indexOf('const SQL'));
 const CATALOG = [...tableDeclaration.matchAll(/\['([a-z_]+\.[a-z_]+)', '([^']+)'\]/g)]
   .flatMap(([, relation, columns]) => columns.split(' ').map(column => ({ relation, column })));
+
+test('projected-row execution accepts only closed query plans, never runtime SQL text', () => {
+  assert.match(source,/const ROW_PROJECTIONS=Object\.freeze\(/);
+  assert.match(source,/if \(!Object\.values\(rowPlans\)\.includes\(plan\)\) invalid\('query_plan'\)/);
+  assert.doesNotMatch(source,/const rows=async\s*\([^)]*\bsql\b/);
+  assert.doesNotMatch(source,/WITH projected AS MATERIALIZED \(\$\{sql\}\)/);
+});
 const RUN = '60000000-0000-4000-8000-000000000001';
 const NOW = '2026-09-05T12:00:00.000Z';
 const NOW_PRECISE = '2026-09-05T12:00:00.000000Z';

@@ -281,13 +281,18 @@ def _improvement_table_in_section(soup: BeautifulSoup, phrases: List[str], match
         return None, False
     # Identity, not Tag equality: separate equal-looking headings still delimit
     # sections. Ignore descendants of the selected header (e.g. a linked title).
-    section_titles = set(_MAIN_HEADING_PHRASES + _ADDITIONAL_HEADING_PHRASES + [
-        "land", "owner", "multi-owner", "property location", "legal description",
-        "value summary", "exemptions", "estimated taxes",
-    ])
-    boundaries = {id(h) for h in headings if h is not header and all(p is not header for p in h.parents)
-                  and (h.name not in {"b", "strong", "label"}
-                       or re.sub(r"\s*\([^)]*\)$", "", heading_text(h).lower()) in section_titles)}
+    def is_boundary(h: Tag) -> bool:
+        if h is header or any(parent is header for parent in h.parents):
+            return False
+        if h.name in {"b", "strong", "label"}:
+            # Inline formatting inside a data table is not a section heading.
+            # Outside a table, however, even an unfamiliar title must stop the
+            # scan so a future DCAD section cannot donate its grid to the active
+            # improvement section.
+            return h.find_parent("table") is None
+        return True
+
+    boundaries = {id(h) for h in headings if is_boundary(h)}
     for node in header.find_all_next(True):
         if id(node) in boundaries:
             break
@@ -446,14 +451,17 @@ def _parse_main_improvement_table(soup: BeautifulSoup, mi_tbl: Tag | None) -> Di
 # ------------------------------------------------------------
 
 def _resolve_additional_improvements_table(soup: BeautifulSoup) -> Optional[Tag]:
-    stable = soup.find(id="ResImp1_dgImp")
-    if stable is not None and stable.name == "table" and _is_addl_impr_table(stable):
-        return stable
     table, has_header = _improvement_table_in_section(
         soup, _ADDITIONAL_HEADING_PHRASES, _is_addl_impr_table,
     )
     if has_header:
         return table
+    # The stable grid id remains a useful legacy fallback only when DCAD did
+    # not provide a recognizable section heading. When a heading exists, its
+    # section boundaries own the result even if a later table reuses this id.
+    stable = soup.find(id="ResImp1_dgImp")
+    if stable is not None and stable.name == "table" and _is_addl_impr_table(stable):
+        return stable
     return next((t for t in soup.find_all("table") if _is_addl_impr_table(t)), None)
 
 def parse_additional_improvements(tbl: Tag | None) -> List[Dict[str, Any]]:

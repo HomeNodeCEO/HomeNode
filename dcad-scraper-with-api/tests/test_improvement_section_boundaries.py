@@ -176,6 +176,38 @@ class ImprovementSectionBoundaryTests(unittest.TestCase):
                 self.assertEqual(detail["improvement_sections"]["main"], "explicitly_absent")
                 self.assertEqual(detail["secondary_improvements"][0]["year_built"], 1995)
 
+    def test_unknown_inline_section_titles_prevent_borrowing_later_tables(self):
+        for tag in ("b", "strong", "label"):
+            with self.subTest(tag=tag):
+                unknown = f'<{tag}>Unrecognized Future DCAD Section</{tag}>'
+                detail = parse_detail_html(MAIN_HEADER + NO_MAIN + unknown + MAIN)
+                self.assertEqual(detail["primary_improvements"], {})
+                self.assertEqual(
+                    detail["improvement_sections"]["main"], "explicitly_absent"
+                )
+
+                detail = parse_detail_html(
+                    ADDITIONAL_HEADER + NO_ADDITIONAL + unknown + ADDITIONAL
+                )
+                self.assertEqual(detail["secondary_improvements"], [])
+                self.assertEqual(
+                    detail["improvement_sections"]["additional"],
+                    "explicitly_absent",
+                )
+
+    def test_inline_formatting_inside_data_tables_is_not_a_section_boundary(self):
+        for tag in ("b", "strong", "label"):
+            with self.subTest(tag=tag):
+                formatted = MAIN.replace(
+                    "<th>Living Area</th>",
+                    f"<th><{tag}>Living Area</{tag}></th>",
+                )
+                detail = parse_detail_html(MAIN_HEADER + formatted)
+                self.assertEqual(detail["primary_improvements"]["year_built"], 1989)
+                self.assertEqual(
+                    detail["primary_improvements"]["living_area_sqft"], 1331
+                )
+
     def test_new_evidence_does_not_bypass_other_cleanup_gates_or_clear_genuine_data(self):
         detail = parse_detail_html(page())
         calls = cleanup_fixtures.CleanupPersistenceTests().capture_upsert(detail)

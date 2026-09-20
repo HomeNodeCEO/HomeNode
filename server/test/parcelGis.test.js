@@ -47,6 +47,7 @@ test("fetches one county parcel with a deadline and preserves evidence shape", a
       assert.ok(options.signal instanceof AbortSignal);
       assert.equal(options.signal.aborted, false);
       assert.equal(options.headers.accept, "application/json");
+      assert.equal(options.redirect, "manual");
       return jsonResponse({ features: [PARCEL_FEATURE] });
     },
   });
@@ -92,6 +93,31 @@ test("rejects unsafe configured county GIS URLs before any request", async () =>
     );
   }
   assert.equal(calls, 0);
+});
+
+test("never follows county GIS redirects to cleartext or internal targets", async () => {
+  for (const location of [
+    "http://gis.example.test/query",
+    "https://127.0.0.1/internal",
+  ]) {
+    let calls = 0;
+    await assert.rejects(
+      () => fetchParcelAreaSuggestion({
+        county: "Denton",
+        accountId: "A-1",
+        fetchImpl: async (_url, options) => {
+          calls += 1;
+          assert.equal(options.redirect, "manual");
+          return new Response(null, {
+            status: 302,
+            headers: { location },
+          });
+        },
+      }),
+      /county_gis_http_302/,
+    );
+    assert.equal(calls, 1);
+  }
 });
 
 test("cancels a county GIS response that exceeds the byte ceiling", async () => {

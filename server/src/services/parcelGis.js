@@ -76,6 +76,7 @@ export async function fetchParcelAreaSuggestion({ county, accountId, env = proce
   try {
     response = await fetchImpl(url, {
       headers: { accept: "application/json" },
+      redirect: "manual",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch {

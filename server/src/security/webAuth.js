@@ -14,6 +14,7 @@ const TRANSACTION_COOKIE_OPTIONS = Object.freeze({
 });
 const SAFE_SESSION_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
 const DEFAULT_OIDC_HTTP_TIMEOUT_MS = 5_000;
+const MAX_OIDC_HTTP_RESPONSE_BYTES = 256 * 1024;
 const ORIGINAL_SESSION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const originalSessionAttempts = new WeakMap();
 
@@ -75,6 +76,45 @@ async function fetchWithDeadline(fetchImpl, url, init, timeoutMs, errorCode, con
     return consume ? await consume(response) : response;
   } finally {
     clearTimeout(timer);
+  }
+}
+
+async function readBoundedProviderJson(response) {
+  const contentLength = response.headers?.get?.("content-length")?.trim();
+  if (/^\d+$/.test(contentLength || "") && Number(contentLength) > MAX_OIDC_HTTP_RESPONSE_BYTES) {
+    try {
+      await response.body?.cancel?.();
+    } catch {
+      // The provider response is already rejected; cancellation is best-effort cleanup.
+    }
+    throw new Error("oidc_response_too_large");
+  }
+  if (!response.body || typeof response.body.getReader !== "function") {
+    throw new Error("oidc_response_body_unavailable");
+  }
+
+  const reader = response.body.getReader();
+  const buffer = Buffer.allocUnsafe(MAX_OIDC_HTTP_RESPONSE_BYTES);
+  let bytesRead = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (!(value instanceof Uint8Array)
+        || bytesRead + value.byteLength > MAX_OIDC_HTTP_RESPONSE_BYTES) {
+        try {
+          await reader.cancel();
+        } catch {
+          // The bounded read has already failed; cancellation is best-effort cleanup.
+        }
+        throw new Error("oidc_response_too_large");
+      }
+      buffer.set(value, bytesRead);
+      bytesRead += value.byteLength;
+    }
+    return JSON.parse(buffer.subarray(0, bytesRead).toString("utf8"));
+  } finally {
+    reader.releaseLock();
   }
 }
 
@@ -207,7 +247,7 @@ function authFailureReason(error) {
 async function tokenExchangeFailure(response) {
   let providerCode = "provider_error";
   try {
-    const value = await response.json();
+    const value = await readBoundedProviderJson(response);
     providerCode = safeDiagnostic(value?.error, providerCode);
   } catch {
     // Provider bodies are optional and never copied into logs or client responses.
@@ -403,7 +443,7 @@ export function createWebAuthRouter({
           async (response) => {
             if (!response.ok) throw new Error("oidc_discovery_unavailable");
             try {
-              return await response.json();
+              return await readBoundedProviderJson(response);
             } catch {
               throw new Error("invalid_oidc_discovery");
             }
@@ -487,7 +527,11 @@ export function createWebAuthRouter({
         "token_exchange_unavailable",
         async (response) => {
           if (!response.ok) throw await tokenExchangeFailure(response);
-          return response.json();
+          try {
+            return await readBoundedProviderJson(response);
+          } catch {
+            throw new Error("token_exchange_unavailable");
+          }
         },
       );
       stage = "token_verification";

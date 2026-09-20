@@ -202,6 +202,25 @@ test("browser OIDC discovery stalls fail within the configured deadline", async 
   });
 });
 
+test("browser OIDC discovery rejects an oversized declared response", async () => {
+  let bodyCancelled = false;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "web_auth_unavailable" });
+  }, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        bodyCancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { "content-length": "300000" },
+    }),
+  });
+  assert.equal(bodyCancelled, true);
+});
+
 test("cross-site sessions require an HTTPS frontend and its exact CORS origin", () => {
   const options = {
     pool: { query: async () => ({ rows: [] }) },
@@ -488,4 +507,46 @@ test("token-exchange network stalls return a bounded retryable outage", async ()
     "[web-auth] callback failed stage=token_exchange reason=token_exchange_unavailable",
   ]);
   assert.doesNotMatch(warnings[0], /provider response|secret|one-time-code/);
+});
+
+test("token exchange rejects an oversized streamed success response", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  const warnings = [];
+  let requestCount = 0;
+  let bodyCancelled = false;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    const transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${authorizationUrl.searchParams.get("state")}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 503);
+    assert.deepEqual(await callback.json(), { error: "authentication_unavailable" });
+  }, {
+    logger: { warn(message) { warnings.push(message); } },
+    fetchImpl: async () => {
+      requestCount += 1;
+      if (requestCount === 1) {
+        return new Response(JSON.stringify(discovery), { status: 200 });
+      }
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new Uint8Array(300_000));
+        },
+        cancel() {
+          bodyCancelled = true;
+        },
+      }), { status: 200 });
+    },
+  });
+  assert.equal(bodyCancelled, true);
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=token_exchange reason=token_exchange_unavailable",
+  ]);
 });

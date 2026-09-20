@@ -178,7 +178,9 @@ export function executeTrustedRepositoryFunctionDeclaration(node, environment) {
   );
   const text = sourceText(ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, parsed));
   const keys = environmentKeys(environment);
-  if (keys.some(key => COMMONJS_GLOBALS.has(key))) invalid('environment');
+  if (keys.some(key => COMMONJS_GLOBALS.has(key) || key === 'environment' || key === name)) {
+    invalid('environment');
+  }
   const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
     + `  const { ${keys.join(', ')} } = environment;\n${text}\n  return ${name};\n};\n`;
   const compiled = ts.transpileModule(wrapped, {

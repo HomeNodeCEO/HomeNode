@@ -94,6 +94,10 @@ test('trusted function execution accepts only a registered named declaration and
     /invalid_trusted_repository_module:environment/);
   assert.throws(() => executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], { ...dependencies, require() {} }),
     /invalid_trusted_repository_module:environment/);
+  for (const key of ['environment', 'useAssignmentConflictKeys']) {
+    assert.throws(() => executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], { ...dependencies, [key]: null }),
+      /invalid_trusted_repository_module:environment/);
+  }
 });
 
 test('trusted module loading rejects injected options and unexpected base URL replacement', () => {

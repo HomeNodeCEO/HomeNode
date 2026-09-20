@@ -1,13 +1,13 @@
 import { mkdtempSync, readFileSync, realpathSync, rmdirSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
-import { extname, join, relative, sep } from 'node:path';
+import { extname, isAbsolute, join, relative, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 
 const requireFromHarness = createRequire(import.meta.url);
 const factories = new Map();
-const trustedSourceFiles = new WeakSet();
+const trustedNodes = new WeakMap();
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const MAX_SOURCE_BYTES = 1024 * 1024;
 const MAX_FACTORIES = 256;
@@ -27,7 +27,7 @@ function trustedPath(url) {
   if (!(url instanceof URL) || url.protocol !== 'file:') invalid('source_url');
   const path = realpathSync(fileURLToPath(url));
   const withinRoot = relative(SOURCE_ROOT, path);
-  if (!withinRoot || withinRoot === '..' || withinRoot.startsWith(`..${sep}`)
+  if (!withinRoot || isAbsolute(withinRoot) || withinRoot === '..' || withinRoot.startsWith(`..${sep}`)
     || withinRoot.includes(`${sep}..${sep}`) || !['.ts', '.tsx'].includes(extname(path).toLowerCase())) {
     invalid('source_path');
   }
@@ -39,7 +39,11 @@ export function readTrustedRepositoryTypeScript(url) {
   const text = sourceText(readFileSync(path, 'utf8'));
   const kind = extname(path).toLowerCase() === '.tsx' ? ts.ScriptKind.TSX : ts.ScriptKind.TS;
   const ast = ts.createSourceFile(withinRoot, text, ts.ScriptTarget.Latest, true, kind);
-  trustedSourceFiles.add(ast);
+  function register(node) {
+    trustedNodes.set(node, Object.freeze({ source: text, start: node.getStart(ast), end: node.end }));
+    ts.forEachChild(node, register);
+  }
+  register(ast);
   return Object.freeze({ text, ast });
 }
 
@@ -78,9 +82,9 @@ function loadFactory(javascript) {
  * Node's ordinary, file-backed module loader.
  */
 export function executeTrustedRepositoryExpression(node, environment) {
-  const ast = node?.getSourceFile?.();
-  if (!ast || !trustedSourceFiles.has(ast)) invalid('expression_source');
-  const trustedExpression = sourceText(node.getText(ast));
+  const trusted = node && typeof node === 'object' ? trustedNodes.get(node) : undefined;
+  if (!trusted) invalid('expression_source');
+  const trustedExpression = sourceText(trusted.source.slice(trusted.start, trusted.end));
   const keys = environmentKeys(environment);
   const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
     + `  const { ${keys.join(', ')} } = environment;\n  return (${trustedExpression});\n};\n`;

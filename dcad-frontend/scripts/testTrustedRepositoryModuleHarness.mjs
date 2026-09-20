@@ -23,6 +23,9 @@ test('trusted expression execution requires a node from a verified repository so
   const counterfeit = ts.createSourceFile('counterfeit.ts', `'counterfeit'`, ts.ScriptTarget.Latest, true);
   assert.throws(() => executeTrustedRepositoryExpression(counterfeit.statements[0].expression, {}),
     /invalid_trusted_repository_module:expression_source/);
+  const forged = { getSourceFile: () => ast, getText: () => `'forged'` };
+  assert.throws(() => executeTrustedRepositoryExpression(forged, {}),
+    /invalid_trusted_repository_module:expression_source/);
 });
 
 test('trusted expression execution rejects inherited and accessor environments', () => {

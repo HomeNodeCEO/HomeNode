@@ -2266,9 +2266,19 @@ function AddressHero({
         ) : null}
 
         <div className="mt-5 flex flex-col gap-5">
+          <Suspense fallback={<LazyReportContent label="documents" />}>
+            <AssignmentDocumentCenter
+              accountId={accountId || ""}
+              assignmentFileId={activeAssignmentFile?.id || null}
+              subjectAddress={documentReviewSubjectAddress}
+              getEditorKey={editorKeyForSave}
+              onCustomAssignmentApplied={applyConfirmedDocumentApplication}
+            />
+          </Suspense>
+
           <SummarySection
-            title="Subject Identification"
-            subtitle="Parcel, ownership, and recorded legal information"
+            title="Subject and Assignment"
+            subtitle="Parcel, ownership, recorded legal information, and assignment scope"
             {...sectionEditProps("report.subject_identification")}
             compact
             className="order-1"
@@ -2643,18 +2653,23 @@ function AddressHero({
                 </div>
               </details>
             </div>
-          </SummarySection>
 
-          <SummarySection
-            title="Assignment Details"
-            subtitle={activeAssignmentFile
-              ? `Saving to appraisal file ${activeAssignmentFile.file_number}`
-              : "Choose a file number above to preserve these values as a new assignment"}
-            manuallyVerified={Boolean(activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"])}
-            compact
-            className="order-5"
-          >
-            <div>
+            <div className="mt-4 border-t border-violet-200 pt-4">
+              <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
+                <div>
+                  <h3 className="text-sm font-semibold text-slate-900">Assignment Scope</h3>
+                  <p className="mt-0.5 text-xs text-slate-500">
+                    {activeAssignmentFile
+                      ? `Saving to appraisal file ${activeAssignmentFile.file_number}`
+                      : "Choose a file number above to preserve these values as a new assignment"}
+                  </p>
+                </div>
+                {activeAssignmentFile || detail?.report_manual_values?.["report.assignment_details"] ? (
+                  <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-1 text-xs font-semibold text-emerald-800">
+                    Assignment file linked
+                  </span>
+                ) : null}
+              </div>
               <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
                 <legend className="px-1 text-sm font-semibold text-slate-900">Assignment Type</legend>
                 <p className="mb-2 text-xs text-slate-600">Select every type that applies.</p>
@@ -2710,17 +2725,6 @@ function AddressHero({
               </button>
             </div>
           </SummarySection>
-
-          <Suspense fallback={<LazyReportContent label="documents" className="order-6" />}>
-            <AssignmentDocumentCenter
-              accountId={accountId || ""}
-              assignmentFileId={activeAssignmentFile?.id || null}
-              subjectAddress={documentReviewSubjectAddress}
-              getEditorKey={editorKeyForSave}
-              onCustomAssignmentApplied={applyConfirmedDocumentApplication}
-              className="order-6"
-            />
-          </Suspense>
 
           <div className="order-4 grid grid-cols-1 gap-5">
             <SummarySection

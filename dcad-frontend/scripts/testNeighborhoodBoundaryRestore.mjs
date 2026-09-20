@@ -1,22 +1,31 @@
 import assert from 'node:assert/strict';
-import { readFileSync } from 'node:fs';
 import test from 'node:test';
+import ts from 'typescript';
 import { automaticBoundaryRestoreState } from '../src/lib/neighborhoodBoundaryRestore.ts';
+import { executeTrustedRepositoryExpression, readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
 // Run only this trusted local effect body with controlled promises. This keeps
 // the regression tied to the actual callback wiring without mounting the map.
 // This is effect-level coverage, not a browser/render or persistence test.
-const source = readFileSync(new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url), 'utf8').replace(/\r\n/g, '\n');
-const start = source.indexOf('  useEffect(() => {\n    if (!automaticAnalysisEnabled || !accountId) return;\n    const attemptSignature =');
-const end = source.indexOf('  }, [automaticAnalysisEnabled, accountId, assignmentFileId, begin]);', start);
-assert.ok(start >= 0 && end > start, 'automatic boundary effect exists');
-const effectBody = source.slice(start + '  useEffect(() => {'.length, end);
-const effect = new Function('bindings', `const {
-  accountId, assignmentFileId, automaticAnalysisEnabled, automaticBoundaryAttemptRef, currentBoundaryContextRef, begin,
-  setGeneratedBoundaryLoading, setGeneratedBoundaryMessage, getNeighborhoodBoundary,
-  runNeighborhoodBoundaryGeneration, DISCOVERY_ENVELOPE_METHODOLOGY_VERSION,
-  applyGeneratedBoundaryRef, automaticBoundaryRestoreState
-} = bindings; ${effectBody}`);
+const { ast } = readTrustedRepositoryTypeScript(
+  new URL('../src/components/NeighborhoodCharacteristicsContent.tsx', import.meta.url),
+);
+const effectCallbacks = [];
+const handlerDeclarations = [];
+function findHarnessNodes(node) {
+  if (ts.isCallExpression(node) && node.expression.getText(ast) === 'useEffect'
+    && node.arguments[0]?.getText(ast).includes('const attemptSignature =')) effectCallbacks.push(node.arguments[0]);
+  if (ts.isVariableDeclaration(node) && node.name.getText(ast) === 'handleCustomGeometryChange') {
+    handlerDeclarations.push(node);
+  }
+  ts.forEachChild(node, findHarnessNodes);
+}
+findHarnessNodes(ast);
+assert.equal(effectCallbacks.length, 1, 'automatic boundary effect exists exactly once');
+assert.equal(handlerDeclarations.length, 1, 'boundary-change handler exists exactly once');
+assert.ok(handlerDeclarations[0].initializer, 'boundary-change handler remains initialized');
+const effect = bindings => executeTrustedRepositoryExpression(effectCallbacks[0], bindings)();
+const handlerExpression = handlerDeclarations[0].initializer;
 const geometry = { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [1, 1], [0, 0]]] };
 const suggestion = { id: 7, methodology_version: 6, evidence: { discovery: { candidate_count: 30 } }, boundary: geometry };
 function deferred() {
@@ -147,12 +156,15 @@ test('cancellation prevents follow-on generation and ignores already-pending gen
 });
 
 test('explicit Reset to Suggested Area still deliberately adopts the suggestion', () => {
-  const resetStart = source.indexOf('    if (origin === "automatic" && generatedBoundary) {');
-  const resetEnd = source.indexOf('\n    const now = new Date().toISOString();', resetStart);
-  assert.ok(resetStart >= 0 && resetEnd > resetStart);
-  const reset = new Function('origin', 'generatedBoundary', 'applyGeneratedBoundary', source.slice(resetStart, resetEnd));
   const calls = [];
-  reset('automatic', suggestion, (result, options) => calls.push({ result, options }));
+  const reset = executeTrustedRepositoryExpression(handlerExpression, {
+    useCallback: callback => callback,
+    generatedBoundary: suggestion,
+    applyGeneratedBoundary: (result, options) => calls.push({ result, options }),
+    onAssignmentChange: () => assert.fail('automatic reset must return before assignment writes'),
+    setGeneratedBoundaryMessage: () => assert.fail('automatic reset uses the adoption callback message'),
+  });
+  reset(null, 'automatic');
   assert.equal(calls.length, 1);
   assert.equal(calls[0].result, suggestion);
   assert.equal(calls[0].options.overwriteGeometry, true);

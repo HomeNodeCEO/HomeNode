@@ -4,16 +4,13 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { createRequire } from 'node:module';
-import ts from 'typescript';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 const root = fileURLToPath(new URL('../', import.meta.url));
-const file = `${root}/src/lib/neighborhoodCityReference.ts`;
-const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { fileName: file, reportDiagnostics: true,
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-assert.deepEqual(compiled.diagnostics.filter(item => item.category === ts.DiagnosticCategory.Error), []);
-const compiledExports = {};
-const executeCompiled = new Function('exports', 'require', compiled.outputText);
 const rejectRuntimeImport = name => { throw new Error(`Unexpected runtime import: ${name}`); };
-executeCompiled(compiledExports, rejectRuntimeImport);
+const compiledExports = loadTrustedRepositoryCommonJs(
+  new URL('../src/lib/neighborhoodCityReference.ts', import.meta.url),
+  rejectRuntimeImport,
+);
 const { decodeCityReference, createCityReferenceLoader, showCityReference, hideCityReference } = compiledExports;
 const catalog = JSON.parse(readFileSync(`${root}/src/data/neighborhoodCityBoundaries.json`, 'utf8'));
 const hash = bytes => createHash('sha256').update(bytes).digest('hex');
@@ -145,10 +142,6 @@ for (const boundaryState of ['not drawn', 'cleared while viewing a city']) {
 }
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const componentFile = `${root}/src/components/NeighborhoodCityReferenceControl.tsx`;
-const componentCode = ts.transpileModule(readFileSync(componentFile, 'utf8').replace('import.meta.env.BASE_URL', "'/base/'"), {
-  compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
-}).outputText;
 const children = node => (Array.isArray(node?.props?.children) ? node.props.children : [node?.props?.children]).flat(Infinity);
 const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
 const nodeText = node => typeof node === 'string' || typeof node === 'number' ? String(node)
@@ -166,19 +159,24 @@ function controlHarness(initialMap = referenceMap()) {
       cells[i] = { deps, cleanup: old?.cleanup }; effects.push(() => { cells[i].cleanup?.(); cells[i].cleanup = fn(); });
     } },
   };
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', 'fetch', componentCode)(name => {
-    if (name === 'react') return react;
-    if (name === 'react/jsx-runtime') return requireRuntime(name);
-    if (name === '@/data/neighborhoodCityBoundaries.json') return { default: catalog };
-    assert.equal(name, '@/lib/neighborhoodCityReference');
-    return { ...compiledExports, createCityReferenceLoader(fetcher) {
-      const load = createCityReferenceLoader(fetcher);
-      return entry => { const pending = load(entry); requests.add(pending);
-        void pending.then(() => requests.delete(pending), () => requests.delete(pending)); return pending; };
-    } };
-  }, module, module.exports, (url, options) => new Promise((resolve, reject) => calls.push({ url, options, resolve, reject })));
-  function render(next = props) { props = next; cursor = 0; dirty = false; tree = module.exports.default(props); effects.splice(0).forEach(fn => fn()); }
+  const component = loadTrustedRepositoryCommonJs(
+    new URL('../src/components/NeighborhoodCityReferenceControl.tsx', import.meta.url),
+    name => {
+      if (name === 'react') return react;
+      if (name === 'react/jsx-runtime') return requireRuntime(name);
+      if (name === '@/data/neighborhoodCityBoundaries.json') return { default: catalog };
+      assert.equal(name, '@/lib/neighborhoodCityReference');
+      return { ...compiledExports, createCityReferenceLoader(fetcher) {
+        const load = createCityReferenceLoader(fetcher);
+        return entry => { const pending = load(entry); requests.add(pending);
+          void pending.then(() => requests.delete(pending), () => requests.delete(pending)); return pending; };
+      } };
+    },
+    { baseUrl: '/base/', environment: {
+      fetch: (url, options) => new Promise((resolve, reject) => calls.push({ url, options, resolve, reject })),
+    } },
+  ).default;
+  function render(next = props) { props = next; cursor = 0; dirty = false; tree = component(props); effects.splice(0).forEach(fn => fn()); }
   function flush() { let n = 0; while (dirty) { assert.ok(++n < 15, 'No control render loop'); render(); } }
   const h = { calls, events, map: initialMap,
     render(next) { render(next); flush(); }, get props() { return props; }, get tree() { return tree; }, text: () => nodeText(tree),

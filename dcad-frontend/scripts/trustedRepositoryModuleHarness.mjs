@@ -11,6 +11,8 @@ const trustedNodes = new WeakMap();
 const IDENTIFIER = /^[A-Za-z_$][A-Za-z0-9_$]*$/;
 const MAX_SOURCE_BYTES = 1024 * 1024;
 const MAX_FACTORIES = 256;
+const MAX_STATEMENTS = 512;
+const MAX_RESULTS = 128;
 const SOURCE_ROOT = realpathSync(fileURLToPath(new URL('../src/', import.meta.url)));
 
 function invalid(reason) {
@@ -97,22 +99,69 @@ export function executeTrustedRepositoryExpression(node, environment) {
 }
 
 /**
+ * Executes an ordered set of statement nodes from one verified repository
+ * source file and returns only explicitly named local values. Callers cannot
+ * contribute executable text; both statements and returned names are checked.
+ */
+export function executeTrustedRepositoryStatements(nodes, environment, resultNames) {
+  if (!Array.isArray(nodes) || nodes.length === 0 || nodes.length > MAX_STATEMENTS) invalid('statements');
+  const trusted = nodes.map(node => node && typeof node === 'object' ? trustedNodes.get(node) : undefined);
+  if (trusted.some(record => !record) || trusted.some(record => record.source !== trusted[0].source)) {
+    invalid('statement_source');
+  }
+  for (let index = 1; index < trusted.length; index += 1) {
+    if (trusted[index - 1].end > trusted[index].start) invalid('statement_order');
+  }
+  if (!Array.isArray(resultNames) || resultNames.length > MAX_RESULTS
+    || new Set(resultNames).size !== resultNames.length
+    || resultNames.some(name => typeof name !== 'string' || !IDENTIFIER.test(name))) {
+    invalid('result_names');
+  }
+  const keys = environmentKeys(environment);
+  const statements = trusted.map(record => record.source.slice(record.start, record.end)).join('\n');
+  sourceText(statements);
+  const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
+    + `  const { ${keys.join(', ')} } = environment;\n${statements}\n`
+    + `  return { ${resultNames.join(', ')} };\n};\n`;
+  const compiled = ts.transpileModule(wrapped, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
+    reportDiagnostics: true,
+  });
+  if (compiled.diagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)) invalid('syntax');
+  return loadFactory(compiled.outputText)(environment);
+}
+
+/**
  * Loads already-transpiled CommonJS originating from a fixed repository file
  * with an explicit dependency resolver. This preserves the existing isolated,
  * file-backed hook harness.
  */
-export function loadTrustedRepositoryCommonJs(url, dependencyResolver) {
+export function loadTrustedRepositoryCommonJs(url, dependencyResolver, options = {}) {
   const { path } = trustedPath(url);
-  const trustedCode = sourceText(readFileSync(path, 'utf8'));
+  let trustedCode = sourceText(readFileSync(path, 'utf8'));
   if (typeof dependencyResolver !== 'function') invalid('dependency_resolver');
+  if (!options || Object.getPrototypeOf(options) !== Object.prototype) invalid('options');
+  const optionDescriptors = Object.getOwnPropertyDescriptors(options);
+  if (Object.values(optionDescriptors).some(descriptor => !Object.hasOwn(descriptor, 'value'))
+    || Object.keys(optionDescriptors).some(key => !['environment', 'baseUrl'].includes(key))) invalid('options');
+  const environment = options.environment ?? {};
+  const keys = environmentKeys(environment);
+  if (options.baseUrl !== undefined) {
+    if (typeof options.baseUrl !== 'string' || options.baseUrl.length === 0 || options.baseUrl.length > 256
+      || !options.baseUrl.startsWith('/') || options.baseUrl.includes('\\')) invalid('base_url');
+    const marker = 'import.meta.env.BASE_URL';
+    if (!trustedCode.includes(marker)) invalid('base_url_marker');
+    trustedCode = trustedCode.split(marker).join(JSON.stringify(options.baseUrl));
+  }
   const compiled = ts.transpileModule(trustedCode, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     reportDiagnostics: true,
   });
   if (compiled.diagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)) invalid('syntax');
-  const wrapped = `'use strict';\nmodule.exports = function load(injectedRequire) {\n`
+  const wrapped = `'use strict';\nmodule.exports = function load(injectedRequire, environment) {\n`
+    + `  const { ${keys.join(', ')} } = environment;\n`
     + `  const target = { exports: {} };\n`
     + `  (function(require, module, exports) {\n${compiled.outputText}\n  })(injectedRequire, target, target.exports);\n`
     + `  return target.exports;\n};\n`;
-  return loadFactory(wrapped)(dependencyResolver);
+  return loadFactory(wrapped)(dependencyResolver, environment);
 }

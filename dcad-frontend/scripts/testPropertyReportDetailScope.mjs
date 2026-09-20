@@ -1,28 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
-import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
+import ts from 'typescript';
 import * as cache from '../src/lib/timedRequestCache.ts';
 import * as navigation from '../src/lib/customAssignmentNavigation.ts';
 import * as mapping from '../src/lib/legacyDcadDetail.ts';
+import { executeTrustedRepositoryFunctionDeclaration, loadTrustedRepositoryCommonJs,
+  readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
-const runtime = createRequire(new URL('../package.json', import.meta.url)), ts = runtime('typescript');
 const source = path => readFileSync(new URL(`../src/${path}`, import.meta.url), 'utf8');
-function compile(path, imports, replacementSource) {
-  const file = fileURLToPath(new URL(`../src/${path}`, import.meta.url));
-  const code = ts.transpileModule(replacementSource ?? source(path), { compilerOptions: {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS,
-  } }).outputText, module = { exports: {} };
-  new Script(`(function(require,module,exports){${code}\n})`, { filename: file }).runInThisContext()(id => {
-    assert.ok(Object.hasOwn(imports, id), `Unexpected import ${id}`); return imports[id];
-  }, module, module.exports);
-  return module.exports;
-}
-const apiSource = source('lib/api.ts');
-const apiTree = ts.createSourceFile('api.ts', apiSource, ts.ScriptTarget.Latest, true);
-const getAccountSource = apiTree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'getAccount').getText(apiTree);
+const { ast: apiTree } = readTrustedRepositoryTypeScript(new URL('../src/lib/api.ts', import.meta.url));
+const getAccountNode = apiTree.statements.find(node => ts.isFunctionDeclaration(node) && node.name?.text === 'getAccount');
+assert.ok(getAccountNode, 'getAccount function declaration');
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
 const deferred = () => { let resolve, reject; const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
   return { promise, resolve, reject }; };
@@ -46,16 +35,22 @@ function harness() {
   };
   // Execute the actual getAccount body and its actual query-field mapping. Only
   // URL assembly and HTTP transport are controlled; there is no network access.
-  const api = compile('lib/api.ts', { transport: {
+  const api = { getAccount: executeTrustedRepositoryFunctionDeclaration(getAccountNode, {
     makeUrl(path, params) { const url = new URL(path, 'https://synthetic.invalid');
       for (const [key, value] of Object.entries(params || {})) if (value !== undefined) url.searchParams.set(key, value);
       return url.href; },
     fetchJSON(url) { const wait = deferred(); calls.push({ url, ...wait }); return wait.promise; },
-  } }, `import { makeUrl, fetchJSON } from 'transport';\n${getAccountSource}`);
-  const dcad = compile('lib/dcad.ts', { './api': api, './legacyDcadDetail': mapping, './customAssignmentNavigation': navigation });
-  const hook = compile('hooks/usePropertyReportDetail.ts', {
+  }) };
+  const dcad = loadTrustedRepositoryCommonJs(new URL('../src/lib/dcad.ts', import.meta.url), id => {
+    const imports = { './api': api, './legacyDcadDetail': mapping, './customAssignmentNavigation': navigation };
+    assert.ok(Object.hasOwn(imports, id), `Unexpected import ${id}`); return imports[id];
+  });
+  const hook = loadTrustedRepositoryCommonJs(new URL('../src/hooks/usePropertyReportDetail.ts', import.meta.url), id => {
+    const imports = {
     react, '@/lib/dcad': dcad, '@/lib/timedRequestCache': cache,
     '@/lib/api': { getAccountPhotos(account) { const wait = deferred(); photos.push({ account, ...wait }); return wait.promise; } },
+    };
+    assert.ok(Object.hasOwn(imports, id), `Unexpected import ${id}`); return imports[id];
   }).usePropertyReportDetail;
   function render(next = props, commit = true) {
     props = next; cursor = 0; dirty = false; output = hook(props);

@@ -1,7 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import ts from 'typescript';
-import { executeTrustedRepositoryExpression, executeTrustedRepositoryStatements,
+import { executeTrustedRepositoryExpression, executeTrustedRepositoryFunctionDeclaration,
+  executeTrustedRepositoryStatements,
   loadTrustedRepositoryCommonJs,
   readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
@@ -64,6 +65,20 @@ test('trusted statement execution accepts only registered ordered statements and
     /invalid_trusted_repository_module:statement_source/);
   assert.throws(() => executeTrustedRepositoryStatements(hookStatements, {}, ['value; process.exit()']),
     /invalid_trusted_repository_module:result_names/);
+});
+
+test('trusted function execution accepts only a registered named declaration and explicit dependencies', () => {
+  const hook = executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], {
+    useState: initial => [initial, () => {}],
+    useRef: current => ({ current }),
+    useCallback: callback => callback,
+  });
+  assert.deepEqual(hook()[0], []);
+  const counterfeit = ts.createSourceFile('counterfeit.ts', 'function injected() {}', ts.ScriptTarget.Latest, true);
+  assert.throws(() => executeTrustedRepositoryFunctionDeclaration(counterfeit.statements[0], {}),
+    /invalid_trusted_repository_module:function_source/);
+  assert.throws(() => executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], Object.create(null)),
+    /invalid_trusted_repository_module:environment/);
 });
 
 test('trusted module loading rejects injected options and unexpected base URL replacement', () => {

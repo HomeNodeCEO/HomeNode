@@ -132,6 +132,46 @@ export function executeTrustedRepositoryStatements(nodes, environment, resultNam
 }
 
 /**
+ * Loads one named function declaration from a verified repository source file.
+ * Export modifiers are removed by the TypeScript AST printer; callers can only
+ * inject plain, explicitly named dependency values into the function closure.
+ */
+export function executeTrustedRepositoryFunctionDeclaration(node, environment) {
+  const trusted = node && typeof node === 'object' ? trustedNodes.get(node) : undefined;
+  if (!trusted || !ts.isFunctionDeclaration(node) || !node.name || !node.body
+    || node.modifiers?.some(modifier => ![
+      ts.SyntaxKind.ExportKeyword,
+      ts.SyntaxKind.AsyncKeyword,
+    ].includes(modifier.kind))) {
+    invalid('function_source');
+  }
+  const name = node.name.text;
+  if (!IDENTIFIER.test(name)) invalid('function_name');
+  const declaration = ts.factory.updateFunctionDeclaration(
+    node,
+    node.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ExportKeyword),
+    node.asteriskToken,
+    node.name,
+    node.typeParameters,
+    node.parameters,
+    node.type,
+    node.body,
+  );
+  const text = sourceText(ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, node.getSourceFile()));
+  const keys = environmentKeys(environment);
+  const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
+    + `  const { ${keys.join(', ')} } = environment;\n${text}\n  return ${name};\n};\n`;
+  const compiled = ts.transpileModule(wrapped, {
+    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS },
+    reportDiagnostics: true,
+  });
+  if (compiled.diagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)) invalid('syntax');
+  const result = loadFactory(compiled.outputText)(environment);
+  if (typeof result !== 'function') invalid('function_result');
+  return result;
+}
+
+/**
  * Loads already-transpiled CommonJS originating from a fixed repository file
  * with an explicit dependency resolver. This preserves the existing isolated,
  * file-backed hook harness.
@@ -154,6 +194,7 @@ export function loadTrustedRepositoryCommonJs(url, dependencyResolver, options =
     trustedCode = trustedCode.split(marker).join(JSON.stringify(options.baseUrl));
   }
   const compiled = ts.transpileModule(trustedCode, {
+    fileName: path,
     compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX },
     reportDiagnostics: true,
   });

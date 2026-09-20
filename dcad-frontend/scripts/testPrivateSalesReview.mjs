@@ -1,9 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
 import * as api from '../src/features/neighborhood/privateSalesReview.ts';
 import * as matchApi from '../src/features/neighborhood/privateSalesMatchProposals.ts';
 import * as pendingApi from '../src/features/neighborhood/privateSalesReviewPending.ts';
@@ -11,8 +9,9 @@ import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentS
 import { validateAssignmentSalesReviewCommand } from '../../server/src/services/assignmentSalesCsv/review.js';
 import { proposeAssignmentSalesMatchPage } from '../../server/src/services/assignmentSalesCsv/matchProposals.js';
 import { createPreparedSalesDigest } from '../../server/src/services/assignmentSalesCsv/receiptIntegrity.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const runtime = createRequire(new URL('../package.json', import.meta.url)), ts = runtime('typescript'), jsx = runtime('react/jsx-runtime');
+const runtime = createRequire(new URL('../package.json', import.meta.url)), jsx = runtime('react/jsx-runtime');
 const { renderToStaticMarkup } = runtime('react-dom/server');
 const identity = { accountId: 'SYNTHETIC-REVIEW', assignmentFileId: 37, sessionKey: 'synthetic-session' };
 const uuid = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
@@ -259,15 +258,14 @@ function harness(t, initial) {
       const effect = { deps, setup, cleanup: old?.cleanup }; owner.cells[index] = effect; owner.effects.push(() => { effect.cleanup?.(); effect.cleanup = setup(); });
     } },
   };
-  const source = readFileSync(new URL('../src/features/neighborhood/components/PrivateSalesReviewPanel.tsx', import.meta.url), 'utf8');
-  const output = ts.transpileModule(source, { compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
-  const module = { exports: {} }, imports = { react, 'react/jsx-runtime': jsx, '../privateSalesReview': api, '../privateSalesMatchProposals': matchApi };
-  new Script(`(function(require,module,exports){${output.outputText}\n})`).runInThisContext()(key => {
-    assert.ok(Object.hasOwn(imports, key), key); return imports[key];
-  }, module, module.exports);
+  const imports = { react, 'react/jsx-runtime': jsx, '../privateSalesReview': api, '../privateSalesMatchProposals': matchApi };
+  const loaded = loadTrustedRepositoryCommonJs(
+    new URL('../src/features/neighborhood/components/PrivateSalesReviewPanel.tsx', import.meta.url),
+    key => { assert.ok(Object.hasOwn(imports, key), key); return imports[key]; },
+  );
   const cleanup = () => { if (fiber) { fiber.live = false; fiber.cells.forEach(cell => cell?.cleanup?.()); fiber = null; } };
   function render(next = props) {
-    props = next; dirty = false; const owner = module.exports.default(props);
+    props = next; dirty = false; const owner = loaded.default(props);
     if (!fiber || owner.key !== fiber.key) { cleanup(); fiber = { key: owner.key, cells: [], effects: [], live: true }; }
     current = fiber; cursor = 0; tree = owner.type(owner.props); current = null; fiber.effects.splice(0).forEach(effect => effect());
   }

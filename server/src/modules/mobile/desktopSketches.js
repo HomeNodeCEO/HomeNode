@@ -1,9 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 
-import { normalizeUuid } from "./reportFiles.js";
+import { createInspectionSession, normalizeUuid } from "./reportFiles.js";
 import {
   activeRooms,
   normalizeManualSketchDocument,
+  saveInspectionSketch,
   sketchResponse,
   synchronizeRooms,
 } from "./sketches.js";
@@ -85,6 +86,51 @@ export async function getAssignmentInspectionSketch(pool, accountId, assignmentF
   } finally {
     client.release();
   }
+}
+
+async function assignmentReportFileId(pool, accountId, assignmentFileId) {
+  const { rows } = await pool.query(
+    `SELECT report_file.id
+       FROM app.assignment_files assignment_file
+       JOIN app.report_files report_file
+         ON report_file.custom_assignment_file_id = assignment_file.id
+        AND report_file.workflow_type = 'custom_appraisal'
+      WHERE assignment_file.id = $1
+        AND assignment_file.account_id = $2
+      ORDER BY report_file.is_current DESC, report_file.updated_at DESC, report_file.id DESC
+      LIMIT 1`,
+    [assignmentFileId, accountId],
+  );
+  return rows[0]?.id || null;
+}
+
+/**
+ * Start a canonical measured sketch from the desktop editor. The same mobile
+ * session, normalization, audit history, room-link, and artifact pipeline is
+ * used so a sketch can move between desktop and field devices without a
+ * second schema or a lossy conversion.
+ */
+export async function createAssignmentInspectionSketch(
+  pool,
+  auth,
+  accountId,
+  assignmentFileId,
+  input = {},
+) {
+  if (!auth?.userId) throw new Error("authentication_required");
+  const reportFileId = await assignmentReportFileId(pool, accountId, assignmentFileId);
+  if (!reportFileId) throw new Error("assignment_report_file_not_found");
+  const session = await createInspectionSession(pool, auth, { report_file_id: reportFileId });
+  const result = await saveInspectionSketch(pool, auth, session.session.id, {
+    client_operation_id: input.client_operation_id || randomUUID(),
+    client_sketch_id: input.client_sketch_id || randomUUID(),
+    base_revision: 0,
+    sketch: input.sketch,
+  });
+  return Object.freeze({
+    sketch: result.sketch,
+    report_registry_revision: result.report_registry_revision,
+  });
 }
 
 async function saveDesktopInspectionSketch(

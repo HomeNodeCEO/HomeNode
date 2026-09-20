@@ -13,6 +13,7 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   getAssignmentFiles,
+  createMobileInspectionSketch,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfileReadiness,
   saveCustomAppraisalWorkfileSection,
@@ -23,9 +24,11 @@ import {
   type AssignmentPhoto,
   type AssignmentDocumentApplication,
   type AssignmentDetailsPayload,
+  type EditableInspectionSketch,
   type ReportManualSectionKey,
   makeUrl,
 } from "@/lib/api";
+import { createBlankSketchDocument } from "@/lib/sketchGeometry";
 import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
 import { useCustomNeighborhoodAcceptedReload } from "@/features/neighborhood/useCustomNeighborhoodAcceptedReload";
@@ -117,6 +120,39 @@ interface SubjectCarouselPhoto {
   url: string;
   label: string;
   detail: string;
+}
+
+function createDesktopSketchDraft(): EditableInspectionSketch {
+  const document = createBlankSketchDocument(crypto.randomUUID());
+  return {
+    id: `desktop-draft-${crypto.randomUUID()}`,
+    revision: 0,
+    measurement_standard: document.measurement_standard,
+    measurement_method: document.measurement_method,
+    review_status: 'draft',
+    confirmed_at: null,
+    updated_at: new Date().toISOString(),
+    summary: {
+      area_count: 1,
+      room_count: 0,
+      all_areas_closed: false,
+      any_self_intersections: false,
+      above_grade_finished_sqft: 0,
+      gross_included_sqft: 0,
+      deduction_sqft: 0,
+      net_gla_sqft: 0,
+      below_grade_finished_sqft: 0,
+      above_grade_nonstandard_finished_sqft: 0,
+      below_grade_nonstandard_finished_sqft: 0,
+      above_grade_noncontinuous_finished_sqft: 0,
+      above_grade_unfinished_sqft: 0,
+      below_grade_unfinished_sqft: 0,
+      garage_sqft: 0,
+      porch_patio_deck_sqft: 0,
+      by_classification: {},
+    },
+    document,
+  };
 }
 import {
   displayValue,
@@ -226,6 +262,7 @@ function AddressHero({
   const acceptedReadGeneration = useRef(0);
   const legacyNeighborhoodAllowedRef = useRef(false);
   const [sketchEvidenceRefreshing, setSketchEvidenceRefreshing] = useState(false);
+  const [desktopSketchDraft, setDesktopSketchDraft] = useState<EditableInspectionSketch | null>(null);
   const sketchEvidenceRefreshInFlight = useRef(false);
   const {
     downloadInProgress,
@@ -580,6 +617,13 @@ function AddressHero({
   );
   const mobileInspectionSketch = activeAssignmentFile?.mobile_inspection_sketch || null;
   const activeAssignmentFileId = activeAssignmentFile?.id || null;
+  const editableInspectionSketch = mobileInspectionSketch || desktopSketchDraft;
+  useEffect(() => {
+    setDesktopSketchDraft(null);
+  }, [activeAssignmentFileId]);
+  useEffect(() => {
+    if (mobileInspectionSketch) setDesktopSketchDraft(null);
+  }, [mobileInspectionSketch]);
   const subjectPhotos = useMemo<SubjectCarouselPhoto[]>(() => {
     const verifiedPhotos = assignmentPhotos.length
       ? assignmentPhotos.filter((photo) => photo.status === "verified")
@@ -2904,31 +2948,43 @@ function AddressHero({
 
             {activeAssignmentFile && accountId ? (
               <div className="mt-5 border-t border-slate-200 pt-4">
-                {mobileInspectionSketch ? (
+                {editableInspectionSketch ? (
                   <Suspense fallback={<LazyReportContent label="mobile sketch" />}>
                     <MobileSketchReview
-                      sketch={mobileInspectionSketch}
+                      sketch={editableInspectionSketch}
                       title="Custom Appraisal measured sketch editor"
-                      artifactUrls={{
-                        svg: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/preview.svg`, { revision: mobileInspectionSketch.revision }),
-                        pdf: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/report.pdf`, { revision: mobileInspectionSketch.revision }),
-                      }}
+                      subtitle={editableInspectionSketch.revision > 0
+                        ? "Edit the same canonical measured sketch used by HomeNode Mobile. Every save creates an audited revision."
+                        : "Enter measured walls here or continue later in HomeNode Mobile. The first save creates the shared canonical sketch."}
+                      revisionSourceLabel="HomeNode"
+                      artifactUrls={editableInspectionSketch.revision > 0 ? {
+                        svg: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/preview.svg`, { revision: editableInspectionSketch.revision }),
+                        pdf: makeUrl(`/api/accounts/${encodeURIComponent(accountId)}/assignment-files/${activeAssignmentFile.id}/mobile-sketch/report.pdf`, { revision: editableInspectionSketch.revision }),
+                      } : undefined}
                       saveDraft={async (draft, expectedRevision) => {
                         const editorKey = editorKeyForSave();
                         if (!editorKey) throw new Error("authentication_required");
-                        const response = await updateMobileInspectionSketch(
-                          accountId,
-                          activeAssignmentFile.id,
-                          {
-                            sketch: draft,
-                            expected_revision: expectedRevision,
-                            reviewer: "HomeNode appraiser",
-                          },
-                          editorKey,
-                        );
+                        const response = expectedRevision === 0
+                          ? await createMobileInspectionSketch(
+                              accountId,
+                              activeAssignmentFile.id,
+                              { sketch: draft, reviewer: "HomeNode appraiser" },
+                              editorKey,
+                            )
+                          : await updateMobileInspectionSketch(
+                              accountId,
+                              activeAssignmentFile.id,
+                              {
+                                sketch: draft,
+                                expected_revision: expectedRevision,
+                                reviewer: "HomeNode appraiser",
+                              },
+                              editorKey,
+                            );
                         return response.sketch;
                       }}
                       onSaved={(savedSketch) => {
+                        setDesktopSketchDraft(null);
                         const updatedFile = {
                           ...activeAssignmentFile,
                           mobile_inspection_sketch: savedSketch,
@@ -2943,7 +2999,8 @@ function AddressHero({
                 ) : (
                   <SketchWorkspaceEmptyState
                     title="Custom Appraisal measured sketch"
-                    subtitle={`No measured sketch is synchronized to ${activeAssignmentFile.file_number} yet. This area shares the lightweight live evidence check used by photos while the page is visible.`}
+                    subtitle={`No measured sketch is attached to ${activeAssignmentFile.file_number} yet. Start one on desktop or synchronize the same sketch from HomeNode Mobile.`}
+                    onCreate={() => setDesktopSketchDraft(createDesktopSketchDraft())}
                     onRefresh={refreshMobileSketchEvidence}
                     refreshing={sketchEvidenceRefreshing}
                   />

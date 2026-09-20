@@ -460,6 +460,9 @@ export interface AppraisalAssignmentFile {
       all_areas_closed: boolean;
       any_self_intersections: boolean;
       above_grade_finished_sqft: number;
+      gross_included_sqft?: number;
+      deduction_sqft?: number;
+      net_gla_sqft?: number;
       below_grade_finished_sqft: number;
       above_grade_nonstandard_finished_sqft: number;
       below_grade_nonstandard_finished_sqft: number;
@@ -486,8 +489,14 @@ export interface AppraisalAssignmentFile {
         label: string;
         level_label: string;
         classification: string;
+        gla_treatment?: 'included' | 'excluded' | 'deduction';
+        parent_area_id?: string | null;
         notes: string | null;
         vertices: Array<{ x: number; y: number }>;
+        dimension_labels?: Array<{
+          segment_index: number;
+          offset: { x: number; y: number };
+        }>;
         position: number;
         calculation: {
           closed: boolean;
@@ -3288,6 +3297,53 @@ export async function downloadCustomAppraisalReportPdf(
     immutable: response.headers.get('x-homenode-immutable') === 'true',
     pageCount: Number.isSafeInteger(pages) && pages > 0 ? pages : null,
   };
+}
+
+/** Create the first canonical sketch revision directly from the desktop editor. */
+export async function createMobileInspectionSketch(
+  accountId: string,
+  assignmentFileId: number,
+  input: {
+    sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>['document'];
+    reviewer?: string;
+    client_operation_id?: string;
+  },
+  editorKey: string,
+): Promise<{
+  ok: true;
+  sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
+  report_registry_revision: number;
+}> {
+  const id = (accountId || '').trim();
+  return withDesktopSketchSaveOperation(
+    'custom-appraisal',
+    id,
+    assignmentFileId,
+    0,
+    (operationId) => fetchJSON<{
+      ok: true;
+      sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
+      report_registry_revision: number;
+    }>(
+      makeUrl(
+        '/api/accounts/'
+          + encodeURIComponent(id)
+          + '/assignment-files/'
+          + encodeURIComponent(String(assignmentFileId))
+          + '/mobile-sketch',
+      ),
+      {
+        method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-homenode-editor-key': editorKey,
+        },
+        body: JSON.stringify({ ...input, client_operation_id: operationId }),
+        retryTransient: true,
+      },
+    ),
+    input.client_operation_id,
+  );
 }
 
 /** Save a desktop review as the next immutable mobile-sketch revision. */

@@ -21,6 +21,7 @@ function baseOptions(overrides = {}) {
     resolveAccountId: async (_pool, value) => value.toUpperCase(),
     normalizeAssignmentId: (value) => Number(value),
     getSketch: async () => { throw new Error("unexpected_get_sketch"); },
+    createSketch: async () => { throw new Error("unexpected_create_sketch"); },
     saveSketch: async () => { throw new Error("unexpected_save_sketch"); },
     renderSvg: () => { throw new Error("unexpected_svg_render"); },
     renderPdf: async () => { throw new Error("unexpected_pdf_render"); },
@@ -56,6 +57,14 @@ async function startRouter(options, auth = null) {
 function patchSketch(baseUrl, accountId, fileId, body = {}) {
   return fetch(`${baseUrl}/api/accounts/${accountId}/assignment-files/${fileId}/mobile-sketch`, {
     method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
+
+function createSketch(baseUrl, accountId, fileId, body = {}) {
+  return fetch(`${baseUrl}/api/accounts/${accountId}/assignment-files/${fileId}/mobile-sketch`, {
+    method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(body),
   });
@@ -188,6 +197,91 @@ test("PDF download preserves report rendering and attachment headers", async (co
   );
   assert.match(response.headers.get("content-type"), /^application\/pdf/);
   assert.deepEqual(renderCall, { receivedSketch: sketch, receivedOptions: artifactOptions });
+});
+
+test("desktop sketch creation uses canonical assignment access, authenticated identity, and mobile model", async (context) => {
+  const calls = [];
+  const body = {
+    client_operation_id: "6c974a22-50a9-47e8-a1c6-6d021f6b3b2e",
+    sketch: { review_status: "draft", areas: [{ vertices: [{ x: 0, y: 0 }, { x: 10, y: 0 }] }] },
+  };
+  const result = { sketch: { id: "sketch-1", revision: 1 }, report_registry_revision: 4 };
+  const options = baseOptions({
+    ensureAssignmentFilesAvailable: async () => { calls.push("assignment-schema"); },
+    ensureCustomAppraisalWorkfilesAvailable: async () => { calls.push("workfile-schema"); },
+    resolveAccountId: async () => "CANONICAL_1",
+    getSketch: async () => null,
+    requireAssignmentAccess: async (_req, _res, accountId, fileId, permission) => {
+      calls.push({ type: "access", accountId, fileId, permission });
+      return true;
+    },
+    createSketch: async (pool, auth, accountId, fileId, input) => {
+      calls.push({ type: "create", pool, auth, accountId, fileId, input });
+      return result;
+    },
+  });
+  const server = await startRouter(options, identity);
+  context.after(server.close);
+
+  const response = await createSketch(server.baseUrl, "legacy_1", 9, body);
+  assert.equal(response.status, 201);
+  assert.deepEqual(await response.json(), { ok: true, ...result });
+  assert.equal(calls.includes("assignment-schema"), true);
+  assert.equal(calls.includes("workfile-schema"), true);
+  assert.deepEqual(calls.find((call) => call.type === "access"), {
+    type: "access",
+    accountId: "CANONICAL_1",
+    fileId: 9,
+    permission: "write",
+  });
+  const created = calls.find((call) => call.type === "create");
+  assert.equal(created.pool, options.pool);
+  assert.equal(created.auth, identity);
+  assert.deepEqual({
+    accountId: created.accountId,
+    fileId: created.fileId,
+    input: created.input,
+  }, {
+    accountId: "CANONICAL_1",
+    fileId: 9,
+    input: body,
+  });
+});
+
+test("desktop sketch creation rejects anonymous, duplicate, and missing report-file starts", async (context) => {
+  let createCalls = 0;
+  const anonymous = await startRouter(baseOptions({ getSketch: async () => null }));
+  const duplicate = await startRouter(baseOptions({
+    getSketch: async () => null,
+    createSketch: async () => { throw new Error("sketch_revision_conflict"); },
+  }), identity);
+  const missing = await startRouter(baseOptions({
+    getSketch: async () => null,
+    createSketch: async () => {
+      createCalls += 1;
+      throw new Error("assignment_report_file_not_found");
+    },
+  }), identity);
+  context.after(async () => Promise.all([anonymous.close(), duplicate.close(), missing.close()]));
+
+  const anonymousResponse = await createSketch(anonymous.baseUrl, "123", 1, {
+    sketch: { review_status: "draft" },
+  });
+  assert.equal(anonymousResponse.status, 401);
+  assert.deepEqual(await anonymousResponse.json(), { error: "authentication_required" });
+
+  const duplicateResponse = await createSketch(duplicate.baseUrl, "123", 1, {
+    sketch: { review_status: "draft" },
+  });
+  assert.equal(duplicateResponse.status, 409);
+  assert.deepEqual(await duplicateResponse.json(), { error: "sketch_revision_conflict" });
+
+  const missingResponse = await createSketch(missing.baseUrl, "123", 1, {
+    sketch: { review_status: "draft" },
+  });
+  assert.equal(missingResponse.status, 404);
+  assert.deepEqual(await missingResponse.json(), { error: "assignment_report_file_not_found" });
+  assert.equal(createCalls, 1);
 });
 
 test("artifact routes preserve not-found, validation, and diagnostic-safe failures", async (context) => {

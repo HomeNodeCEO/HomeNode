@@ -3,6 +3,15 @@ import { useEffect, useMemo, useState } from "react";
 import {
   type EditableInspectionSketch,
 } from "@/lib/api";
+import {
+  appendMeasuredWall,
+  closeSketchArea,
+  createBlankSketchDocument,
+  liveSketchSummary,
+  recalculateSketchArea,
+  recalculateSketchDocument,
+  undoSketchWall,
+} from "@/lib/sketchGeometry";
 
 type Sketch = EditableInspectionSketch;
 type Document = Sketch["document"];
@@ -53,6 +62,11 @@ const ROOM_TYPES = [
 ];
 
 const fieldClass = "w-full rounded-md border border-slate-300 bg-white px-2 py-1.5 text-xs text-slate-900 shadow-sm focus:border-emerald-500 focus:outline-none";
+const DIRECTIONS = [
+  ["NW", 135], ["N", 90], ["NE", 45],
+  ["W", 180], ["E", 0],
+  ["SW", 225], ["S", 270], ["SE", 315],
+] as const;
 
 function clone(document: Document): Document {
   return JSON.parse(JSON.stringify(document)) as Document;
@@ -96,8 +110,9 @@ export default function MobileSketchReview({
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
   const [loadedRevision, setLoadedRevision] = useState(sketch.revision);
-  const [loadedSummary, setLoadedSummary] = useState(sketch.summary);
   const [pendingSketch, setPendingSketch] = useState<Sketch | null>(null);
+  const [wallLength, setWallLength] = useState("10");
+  const [wallBearing, setWallBearing] = useState("0");
 
   useEffect(() => {
     if (sketch.revision === loadedRevision) return;
@@ -106,12 +121,11 @@ export default function MobileSketchReview({
       setMessage(`${revisionSourceLabel} sketch revision ${sketch.revision} is available. Your unsaved desktop edits are preserved.`);
       return;
     }
-    setDraft(clone(sketch.document));
+    setDraft(recalculateSketchDocument(clone(sketch.document)));
     setSelectedAreaId((current) => sketch.document.areas.some((area) => area.id === current)
       ? current
       : sketch.document.areas[0]?.id || "");
     setLoadedRevision(sketch.revision);
-    setLoadedSummary(sketch.summary);
     setPendingSketch(null);
     setDirty(false);
   }, [dirty, loadedRevision, revisionSourceLabel, sketch]);
@@ -122,23 +136,57 @@ export default function MobileSketchReview({
     [draft?.rooms, selectedAreaId],
   );
   const plot = useMemo(() => plotFor(selectedArea, selectedRooms), [selectedArea, selectedRooms]);
+  const liveSummary = useMemo(
+    () => draft ? liveSketchSummary(draft, selectedAreaId) : null,
+    [draft, selectedAreaId],
+  );
 
   if (!draft) return null;
 
   const change = (update: (current: Document) => Document) => {
-    setDraft((current) => current ? update(current) : current);
+    setDraft((current) => current ? recalculateSketchDocument(update(current)) : current);
     setDirty(true);
     setMessage("");
   };
 
   const updateArea = (areaId: string, update: Partial<Area>) => change((current) => ({
     ...current,
-    areas: current.areas.map((area) => area.id === areaId ? { ...area, ...update } : area),
+    areas: current.areas.map((area) => area.id === areaId
+      ? recalculateSketchArea({ ...area, ...update })
+      : area),
   }));
 
   const updateRoom = (roomId: string, update: Partial<Room>) => change((current) => ({
     ...current,
     rooms: current.rooms.map((room) => room.id === roomId ? { ...room, ...update } : room),
+  }));
+
+  const addRoom = (area: Area) => {
+    const anchor = area.calculation.centroid;
+    if (!anchor || !area.calculation.ready_for_area_classification) {
+      setMessage("Close this area before adding a room marker.");
+      return;
+    }
+    const id = crypto.randomUUID();
+    const position = draft.rooms.length + 1;
+    const room: Room = {
+      id,
+      room_ref: id,
+      area_id: area.id,
+      label: `Room ${selectedRooms.length + 1}`,
+      room_type: "other",
+      level_label: area.level_label,
+      anchor: { ...anchor },
+      position,
+    };
+    change((current) => ({ ...current, rooms: [...current.rooms, room] }));
+  };
+
+  const removeRoom = (roomId: string) => change((current) => ({
+    ...current,
+    rooms: current.rooms
+      .filter((room) => room.id !== roomId)
+      .map((room, index) => ({ ...room, position: index + 1 })),
   }));
 
   const updateVertex = (area: Area, index: number, axis: "x" | "y", value: number) => {
@@ -168,6 +216,10 @@ export default function MobileSketchReview({
   });
 
   const addCorner = (area: Area) => {
+    if (area.vertices.length < 2) {
+      setMessage("Add the first measured wall before inserting another corner.");
+      return;
+    }
     const vertices = area.vertices.map((point) => ({ ...point }));
     const previous = vertices[Math.max(0, vertices.length - 2)];
     vertices.splice(vertices.length - 1, 0, { x: previous.x + 1, y: previous.y + 1 });
@@ -181,14 +233,80 @@ export default function MobileSketchReview({
     });
   };
 
+  const addArea = (kind: "exterior" | "garage") => {
+    const id = crypto.randomUUID();
+    const template = createBlankSketchDocument(id).areas[0];
+    const parent = selectedArea;
+    const position = draft.areas.length + 1;
+    const area = kind === "garage" && parent
+      ? {
+          ...template,
+          label: `Garage deduction ${position}`,
+          level_label: parent.level_label,
+          classification: "garage",
+          gla_treatment: "deduction" as const,
+          parent_area_id: parent.id,
+          position,
+        }
+      : {
+          ...template,
+          label: `Exterior area ${position}`,
+          position,
+        };
+    change((current) => ({ ...current, areas: [...current.areas, area] }));
+    setSelectedAreaId(id);
+  };
+
+  const removeArea = (areaId: string) => {
+    if (draft.areas.length <= 1) return;
+    const removed = new Set([
+      areaId,
+      ...draft.areas.filter((area) => area.parent_area_id === areaId).map((area) => area.id),
+    ]);
+    const areas = draft.areas
+      .filter((area) => !removed.has(area.id))
+      .map((area, index) => ({ ...area, position: index + 1 }));
+    const rooms = draft.rooms.filter((room) => !removed.has(room.area_id));
+    change((current) => ({ ...current, areas, rooms }));
+    setSelectedAreaId(areas[0]?.id || "");
+  };
+
+  const setAreaClassification = (area: Area, classification: string) => updateArea(area.id, {
+    classification,
+    gla_treatment: classification === "above_grade_finished" ? "included" : "excluded",
+    parent_area_id: null,
+  });
+
+  const addWall = (area: Area) => {
+    try {
+      if (area.calculation.closed) throw new Error("This area is already closed. Undo its closing wall to continue.");
+      updateArea(area.id, {
+        vertices: appendMeasuredWall(area.vertices, Number(wallLength), Number(wallBearing)),
+      });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The wall could not be added.");
+    }
+  };
+
+  const closeArea = (area: Area) => {
+    try {
+      updateArea(area.id, { vertices: closeSketchArea(area.vertices) });
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "The area could not be closed.");
+    }
+  };
+
   const save = async () => {
+    if (draft.areas.some((area) => area.vertices.length < 2)) {
+      setMessage("Each sketch area needs at least one measured wall before it can be saved.");
+      return;
+    }
     setSaving(true);
     setMessage("");
     try {
       const saved = await saveDraft(draft, loadedRevision);
-      setDraft(clone(saved.document));
+      setDraft(recalculateSketchDocument(clone(saved.document)));
       setLoadedRevision(saved.revision);
-      setLoadedSummary(saved.summary);
       setPendingSketch(null);
       onSaved(saved);
       setDirty(false);
@@ -209,10 +327,9 @@ export default function MobileSketchReview({
 
   const loadPendingRevision = () => {
     if (!pendingSketch) return;
-    setDraft(clone(pendingSketch.document));
+    setDraft(recalculateSketchDocument(clone(pendingSketch.document)));
     setSelectedAreaId(pendingSketch.document.areas[0]?.id || "");
     setLoadedRevision(pendingSketch.revision);
-    setLoadedSummary(pendingSketch.summary);
     setPendingSketch(null);
     setDirty(false);
     setMessage(`Loaded ${revisionSourceLabel.toLowerCase()} sketch revision ${pendingSketch.revision}.`);
@@ -224,7 +341,7 @@ export default function MobileSketchReview({
         <div>
           <div className="text-sm font-semibold text-slate-900">{editorTitle}</div>
           <div className="mt-1 text-xs text-slate-600">
-            Revision {loadedRevision} - {draft.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Alternate standard"}
+            {loadedRevision > 0 ? `Revision ${loadedRevision}` : "New unsaved sketch"} - {draft.measurement_standard === "ansi_z765_2021" ? "ANSI Z765-2021" : "Alternate standard"}
           </div>
           <div className="mt-1 text-xs text-slate-500">{subtitle}</div>
         </div>
@@ -246,11 +363,17 @@ export default function MobileSketchReview({
         </div>
       ) : null}
 
-      <div className="mt-3 grid grid-cols-2 gap-2 text-xs sm:grid-cols-4">
-        <div className="rounded-lg bg-slate-50 p-3">Above grade<div className="mt-1 text-base font-semibold">{loadedSummary.above_grade_finished_sqft.toLocaleString()} sf</div></div>
-        <div className="rounded-lg bg-slate-50 p-3">Below grade<div className="mt-1 text-base font-semibold">{loadedSummary.below_grade_finished_sqft.toLocaleString()} sf</div></div>
+      <div className="mt-3 grid grid-cols-2 gap-2 text-xs lg:grid-cols-6">
+        <div className="rounded-lg bg-violet-50 p-3">Net GLA<div className="mt-1 text-base font-semibold">{liveSummary?.netGlaSqft.toLocaleString() || 0} sf</div></div>
+        <div className="rounded-lg bg-slate-50 p-3">Gross included<div className="mt-1 text-base font-semibold">{liveSummary?.grossIncludedSqft.toLocaleString() || 0} sf</div></div>
+        <div className="rounded-lg bg-slate-50 p-3">Garage deduction<div className="mt-1 text-base font-semibold">{liveSummary?.deductionSqft.toLocaleString() || 0} sf</div></div>
+        <div className="rounded-lg bg-slate-50 p-3">Below grade<div className="mt-1 text-base font-semibold">{liveSummary?.belowGradeFinishedSqft.toLocaleString() || 0} sf</div></div>
         <div className="rounded-lg bg-slate-50 p-3">Areas<div className="mt-1 text-base font-semibold">{draft.areas.length}</div></div>
         <div className="rounded-lg bg-slate-50 p-3">Rooms<div className="mt-1 text-base font-semibold">{draft.rooms.length}</div></div>
+      </div>
+
+      <div className="mt-2 text-[11px] leading-5 text-slate-500">
+        Square footage updates from the measured wall geometry on screen. The server recalculates every area before saving and before producing the SVG or PDF exhibit.
       </div>
 
       <div className="mt-4 grid gap-4 xl:grid-cols-[minmax(0,1.1fr)_minmax(340px,0.9fr)]">
@@ -261,6 +384,8 @@ export default function MobileSketchReview({
                 {index + 1}. {area.label}
               </button>
             ))}
+            <button className="rounded-md border border-violet-300 bg-violet-50 px-2 py-1 text-xs font-semibold text-violet-900" onClick={() => addArea("exterior")} type="button">+ Exterior area</button>
+            <button className="rounded-md border border-amber-300 bg-amber-50 px-2 py-1 text-xs font-semibold text-amber-900 disabled:opacity-50" disabled={!selectedArea || selectedArea.gla_treatment !== "included"} onClick={() => addArea("garage")} type="button">+ Garage deduction</button>
           </div>
           <svg className="h-auto w-full rounded-md bg-white" viewBox="0 0 520 340" role="img" aria-label="Live sketch geometry">
             {plot ? (
@@ -312,16 +437,43 @@ export default function MobileSketchReview({
             <label className="text-xs">Label<input className={fieldClass} value={selectedArea.label} onChange={(event) => updateArea(selectedArea.id, { label: event.target.value })} /></label>
             <label className="text-xs">Level<input className={fieldClass} value={selectedArea.level_label} onChange={(event) => updateArea(selectedArea.id, { level_label: event.target.value })} /></label>
             <label className="text-xs">Classification
-              <select className={fieldClass} value={selectedArea.classification} onChange={(event) => updateArea(selectedArea.id, { classification: event.target.value })}>
+              <select className={fieldClass} disabled={selectedArea.gla_treatment === "deduction"} value={selectedArea.classification} onChange={(event) => setAreaClassification(selectedArea, event.target.value)}>
                 {AREA_TYPES.map((value) => <option key={value} value={value}>{title(value)}</option>)}
               </select>
             </label>
           </div>
           <label className="mt-2 block text-xs">Area notes<textarea className={fieldClass} rows={2} value={selectedArea.notes || ""} onChange={(event) => updateArea(selectedArea.id, { notes: event.target.value || null })} /></label>
 
+          <div className="mt-4 rounded-lg border border-violet-200 bg-violet-50/60 p-3">
+            <div className="flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="text-xs font-semibold text-violet-950">Measured walls</div>
+                <div className="mt-0.5 text-[11px] text-violet-800">
+                  Selected area: {liveSummary?.selectedAreaSqft?.toLocaleString() || "pending"} sf · {selectedArea.calculation.perimeter_feet.toLocaleString()} ft perimeter · {selectedArea.calculation.closed ? "closed" : `${selectedArea.calculation.closure_gap_feet.toLocaleString()} ft closure gap`}
+                </div>
+              </div>
+              {draft.areas.length > 1 ? <button className="rounded border border-rose-300 bg-white px-2 py-1 text-xs font-semibold text-rose-700" onClick={() => removeArea(selectedArea.id)} type="button">Remove area</button> : null}
+            </div>
+            <div className="mt-3 grid gap-2 sm:grid-cols-[minmax(110px,0.65fr)_minmax(110px,0.65fr)_minmax(0,1.7fr)]">
+              <label className="text-xs">Length (ft)<input className={fieldClass} min="0.1" step="0.1" type="number" value={wallLength} onChange={(event) => setWallLength(event.target.value)} /></label>
+              <label className="text-xs">Bearing (°)<input className={fieldClass} step="1" type="number" value={wallBearing} onChange={(event) => setWallBearing(event.target.value)} /></label>
+              <div>
+                <div className="text-xs">Direction</div>
+                <div className="mt-1 flex flex-wrap gap-1">
+                  {DIRECTIONS.map(([label, bearing]) => <button className={(Number(wallBearing) === bearing ? "border-violet-600 bg-violet-700 text-white" : "border-violet-200 bg-white text-violet-900") + " min-w-9 rounded border px-2 py-1 text-[11px] font-semibold"} key={label} onClick={() => setWallBearing(String(bearing))} type="button">{label}</button>)}
+                </div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <button className="rounded-md bg-violet-700 px-3 py-1.5 text-xs font-semibold text-white disabled:opacity-50" disabled={selectedArea.calculation.closed} onClick={() => addWall(selectedArea)} type="button">Add wall</button>
+              <button className="rounded-md border border-violet-300 bg-white px-3 py-1.5 text-xs font-semibold text-violet-900 disabled:opacity-50" disabled={selectedArea.vertices.length < 3 || selectedArea.calculation.closed} onClick={() => closeArea(selectedArea)} type="button">Close to start</button>
+              <button className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 disabled:opacity-50" disabled={!selectedArea.vertices.length} onClick={() => updateArea(selectedArea.id, { vertices: undoSketchWall(selectedArea.vertices) })} type="button">Undo wall</button>
+            </div>
+          </div>
+
           <div className="mt-3 flex items-center justify-between">
             <div className="text-xs font-semibold">Corner coordinates (feet)</div>
-            <button className="rounded border px-2 py-1 text-xs" onClick={() => addCorner(selectedArea)} type="button">Add corner</button>
+            <button className="rounded border px-2 py-1 text-xs disabled:opacity-50" disabled={selectedArea.vertices.length < 2} onClick={() => addCorner(selectedArea)} type="button">Add corner</button>
           </div>
           <div className="mt-2 grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
             {selectedArea.vertices.map((vertex, index) => (
@@ -338,7 +490,20 @@ export default function MobileSketchReview({
             ))}
           </div>
 
-          <div className="mt-4 text-xs font-semibold">Room labels and photo anchors</div>
+          <div className="mt-4 flex flex-wrap items-center justify-between gap-2">
+            <div>
+              <div className="text-xs font-semibold">Room labels and photo anchors</div>
+              <div className="mt-0.5 text-[11px] text-slate-500">Room markers use the same anchors that connect mobile photos to sketch rooms.</div>
+            </div>
+            <button
+              className="rounded-md border border-violet-300 bg-violet-50 px-3 py-1.5 text-xs font-semibold text-violet-900 disabled:opacity-50"
+              disabled={!selectedArea.calculation.ready_for_area_classification}
+              onClick={() => addRoom(selectedArea)}
+              type="button"
+            >
+              + Room marker
+            </button>
+          </div>
           <div className="mt-2 space-y-2">
             {selectedRooms.map((room) => (
               <div className="grid gap-2 rounded-md border p-2 sm:grid-cols-[1.2fr_1fr_90px_90px_auto]" key={room.id}>
@@ -351,6 +516,7 @@ export default function MobileSketchReview({
                 <div className="flex gap-1">
                   <button className="rounded border px-2 text-xs" onClick={() => moveRoom(room.id, -1)} type="button">Up</button>
                   <button className="rounded border px-2 text-xs" onClick={() => moveRoom(room.id, 1)} type="button">Down</button>
+                  <button className="rounded border border-rose-200 px-2 text-xs text-rose-700" onClick={() => removeRoom(room.id)} type="button">Remove</button>
                 </div>
               </div>
             ))}

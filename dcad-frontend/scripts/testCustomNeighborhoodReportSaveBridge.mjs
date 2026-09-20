@@ -2,12 +2,12 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import test from 'node:test';
 import ts from 'typescript';
+import { executeTrustedRepositoryExpression, readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 import { customNeighborhoodPdfReadinessErrors } from '../src/features/neighborhood/customNeighborhoodPdfReadiness.ts';
 import { matchCustomNeighborhoodAcceptedResponse } from '../src/features/neighborhood/customNeighborhoodAcceptedState.ts';
 import { reportedObservationReportFixture } from '../../server/test/fixtures/reportedObservationReportFixture.js';
 
-const source = readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
-const ast = ts.createSourceFile('PropertyReport.tsx', source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+const { text: source, ast } = readTrustedRepositoryTypeScript(new URL('../src/pages/PropertyReport.tsx', import.meta.url));
 function handler(name, environment) {
   const matches = [];
   function visit(node) {
@@ -17,10 +17,7 @@ function handler(name, environment) {
   visit(ast); assert.equal(matches.length, 1);
   // Execute the actual handler AST, not a copied implementation. Only synthetic
   // dependencies are provided; the application, network and browser never start.
-  const compiled = ts.transpileModule(`return (${matches[0].getText(ast)});`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
-  }).outputText;
-  return new Function(...Object.keys(environment), compiled)(...Object.values(environment));
+  return executeTrustedRepositoryExpression(matches[0], environment);
 }
 function privateSalesReadOnly(environment) {
   const matches = [];
@@ -32,10 +29,7 @@ function privateSalesReadOnly(environment) {
     ts.forEachChild(node, visit);
   }
   visit(ast); assert.equal(matches.length, 1);
-  const compiled = ts.transpileModule(`return (${matches[0].getText(ast)});`, {
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.None },
-  }).outputText;
-  return new Function(...Object.keys(environment), compiled)(...Object.values(environment));
+  return executeTrustedRepositoryExpression(matches[0], environment);
 }
 function deferred() {
   let resolve, reject;

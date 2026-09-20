@@ -115,6 +115,26 @@ class ParserCanaryPersistenceTests(unittest.TestCase):
         self.assertIn("SET status = 'leased'", sql)
         self.assertEqual(params["lease_minutes"], self.config.lease_minutes)
 
+    def test_leased_canary_keeps_campaign_blocked_until_resolved(self) -> None:
+        engine = MagicMock()
+        connection = engine.connect.return_value.__enter__.return_value
+        summary = MagicMock()
+        summary.mappings.return_value.one.return_value = {
+            "configured": 1,
+            "failed": 0,
+            "leased": 1,
+            "next_run_at": None,
+            "last_success_at": None,
+        }
+        latest_failure = MagicMock()
+        latest_failure.mappings.return_value.first.return_value = None
+        connection.execute.side_effect = [summary, latest_failure]
+
+        status = worker.parser_canary_status(engine, self.config)
+
+        self.assertTrue(status["blocked"])
+        self.assertEqual(status["leased"], 1)
+
     def test_success_schedules_the_next_daily_run(self) -> None:
         engine = MagicMock()
         connection = engine.begin.return_value.__enter__.return_value

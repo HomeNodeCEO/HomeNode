@@ -576,7 +576,14 @@ def parser_canary_status(engine: Engine, config: WorkerConfig) -> dict[str, obje
         ).mappings().first()
     return {
         **dict(summary),
-        "blocked": int(summary["failed"] or 0) > 0,
+        # A leased canary is still an unresolved safety check. This matters when
+        # another worker is running it and when a process restarts before its
+        # prior lease expires: campaign work must remain paused until that
+        # canary either passes or becomes claimable again.
+        "blocked": (
+            int(summary["failed"] or 0) > 0
+            or int(summary["leased"] or 0) > 0
+        ),
         "latest_failure": dict(latest_failure) if latest_failure else None,
     }
 

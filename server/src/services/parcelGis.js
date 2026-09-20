@@ -1,5 +1,9 @@
 import { assertNonDallasEnrichmentCounty } from "../util/nonDallasEnrichment.js";
 import { esriGeometryToGeoJson, geoJsonAreaSquareFeet } from "../util/parcelArea.js";
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
+const FETCH_TIMEOUT_MS = 15_000;
+const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 export const COUNTY_GIS_CONFIG = Object.freeze({
   COLLIN: {
@@ -24,6 +28,19 @@ function quoteArcGisValue(value) {
   return `'${String(value).replace(/'/g, "''")}'`;
 }
 
+function countyGisUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || ""));
+  } catch {
+    throw new Error("county_gis_invalid_url");
+  }
+  if (url.protocol !== "https:" || url.username || url.password) {
+    throw new Error("county_gis_invalid_url");
+  }
+  return url;
+}
+
 export function countyGisConfiguration(county, env = process.env) {
   const normalized = assertNonDallasEnrichmentCounty(county);
   const envPrefix = `${normalized}_GIS_`;
@@ -46,7 +63,7 @@ export async function fetchParcelAreaSuggestion({ county, accountId, env = proce
   const where = config.idFields
     .map((field) => `${field} = ${quoteArcGisValue(account)}`)
     .join(" OR ");
-  const url = new URL(config.url);
+  const url = countyGisUrl(config.url);
   url.search = new URLSearchParams({
     f: "json",
     where,
@@ -55,9 +72,33 @@ export async function fetchParcelAreaSuggestion({ county, accountId, env = proce
     outSR: "4326",
     resultRecordCount: "2",
   }).toString();
-  const response = await fetchImpl(url, { headers: { accept: "application/json" } });
-  if (!response.ok) throw new Error(`county_gis_http_${response.status}`);
-  const payload = await response.json();
+  let response;
+  try {
+    response = await fetchImpl(url, {
+      headers: { accept: "application/json" },
+      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error("county_gis_unavailable");
+  }
+  if (!response?.ok) {
+    const status = Number.isInteger(response?.status) ? response.status : "unknown";
+    throw new Error(`county_gis_http_${status}`);
+  }
+  let payload;
+  try {
+    payload = await readBoundedJsonResponse(response, {
+      maximumBytes: MAX_RESPONSE_BYTES,
+      tooLargeCode: "county_gis_response_too_large",
+      unavailableCode: "county_gis_response_unavailable",
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (["county_gis_response_too_large", "county_gis_response_unavailable"].includes(code)) {
+      throw new Error(code);
+    }
+    throw new Error("county_gis_invalid_response");
+  }
   if (payload?.error) throw new Error("county_gis_query_failed");
   const features = payload?.features || [];
   if (!features.length) return null;
@@ -75,3 +116,9 @@ export async function fetchParcelAreaSuggestion({ county, accountId, env = proce
     status: "pending",
   };
 }
+
+export const parcelGisInternals = Object.freeze({
+  FETCH_TIMEOUT_MS,
+  MAX_RESPONSE_BYTES,
+  countyGisUrl,
+});

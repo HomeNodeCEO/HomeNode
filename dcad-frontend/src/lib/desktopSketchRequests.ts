@@ -2,7 +2,6 @@ import {
   fetchJSON,
   makeUrl,
   type AppraisalAssignmentFile,
-  updateMobileInspectionSketch,
 } from '@/lib/api';
 import { withDesktopSketchSaveOperation } from '@/lib/desktopSketchSaveOperation';
 
@@ -36,6 +35,44 @@ export function createMobileInspectionSketch(
       ),
       {
         method: 'POST',
+        headers: {
+          'content-type': 'application/json',
+          'x-homenode-editor-key': editorKey,
+        },
+        body: JSON.stringify({ ...input, client_operation_id: operationId }),
+        retryTransient: true,
+      },
+    ),
+    input.client_operation_id,
+  );
+}
+
+/** Save a desktop review as the next immutable shared sketch revision. */
+export function updateMobileInspectionSketch(
+  accountId: string,
+  assignmentFileId: number,
+  input: {
+    sketch: InspectionSketch['document'];
+    expected_revision: number;
+    reviewer?: string;
+    client_operation_id?: string;
+  },
+  editorKey: string,
+): Promise<{
+  ok: true;
+  sketch: InspectionSketch;
+  report_registry_revision: number;
+}> {
+  const id = (accountId || '').trim();
+  return withDesktopSketchSaveOperation(
+    'custom-appraisal', id, assignmentFileId, input.expected_revision,
+    (operationId) => fetchJSON(
+      makeUrl(
+        `/api/accounts/${encodeURIComponent(id)}/assignment-files/`
+          + `${encodeURIComponent(String(assignmentFileId))}/mobile-sketch`,
+      ),
+      {
+        method: 'PATCH',
         headers: {
           'content-type': 'application/json',
           'x-homenode-editor-key': editorKey,

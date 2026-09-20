@@ -110,10 +110,12 @@ test('uncertain failures retain the operation while success and conflicts clear 
 
 test('desktop sketch APIs replay transient failures with their retained operation IDs', () => {
   const source = fs.readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
-  const customStart = source.indexOf('export async function updateMobileInspectionSketch(');
   const propertyTaxStart = source.indexOf('export async function updatePropertyTaxInspectionSketch(');
   const nextStart = source.indexOf('/** Load background coordinate coverage', propertyTaxStart);
-  const customApi = source.slice(customStart, propertyTaxStart);
+  const customApi = fs.readFileSync(
+    new URL('../src/lib/desktopSketchRequests.ts', import.meta.url),
+    'utf8',
+  );
   const propertyTaxApi = source.slice(propertyTaxStart, nextStart);
 
   for (const api of [customApi, propertyTaxApi]) {

@@ -167,8 +167,7 @@ export function closeSketchArea(vertices: SketchPoint[]): SketchPoint[] {
 
 export function undoSketchWall(vertices: SketchPoint[]): SketchPoint[] {
   if (vertices.length <= 2) return [];
-  const closed = distance(vertices[0]!, vertices.at(-1)!) <= 0.05;
-  return closed ? vertices.slice(0, -1) : vertices.slice(0, -1);
+  return vertices.slice(0, -1);
 }
 
 export function liveSketchSummary(

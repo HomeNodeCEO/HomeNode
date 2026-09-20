@@ -3299,54 +3299,6 @@ export async function downloadCustomAppraisalReportPdf(
   };
 }
 
-/** Save a desktop review as the next immutable mobile-sketch revision. */
-export async function updateMobileInspectionSketch(
-  accountId: string,
-  assignmentFileId: number,
-  input: {
-    sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>['document'];
-    expected_revision: number;
-    reviewer?: string;
-    client_operation_id?: string;
-  },
-  editorKey: string,
-): Promise<{
-  ok: true;
-  sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
-  report_registry_revision: number;
-}> {
-  const id = (accountId || '').trim();
-  return withDesktopSketchSaveOperation(
-    'custom-appraisal',
-    id,
-    assignmentFileId,
-    input.expected_revision,
-    (operationId) => fetchJSON<{
-      ok: true;
-      sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
-      report_registry_revision: number;
-    }>(
-      makeUrl(
-        '/api/accounts/'
-          + encodeURIComponent(id)
-          + '/assignment-files/'
-          + encodeURIComponent(String(assignmentFileId))
-          + '/mobile-sketch',
-      ),
-      {
-        method: 'PATCH',
-        headers: {
-          'content-type': 'application/json',
-          'x-homenode-editor-key': editorKey,
-        },
-        body: JSON.stringify({ ...input, client_operation_id: operationId }),
-        retryTransient: true,
-      },
-    ),
-    input.client_operation_id,
-  );
-}
-
 /** Save a Property Tax Protest sketch through the authenticated desktop workflow. */
 export async function updatePropertyTaxInspectionSketch(
   accountId: string,

@@ -221,6 +221,43 @@ test("browser OIDC discovery rejects an oversized declared response", async () =
   assert.equal(bodyCancelled, true);
 });
 
+test("callback treats an oversized discovery response after restart as retryable", async () => {
+  const discovery = {
+    issuer: "https://identity.example.test",
+    authorization_endpoint: "https://identity.example.test/authorize",
+    token_endpoint: "https://identity.example.test/token",
+  };
+  let transactionCookie;
+  let state;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const login = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    const authorizationUrl = new URL(login.headers.get("location"));
+    transactionCookie = login.headers.get("set-cookie").split(";", 1)[0];
+    state = authorizationUrl.searchParams.get("state");
+  }, {
+    fetchImpl: async () => new Response(JSON.stringify(discovery), { status: 200 }),
+  });
+
+  const warnings = [];
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=one-time-code&state=${state}`,
+      { headers: { cookie: transactionCookie }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 503);
+    assert.deepEqual(await callback.json(), { error: "authentication_unavailable" });
+  }, {
+    logger: { warn(message) { warnings.push(message); } },
+    fetchImpl: async () => new Response("{}", {
+      status: 200,
+      headers: { "content-length": "300000" },
+    }),
+  });
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=discovery reason=oidc_discovery_unavailable",
+  ]);
+});
+
 test("cross-site sessions require an HTTPS frontend and its exact CORS origin", () => {
   const options = {
     pool: { query: async () => ({ rows: [] }) },

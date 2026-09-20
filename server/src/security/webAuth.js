@@ -444,7 +444,10 @@ export function createWebAuthRouter({
             if (!response.ok) throw new Error("oidc_discovery_unavailable");
             try {
               return await readBoundedProviderJson(response);
-            } catch {
+            } catch (error) {
+              if (!(error instanceof SyntaxError)) {
+                throw new Error("oidc_discovery_unavailable");
+              }
               throw new Error("invalid_oidc_discovery");
             }
           },

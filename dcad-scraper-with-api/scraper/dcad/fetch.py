@@ -65,9 +65,16 @@ def _validate_request_target(url: str) -> None:
     """Reject an outbound target unless it is HTTPS on the DCAD allowlist."""
 
     parsed = urlparse(str(url or ""))
+    try:
+        port = parsed.port
+    except ValueError as error:
+        raise DcadResponseValidationError(
+            "dcad_response_redirect_invalid"
+        ) from error
     if (
         parsed.scheme.lower() != "https"
         or (parsed.hostname or "").lower() not in _ALLOWED_HOSTS
+        or port not in (None, 443)
     ):
         raise DcadResponseValidationError("dcad_response_redirect_invalid")
 
@@ -91,11 +98,18 @@ def _account_from_action(action: str | None) -> str | None:
 
     if not action:
         return None
-    query = parse_qs(urlparse(action).query)
-    for key, values in query.items():
-        if key.lower() == "id" and values:
-            return str(values[0]).strip()
-    return None
+    query = parse_qs(urlparse(action).query, keep_blank_values=True)
+    matches = [
+        str(value).strip()
+        for key, values in query.items()
+        if key.lower() == "id"
+        for value in values
+    ]
+    if not matches:
+        return None
+    if len(matches) != 1 or not matches[0]:
+        raise DcadResponseValidationError("dcad_response_account_query_invalid")
+    return matches[0]
 
 
 def _validated_account_id(account_id: str) -> str:

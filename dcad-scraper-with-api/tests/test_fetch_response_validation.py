@@ -3,7 +3,7 @@ from __future__ import annotations
 import sys
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, call
 
 import requests
 
@@ -145,8 +145,62 @@ class FetchResponseValidationTests(unittest.TestCase):
         session.get.side_effect = [redirect, final]
         self.assertIn("Residential Account", get_detail_html(session, ACCOUNT))
         self.assertEqual(session.get.call_count, 2)
+        self.assertEqual(
+            session.get.call_args_list,
+            [
+                call(
+                    initial_url,
+                    timeout=30.0,
+                    stream=True,
+                    allow_redirects=False,
+                ),
+                call(
+                    final_url,
+                    timeout=30.0,
+                    stream=True,
+                    allow_redirects=False,
+                ),
+            ],
+        )
         redirect.close.assert_called_once()
         final.close.assert_called_once()
+
+    def test_rejects_nonstandard_https_port_before_requesting_target(self):
+        redirect = response(
+            f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}", "",
+            {
+                "Location": (
+                    "https://www.dallascad.org:8443/AcctDetailRes.aspx"
+                    f"?ID={ACCOUNT}"
+                )
+            },
+            status_code=302,
+        )
+        session = session_with(redirect)
+        with self.assertRaisesRegex(DcadResponseValidationError, "redirect_invalid"):
+            get_detail_html(session, ACCOUNT)
+        session.get.assert_called_once()
+
+    def test_rejects_blank_or_ambiguous_form_account_ids(self):
+        actions = (
+            "./AcctDetailRes.aspx?ID=",
+            f"./AcctDetailRes.aspx?ID={ACCOUNT}&ID={ACCOUNT}",
+            f"./AcctDetailRes.aspx?ID={ACCOUNT}&id={ACCOUNT}",
+        )
+        for action in actions:
+            with self.subTest(action=action):
+                html = detail_html().replace(
+                    f"./AcctDetailRes.aspx?ID={ACCOUNT}", action
+                )
+                session = session_with(response(
+                    f"https://www.dallascad.org/AcctDetailRes.aspx?ID={ACCOUNT}",
+                    html,
+                ))
+                with self.assertRaisesRegex(
+                    DcadResponseValidationError,
+                    "account_(?:query_invalid|identity_missing)",
+                ):
+                    get_detail_html(session, ACCOUNT)
 
     def test_rejects_missing_required_form_and_detail_markers(self):
         cases = (

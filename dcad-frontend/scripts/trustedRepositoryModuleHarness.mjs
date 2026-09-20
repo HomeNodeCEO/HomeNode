@@ -14,6 +14,7 @@ const MAX_FACTORIES = 256;
 const MAX_STATEMENTS = 512;
 const MAX_RESULTS = 128;
 const SOURCE_ROOT = realpathSync(fileURLToPath(new URL('../src/', import.meta.url)));
+const COMMONJS_GLOBALS = new Set(['require', 'module', 'exports', '__filename', '__dirname']);
 
 function invalid(reason) {
   throw new TypeError(`invalid_trusted_repository_module:${reason}`);
@@ -138,27 +139,46 @@ export function executeTrustedRepositoryStatements(nodes, environment, resultNam
  */
 export function executeTrustedRepositoryFunctionDeclaration(node, environment) {
   const trusted = node && typeof node === 'object' ? trustedNodes.get(node) : undefined;
-  if (!trusted || !ts.isFunctionDeclaration(node) || !node.name || !node.body
-    || node.modifiers?.some(modifier => ![
+  if (!trusted || !ts.isFunctionDeclaration(node)) invalid('function_source');
+  const registeredText = sourceText(trusted.source.slice(trusted.start, trusted.end));
+  const parsed = ts.createSourceFile(
+    'trusted-function.ts',
+    registeredText,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TS,
+  );
+  const registered = parsed.statements.length === 1 ? parsed.statements[0] : undefined;
+  if (parsed.parseDiagnostics?.some(item => item.category === ts.DiagnosticCategory.Error)
+    || !registered || !ts.isFunctionDeclaration(registered) || !registered.name || !registered.body
+    || registered.modifiers?.some(modifier => ![
       ts.SyntaxKind.ExportKeyword,
       ts.SyntaxKind.AsyncKeyword,
     ].includes(modifier.kind))) {
     invalid('function_source');
   }
-  const name = node.name.text;
+  let commonJsReference = false;
+  function inspect(current) {
+    if (ts.isIdentifier(current) && COMMONJS_GLOBALS.has(current.text)) commonJsReference = true;
+    ts.forEachChild(current, inspect);
+  }
+  inspect(registered);
+  if (commonJsReference) invalid('commonjs_global');
+  const name = registered.name.text;
   if (!IDENTIFIER.test(name)) invalid('function_name');
   const declaration = ts.factory.updateFunctionDeclaration(
-    node,
-    node.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ExportKeyword),
-    node.asteriskToken,
-    node.name,
-    node.typeParameters,
-    node.parameters,
-    node.type,
-    node.body,
+    registered,
+    registered.modifiers?.filter(modifier => modifier.kind !== ts.SyntaxKind.ExportKeyword),
+    registered.asteriskToken,
+    registered.name,
+    registered.typeParameters,
+    registered.parameters,
+    registered.type,
+    registered.body,
   );
-  const text = sourceText(ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, node.getSourceFile()));
+  const text = sourceText(ts.createPrinter().printNode(ts.EmitHint.Unspecified, declaration, parsed));
   const keys = environmentKeys(environment);
+  if (keys.some(key => COMMONJS_GLOBALS.has(key))) invalid('environment');
   const wrapped = `'use strict';\nmodule.exports = function execute(environment) {\n`
     + `  const { ${keys.join(', ')} } = environment;\n${text}\n  return ${name};\n};\n`;
   const compiled = ts.transpileModule(wrapped, {

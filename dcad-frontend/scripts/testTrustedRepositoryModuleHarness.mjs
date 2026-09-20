@@ -68,16 +68,31 @@ test('trusted statement execution accepts only registered ordered statements and
 });
 
 test('trusted function execution accepts only a registered named declaration and explicit dependencies', () => {
-  const hook = executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], {
+  const dependencies = {
     useState: initial => [initial, () => {}],
     useRef: current => ({ current }),
     useCallback: callback => callback,
-  });
+  };
+  const hook = executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], dependencies);
   assert.deepEqual(hook()[0], []);
+  const originalBody = hookFunctions[0].body;
+  try {
+    hookFunctions[0].body = ts.factory.createBlock([
+      ts.factory.createReturnStatement(ts.factory.createArrayLiteralExpression([
+        ts.factory.createStringLiteral('mutated'),
+      ])),
+    ]);
+    assert.deepEqual(executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], dependencies)()[0], [],
+      'execution must use the registered source slice, not the mutable AST object');
+  } finally {
+    hookFunctions[0].body = originalBody;
+  }
   const counterfeit = ts.createSourceFile('counterfeit.ts', 'function injected() {}', ts.ScriptTarget.Latest, true);
   assert.throws(() => executeTrustedRepositoryFunctionDeclaration(counterfeit.statements[0], {}),
     /invalid_trusted_repository_module:function_source/);
   assert.throws(() => executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], Object.create(null)),
+    /invalid_trusted_repository_module:environment/);
+  assert.throws(() => executeTrustedRepositoryFunctionDeclaration(hookFunctions[0], { ...dependencies, require() {} }),
     /invalid_trusted_repository_module:environment/);
 });
 

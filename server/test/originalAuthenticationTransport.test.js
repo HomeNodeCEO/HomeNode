@@ -80,7 +80,10 @@ function realVerifier({ issuer = ISSUER, audience = AUDIENCE, clientId = CLIENT,
       } catch (error) { contractFailures.push(error); throw error; }
       fetches.push({ url, headers: copy(options.headers) });
       if (onFetch) await onFetch();
-      return { ok: true, async json() { return { keys: [{ ...JWK }] }; } };
+      return new globalThis.Response(JSON.stringify({ keys: [{ ...JWK }] }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
     },
   });
   return { verifier, fetches, contractFailures };

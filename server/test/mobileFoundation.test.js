@@ -747,6 +747,50 @@ test("OIDC provider stalls and malformed JWKS fail as bounded 503 outages", asyn
   );
 });
 
+test("OIDC provider responses reject declared and streamed oversized JSON", async () => {
+  let declaredBodyCancelled = false;
+  const declaredOversized = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => NOW,
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        declaredBodyCancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { "content-length": "300000" },
+    }),
+  });
+  await assert.rejects(
+    () => declaredOversized.verify(token()),
+    (error) => error.statusCode === 503 && error.message === "oidc_jwks_unavailable",
+  );
+  assert.equal(declaredBodyCancelled, true);
+
+  let streamedBodyCancelled = false;
+  const streamedOversized = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => NOW,
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array(300_000));
+      },
+      cancel() {
+        streamedBodyCancelled = true;
+      },
+    }), { status: 200 }),
+  });
+  await assert.rejects(
+    () => streamedOversized.verify(token()),
+    (error) => error.statusCode === 503 && error.message === "oidc_jwks_unavailable",
+  );
+  assert.equal(streamedBodyCancelled, true);
+});
+
 
 test("preflights OIDC discovery and supported signing keys", async () => {
   const status = await verifier().preflight();

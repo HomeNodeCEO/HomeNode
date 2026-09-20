@@ -52,13 +52,15 @@ test('Custom Appraisal exposes desktop creation and canonical save paths', () =>
   const report = fs.readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
   const editor = fs.readFileSync(new URL('../src/components/MobileSketchReview.tsx', import.meta.url), 'utf8');
   const api = fs.readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
+  const requests = fs.readFileSync(new URL('../src/lib/desktopSketchRequests.ts', import.meta.url), 'utf8');
   assert.match(report, /Start one on desktop/);
-  assert.match(report, /createMobileInspectionSketch/);
-  assert.match(report, /expectedRevision === 0/);
+  assert.match(report, /saveCustomAppraisalSketchDraft/);
   assert.match(editor, /Net GLA/);
   assert.match(editor, /Garage deduction/);
   assert.match(editor, /Add wall/);
   assert.match(editor, /Room marker/);
   assert.match(editor, /photo anchors/);
-  assert.match(api, /method: 'POST'/);
+  assert.match(requests, /method: 'POST'/);
+  assert.match(requests, /expectedRevision === 0/);
+  assert.match(api, /updateMobileInspectionSketch/);
 });

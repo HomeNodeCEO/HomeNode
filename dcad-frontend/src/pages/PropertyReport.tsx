@@ -13,13 +13,11 @@ import {
 } from "@/lib/appraisalReportDraft";
 import {
   getAssignmentFiles,
-  createMobileInspectionSketch,
   reviewNeighborhoodBoundary as saveNeighborhoodBoundaryReview,
   getCustomAppraisalWorkfileReadiness,
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
   updateAssignmentFile,
-  updateMobileInspectionSketch,
   type AppraisalAssignmentFile,
   type AssignmentPhoto,
   type AssignmentDocumentApplication,
@@ -28,7 +26,8 @@ import {
   type ReportManualSectionKey,
   makeUrl,
 } from "@/lib/api";
-import { createBlankSketchDocument } from "@/lib/sketchGeometry";
+import { saveCustomAppraisalSketchDraft } from "@/lib/desktopSketchRequests";
+import { createDesktopSketchDraft } from "@/lib/sketchGeometry";
 import { loadCustomAppraisalWorkfile } from "@/lib/appraisalFileRequests";
 import { loadCustomNeighborhoodAccepted } from "@/features/neighborhood/loadCustomNeighborhoodAccepted";
 import { useCustomNeighborhoodAcceptedReload } from "@/features/neighborhood/useCustomNeighborhoodAcceptedReload";
@@ -120,39 +119,6 @@ interface SubjectCarouselPhoto {
   url: string;
   label: string;
   detail: string;
-}
-
-function createDesktopSketchDraft(): EditableInspectionSketch {
-  const document = createBlankSketchDocument(crypto.randomUUID());
-  return {
-    id: `desktop-draft-${crypto.randomUUID()}`,
-    revision: 0,
-    measurement_standard: document.measurement_standard,
-    measurement_method: document.measurement_method,
-    review_status: 'draft',
-    confirmed_at: null,
-    updated_at: new Date().toISOString(),
-    summary: {
-      area_count: 1,
-      room_count: 0,
-      all_areas_closed: false,
-      any_self_intersections: false,
-      above_grade_finished_sqft: 0,
-      gross_included_sqft: 0,
-      deduction_sqft: 0,
-      net_gla_sqft: 0,
-      below_grade_finished_sqft: 0,
-      above_grade_nonstandard_finished_sqft: 0,
-      below_grade_nonstandard_finished_sqft: 0,
-      above_grade_noncontinuous_finished_sqft: 0,
-      above_grade_unfinished_sqft: 0,
-      below_grade_unfinished_sqft: 0,
-      garage_sqft: 0,
-      porch_patio_deck_sqft: 0,
-      by_classification: {},
-    },
-    document,
-  };
 }
 import {
   displayValue,
@@ -2964,23 +2930,13 @@ function AddressHero({
                       saveDraft={async (draft, expectedRevision) => {
                         const editorKey = editorKeyForSave();
                         if (!editorKey) throw new Error("authentication_required");
-                        const response = expectedRevision === 0
-                          ? await createMobileInspectionSketch(
-                              accountId,
-                              activeAssignmentFile.id,
-                              { sketch: draft, reviewer: "HomeNode appraiser" },
-                              editorKey,
-                            )
-                          : await updateMobileInspectionSketch(
-                              accountId,
-                              activeAssignmentFile.id,
-                              {
-                                sketch: draft,
-                                expected_revision: expectedRevision,
-                                reviewer: "HomeNode appraiser",
-                              },
-                              editorKey,
-                            );
+                        const response = await saveCustomAppraisalSketchDraft({
+                          accountId,
+                          assignmentFileId: activeAssignmentFile.id,
+                          sketch: draft,
+                          expectedRevision,
+                          editorKey,
+                        });
                         return response.sketch;
                       }}
                       onSaved={(savedSketch) => {

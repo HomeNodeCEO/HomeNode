@@ -3,6 +3,7 @@ import type { EditableInspectionSketch } from '@/lib/api';
 export type SketchDocument = EditableInspectionSketch['document'];
 export type SketchArea = SketchDocument['areas'][number];
 export type SketchPoint = SketchArea['vertices'][number];
+export type EditableSketch = EditableInspectionSketch;
 
 export type LiveSketchSummary = {
   grossIncludedSqft: number;
@@ -227,5 +228,28 @@ export function createBlankSketchDocument(areaId: string): SketchDocument {
       position: 1,
     }],
     rooms: [],
+  };
+}
+
+export function createDesktopSketchDraft(): EditableSketch {
+  const document = createBlankSketchDocument(crypto.randomUUID());
+  return {
+    id: `desktop-draft-${crypto.randomUUID()}`,
+    revision: 0,
+    measurement_standard: document.measurement_standard,
+    measurement_method: document.measurement_method,
+    review_status: 'draft',
+    confirmed_at: null,
+    updated_at: new Date().toISOString(),
+    summary: {
+      area_count: 1, room_count: 0, all_areas_closed: false,
+      any_self_intersections: false, above_grade_finished_sqft: 0,
+      gross_included_sqft: 0, deduction_sqft: 0, net_gla_sqft: 0,
+      below_grade_finished_sqft: 0, above_grade_nonstandard_finished_sqft: 0,
+      below_grade_nonstandard_finished_sqft: 0, above_grade_noncontinuous_finished_sqft: 0,
+      above_grade_unfinished_sqft: 0, below_grade_unfinished_sqft: 0,
+      garage_sqft: 0, porch_patio_deck_sqft: 0, by_classification: {},
+    },
+    document,
   };
 }

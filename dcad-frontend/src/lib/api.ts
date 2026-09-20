@@ -3299,53 +3299,6 @@ export async function downloadCustomAppraisalReportPdf(
   };
 }
 
-/** Create the first canonical sketch revision directly from the desktop editor. */
-export async function createMobileInspectionSketch(
-  accountId: string,
-  assignmentFileId: number,
-  input: {
-    sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>['document'];
-    reviewer?: string;
-    client_operation_id?: string;
-  },
-  editorKey: string,
-): Promise<{
-  ok: true;
-  sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
-  report_registry_revision: number;
-}> {
-  const id = (accountId || '').trim();
-  return withDesktopSketchSaveOperation(
-    'custom-appraisal',
-    id,
-    assignmentFileId,
-    0,
-    (operationId) => fetchJSON<{
-      ok: true;
-      sketch: NonNullable<AppraisalAssignmentFile['mobile_inspection_sketch']>;
-      report_registry_revision: number;
-    }>(
-      makeUrl(
-        '/api/accounts/'
-          + encodeURIComponent(id)
-          + '/assignment-files/'
-          + encodeURIComponent(String(assignmentFileId))
-          + '/mobile-sketch',
-      ),
-      {
-        method: 'POST',
-        headers: {
-          'content-type': 'application/json',
-          'x-homenode-editor-key': editorKey,
-        },
-        body: JSON.stringify({ ...input, client_operation_id: operationId }),
-        retryTransient: true,
-      },
-    ),
-    input.client_operation_id,
-  );
-}
-
 /** Save a desktop review as the next immutable mobile-sketch revision. */
 export async function updateMobileInspectionSketch(
   accountId: string,

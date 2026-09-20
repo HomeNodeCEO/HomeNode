@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import json
 import logging
+from collections.abc import Mapping
 from decimal import Decimal, InvalidOperation
 from typing import Any, Dict, Optional
 
@@ -82,6 +83,47 @@ def to_decimal_or_none(v: Any) -> Optional[Decimal]:
         return value if value.is_finite() else None
     except (InvalidOperation, ValueError, TypeError):
         return None
+
+
+def _secondary_replacement_is_verified(detail: Dict[str, Any]) -> bool:
+    """Check the whole new source group before deleting any retained rows."""
+    if "improvement_sections" not in detail:
+        return True  # Preserve older payload semantics without inventing evidence.
+    sections = detail["improvement_sections"]
+    rows = detail.get("secondary_improvements")
+    if not isinstance(sections, Mapping) or not isinstance(rows, list):
+        return False
+    if "additional_improvements" in detail and detail["additional_improvements"] != rows:
+        return False
+    status = sections.get("additional")
+    if status == "explicitly_absent":
+        return not rows
+    if status != "present" or not rows:
+        return False  # Unresolved/unknown or an unparsed table is not an empty group.
+    seen = set()
+    for row in rows:
+        if not isinstance(row, Mapping) or any(
+            isinstance(value, bool) or not isinstance(value, (str, int, float, Decimal, type(None)))
+            or (isinstance(value, (float, Decimal)) and not Decimal(str(value)).is_finite())
+            for value in row.values()
+        ):
+            return False
+        number = to_decimal_or_none(row.get("imp_num"))
+        persisted_number = to_int_or_none(row.get("imp_num"))
+        if (number is None or number != number.to_integral_value()
+                or not 1 <= number <= 2_147_483_647 or number in seen
+                or persisted_number != number):
+            return False
+        seen.add(number)
+        for field in ("year_built", "num_stories", "area_size", "value", "depreciation"):
+            value = row.get(field)
+            if not _is_nullish(value) and to_decimal_or_none(value) is None:
+                return False
+            if field in {"year_built", "area_size"} and not _is_nullish(value):
+                integer = to_int_or_none(value)
+                if integer is None or not -2_147_483_648 <= integer <= 2_147_483_647:
+                    return False
+    return True
 
 
 def collapse_owner_parties(
@@ -375,7 +417,7 @@ def upsert_parsed(account_id: str, detail: Dict[str, Any], history: Dict[str, An
 
         # -------- secondary_improvements (core mapping) --------
         sec_list = (detail or {}).get("secondary_improvements") or []
-        if (_SCHEMA or "").lower() == "core":
+        if (_SCHEMA or "").lower() == "core" and _secondary_replacement_is_verified(detail or {}):
             s.execute(
                 text(f"DELETE FROM {_tbl('secondary_improvements')} WHERE account_id = :account_id"),
                 {"account_id": account_id},

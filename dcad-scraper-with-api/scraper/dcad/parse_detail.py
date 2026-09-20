@@ -11,7 +11,7 @@ from bs4 import BeautifulSoup, Tag, NavigableString
 from .normalize import clean_text, to_bool, to_num, to_sqft, pct_to_num
 
 
-PARSER_VERSION = "2026-09-19-owner-source-year"  # used only for debugging/verification
+PARSER_VERSION = "2026-09-19-improvement-section-boundaries"  # debugging/verification
 
 
 # ------------------------------------------------------------
@@ -255,14 +255,81 @@ _MAIN_HEADING_PHRASES = [
     "residential improvements", "building information", "improvements - main",
     "res improvements", "primary building"
 ]
+_ADDITIONAL_HEADING_PHRASES = [
+    "additional improvements", "other improvements", "outbuildings", "secondary improvements"
+]
+_IMPROVEMENT_HEADINGS = "h1,h2,h3,h4,b,strong,label,div.section-title,div.card-title,span.DtlSectionHdr"
+_IMPROVEMENT_ABSENCE = {
+    "main": ("MainImpRes1_lblMsg", "No Main Improvement."),
+    "additional": ("ResImp1_lblMessage", "No Additional Improvements."),
+}
+
+
+def _improvement_table_in_section(soup: BeautifulSoup, phrases: List[str], matches):
+    """Never borrow the next section's grid, including a numbered Land grid."""
+    def heading_text(tag: Tag) -> str:
+        # Linked/emphasized words remain separate, unlike the general _txt
+        # helper used by other established field parsers.
+        return clean_text(tag.get_text(" ", strip=True))
+
+    headings = soup.select(_IMPROVEMENT_HEADINGS)
+    header = next((h for h in headings if any(
+        re.fullmatch(re.escape(phrase) + r"(?:\s*\([^)]*\))?", heading_text(h), re.I)
+        for phrase in phrases
+    )), None)
+    if header is None:
+        return None, False
+    # Identity, not Tag equality: separate equal-looking headings still delimit
+    # sections. Ignore descendants of the selected header (e.g. a linked title).
+    def is_boundary(h: Tag) -> bool:
+        if h is header or any(parent is header for parent in h.parents):
+            return False
+        if h.name in {"b", "strong", "label"}:
+            # Inline formatting inside a data table is not a section heading.
+            # Outside a table, however, even an unfamiliar title must stop the
+            # scan so a future DCAD section cannot donate its grid to the active
+            # improvement section.
+            return h.find_parent("table") is None
+        return True
+
+    boundaries = {id(h) for h in headings if is_boundary(h)}
+    for node in header.find_all_next(True):
+        if id(node) in boundaries:
+            break
+        if node.name != "table" or _is_nav_like_table(node) or _is_land_like_table(node):
+            continue
+        # A layout wrapper may contain several sections; it is not their data
+        # table. Continue into it rather than parsing all nested tables together.
+        if any(id(child) in boundaries for child in node.find_all(True)):
+            continue
+        if matches(node):
+            return node, True
+    return None, True
+
+
+def _improvement_section_status(soup: BeautifulSoup, section: str, table: Tag | None) -> str:
+    if table is not None:
+        return "present"
+    marker_id, exact_text = _IMPROVEMENT_ABSENCE[section]
+    marker = soup.find(id=marker_id)
+    return "explicitly_absent" if _txt(marker, "") == exact_text else "unresolved"
+
 
 def _resolve_main_improvement_table(soup: BeautifulSoup) -> Optional[Tag]:
-    return (
-        _table_after_heading(soup, "main improvement")
-        or _find_after_header_span(soup, "lblmainimp")
-        or _find_heading_table(soup, _MAIN_HEADING_PHRASES)
-        or next((t for t in soup.find_all("table") if _is_main_impr_table(t)), None)
+    table, has_header = _improvement_table_in_section(
+        soup, _MAIN_HEADING_PHRASES,
+        lambda t: _is_main_impr_table(t) or bool(set(parse_keyvalue_table(t)) & {
+            "building class", "building classification", "year built", "living area",
+        }),
     )
+    if has_header:
+        return table
+    # Preserve content-based recovery for old pages without recognizable section
+    # headings, but do not mistake the secondary-improvement column headers for
+    # a main-building key/value table.
+    return next((t for t in soup.find_all("table") if _is_main_impr_table(t)
+                 and not _is_nav_like_table(t) and not _is_land_like_table(t)
+                 and not _is_addl_impr_table(t)), None) or _find_best_main_by_content(soup)
 
 def _find_best_main_by_content(soup: BeautifulSoup) -> Optional[Tag]:
     best_tbl = None
@@ -286,7 +353,10 @@ def _find_best_main_by_content(soup: BeautifulSoup) -> Optional[Tag]:
     return best_tbl if best_score >= 3 else None
 
 def parse_main_improvement(soup: BeautifulSoup) -> Dict[str, Any]:
-    mi_tbl = _resolve_main_improvement_table(soup) or _find_best_main_by_content(soup)
+    return _parse_main_improvement_table(soup, _resolve_main_improvement_table(soup))
+
+
+def _parse_main_improvement_table(soup: BeautifulSoup, mi_tbl: Tag | None) -> Dict[str, Any]:
     if not mi_tbl:
         return {}
     kv = parse_keyvalue_table(mi_tbl)
@@ -381,16 +451,22 @@ def parse_main_improvement(soup: BeautifulSoup) -> Dict[str, Any]:
 # ------------------------------------------------------------
 
 def _resolve_additional_improvements_table(soup: BeautifulSoup) -> Optional[Tag]:
-    return (
-        soup.find(id="ResImp1_dgImp")
-        or _find_after_header_span(soup, "lbladdimp")
-        or _find_heading_table(soup, ["additional improvements", "other improvements", "outbuildings", "secondary improvements"])
-        or next((t for t in soup.find_all("table") if _is_addl_impr_table(t)), None)
+    table, has_header = _improvement_table_in_section(
+        soup, _ADDITIONAL_HEADING_PHRASES, _is_addl_impr_table,
     )
+    if has_header:
+        return table
+    # The stable grid id remains a useful legacy fallback only when DCAD did
+    # not provide a recognizable section heading. When a heading exists, its
+    # section boundaries own the result even if a later table reuses this id.
+    stable = soup.find(id="ResImp1_dgImp")
+    if stable is not None and stable.name == "table" and _is_addl_impr_table(stable):
+        return stable
+    return next((t for t in soup.find_all("table") if _is_addl_impr_table(t)), None)
 
 def parse_additional_improvements(tbl: Tag | None) -> List[Dict[str, Any]]:
     rows: List[Dict[str, Any]] = []
-    if not tbl or _is_nav_like_table(tbl):
+    if not tbl or _is_nav_like_table(tbl) or _is_land_like_table(tbl):
         return rows
 
     trs = tbl.find_all("tr")
@@ -1169,7 +1245,8 @@ def parse_detail_html(
     value_summary = parse_value_summary(soup)
     arb_hearing = parse_arb_hearing(soup)
 
-    main_improvement = parse_main_improvement(soup)
+    mi_tbl = _resolve_main_improvement_table(soup)
+    main_improvement = _parse_main_improvement_table(soup, mi_tbl)
     ai_tbl = _resolve_additional_improvements_table(soup)
     additional_improvements = parse_additional_improvements(ai_tbl) if ai_tbl else []
 
@@ -1368,6 +1445,10 @@ def parse_detail_html(
 
         "primary_improvements": main_improvement,
         "secondary_improvements": sec_rows,
+        "improvement_sections": {
+            "main": _improvement_section_status(soup, "main", mi_tbl),
+            "additional": _improvement_section_status(soup, "additional", ai_tbl),
+        },
 
         # Maintain legacy key and add plural alias for clients expecting main_improvements
         "main_improvement": main_improvement,

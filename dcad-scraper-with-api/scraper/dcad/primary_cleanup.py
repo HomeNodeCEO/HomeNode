@@ -26,6 +26,14 @@ EXTRA_AMENITY_FIELDS = ("basement", "sprinkler", "spa", "pool", "sauna",
 
 def vacant_zero_cleanup_year(detail: Mapping) -> int | None:
     """Require this attempt's empty Main plus corroborated, explicit vacancy."""
+    # New parser captures distinguish source-confirmed absence from an empty or
+    # unrecognized section. Older retained payloads keep their existing gates.
+    if "improvement_sections" in detail:
+        sections = detail["improvement_sections"]
+        if (not isinstance(sections, Mapping)
+                or sections.get("main") != "explicitly_absent"
+                or sections.get("additional") != "explicitly_absent"):
+            return None
     present = [detail[key] for key in PRIMARY_ALIASES if key in detail]
     if not present or any(not isinstance(value, Mapping) or value for value in present):
         return None

@@ -2,16 +2,14 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import * as previewTransportHelpers from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as controller from '../src/features/neighborhood/customCohortPreviewController.ts';
 import * as catalogHelpers from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as cadEvidenceHelpers from '../src/features/neighborhood/customCohortCadEvidence.ts';
 import * as subdivisionFamilies from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const requireRuntime = createRequire(new URL('../package.json', import.meta.url)), ts = requireRuntime('typescript');
+const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ref = { context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
 const groupId = n => `recorded-cad:${String(n).padStart(64, '0')}`;
 const input = { accountId: 'A', assignmentFileId: '9007199254740993', contextRef: ref, selection: { revision: 1, pockets: [] } };
@@ -89,11 +87,7 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   const api = { requestCustomCohortObservationPreview: previewTransport,
     requestCustomCohortOperation: (...args) => { catalogCalls.push(args); return Promise.resolve(catalogResponse()); } };
   const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortPocketInspector', 'CustomCohortMemberBrowser', 'CustomCohortSubdivisionDialog'].map(key => [key, function Stub() {}]));
-  const file = fileURLToPath(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url));
-  const compiled = ts.transpileModule(readFileSync(file, 'utf8'), { compilerOptions: {
-    target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-  } }).outputText, module = { exports: {} };
-  new Script(`(function(require,module,exports,setTimeout,clearTimeout,JSON){${compiled}\n})`, { filename: file }).runInThisContext()(key => {
+  const component = loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url), key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
     if (key === '../customCohortPreviewApi') return api;
@@ -109,11 +103,14 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
       },
       createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
-  }, module, module.exports, (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; }, id => timers.delete(id),
-  { parse: JSON.parse, stringify: (...args) => { onSerialize?.(args[0]); return JSON.stringify(...args); } });
+  }, { environment: {
+    setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; },
+    clearTimeout: id => timers.delete(id),
+    JSON: { parse: JSON.parse, stringify: (...args) => { onSerialize?.(args[0]); return JSON.stringify(...args); } },
+  } });
   function render(next = props) {
     props = next; cursor = 0; dirty = false;
-    const owner = module.exports.default(props);
+    const owner = component.default(props);
     if (name === 'CustomCohortPocketInspector' && ownerKey !== owner.key) {
       // A keyed child remount does not discard the outer component's memo hooks.
       cells.slice(cursor).forEach(cell => cell?.cleanup?.()); cells.length = cursor; effects.length = 0; ownerKey = owner.key;

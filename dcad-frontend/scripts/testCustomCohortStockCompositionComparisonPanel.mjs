@@ -2,25 +2,24 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
-const ts = requireRuntime('typescript');
 const file = new URL('../src/features/neighborhood/components/CustomCohortStockCompositionComparison.tsx', import.meta.url);
 const source = readFileSync(file, 'utf8');
-const compiled = ts.transpileModule(source, { compilerOptions: {
-  target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX,
-} }).outputText;
 const children = node => [node?.props?.children].flat(Infinity);
 const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : children(node).filter(value => value !== null && value !== undefined && value !== false).map(text).join('');
-const module = { exports: {} }, imports = [];
-new Script(`(function(require,module,exports,fetch,XMLHttpRequest,WebSocket){${compiled}\n})`).runInThisContext()(key => {
+const imports = [];
+const panel = loadTrustedRepositoryCommonJs(file, key => {
   imports.push(key); assert.equal(key, 'react/jsx-runtime', 'The panel must not import hooks, transports or action owners');
   return requireRuntime(key);
-}, module, module.exports, () => assert.fail('No requests from the comparison panel'),
-function () { assert.fail('No XMLHttpRequest'); }, function () { assert.fail('No WebSocket'); });
+}, { environment: {
+  fetch: () => assert.fail('No requests from the comparison panel'),
+  XMLHttpRequest: function () { assert.fail('No XMLHttpRequest'); },
+  WebSocket: function () { assert.fail('No WebSocket'); },
+} });
 
 const coverage = (total, observed, partial, unknown) => ({ total, observed, partial, unknown });
 const referenceCoverage = [coverage(1000, 600, 100, 300), coverage(1000, 800, 50, 150),
@@ -47,7 +46,7 @@ function fixture() {
   };
 }
 const freeze = value => { if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value; };
-const render = comparison => module.exports.default({ comparison: freeze(comparison) });
+const render = comparison => panel.default({ comparison: freeze(comparison) });
 const section = (tree, label) => walk(tree).find(node => node.type === 'section' && node.props['aria-label'] === label);
 const dataRows = tree => walk(tree).filter(node => node.type === 'tr').slice(1).map(row => children(row).filter(Boolean).map(text));
 

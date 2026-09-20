@@ -1,16 +1,15 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { readFileSync, existsSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { createRequire } from 'node:module';
-import { Script } from 'node:vm';
-import { fileURLToPath } from 'node:url';
 import * as decoder from '../src/features/neighborhood/customReportedProposal.ts';
 import * as presentation from '../src/features/neighborhood/customReportedObservationPresentation.ts';
 import * as outline from '../src/features/neighborhood/acceptedNeighborhoodOutline.ts';
 import { createCustomWorkspaceRequestLane } from '../src/features/neighborhood/customWorkspaceRequestLane.ts';
 import { reportedObservationReportFixture } from '../../server/test/fixtures/reportedObservationReportFixture.js';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-const runtime = createRequire(new URL('../package.json', import.meta.url)), ts = runtime('typescript'), jsx = runtime('react/jsx-runtime');
+const runtime = createRequire(new URL('../package.json', import.meta.url)), jsx = runtime('react/jsx-runtime');
 const { renderToStaticMarkup } = runtime('react-dom/server');
 const uuid = n => `10000000-0000-4000-8000-${String(n).padStart(12, '0')}`;
 const TARGET = { accountId: 'SYNTHETIC', assignmentFileId: '125', sessionKey: 'synthetic-user-session' };
@@ -42,19 +41,15 @@ function proposal(e = EXPECTED) {
 const ack = (e = EXPECTED, operation = uuid(4)) => ({ status: 'accepted', target: { account_id: e.accountId, assignment_file_id: e.assignmentFileId },
   context_ref: copy(e.contextRef), operation_id: operation, proposal_operation_id: e.operationId, accepted_editor_revision: e.editorRevision + 1, reused: false });
 function compile(url, overrides = {}, cache = new Map()) {
-  const file = fileURLToPath(url); if (cache.has(file)) return cache.get(file);
-  const output = ts.transpileModule(readFileSync(file, 'utf8'), { fileName: file, reportDiagnostics: true,
-    compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS, jsx: ts.JsxEmit.ReactJSX } });
-  assert.equal((output.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error).length, 0);
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){${output.outputText}\n})`, { filename: file }).runInThisContext()(name => {
+  const key = url.href; if (cache.has(key)) return cache.get(key);
+  const loaded = loadTrustedRepositoryCommonJs(url, name => {
     if (Object.hasOwn(overrides, name)) return overrides[name];
     if (name.startsWith('.')) {
       let source = new URL(name, url); if (!existsSync(source)) source = new URL(`${name}.ts`, url);
       return compile(source, overrides, cache);
     }
     assert.ok(['react', 'react/jsx-runtime'].includes(name)); return runtime(name);
-  }, module, module.exports); cache.set(file, module.exports); return module.exports;
+  }); cache.set(key, loaded); return loaded;
 }
 const { createCustomWorkspaceApi } = compile(new URL('../src/features/neighborhood/customWorkspaceApi.ts', import.meta.url));
 

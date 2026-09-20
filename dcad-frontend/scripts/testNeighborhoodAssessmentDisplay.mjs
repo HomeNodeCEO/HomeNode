@@ -1,27 +1,17 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { createRequire } from 'node:module';
-import { readFileSync } from 'node:fs';
-import { join } from 'node:path';
-import { fileURLToPath } from 'node:url';
-import { Script } from 'node:vm';
 import { NEIGHBORHOOD_MEASUREMENTS } from '../../server/src/services/neighborhoodAssessment/contract.js';
 import { makeNeighborhoodAssessmentDisplayFixture as fixture, coreDisplayInput, uadDisplayInput,
   composeDisplayPreview, expectedDisplayNotice } from './fixtures/neighborhoodAssessmentDisplayFixture.mjs';
+import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-// Transpile only the new formatter and accepted display model, in memory. Real
-// server builders are imported by the TEST fixture only. Production modules
-// cannot import a server, provider or Node dependency through this harness.
-const frontend = fileURLToPath(new URL('../', import.meta.url));
-const ts = createRequire(join(frontend, 'package.json'))('typescript');
+// Load only the new formatter and accepted display model through the trusted
+// repository harness. Real server builders are imported by the TEST fixture
+// only. Production modules cannot import a server, provider or Node dependency.
 function compiled(relative) {
-  const result = ts.transpileModule(readFileSync(join(frontend, relative), 'utf8'), { fileName: relative,
-    reportDiagnostics: true, compilerOptions: { target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.CommonJS } });
-  assert.deepEqual((result.diagnostics ?? []).filter(d => d.category === ts.DiagnosticCategory.Error), []);
-  const module = { exports: {} };
-  new Script(`(function(require,module,exports){\n${result.outputText}\n})`, { filename: relative })
-    .runInThisContext()(name => { throw new Error(`Unexpected production runtime dependency: ${name}`); }, module, module.exports);
-  return module.exports;
+  return loadTrustedRepositoryCommonJs(new URL(`../${relative}`, import.meta.url), name => {
+    throw new Error(`Unexpected production runtime dependency: ${name}`);
+  });
 }
 const { formatNeighborhoodAssessmentDisplay: format } = compiled('src/features/neighborhood/neighborhoodAssessmentDisplay.ts');
 const { prepareNeighborhoodPreview: prepare, createNeighborhoodPreviewIntent: intent } = compiled('src/features/neighborhood/neighborhoodPreviewModel.ts');

@@ -4,8 +4,16 @@ import test from "node:test";
 import {
   fetchOfficialZoningAtPoint,
   getPropertyZoningEvidence,
+  syncOfficialZoningDocuments,
 } from "../src/services/zoningEvidence.js";
 import { DALLAS_COUNTY_ZONING_JURISDICTIONS } from "../src/services/propertyZoningSources.js";
+
+function jsonResponse(value) {
+  return new Response(JSON.stringify(value), {
+    status: 200,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 test("property zoning evidence only accepts the subject city's official GIS provider", async () => {
   let automaticLookup = null;
@@ -39,7 +47,7 @@ test("property zoning evidence only accepts the subject city's official GIS prov
 
   const result = await getPropertyZoningEvidence(pool, {
     accountId: "00000000000000000",
-    fetchImpl: async () => ({ ok: true, json: async () => ({ features: [] }) }),
+    fetchImpl: async () => jsonResponse({ features: [] }),
   });
 
   assert.equal(result.jurisdiction.provider_key, "city_dallas_official");
@@ -60,15 +68,10 @@ test("live official zoning lookup maps Duncanville's current GIS attributes", as
     longitude: -96.9,
     fetchImpl: async (url) => {
       requestedUrl = new URL(url);
-      return {
-        ok: true,
-        async json() {
-          return { features: [{ attributes: {
-            FID: 15,
-            NEW_ZONING: "SF-10, Single-Family Residential District (SF-10)",
-          } }] };
-        },
-      };
+      return jsonResponse({ features: [{ attributes: {
+        FID: 15,
+        NEW_ZONING: "SF-10, Single-Family Residential District (SF-10)",
+      } }] });
     },
   });
 
@@ -89,11 +92,8 @@ test("live Duncanville zoning lookup classifies numbered planned developments", 
   const result = await fetchOfficialZoningAtPoint(jurisdiction, {
     latitude: 32.65,
     longitude: -96.9,
-    fetchImpl: async () => ({
-      ok: true,
-      async json() {
-        return { features: [{ attributes: { FID: 16, NEW_ZONING: "PD-12" } }] };
-      },
+    fetchImpl: async () => jsonResponse({
+      features: [{ attributes: { FID: 16, NEW_ZONING: "PD-12" } }],
     }),
   });
 
@@ -172,19 +172,66 @@ test("missing coordinates are repaired on demand before official zoning lookup",
       refreshed = true;
       return { matched: 1 };
     },
-    fetchImpl: async () => ({
-      ok: true,
-      async json() {
-        return { features: [{ attributes: {
-          FID: 7,
-          NEW_ZONING: "PD, Planned Development District",
-        } }] };
-      },
-    }),
+    fetchImpl: async () => jsonResponse({ features: [{ attributes: {
+      FID: 7,
+      NEW_ZONING: "PD, Planned Development District",
+    } }] }),
   });
 
   assert.equal(refreshed, true);
   assert.equal(result.review_required, false);
   assert.equal(result.automatic_result.zoning_code, "PD");
   assert.equal(result.automatic_result.zoning_description, "Planned Development District");
+});
+
+test("live official zoning rejects oversized provider JSON", async () => {
+  const jurisdiction = DALLAS_COUNTY_ZONING_JURISDICTIONS.find(
+    (entry) => entry.city === "Duncanville",
+  );
+  let bodyCancelled = false;
+  await assert.rejects(
+    () => fetchOfficialZoningAtPoint(jurisdiction, {
+      latitude: 32.65,
+      longitude: -96.9,
+      fetchImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          bodyCancelled = true;
+        },
+      }), {
+        status: 200,
+        headers: { "content-length": String(3 * 1024 * 1024) },
+      }),
+    }),
+    { message: "official_zoning_response_too_large" },
+  );
+  assert.equal(bodyCancelled, true);
+});
+
+test("official zoning document sync rejects declared oversized PDFs before buffering", async () => {
+  let requestCount = 0;
+  let cancellationCount = 0;
+  const result = await syncOfficialZoningDocuments({
+    async query() {
+      return { rows: [] };
+    },
+  }, {
+    logger: { warn() {} },
+    fetchImpl: async (_url, options) => {
+      requestCount += 1;
+      assert.ok(options.signal instanceof AbortSignal);
+      return new Response(new ReadableStream({
+        cancel() {
+          cancellationCount += 1;
+        },
+      }), {
+        status: 200,
+        headers: { "content-length": String((50 * 1024 * 1024) + 1) },
+      });
+    },
+  });
+  assert.ok(result.attempted > 0);
+  assert.equal(result.failed, result.attempted);
+  assert.equal(requestCount, result.attempted);
+  assert.equal(cancellationCount, result.attempted);
+  assert.equal(result.results.every((entry) => entry.error === "zoning_document_too_large"), true);
 });

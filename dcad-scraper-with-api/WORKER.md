@@ -28,8 +28,9 @@ both processes and stops the service if either process exits unexpectedly.
    not count as DCAD outages.
 8. Completed accounts missing owner, land, or GLA can be placed in a separate
    field-repair queue. By default the worker processes one repair after every
-   100 normal campaign accounts, so repair work does not materially delay the
-   missing-first campaign. A usable response whose requested fields remain
+   five normal campaign accounts, so repair work remains bounded without
+   starving the primary campaign.
+   A usable response whose requested fields remain
    unverified is classified as `source_missing` rather than retried forever.
    This legacy status does not prove DCAD omitted the field: a parser or
    persistence gap can produce the same outcome.
@@ -59,6 +60,16 @@ both processes and stops the service if either process exits unexpectedly.
     Existing historical success/source-missing rows are not bulk reset by a
     worker deployment; a reviewed, separately applied audit is needed to
     requeue them. No repair lease/scheduling policy is changed by these checks.
+14. A response that repeatedly fails the same identity/shape validation three
+    times is moved to `manual_review`. Its target remains unfinished, it is not
+    silently skipped, and the worker will not reclaim it until an operator
+    explicitly requeues that account. Network and timeout failures continue to
+    use the shared outage circuit instead of this per-account quarantine.
+15. A read-only parser canary runs against the known-good health account every
+    24 hours. It requires the subject address, owner, market value, and every
+    history section, writes only its canary result, and pauses all campaign and
+    repair work after a failure. It retries every 15 minutes and resumes work
+    only after the sentinel parses successfully.
 
 The residential target table—not `core.accounts.county`—controls selection.
 Collin County rows already present elsewhere in the database have no effect on
@@ -98,7 +109,14 @@ The outage circuit defaults can be tuned with
 conservative so an individual bad account cannot pause the campaign.
 
 `SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS` controls the repair cadence and defaults
-to `100`.
+to `5`.
+
+`SCRAPE_DETERMINISTIC_FAILURE_ATTEMPTS` controls the identical response-
+validation failures required for quarantine and defaults to `3` (minimum `2`).
+`SCRAPE_CANARY_ACCOUNT_IDS` is a comma-separated list of exact 17-digit Dallas
+account IDs and defaults to `SCRAPE_HEALTH_ACCOUNT_ID` (the Snowmass control).
+`SCRAPE_CANARY_INTERVAL_HOURS`, `SCRAPE_CANARY_RETRY_MINUTES`, and
+`SCRAPE_CANARY_POLL_SECONDS` default to `24`, `15`, and `60` respectively.
 
 ### Bounded exact-field audits
 
@@ -156,6 +174,8 @@ writes before rollback, its `--limit` does not bound the underlying audit, and
 it can reset non-leased retry history.
 
 Campaign progress is available from the public API at `/scrape/status`.
+It includes `manual_review_targets` and a `parser_canaries` object. A failed
+canary is an intentional stop condition, not a worker outage to work around.
 
 Only one worker instance should run initially. The default request pacing is a
 two-second delay after each account, in addition to the one-second pause between
@@ -181,6 +201,17 @@ FROM app.dcad_scrape_state
 WHERE status = 'retry'
 ORDER BY attempts DESC, next_attempt_at
 LIMIT 100;
+
+SELECT account_id, attempts, consecutive_deterministic_failures,
+       manual_review_at, left(manual_review_reason, 200) AS reason
+FROM app.dcad_scrape_state
+WHERE status = 'manual_review'
+ORDER BY manual_review_at, account_id;
+
+SELECT account_id, status, consecutive_failures, last_run_at,
+       last_success_at, next_run_at, left(last_error, 200) AS error
+FROM app.dcad_parser_canaries
+ORDER BY account_id;
 
 SELECT event_type, cycle_number, event_payload, created_at
 FROM app.dcad_campaign_events

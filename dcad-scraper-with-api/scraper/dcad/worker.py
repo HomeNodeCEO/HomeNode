@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import logging
 import os
@@ -11,19 +12,31 @@ import time
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 from pathlib import Path
-from typing import Optional
+from typing import Any, Mapping, Optional
 
 from requests import exceptions as requests_exceptions
 from sqlalchemy import Engine, text
 
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
-from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
-from dcad.fetch import browser
+from dcad.data_quality import (
+    CompletenessAssessment,
+    IncompleteScrapeError,
+    require_complete_detail,
+)
+from dcad.fetch import (
+    DcadResponseValidationError,
+    browser,
+    get_detail_html,
+    get_history_html,
+    polite_pause,
+)
 from dcad.field_completeness import (
     parsed_verification_row, primary_structure_sql,
     verification_not_applicable, verification_presence,
 )
 from dcad.run_once import run_for_account
+from dcad.parse_detail import parse_detail_html
+from dcad.parse_history import parse_history_html
 from dcad.upsert import get_engine
 from dcad.owner_source import owner_name_key, owner_source_year_sql
 
@@ -132,6 +145,7 @@ class WorkerConfig:
     lease_minutes: int
     retry_base_seconds: int
     retry_max_seconds: int
+    deterministic_failure_threshold: int
     outage_failure_threshold: int
     outage_pause_seconds: int
     auto_migrate: bool
@@ -143,6 +157,10 @@ class WorkerConfig:
     market_value_recheck_every_accounts: int
     owner_recovery_every_accounts: int
     field_repair_every_accounts: int
+    parser_canary_account_ids: tuple[str, ...]
+    parser_canary_interval_hours: int
+    parser_canary_retry_minutes: int
+    parser_canary_poll_seconds: int
 
     @classmethod
     def from_env(cls) -> "WorkerConfig":
@@ -151,6 +169,28 @@ class WorkerConfig:
             for part in os.getenv("SCRAPE_EXCLUDED_COUNTIES", "COLLIN").split(",")
             if part.strip()
         )
+        recovery_health_account_id = os.getenv(
+            "SCRAPE_HEALTH_ACCOUNT_ID", "26272500060150000"
+        ).strip()
+        canary_ids = tuple(
+            dict.fromkeys(
+                part.strip()
+                for part in os.getenv(
+                    "SCRAPE_CANARY_ACCOUNT_IDS", recovery_health_account_id
+                ).split(",")
+                if part.strip()
+            )
+        )
+        invalid_canary_ids = [
+            account_id
+            for account_id in canary_ids
+            if re.fullmatch(r"\d{17}", account_id) is None
+        ]
+        if invalid_canary_ids:
+            raise ValueError(
+                "SCRAPE_CANARY_ACCOUNT_IDS must contain only 17-digit Dallas "
+                f"account IDs: {invalid_canary_ids!r}"
+            )
         return cls(
             data_schema=_identifier(os.getenv("DB_SCHEMA", "core"), "DB_SCHEMA"),
             state_schema=_identifier(os.getenv("SCRAPE_STATE_SCHEMA", "app"), "SCRAPE_STATE_SCHEMA"),
@@ -162,6 +202,9 @@ class WorkerConfig:
             lease_minutes=max(1, int(os.getenv("SCRAPE_LEASE_MINUTES", "15"))),
             retry_base_seconds=max(30, int(os.getenv("SCRAPE_RETRY_BASE_SECONDS", "300"))),
             retry_max_seconds=max(300, int(os.getenv("SCRAPE_RETRY_MAX_SECONDS", "604800"))),
+            deterministic_failure_threshold=max(
+                2, int(os.getenv("SCRAPE_DETERMINISTIC_FAILURE_ATTEMPTS", "3"))
+            ),
             outage_failure_threshold=max(
                 2, int(os.getenv("SCRAPE_OUTAGE_FAILURE_THRESHOLD", "5"))
             ),
@@ -176,9 +219,7 @@ class WorkerConfig:
             recovery_every_accounts=max(
                 1, int(os.getenv("SCRAPE_RECOVERY_EVERY_ACCOUNTS", "25"))
             ),
-            recovery_health_account_id=os.getenv(
-                "SCRAPE_HEALTH_ACCOUNT_ID", "26272500060150000"
-            ).strip(),
+            recovery_health_account_id=recovery_health_account_id,
             market_value_recheck_days=max(
                 1, int(os.getenv("SCRAPE_MARKET_VALUE_RECHECK_DAYS", "7"))
             ),
@@ -191,6 +232,16 @@ class WorkerConfig:
             ),
             field_repair_every_accounts=max(
                 1, int(os.getenv("SCRAPE_FIELD_REPAIR_EVERY_ACCOUNTS", "5"))
+            ),
+            parser_canary_account_ids=canary_ids,
+            parser_canary_interval_hours=max(
+                1, int(os.getenv("SCRAPE_CANARY_INTERVAL_HOURS", "24"))
+            ),
+            parser_canary_retry_minutes=max(
+                1, int(os.getenv("SCRAPE_CANARY_RETRY_MINUTES", "15"))
+            ),
+            parser_canary_poll_seconds=max(
+                15, int(os.getenv("SCRAPE_CANARY_POLL_SECONDS", "60"))
             ),
         )
 
@@ -261,6 +312,12 @@ def _field_repair_table(config: WorkerConfig) -> str:
     )
 
 
+def _parser_canary_table(config: WorkerConfig) -> str:
+    return _qualified_table(
+        config.state_schema, "dcad_parser_canaries", "parser canaries"
+    )
+
+
 def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
     state_schema = _identifier(config.state_schema, "scrape state schema")
     state = _state_table(config)
@@ -295,6 +352,8 @@ def ensure_state_schema(engine: Engine, config: WorkerConfig) -> None:
             "017_dcad_field_repair_queue.sql",
             "018_vacant_land_gla_not_applicable.sql",
             "019_value_only_vacant_land_gla_not_applicable.sql",
+            "020_dcad_deterministic_failure_quarantine.sql",
+            "021_dcad_parser_canaries.sql",
         ):
             migration = migration_root / migration_name
             conn.execute(text(migration.read_text(encoding="utf-8")))
@@ -311,6 +370,215 @@ def verify_state_schema(engine: Engine, config: WorkerConfig) -> None:
             "Scrape state table is missing. Run with --migrate-only or set "
             "SCRAPE_AUTO_MIGRATE=true."
         )
+
+
+class ParserCanaryError(RuntimeError):
+    """Raised when a known-good DCAD account no longer parses as expected."""
+
+
+def seed_parser_canaries(engine: Engine, config: WorkerConfig) -> int:
+    """Register configured read-only parser sentinels without resetting history."""
+
+    if not config.parser_canary_account_ids:
+        return 0
+    canaries = _parser_canary_table(config)
+    sql = text(
+        f"""
+        INSERT INTO {canaries} (account_id, status, next_run_at)
+        SELECT account_id, 'pending', now()
+        FROM unnest(CAST(:account_ids AS text[])) AS configured(account_id)
+        ON CONFLICT (account_id) DO NOTHING
+        """
+    )
+    with engine.begin() as conn:
+        result = conn.execute(sql, {"account_ids": list(config.parser_canary_account_ids)})
+    return int(result.rowcount or 0)
+
+
+def claim_due_parser_canary(
+    engine: Engine,
+    config: WorkerConfig,
+    worker_id: str,
+) -> Optional[str]:
+    canaries = _parser_canary_table(config)
+    sql = text(
+        f"""
+        WITH candidate AS (
+            SELECT account_id
+            FROM {canaries}
+            WHERE next_run_at <= now()
+              AND (lease_expires_at IS NULL OR lease_expires_at <= now())
+              AND status IN ('pending', 'passed', 'failed', 'leased')
+            ORDER BY next_run_at, account_id
+            FOR UPDATE SKIP LOCKED
+            LIMIT 1
+        )
+        UPDATE {canaries} AS canary
+        SET status = 'leased',
+            lease_expires_at = now() + make_interval(mins => :lease_minutes),
+            worker_id = :worker_id,
+            last_run_at = now(),
+            updated_at = now()
+        FROM candidate
+        WHERE canary.account_id = candidate.account_id
+        RETURNING canary.account_id
+        """
+    )
+    with engine.begin() as conn:
+        row = conn.execute(
+            sql,
+            {
+                "worker_id": worker_id,
+                "lease_minutes": config.lease_minutes,
+            },
+        ).mappings().first()
+    return str(row["account_id"]) if row else None
+
+
+def validate_parser_canary_result(
+    detail: Mapping[str, Any], history: Mapping[str, Any]
+) -> dict[str, object]:
+    """Validate the stable fields a known-good improved parcel must expose."""
+
+    location = detail.get("property_location")
+    owner = detail.get("owner")
+    values = detail.get("value_summary")
+    reasons: list[str] = []
+    if not isinstance(location, Mapping) or not location.get("address"):
+        reasons.append("missing_address")
+    if not isinstance(owner, Mapping) or not owner.get("owner_name"):
+        reasons.append("missing_owner_name")
+    if not isinstance(values, Mapping) or not values.get("market_value"):
+        reasons.append("missing_market_value")
+
+    history_counts: dict[str, int] = {}
+    for key in ("owner_history", "market_value", "taxable_value", "exemptions"):
+        rows = history.get(key)
+        if not isinstance(rows, list) or not rows:
+            reasons.append(f"missing_{key}")
+            history_counts[key] = 0
+        else:
+            history_counts[key] = len(rows)
+
+    if reasons:
+        raise ParserCanaryError("parser_canary_failed:" + ",".join(reasons))
+    return {
+        "address_present": True,
+        "owner_name_present": True,
+        "market_value_present": True,
+        "history_counts": history_counts,
+    }
+
+
+def run_parser_canary(account_id: str) -> dict[str, object]:
+    """Fetch and parse a sentinel account without writing property data."""
+
+    with browser() as page:
+        detail_html = get_detail_html(page, account_id)
+        detail = parse_detail_html(detail_html)
+        require_complete_detail(account_id, detail, detail_html)
+        polite_pause()
+        history_html = get_history_html(page, account_id)
+        history = parse_history_html(history_html)
+    return validate_parser_canary_result(detail, history)
+
+
+def mark_parser_canary_success(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    result: Mapping[str, object],
+) -> None:
+    canaries = _parser_canary_table(config)
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {canaries}
+                SET status = 'passed',
+                    consecutive_failures = 0,
+                    last_success_at = now(),
+                    next_run_at = now() + make_interval(hours => :interval_hours),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = NULL,
+                    last_result = CAST(:result AS jsonb),
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "interval_hours": config.parser_canary_interval_hours,
+                "result": json.dumps(dict(result), sort_keys=True),
+            },
+        )
+
+
+def mark_parser_canary_failure(
+    engine: Engine,
+    config: WorkerConfig,
+    account_id: str,
+    error: BaseException,
+) -> None:
+    canaries = _parser_canary_table(config)
+    message = f"{error.__class__.__name__}: {error}"[:2000]
+    with engine.begin() as conn:
+        conn.execute(
+            text(
+                f"""
+                UPDATE {canaries}
+                SET status = 'failed',
+                    consecutive_failures = consecutive_failures + 1,
+                    next_run_at = now() + make_interval(mins => :retry_minutes),
+                    lease_expires_at = NULL,
+                    worker_id = NULL,
+                    last_error = :last_error,
+                    last_result = '{{}}'::jsonb,
+                    updated_at = now()
+                WHERE account_id = :account_id
+                """
+            ),
+            {
+                "account_id": account_id,
+                "retry_minutes": config.parser_canary_retry_minutes,
+                "last_error": message,
+            },
+        )
+
+
+def parser_canary_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
+    canaries = _parser_canary_table(config)
+    with engine.connect() as conn:
+        summary = conn.execute(
+            text(
+                f"""
+                SELECT count(*) AS configured,
+                       count(*) FILTER (WHERE status = 'failed') AS failed,
+                       count(*) FILTER (WHERE status = 'leased') AS leased,
+                       min(next_run_at) AS next_run_at,
+                       max(last_success_at) AS last_success_at
+                FROM {canaries}
+                """
+            )
+        ).mappings().one()
+        latest_failure = conn.execute(
+            text(
+                f"""
+                SELECT account_id, consecutive_failures, last_run_at,
+                       next_run_at, last_error
+                FROM {canaries}
+                WHERE status = 'failed'
+                ORDER BY updated_at DESC, account_id
+                LIMIT 1
+                """
+            )
+        ).mappings().first()
+    return {
+        **dict(summary),
+        "blocked": int(summary["failed"] or 0) > 0,
+        "latest_failure": dict(latest_failure) if latest_failure else None,
+    }
 
 
 def bootstrap_existing_successes(engine: Engine, config: WorkerConfig) -> int:
@@ -406,7 +674,7 @@ def claim_next_account(
             FROM {targets} t
             JOIN campaign_gate c ON true
             LEFT JOIN {state} s ON s.account_id = t.account_id
-            WHERE COALESCE(s.status, 'pending') <> 'disabled'
+            WHERE COALESCE(s.status, 'pending') NOT IN ('disabled', 'manual_review')
               AND (s.lease_expires_at IS NULL OR s.lease_expires_at <= now())
               AND (
                   COALESCE(s.status, 'pending') <> 'retry'
@@ -758,6 +1026,10 @@ def mark_success(
             lease_expires_at = NULL,
             worker_id = NULL,
             last_error = NULL,
+            failure_fingerprint = NULL,
+            consecutive_deterministic_failures = 0,
+            manual_review_at = NULL,
+            manual_review_reason = NULL,
             quality_status = {_market_quality_status_sql('quality_flags', 'quality_status')},
             quality_flags = {_merged_quality_flags_sql('quality_flags')},
             canonical_account_id = :account_id,
@@ -968,16 +1240,43 @@ def retry_delay_seconds(config: WorkerConfig, prior_attempts: int) -> int:
     return min(config.retry_max_seconds, config.retry_base_seconds * (2**exponent))
 
 
+@dataclass(frozen=True)
+class FailureDisposition:
+    delay_seconds: int
+    status: str
+    consecutive_deterministic_failures: int
+
+    @property
+    def quarantined(self) -> bool:
+        return self.status == "manual_review"
+
+
+def deterministic_failure_fingerprint(error: BaseException) -> Optional[str]:
+    """Return a privacy-safe fingerprint only for deterministic page rejection.
+
+    Transport errors and incomplete-but-valid account pages retain the existing
+    retry/recovery behavior. Response validation errors use stable internal
+    codes, so hashing the class and code lets the worker distinguish one
+    repeated failure from changing failures without persisting page contents.
+    """
+
+    if not isinstance(error, DcadResponseValidationError):
+        return None
+    material = f"{error.__class__.__name__}:{error}".encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
 def mark_failure(
     engine: Engine,
     config: WorkerConfig,
     account_id: str,
     prior_attempts: int,
     error: BaseException,
-) -> int:
+) -> FailureDisposition:
     state = _state_table(config)
     delay = retry_delay_seconds(config, prior_attempts)
     message = f"{error.__class__.__name__}: {error}"[:2000]
+    failure_fingerprint = deterministic_failure_fingerprint(error)
     incomplete = isinstance(error, IncompleteScrapeError)
     quality_status = "incomplete" if incomplete else "scrape_error"
     quality_flags = (
@@ -985,21 +1284,59 @@ def mark_failure(
     )
     sql = text(
         f"""
-        UPDATE {state}
-        SET status = 'retry',
-            attempts = attempts + 1,
-            next_attempt_at = now() + make_interval(secs => :delay_seconds),
-            lease_expires_at = NULL,
-            worker_id = NULL,
-            last_error = :last_error,
-            quality_status = :quality_status,
-            quality_flags = CAST(:quality_flags AS text[]),
-            updated_at = now()
-        WHERE account_id = :account_id
+        WITH classified AS (
+            SELECT account_id,
+                   CASE
+                       WHEN :failure_fingerprint IS NULL THEN 0
+                       WHEN failure_fingerprint = :failure_fingerprint
+                           THEN consecutive_deterministic_failures + 1
+                       ELSE 1
+                   END AS next_deterministic_count
+            FROM {state}
+            WHERE account_id = :account_id
+            FOR UPDATE
+        ), updated AS (
+            UPDATE {state} AS scrape_state
+            SET status = CASE
+                    WHEN :failure_fingerprint IS NOT NULL
+                     AND classified.next_deterministic_count >= :failure_threshold
+                        THEN 'manual_review'
+                    ELSE 'retry'
+                END,
+                attempts = scrape_state.attempts + 1,
+                next_attempt_at = now() + make_interval(secs => :delay_seconds),
+                lease_expires_at = NULL,
+                worker_id = NULL,
+                last_error = :last_error,
+                quality_status = :quality_status,
+                quality_flags = CAST(:quality_flags AS text[]),
+                failure_fingerprint = :failure_fingerprint,
+                consecutive_deterministic_failures =
+                    classified.next_deterministic_count,
+                manual_review_at = CASE
+                    WHEN :failure_fingerprint IS NOT NULL
+                     AND classified.next_deterministic_count >= :failure_threshold
+                        THEN now()
+                    ELSE NULL
+                END,
+                manual_review_reason = CASE
+                    WHEN :failure_fingerprint IS NOT NULL
+                     AND classified.next_deterministic_count >= :failure_threshold
+                        THEN :last_error
+                    ELSE NULL
+                END,
+                updated_at = now()
+            FROM classified
+            WHERE scrape_state.account_id = classified.account_id
+            RETURNING scrape_state.status,
+                      scrape_state.consecutive_deterministic_failures
+        )
+        SELECT status, consecutive_deterministic_failures
+        FROM updated
         """
     )
     with engine.begin() as conn:
-        conn.execute(
+        outcome = conn.execute(
             sql,
             {
                 "account_id": account_id,
@@ -1007,8 +1344,10 @@ def mark_failure(
                 "last_error": message,
                 "quality_status": quality_status,
                 "quality_flags": "{" + ",".join(quality_flags) + "}",
+                "failure_fingerprint": failure_fingerprint,
+                "failure_threshold": config.deterministic_failure_threshold,
             },
-        )
+        ).mappings().one()
         conn.execute(
             text(
                 f"""
@@ -1024,7 +1363,13 @@ def mark_failure(
                 "quality_flags": "{" + ",".join(quality_flags) + "}",
             },
         )
-    return delay
+    return FailureDisposition(
+        delay_seconds=delay,
+        status=str(outcome["status"]),
+        consecutive_deterministic_failures=int(
+            outcome["consecutive_deterministic_failures"]
+        ),
+    )
 
 
 def release_claim(
@@ -2168,6 +2513,9 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
                        count(t.account_id) FILTER (
                            WHERE s.status = 'retry'
                        ) AS retry_targets,
+                       count(t.account_id) FILTER (
+                           WHERE s.status = 'manual_review'
+                       ) AS manual_review_targets,
                        min(t.source_position) FILTER (
                            WHERE (
                                c.phase = 'initial_missing'
@@ -2289,6 +2637,7 @@ def campaign_status(engine: Engine, config: WorkerConfig) -> dict[str, object]:
         **dict(owner_quality),
         **dict(field_repair_quality),
     }
+    result["parser_canaries"] = parser_canary_status(engine, config)
     return result
 
 
@@ -2688,19 +3037,21 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
     else:
         verify_state_schema(engine, config)
 
+    canaries_seeded = 0 if once else seed_parser_canaries(engine, config)
     bootstrapped = bootstrap_existing_successes(engine, config)
     total_targets = target_account_count(engine, config)
     progress = campaign_status(engine, config)
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     log.info(
         "Worker ready id=%s campaign=%s targets=%d phase=%s cycle=%s "
-        "existing_successes_bootstrapped=%d",
+        "existing_successes_bootstrapped=%d parser_canaries_seeded=%d",
         worker_id,
         config.campaign_key,
         total_targets,
         progress.get("phase"),
         progress.get("cycle_number", 0),
         bootstrapped,
+        canaries_seeded,
     )
 
     successes = 0
@@ -2712,7 +3063,56 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
     )
     processed_since_field_repair = 0 if once else config.field_repair_every_accounts
     next_idle_queue = 0
+    next_canary_poll_at = 0.0
+    parser_canary_blocked = False
     while not _stop_requested:
+        if not once and time.monotonic() >= next_canary_poll_at:
+            canary_account_id = claim_due_parser_canary(
+                engine, config, worker_id
+            )
+            if canary_account_id is not None:
+                try:
+                    canary_result = run_parser_canary(canary_account_id)
+                except Exception as error:
+                    mark_parser_canary_failure(
+                        engine, config, canary_account_id, error
+                    )
+                    parser_canary_blocked = True
+                    upstream_outage = is_upstream_outage_error(error)
+                    if upstream_outage:
+                        record_upstream_failure(
+                            engine, config, worker_id, error
+                        )
+                    log.critical(
+                        "Parser canary failed; campaign work is paused "
+                        "account_id=%s retry_minutes=%d upstream_outage=%s "
+                        "error=%s",
+                        canary_account_id,
+                        config.parser_canary_retry_minutes,
+                        upstream_outage,
+                        error,
+                        exc_info=True,
+                    )
+                else:
+                    mark_parser_canary_success(
+                        engine, config, canary_account_id, canary_result
+                    )
+                    reset_outage_circuit(engine, config)
+                    log.info(
+                        "Parser canary passed account_id=%s result=%s",
+                        canary_account_id,
+                        json.dumps(canary_result, sort_keys=True),
+                    )
+            canary_progress = parser_canary_status(engine, config)
+            parser_canary_blocked = bool(canary_progress["blocked"])
+            next_canary_poll_at = (
+                time.monotonic() + config.parser_canary_poll_seconds
+            )
+
+        if parser_canary_blocked:
+            _sleep(min(config.idle_seconds, config.parser_canary_poll_seconds))
+            continue
+
         if (
             not once
             and processed_since_owner_recovery
@@ -2810,7 +3210,9 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
             assessment = run_for_account(account_id)
         except Exception as error:
             failures += 1
-            delay = mark_failure(engine, config, account_id, prior_attempts, error)
+            disposition = mark_failure(
+                engine, config, account_id, prior_attempts, error
+            )
             if (
                 isinstance(error, IncompleteScrapeError)
                 and prior_attempts + 1 >= config.recovery_attempt_threshold
@@ -2852,11 +3254,14 @@ def run_worker(config: WorkerConfig, once: bool = False) -> int:
                         "DCAD outage circuit closed after a reachable non-upstream response"
                     )
             log.error(
-                "Scrape failed account_id=%s attempt=%d retry_in_seconds=%d "
+                "Scrape failed account_id=%s attempt=%d disposition=%s "
+                "retry_in_seconds=%d deterministic_failures=%d "
                 "upstream_outage=%s error=%s",
                 account_id,
                 prior_attempts + 1,
-                delay,
+                disposition.status,
+                disposition.delay_seconds,
+                disposition.consecutive_deterministic_failures,
                 upstream_outage,
                 error,
                 exc_info=True,

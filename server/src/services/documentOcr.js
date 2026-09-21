@@ -1,5 +1,9 @@
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
 const AZURE_API_VERSION = "2024-11-30";
 const AZURE_MODEL_ID = "prebuilt-read";
+const MAX_OCR_ERROR_RESPONSE_BYTES = 256 * 1024;
+const MAX_OCR_RESULT_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -10,8 +14,16 @@ function boundedInteger(value, fallback, minimum, maximum) {
 function cleanEndpoint(value) {
   const raw = String(value || "").trim().replace(/\/+$/, "");
   if (!raw) return null;
-  const url = new URL(raw);
+  let url;
+  try {
+    url = new URL(raw);
+  } catch {
+    throw new Error("document_ocr_endpoint_invalid");
+  }
   if (url.protocol !== "https:") throw new Error("document_ocr_endpoint_must_use_https");
+  if (url.username || url.password || url.hash || url.search) {
+    throw new Error("document_ocr_endpoint_invalid");
+  }
   return url;
 }
 
@@ -19,19 +31,84 @@ function sleep(milliseconds) {
   return new Promise((resolve) => setTimeout(resolve, milliseconds));
 }
 
-async function fetchWithTimeout(url, init, timeoutMs) {
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The response headers have already been consumed; cancellation is best-effort cleanup.
+  }
+}
+
+async function fetchWithTimeout(url, init, timeoutMs, unavailableCode) {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
   try {
-    return await fetch(url, { ...init, signal: controller.signal });
+    return await fetch(url, {
+      ...init,
+      redirect: "manual",
+      signal: controller.signal,
+    });
+  } catch {
+    throw new Error(unavailableCode);
   } finally {
     clearTimeout(timeout);
   }
 }
 
 function responseError(status, payload, fallback) {
-  const detail = String(payload?.error?.code || payload?.error?.message || "").slice(0, 300);
-  return new Error(`${fallback}:${status}${detail ? `:${detail}` : ""}`);
+  const safeStatus = Number.isInteger(status) ? status : "unknown";
+  const rawProviderCode = String(payload?.error?.code || "");
+  const providerCode = /^[A-Za-z][A-Za-z0-9_.-]{0,63}$/.test(rawProviderCode)
+    ? `_${rawProviderCode}`
+    : "";
+  return new Error(`${fallback}_http_${safeStatus}${providerCode}`);
+}
+
+async function readProviderJson(
+  response,
+  maximumBytes,
+  errorPrefix,
+  { optional = false } = {},
+) {
+  const tooLargeCode = `${errorPrefix}_response_too_large`;
+  const unavailableCode = `${errorPrefix}_response_unavailable`;
+  try {
+    return await readBoundedJsonResponse(response, {
+      maximumBytes,
+      tooLargeCode,
+      unavailableCode,
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (code === tooLargeCode) throw new Error(code);
+    if (optional) return {};
+    if (code === unavailableCode) throw new Error(code);
+    throw new Error(`${errorPrefix}_invalid_response`);
+  }
+}
+
+function trustedOperationUrl(operationLocation, endpoint) {
+  let resultUrl;
+  try {
+    resultUrl = new URL(String(operationLocation || ""));
+  } catch {
+    throw new Error("document_ocr_operation_location_untrusted");
+  }
+  const pathPrefix =
+    `/documentintelligence/documentModels/${AZURE_MODEL_ID}/analyzeResults/`;
+  const operation = resultUrl.pathname.slice(pathPrefix.length);
+  if (
+    resultUrl.origin !== endpoint.origin
+    || resultUrl.username
+    || resultUrl.password
+    || resultUrl.hash
+    || !resultUrl.pathname.startsWith(pathPrefix)
+    || !/^[A-Za-z0-9._~-]{1,256}$/.test(operation)
+    || resultUrl.searchParams.get("api-version") !== AZURE_API_VERSION
+  ) {
+    throw new Error("document_ocr_operation_location_untrusted");
+  }
+  return resultUrl;
 }
 
 function pageTextFromResult(result = {}) {
@@ -101,33 +178,48 @@ export function createDocumentOcrProvider(env = process.env) {
           "ocp-apim-subscription-key": key,
         },
         body: content,
-      }, requestTimeoutMs);
+      }, requestTimeoutMs, "document_ocr_submit_unavailable");
       if (submitted.status !== 202) {
-        const payload = await submitted.json().catch(() => ({}));
+        const payload = await readProviderJson(
+          submitted,
+          MAX_OCR_ERROR_RESPONSE_BYTES,
+          "document_ocr_submit",
+          { optional: true },
+        );
         throw responseError(submitted.status, payload, "document_ocr_submit_failed");
       }
       const operationLocation = submitted.headers.get("operation-location");
+      await cancelResponseBody(submitted);
       if (!operationLocation) throw new Error("document_ocr_operation_location_missing");
-      const resultUrl = new URL(operationLocation);
-      if (resultUrl.origin !== endpoint.origin) {
-        throw new Error("document_ocr_operation_location_untrusted");
-      }
+      const resultUrl = trustedOperationUrl(operationLocation, endpoint);
       const deadline = Date.now() + maximumPollMs;
       let result = null;
       while (Date.now() < deadline) {
         const response = await fetchWithTimeout(resultUrl, {
           method: "GET",
           headers: { "ocp-apim-subscription-key": key },
-        }, requestTimeoutMs);
-        const payload = await response.json().catch(() => ({}));
-        if (!response.ok) throw responseError(response.status, payload, "document_ocr_poll_failed");
+        }, requestTimeoutMs, "document_ocr_poll_unavailable");
+        if (!response.ok) {
+          const payload = await readProviderJson(
+            response,
+            MAX_OCR_ERROR_RESPONSE_BYTES,
+            "document_ocr_poll",
+            { optional: true },
+          );
+          throw responseError(response.status, payload, "document_ocr_poll_failed");
+        }
+        const payload = await readProviderJson(
+          response,
+          MAX_OCR_RESULT_RESPONSE_BYTES,
+          "document_ocr_poll",
+        );
         const status = String(payload.status || "").toLowerCase();
         if (status === "succeeded") {
           result = payload;
           break;
         }
         if (status === "failed" || status === "canceled") {
-          throw responseError(response.status, payload, "document_ocr_analysis_failed");
+          throw new Error("document_ocr_analysis_failed");
         }
         const retryAfterSeconds = Number(response.headers.get("retry-after"));
         const retryAfterMs = Number.isFinite(retryAfterSeconds) && retryAfterSeconds > 0
@@ -149,3 +241,8 @@ export function createDocumentOcrProvider(env = process.env) {
     },
   };
 }
+
+export const documentOcrInternals = Object.freeze({
+  MAX_OCR_ERROR_RESPONSE_BYTES,
+  MAX_OCR_RESULT_RESPONSE_BYTES,
+});

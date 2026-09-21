@@ -5025,7 +5025,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}>
         <ConditionQualityStudy
-          key={`condition-quality-${propertyId}`}
+          key={`condition-quality-${propertyId}-${salesAnalysisAsOf}`}
           subjectAccountId={propertyId}
           assignmentFileId={activeAssignmentFile?.id || null}
           analysisAsOf={salesAnalysisAsOf}

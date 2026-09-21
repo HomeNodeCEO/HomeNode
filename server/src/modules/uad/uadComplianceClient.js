@@ -1,4 +1,7 @@
 import { createHash } from "node:crypto";
+import { TextDecoder } from "node:util";
+
+import { readBoundedResponseBuffer } from "../../util/boundedResponse.js";
 
 const PROVIDERS = Object.freeze(["fannie", "freddie"]);
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
@@ -84,28 +87,52 @@ function providerConfig(env, provider) {
   return Object.freeze(config);
 }
 
-async function readBoundedText(response, maximum = MAX_RESPONSE_BYTES) {
-  const declared = Number(response.headers.get("content-length") || 0);
-  if (declared > maximum) throw new Error("uad_compliance_response_too_large");
-  if (!response.body?.getReader) {
-    const text = await response.text();
-    if (Buffer.byteLength(text, "utf8") > maximum) throw new Error("uad_compliance_response_too_large");
-    return text;
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The response is already rejected; cancellation is best-effort cleanup.
   }
-  const reader = response.body.getReader();
-  const chunks = [];
-  let total = 0;
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maximum) {
-      await reader.cancel().catch(() => {});
-      throw new Error("uad_compliance_response_too_large");
+}
+
+function responseStatus(response) {
+  return Number.isInteger(response?.status)
+    && response.status >= 100
+    && response.status <= 599
+    ? response.status
+    : "unknown";
+}
+
+async function readBoundedText(response, maximum = MAX_RESPONSE_BYTES, signal = null) {
+  if (!response || typeof response.ok !== "boolean"
+    || typeof response.headers?.get !== "function") {
+    await cancelResponseBody(response);
+    throw new Error("uad_compliance_response_invalid");
+  }
+  if (response.redirected) {
+    await cancelResponseBody(response);
+    throw new Error("uad_compliance_redirect_forbidden");
+  }
+  let buffer;
+  try {
+    buffer = await readBoundedResponseBuffer(response, {
+      maximumBytes: maximum,
+      tooLargeCode: "uad_compliance_response_too_large",
+      unavailableCode: "uad_compliance_response_invalid",
+    });
+  } catch (error) {
+    if (signal?.aborted) throw new Error("uad_compliance_timeout");
+    if (error?.message === "uad_compliance_response_too_large"
+      || error?.message === "uad_compliance_response_invalid") {
+      throw error;
     }
-    chunks.push(Buffer.from(value));
+    throw new Error("uad_compliance_response_invalid");
   }
-  return Buffer.concat(chunks).toString("utf8");
+  try {
+    return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+  } catch {
+    throw new Error("uad_compliance_response_invalid");
+  }
 }
 
 function responseHeader(response, names) {
@@ -134,6 +161,7 @@ export class UadComplianceClient {
       form.set("client_id", this.config.clientId);
       form.set("client_secret", this.config.clientSecret);
     }
+    const signal = AbortSignal.timeout(this.timeoutMs);
     let response;
     try {
       response = await this.fetchImpl(this.config.tokenUrl, {
@@ -141,14 +169,26 @@ export class UadComplianceClient {
         headers,
         body: form,
         redirect: "error",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal,
       });
     } catch (error) {
       if (["AbortError", "TimeoutError"].includes(error?.name)) throw new Error("uad_compliance_timeout");
       throw new Error("uad_compliance_network_error");
     }
-    const body = await readBoundedText(response, 256 * 1024);
-    if (!response.ok) throw new Error(`uad_compliance_token_failed:${response.status}`);
+    if (!response || typeof response.ok !== "boolean"
+      || typeof response.headers?.get !== "function") {
+      await cancelResponseBody(response);
+      throw new Error("uad_compliance_response_invalid");
+    }
+    if (response.redirected) {
+      await cancelResponseBody(response);
+      throw new Error("uad_compliance_redirect_forbidden");
+    }
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      throw new Error(`uad_compliance_token_failed:${responseStatus(response)}`);
+    }
+    const body = await readBoundedText(response, 256 * 1024, signal);
     let parsed;
     try {
       parsed = JSON.parse(body);
@@ -163,6 +203,7 @@ export class UadComplianceClient {
   async submitXml(xml, { correlationId } = {}) {
     if (!this.config.configured) throw new Error(`uad_compliance_${this.config.provider}_not_configured`);
     const token = await this.accessToken();
+    const signal = AbortSignal.timeout(this.timeoutMs);
     let response;
     try {
       response = await this.fetchImpl(this.config.submitUrl, {
@@ -174,13 +215,13 @@ export class UadComplianceClient {
         },
         body: xml,
         redirect: "error",
-        signal: AbortSignal.timeout(this.timeoutMs),
+        signal,
       });
     } catch (error) {
       if (["AbortError", "TimeoutError"].includes(error?.name)) throw new Error("uad_compliance_timeout");
       throw new Error("uad_compliance_network_error");
     }
-    const body = await readBoundedText(response);
+    const body = await readBoundedText(response, MAX_RESPONSE_BYTES, signal);
     const contentType = String(response.headers.get("content-type") || "application/octet-stream")
       .split(";", 1)[0].trim().toLowerCase();
     return {

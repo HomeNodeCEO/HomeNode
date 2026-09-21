@@ -162,6 +162,13 @@ test("cancels invalid and unsuccessful response bodies with stable diagnostics",
       errorCode: "http_error",
     },
     {
+      matches: (url) => url.endsWith("/api/uad/capabilities"),
+      check: "capabilities",
+      status: 200,
+      contentType: "text/html",
+      errorCode: "invalid_content_type",
+    },
+    {
       matches: (url) => url.includes("/uad-3.6/"),
       check: "web_app",
       status: 200,

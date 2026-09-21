@@ -24,6 +24,13 @@ function responseStatus(response) {
     : null;
 }
 
+function responseMediaType(response) {
+  return String(response?.headers?.get?.("content-type") || "")
+    .split(";", 1)[0]
+    .trim()
+    .toLowerCase();
+}
+
 export function normalizeUadSmokeBaseUrl(value) {
   const url = new URL(String(value || "").trim());
   const local = ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
@@ -50,6 +57,11 @@ async function getJson(fetchImpl, url, timeoutMs) {
   if (!response.ok) {
     await cancelResponseBody(response);
     return { ok: false, status, body: null, error_code: "http_error" };
+  }
+  const mediaType = responseMediaType(response);
+  if (mediaType !== "application/json" && !mediaType.endsWith("+json")) {
+    await cancelResponseBody(response);
+    return { ok: false, status, body: null, error_code: "invalid_content_type" };
   }
   let body = null;
   try {
@@ -94,8 +106,7 @@ async function getHtml(fetchImpl, url, timeoutMs) {
     await cancelResponseBody(response);
     return { ok: false, status, error_code: "http_error" };
   }
-  const contentType = String(response.headers?.get?.("content-type") || "").toLowerCase();
-  if (!contentType.includes("text/html")) {
+  if (responseMediaType(response) !== "text/html") {
     await cancelResponseBody(response);
     return { ok: false, status, error_code: "invalid_content_type" };
   }

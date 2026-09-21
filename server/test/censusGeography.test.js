@@ -2,12 +2,29 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  censusGeographyInternals,
   expectedCountyFips,
+  fetchCensusAddressBatch,
+  fetchCensusCoordinatesBatch,
   lookupAccountCensusGeographyNow,
   parseCensusAddressBatchResponse,
   parseCensusCoordinatesBatchResponse,
   validateCensusGeography,
 } from "../src/services/censusGeography.js";
+
+const coordinateRow = {
+  account_id: "26272500060150000",
+  source_longitude: -96.63,
+  source_latitude: 32.92,
+};
+
+const addressRow = {
+  account_id: "26272500060150000",
+  source_address: "1909 SNOWMASS LN",
+  source_city: "GARLAND",
+  source_state: "TX",
+  source_postal_code: "75044",
+};
 
 test("parses Census coordinate batch tract results", () => {
   const rows = parseCensusCoordinatesBatchResponse(
@@ -37,6 +54,117 @@ test("parses Census address batch results and the returned coordinate", () => {
   assert.equal(rows[0].longitude, -96.656200410661);
   assert.equal(rows[0].latitude, 32.946676823261);
   assert.equal(rows[0].match_type, "Exact");
+});
+
+test("Census batch requests refuse redirects and request CSV responses", async () => {
+  const calls = [];
+  const rows = await fetchCensusCoordinatesBatch([coordinateRow], {
+    fetchImpl: async (url, options) => {
+      calls.push({ url, options });
+      return new Response(
+        '"26272500060150000","-96.6300","32.9200","Match","48","113","019004","1001"\n',
+        { headers: { "content-type": "text/csv" } },
+      );
+    },
+  });
+
+  assert.equal(rows.length, 1);
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0].options.redirect, "error");
+  assert.equal(calls[0].options.headers.accept, "text/csv");
+  assert.equal(calls[0].options.signal instanceof AbortSignal, true);
+});
+
+test("Census batch responses are size bounded and cancelled", async () => {
+  let cancelled = false;
+  await assert.rejects(
+    fetchCensusAddressBatch([addressRow], {
+      fetchImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }), {
+        headers: {
+          "content-length": String(
+            censusGeographyInternals.MAX_CENSUS_BATCH_RESPONSE_BYTES + 1
+          ),
+          "content-type": "text/csv",
+        },
+      }),
+    }),
+    { message: "census_address_batch_response_too_large" },
+  );
+  assert.equal(cancelled, true);
+});
+
+test("Census batch HTTP and redirect failures cancel response bodies", async () => {
+  for (const [response, expectedMessage] of [
+    [
+      { ok: false, status: 503, redirected: false },
+      "census_coordinates_batch_http_503",
+    ],
+    [
+      { ok: true, status: 200, redirected: true },
+      "census_coordinates_batch_redirect_forbidden",
+    ],
+  ]) {
+    let cancelled = false;
+    const body = new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    });
+    await assert.rejects(
+      fetchCensusCoordinatesBatch([coordinateRow], {
+        fetchImpl: async () => ({
+          ...response,
+          body,
+          headers: new Headers(),
+        }),
+      }),
+      { message: expectedMessage },
+    );
+    assert.equal(cancelled, true);
+  }
+});
+
+test("Census batch transport failures do not expose provider diagnostics", async () => {
+  await assert.rejects(
+    fetchCensusAddressBatch([addressRow], {
+      fetchImpl: async () => {
+        throw new Error("private Census network diagnostic");
+      },
+    }),
+    { message: "census_address_batch_unavailable" },
+  );
+});
+
+test("Census batch deadlines remain active through stalled response bodies", async () => {
+  let aborted = false;
+  await assert.rejects(
+    fetchCensusCoordinatesBatch([coordinateRow], {
+      requestTimeoutMs: 250,
+      fetchImpl: async (_url, options) => new Response(new ReadableStream({
+        start(controller) {
+          options.signal.addEventListener("abort", () => {
+            aborted = true;
+            controller.error(new Error("private Census body diagnostic"));
+          }, { once: true });
+        },
+      }), { headers: { "content-type": "text/csv" } }),
+    }),
+    { message: "census_coordinates_batch_timeout" },
+  );
+  assert.equal(aborted, true);
+});
+
+test("Census batch rejects invalid UTF-8 with a stable error", async () => {
+  await assert.rejects(
+    fetchCensusAddressBatch([addressRow], {
+      fetchImpl: async () => new Response(Uint8Array.from([0xc3, 0x28])),
+    }),
+    { message: "census_address_batch_response_invalid" },
+  );
 });
 
 test("validates Texas county FIPS without accepting a cross-county point", () => {

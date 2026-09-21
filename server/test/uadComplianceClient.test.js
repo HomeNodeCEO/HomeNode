@@ -71,6 +71,106 @@ test("client-credentials token and XML submission never expose credentials in re
   assert.doesNotMatch(JSON.stringify(result), /client-secret|temporary-token/);
 });
 
+test("compliance token failures cancel bodies and sanitize invalid status values", async () => {
+  let cancelled = false;
+  const registry = createUadComplianceRegistry({
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "acpt",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
+  }, {
+    fetchImpl: async () => ({
+      ok: false,
+      status: "private-provider-status",
+      redirected: false,
+      headers: new Headers(),
+      body: new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }),
+    }),
+  });
+
+  await assert.rejects(
+    registry.getClient("fannie").accessToken(),
+    { message: "uad_compliance_token_failed:unknown" },
+  );
+  assert.equal(cancelled, true);
+});
+
+test("compliance responses reject and cancel oversized declared bodies", async () => {
+  let cancelled = false;
+  const registry = createUadComplianceRegistry({
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "acpt",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
+  }, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      headers: { "content-length": String(256 * 1024 + 1) },
+    }),
+  });
+
+  await assert.rejects(
+    registry.getClient("fannie").accessToken(),
+    { message: "uad_compliance_response_too_large" },
+  );
+  assert.equal(cancelled, true);
+});
+
+test("compliance stream failures and invalid UTF-8 use stable error codes", async () => {
+  const environment = {
+    UAD_COMPLIANCE_API_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENABLED: "true",
+    FANNIE_UAD_COMPLIANCE_ENVIRONMENT: "acpt",
+    FANNIE_UAD_COMPLIANCE_BASE_URL: "https://api.example.test/uad",
+    FANNIE_UAD_COMPLIANCE_TOKEN_URL: "https://identity.example.test/token",
+    FANNIE_UAD_COMPLIANCE_CLIENT_ID: "id",
+    FANNIE_UAD_COMPLIANCE_CLIENT_SECRET: "secret",
+    FANNIE_UAD_COMPLIANCE_TOKEN_AUTH_STYLE: "basic",
+    FANNIE_UAD_COMPLIANCE_ALLOWED_HOSTS: "api.example.test,identity.example.test",
+  };
+  let calls = 0;
+  const failedStreamRegistry = createUadComplianceRegistry(environment, {
+    fetchImpl: async () => {
+      calls += 1;
+      if (calls === 1) return response(JSON.stringify({ access_token: "temporary-token" }));
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.error(new Error("private compliance provider diagnostic"));
+        },
+      }));
+    },
+  });
+  await assert.rejects(
+    failedStreamRegistry.getClient("fannie").submitXml("<MESSAGE/>"),
+    { message: "uad_compliance_response_invalid" },
+  );
+
+  const invalidEncodingRegistry = createUadComplianceRegistry(environment, {
+    fetchImpl: async () => new Response(Uint8Array.from([0xc3, 0x28])),
+  });
+  await assert.rejects(
+    invalidEncodingRegistry.getClient("fannie").accessToken(),
+    { message: "uad_compliance_response_invalid" },
+  );
+});
+
 test("requires assigned-host pinning and production verification evidence", () => {
   const unpinned = createUadComplianceRegistry({
     UAD_COMPLIANCE_API_ENABLED: "true",

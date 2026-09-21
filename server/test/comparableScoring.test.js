@@ -355,6 +355,49 @@ test("the default twelve-month policy excludes every sale over one year old", ()
   assert.equal(result.policy.outsideAnalysisPeriodCount, 1);
 });
 
+test("distant influence-support sales remain visible but cannot replace primary comparables", () => {
+  const result = applyRecommendationPolicy(
+    [
+      {
+        source_record_id: "distant-influence-match",
+        closing_date: "2026-07-01",
+        comparableScore: 99,
+        distanceMiles: 19.36,
+        housingTypeCompatible: true,
+        influence_support_candidate: true,
+        candidate_purpose: "influence_support",
+      },
+      {
+        source_record_id: "nearby-primary",
+        closing_date: "2026-06-15",
+        comparableScore: 82,
+        distanceMiles: 0.72,
+        housingTypeCompatible: true,
+        influence_support_candidate: false,
+        candidate_purpose: "primary_similarity",
+      },
+    ],
+    {
+      referenceDate: "2026-08-31",
+      policy: { count: 1, periodMonths: 12 },
+    },
+  );
+
+  assert.deepEqual(
+    result.recommendedSales.map((sale) => sale.source_record_id),
+    ["nearby-primary"],
+  );
+  const supportSale = result.sales.find(
+    (sale) => sale.source_record_id === "distant-influence-match",
+  );
+  assert.equal(supportSale.recommended, false);
+  assert.equal(
+    supportSale.recommendationExclusionReason,
+    "influence_support_only",
+  );
+  assert.equal(result.policy.influenceSupportExcludedCount, 1);
+});
+
 test("selecting twenty-four months explicitly includes older fallback sales", () => {
   const result = applyRecommendationPolicy(
     [

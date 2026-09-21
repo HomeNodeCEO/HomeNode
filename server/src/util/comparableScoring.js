@@ -519,10 +519,13 @@ export function applyRecommendationPolicy(
       );
     })(),
   }));
-  const eligibleSales = classifiedSales.filter(
-    (sale) => sale.insideAnalysisPeriod && sale.housingTypeCompatible !== false,
+  const primaryEligibleSales = classifiedSales.filter(
+    (sale) =>
+      sale.insideAnalysisPeriod &&
+      sale.housingTypeCompatible !== false &&
+      sale.influence_support_candidate !== true,
   );
-  const recommendedSales = eligibleSales.slice(
+  const recommendedSales = primaryEligibleSales.slice(
     0,
     policy.count ?? DEFAULT_RECOMMENDATION_POLICY.count,
   );
@@ -541,6 +544,8 @@ export function applyRecommendationPolicy(
           ? "outside_analysis_period"
           : sale.housingTypeCompatible === false
             ? "housing_type_mismatch"
+            : sale.influence_support_candidate === true
+              ? "influence_support_only"
           : null,
     };
   });
@@ -579,6 +584,9 @@ export function applyRecommendationPolicy(
       olderSaleExclusionApplied: periodMonths === 12,
       housingTypeMismatchCount: sales.filter(
         (sale) => sale.housingTypeCompatible === false,
+      ).length,
+      influenceSupportExcludedCount: sales.filter(
+        (sale) => sale.influence_support_candidate === true,
       ).length,
     },
   };

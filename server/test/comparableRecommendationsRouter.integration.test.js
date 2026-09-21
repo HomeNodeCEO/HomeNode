@@ -444,6 +444,55 @@ test("recommendations preserve bounded SQL, site evidence precedence, ranking, a
   assert.deepEqual(calls.find((call) => call.type === "rank").signature, subjectSignature);
 });
 
+test("all sales outside the selected radius are tagged as influence support before recommendation policy", async (context) => {
+  let policySales = null;
+  const options = routerOptions({
+    pool: {
+      query: async (sql) => {
+        if (sql.includes("FROM core.accounts account")) return { rows: [subject()] };
+        if (sql.includes("FROM core.v_sales_enriched sale")) return { rows: [candidate()] };
+        if (sql.includes("FROM core.land_detail land")) return { rows: [] };
+        throw new Error("unexpected_query");
+      },
+    },
+    loadInfluenceContexts: async () => new Map([["A-1", {
+      influence_signature: {
+        material_influence_present: true,
+        material_categories: ["commercial"],
+      },
+    }]]),
+    scoreCandidate: () => ({
+      comparableScore: 75,
+      distanceMiles: 16.09,
+      squareFootageDifferenceRatio: 0,
+      ageDataAvailable: true,
+      siteDataAvailable: true,
+    }),
+    rankByInfluence: (sales) => defaultInfluencePolicy(sales.map((sale) => ({
+      ...sale,
+      influence_similarity: {
+        tier: 3,
+        similarity: 10,
+        exact_material_match: false,
+      },
+    }))),
+    applyPolicy: (sales) => {
+      policySales = sales;
+      return defaultRecommendationPolicy(sales);
+    },
+  });
+  const server = await startRouter(createComparableRecommendationsRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, { subject_account_id: "A-1" });
+  assert.equal(response.status, 200);
+  assert.equal(policySales.length, 1);
+  assert.equal(policySales[0].distanceMiles, 16.09);
+  assert.equal(policySales[0].influence_similarity.exact_material_match, false);
+  assert.equal(policySales[0].influence_support_candidate, true);
+  assert.equal(policySales[0].candidate_purpose, "influence_support");
+});
+
 test("missing cached evidence is queued without delaying an empty recommendation response", async (context) => {
   const missingCandidate = candidate({
     primary_account_id: "C-2",

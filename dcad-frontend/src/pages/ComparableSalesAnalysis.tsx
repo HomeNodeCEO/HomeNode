@@ -1701,9 +1701,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     ],
   );
 
-  // The listing grid consumes the same market-supported adjustment schedule as
-  // the closed-sale grid. Listing characteristics stay independent, while the
-  // applied bath, GLA, garage, pool, condition, and quality rates are shared.
   const listingLivingAreas = useMemo(
     () => selectedListings.map((listing) => listing
       ? saleNumber(resolveComparableCharacteristic({
@@ -5031,6 +5028,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           key={`condition-quality-${propertyId}`}
           subjectAccountId={propertyId}
           assignmentFileId={activeAssignmentFile?.id || null}
+          analysisAsOf={salesAnalysisAsOf}
           subjectCondition={subjectCondition}
           subjectQuality={subjectQuality}
           ratingAssignments={conditionQualityRatings}

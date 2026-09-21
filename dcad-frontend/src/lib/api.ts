@@ -1118,6 +1118,7 @@ export interface ContractPriceSupportAnalysis {
   support_status: 'not_analyzed' | 'supported' | 'limited' | 'unsupported';
   within_5_percent_count?: number;
   within_10_percent_count?: number;
+  strong_physical_support_count?: number;
   contract_percentile?: number | null;
   upper_quartile_price?: number | null;
   subject_condition?: string | null;
@@ -1129,6 +1130,8 @@ export interface ContractPriceSupportAnalysis {
     price_band_percent: number;
     close_support_band_percent: number;
     minimum_physical_score: number;
+    strong_physical_score: number;
+    maximum_strong_size_difference_ratio: number;
     condition_quality_verification_required: boolean;
   };
   support_sales: SaleRow[];

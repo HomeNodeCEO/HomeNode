@@ -33,6 +33,7 @@ const studySource = (
 const {
   calculateConditionQualityStudy,
   calculateRatingAdjustment,
+  conditionQualityStudyPeriod,
   factoredStudyAmount,
 } = await import(moduleDataUrl(transpile(studySource)));
 
@@ -85,5 +86,18 @@ assert.equal(
   0,
 );
 assert.equal(factoredStudyAmount(78800, 50), 39400);
+
+assert.deepEqual(conditionQualityStudyPeriod('2026-08-31'), {
+  asOfDate: '2026-08-31',
+  dateFrom: '2025-08-31',
+});
+assert.deepEqual(conditionQualityStudyPeriod('2024-02-29'), {
+  asOfDate: '2024-02-29',
+  dateFrom: '2023-02-28',
+});
+assert.deepEqual(conditionQualityStudyPeriod('not-a-date', new Date(2026, 8, 21)), {
+  asOfDate: '2026-09-21',
+  dateFrom: '2025-09-21',
+});
 
 console.log('Condition and quality study tests passed.');

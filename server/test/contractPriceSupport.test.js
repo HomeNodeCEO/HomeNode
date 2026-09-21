@@ -12,6 +12,7 @@ function sale(id, price, distance, score = 70, overrides = {}) {
     sale_price: price,
     distanceMiles: distance,
     comparableScore: score,
+    squareFootageDifferenceRatio: 0.1,
     insideAnalysisPeriod: true,
     housingTypeCompatible: true,
     influence_support_candidate: false,
@@ -41,6 +42,7 @@ test("contract price support is an independent local screen with an upper-tier r
   assert.equal(result.local_sale_count, 5);
   assert.equal(result.within_5_percent_count, 2);
   assert.equal(result.within_10_percent_count, 3);
+  assert.equal(result.strong_physical_support_count, 3);
   assert.equal(result.support_status, "supported");
   assert.equal(result.upper_tier_review, true);
   assert.equal(result.methodology.primary_recommendations_unchanged, true);
@@ -65,6 +67,22 @@ test("contract price support reports limited and unsupported evidence without ma
   assert.equal(unsupported.support_status, "unsupported");
   assert.equal(unsupported.review_set_sales.length, 0);
   assert.match(unsupported.reconciliation, /should not anchor/i);
+});
+
+test("price-band counts remain limited when physical similarity is weak", () => {
+  const result = analyzeContractPriceSupport({
+    contractPrice: 300000,
+    radiusMiles: 3,
+    sales: [
+      sale(1, 295000, 0.3, 49),
+      sale(2, 300000, 0.6, 80, { squareFootageDifferenceRatio: 0.5 }),
+      sale(3, 305000, 1.1, 45),
+    ],
+  });
+  assert.equal(result.within_10_percent_count, 3);
+  assert.equal(result.strong_physical_support_count, 0);
+  assert.equal(result.support_status, "limited");
+  assert.match(result.reconciliation, /stronger physical-similarity screen/i);
 });
 
 test("remodeled-subject review sets reserve capacity for upper-tier sales", () => {

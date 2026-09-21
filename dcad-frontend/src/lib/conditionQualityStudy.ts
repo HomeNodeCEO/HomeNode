@@ -87,6 +87,38 @@ export type AppliedConditionQualityAdjustment = {
   selectedSaleCount: number;
 };
 
+function localDateString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function validIsoCalendarDate(value: string): boolean {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+  const date = new Date(`${value}T12:00:00`);
+  return Number.isFinite(date.getTime()) && localDateString(date) === value;
+}
+
+export function conditionQualityStudyPeriod(
+  analysisAsOf?: string | null,
+  fallbackDate = new Date(),
+): { asOfDate: string; dateFrom: string } {
+  const requestedDate = String(analysisAsOf || '').trim().slice(0, 10);
+  const asOfDate = validIsoCalendarDate(requestedDate)
+    ? requestedDate
+    : localDateString(fallbackDate);
+  const [year, month, day] = asOfDate.split('-').map(Number);
+  const priorYear = year - 1;
+  const priorYearMonthEnd = new Date(priorYear, month, 0).getDate();
+  const dateFrom = [
+    priorYear,
+    String(month).padStart(2, '0'),
+    String(Math.min(day, priorYearMonthEnd)).padStart(2, '0'),
+  ].join('-');
+  return { asOfDate, dateFrom };
+}
+
 export function conditionQualitySaleKey(sale: {
   source_record_id?: string | number | null;
   sale_id?: string | number | null;

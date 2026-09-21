@@ -1,0 +1,64 @@
+diff --git a/src/v4/core/schemas.ts b/src/v4/core/schemas.ts
+index ce16838549a39ff2522a1b6eea2b8994265f1b0f..3c1b0f00db7c4f3ffd261a3bf3a9ca95816ea771 100644
+--- a/src/v4/core/schemas.ts
++++ b/src/v4/core/schemas.ts
+@@ -799,6 +799,7 @@ export const $ZodCIDRv6: core.$constructor<$ZodCIDRv6> = /*@__PURE__*/ core.$con
+ //////////////////////////////   ZodBase64   //////////////////////////////
+ export function isValidBase64(data: string): boolean {
+   if (data === "") return true;
++  if (/\s/.test(data)) return false;
+   if (data.length % 4 !== 0) return false;
+   try {
+     atob(data);
+@@ -1852,6 +1853,7 @@ export const $ZodObject: core.$constructor<$ZodObject> = /*@__PURE__*/ core.$con
+     const _catchall = catchall._zod;
+     const t = _catchall.def.type;
+     for (const key of Object.keys(input)) {
++      if (key === "__proto__") continue;
+       if (keySet.has(key)) continue;
+       if (t === "never") {
+         unrecognized.push(key);
+diff --git a/v4/core/schemas.cjs b/v4/core/schemas.cjs
+index 7c77d2b5af031e086d535f4b2e1898cec17eda29..7efc784bc9443926d3c5e8e8c08312f317351ad3 100644
+--- a/v4/core/schemas.cjs
++++ b/v4/core/schemas.cjs
+@@ -347,6 +347,8 @@ exports.$ZodCIDRv6 = core.$constructor("$ZodCIDRv6", (inst, def) => {
+ function isValidBase64(data) {
+     if (data === "")
+         return true;
++    if (/\s/.test(data))
++        return false;
+     if (data.length % 4 !== 0)
+         return false;
+     try {
+@@ -873,6 +875,8 @@ exports.$ZodObject = core.$constructor("$ZodObject", (inst, def) => {
+         const _catchall = catchall._zod;
+         const t = _catchall.def.type;
+         for (const key of Object.keys(input)) {
++            if (key === "__proto__")
++                continue;
+             if (keySet.has(key))
+                 continue;
+             if (t === "never") {
+diff --git a/v4/core/schemas.js b/v4/core/schemas.js
+index 692ce1fc2d0e138b51b5af2bafe0e2b4a279c0bc..f00b8d40379e3646729726ca1e8a42504520bbba 100644
+--- a/v4/core/schemas.js
++++ b/v4/core/schemas.js
+@@ -316,6 +316,8 @@ export const $ZodCIDRv6 = /*@__PURE__*/ core.$constructor("$ZodCIDRv6", (inst, d
+ export function isValidBase64(data) {
+     if (data === "")
+         return true;
++    if (/\s/.test(data))
++        return false;
+     if (data.length % 4 !== 0)
+         return false;
+     try {
+@@ -842,6 +844,8 @@ export const $ZodObject = /*@__PURE__*/ core.$constructor("$ZodObject", (inst, d
+         const _catchall = catchall._zod;
+         const t = _catchall.def.type;
+         for (const key of Object.keys(input)) {
++            if (key === "__proto__")
++                continue;
+             if (keySet.has(key))
+                 continue;
+             if (t === "never") {

@@ -11,7 +11,15 @@ import {
   evaluateSubjectSiteSize,
   fetchDcadLandUseParcels,
   isDcadParcelBuiltUp,
+  neighborhoodLandUseInternals,
 } from "../src/services/neighborhoodLandUse.js";
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 test("profiles all improved one-unit properties whether or not they sold", () => {
   const profile = buildNeighborhoodPropertyProfile([
@@ -156,33 +164,34 @@ test("loads every intersecting DCAD parcel by object id with classification fiel
   const fetchImpl = async (_url, options) => {
     const params = new URLSearchParams(String(options.body));
     requests.push(params);
+    assert.equal(options.redirect, "error");
+    assert.equal(options.signal instanceof AbortSignal, true);
+    assert.equal(options.headers.accept, "application/json");
     if (params.get("returnIdsOnly") === "true") {
-      return { ok: true, json: async () => ({ objectIds: [22, 11, 22] }) };
+      return jsonResponse({ objectIds: [22, 11, 22] });
     }
-    return {
-      ok: true,
-      json: async () => ({
-        type: "FeatureCollection",
-        features: [
-          {
-            type: "Feature",
-            id: 11,
-            properties: {
-              OBJECTID: 11,
-              PARCELID: "26272500060150000",
-              USECD: "1",
-              USEDSCRP: "Residential",
-              CLASSCD: "1",
-              CLASSDSCRP: "SINGLE FAMILY RESIDENCES",
-            },
-            geometry: {
-              type: "Polygon",
-              coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
-            },
+    return jsonResponse({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          id: 11,
+          properties: {
+            OBJECTID: 11,
+            PARCELID: "26272500060150000",
+            USECD: "1",
+            USEDSCRP: "Residential",
+            CLASSCD: "1",
+            CLASSDSCRP: "SINGLE FAMILY RESIDENCES",
+            LASTUPDATE: 8.64e15 + 1,
           },
-        ],
-      }),
-    };
+          geometry: {
+            type: "Polygon",
+            coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+          },
+        },
+      ],
+    });
   };
   const parcels = await fetchDcadLandUseParcels({
     type: "Polygon",
@@ -191,10 +200,108 @@ test("loads every intersecting DCAD parcel by object id with classification fiel
   assert.equal(parcels.length, 1);
   assert.equal(parcels[0].class_code, "1");
   assert.equal(parcels[0].class_description, "SINGLE FAMILY RESIDENCES");
+  assert.equal(parcels[0].source_updated_at, null);
   assert.equal(requests.length, 2);
   assert.equal(requests[0].get("spatialRel"), "esriSpatialRelIntersects");
   assert.equal(requests[1].get("objectIds"), "22,11");
   assert.match(requests[1].get("outFields"), /CLASSDSCRP/);
+});
+
+test("rejects and cancels oversized DCAD land-use responses", async () => {
+  let cancellations = 0;
+  await assert.rejects(
+    fetchDcadLandUseParcels({
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+    }, {
+      fetchImpl: async () => ({
+        ok: true,
+        headers: new Headers({
+          "content-length": String(
+            neighborhoodLandUseInternals.MAX_DCAD_LAND_USE_RESPONSE_BYTES + 1,
+          ),
+        }),
+        body: {
+          async cancel() {
+            cancellations += 1;
+          },
+        },
+      }),
+    }),
+    { message: "dcad_land_use_response_too_large" },
+  );
+  assert.equal(cancellations, 1);
+});
+
+test("keeps the DCAD land-use deadline active while response bodies are read", async () => {
+  let requestSignal = null;
+  const startedAt = Date.now();
+  await assert.rejects(
+    fetchDcadLandUseParcels({
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+    }, {
+      requestTimeoutMs: 1,
+      fetchImpl: async (_url, options) => {
+        requestSignal = options.signal;
+        return new Response(new ReadableStream({
+          start(controller) {
+            options.signal.addEventListener("abort", () => {
+              controller.error(new Error("provider stream stalled"));
+            }, { once: true });
+          },
+        }));
+      },
+    }),
+    { message: "dcad_land_use_query_timeout" },
+  );
+  assert.equal(requestSignal?.aborted, true);
+  assert.ok(Date.now() - startedAt < 2_000);
+});
+
+test("cancels HTTP failures and sanitizes DCAD provider errors", async () => {
+  let cancellations = 0;
+  const geometry = {
+    type: "Polygon",
+    coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+  };
+  await assert.rejects(
+    fetchDcadLandUseParcels(geometry, {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        body: {
+          async cancel() {
+            cancellations += 1;
+          },
+        },
+      }),
+    }),
+    { message: "dcad_land_use_query_http_503" },
+  );
+  assert.equal(cancellations, 1);
+
+  await assert.rejects(
+    fetchDcadLandUseParcels(geometry, {
+      fetchImpl: async () => jsonResponse({
+        error: { code: 498, message: "provider secret must not escape" },
+      }),
+    }),
+    { message: "dcad_land_use_query_provider_498" },
+  );
+});
+
+test("rejects malformed DCAD object-id payloads with a stable code", async () => {
+  await assert.rejects(
+    fetchDcadLandUseParcels({
+      type: "Polygon",
+      coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+    }, {
+      fetchImpl: async () => jsonResponse({ objectIds: "1,2,3" }),
+    }),
+    { message: "dcad_land_use_response_invalid" },
+  );
 });
 
 test("loads large DCAD parcel sets with bounded parallel batch requests", async () => {
@@ -204,10 +311,9 @@ test("loads large DCAD parcel sets with bounded parallel batch requests", async 
   const fetchImpl = async (_url, options) => {
     const params = new URLSearchParams(String(options.body));
     if (params.get("returnIdsOnly") === "true") {
-      return {
-        ok: true,
-        json: async () => ({ objectIds: Array.from({ length: 4_001 }, (_, index) => index + 1) }),
-      };
+      return jsonResponse({
+        objectIds: Array.from({ length: 4_001 }, (_, index) => index + 1),
+      });
     }
     batchRequests += 1;
     activeBatches += 1;
@@ -215,21 +321,18 @@ test("loads large DCAD parcel sets with bounded parallel batch requests", async 
     await new Promise((resolve) => setTimeout(resolve, 10));
     activeBatches -= 1;
     const firstId = Number(params.get("objectIds").split(",")[0]);
-    return {
-      ok: true,
-      json: async () => ({
-        type: "FeatureCollection",
-        features: [{
-          type: "Feature",
-          id: firstId,
-          properties: { OBJECTID: firstId, PARCELID: String(firstId).padStart(17, "0"), CLASSCD: "1" },
-          geometry: {
-            type: "Polygon",
-            coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
-          },
-        }],
-      }),
-    };
+    return jsonResponse({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        id: firstId,
+        properties: { OBJECTID: firstId, PARCELID: String(firstId).padStart(17, "0"), CLASSCD: "1" },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+        },
+      }],
+    });
   };
   const parcels = await fetchDcadLandUseParcels({
     type: "Polygon",
@@ -251,28 +354,25 @@ test("reuses a completed neighborhood analysis for the same subject and boundary
     fetchRequests += 1;
     const params = new URLSearchParams(String(options.body));
     if (params.get("returnIdsOnly") === "true") {
-      return { ok: true, json: async () => ({ objectIds: [1] }) };
+      return jsonResponse({ objectIds: [1] });
     }
-    return {
-      ok: true,
-      json: async () => ({
-        type: "FeatureCollection",
-        features: [{
-          type: "Feature",
-          id: 1,
-          properties: {
-            OBJECTID: 1,
-            PARCELID: "26272500060150000",
-            CLASSCD: "1",
-            IMPVALUE: 250_000,
-          },
-          geometry: {
-            type: "Polygon",
-            coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
-          },
-        }],
-      }),
-    };
+    return jsonResponse({
+      type: "FeatureCollection",
+      features: [{
+        type: "Feature",
+        id: 1,
+        properties: {
+          OBJECTID: 1,
+          PARCELID: "26272500060150000",
+          CLASSCD: "1",
+          IMPVALUE: 250_000,
+        },
+        geometry: {
+          type: "Polygon",
+          coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+        },
+      }],
+    });
   };
   let databaseQueries = 0;
   const pool = {

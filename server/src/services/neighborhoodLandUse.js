@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 import { validateCustomMarketGeometry } from "./marketConditions.js";
 import { esriGeometryToGeoJson } from "../util/parcelArea.js";
 import {
@@ -46,6 +47,8 @@ const PARCEL_BATCH_SIZE = 2_000;
 const PARCEL_FETCH_CONCURRENCY = 3;
 const ANALYSIS_CACHE_TTL_MS = 6 * 60 * 60 * 1000;
 const ANALYSIS_CACHE_MAX_ENTRIES = 50;
+const DCAD_LAND_USE_REQUEST_TIMEOUT_MS = 60_000;
+const MAX_DCAD_LAND_USE_RESPONSE_BYTES = 64 * 1024 * 1024;
 const SQ_FEET_PER_ACRE = 43_560;
 const VACANT_CLASS_CODES = new Set(["7", "8", "9", "10", "11", "39"]);
 const IMPROVED_CLASS_CODES = new Set(["1", "2", "3", "4", "5", "6", "17", "18", "35", "40"]);
@@ -208,21 +211,89 @@ function arcGisBody(values) {
   return new URLSearchParams(Object.entries(values).map(([key, value]) => [key, String(value)]));
 }
 
-async function arcGisRequest(body, fetchImpl) {
-  const response = await fetchImpl(DCAD_LAND_USE_QUERY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-    signal: AbortSignal.timeout(60_000),
-  });
-  if (!response.ok) throw new Error(`dcad_land_use_query_http_${response.status}`);
-  const payload = await response.json();
-  if (payload?.error) {
-    throw new Error(
-      `dcad_land_use_query_${payload.error.code || "error"}: ${payload.error.message || "unknown error"}`,
-    );
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The request is already rejected; cancellation is best-effort cleanup.
   }
-  return payload;
+}
+
+function boundedRequestTimeout(value) {
+  let parsed;
+  try {
+    parsed = Number(value);
+  } catch {
+    return DCAD_LAND_USE_REQUEST_TIMEOUT_MS;
+  }
+  if (!Number.isFinite(parsed)) return DCAD_LAND_USE_REQUEST_TIMEOUT_MS;
+  return Math.max(250, Math.min(120_000, Math.trunc(parsed)));
+}
+
+async function arcGisRequest(body, fetchImpl, requestTimeoutMs) {
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    boundedRequestTimeout(requestTimeoutMs),
+  );
+  const { signal } = controller;
+  try {
+    let response;
+    try {
+      response = await fetchImpl(DCAD_LAND_USE_QUERY_URL, {
+        method: "POST",
+        headers: {
+          "content-type": "application/x-www-form-urlencoded",
+          accept: "application/json",
+        },
+        body,
+        redirect: "error",
+        signal,
+      });
+    } catch {
+      if (signal.aborted) throw new Error("dcad_land_use_query_timeout");
+      throw new Error("dcad_land_use_query_unavailable");
+    }
+    if (!response || typeof response.ok !== "boolean") {
+      await cancelResponseBody(response);
+      throw new Error("dcad_land_use_response_invalid");
+    }
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      const status = Number.isInteger(response.status)
+        && response.status >= 100
+        && response.status <= 599
+        ? response.status
+        : "unknown";
+      throw new Error(`dcad_land_use_query_http_${status}`);
+    }
+    let payload;
+    try {
+      payload = await readBoundedJsonResponse(response, {
+        maximumBytes: MAX_DCAD_LAND_USE_RESPONSE_BYTES,
+        tooLargeCode: "dcad_land_use_response_too_large",
+        unavailableCode: "dcad_land_use_response_invalid",
+      });
+    } catch (error) {
+      if (signal.aborted) throw new Error("dcad_land_use_query_timeout");
+      if (error?.message === "dcad_land_use_response_too_large") throw error;
+      throw new Error("dcad_land_use_response_invalid");
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("dcad_land_use_response_invalid");
+    }
+    if (payload.error) {
+      const providerCode = Number.isSafeInteger(Number(payload.error.code))
+        && Number(payload.error.code) >= 0
+        && Number(payload.error.code) <= 999_999
+        ? Number(payload.error.code)
+        : "error";
+      throw new Error(`dcad_land_use_query_provider_${providerCode}`);
+    }
+    return payload;
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 function chunks(values, size) {
@@ -256,6 +327,10 @@ function normalizeParcelFeature(feature, index) {
     ? esriGeometryToGeoJson(feature.geometry)
     : feature?.geometry;
   if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) return null;
+  const sourceTimestamp = Number(properties.LASTUPDATE);
+  const sourceDate = Number.isFinite(sourceTimestamp) && sourceTimestamp > 0
+    ? new Date(sourceTimestamp)
+    : null;
   return {
     source_index: index,
     object_id: properties.OBJECTID ?? feature?.id ?? null,
@@ -266,15 +341,22 @@ function normalizeParcelFeature(feature, index) {
     class_code: String(properties.CLASSCD || "").trim() || null,
     class_description: String(properties.CLASSDSCRP || "").trim() || null,
     property_description: String(properties.PRPRTYDSCRP || "").trim() || null,
-    source_updated_at: Number.isFinite(Number(properties.LASTUPDATE))
-      ? new Date(Number(properties.LASTUPDATE)).toISOString()
+    source_updated_at: sourceDate && !Number.isNaN(sourceDate.getTime())
+      ? sourceDate.toISOString()
       : null,
     attributes: properties,
     geometry,
   };
 }
 
-export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetch } = {}) {
+export async function fetchDcadLandUseParcels(
+  customGeometry,
+  {
+    fetchImpl = fetch,
+    requestTimeoutMs = DCAD_LAND_USE_REQUEST_TIMEOUT_MS,
+  } = {},
+) {
+  if (typeof fetchImpl !== "function") throw new Error("dcad_land_use_fetch_unavailable");
   const geometry = validateCustomMarketGeometry(customGeometry);
   const esriGeometry = JSON.stringify({
     rings: geometry.coordinates,
@@ -288,8 +370,13 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
     inSR: "4326",
     returnIdsOnly: "true",
     f: "json",
-  }), fetchImpl);
-  const objectIds = [...new Set((idPayload.objectIds || []).map(Number).filter(Number.isFinite))];
+  }), fetchImpl, requestTimeoutMs);
+  if (idPayload.objectIds != null && !Array.isArray(idPayload.objectIds)) {
+    throw new Error("dcad_land_use_response_invalid");
+  }
+  const objectIds = [...new Set((idPayload.objectIds || [])
+    .map(Number)
+    .filter((value) => Number.isSafeInteger(value) && value > 0))];
   if (objectIds.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
   if (!objectIds.length) return [];
 
@@ -304,7 +391,7 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
         outSR: "4326",
         geometryPrecision: "7",
         f: "geojson",
-      }), fetchImpl);
+      }), fetchImpl, requestTimeoutMs);
       if (!Array.isArray(payload.features)) {
         payload = await arcGisRequest(arcGisBody({
           objectIds: objectIdBatch.join(","),
@@ -313,9 +400,12 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
           outSR: "4326",
           geometryPrecision: "7",
           f: "json",
-        }), fetchImpl);
+        }), fetchImpl, requestTimeoutMs);
       }
-      return payload.features || [];
+      if (!Array.isArray(payload.features)) {
+        throw new Error("dcad_land_use_response_invalid");
+      }
+      return payload.features;
     },
   );
   const features = featureBatches.flat();
@@ -323,6 +413,10 @@ export async function fetchDcadLandUseParcels(customGeometry, { fetchImpl = fetc
     .map((feature, index) => normalizeParcelFeature(feature, index))
     .filter(Boolean);
 }
+
+export const neighborhoodLandUseInternals = Object.freeze({
+  MAX_DCAD_LAND_USE_RESPONSE_BYTES,
+});
 
 async function calculateClippedParcelMetrics(pool, boundary, classifiedParcels) {
   const payload = classifiedParcels.map((parcel, sourceIndex) => ({

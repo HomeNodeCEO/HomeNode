@@ -1,9 +1,58 @@
 import { polygonCentroid } from "../util/comparableScoring.js";
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 
 export const DCAD_PARCEL_QUERY_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
+const DCAD_FETCH_TIMEOUT_MS = 45_000;
+const MAX_DCAD_RESPONSE_BYTES = 8 * 1024 * 1024;
+
+async function fetchDcadJson(body, fetchImpl, errorPrefix) {
+  let response;
+  try {
+    response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(DCAD_FETCH_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error(`${errorPrefix}_unavailable`);
+  }
+  if (!response?.ok) {
+    const status = Number.isInteger(response?.status)
+      ? response.status
+      : "unknown";
+    throw new Error(`${errorPrefix}_http_${status}`);
+  }
+
+  const tooLargeCode = `${errorPrefix}_response_too_large`;
+  const unavailableCode = `${errorPrefix}_response_unavailable`;
+  let payload;
+  try {
+    payload = await readBoundedJsonResponse(response, {
+      maximumBytes: MAX_DCAD_RESPONSE_BYTES,
+      tooLargeCode,
+      unavailableCode,
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (code === tooLargeCode || code === unavailableCode) {
+      throw new Error(code);
+    }
+    throw new Error(`${errorPrefix}_invalid_response`);
+  }
+  if (payload?.error) {
+    const rawProviderCode = String(payload.error.code ?? "");
+    const providerCode = /^\d{1,6}$/.test(rawProviderCode)
+      ? rawProviderCode
+      : "error";
+    throw new Error(`${errorPrefix}_${providerCode}`);
+  }
+  return payload;
+}
 
 export async function ensureAccountLocationsTable(pool) {
   await pool.query(`
@@ -127,23 +176,11 @@ export async function findDcadParcelsByAddress(
     outSR: "4326",
     f: "json",
   });
-  const response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
+  const payload = await fetchDcadJson(
     body,
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!response.ok) {
-    throw new Error(`dcad_parcel_address_query_http_${response.status}`);
-  }
-  const payload = await response.json();
-  if (payload?.error) {
-    throw new Error(
-      `dcad_parcel_address_query_${payload.error.code || "error"}: ${
-        payload.error.message || "unknown error"
-      }`,
-    );
-  }
+    fetchImpl,
+    "dcad_parcel_address_query",
+  );
 
   const matches = [];
   const seen = new Set();
@@ -316,23 +353,7 @@ async function queryDcadFeatures(accountIds, fetchImpl) {
     outSR: "4326",
     f: "json",
   });
-  const response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-    signal: AbortSignal.timeout(45_000),
-  });
-  if (!response.ok) {
-    throw new Error(`dcad_parcel_query_http_${response.status}`);
-  }
-  const payload = await response.json();
-  if (payload?.error) {
-    throw new Error(
-      `dcad_parcel_query_${payload.error.code || "error"}: ${
-        payload.error.message || "unknown error"
-      }`,
-    );
-  }
+  const payload = await fetchDcadJson(body, fetchImpl, "dcad_parcel_query");
   return Array.isArray(payload?.features) ? payload.features : [];
 }
 
@@ -518,3 +539,8 @@ export async function refreshAccountLocations(
   }
   return summary;
 }
+
+export const accountLocationInternals = Object.freeze({
+  DCAD_FETCH_TIMEOUT_MS,
+  MAX_DCAD_RESPONSE_BYTES,
+});

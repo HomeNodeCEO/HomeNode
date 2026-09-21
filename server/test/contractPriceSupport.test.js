@@ -67,6 +67,28 @@ test("contract price support reports limited and unsupported evidence without ma
   assert.match(unsupported.reconciliation, /should not anchor/i);
 });
 
+test("remodeled-subject review sets reserve capacity for upper-tier sales", () => {
+  const result = analyzeContractPriceSupport({
+    contractPrice: 300000,
+    subjectCondition: "C2",
+    radiusMiles: 3,
+    sales: [
+      sale(1, 286000, 0.2, 90),
+      sale(2, 290000, 0.3, 89),
+      sale(3, 294000, 0.4, 88),
+      sale(4, 298000, 0.5, 87),
+      sale(5, 302000, 0.6, 86),
+      sale(6, 306000, 0.7, 85),
+      sale(7, 420000, 0.8, 84),
+      sale(8, 410000, 0.9, 83),
+    ],
+  });
+
+  assert.equal(result.review_set_sales.length, 6);
+  assert.ok(result.review_set_sales.some((item) => item.source_record_id === 7));
+  assert.ok(result.review_set_sales.some((item) => item.source_record_id === 8));
+});
+
 test("missing contract price remains a bounded not-analyzed result", () => {
   const result = analyzeContractPriceSupport({ sales: [sale(1, 300000, 1)] });
   assert.deepEqual(result, {

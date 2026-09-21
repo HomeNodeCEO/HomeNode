@@ -154,13 +154,18 @@ export function analyzeContractPriceSupport({
     .slice(0, 12);
   const reviewSet = [];
   const reviewIds = new Set();
-  for (const sale of [...supportSales, ...(upperTierReview ? upperTierSales : [])]) {
-    const id = saleIdentity(sale);
-    if (reviewIds.has(id)) continue;
-    reviewIds.add(id);
-    reviewSet.push(sale);
-    if (reviewSet.length === 6) break;
-  }
+  const appendReviewSales = (salesToAppend, maximumSize) => {
+    for (const sale of salesToAppend) {
+      const id = saleIdentity(sale);
+      if (reviewIds.has(id)) continue;
+      reviewIds.add(id);
+      reviewSet.push(sale);
+      if (reviewSet.length === maximumSize) break;
+    }
+  };
+  if (upperTierReview) appendReviewSales(upperTierSales, 3);
+  appendReviewSales(supportSales, 6);
+  if (upperTierReview && reviewSet.length < 6) appendReviewSales(upperTierSales, 6);
 
   const supportStatus = withinTen.length >= 3
     ? "supported"

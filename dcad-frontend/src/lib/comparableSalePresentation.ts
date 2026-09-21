@@ -1,4 +1,4 @@
-import type { SaleRow } from './api';
+import type { ContractPriceSupportAnalysis, SaleRow } from './api';
 import { monthsBeforeDate } from './comparableSalesPresentation';
 
 export function saleDateDisplay(value: string | null): string {
@@ -28,6 +28,23 @@ export function housingTypeNeedsReview(sale: SaleRow): boolean {
 export function attachmentNeedsReview(sale: SaleRow): boolean {
   return !housingTypeNeedsReview(sale) &&
     (!sale.attachment_type || sale.attachment_type === 'unknown');
+}
+
+export function housingTypeGridValue(sale: SaleRow | null | undefined): string {
+  if (!sale) return 'Not available';
+  if (housingTypeNeedsReview(sale)) return '⚠ Review';
+  return sale.structural_style || sale.housing_type || 'Not available';
+}
+
+export function contractSupportLoadNotice(
+  analysis: ContractPriceSupportAnalysis | null,
+  count: number,
+  maximum: number,
+): string {
+  const kind = analysis?.upper_tier_review
+    ? 'contract-support and upper-tier'
+    : 'contract-support';
+  return `${Math.min(count, maximum)} nearby ${kind} review sales loaded. Re-run adjustments and verify condition and quality.`;
 }
 
 export function statisticalOutlierLabel(sale: SaleRow): string {

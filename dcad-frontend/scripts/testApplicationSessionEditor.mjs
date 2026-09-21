@@ -28,6 +28,7 @@ test("an authenticated application session replaces the legacy editor-key prompt
   };
 
   forgetEditorCredential();
+  rememberEditorCredential("legacy-before-login");
   setApplicationSessionActive(true);
   assert.equal(requestEditorCredential("legacy prompt"), AUTHENTICATED_SESSION_EDITOR_CREDENTIAL);
   assert.equal(editorCredentialForRequest(), AUTHENTICATED_SESSION_EDITOR_CREDENTIAL);
@@ -47,12 +48,14 @@ test("the session marker is never retained as a reusable shared secret", () => {
   assert.equal(readEditorCredential(), "");
 
   rememberEditorCredential(" legacy-key ");
+  assert.equal(readEditorCredential(), "legacy-key");
   setApplicationSessionActive(true);
   assert.equal(editorCredentialForRequest("another-key"), AUTHENTICATED_SESSION_EDITOR_CREDENTIAL);
-  assert.equal(readEditorCredential(), "legacy-key");
+  assert.equal(readEditorCredential(), "");
+  assert.equal(rememberEditorCredential("replacement-key"), "");
 
   setApplicationSessionActive(false);
-  assert.equal(editorCredentialForRequest(), "legacy-key");
+  assert.equal(editorCredentialForRequest(), "");
   forgetEditorCredential();
 });
 
@@ -62,6 +65,8 @@ test("JSON and binary API requests share cookie, token, and marker stripping", (
   const auth = read("../src/features/auth/ApplicationAuth.tsx");
   const search = read("../src/pages/PropertySearch.tsx");
   assert.match(auth, /setApplicationSessionActive\(Boolean\(session\)\)/);
+  assert.match(auth, /setApplicationSessionActive\(Boolean\(nextSession\)\);\s*setSession\(nextSession\)/);
+  assert.match(auth, /finally \{\s*forgetEditorCredential\(\);\s*setApplicationSessionActive\(false\);\s*setSession\(null\)/);
   assert.match(auth, /AUTH_REQUEST_TIMEOUT_MS = 10_000/);
   assert.match(auth, /signal: controller\.signal/);
   assert.match(api, /isAuthenticatedSessionEditorCredential/);

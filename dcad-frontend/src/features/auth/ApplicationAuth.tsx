@@ -1,5 +1,5 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
-import { setApplicationSessionActive } from '@/lib/editorCredential';
+import { forgetEditorCredential, setApplicationSessionActive } from '@/lib/editorCredential';
 import {
   authStatusFromResponse,
   readinessFromResponse,
@@ -87,7 +87,10 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
           if (sessionResponse.ok) {
             const body: unknown = await sessionResponse.json();
             const nextSession = sessionFromResponse(body);
-            if (active) setSession(nextSession);
+            if (active) {
+              setApplicationSessionActive(Boolean(nextSession));
+              setSession(nextSession);
+            }
             const canAuditReadiness = nextSession?.organizations.some((organization) =>
               organization.roles.some((role) => role === 'organization_admin' || role === 'homenode_admin'));
             if (canAuditReadiness) {
@@ -130,6 +133,8 @@ export function ApplicationAuthProvider({ children }: { children: React.ReactNod
       try {
         await fetchAuthRequest('/api/auth/logout', { method: 'POST' });
       } finally {
+        forgetEditorCredential();
+        setApplicationSessionActive(false);
         setSession(null);
         setReadiness(null);
         setReadinessError(null);

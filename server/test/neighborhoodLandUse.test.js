@@ -293,15 +293,53 @@ test("cancels HTTP failures and sanitizes DCAD provider errors", async () => {
 });
 
 test("rejects malformed DCAD object-id payloads with a stable code", async () => {
+  const geometry = {
+    type: "Polygon",
+    coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
+  };
+  for (const objectIds of [null, "1,2,3", [1, "2"], [1, 0], [1, 2.5]]) {
+    await assert.rejects(
+      fetchDcadLandUseParcels(geometry, {
+        fetchImpl: async () => jsonResponse({ objectIds }),
+      }),
+      { message: "dcad_land_use_response_invalid" },
+    );
+  }
+});
+
+test("rejects a whole DCAD feature batch when any parcel is malformed", async () => {
+  let requests = 0;
   await assert.rejects(
     fetchDcadLandUseParcels({
       type: "Polygon",
       coordinates: [[[-96.7, 32.9], [-96.6, 32.9], [-96.6, 33], [-96.7, 32.9]]],
     }, {
-      fetchImpl: async () => jsonResponse({ objectIds: "1,2,3" }),
+      fetchImpl: async (_url, options) => {
+        requests += 1;
+        const params = new URLSearchParams(String(options.body));
+        if (params.get("returnIdsOnly") === "true") {
+          return jsonResponse({ objectIds: [1, 2] });
+        }
+        return jsonResponse({
+          features: [
+            {
+              properties: { OBJECTID: 1, PARCELID: "00000000000000001" },
+              geometry: {
+                type: "Polygon",
+                coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+              },
+            },
+            {
+              properties: { OBJECTID: 2, PARCELID: "00000000000000002" },
+              geometry: null,
+            },
+          ],
+        });
+      },
     }),
     { message: "dcad_land_use_response_invalid" },
   );
+  assert.equal(requests, 2);
 });
 
 test("loads large DCAD parcel sets with bounded parallel batch requests", async () => {

@@ -321,12 +321,70 @@ async function mapWithConcurrency(values, concurrency, mapper) {
   return results;
 }
 
+function record(value) {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function validCoordinatePair(value) {
+  if (!Array.isArray(value) || value.length < 2) return false;
+  const [longitude, latitude] = value;
+  return Number.isFinite(longitude)
+    && Number.isFinite(latitude)
+    && longitude >= -180
+    && longitude <= 180
+    && latitude >= -90
+    && latitude <= 90;
+}
+
+function validLinearRing(value) {
+  if (!Array.isArray(value) || value.length < 4 || !value.every(validCoordinatePair)) {
+    return false;
+  }
+  const first = value[0];
+  const last = value[value.length - 1];
+  return first[0] === last[0] && first[1] === last[1];
+}
+
+function validParcelGeometry(value) {
+  if (!record(value)) return false;
+  if (value.type === "Polygon") {
+    return Array.isArray(value.coordinates)
+      && value.coordinates.length > 0
+      && value.coordinates.every(validLinearRing);
+  }
+  if (value.type === "MultiPolygon") {
+    return Array.isArray(value.coordinates)
+      && value.coordinates.length > 0
+      && value.coordinates.every((polygon) => Array.isArray(polygon)
+        && polygon.length > 0
+        && polygon.every(validLinearRing));
+  }
+  return false;
+}
+
+function parcelGeometry(feature) {
+  if (!record(feature?.geometry)) return null;
+  if (!Array.isArray(feature.geometry.rings)) return feature.geometry;
+  try {
+    return esriGeometryToGeoJson(feature.geometry);
+  } catch {
+    return null;
+  }
+}
+
+function validParcelFeature(feature) {
+  if (!record(feature)) return false;
+  const attributes = feature.properties ?? feature.attributes;
+  const objectId = attributes?.OBJECTID ?? feature.id;
+  return record(attributes)
+    && Number.isSafeInteger(objectId)
+    && objectId > 0
+    && validParcelGeometry(parcelGeometry(feature));
+}
+
 function normalizeParcelFeature(feature, index) {
-  const properties = feature?.properties || feature?.attributes || {};
-  const geometry = feature?.geometry?.rings
-    ? esriGeometryToGeoJson(feature.geometry)
-    : feature?.geometry;
-  if (!geometry || !["Polygon", "MultiPolygon"].includes(geometry.type)) return null;
+  const properties = feature.properties ?? feature.attributes;
+  const geometry = parcelGeometry(feature);
   const sourceTimestamp = Number(properties.LASTUPDATE);
   const sourceDate = Number.isFinite(sourceTimestamp) && sourceTimestamp > 0
     ? new Date(sourceTimestamp)
@@ -371,12 +429,11 @@ export async function fetchDcadLandUseParcels(
     returnIdsOnly: "true",
     f: "json",
   }), fetchImpl, requestTimeoutMs);
-  if (idPayload.objectIds != null && !Array.isArray(idPayload.objectIds)) {
+  if (!Array.isArray(idPayload.objectIds)
+    || idPayload.objectIds.some((value) => !Number.isSafeInteger(value) || value <= 0)) {
     throw new Error("dcad_land_use_response_invalid");
   }
-  const objectIds = [...new Set((idPayload.objectIds || [])
-    .map(Number)
-    .filter((value) => Number.isSafeInteger(value) && value > 0))];
+  const objectIds = [...new Set(idPayload.objectIds)];
   if (objectIds.length > MAX_PARCELS) throw new Error("land_use_area_too_many_parcels");
   if (!objectIds.length) return [];
 
@@ -405,13 +462,14 @@ export async function fetchDcadLandUseParcels(
       if (!Array.isArray(payload.features)) {
         throw new Error("dcad_land_use_response_invalid");
       }
+      if (payload.features.some((feature) => !validParcelFeature(feature))) {
+        throw new Error("dcad_land_use_response_invalid");
+      }
       return payload.features;
     },
   );
   const features = featureBatches.flat();
-  return features
-    .map((feature, index) => normalizeParcelFeature(feature, index))
-    .filter(Boolean);
+  return features.map((feature, index) => normalizeParcelFeature(feature, index));
 }
 
 export const neighborhoodLandUseInternals = Object.freeze({

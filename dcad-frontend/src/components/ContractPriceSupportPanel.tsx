@@ -58,6 +58,9 @@ export default function ContractPriceSupportPanel({
             {analysis.within_10_percent_count ?? 0} within 10%
           </span>
           <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">
+            {analysis.strong_physical_support_count ?? 0} strong physical matches
+          </span>
+          <span className="rounded-full bg-white/80 px-2 py-1 font-semibold">
             {(analysis.local_sale_count ?? 0).toLocaleString()} local sales screened
           </span>
         </div>

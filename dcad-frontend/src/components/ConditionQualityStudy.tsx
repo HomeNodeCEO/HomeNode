@@ -11,6 +11,7 @@ import {
 } from '@/lib/conditionQualityRatings';
 import {
   calculateConditionQualityStudy,
+  conditionQualityStudyPeriod,
   conditionQualitySaleKey,
   factoredStudyAmount,
   type AppliedConditionQualityAdjustment,
@@ -52,19 +53,6 @@ const MARKET_OPTIONS: Array<{
     description: `Ranks every eligible sale from 0 to ${miles} mile${miles === 1 ? '' : 's'} from the subject.`,
   })),
 ];
-
-function localDateString(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, '0');
-  const day = String(date.getDate()).padStart(2, '0');
-  return `${year}-${month}-${day}`;
-}
-
-function oneYearBefore(value: string): string {
-  const date = new Date(`${value}T12:00:00`);
-  date.setFullYear(date.getFullYear() - 1);
-  return localDateString(date);
-}
 
 function finitePrice(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
@@ -171,6 +159,7 @@ function StudyGroupsTable({
 export default function ConditionQualityStudy({
   subjectAccountId,
   assignmentFileId,
+  analysisAsOf,
   subjectCondition,
   subjectQuality,
   ratingAssignments,
@@ -184,6 +173,7 @@ export default function ConditionQualityStudy({
 }: {
   subjectAccountId: string;
   assignmentFileId: number | null;
+  analysisAsOf?: string | null;
   subjectCondition: string;
   subjectQuality: string;
   ratingAssignments: Record<string, ConditionQualityRatingAssignment>;
@@ -213,8 +203,10 @@ export default function ConditionQualityStudy({
   const [result, setResult] = useState<ConditionQualityStudyResult | null>(null);
   const [selectedOptions, setSelectedOptions] = useState<Record<string, StudyBasis>>({});
   const [factors, setFactors] = useState<Record<string, string>>({});
-  const asOfDate = useMemo(() => localDateString(), []);
-  const dateFrom = useMemo(() => oneYearBefore(asOfDate), [asOfDate]);
+  const { asOfDate, dateFrom } = useMemo(
+    () => conditionQualityStudyPeriod(analysisAsOf),
+    [analysisAsOf],
+  );
 
   const selectedSales = useMemo(() => {
     const selected = new Set(selectedSaleKeys);

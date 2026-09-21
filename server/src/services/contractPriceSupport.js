@@ -1,5 +1,7 @@
 const DEFAULT_LOCAL_RADIUS_MILES = 3;
 const MINIMUM_PHYSICAL_SCORE = 35;
+const STRONG_PHYSICAL_SCORE = 50;
+const MAX_STRONG_SIZE_DIFFERENCE_RATIO = 0.35;
 
 function finitePositiveNumber(value) {
   const parsed = typeof value === "string"
@@ -37,6 +39,15 @@ function conditionIndicatesUpperTierReview(condition, notes) {
   const normalizedNotes = String(notes || "").trim().toLowerCase();
   return ["C1", "C2", "C2-C1"].includes(normalizedCondition) ||
     /\b(remodel(?:ed|ing)?|renovat(?:ed|ion)|updated|complete(?:ly)? rehab)\b/.test(normalizedNotes);
+}
+
+function isStrongPhysicalSupport(sale) {
+  const physicalScore = finiteNumber(sale?.comparableScore);
+  const sizeDifferenceRatio = finiteNumber(sale?.squareFootageDifferenceRatio);
+  return physicalScore !== null &&
+    physicalScore >= STRONG_PHYSICAL_SCORE &&
+    sizeDifferenceRatio !== null &&
+    sizeDifferenceRatio <= MAX_STRONG_SIZE_DIFFERENCE_RATIO;
 }
 
 export async function loadComparableContractContext(pool, {
@@ -128,6 +139,7 @@ export function analyzeContractPriceSupport({
     .filter((value) => value !== null);
   const withinFive = localSales.filter((sale) => sale.contract_support_band === "within_5_percent");
   const withinTen = localSales.filter((sale) => sale.contract_support_band !== "outside_10_percent");
+  const strongPhysicalSupport = withinTen.filter(isStrongPhysicalSupport);
   const topQuartilePrice = quantile(localPrices, 0.75);
   const contractPercentile = localPrices.length
     ? Math.round(
@@ -167,15 +179,15 @@ export function analyzeContractPriceSupport({
   appendReviewSales(supportSales, 6);
   if (upperTierReview && reviewSet.length < 6) appendReviewSales(upperTierSales, 6);
 
-  const supportStatus = withinTen.length >= 3
+  const supportStatus = strongPhysicalSupport.length >= 3
     ? "supported"
     : withinTen.length > 0
       ? "limited"
       : "unsupported";
   const reconciliation = supportStatus === "supported"
-    ? `${withinTen.length} physically screened sales within ${localRadiusMiles} miles closed within 10% of the contract price, including ${withinFive.length} within 5%. The contract has local sale-price support, subject to condition and quality verification.`
+    ? `${strongPhysicalSupport.length} strongly similar sales within ${localRadiusMiles} miles closed within 10% of the contract price; ${withinTen.length} broader physically screened sales fell within that band, including ${withinFive.length} within 5%. The contract has local sale-price support, subject to condition and quality verification.`
     : supportStatus === "limited"
-      ? `${withinTen.length} physically screened sale${withinTen.length === 1 ? "" : "s"} within ${localRadiusMiles} miles closed within 10% of the contract price. Support is limited; verify remodeling, condition, quality, and concessions before reconciling toward the contract.`
+      ? `${withinTen.length} broader physically screened sale${withinTen.length === 1 ? "" : "s"} within ${localRadiusMiles} miles closed within 10% of the contract price, but only ${strongPhysicalSupport.length} met the stronger physical-similarity screen. Support is limited; verify remodeling, condition, quality, concessions, and the adjusted indications before reconciling toward the contract.`
       : `No physically screened sale within ${localRadiusMiles} miles closed within 10% of the contract price. The contract is not supported by the available local sale-price screen and should not anchor the value conclusion.`;
 
   return {
@@ -187,6 +199,7 @@ export function analyzeContractPriceSupport({
     support_status: supportStatus,
     within_5_percent_count: withinFive.length,
     within_10_percent_count: withinTen.length,
+    strong_physical_support_count: strongPhysicalSupport.length,
     contract_percentile: contractPercentile,
     upper_quartile_price: topQuartilePrice === null ? null : Math.round(topQuartilePrice),
     subject_condition: String(subjectCondition || "").trim() || null,
@@ -198,6 +211,8 @@ export function analyzeContractPriceSupport({
       price_band_percent: 10,
       close_support_band_percent: 5,
       minimum_physical_score: MINIMUM_PHYSICAL_SCORE,
+      strong_physical_score: STRONG_PHYSICAL_SCORE,
+      maximum_strong_size_difference_ratio: MAX_STRONG_SIZE_DIFFERENCE_RATIO,
       condition_quality_verification_required: true,
     },
     support_sales: supportSales,

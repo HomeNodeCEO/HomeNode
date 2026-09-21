@@ -825,11 +825,9 @@ export function createComparableRecommendationsRouter({
       const rankedScoped = influenceRanked.sales.map((candidate) => ({
         ...candidate,
         influence_support_candidate:
-          Number(candidate.distanceMiles) > Number(radiusMiles) &&
-          candidate.influence_similarity?.exact_material_match === true,
+          Number(candidate.distanceMiles) > Number(radiusMiles),
         candidate_purpose:
-          Number(candidate.distanceMiles) > Number(radiusMiles) &&
-          candidate.influence_similarity?.exact_material_match === true
+          Number(candidate.distanceMiles) > Number(radiusMiles)
             ? "influence_support"
             : "primary_similarity",
       }));

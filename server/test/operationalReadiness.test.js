@@ -192,19 +192,21 @@ test("scraper loader rejects malformed or non-object provider JSON", async () =>
 });
 
 test("scraper loader normalizes an invalid clock without issuing a request", async () => {
-  let calls = 0;
-  const loader = createCachedScraperStatusLoader({
-    url: "https://dcad.example/status",
-    now: () => Number.NaN,
-    fetchImpl: async () => {
-      calls += 1;
-      return Response.json({ phase: "initial_missing" });
-    },
-  });
-  const result = await loader();
-  assert.equal(calls, 0);
-  assert.equal(result.payload, null);
-  assert.equal(result.error, "dcad_scraper_status_unavailable");
+  for (const invalidTime of [Number.NaN, 8.64e15 + 1]) {
+    let calls = 0;
+    const loader = createCachedScraperStatusLoader({
+      url: "https://dcad.example/status",
+      now: () => invalidTime,
+      fetchImpl: async () => {
+        calls += 1;
+        return Response.json({ phase: "initial_missing" });
+      },
+    });
+    const result = await loader();
+    assert.equal(calls, 0);
+    assert.equal(result.payload, null);
+    assert.equal(result.error, "dcad_scraper_status_unavailable");
+  }
 });
 
 test("combined readiness includes request timing and both repair sources", () => {

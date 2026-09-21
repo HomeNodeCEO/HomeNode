@@ -297,7 +297,7 @@ export function createCachedScraperStatusLoader({
 
   function currentTime() {
     const value = Number(now());
-    if (!Number.isFinite(value) || value < 0) {
+    if (!Number.isFinite(value) || value < 0 || Number.isNaN(new Date(value).getTime())) {
       throw new Error("dcad_scraper_status_unavailable");
     }
     return value;

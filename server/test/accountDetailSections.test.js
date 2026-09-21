@@ -1,6 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { loadAccountDetailSections } from "../src/services/accountDetailSections.js";
+import {
+  accountDetailSectionInternals,
+  loadAccountDetailSections,
+} from "../src/services/accountDetailSections.js";
+
+function jsonResponse(value, init = {}) {
+  return new Response(JSON.stringify(value), {
+    ...init,
+    headers: {
+      "content-type": "application/json",
+      ...init.headers,
+    },
+  });
+}
+
+function emptySectionPool() {
+  return {
+    async query() {
+      return { rows: [] };
+    },
+  };
+}
 
 function deferred() {
   let resolve;
@@ -28,7 +49,7 @@ test("account detail sections launch independent indexed lookups concurrently", 
   const loading = loadAccountDetailSections(pool, "26572500130160000", {
     fetchImpl: async (...args) => {
       fetchCalls.push(args);
-      return { ok: true, json: async () => ({ features: [] }) };
+      return jsonResponse({ features: [] });
     },
   });
   assert.equal(calls.length, 9);
@@ -155,9 +176,7 @@ test("missing historical fields use the official DCAD parcel fallback", async ()
   const result = await loadAccountDetailSections(pool, "221508800I0190000", {
     fetchImpl: async (_url, options) => {
       fetchCalls.push(options);
-      return {
-        ok: true,
-        json: async () => ({ features: [{ attributes: {
+      return jsonResponse({ features: [{ attributes: {
           STRCLASS: "14",
           OWNERNME1: "LAM DUNG LY",
           PSTLADDRESS: "1402 AARON PL",
@@ -165,12 +184,14 @@ test("missing historical fields use the official DCAD parcel fallback", async ()
           PSTLSTATE: "TX",
           PSTLZIP5: "75137",
           PSTLZIP4: "4907",
-        } }] }),
-      };
+        } }] });
     },
   });
 
   assert.equal(fetchCalls.length, 1);
+  assert.equal(fetchCalls[0].redirect, "manual");
+  assert.ok(fetchCalls[0].signal instanceof AbortSignal);
+  assert.equal(fetchCalls[0].signal.aborted, false);
   assert.match(String(fetchCalls[0].body), /221508800I0190000/);
   assert.equal(result.primaryImprovement.building_class, "14");
   assert.equal(result.owner.owner_name, "LAM DUNG LY");
@@ -178,6 +199,101 @@ test("missing historical fields use the official DCAD parcel fallback", async ()
   assert.equal(result.owner.source_year, null);
   assert.equal(result.owner.tax_year, null);
   assert.equal(result.owner.mailing_address, "1402 AARON PL, DUNCANVILLE, TX 75137-4907");
+});
+
+test("DCAD account fallback rejects and cancels oversized responses", async () => {
+  const warnings = [];
+  let cancelled = false;
+  const body = new ReadableStream({
+    pull(controller) {
+      controller.enqueue(new Uint8Array(
+        accountDetailSectionInternals.MAX_DCAD_DETAIL_RESPONSE_BYTES + 1,
+      ));
+    },
+    cancel() {
+      cancelled = true;
+    },
+  });
+
+  const result = await loadAccountDetailSections(
+    emptySectionPool(),
+    "11111111111111111",
+    {
+      logger: { warn: (...args) => warnings.push(args) },
+      fetchImpl: async () => new Response(body),
+    },
+  );
+
+  assert.equal(cancelled, true);
+  assert.equal(result.primaryImprovement, null);
+  assert.deepEqual(warnings, [[
+    "DCAD account fallback lookup failed",
+    "dcad_account_fallback_response_too_large",
+  ]]);
+});
+
+test("DCAD account fallback refuses redirects", async () => {
+  const warnings = [];
+  let fetchCalls = 0;
+  await loadAccountDetailSections(
+    emptySectionPool(),
+    "22222222222222222",
+    {
+      logger: { warn: (...args) => warnings.push(args) },
+      fetchImpl: async (_url, options) => {
+        fetchCalls += 1;
+        assert.equal(options.redirect, "manual");
+        return new Response(null, {
+          status: 302,
+          headers: { location: "https://127.0.0.1/internal" },
+        });
+      },
+    },
+  );
+
+  assert.equal(fetchCalls, 1);
+  assert.deepEqual(warnings, [[
+    "DCAD account fallback lookup failed",
+    "dcad_account_fallback_http_302",
+  ]]);
+});
+
+test("DCAD account fallback sanitizes transport and provider diagnostics", async () => {
+  const transportWarnings = [];
+  const transportDetail = "socket detail containing a private hostname";
+  await loadAccountDetailSections(
+    emptySectionPool(),
+    "33333333333333333",
+    {
+      logger: { warn: (...args) => transportWarnings.push(args) },
+      fetchImpl: async () => {
+        throw new Error(transportDetail);
+      },
+    },
+  );
+  assert.deepEqual(transportWarnings, [[
+    "DCAD account fallback lookup failed",
+    "dcad_account_fallback_unavailable",
+  ]]);
+  assert.equal(JSON.stringify(transportWarnings).includes(transportDetail), false);
+
+  const providerWarnings = [];
+  const providerDetail = "attacker-controlled provider detail";
+  await loadAccountDetailSections(
+    emptySectionPool(),
+    "44444444444444444",
+    {
+      logger: { warn: (...args) => providerWarnings.push(args) },
+      fetchImpl: async () => jsonResponse({
+        error: { code: providerDetail, message: providerDetail },
+      }),
+    },
+  );
+  assert.deepEqual(providerWarnings, [[
+    "DCAD account fallback lookup failed",
+    "dcad_account_fallback_error",
+  ]]);
+  assert.equal(JSON.stringify(providerWarnings).includes(providerDetail), false);
 });
 test("optional land and secondary-improvement failures preserve the account response", async () => {
   const errors = [];
@@ -244,7 +360,7 @@ async function ownerSections({ normalized, raw, attributes = {}, snapshotYear = 
     fetchImpl: async (...args) => {
       fetches.push(args);
       if (!live) throw new Error("unexpected_external_fallback");
-      return { ok: true, json: async () => ({ features: [{ attributes: live }] }) };
+      return jsonResponse({ features: [{ attributes: live }] });
     } });
   // The loader tolerates fallback failures, so throwing in the mock alone is
   // insufficient. Every offline caller must assert outside that catch path.

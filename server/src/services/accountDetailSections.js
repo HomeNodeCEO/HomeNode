@@ -1,3 +1,5 @@
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
 const PRIMARY_IMPROVEMENT_SQL = `
   SELECT
     construction_type, percent_complete, year_built, effective_year_built,
@@ -126,6 +128,8 @@ const RAW_DETAIL_SQL = `
 
 const DCAD_PARCEL_QUERY_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
+const DCAD_DETAIL_FALLBACK_TIMEOUT_MS = 5_000;
+const MAX_DCAD_DETAIL_RESPONSE_BYTES = 1024 * 1024;
 const DCAD_DETAIL_FALLBACK_FIELDS = [
   "PARCELID", "LOWPARCELID", "STRCLASS", "RESYRBLT", "RESFLRAREA", "BLDGAREA",
   "RESSTRTYP", "OWNERNME1", "OWNERNME2", "PSTLADDRESS", "PSTLCITY", "PSTLSTATE",
@@ -320,15 +324,48 @@ async function fetchDcadAttributes(accountId, fetchImpl) {
     returnGeometry: "false",
     f: "json",
   });
-  const response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
-    method: "POST",
-    headers: { "content-type": "application/x-www-form-urlencoded" },
-    body,
-    signal: AbortSignal.timeout(5_000),
-  });
-  if (!response.ok) throw new Error(`dcad_account_fallback_http_${response.status}`);
-  const payload = await response.json();
-  if (payload?.error) throw new Error(`dcad_account_fallback_${payload.error.code || "error"}`);
+  let response;
+  try {
+    response = await fetchImpl(DCAD_PARCEL_QUERY_URL, {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body,
+      redirect: "manual",
+      signal: AbortSignal.timeout(DCAD_DETAIL_FALLBACK_TIMEOUT_MS),
+    });
+  } catch {
+    throw new Error("dcad_account_fallback_unavailable");
+  }
+  if (!response?.ok) {
+    const status = Number.isInteger(response?.status)
+      ? response.status
+      : "unknown";
+    throw new Error(`dcad_account_fallback_http_${status}`);
+  }
+  let payload;
+  try {
+    payload = await readBoundedJsonResponse(response, {
+      maximumBytes: MAX_DCAD_DETAIL_RESPONSE_BYTES,
+      tooLargeCode: "dcad_account_fallback_response_too_large",
+      unavailableCode: "dcad_account_fallback_response_unavailable",
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (
+      code === "dcad_account_fallback_response_too_large"
+      || code === "dcad_account_fallback_response_unavailable"
+    ) {
+      throw new Error(code);
+    }
+    throw new Error("dcad_account_fallback_invalid_response");
+  }
+  if (payload?.error) {
+    const rawProviderCode = String(payload.error.code ?? "");
+    const providerCode = /^\d{1,6}$/.test(rawProviderCode)
+      ? rawProviderCode
+      : "error";
+    throw new Error(`dcad_account_fallback_${providerCode}`);
+  }
   const attributes = payload?.features?.[0]?.attributes || {};
   rememberDcadAttributes(accountId, attributes);
   return attributes;
@@ -449,3 +486,8 @@ export async function loadAccountDetailSections(
     additionalImprovements,
   };
 }
+
+export const accountDetailSectionInternals = Object.freeze({
+  DCAD_DETAIL_FALLBACK_TIMEOUT_MS,
+  MAX_DCAD_DETAIL_RESPONSE_BYTES,
+});

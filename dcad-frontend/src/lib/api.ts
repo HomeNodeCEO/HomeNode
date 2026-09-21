@@ -426,6 +426,7 @@ export interface AppraisalAssignmentFile {
   inherited_from_file_number: string | null;
   reviewer: string | null;
   revision: number;
+  effective_date: string | null;
   workfile: {
     key: string;
     canonical_file_name: string;

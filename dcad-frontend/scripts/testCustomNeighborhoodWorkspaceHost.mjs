@@ -771,6 +771,22 @@ test('missing period, malformed checkpoint, signed and disabled hosts do not sil
   }
 });
 
+test('a canonical effective-date default enables an explicit fresh capture without starting one on page load', async t => {
+  const db = server(), h = harness(t, db, undefined, {
+    initialPeriod: null,
+    defaultPeriod: { start_date: '2024-09-01', end_date: '2026-08-31' },
+  });
+  await h.settle();
+  assert.deepEqual(kinds(db), []);
+  assert.equal(h.button('Start 3-mile exploration').props.disabled, false);
+  assert.match(h.html(), /2024-09-01/);
+  assert.match(h.html(), /2026-08-31/);
+  h.click('Start 3-mile exploration'); await h.settle();
+  assert.deepEqual(db.calls.find(call => call.kind === 'capture').body.observation_period, {
+    start_date: '2024-09-01', end_date: '2026-08-31',
+  });
+});
+
 test('fresh signed workfile reload removes editable choices and refuses a successful save flush', async t => {
   const initial = activeSection(), db = server(initial), h = harness(t, db, initial); await h.settle();
   db.file(TARGET).status = 'signed'; h.click('Reload saved choices'); await h.settle();

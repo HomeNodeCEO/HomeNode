@@ -18,6 +18,7 @@ interface Props {
   hasActiveAssignmentFile: boolean;
   accountId?: string;
   assignmentFileId?: number | null;
+  effectiveDate?: string | null;
   marketConditionsDraft: MarketConditionsDraft | null;
   onMarketConditionsChange: (draft: MarketConditionsDraft | null) => void;
 }
@@ -83,6 +84,7 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
       <Suspense fallback={<Loading label="market conditions analysis" />}>
         <MarketConditionsAnalysis key={`${props.accountId}:${props.assignmentFileId}`} subjectAccountId={props.accountId}
           assignmentFileId={props.assignmentFileId} initialDraft={props.marketConditionsDraft}
+          initialAsOfDate={props.effectiveDate}
           onCompletionChange={props.onMarketConditionsChange} initialCustomGeometry={geometry}
           initialCustomGeometrySource={geometry ? 'appraiser_defined_area_manual_v1' : null}
           suggestedCustomGeometry={geometry} embedded />

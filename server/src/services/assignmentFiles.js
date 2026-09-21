@@ -88,6 +88,7 @@ export function assignmentFileResponse(row) {
     inherited_from_file_number: row.inherited_from_file_number || null,
     reviewer: row.reviewer || null,
     revision: Number(row.revision || 1),
+    effective_date: row.effective_date || null,
     workfile: row.workfile_key ? {
       key: row.workfile_key,
       canonical_file_name: row.canonical_file_name,

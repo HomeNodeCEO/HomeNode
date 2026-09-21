@@ -3,6 +3,7 @@ import test from 'node:test';
 import { readFileSync } from 'node:fs';
 import * as catalog from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
+import * as defaultPeriod from '../src/features/neighborhood/customWorkspaceDefaultPeriod.ts';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
 function compile(name, imports, globals = {}) {
@@ -57,6 +58,7 @@ function harness(t, options = {}) {
         ...(section === undefined ? {} : { neighborhood_workspace: copy(section) }) } } });
   };
   const exports = compile('useCustomNeighborhoodReportBridge.ts', { react, './customWorkspaceApi': api,
+    './customWorkspaceDefaultPeriod': defaultPeriod,
     '@/lib/api': { makeUrl: value => value, fetchWithApplicationAuthentication: (url, init) => {
       const call = { url, init }; calls.push(call); return Promise.resolve(request ? request(call, respond) : respond(call));
     } },

@@ -122,6 +122,7 @@ type Props = {
   subjectAccountId: string;
   assignmentFileId?: number | null;
   initialDraft?: MarketConditionsDraft | null;
+  initialAsOfDate?: string | null;
   onCompletionChange?: (draft: MarketConditionsDraft | null) => void;
   initialCustomGeometry?: GeoJsonPolygon | null;
   initialCustomGeometrySource?: string | null;
@@ -1028,6 +1029,7 @@ export default function MarketConditionsAnalysis({
   subjectAccountId,
   assignmentFileId = null,
   initialDraft = null,
+  initialAsOfDate = null,
   onCompletionChange,
   initialCustomGeometry = null,
   initialCustomGeometrySource = null,
@@ -1092,7 +1094,7 @@ export default function MarketConditionsAnalysis({
       .filter((option) => option.key !== 'custom' || resolvedInitialGeometry !== null)
       .map((option) => option.key));
   const [asOfDate, setAsOfDate] = useState(
-    savedDraft?.asOfDate || todayInputValue(),
+    savedDraft?.asOfDate || initialAsOfDate || todayInputValue(),
   );
   const [periodMonths, setPeriodMonths] = useState<12 | 24 | 36>(
     savedDraft?.periodMonths || 24,

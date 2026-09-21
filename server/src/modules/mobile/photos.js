@@ -350,7 +350,11 @@ function ensureStorage(storage) {
 }
 
 function uploadForObject(storage, row) {
-  const upload = storage.createUploadUrl({ objectKey: row.object_key, contentType: row.content_type });
+  const upload = storage.createUploadUrl({
+    objectKey: row.object_key,
+    contentType: row.content_type,
+    contentLength: Number(row.expected_byte_size),
+  });
   return {
     object_id: row.id,
     variant: row.variant,

@@ -18,6 +18,15 @@ function boundedInteger(value, fallback, minimum, maximum) {
   return Math.max(minimum, Math.min(parsed, maximum));
 }
 
+function optionalContentLength(value) {
+  if (value == null) return null;
+  const normalized = Number(value);
+  if (!Number.isSafeInteger(normalized) || normalized < 0) {
+    throw new Error("uad_object_upload_size_invalid");
+  }
+  return normalized;
+}
+
 function temporaryFilePath(value) {
   if (typeof value !== "string" || !value.trim()) {
     throw new Error("uad_object_file_path_invalid");
@@ -157,6 +166,7 @@ export function createR2PresignedUrl({
   objectKey,
   method = "PUT",
   contentType,
+  contentLength,
   expiresInSeconds = 900,
   now = new Date(),
 }) {
@@ -165,9 +175,15 @@ export function createR2PresignedUrl({
   const timestamp = amzTimestamp(now);
   const dateStamp = timestamp.slice(0, 8);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
-  const headers = contentType
-    ? { "content-type": String(contentType).trim().toLowerCase(), host }
-    : { host };
+  const normalizedContentLength = optionalContentLength(contentLength);
+  if (method.toUpperCase() === "PUT" && normalizedContentLength == null) {
+    throw new Error("uad_object_upload_size_required");
+  }
+  const headers = {
+    ...(normalizedContentLength == null ? {} : { "content-length": String(normalizedContentLength) }),
+    ...(contentType ? { "content-type": String(contentType).trim().toLowerCase() } : {}),
+    host,
+  };
   const signedHeaders = Object.keys(headers).sort().join(";");
   const canonicalHeaders = Object.keys(headers)
     .sort()
@@ -338,17 +354,24 @@ export function createUadObjectStorage(env = process.env, {
       max_attempts: config.maxAttempts,
       max_buffered_download_bytes: config.maxBufferedDownloadBytes,
     }),
-    createUploadUrl({ objectKey, contentType }) {
+    createUploadUrl({ objectKey, contentType, contentLength }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      const normalizedContentLength = optionalContentLength(contentLength);
       return {
         method: "PUT",
         url: createR2PresignedUrl({
           ...config,
           objectKey,
           contentType,
+          contentLength: normalizedContentLength,
           expiresInSeconds: config.uploadTtlSeconds,
         }),
-        headers: { "content-type": contentType },
+        headers: {
+          "content-type": contentType,
+          ...(normalizedContentLength == null
+            ? {}
+            : { "content-length": String(normalizedContentLength) }),
+        },
         expires_in_seconds: config.uploadTtlSeconds,
       };
     },
@@ -366,7 +389,8 @@ export function createUadObjectStorage(env = process.env, {
       };
     },
     async putObject({ objectKey, contentType, body }) {
-      const upload = this.createUploadUrl({ objectKey, contentType });
+      const byteSize = Buffer.byteLength(body);
+      const upload = this.createUploadUrl({ objectKey, contentType, contentLength: byteSize });
       const response = await request("upload", upload.url, {
         method: upload.method,
         headers: upload.headers,
@@ -374,7 +398,7 @@ export function createUadObjectStorage(env = process.env, {
       });
       return {
         etag: response.headers.get("etag"),
-        byte_size: Buffer.byteLength(body),
+        byte_size: byteSize,
         content_type: contentType,
       };
     },
@@ -386,10 +410,10 @@ export function createUadObjectStorage(env = process.env, {
         if (!Number.isSafeInteger(size) || size < 0 || file.size !== size) {
           throw new Error("uad_object_upload_size_mismatch");
         }
-        const upload = this.createUploadUrl({ objectKey, contentType });
+        const upload = this.createUploadUrl({ objectKey, contentType, contentLength: size });
         const response = await request("upload", upload.url, {
           method: upload.method,
-          headers: { ...upload.headers, "content-length": String(size) },
+          headers: upload.headers,
           duplex: "half",
         }, {
           bodyFactory: () => fileHandle.createReadStream({ autoClose: false, start: 0 }),

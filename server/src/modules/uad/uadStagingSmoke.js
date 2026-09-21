@@ -1,6 +1,28 @@
 import { CURRENT_UAD_RELEASE_KEY } from "./constants.js";
+import {
+  readBoundedJsonResponse,
+  readBoundedResponseBuffer,
+} from "../../util/boundedResponse.js";
 
 const DEFAULT_FIXTURE_ACCOUNT_ID = "UAD-STAGING-SFR-0001";
+const MAX_JSON_RESPONSE_BYTES = 2 * 1024 * 1024;
+const MAX_HTML_RESPONSE_BYTES = 2 * 1024 * 1024;
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The smoke check already has its result; cancellation is best-effort cleanup.
+  }
+}
+
+function responseStatus(response) {
+  return Number.isInteger(response?.status)
+    && response.status >= 100
+    && response.status <= 599
+    ? response.status
+    : null;
+}
 
 export function normalizeUadSmokeBaseUrl(value) {
   const url = new URL(String(value || "").trim());
@@ -13,48 +35,90 @@ export function normalizeUadSmokeBaseUrl(value) {
 }
 
 async function getJson(fetchImpl, url, timeoutMs) {
+  const signal = AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await fetchImpl(url, {
       headers: { accept: "application/json" },
       redirect: "error",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
   } catch {
     return { ok: false, status: null, body: null, error_code: "request_failed" };
   }
+  const status = responseStatus(response);
+  if (!response.ok) {
+    await cancelResponseBody(response);
+    return { ok: false, status, body: null, error_code: "http_error" };
+  }
   let body = null;
   try {
-    body = await response.json();
-  } catch {
-    return { ok: false, status: response.status, body: null, error_code: "invalid_json" };
+    body = await readBoundedJsonResponse(response, {
+      maximumBytes: MAX_JSON_RESPONSE_BYTES,
+      tooLargeCode: "uad_smoke_response_too_large",
+      unavailableCode: "uad_smoke_response_unavailable",
+    });
+  } catch (error) {
+    const errorCode = signal.aborted
+      ? "request_failed"
+      : error?.message === "uad_smoke_response_too_large"
+        ? "response_too_large"
+        : "invalid_json";
+    return { ok: false, status, body: null, error_code: errorCode };
+  }
+  if (!body || typeof body !== "object" || Array.isArray(body)) {
+    return { ok: false, status, body: null, error_code: "invalid_json" };
   }
   return {
-    ok: response.ok,
-    status: response.status,
+    ok: true,
+    status,
     body,
-    error_code: response.ok ? null : String(body?.error || "http_error").slice(0, 120),
+    error_code: null,
   };
 }
 
 async function getHtml(fetchImpl, url, timeoutMs) {
+  const signal = AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await fetchImpl(url, {
       headers: { accept: "text/html" },
       redirect: "error",
-      signal: AbortSignal.timeout(timeoutMs),
+      signal,
     });
-    const body = await response.text();
-    const contentType = String(response.headers?.get?.("content-type") || "").toLowerCase();
-    return {
-      ok: response.ok && contentType.includes("text/html") && body.includes("id=\"root\""),
-      status: response.status,
-      error_code: response.ok ? null : "http_error",
-    };
   } catch {
     return { ok: false, status: null, error_code: "request_failed" };
   }
+  const status = responseStatus(response);
+  if (!response.ok) {
+    await cancelResponseBody(response);
+    return { ok: false, status, error_code: "http_error" };
+  }
+  const contentType = String(response.headers?.get?.("content-type") || "").toLowerCase();
+  if (!contentType.includes("text/html")) {
+    await cancelResponseBody(response);
+    return { ok: false, status, error_code: "invalid_content_type" };
+  }
+  let body;
+  try {
+    body = (await readBoundedResponseBuffer(response, {
+      maximumBytes: MAX_HTML_RESPONSE_BYTES,
+      tooLargeCode: "uad_smoke_response_too_large",
+      unavailableCode: "uad_smoke_response_unavailable",
+    })).toString("utf8");
+  } catch (error) {
+    return {
+      ok: false,
+      status,
+      error_code: signal.aborted
+        ? "request_failed"
+        : error?.message === "uad_smoke_response_too_large"
+          ? "response_too_large"
+          : "invalid_html",
+    };
+  }
+  const ok = body.includes("id=\"root\"");
+  return { ok, status, error_code: ok ? null : "invalid_html" };
 }
 
 export async function runUadStagingSmoke({
@@ -150,3 +214,8 @@ export async function runUadStagingSmoke({
     checks,
   };
 }
+
+export const uadStagingSmokeInternals = Object.freeze({
+  MAX_HTML_RESPONSE_BYTES,
+  MAX_JSON_RESPONSE_BYTES,
+});

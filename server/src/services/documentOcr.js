@@ -41,17 +41,22 @@ async function cancelResponseBody(response) {
 
 async function fetchWithTimeout(url, init, timeoutMs, unavailableCode) {
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+  let timeout = setTimeout(() => controller.abort(), timeoutMs);
+  const finish = () => {
+    if (timeout == null) return;
+    clearTimeout(timeout);
+    timeout = null;
+  };
   try {
-    return await fetch(url, {
+    const response = await fetch(url, {
       ...init,
       redirect: "manual",
       signal: controller.signal,
     });
+    return { response, finish };
   } catch {
+    finish();
     throw new Error(unavailableCode);
-  } finally {
-    clearTimeout(timeout);
   }
 }
 
@@ -171,7 +176,7 @@ export function createDocumentOcrProvider(env = process.env) {
       );
       analyzeUrl.searchParams.set("api-version", AZURE_API_VERSION);
       analyzeUrl.searchParams.set("stringIndexType", "utf16CodeUnit");
-      const submitted = await fetchWithTimeout(analyzeUrl, {
+      const submittedRequest = await fetchWithTimeout(analyzeUrl, {
         method: "POST",
         headers: {
           "content-type": "application/pdf",
@@ -179,40 +184,53 @@ export function createDocumentOcrProvider(env = process.env) {
         },
         body: content,
       }, requestTimeoutMs, "document_ocr_submit_unavailable");
-      if (submitted.status !== 202) {
-        const payload = await readProviderJson(
-          submitted,
-          MAX_OCR_ERROR_RESPONSE_BYTES,
-          "document_ocr_submit",
-          { optional: true },
-        );
-        throw responseError(submitted.status, payload, "document_ocr_submit_failed");
+      const submitted = submittedRequest.response;
+      let operationLocation;
+      let resultUrl;
+      try {
+        if (submitted.status !== 202) {
+          const payload = await readProviderJson(
+            submitted,
+            MAX_OCR_ERROR_RESPONSE_BYTES,
+            "document_ocr_submit",
+            { optional: true },
+          );
+          throw responseError(submitted.status, payload, "document_ocr_submit_failed");
+        }
+        operationLocation = submitted.headers.get("operation-location");
+        await cancelResponseBody(submitted);
+        if (!operationLocation) throw new Error("document_ocr_operation_location_missing");
+        resultUrl = trustedOperationUrl(operationLocation, endpoint);
+      } finally {
+        submittedRequest.finish();
       }
-      const operationLocation = submitted.headers.get("operation-location");
-      await cancelResponseBody(submitted);
-      if (!operationLocation) throw new Error("document_ocr_operation_location_missing");
-      const resultUrl = trustedOperationUrl(operationLocation, endpoint);
       const deadline = Date.now() + maximumPollMs;
       let result = null;
       while (Date.now() < deadline) {
-        const response = await fetchWithTimeout(resultUrl, {
+        const pollRequest = await fetchWithTimeout(resultUrl, {
           method: "GET",
           headers: { "ocp-apim-subscription-key": key },
         }, requestTimeoutMs, "document_ocr_poll_unavailable");
-        if (!response.ok) {
-          const payload = await readProviderJson(
+        const response = pollRequest.response;
+        let payload;
+        try {
+          if (!response.ok) {
+            const errorPayload = await readProviderJson(
+              response,
+              MAX_OCR_ERROR_RESPONSE_BYTES,
+              "document_ocr_poll",
+              { optional: true },
+            );
+            throw responseError(response.status, errorPayload, "document_ocr_poll_failed");
+          }
+          payload = await readProviderJson(
             response,
-            MAX_OCR_ERROR_RESPONSE_BYTES,
+            MAX_OCR_RESULT_RESPONSE_BYTES,
             "document_ocr_poll",
-            { optional: true },
           );
-          throw responseError(response.status, payload, "document_ocr_poll_failed");
+        } finally {
+          pollRequest.finish();
         }
-        const payload = await readProviderJson(
-          response,
-          MAX_OCR_RESULT_RESPONSE_BYTES,
-          "document_ocr_poll",
-        );
         const status = String(payload.status || "").toLowerCase();
         if (status === "succeeded") {
           result = payload;

@@ -150,23 +150,30 @@ test("scraper loader rejects and cancels oversized status responses", async () =
 
 test("scraper loader bounds stalled body reads with a sanitized timeout", async () => {
   let aborted = false;
+  let keepAlive;
   const loader = createCachedScraperStatusLoader({
     url: "https://dcad.example/status",
     timeoutMs: 250,
     fetchImpl: async (_url, init) => new Response(new ReadableStream({
       start(controller) {
+        keepAlive = setTimeout(() => {}, 1_000);
         init.signal.addEventListener("abort", () => {
           aborted = true;
+          clearTimeout(keepAlive);
           controller.error(new Error("private scraper transport detail"));
         }, { once: true });
       },
     })),
   });
-  const result = await loader();
-  assert.equal(aborted, true);
-  assert.equal(result.payload, null);
-  assert.equal(result.error, "dcad_scraper_status_unavailable");
-  assert.equal(JSON.stringify(result).includes("private scraper transport detail"), false);
+  try {
+    const result = await loader();
+    assert.equal(aborted, true);
+    assert.equal(result.payload, null);
+    assert.equal(result.error, "dcad_scraper_status_unavailable");
+    assert.equal(JSON.stringify(result).includes("private scraper transport detail"), false);
+  } finally {
+    clearTimeout(keepAlive);
+  }
 });
 
 test("scraper loader rejects malformed or non-object provider JSON", async () => {

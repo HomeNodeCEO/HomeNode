@@ -14,6 +14,21 @@ const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json
 const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
 const imageSizeModule = require.resolve('image-size', { paths: [metroRoot] });
 
+type ZodSchema = {
+  parse: (input: unknown) => Record<string, unknown>;
+  safeParse: (input: unknown) => { success: boolean };
+};
+
+type ZodV4 = {
+  base64: () => ZodSchema;
+  object: (shape: Record<string, ZodSchema>) => ZodSchema & {
+    catchall: (schema: ZodSchema) => ZodSchema;
+    passthrough: () => ZodSchema;
+  };
+  string: () => ZodSchema;
+  unknown: () => ZodSchema;
+};
+
 test('Expo tooling YAML parser budgets empty merge sources without breaking normal merges', () => {
   const xcprettyRequire = createRequire(expoCliRequire.resolve('@expo/xcpretty'));
   const yaml = xcprettyRequire('js-yaml') as { load: (input: string, options: { maxTotalMergeKeys: number }) => unknown };
@@ -72,6 +87,35 @@ test('patched image-size rejects malformed boxes without blocking the build proc
       `${name} blocked the Node.js event loop`,
     );
     assert.equal(result.status, 0, `${name} probe failed: ${result.stderr}`);
+  }
+});
+
+// Expo currently pins Zod 3.x, whose package also exposes an affected v4
+// preview subpath. The lockfile patch backports the Zod 4.4.0 guards without
+// forcing Expo across an unsupported major-version boundary.
+test('patched Expo Zod v4 rejects whitespace in Base64 input', () => {
+  const zod = expoCliRequire('zod/v4') as ZodV4;
+  const schema = zod.base64();
+
+  assert.equal(schema.safeParse('MTIz').success, true);
+  for (const input of ['123 ', ' 123', '12 3', 'MTIz\n', 'MTIz\t']) {
+    assert.equal(schema.safeParse(input).success, false, `accepted ${JSON.stringify(input)}`);
+  }
+});
+
+test('patched Expo Zod v4 object catchalls cannot replace the result prototype', () => {
+  const zod = expoCliRequire('zod/v4') as ZodV4;
+  const input = JSON.parse('{"__proto__":{"isAdmin":true},"name":"alice"}') as Record<string, unknown>;
+  const schemas = [
+    zod.object({ name: zod.string() }).passthrough(),
+    zod.object({ name: zod.string() }).catchall(zod.unknown()),
+  ];
+
+  for (const schema of schemas) {
+    const parsed = schema.parse(input);
+    assert.equal(Object.getPrototypeOf(parsed), Object.prototype);
+    assert.equal(Object.hasOwn(parsed, '__proto__'), false);
+    assert.equal('isAdmin' in parsed, false);
   }
 });
 

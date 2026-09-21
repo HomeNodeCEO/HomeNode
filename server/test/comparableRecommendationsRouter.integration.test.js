@@ -124,6 +124,11 @@ function routerOptions(overrides = {}) {
       olderThanOneYearCount: 0,
       olderThanTwoYearsCount: 0,
     }),
+    loadContractContext: async () => null,
+    analyzeContractSupport: ({ contractPrice }) => ({
+      available: contractPrice != null,
+      support_status: contractPrice == null ? "not_analyzed" : "limited",
+    }),
     currentDate: () => "2026-09-02",
     requireCustomAccountScope: async () => true,
     requirePropertyTaxAccountScope: async () => true,
@@ -390,11 +395,27 @@ test("recommendations preserve bounded SQL, site evidence precedence, ranking, a
       olderThanOneYearCount: 0,
       olderThanTwoYearsCount: 0,
     }),
+    loadContractContext: async (pool, input) => {
+      calls.push({ type: "contract-context", pool, input });
+      return {
+        contractPrice: 430000,
+        subjectCondition: "C2",
+        subjectConditionNotes: "Completely remodeled",
+      };
+    },
+    analyzeContractSupport: (input) => {
+      calls.push({ type: "contract-support", input });
+      return { available: true, support_status: "limited" };
+    },
   });
   const server = await startRouter(createComparableRecommendationsRouter(options));
   context.after(server.close);
 
-  const response = await get(server.baseUrl, { subject_account_id: " A-1 ", limit: "1" });
+  const response = await get(server.baseUrl, {
+    subject_account_id: " A-1 ",
+    assignment_file_id: "42",
+    limit: "1",
+  });
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.subject.account_id, "A-1");
@@ -414,6 +435,10 @@ test("recommendations preserve bounded SQL, site evidence precedence, ranking, a
   assert.equal(body.competitive_sales.length, 1);
   assert.equal(body.sales.length, 1);
   assert.equal(body.statistical_analysis.available, true);
+  assert.deepEqual(body.contract_price_support, {
+    available: true,
+    support_status: "limited",
+  });
   assert.equal(body.study_market.label, "All eligible sales");
 
   assert.equal(queries.length, 3);
@@ -442,6 +467,12 @@ test("recommendations preserve bounded SQL, site evidence precedence, ranking, a
   assert.equal(candidateRow.manual_land_value, undefined);
   assert.equal(calls.find((call) => call.type === "filter").market, null);
   assert.deepEqual(calls.find((call) => call.type === "rank").signature, subjectSignature);
+  assert.deepEqual(calls.find((call) => call.type === "contract-context").input, {
+    accountId: "A-1",
+    assignmentFileId: "42",
+  });
+  assert.equal(calls.find((call) => call.type === "contract-support").input.contractPrice, 430000);
+  assert.equal(calls.find((call) => call.type === "contract-support").input.radiusMiles, 5);
 });
 
 test("all sales outside the selected radius are tagged as influence support before recommendation policy", async (context) => {

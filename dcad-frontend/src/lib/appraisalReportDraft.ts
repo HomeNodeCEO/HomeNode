@@ -1,4 +1,8 @@
-import type { QualitativeAnalysisResponse, SaleRow } from "./api";
+import type {
+  ContractPriceSupportAnalysis,
+  QualitativeAnalysisResponse,
+  SaleRow,
+} from "./api";
 import {
   browserDraftIdentityKey,
   type BrowserDraftSession,
@@ -78,6 +82,7 @@ export type AppraisalReportSalesDraft = {
       quality: string;
     }>;
     qualitativeAnalysis?: QualitativeAnalysisResponse | null;
+    contractPriceSupport?: ContractPriceSupportAnalysis | null;
     ctcNotes?: string;
   };
 };

@@ -26,6 +26,7 @@ import type {
   ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
+import ContractPriceSupportPanel from '@/components/ContractPriceSupportPanel';
 import DeferredReportSection from '@/components/DeferredReportSection';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
@@ -87,6 +88,15 @@ import {
   subjectFromDetailResponse,
   type SubjectData,
 } from '@/lib/comparableSubjectData';
+import {
+  attachmentNeedsReview,
+  housingTypeNeedsReview,
+  saleDateDisplay,
+  saleDisplayAddress,
+  saleIsOverOneYear,
+  statisticalOutlierLabel,
+  suggestedAttachmentType,
+} from '@/lib/comparableSalePresentation';
 
 const ConditionQualityStudy = lazy(
   () => import('@/components/ConditionQualityStudy'),
@@ -302,6 +312,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     useState<api.AppraisalAssignmentFile | null>(null);
   const [workfileDraftToRestore, setWorkfileDraftToRestore] =
     useState<AppraisalReportSalesDraft | null>(null);
+  const contractPriceSupport = recommendationSummary?.contract_price_support ??
+    workfileDraftToRestore?.workspace?.contractPriceSupport ?? null;
   const [workfileReady, setWorkfileReady] = useState(false);
   const [workfileSaveStatus, setWorkfileSaveStatus] = useState('Loading appraisal workfile...');
   const [workfileCanonicalName, setWorkfileCanonicalName] = useState('');
@@ -928,65 +940,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  const saleDateDisplay = (value: string | null): string => {
-    if (!value) return '';
-    const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US');
-  };
-
-  const saleIsOverOneYear = (sale: SaleRow): boolean => {
-    if (sale.soldOverOneYear != null) return sale.soldOverOneYear;
-    if (!sale.closing_date) return false;
-    const saleDate = new Date(`${sale.closing_date.slice(0, 10)}T12:00:00Z`);
-    if (Number.isNaN(saleDate.getTime())) return false;
-    const cutoffValue = monthsBeforeDate(salesAnalysisAsOf, 12);
-    const cutoff = new Date(`${cutoffValue}T12:00:00Z`);
-    if (Number.isNaN(cutoff.getTime())) return false;
-    return saleDate < cutoff;
-  };
-
-  const saleDisplayAddress = (sale: SaleRow): string => {
-    if (sale.address?.trim()) return sale.address.trim();
-    if (sale.primary_account_id) return `Account ${sale.primary_account_id} (address unavailable)`;
-    return `Unmatched sale${sale.source_row_number ? ` ${sale.source_row_number}` : ''}`;
-  };
-
-  const housingTypeNeedsReview = (sale: SaleRow): boolean =>
-    !(sale.structural_style || sale.housing_type || '').trim();
-
-  const attachmentNeedsReview = (sale: SaleRow): boolean =>
-    !housingTypeNeedsReview(sale) &&
-    (!sale.attachment_type || sale.attachment_type === 'unknown');
-
   const housingTypeGridValue = (sale: SaleRow | null | undefined): string => {
     if (!sale) return 'Not available';
     if (housingTypeNeedsReview(sale)) return '⚠ Review';
     return sale.structural_style || sale.housing_type || 'Not available';
-  };
-
-  const statisticalOutlierLabel = (sale: SaleRow): string => {
-    if (!sale.statistical_outlier) return '';
-    const direction = sale.statistical_outlier_direction === 'low' ? 'low' : 'high';
-    return `Statistical outlier · unusually ${direction} price/SF`;
-  };
-
-  const suggestedAttachmentType = (
-    housingType: string,
-    current: HousingEditForm['attachmentType'],
-  ): HousingEditForm['attachmentType'] => {
-    const normalized = housingType.trim().toLowerCase();
-    if (/\bdetached\b/.test(normalized) || normalized === 'single family') return 'detached';
-    if (
-      /\battached\b/.test(normalized) ||
-      normalized.includes('townhome') ||
-      normalized.includes('townhouse') ||
-      normalized.includes('condo') ||
-      normalized.includes('duplex')
-    ) {
-      return 'attached';
-    }
-    if (normalized.includes('multi-family') || normalized.includes('multifamily')) return 'mixed';
-    return current;
   };
 
   const openHousingEditor = (sale: SaleRow) => {
@@ -1434,9 +1391,40 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   };
 
   const clearComparables = () => {
-    Array.from({ length: COMPARABLE_COUNT }, (_, index) => index).forEach(removeComparable);
+    setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+    setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
+    setCompGla(Array(COMPARABLE_COUNT).fill(null));
+    setCompPrices(Array(COMPARABLE_COUNT).fill(null));
+    setCompConcessions(Array(COMPARABLE_COUNT).fill(null));
+    setCompTimeAdjustments(Array(COMPARABLE_COUNT).fill(null));
+    setCompSaleDates(Array(COMPARABLE_COUNT).fill(''));
+    setCompLandSize(Array(COMPARABLE_COUNT).fill(null));
+    setCompAges(Array(COMPARABLE_COUNT).fill(null));
+    setCompGarage(Array(COMPARABLE_COUNT).fill(null));
+    setCompConditions(Array(COMPARABLE_COUNT).fill(''));
+    setCompQualities(Array(COMPARABLE_COUNT).fill(''));
+    setCompRooms(Array.from(
+      { length: COMPARABLE_COUNT },
+      () => ({ tot: null, bd: null, full: null, half: null }),
+    ));
     setSelectedSecondarySales([]);
+    setCompetitiveReplacementSale(null);
     setSalesError(null);
+  };
+
+  const loadContractSupportReviewSet = () => {
+    const reviewSet = contractPriceSupport?.review_set_sales || [];
+    if (!reviewSet.length) {
+      setSalesError('No local contract-support review set is available for this assignment.');
+      return;
+    }
+    clearComparables();
+    reviewSet.slice(0, COMPARABLE_COUNT).forEach((sale, slot) => {
+      applySaleToSlot(sale, slot);
+    });
+    setSalesNotice(
+      `${Math.min(reviewSet.length, COMPARABLE_COUNT)} nearby upper-tier sales loaded. Re-run adjustments and verify condition and quality.`,
+    );
   };
 
   const resetSalesForAnalysisPeriodChange = () => {
@@ -2193,6 +2181,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         appliedConditionQualityAdjustments,
         conditionQualityRatings,
         qualitativeAnalysis,
+        contractPriceSupport,
         ctcNotes,
       },
     };
@@ -2260,6 +2249,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     appliedConditionQualityAdjustments,
     conditionQualityRatings,
     qualitativeAnalysis,
+    contractPriceSupport,
     ctcNotes,
     workfileCanonicalName,
   ]);
@@ -3381,7 +3371,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <div>
                     <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
                     <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
-                    {sale && saleIsOverOneYear(sale) && (
+                    {sale && saleIsOverOneYear(sale, salesAnalysisAsOf) && (
                       <div className="mt-1 text-xs font-semibold text-amber-800">Sale over one year old</div>
                     )}
                     {sale?.statistical_outlier && (
@@ -3483,6 +3473,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
 
+          {contractPriceSupport?.available && (
+            <ContractPriceSupportPanel
+              analysis={contractPriceSupport}
+              selectedSales={selectedSales}
+              onLoadReviewSet={loadContractSupportReviewSet}
+              onToggleSale={(sale, selectedSlot) => selectedSlot >= 0
+                ? removeComparable(selectedSlot)
+                : addCompetitiveSaleToPrimaryGrid(sale)}
+            />
+          )}
+
           {recommendationSummary?.statistical_analysis && (
             <div
               className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
@@ -3560,7 +3561,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         ? '0 garage spaces'
                         : 'Garage spaces unavailable';
                     const hasPool = booleanValue(sale.mls_pool_yn ?? sale.cad_pool);
-                    const olderThanOneYear = saleIsOverOneYear(sale);
+                    const olderThanOneYear = saleIsOverOneYear(sale, salesAnalysisAsOf);
                     const missingHousingType = housingTypeNeedsReview(sale);
                     const unknownAttachment = attachmentNeedsReview(sale);
                     return (

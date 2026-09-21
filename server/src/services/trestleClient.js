@@ -1,7 +1,10 @@
 import { hasSourceValue } from "../util/nonDallasEnrichment.js";
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 
 const DEFAULT_BASE_URL = "https://api.cotality.com/trestle/odata";
 const DEFAULT_TOKEN_URL = "https://api.cotality.com/trestle/oidc/connect/token";
+const MAX_TRESTLE_TOKEN_RESPONSE_BYTES = 256 * 1024;
+const MAX_TRESTLE_API_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -39,6 +42,50 @@ function quotaSnapshot(response) {
     hour_limit: read("hour-quota-limit"),
     hour_remaining: read("hour-quota-remaining"),
   };
+}
+
+function trustedHttpsUrl(value, errorCode) {
+  let url;
+  try {
+    url = value instanceof URL ? new URL(value.href) : new URL(String(value));
+  } catch {
+    throw new Error(errorCode);
+  }
+  if (
+    url.protocol !== "https:"
+    || url.username
+    || url.password
+    || url.hash
+  ) {
+    throw new Error(errorCode);
+  }
+  return url;
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // Rejected provider bodies are best-effort cleanup only.
+  }
+}
+
+async function readTrestleJson(response, maximumBytes, errorPrefix) {
+  const tooLargeCode = `${errorPrefix}_response_too_large`;
+  const unavailableCode = `${errorPrefix}_response_unavailable`;
+  try {
+    return await readBoundedJsonResponse(response, {
+      maximumBytes,
+      tooLargeCode,
+      unavailableCode,
+    });
+  } catch (error) {
+    const code = String(error?.message || "");
+    if (code === tooLargeCode || code === unavailableCode) {
+      throw new Error(code);
+    }
+    throw new Error(`${errorPrefix}_invalid_response`);
+  }
 }
 
 export function trestleConfiguration(env = process.env) {
@@ -139,29 +186,39 @@ export class TrestleClient {
   }
 
   async fetchWithRetry(url, options, errorPrefix) {
-    let lastError = null;
+    const safeUrl = trustedHttpsUrl(url, `${errorPrefix}_endpoint_invalid`);
     for (let attempt = 1; attempt <= this.config.retryAttempts; attempt += 1) {
+      let response;
       try {
-        const response = await this.fetch(url, {
+        response = await this.fetch(safeUrl, {
           ...options,
+          redirect: "manual",
           signal: options?.signal || AbortSignal.timeout(this.config.requestTimeoutMs),
         });
-        this.lastQuota = quotaSnapshot(response);
-        if (response.ok) return response;
-        const retryable = response.status === 429 || response.status >= 500;
-        if (!retryable || attempt === this.config.retryAttempts) {
-          throw new Error(`${errorPrefix}_http_${response.status}`);
+      } catch {
+        if (attempt === this.config.retryAttempts) {
+          throw new Error(`${errorPrefix}_unavailable`);
         }
-        await this.sleep(retryAfterMilliseconds(response, attempt, this.config.retryBaseMs));
-      } catch (error) {
-        lastError = error;
-        const message = String(error?.message || "");
-        const explicitlyNonRetryable = /_http_(400|401|403|404|405|409|422)$/.test(message);
-        if (explicitlyNonRetryable || attempt === this.config.retryAttempts) throw error;
         await this.sleep(Math.min(60_000, this.config.retryBaseMs * (2 ** (attempt - 1))));
+        continue;
       }
+      this.lastQuota = quotaSnapshot(response);
+      if (response.ok) return response;
+
+      const status = Number.isInteger(response?.status)
+        ? response.status
+        : "unknown";
+      const retryable = response?.status === 429 || response?.status >= 500;
+      const retryDelay = retryable && attempt < this.config.retryAttempts
+        ? retryAfterMilliseconds(response, attempt, this.config.retryBaseMs)
+        : null;
+      await cancelResponseBody(response);
+      if (retryDelay == null) {
+        throw new Error(`${errorPrefix}_http_${status}`);
+      }
+      await this.sleep(retryDelay);
     }
-    throw lastError || new Error(`${errorPrefix}_failed`);
+    throw new Error(`${errorPrefix}_unavailable`);
   }
 
   async accessToken() {
@@ -174,12 +231,20 @@ export class TrestleClient {
       client_secret: this.config.clientSecret,
       scope: this.config.scope,
     });
-    const response = await this.fetchWithRetry(this.config.tokenUrl, {
+    const tokenUrl = trustedHttpsUrl(
+      this.config.tokenUrl,
+      "trestle_token_endpoint_invalid",
+    );
+    const response = await this.fetchWithRetry(tokenUrl, {
       method: "POST",
       headers: { "content-type": "application/x-www-form-urlencoded" },
       body,
     }, "trestle_token");
-    const payload = await response.json();
+    const payload = await readTrestleJson(
+      response,
+      MAX_TRESTLE_TOKEN_RESPONSE_BYTES,
+      "trestle_token",
+    );
     if (!payload?.access_token) throw new Error("trestle_token_missing");
     this.token = payload.access_token;
     this.tokenExpiresAt = Date.now() + Number(payload.expires_in || 3600) * 1000;
@@ -187,8 +252,19 @@ export class TrestleClient {
   }
 
   async request(path, searchParams = {}) {
+    const base = trustedHttpsUrl(
+      `${this.config.baseUrl}/`,
+      "trestle_base_url_invalid",
+    );
+    if (base.search) throw new Error("trestle_base_url_invalid");
+    const url = trustedHttpsUrl(
+      new URL(String(path).replace(/^\/+/, ""), base),
+      "trestle_untrusted_path",
+    );
+    if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
+      throw new Error("trestle_untrusted_path");
+    }
     const token = await this.accessToken();
-    const url = new URL(`${this.config.baseUrl}/${String(path).replace(/^\/+/, "")}`);
     for (const [key, value] of Object.entries(searchParams)) {
       if (value !== null && value !== undefined && value !== "") {
         url.searchParams.set(key, String(value));
@@ -197,12 +273,28 @@ export class TrestleClient {
     const response = await this.fetchWithRetry(url, {
       headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     }, "trestle");
-    return response.json();
+    return readTrestleJson(
+      response,
+      MAX_TRESTLE_API_RESPONSE_BYTES,
+      "trestle",
+    );
   }
 
   async requestNextLink(nextLink) {
-    const base = new URL(`${this.config.baseUrl}/`);
-    const url = new URL(String(nextLink || ""), base);
+    const base = trustedHttpsUrl(
+      `${this.config.baseUrl}/`,
+      "trestle_base_url_invalid",
+    );
+    if (base.search) throw new Error("trestle_base_url_invalid");
+    let url;
+    try {
+      url = trustedHttpsUrl(
+        new URL(String(nextLink || ""), base),
+        "trestle_untrusted_next_link",
+      );
+    } catch {
+      throw new Error("trestle_untrusted_next_link");
+    }
     if (url.origin !== base.origin || !url.pathname.startsWith(base.pathname)) {
       throw new Error("trestle_untrusted_next_link");
     }
@@ -210,7 +302,11 @@ export class TrestleClient {
     const response = await this.fetchWithRetry(url, {
       headers: { authorization: `Bearer ${token}`, accept: "application/json" },
     }, "trestle");
-    return response.json();
+    return readTrestleJson(
+      response,
+      MAX_TRESTLE_API_RESPONSE_BYTES,
+      "trestle",
+    );
   }
 
   propertyChangesFilter({ modifiedAfter, counties = this.config.counties } = {}) {
@@ -283,3 +379,8 @@ export class TrestleClient {
     return record ? { raw: record, attributes: mapTrestleProperty(record) } : null;
   }
 }
+
+export const trestleClientInternals = Object.freeze({
+  MAX_TRESTLE_API_RESPONSE_BYTES,
+  MAX_TRESTLE_TOKEN_RESPONSE_BYTES,
+});

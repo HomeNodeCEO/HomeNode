@@ -9,6 +9,7 @@ import {
 import {
   mapTrestleProperty,
   TrestleClient,
+  trestleClientInternals,
   trestleConfiguration,
 } from "../src/services/trestleClient.js";
 import { getNonDallasAccount } from "../src/services/propertyEnrichment.js";
@@ -149,6 +150,7 @@ test("incremental Property queries use ModificationTimestamp and optional county
 test("Trestle retries quota responses and accepts only same-service next links", async () => {
   const sleeps = [];
   let attempts = 0;
+  let rejectedBodyCancelled = false;
   const client = new TrestleClient({
     env: {
       TRESTLE_ENABLED: "true",
@@ -156,14 +158,25 @@ test("Trestle retries quota responses and accepts only same-service next links",
       TRESTLE_CLIENT_SECRET: "secret",
       TRESTLE_RETRY_ATTEMPTS: "3",
     },
-    fetchImpl: async () => {
+    fetchImpl: async (_url, options) => {
       attempts += 1;
-      return {
-        ok: attempts > 1,
-        status: attempts > 1 ? 200 : 429,
-        headers: { get: (name) => name === "retry-after" ? "0" : null },
-        async json() { return { value: [] }; },
-      };
+      assert.equal(options.redirect, "manual");
+      if (attempts > 1) {
+        return new Response(JSON.stringify({ value: [] }), {
+          headers: { "content-type": "application/json" },
+        });
+      }
+      return new Response(new ReadableStream({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode("quota exceeded"));
+        },
+        cancel() {
+          rejectedBodyCancelled = true;
+        },
+      }), {
+        status: 429,
+        headers: { "retry-after": "0" },
+      });
     },
     sleepImpl: async (milliseconds) => { sleeps.push(milliseconds); },
   });
@@ -173,9 +186,172 @@ test("Trestle retries quota responses and accepts only same-service next links",
     "https://api.cotality.com/trestle/odata/Property?$skip=1000",
   ), { value: [] });
   assert.equal(attempts, 2);
+  assert.equal(rejectedBodyCancelled, true);
   assert.deepEqual(sleeps, [0]);
   await assert.rejects(
     client.requestNextLink("https://example.com/steal-token"),
     /trestle_untrusted_next_link/,
   );
+});
+
+test("Trestle rejects unsafe configured endpoints before sending credentials", async () => {
+  let fetchCalls = 0;
+  const tokenClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_TOKEN_URL: "http://metadata.internal/token",
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected_fetch");
+    },
+  });
+  await assert.rejects(
+    tokenClient.accessToken(),
+    { message: "trestle_token_endpoint_invalid" },
+  );
+
+  const apiClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_BASE_URL: "http://metadata.internal/odata",
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected_fetch");
+    },
+  });
+  apiClient.token = "cached";
+  apiClient.tokenExpiresAt = Date.now() + 3_600_000;
+  await assert.rejects(
+    apiClient.request("Property"),
+    { message: "trestle_base_url_invalid" },
+  );
+
+  const pathClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+    },
+    fetchImpl: async () => {
+      fetchCalls += 1;
+      throw new Error("unexpected_fetch");
+    },
+  });
+  pathClient.token = "cached";
+  pathClient.tokenExpiresAt = Date.now() + 3_600_000;
+  await assert.rejects(
+    pathClient.request("https://example.com/steal-token"),
+    { message: "trestle_untrusted_path" },
+  );
+  assert.equal(fetchCalls, 0);
+});
+
+test("Trestle refuses redirects and sanitizes transport failures", async () => {
+  let redirectCalls = 0;
+  const redirectClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_RETRY_ATTEMPTS: "1",
+    },
+    fetchImpl: async (_url, options) => {
+      redirectCalls += 1;
+      assert.equal(options.redirect, "manual");
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://example.com/steal-credentials" },
+      });
+    },
+  });
+  await assert.rejects(
+    redirectClient.accessToken(),
+    { message: "trestle_token_http_302" },
+  );
+  assert.equal(redirectCalls, 1);
+
+  const transportDetail = "socket failure exposing a private hostname";
+  const transportClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_RETRY_ATTEMPTS: "1",
+    },
+    fetchImpl: async () => {
+      throw new Error(transportDetail);
+    },
+  });
+  transportClient.token = "cached";
+  transportClient.tokenExpiresAt = Date.now() + 3_600_000;
+  await assert.rejects(
+    transportClient.request("Property"),
+    (error) => {
+      assert.equal(error.message, "trestle_unavailable");
+      assert.equal(error.message.includes(transportDetail), false);
+      return true;
+    },
+  );
+});
+
+test("Trestle bounds token and OData JSON responses", async () => {
+  let tokenBodyCancelled = false;
+  const tokenClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_RETRY_ATTEMPTS: "1",
+    },
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        tokenBodyCancelled = true;
+      },
+    }), {
+      headers: {
+        "content-length": String(
+          trestleClientInternals.MAX_TRESTLE_TOKEN_RESPONSE_BYTES + 1,
+        ),
+      },
+    }),
+  });
+  await assert.rejects(
+    tokenClient.accessToken(),
+    { message: "trestle_token_response_too_large" },
+  );
+  assert.equal(tokenBodyCancelled, true);
+
+  let apiBodyCancelled = false;
+  const apiClient = new TrestleClient({
+    env: {
+      TRESTLE_ENABLED: "true",
+      TRESTLE_CLIENT_ID: "client",
+      TRESTLE_CLIENT_SECRET: "secret",
+      TRESTLE_RETRY_ATTEMPTS: "1",
+    },
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        apiBodyCancelled = true;
+      },
+    }), {
+      headers: {
+        "content-length": String(
+          trestleClientInternals.MAX_TRESTLE_API_RESPONSE_BYTES + 1,
+        ),
+      },
+    }),
+  });
+  apiClient.token = "cached";
+  apiClient.tokenExpiresAt = Date.now() + 3_600_000;
+  await assert.rejects(
+    apiClient.request("Property"),
+    { message: "trestle_response_too_large" },
+  );
+  assert.equal(apiBodyCancelled, true);
 });

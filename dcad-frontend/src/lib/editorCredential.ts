@@ -4,7 +4,9 @@ let applicationSessionActive = false;
 export const AUTHENTICATED_SESSION_EDITOR_CREDENTIAL = '__homenode_authenticated_session__';
 
 export function setApplicationSessionActive(active: boolean): void {
-  applicationSessionActive = active === true;
+  const nextActive = active === true;
+  if (nextActive || applicationSessionActive) editorCredential = '';
+  applicationSessionActive = nextActive;
 }
 
 export function isAuthenticatedSessionEditorCredential(value: unknown): boolean {
@@ -21,6 +23,7 @@ export function readEditorCredential(): string {
 }
 
 export function rememberEditorCredential(value: unknown): string {
+  if (applicationSessionActive) return '';
   const normalized = String(value ?? '').trim();
   if (normalized !== AUTHENTICATED_SESSION_EDITOR_CREDENTIAL) {
     editorCredential = normalized;

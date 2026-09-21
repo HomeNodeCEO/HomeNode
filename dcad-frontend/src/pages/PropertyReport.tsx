@@ -99,7 +99,6 @@ const CustomNeighborhoodCharacteristicsSection = lazy(
   () => import("@/features/neighborhood/components/CustomNeighborhoodCharacteristicsSection"),
 );
 const PrivateSalesImportsPanel = lazy(() => import("@/features/neighborhood/components/PrivateSalesImportsPanel"));
-// Default-off display gate; server/source owner authorization remains independent.
 const CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED = import.meta.env.VITE_CUSTOM_NEIGHBORHOOD_WORKSPACE_ENABLED === "true";
 const ListingsContractsSalesContent = lazy(
   () => import("@/components/ListingsContractsSalesContent"),
@@ -155,7 +154,6 @@ import {
 import { useZoningEvidence } from "@/hooks/useZoningEvidence";
 
 type AssignmentDetails = AssignmentDetailsPayload;
-
 function AddressHero({
   detail: baseDetail,
   accountId,
@@ -365,7 +363,6 @@ function AddressHero({
     onCredentialRejected: forgetEditorCredential,
   });
   const detail = scopedDetail as DcadDetail | null;
-
   useEffect(() => {
     assignmentDraftRef.current = assignmentDraft;
     const draftChanged = !customAppraisalDraftsMatch(
@@ -451,8 +448,6 @@ function AddressHero({
     address: exactAddress,
     enabled: detailLoaded && Boolean(activeAssignmentFile?.id),
   });
-
-
   useEffect(() => {
     if (unemploymentHydrationAccount.current !== (accountId || "")) {
       unemploymentHydrationAccount.current = accountId || "";
@@ -482,6 +477,7 @@ function AddressHero({
     accountId,
     assignmentFileId: activeAssignmentFile?.id,
     workfileStatus: activeAssignmentFile?.workfile?.status ?? null,
+    effectiveDate: activeAssignmentFile?.effective_date ?? null,
     subjectLabel: address,
     auth: applicationAuth,
     onAccepted: handleNeighborhoodAccepted,
@@ -692,7 +688,7 @@ function AddressHero({
         file.id === refreshed.id ? mergeEvidence(file) : file
       )));
     } catch {
-      // A background sync failure must never disturb the active report draft.
+      // Non-blocking evidence refresh.
     } finally {
       sketchEvidenceRefreshInFlight.current = false;
       setSketchEvidenceRefreshing(false);
@@ -3153,6 +3149,7 @@ function AddressHero({
                   hasActiveAssignmentFile={Boolean(activeAssignmentFile)}
                   accountId={accountId}
                   assignmentFileId={activeAssignmentFile?.id || null}
+                  effectiveDate={activeAssignmentFile?.effective_date ?? null}
                   marketConditionsDraft={marketConditionsDraft}
                   onMarketConditionsChange={updateMarketConditions}
                 />

@@ -9,11 +9,13 @@ import type CustomNeighborhoodWorkspaceHost from './components/CustomNeighborhoo
 import type { CustomNeighborhoodWorkspaceControls } from './components/CustomNeighborhoodWorkspaceHost';
 import type { CustomWorkspaceTarget } from './customWorkspaceLifecycle';
 import type { CustomWorkspacePrivateSalesImport } from './customWorkspaceCheckpoint';
+import { customWorkspaceDefaultObservationPeriod } from './customWorkspaceDefaultPeriod';
 
 export type CustomNeighborhoodReportHostProps = ComponentProps<typeof CustomNeighborhoodWorkspaceHost>;
 export interface CustomNeighborhoodReportBridgeInput {
   enabled: boolean; accountId?: string | null; assignmentFileId?: number | null;
   workfileStatus?: 'draft' | 'signed' | 'archived' | null; subjectLabel: string;
+  effectiveDate?: string | null;
   auth: { ready: boolean; bootstrapError: string | null; session: Session | null };
   onAccepted?: () => Promise<boolean>;
 }
@@ -59,8 +61,9 @@ interface Runtime {
 interface Bootstrap { runtime: Runtime; status: Status; message: string | null }
 
 /** Production adapter only: existing authenticated endpoints + existing owned
- * workspace. No local drafts, accepted report writes, inferred study dates,
- * polling, auth policy changes, or per-preview report autosave state. */
+ * workspace. The canonical assignment effective date may seed an editable
+ * period, but no browser date or file-number date is inferred. No local drafts,
+ * accepted report writes, polling, auth changes, or preview autosave lives here. */
 export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodReportBridgeInput): CustomNeighborhoodReportBridge {
   const [retryRevision, setRetryRevision] = useState(0);
   const [bootstrap, setBootstrap] = useState<Bootstrap | null>(null);
@@ -191,6 +194,7 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
   const hostProps: CustomNeighborhoodReportHostProps | null = enabled && result && runtime.target && runtime.api ? {
     enabled: true, target: runtime.target, subjectLabel: input.subjectLabel, initialSection: result.section,
     initialPeriod: checkpoint?.active?.observation_period ?? checkpoint?.pending_capture?.observation_period ?? null,
+    defaultPeriod: customWorkspaceDefaultObservationPeriod(input.effectiveDate),
     workfileStatus: fileStatus === 'signed' || fileStatus === 'archived' ? fileStatus : result.status,
     api: runtime.api, registerControls: runtime.registerControls,
     onAccepted: async () => {

@@ -25,6 +25,7 @@ export interface CustomNeighborhoodWorkspaceControls {
 interface Props {
   target: CustomWorkspaceTarget; subjectLabel: string; initialSection: unknown;
   initialPeriod: CustomWorkspaceObservationPeriod | null;
+  defaultPeriod?: CustomWorkspaceObservationPeriod | null;
   workfileStatus: 'draft' | 'signed' | 'archived'; enabled: boolean;
   api: ReturnType<typeof createCustomWorkspaceApi>;
   registerControls?: (controls: CustomNeighborhoodWorkspaceControls | null) => void;
@@ -86,8 +87,8 @@ function HostSession(props: Props) {
   const [initial] = useState(() => props);
   const [state, setState] = useState<CustomWorkspaceLifecycleState | null>(null);
   const [lastReady, setLastReady] = useState<CustomWorkspaceLifecycleState | null>(null);
-  const [start, setStart] = useState(initial.initialPeriod?.start_date ?? '');
-  const [end, setEnd] = useState(initial.initialPeriod?.end_date ?? '');
+  const [start, setStart] = useState(initial.initialPeriod?.start_date ?? initial.defaultPeriod?.start_date ?? '');
+  const [end, setEnd] = useState(initial.initialPeriod?.end_date ?? initial.defaultPeriod?.end_date ?? '');
   const [scope, setScope] = useState<CustomWorkspaceDiscovery | undefined>(undefined);
   const scopeRef = useRef<CustomWorkspaceDiscovery | undefined>(undefined);
   const scopeBinding = useRef<string | null>(null);

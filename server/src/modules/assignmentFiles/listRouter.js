@@ -97,10 +97,24 @@ export function createAssignmentFileListRouter({
         ? authorizedRows.filter((row) => Number(row.id) === requestedAssignmentFileId)
         : authorizedRows;
       const assignmentIds = rows.map((row) => Number(row.id));
+      let effectiveDateRows = [];
       let sectionRows = [];
       let mobilePhotoRows = [];
       let mobileSketchRows = [];
       if (assignmentIds.length) {
+        try {
+          effectiveDateRows = await pool.query(
+            `SELECT report_file.custom_assignment_file_id AS assignment_file_id,
+                    appraisal_case.effective_date::text AS effective_date
+               FROM app.report_files report_file
+               JOIN app.appraisal_cases appraisal_case
+                 ON appraisal_case.id = report_file.appraisal_case_id
+              WHERE report_file.custom_assignment_file_id = ANY($1::bigint[])`,
+            [assignmentIds],
+          ).then((result) => result.rows);
+        } catch (error) {
+          if (error?.code !== "42P01") throw error;
+        }
         try {
           [sectionRows, mobilePhotoRows, mobileSketchRows] = await Promise.all([
             pool.query(
@@ -173,8 +187,15 @@ export function createAssignmentFileListRouter({
         mobilePhotoRows,
         mobileSketchRows,
       });
+      const effectiveDatesByFile = new Map(effectiveDateRows.map((row) => [
+        Number(row.assignment_file_id),
+        row.effective_date || null,
+      ]));
       const files = rows.map((row) => {
-        const response = assignmentFileResponse(row);
+        const response = assignmentFileResponse({
+          ...row,
+          effective_date: effectiveDatesByFile.get(Number(row.id)) || null,
+        });
         return {
           ...response,
           custom_appraisal_sections: detailIndex.sectionsByFile.get(response.id) || {},

@@ -144,6 +144,9 @@ test("enforced assignment-file listing filters before loading details and signs 
       if (/FROM app\.assignment_files f/.test(sql)) {
         return { rows: [authorized, denied], rowCount: 2 };
       }
+      if (/appraisal_case\.effective_date/.test(sql)) {
+        return { rows: [{ assignment_file_id: "1", effective_date: "2026-08-31" }] };
+      }
       if (/FROM app\.custom_appraisal_sections/.test(sql)) {
         return { rows: [{
           assignment_file_id: "1",
@@ -220,6 +223,7 @@ test("enforced assignment-file listing filters before loading details and signs 
   assert.equal(body.account_id, "CANONICAL_1");
   assert.equal(body.files.length, 1);
   assert.equal(body.files[0].id, 1);
+  assert.equal(body.files[0].effective_date, "2026-08-31");
   assert.deepEqual(body.files[0].custom_appraisal_sections.subject, {
     value: { address: "100 Main" },
     revision: 3,
@@ -257,7 +261,7 @@ test("enforced assignment-file listing filters before loading details and signs 
     false,
   );
   const detailQueries = queries.filter(({ params }) => Array.isArray(params?.[0]));
-  assert.equal(detailQueries.length, 3);
+  assert.equal(detailQueries.length, 4);
   assert.ok(detailQueries.every(({ params }) => JSON.stringify(params) === "[[1]]"));
 });
 
@@ -331,6 +335,9 @@ test("missing optional mobile detail tables leave the assignment list usable", a
       if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [{}], rowCount: 1 };
       if (/FROM app\.assignment_files f/.test(sql)) return { rows: [assignmentRow()] };
       if (/property_attribute_manual_values/.test(sql)) return { rows: [] };
+      if (/appraisal_case\.effective_date/.test(sql)) {
+        throw Object.assign(new Error("missing optional table"), { code: "42P01" });
+      }
       if (/FROM app\.custom_appraisal_sections/.test(sql)) {
         throw Object.assign(new Error("missing optional table"), { code: "42P01" });
       }
@@ -345,6 +352,7 @@ test("missing optional mobile detail tables leave the assignment list usable", a
   assert.equal(response.status, 200);
   const body = await response.json();
   assert.equal(body.files.length, 1);
+  assert.equal(body.files[0].effective_date, null);
   assert.deepEqual(body.files[0].custom_appraisal_sections, {});
   assert.deepEqual(body.files[0].mobile_inspection_photos, []);
   assert.equal(body.files[0].mobile_inspection_sketch, null);

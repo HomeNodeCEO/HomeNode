@@ -513,11 +513,13 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     );
 
     const photoClientId = randomUUID();
+    const photoUploadRequests = [];
     const photoStorage = {
       configured: true,
       provider: "r2",
       bucket: "mobile-photo-test",
-      createUploadUrl({ objectKey, contentType }) {
+      createUploadUrl({ objectKey, contentType, contentLength }) {
+        photoUploadRequests.push({ objectKey, contentType, contentLength });
         return {
           method: "PUT",
           url: `https://uploads.example.test/${encodeURIComponent(objectKey)}`,
@@ -585,6 +587,10 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     );
     assert.equal(uploadBatch.photos.length, 1);
     assert.equal(uploadBatch.photos[0].uploads.length, 2);
+    assert.deepEqual(
+      photoUploadRequests.slice(0, 2).map((request) => request.contentLength),
+      [MOBILE_PHOTO_JPEG.length, MOBILE_PHOTO_JPEG.length],
+    );
     assert.equal(uploadBatch.photos[0].photo.caption, "Kitchen");
     const retriedPhotoBatch = await createPhotoUploadBatch(
       pool,

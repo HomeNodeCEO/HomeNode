@@ -407,6 +407,7 @@ function normalizeAssetInput(input = {}) {
     kind,
     contentType,
     fileName,
+    expectedByteSize,
     entityId: input.entity_id || null,
     sectionNumber,
     captionType,
@@ -589,7 +590,11 @@ async function createUadAssetUploadInTransaction(client, storage, workfileId, no
     assetId,
     fileName: normalized.fileName,
   });
-  const upload = storage.createUploadUrl({ objectKey, contentType: normalized.contentType });
+  const upload = storage.createUploadUrl({
+    objectKey,
+    contentType: normalized.contentType,
+    contentLength: normalized.expectedByteSize,
+  });
   const expiresAt = new Date(Date.now() + upload.expires_in_seconds * 1000);
 
   const created = await client.query(

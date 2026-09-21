@@ -19,11 +19,13 @@ const ENVIRONMENT = Object.freeze({
 
 test("R2 operations retry bounded transient responses and expose safe resilience settings", async () => {
   let calls = 0;
+  let uploadRequest;
   const sleeps = [];
   const storage = createUadObjectStorage(ENVIRONMENT, {
     sleep: async (milliseconds) => sleeps.push(milliseconds),
-    fetchImpl: async () => {
+    fetchImpl: async (url, init) => {
       calls += 1;
+      uploadRequest = { url: String(url), init };
       if (calls < 3) return new Response(null, { status: 503 });
       return new Response(null, { status: 200, headers: { etag: '"ok"' } });
     },
@@ -36,6 +38,11 @@ test("R2 operations retry bounded transient responses and expose safe resilience
   assert.equal(calls, 3);
   assert.equal(sleeps.length, 2);
   assert.equal(uploaded.etag, '"ok"');
+  assert.equal(uploadRequest.init.headers["content-length"], String(Buffer.byteLength("<MESSAGE/>")));
+  assert.equal(
+    new URL(uploadRequest.url).searchParams.get("X-Amz-SignedHeaders"),
+    "content-length;content-type;host",
+  );
   assert.deepEqual(storage.resilience, {
     request_timeout_ms: 1000,
     stream_timeout_ms: 120000,

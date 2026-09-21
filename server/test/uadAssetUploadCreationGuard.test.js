@@ -111,8 +111,8 @@ function uploadHarness({
   const storage = {
     provider: "synthetic",
     bucket: "synthetic-private-bucket",
-    createUploadUrl({ objectKey, contentType }) {
-      storageCalls.push({ objectKey, contentType });
+    createUploadUrl({ objectKey, contentType, contentLength }) {
+      storageCalls.push({ objectKey, contentType, contentLength });
       if (uploadError) throw uploadError;
       return {
         url: "https://upload.invalid/synthetic",
@@ -229,6 +229,7 @@ test("asset upload creation preserves every explicitly unsigned mutable workflow
     assert.equal(result.asset_id, harness.mutationQueries[0]?.parameters[0]);
     assert.equal(harness.storageCalls.length, 1);
     assert.equal(harness.storageCalls[0].contentType, UPLOAD_INPUT.content_type);
+    assert.equal(harness.storageCalls[0].contentLength, UPLOAD_INPUT.byte_size);
     assert.match(harness.storageCalls[0].objectKey, new RegExp(`/${WORKFILE_ID}/assets/${result.asset_id}/subject-front\\.jpg$`));
     assert.equal(harness.mutationQueries.length, 1);
 

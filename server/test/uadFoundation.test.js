@@ -108,14 +108,24 @@ test("creates a bounded R2 presigned PUT URL and requires complete configuration
     bucket: "homenode-uad",
     objectKey: "organizations/org/uad/workfile/assets/asset/front.jpg",
     contentType: "image/jpeg",
+    contentLength: 1_024,
     expiresInSeconds: 900,
     now: new Date("2026-08-16T12:00:00.000Z"),
   }));
   assert.equal(url.hostname, "homenode-uad.example-account.r2.cloudflarestorage.com");
   assert.equal(url.pathname, "/organizations/org/uad/workfile/assets/asset/front.jpg");
   assert.equal(url.searchParams.get("X-Amz-Expires"), "900");
-  assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "content-type;host");
+  assert.equal(url.searchParams.get("X-Amz-SignedHeaders"), "content-length;content-type;host");
   assert.match(url.searchParams.get("X-Amz-Signature"), /^[a-f0-9]{64}$/);
+  assert.throws(() => createR2PresignedUrl({
+    accountId: "example-account",
+    accessKeyId: "example-key",
+    secretAccessKey: "example-secret",
+    bucket: "homenode-uad",
+    objectKey: "invalid-size.jpg",
+    contentType: "image/jpeg",
+    contentLength: 1.5,
+  }), /uad_object_upload_size_invalid/);
 });
 
 test("allows UAD storage to override the shared R2 bucket without mutating the environment", () => {
@@ -163,12 +173,20 @@ test("allows dedicated UAD R2 credentials without changing shared storage creden
 
   assert.equal(sharedStorage.bucket, "homenode-shared-production");
   assert.equal(uadStorage.bucket, "homenode-uad-production");
-  const upload = new URL(uadStorage.createUploadUrl({
+  assert.throws(() => sharedStorage.createUploadUrl({
+    objectKey: "organizations/org/uad/workfile/assets/asset/unbounded.jpg",
+    contentType: "image/jpeg",
+  }), /uad_object_upload_size_required/);
+  const uploadCapability = uadStorage.createUploadUrl({
     objectKey: "organizations/org/uad/workfile/assets/asset/front.jpg",
     contentType: "image/jpeg",
-  }).url);
+    contentLength: 1_024,
+  });
+  const upload = new URL(uploadCapability.url);
   assert.equal(upload.hostname, "homenode-uad-production.uad-account.r2.cloudflarestorage.com");
   assert.match(upload.searchParams.get("X-Amz-Credential"), /^uad-key\//);
+  assert.equal(upload.searchParams.get("X-Amz-SignedHeaders"), "content-length;content-type;host");
+  assert.equal(uploadCapability.headers["content-length"], "1024");
 });
 
 test("uploads generated artifacts through a private signed R2 request", async () => {

@@ -230,7 +230,11 @@ export function buildAssignmentPhotoVersion(rows = []) {
 }
 
 function uploadPayload(storage, object) {
-  const upload = storage.createUploadUrl({ objectKey: object.object_key, contentType: object.content_type });
+  const upload = storage.createUploadUrl({
+    objectKey: object.object_key,
+    contentType: object.content_type,
+    contentLength: Number(object.expected_byte_size),
+  });
   return {
     object_id: object.id,
     variant: object.variant,

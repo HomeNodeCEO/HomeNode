@@ -9,13 +9,22 @@ import {
   normalizeOfficialZoningFeature,
   normalizeRoadFeature,
   normalizeTrafficVolumeFeature,
+  propertyContextSyncInternals,
   rebuildRoadGraph,
+  requestArcGis,
   syncDcadPropertyContext,
   syncOfficialZoningContext,
   syncTigerRoadContext,
   syncTxdotTrafficContext,
   tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
+
+function arcGisResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
 
 test("rebuilds durable road corridors and intersection graph from the local mirror", async () => {
   const statements = [];
@@ -43,16 +52,127 @@ test("ArcGIS object IDs are numeric, unique, and sorted", async () => {
     where: "LASTUPDATE IS NOT NULL",
     fetchImpl: async (_url, options) => {
       requestBody = new URLSearchParams(String(options.body));
-      return {
-        ok: true,
-        json: async () => ({ objectIds: [9, "2", 9, 4, null, "bad"] }),
-      };
+      assert.equal(options.redirect, "error");
+      assert.equal(options.signal instanceof AbortSignal, true);
+      return arcGisResponse({ objectIds: [9, "2", 9, 4, null, "bad"] });
     },
   });
 
   assert.deepEqual(objectIds, [2, 4, 9]);
   assert.equal(requestBody.get("returnIdsOnly"), "true");
   assert.equal(requestBody.get("where"), "LASTUPDATE IS NOT NULL");
+});
+
+test("ArcGIS requests reject unsafe URLs before issuing a request", async () => {
+  let calls = 0;
+  for (const url of [
+    "http://example.test/query",
+    "https://user:secret@example.test/query",
+    "https://example.test/query?token=secret",
+    "https://example.test/query#fragment",
+  ]) {
+    await assert.rejects(
+      requestArcGis(url, { f: "json" }, {
+        fetchImpl: async () => {
+          calls += 1;
+          return arcGisResponse({});
+        },
+        maximumAttempts: 1,
+      }),
+      { message: "property_context_source_url_invalid" },
+    );
+  }
+  assert.equal(calls, 0);
+});
+
+test("ArcGIS requests reject and cancel oversized responses", async () => {
+  let cancelled = false;
+  await assert.rejects(
+    requestArcGis("https://example.test/query", { f: "json" }, {
+      maximumAttempts: 1,
+      fetchImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }), {
+        headers: {
+          "content-length": String(propertyContextSyncInternals.MAX_ARCGIS_RESPONSE_BYTES + 1),
+          "content-type": "application/json",
+        },
+      }),
+    }),
+    { message: "property_context_source_response_too_large" },
+  );
+  assert.equal(cancelled, true);
+});
+
+test("ArcGIS request deadlines remain active through stalled response bodies", async () => {
+  let aborted = false;
+  let keepAlive;
+  try {
+    await assert.rejects(
+      requestArcGis("https://example.test/query", { f: "json" }, {
+        timeoutMs: 250,
+        maximumAttempts: 1,
+        fetchImpl: async (_url, options) => new Response(new ReadableStream({
+          start(controller) {
+            keepAlive = setTimeout(() => {}, 1_000);
+            options.signal.addEventListener("abort", () => {
+              aborted = true;
+              clearTimeout(keepAlive);
+              controller.error(new Error("private ArcGIS transport detail"));
+            }, { once: true });
+          },
+        }), { headers: { "content-type": "application/json" } }),
+      }),
+      { message: "property_context_source_timeout" },
+    );
+    assert.equal(aborted, true);
+  } finally {
+    clearTimeout(keepAlive);
+  }
+});
+
+test("ArcGIS HTTP and provider failures are cancelled and sanitized", async () => {
+  let cancelled = false;
+  await assert.rejects(
+    requestArcGis("https://example.test/query", { f: "json" }, {
+      maximumAttempts: 1,
+      fetchImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          cancelled = true;
+        },
+      }), { status: 503 }),
+    }),
+    { message: "property_context_source_http_503" },
+  );
+  assert.equal(cancelled, true);
+
+  await assert.rejects(
+    requestArcGis("https://example.test/query", { f: "json" }, {
+      maximumAttempts: 1,
+      fetchImpl: async () => arcGisResponse({
+        error: { code: 499, message: "private provider diagnostic" },
+      }),
+    }),
+    { message: "property_context_source_provider_499" },
+  );
+});
+
+test("ArcGIS malformed JSON and invalid tuning values fail within fixed bounds", async () => {
+  let calls = 0;
+  await assert.rejects(
+    requestArcGis("https://example.test/query", { f: "json" }, {
+      timeoutMs: Number.POSITIVE_INFINITY,
+      maximumAttempts: Number.POSITIVE_INFINITY,
+      fetchImpl: async () => {
+        calls += 1;
+        return new Response("not-json");
+      },
+    }),
+    { message: "property_context_source_invalid_response" },
+  );
+  assert.equal(calls, 3);
 });
 
 test("DCAD parcel normalization retains appraisal and land-use evidence", () => {
@@ -68,6 +188,7 @@ test("DCAD parcel normalization retains appraisal and land-use evidence", () => 
       RESFLRAREA: 1_850,
       RESYRBLT: 1978,
       IMPVALUE: 200_000,
+      LASTUPDATE: 8.64e15 + 1,
     },
     geometry: {
       type: "Polygon",
@@ -80,6 +201,7 @@ test("DCAD parcel normalization retains appraisal and land-use evidence", () => 
   assert.equal(record.residential_area_sqft, 1_850);
   assert.equal(record.residential_year_built, 1978);
   assert.equal(record.built_up, true);
+  assert.equal(record.source_updated_at, null);
   assert.equal(record.geometry.type, "Polygon");
   assert.equal(record.source_record_hash.length, 64);
 });
@@ -200,10 +322,7 @@ test("an implausibly small full DCAD response cannot delete the last good mirror
       return { rows: [], rowCount: 0 };
     },
   };
-  const fetchImpl = async () => ({
-    ok: true,
-    json: async () => ({ objectIds: [1, 2, 3] }),
-  });
+  const fetchImpl = async () => arcGisResponse({ objectIds: [1, 2, 3] });
 
   await assert.rejects(
     syncDcadPropertyContext(pool, {
@@ -333,21 +452,18 @@ test("a partial full-sync feature response cannot delete the last good mirror", 
   const fetchImpl = async (_url, options) => {
     const body = new URLSearchParams(String(options.body));
     if (body.get("returnIdsOnly") === "true") {
-      return { ok: true, json: async () => ({ objectIds }) };
+      return arcGisResponse({ objectIds });
     }
-    return {
-      ok: true,
-      json: async () => ({
-        features: [{
-          id: 1,
-          properties: { OBJECTID: 1, AADT_CUR: 12_000 },
-          geometry: {
-            type: "LineString",
-            coordinates: [[-96.7, 32.9], [-96.69, 32.91]],
-          },
-        }],
-      }),
-    };
+    return arcGisResponse({
+      features: [{
+        id: 1,
+        properties: { OBJECTID: 1, AADT_CUR: 12_000 },
+        geometry: {
+          type: "LineString",
+          coordinates: [[-96.7, 32.9], [-96.69, 32.91]],
+        },
+      }],
+    });
   };
 
   await assert.rejects(

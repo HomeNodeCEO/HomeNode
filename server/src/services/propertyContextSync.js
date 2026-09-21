@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 import {
   classifyDcadLandUse,
   isDcadParcelBuiltUp,
@@ -63,6 +64,7 @@ const DALLAS_COUNTY_QUERY_ENVELOPE = Object.freeze({
 const DEFAULT_BATCH_SIZE = 2_000;
 const DEFAULT_FETCH_CONCURRENCY = 3;
 const SYNC_LOCK_PREFIX = "homenode:property-context:";
+const MAX_ARCGIS_RESPONSE_BYTES = 64 * 1024 * 1024;
 
 const ROAD_LAYERS = Object.freeze([
   { id: 0, sourceKey: "tiger_roads_primary", label: "Census TIGER primary roads", roadClass: "primary", outFields: ROAD_FIELDS },
@@ -116,8 +118,10 @@ function text(value) {
 function sourceDate(value) {
   if (value === null || value === undefined || String(value).trim() === "") return null;
   const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue <= 0) return null;
   if (Number.isFinite(numericValue) && numericValue > 0) {
-    return new Date(numericValue).toISOString();
+    const parsed = new Date(numericValue);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
   }
   const monthDayYear = String(value || "").match(/^(\d{2})-(\d{2})-(\d{4})$/);
   if (monthDayYear) {
@@ -139,39 +143,112 @@ function arcGisBody(values) {
   );
 }
 
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The request already failed; cancellation is best-effort cleanup.
+  }
+}
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(minimum, Math.min(Math.trunc(parsed), maximum));
+}
+
+function arcGisUrl(value) {
+  let url;
+  try {
+    url = new URL(String(value || "").trim());
+  } catch {
+    throw new Error("property_context_source_url_invalid");
+  }
+  if (url.protocol !== "https:" || url.username || url.password || url.search || url.hash) {
+    throw new Error("property_context_source_url_invalid");
+  }
+  return url.toString();
+}
+
+function normalizedArcGisError(error, signal) {
+  const code = String(error?.message || "");
+  if (signal?.aborted || ["AbortError", "TimeoutError"].includes(error?.name)) {
+    return "property_context_source_timeout";
+  }
+  if (/^property_context_source_(?:http_(?:unknown|[1-5]\d{2})|provider_(?:error|\d+)|response_too_large|invalid_response)$/.test(code)) {
+    return code;
+  }
+  return "property_context_source_unavailable";
+}
+
 export async function requestArcGis(url, values, {
   fetchImpl = fetch,
   timeoutMs = 120_000,
   maximumAttempts = 3,
 } = {}) {
+  if (typeof fetchImpl !== "function") throw new Error("property_context_source_fetch_unavailable");
+  const endpoint = arcGisUrl(url);
+  const requestTimeoutMs = boundedInteger(timeoutMs, 120_000, 250, 300_000);
+  const attempts = boundedInteger(maximumAttempts, 3, 1, 5);
   let lastError = null;
-  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const signal = AbortSignal.timeout(requestTimeoutMs);
     try {
-      const response = await fetchImpl(url, {
+      const response = await fetchImpl(endpoint, {
         method: "POST",
         headers: {
           "content-type": "application/x-www-form-urlencoded",
           accept: "application/json",
         },
         body: arcGisBody(values),
-        signal: AbortSignal.timeout(timeoutMs),
+        redirect: "error",
+        signal,
       });
-      if (!response.ok) throw new Error(`property_context_source_http_${response.status}`);
-      const payload = await response.json();
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        const status = Number.isInteger(response?.status)
+          && response.status >= 100
+          && response.status <= 599
+          ? response.status
+          : "unknown";
+        throw new Error(`property_context_source_http_${status}`);
+      }
+      let payload;
+      try {
+        payload = await readBoundedJsonResponse(response, {
+          maximumBytes: MAX_ARCGIS_RESPONSE_BYTES,
+          tooLargeCode: "property_context_source_response_too_large",
+          unavailableCode: "property_context_source_invalid_response",
+        });
+      } catch (error) {
+        if (signal.aborted) throw new Error("property_context_source_timeout");
+        if (error?.message === "property_context_source_response_too_large") throw error;
+        throw new Error("property_context_source_invalid_response");
+      }
+      if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+        throw new Error("property_context_source_invalid_response");
+      }
       if (payload?.error) {
-        throw new Error(
-          `property_context_source_${payload.error.code || "error"}: ${payload.error.message || "unknown error"}`,
-        );
+        const providerCode = Number.isSafeInteger(Number(payload.error.code))
+          && Number(payload.error.code) >= 0
+          && Number(payload.error.code) <= 999_999
+          ? Number(payload.error.code)
+          : "error";
+        throw new Error(`property_context_source_provider_${providerCode}`);
       }
       return payload;
     } catch (error) {
-      lastError = error;
-      if (attempt >= maximumAttempts) break;
+      lastError = new Error(normalizedArcGisError(error, signal));
+      if (attempt >= attempts) break;
       await new Promise((resolve) => setTimeout(resolve, attempt * 500));
     }
   }
   throw lastError || new Error("property_context_source_failed");
 }
+
+export const propertyContextSyncInternals = Object.freeze({
+  MAX_ARCGIS_RESPONSE_BYTES,
+});
 
 export async function fetchArcGisObjectIds(url, {
   where = "1=1",

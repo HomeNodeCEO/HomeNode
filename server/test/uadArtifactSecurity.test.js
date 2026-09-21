@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import path from "node:path";
 import test from "node:test";
 import { deflateSync } from "node:zlib";
 import PDFDocument from "pdfkit";
 
 import { createUadAssetUpload, verifyUadAssetUpload } from "../src/modules/uad/assets.js";
+import { bindDownloadedFilePath } from "../src/modules/uad/uadPackageArtifacts.js";
 import { buildDeterministicZip } from "../src/modules/uad/uadDeliveryPackage.js";
 import { inspectUadAssetPayload, inspectUadPdfSafety } from "../src/modules/uad/uadFileSecurity.js";
 import { validateUadSubschema } from "../src/modules/uad/uadSubschema.js";
@@ -189,6 +191,35 @@ test("verified asset inspection rejects MIME spoofing, unsafe PDFs, and image bo
   const oversizedDimensions = Buffer.from(PNG);
   oversizedDimensions.writeUInt32BE(20_001, 16);
   assert.throws(() => inspectUadAssetPayload(oversizedDimensions, "image/png"), /image_dimensions/);
+});
+
+test("package downloads stay bound to the caller-selected temporary file", () => {
+  const requestedFilePath = path.resolve("synthetic-uad-package", "asset.bin");
+  const alternateFilePath = path.resolve("synthetic-uad-package", "alternate.bin");
+  const metadata = {
+    byte_size: PNG.length,
+    checksum_sha256: "a".repeat(64),
+  };
+
+  const accepted = bindDownloadedFilePath(
+    { ...metadata, file_path: requestedFilePath },
+    requestedFilePath,
+    "uad_package_asset",
+  );
+  assert.equal(accepted.file_path, requestedFilePath);
+
+  assert.throws(
+    () => bindDownloadedFilePath(
+      { ...metadata, file_path: alternateFilePath },
+      requestedFilePath,
+      "uad_package_asset",
+    ),
+    /uad_package_asset_file_path_mismatch/,
+  );
+  assert.throws(
+    () => bindDownloadedFilePath(metadata, requestedFilePath, "uad_package_asset"),
+    /uad_package_asset_file_path_mismatch/,
+  );
 });
 
 test("verified asset inspection rejects parser-confused non-Buffer body shapes", async () => {

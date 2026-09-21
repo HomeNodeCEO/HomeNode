@@ -69,23 +69,34 @@ async function loadDeliveryAssets(queryable, workfileId) {
   return result.rows;
 }
 
+export function bindDownloadedFilePath(downloaded, filePath, errorPrefix) {
+  const expectedFilePath = path.resolve(filePath);
+  if (typeof downloaded?.file_path !== "string"
+      || path.resolve(downloaded.file_path) !== expectedFilePath) {
+    throw new Error(`${errorPrefix}_file_path_mismatch`);
+  }
+  return { ...downloaded, file_path: expectedFilePath };
+}
+
 async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBytes) {
+  const expectedFilePath = path.resolve(filePath);
   let downloaded;
   if (typeof storage.downloadObjectToFile === "function") {
     downloaded = await storage.downloadObjectToFile({
       objectKey: row.object_key,
-      filePath,
+      filePath: expectedFilePath,
       maxBytes,
     });
   } else {
     const buffered = await storage.getObject({ objectKey: row.object_key, maxBytes });
-    await writeFile(filePath, buffered.body);
+    await writeFile(expectedFilePath, buffered.body);
     downloaded = {
-      file_path: filePath,
+      file_path: expectedFilePath,
       byte_size: buffered.body.length,
       checksum_sha256: createHash("sha256").update(buffered.body).digest("hex"),
     };
   }
+  downloaded = bindDownloadedFilePath(downloaded, expectedFilePath, errorPrefix);
   const expectedByteSize = row.expected_byte_size ?? row.byte_size;
   const expectedChecksum = row.expected_checksum_sha256 ?? row.checksum_sha256;
   if (expectedByteSize != null && Number(expectedByteSize) !== Number(downloaded.byte_size)) {
@@ -248,32 +259,38 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
   try {
     const pdfArtifact = sourceArtifacts.get("pdf");
     const xmlArtifact = sourceArtifacts.get("xml");
+    const pdfFilePath = path.join(temporaryDirectory, "source.pdf");
+    const xmlFilePath = path.join(temporaryDirectory, "source.xml");
     const pdf = await downloadVerifiedToFile(
       storage,
       pdfArtifact,
       "uad_package_pdf",
-      path.join(temporaryDirectory, "source.pdf"),
+      pdfFilePath,
       MAX_PACKAGE_BYTES,
     );
     const xml = await downloadVerifiedToFile(
       storage,
       xmlArtifact,
       "uad_package_xml",
-      path.join(temporaryDirectory, "source.xml"),
+      xmlFilePath,
       MAX_PACKAGE_BYTES,
     );
     const verifiedEntries = [];
     let totalAssetBytes = 0;
     for (const [index, entry] of deliveryEntries.entries()) {
+      const assetFilePath = path.join(
+        temporaryDirectory,
+        `asset-${String(index + 1).padStart(4, "0")}.bin`,
+      );
       const downloaded = await downloadVerifiedToFile(
         storage,
         entry,
         "uad_package_asset",
-        path.join(temporaryDirectory, `asset-${String(index + 1).padStart(4, "0")}.bin`),
+        assetFilePath,
         Math.min(MAX_PACKAGE_BYTES, Number(entry.byte_size || MAX_PACKAGE_BYTES)),
       );
       try {
-        const body = await readFile(downloaded.file_path);
+        const body = await readFile(assetFilePath);
         const inspected = inspectUadAssetPayload(body, entry.content_type);
         if (inspected.content_type === "application/pdf") await inspectUadPdfSafety(body);
       } catch {
@@ -281,7 +298,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
       }
       totalAssetBytes += downloaded.byte_size;
       if (totalAssetBytes > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
-      verifiedEntries.push({ ...entry, ...downloaded });
+      verifiedEntries.push({ ...entry, ...downloaded, file_path: assetFilePath });
     }
     const manifest = buildUadImagesManifest({ workfile, inputDigest, entries: verifiedEntries });
     const pdfFileName = sanitizeUadFileName(pdfArtifact.metadata?.file_name || `${workfile.file_number}.pdf`);
@@ -291,13 +308,13 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     const zip = await writeDeterministicZipToFile([
       {
         path: pdfFileName,
-        file_path: pdf.file_path,
+        file_path: pdfFilePath,
         byte_size: pdf.byte_size,
         remove_after_write: true,
       },
       {
         path: xmlFileName,
-        file_path: xml.file_path,
+        file_path: xmlFilePath,
         byte_size: xml.byte_size,
         remove_after_write: true,
       },

@@ -1,4 +1,7 @@
 import { randomUUID } from "node:crypto";
+import { TextDecoder } from "node:util";
+
+import { readBoundedResponseBuffer } from "../util/boundedResponse.js";
 
 export const CENSUS_BENCHMARK = "Public_AR_Current";
 export const CENSUS_VINTAGE = "Current_Current";
@@ -6,6 +9,9 @@ export const CENSUS_COORDINATES_BATCH_URL =
   "https://geocoding.geo.census.gov/geocoder/geographies/coordinatesbatch";
 export const CENSUS_ADDRESS_BATCH_URL =
   "https://geocoding.geo.census.gov/geocoder/geographies/addressbatch";
+
+const CENSUS_BATCH_REQUEST_TIMEOUT_MS = 120_000;
+const MAX_CENSUS_BATCH_RESPONSE_BYTES = 32 * 1024 * 1024;
 
 const COUNTY_FIPS = new Map([
   ["collin", "085"],
@@ -24,6 +30,95 @@ function boundedInteger(value, fallback, minimum, maximum) {
 function csvCell(value) {
   const text = String(value ?? "");
   return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The request is already rejected; cancellation is best-effort cleanup.
+  }
+}
+
+function boundedCensusRequestTimeout(value) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return CENSUS_BATCH_REQUEST_TIMEOUT_MS;
+  return Math.max(250, Math.min(120_000, Math.trunc(parsed)));
+}
+
+async function fetchCensusBatchText(
+  kind,
+  url,
+  form,
+  fetchImpl,
+  requestTimeoutMs,
+) {
+  if (typeof fetchImpl !== "function") {
+    throw new Error(`census_${kind}_batch_fetch_unavailable`);
+  }
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    boundedCensusRequestTimeout(requestTimeoutMs),
+  );
+  const { signal } = controller;
+  try {
+    let response;
+    try {
+      response = await fetchImpl(url, {
+        method: "POST",
+        body: form,
+        redirect: "error",
+        signal,
+        headers: {
+          accept: "text/csv",
+          "user-agent": "HomeNode census-tract backfill/1.0",
+        },
+      });
+    } catch {
+      if (signal.aborted) throw new Error(`census_${kind}_batch_timeout`);
+      throw new Error(`census_${kind}_batch_unavailable`);
+    }
+    if (!response || typeof response.ok !== "boolean") {
+      await cancelResponseBody(response);
+      throw new Error(`census_${kind}_batch_response_invalid`);
+    }
+    if (response.redirected) {
+      await cancelResponseBody(response);
+      throw new Error(`census_${kind}_batch_redirect_forbidden`);
+    }
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      const status = Number.isInteger(response.status)
+        && response.status >= 100
+        && response.status <= 599
+        ? response.status
+        : "unknown";
+      throw new Error(`census_${kind}_batch_http_${status}`);
+    }
+    let buffer;
+    try {
+      buffer = await readBoundedResponseBuffer(response, {
+        maximumBytes: MAX_CENSUS_BATCH_RESPONSE_BYTES,
+        tooLargeCode: `census_${kind}_batch_response_too_large`,
+        unavailableCode: `census_${kind}_batch_response_invalid`,
+      });
+    } catch (error) {
+      if (signal.aborted) throw new Error(`census_${kind}_batch_timeout`);
+      if (error?.message === `census_${kind}_batch_response_too_large` ||
+          error?.message === `census_${kind}_batch_response_invalid`) {
+        throw error;
+      }
+      throw new Error(`census_${kind}_batch_response_invalid`);
+    }
+    try {
+      return new TextDecoder("utf-8", { fatal: true }).decode(buffer);
+    } catch {
+      throw new Error(`census_${kind}_batch_response_invalid`);
+    }
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export function parseCsvRow(line) {
@@ -422,7 +517,12 @@ async function claimCensusGeographyBatch(
 
 export async function fetchCensusCoordinatesBatch(
   rows,
-  { fetchImpl = fetch, benchmark = CENSUS_BENCHMARK, vintage = CENSUS_VINTAGE } = {},
+  {
+    fetchImpl = fetch,
+    benchmark = CENSUS_BENCHMARK,
+    vintage = CENSUS_VINTAGE,
+    requestTimeoutMs = CENSUS_BATCH_REQUEST_TIMEOUT_MS,
+  } = {},
 ) {
   const csv = rows
     .map((row) => [row.account_id, row.source_longitude, row.source_latitude].map(csvCell).join(","))
@@ -431,26 +531,24 @@ export async function fetchCensusCoordinatesBatch(
   form.append("coordinatesFile", new Blob([`${csv}\n`], { type: "text/csv" }), "coordinates.csv");
   form.append("benchmark", benchmark);
   form.append("vintage", vintage);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-  timeout.unref?.();
-  try {
-    const response = await fetchImpl(CENSUS_COORDINATES_BATCH_URL, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-      headers: { "user-agent": "HomeNode census-tract backfill/1.0" },
-    });
-    if (!response.ok) throw new Error(`census_coordinates_batch_http_${response.status}`);
-    return parseCensusCoordinatesBatchResponse(await response.text());
-  } finally {
-    clearTimeout(timeout);
-  }
+  const body = await fetchCensusBatchText(
+    "coordinates",
+    CENSUS_COORDINATES_BATCH_URL,
+    form,
+    fetchImpl,
+    requestTimeoutMs,
+  );
+  return parseCensusCoordinatesBatchResponse(body);
 }
 
 export async function fetchCensusAddressBatch(
   rows,
-  { fetchImpl = fetch, benchmark = CENSUS_BENCHMARK, vintage = CENSUS_VINTAGE } = {},
+  {
+    fetchImpl = fetch,
+    benchmark = CENSUS_BENCHMARK,
+    vintage = CENSUS_VINTAGE,
+    requestTimeoutMs = CENSUS_BATCH_REQUEST_TIMEOUT_MS,
+  } = {},
 ) {
   const csv = rows
     .map((row) => [
@@ -465,22 +563,19 @@ export async function fetchCensusAddressBatch(
   form.append("addressFile", new Blob([`${csv}\n`], { type: "text/csv" }), "addresses.csv");
   form.append("benchmark", benchmark);
   form.append("vintage", vintage);
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 120_000);
-  timeout.unref?.();
-  try {
-    const response = await fetchImpl(CENSUS_ADDRESS_BATCH_URL, {
-      method: "POST",
-      body: form,
-      signal: controller.signal,
-      headers: { "user-agent": "HomeNode census-tract backfill/1.0" },
-    });
-    if (!response.ok) throw new Error(`census_address_batch_http_${response.status}`);
-    return parseCensusAddressBatchResponse(await response.text());
-  } finally {
-    clearTimeout(timeout);
-  }
+  const body = await fetchCensusBatchText(
+    "address",
+    CENSUS_ADDRESS_BATCH_URL,
+    form,
+    fetchImpl,
+    requestTimeoutMs,
+  );
+  return parseCensusAddressBatchResponse(body);
 }
+
+export const censusGeographyInternals = Object.freeze({
+  MAX_CENSUS_BATCH_RESPONSE_BYTES,
+});
 
 /**
  * Resolve and persist one account immediately without waiting for the background queue.

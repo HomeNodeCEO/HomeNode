@@ -747,7 +747,6 @@ async function queryRoadLayer(layer, ring, fetchImpl, requestTimeoutMs) {
     () => controller.abort(),
     boundedRequestTimeout(requestTimeoutMs),
   );
-  timeout.unref?.();
   try {
     const response = await fetchImpl(url, {
       headers: { accept: "application/json" },

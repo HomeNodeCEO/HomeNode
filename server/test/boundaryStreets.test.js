@@ -20,6 +20,23 @@ const geometry = {
   ]],
 };
 
+function translatedGeometry(offset) {
+  return {
+    type: "Polygon",
+    coordinates: [geometry.coordinates[0].map(([longitude, latitude]) => [
+      longitude + offset,
+      latitude,
+    ])],
+  };
+}
+
+function jsonResponse(payload, status = 200) {
+  return new Response(JSON.stringify(payload), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
 test("normalizes and deduplicates TIGERweb boundary street names", () => {
   assert.deepEqual(normalizeBoundaryStreetNames([
     { attributes: { NAME: "Snowmass Ln", BASENAME: "Snowmass" } },
@@ -79,20 +96,17 @@ test("prefers a continuous perimeter road over a shorter internal road", () => {
 test("queries all TIGERweb road layers along the drawn boundary", async () => {
   const requestedLayers = [];
   const result = await fetchBoundaryStreetNames(geometry, {
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, options) => {
       const layer = Number(url.pathname.split("/").at(-2));
       requestedLayers.push(layer);
-      return {
-        ok: true,
-        async json() {
-          return {
-            features: [{
-              attributes: { NAME: `Road ${layer + 1}` },
-              geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
-            }],
-          };
-        },
-      };
+      assert.equal(options.redirect, "error");
+      assert.equal(options.signal instanceof AbortSignal, true);
+      return jsonResponse({
+        features: [{
+          attributes: { NAME: `Road ${layer + 1}` },
+          geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
+        }],
+      });
     },
     now: () => new Date("2026-08-11T14:00:00.000Z"),
   });
@@ -102,6 +116,69 @@ test("queries all TIGERweb road layers along the drawn boundary", async () => {
   assert.equal(result.summary, "South: Road 1");
   assert.equal(result.review_required, true);
   assert.equal(result.boundary_buffer_meters, 75);
+});
+
+test("cancels oversized TIGERweb responses and fails with a stable lookup error", async () => {
+  let cancellations = 0;
+  await assert.rejects(
+    fetchBoundaryStreetNames(translatedGeometry(0.01), {
+      fetchImpl: async () => ({
+        ok: true,
+        headers: new Headers({ "content-length": String(32 * 1024 * 1024 + 1) }),
+        body: {
+          async cancel() {
+            cancellations += 1;
+          },
+        },
+      }),
+    }),
+    { message: "boundary_street_lookup_failed" },
+  );
+  assert.equal(cancellations, 3);
+});
+
+test("keeps the TIGERweb deadline active while response bodies are read", async () => {
+  const signals = [];
+  const startedAt = Date.now();
+  await assert.rejects(
+    fetchBoundaryStreetNames(translatedGeometry(0.02), {
+      requestTimeoutMs: 1,
+      fetchImpl: async (_url, options) => {
+        signals.push(options.signal);
+        return new Response(new ReadableStream({
+          start(controller) {
+            options.signal.addEventListener("abort", () => {
+              controller.error(new Error("provider stream stalled"));
+            }, { once: true });
+          },
+        }));
+      },
+    }),
+    { message: "boundary_street_lookup_failed" },
+  );
+  assert.equal(signals.length, 3);
+  assert.equal(signals.every((signal) => signal.aborted), true);
+  assert.ok(Date.now() - startedAt < 2_000);
+});
+
+test("cancels TIGERweb error bodies without exposing provider details", async () => {
+  let cancellations = 0;
+  await assert.rejects(
+    fetchBoundaryStreetNames(translatedGeometry(0.03), {
+      fetchImpl: async () => ({
+        ok: false,
+        status: 503,
+        headers: new Headers(),
+        body: {
+          async cancel() {
+            cancellations += 1;
+          },
+        },
+      }),
+    }),
+    { message: "boundary_street_lookup_failed" },
+  );
+  assert.equal(cancellations, 3);
 });
 
 test("rejects an open boundary polygon", async () => {
@@ -274,16 +351,13 @@ test("uses the local TxDOT AADT mirror before TIGERweb", async () => {
 
 test("falls back to TIGERweb only when explicitly enabled", async () => {
   const pool = { query: async () => ({ rows: [] }) };
-  const fetchImpl = async (url) => ({
-    ok: true,
-    json: async () => ({
-      features: url.toString().includes("/0/query")
-        ? [{
-          attributes: { NAME: "Road 1" },
-          geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
-        }]
-        : [],
-    }),
+  const fetchImpl = async (url) => jsonResponse({
+    features: url.toString().includes("/0/query")
+      ? [{
+        attributes: { NAME: "Road 1" },
+        geometry: { paths: [[[-96.659, 32.9601], [-96.641, 32.9601]]] },
+      }]
+      : [],
   });
   const result = await loadBoundaryStreetNames(pool, geometry, {
     fetchImpl,

@@ -1,7 +1,11 @@
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
 const TIGERWEB_TRANSPORTATION_URL =
   "https://tigerweb.geo.census.gov/arcgis/rest/services/TIGERweb/Transportation_LargeScale/MapServer";
 const ROAD_LAYERS = [0, 1, 2];
 const CACHE_TTL_MS = 24 * 60 * 60 * 1000;
+const TIGERWEB_REQUEST_TIMEOUT_MS = 30_000;
+const MAX_TIGERWEB_RESPONSE_BYTES = 32 * 1024 * 1024;
 const BOUNDARY_BUFFER_METERS = 75;
 const MAJOR_ROAD_SEARCH_METERS = 3219;
 const MIN_MAJOR_ROAD_AADT = 10000;
@@ -700,7 +704,26 @@ async function queryLocalTrafficBoundaryRoads(pool, geometry) {
   return rows.map(trafficRoadFeature).filter(Boolean);
 }
 
-async function queryRoadLayer(layer, ring, fetchImpl) {
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The request is already rejected; cancellation is best-effort cleanup.
+  }
+}
+
+function boundedRequestTimeout(value) {
+  let parsed;
+  try {
+    parsed = Number(value);
+  } catch {
+    return TIGERWEB_REQUEST_TIMEOUT_MS;
+  }
+  if (!Number.isFinite(parsed)) return TIGERWEB_REQUEST_TIMEOUT_MS;
+  return Math.max(250, Math.min(60_000, Math.trunc(parsed)));
+}
+
+async function queryRoadLayer(layer, ring, fetchImpl, requestTimeoutMs) {
   const url = new URL(`${TIGERWEB_TRANSPORTATION_URL}/${layer}/query`);
   url.search = new URLSearchParams({
     f: "json",
@@ -719,20 +742,64 @@ async function queryRoadLayer(layer, ring, fetchImpl) {
     outSR: "4326",
     resultRecordCount: "2000",
   }).toString();
-  const response = await fetchImpl(url, {
-    headers: { accept: "application/json" },
-  });
-  if (!response.ok) throw new Error(`tigerweb_http_${response.status}`);
-  const payload = await response.json();
-  if (payload?.error) throw new Error("tigerweb_query_failed");
-  return Array.isArray(payload?.features)
-    ? payload.features.map((feature) => ({ ...feature, road_layer: layer }))
-    : [];
+  const controller = new AbortController();
+  const timeout = setTimeout(
+    () => controller.abort(),
+    boundedRequestTimeout(requestTimeoutMs),
+  );
+  timeout.unref?.();
+  try {
+    const response = await fetchImpl(url, {
+      headers: { accept: "application/json" },
+      redirect: "error",
+      signal: controller.signal,
+    });
+    if (!response || typeof response.ok !== "boolean") {
+      throw new Error("tigerweb_response_invalid");
+    }
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      throw new Error("tigerweb_http_error");
+    }
+    let payload;
+    try {
+      payload = await readBoundedJsonResponse(response, {
+        maximumBytes: MAX_TIGERWEB_RESPONSE_BYTES,
+        tooLargeCode: "tigerweb_response_too_large",
+        unavailableCode: "tigerweb_response_invalid",
+      });
+    } catch (error) {
+      if (controller.signal.aborted) throw new Error("tigerweb_timeout");
+      if (error?.message === "tigerweb_response_too_large") throw error;
+      throw new Error("tigerweb_response_invalid");
+    }
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
+      throw new Error("tigerweb_response_invalid");
+    }
+    if (payload.error) throw new Error("tigerweb_query_failed");
+    return Array.isArray(payload.features)
+      ? payload.features.map((feature) => ({ ...feature, road_layer: layer }))
+      : [];
+  } catch (error) {
+    if (controller.signal.aborted) throw new Error("tigerweb_timeout");
+    if (/^tigerweb_(?:http_error|query_failed|response_invalid|response_too_large)$/.test(
+      String(error?.message || ""),
+    )) {
+      throw error;
+    }
+    throw new Error("tigerweb_unavailable");
+  } finally {
+    clearTimeout(timeout);
+  }
 }
 
 export async function fetchBoundaryStreetNames(
   geometry,
-  { fetchImpl = globalThis.fetch, now = () => new Date() } = {},
+  {
+    fetchImpl = globalThis.fetch,
+    now = () => new Date(),
+    requestTimeoutMs = TIGERWEB_REQUEST_TIMEOUT_MS,
+  } = {},
 ) {
   if (typeof fetchImpl !== "function") throw new Error("boundary_street_fetch_unavailable");
   const ring = normalizedRing(geometry);
@@ -741,7 +808,12 @@ export async function fetchBoundaryStreetNames(
   if (cached && now().getTime() - cached.cachedAt < CACHE_TTL_MS) return cached.value;
 
   const results = await Promise.allSettled(
-    ROAD_LAYERS.map((layer) => queryRoadLayer(layer, ring, fetchImpl)),
+    ROAD_LAYERS.map((layer) => queryRoadLayer(
+      layer,
+      ring,
+      fetchImpl,
+      requestTimeoutMs,
+    )),
   );
   const features = results.flatMap((result) => result.status === "fulfilled" ? result.value : []);
   if (!features.length && results.every((result) => result.status === "rejected")) {

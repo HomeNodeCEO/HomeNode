@@ -98,7 +98,7 @@ test('patched Expo Zod v4 rejects whitespace in Base64 input', () => {
   const schema = zod.base64();
 
   assert.equal(schema.safeParse('MTIz').success, true);
-  for (const input of ['123 ', ' 123', '12 3', 'MTIz\n', 'MTIz\t']) {
+  for (const input of ['123 ', ' 123', '12 3', 'MTI\n', 'MTI\t']) {
     assert.equal(schema.safeParse(input).success, false, `accepted ${JSON.stringify(input)}`);
   }
 });

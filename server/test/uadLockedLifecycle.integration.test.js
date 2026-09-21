@@ -1322,10 +1322,12 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         provider: "postgres", bucket: "synthetic-local-only",
         createUploadUrl(request) {
           assert.equal(request.contentType, uploadInput.content_type);
+          assert.equal(request.contentLength, uploadInput.byte_size);
           calls.push({ ...request });
           onIssue?.(request);
           const capability = { url: `https://synthetic-upload.invalid/${request.objectKey}`,
-            method: "PUT", headers: { "Content-Type": request.contentType }, expires_in_seconds: 900 };
+            method: "PUT", headers: { "Content-Type": request.contentType,
+              "Content-Length": String(request.contentLength) }, expires_in_seconds: 900 };
           capabilities.push(capability);
           return capability;
         },
@@ -1357,7 +1359,8 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     const assertUploadCreated = async (fixture, before, result, local) => {
       assert.deepEqual(Object.keys(result).sort(), ["asset_id", "expires_at", "object_key", "upload"]);
       assert.equal(result.object_key, `organizations/unassigned/uad/${fixture.workfileId}/assets/${result.asset_id}/synthetic-upload.jpg`);
-      assert.deepEqual(local.calls, [{ objectKey: result.object_key, contentType: uploadInput.content_type }]);
+      assert.deepEqual(local.calls, [{ objectKey: result.object_key,
+        contentType: uploadInput.content_type, contentLength: uploadInput.byte_size }]);
       assert.equal(local.capabilities.length, 1);
       assert.equal(result.upload, local.capabilities[0], "the same locally issued capability is returned after commit");
       assert.equal(result.upload.method, "PUT");

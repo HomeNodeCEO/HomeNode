@@ -206,6 +206,26 @@ test("DCAD parcel normalization retains appraisal and land-use evidence", () => 
   assert.equal(record.source_record_hash.length, 64);
 });
 
+test("DCAD parcel normalization rejects non-positive numeric source timestamps", () => {
+  for (const lastUpdate of [0, -1, "-1000"]) {
+    const record = normalizeDcadParcelFeature({
+      type: "Feature",
+      id: 42,
+      properties: {
+        OBJECTID: 42,
+        PARCELID: "26272500060150000",
+        LASTUPDATE: lastUpdate,
+      },
+      geometry: {
+        type: "Polygon",
+        coordinates: [[[-96.7, 32.9], [-96.69, 32.9], [-96.69, 32.91], [-96.7, 32.9]]],
+      },
+    }, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+
+    assert.equal(record.source_updated_at, null);
+  }
+});
+
 test("road normalization retains the named road and source class", () => {
   const record = normalizeRoadFeature({
     type: "Feature",

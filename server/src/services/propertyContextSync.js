@@ -118,6 +118,7 @@ function text(value) {
 function sourceDate(value) {
   if (value === null || value === undefined || String(value).trim() === "") return null;
   const numericValue = Number(value);
+  if (Number.isFinite(numericValue) && numericValue <= 0) return null;
   if (Number.isFinite(numericValue) && numericValue > 0) {
     const parsed = new Date(numericValue);
     return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();

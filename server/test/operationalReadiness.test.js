@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   buildDataRepairReadiness,
   createCachedScraperStatusLoader,
+  operationalReadinessInternals,
   summarizeDcadScraperStatus,
   summarizeMaintenanceReadiness,
 } from "../src/services/operationalReadiness.js";
@@ -77,7 +78,7 @@ test("scraper loader caches success and retains last-known data on failure", asy
     fetchImpl: async () => {
       calls += 1;
       if (calls > 1) throw new Error("source_down");
-      return { ok: true, async json() { return { phase: "initial_missing" }; } };
+      return Response.json({ phase: "initial_missing" });
     },
   });
   assert.equal((await loader()).payload.phase, "initial_missing");
@@ -87,7 +88,116 @@ test("scraper loader caches success and retains last-known data on failure", asy
   const stale = await loader();
   assert.equal(stale.stale, true);
   assert.equal(stale.payload.phase, "initial_missing");
-  assert.equal(stale.error, "source_down");
+  assert.equal(stale.error, "dcad_scraper_status_unavailable");
+});
+
+test("scraper loader rejects unsafe status URLs before issuing a request", () => {
+  const unsafeUrls = [
+    "http://dcad.example/status",
+    "https://user:password@dcad.example/status",
+    "https://dcad.example/status?api_key=secret",
+    "https://dcad.example/status#fragment",
+    "https://[invalid",
+  ];
+  for (const url of unsafeUrls) {
+    assert.throws(
+      () => createCachedScraperStatusLoader({ url }),
+      { message: "dcad_scraper_status_url_invalid" },
+    );
+  }
+});
+
+test("scraper loader refuses redirects without forwarding the request", async () => {
+  let calls = 0;
+  const loader = createCachedScraperStatusLoader({
+    url: "https://dcad.example/status",
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      assert.equal(init.redirect, "manual");
+      return new Response(null, {
+        status: 302,
+        headers: { location: "https://attacker.example/collect" },
+      });
+    },
+  });
+  const result = await loader();
+  assert.equal(calls, 1);
+  assert.equal(result.payload, null);
+  assert.equal(result.error, "dcad_scraper_status_http_302");
+});
+
+test("scraper loader rejects and cancels oversized status responses", async () => {
+  let cancelled = false;
+  const loader = createCachedScraperStatusLoader({
+    url: "https://dcad.example/status",
+    fetchImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        cancelled = true;
+      },
+    }), {
+      headers: {
+        "content-length": String(
+          operationalReadinessInternals.MAX_SCRAPER_STATUS_RESPONSE_BYTES + 1,
+        ),
+      },
+    }),
+  });
+  const result = await loader();
+  assert.equal(result.payload, null);
+  assert.equal(result.error, "dcad_scraper_status_response_too_large");
+  assert.equal(cancelled, true);
+});
+
+test("scraper loader bounds stalled body reads with a sanitized timeout", async () => {
+  let aborted = false;
+  const loader = createCachedScraperStatusLoader({
+    url: "https://dcad.example/status",
+    timeoutMs: 250,
+    fetchImpl: async (_url, init) => new Response(new ReadableStream({
+      start(controller) {
+        init.signal.addEventListener("abort", () => {
+          aborted = true;
+          controller.error(new Error("private scraper transport detail"));
+        }, { once: true });
+      },
+    })),
+  });
+  const result = await loader();
+  assert.equal(aborted, true);
+  assert.equal(result.payload, null);
+  assert.equal(result.error, "dcad_scraper_status_unavailable");
+  assert.equal(JSON.stringify(result).includes("private scraper transport detail"), false);
+});
+
+test("scraper loader rejects malformed or non-object provider JSON", async () => {
+  for (const response of [
+    new Response("not-json"),
+    Response.json(["unexpected"]),
+  ]) {
+    const loader = createCachedScraperStatusLoader({
+      url: "https://dcad.example/status",
+      fetchImpl: async () => response,
+    });
+    const result = await loader();
+    assert.equal(result.payload, null);
+    assert.equal(result.error, "dcad_scraper_status_invalid_response");
+  }
+});
+
+test("scraper loader normalizes an invalid clock without issuing a request", async () => {
+  let calls = 0;
+  const loader = createCachedScraperStatusLoader({
+    url: "https://dcad.example/status",
+    now: () => Number.NaN,
+    fetchImpl: async () => {
+      calls += 1;
+      return Response.json({ phase: "initial_missing" });
+    },
+  });
+  const result = await loader();
+  assert.equal(calls, 0);
+  assert.equal(result.payload, null);
+  assert.equal(result.error, "dcad_scraper_status_unavailable");
 });
 
 test("combined readiness includes request timing and both repair sources", () => {

@@ -1,5 +1,8 @@
+import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+
 const DEFAULT_SCRAPER_STATUS_URL =
   "https://dcad-scraper-with-api.onrender.com/scrape/status";
+const MAX_SCRAPER_STATUS_RESPONSE_BYTES = 1024 * 1024;
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -9,6 +12,46 @@ function number(value, fallback = 0) {
 function rounded(value, digits = 2) {
   const scale = 10 ** digits;
   return Math.round(number(value) * scale) / scale;
+}
+
+function boundedInteger(value, fallback, minimum, maximum) {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(maximum, Math.max(minimum, Math.trunc(parsed)));
+}
+
+function scraperStatusUrl(value) {
+  let parsed;
+  try {
+    parsed = new URL(String(value || "").trim());
+  } catch {
+    throw new Error("dcad_scraper_status_url_invalid");
+  }
+  if (
+    parsed.protocol !== "https:"
+    || parsed.username
+    || parsed.password
+    || parsed.search
+    || parsed.hash
+  ) {
+    throw new Error("dcad_scraper_status_url_invalid");
+  }
+  return parsed.toString();
+}
+
+async function cancelResponseBody(response) {
+  try {
+    await response?.body?.cancel?.();
+  } catch {
+    // The response is already rejected; cancellation is best-effort cleanup.
+  }
+}
+
+function normalizedScraperStatusError(error) {
+  const code = String(error?.message || "");
+  return /^dcad_scraper_status_(?:http_(?:[1-5]\d\d|unknown)|response_too_large|invalid_response|unavailable)$/.test(code)
+    ? code
+    : "dcad_scraper_status_unavailable";
 }
 
 function isoDate(value) {
@@ -245,23 +288,63 @@ export function createCachedScraperStatusLoader({
   timeoutMs = Number(process.env.DCAD_SCRAPER_STATUS_TIMEOUT_MS || 5_000),
   now = () => Date.now(),
 } = {}) {
+  const statusUrl = scraperStatusUrl(url);
+  const cacheTtlMs = boundedInteger(ttlMs, 300_000, 1_000, 3_600_000);
+  const requestTimeoutMs = boundedInteger(timeoutMs, 5_000, 250, 60_000);
   let cached = null;
   let cachedAt = 0;
   let pending = null;
 
-  async function refresh() {
-    const response = await fetchImpl(url, {
-      headers: { accept: "application/json" },
-      signal: AbortSignal.timeout(Math.max(250, timeoutMs)),
-    });
-    if (!response.ok) {
-      throw new Error("dcad_scraper_status_http_" + response.status);
+  function currentTime() {
+    const value = Number(now());
+    if (!Number.isFinite(value) || value < 0) {
+      throw new Error("dcad_scraper_status_unavailable");
     }
-    const value = await response.json();
+    return value;
+  }
+
+  async function refresh() {
+    const signal = AbortSignal.timeout(requestTimeoutMs);
+    let response;
+    try {
+      response = await fetchImpl(statusUrl, {
+        headers: { accept: "application/json" },
+        redirect: "manual",
+        signal,
+      });
+    } catch {
+      throw new Error("dcad_scraper_status_unavailable");
+    }
+    if (!response.ok) {
+      await cancelResponseBody(response);
+      const status = Number.isInteger(response?.status)
+        && response.status >= 100
+        && response.status <= 599
+        ? response.status
+        : "unknown";
+      throw new Error(`dcad_scraper_status_http_${status}`);
+    }
+    let value;
+    try {
+      value = await readBoundedJsonResponse(response, {
+        maximumBytes: MAX_SCRAPER_STATUS_RESPONSE_BYTES,
+        tooLargeCode: "dcad_scraper_status_response_too_large",
+        unavailableCode: "dcad_scraper_status_response_unavailable",
+      });
+    } catch (error) {
+      const code = String(error?.message || "");
+      if (code === "dcad_scraper_status_response_too_large") throw error;
+      if (signal.aborted) throw new Error("dcad_scraper_status_unavailable");
+      throw new Error("dcad_scraper_status_invalid_response");
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) {
+      throw new Error("dcad_scraper_status_invalid_response");
+    }
+    const observedAt = currentTime();
     cached = value;
-    cachedAt = now();
+    cachedAt = observedAt;
     return {
-      source_url: url,
+      source_url: statusUrl,
       fetched_at: new Date(cachedAt).toISOString(),
       stale: false,
       payload: value,
@@ -270,32 +353,36 @@ export function createCachedScraperStatusLoader({
   }
 
   return async function loadScraperStatus() {
-    const age = now() - cachedAt;
-    if (cached && age >= 0 && age < Math.max(1_000, ttlMs)) {
-      return {
-        source_url: url,
-        fetched_at: new Date(cachedAt).toISOString(),
-        stale: false,
-        payload: cached,
-        error: null,
-      };
-    }
-    if (!pending) {
-      pending = refresh().finally(() => { pending = null; });
-    }
     try {
+      const age = currentTime() - cachedAt;
+      if (cached && age >= 0 && age < cacheTtlMs) {
+        return {
+          source_url: statusUrl,
+          fetched_at: new Date(cachedAt).toISOString(),
+          stale: false,
+          payload: cached,
+          error: null,
+        };
+      }
+      if (!pending) {
+        pending = refresh().finally(() => { pending = null; });
+      }
       return await pending;
     } catch (error) {
       return {
-        source_url: url,
+        source_url: statusUrl,
         fetched_at: cachedAt ? new Date(cachedAt).toISOString() : null,
         stale: Boolean(cached),
         payload: cached,
-        error: String(error?.message || error),
+        error: normalizedScraperStatusError(error),
       };
     }
   };
 }
+
+export const operationalReadinessInternals = Object.freeze({
+  MAX_SCRAPER_STATUS_RESPONSE_BYTES,
+});
 
 export function buildDataRepairReadiness({
   recentMaintenance = [],

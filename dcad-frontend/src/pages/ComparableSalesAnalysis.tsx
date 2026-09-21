@@ -26,6 +26,7 @@ import type {
   ConditionQualityRatingAssignment,
 } from '@/components/ConditionQualityStudy';
 import ComparableSalesMap from '@/components/ComparableSalesMap';
+import ContractPriceSupportPanel from '@/components/ContractPriceSupportPanel';
 import DeferredReportSection from '@/components/DeferredReportSection';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
 import { fetchDetail } from '@/lib/dcad';
@@ -87,6 +88,17 @@ import {
   subjectFromDetailResponse,
   type SubjectData,
 } from '@/lib/comparableSubjectData';
+import {
+  attachmentNeedsReview,
+  contractSupportLoadNotice,
+  housingTypeGridValue,
+  housingTypeNeedsReview,
+  saleDateDisplay,
+  saleDisplayAddress,
+  saleIsOverOneYear,
+  statisticalOutlierLabel,
+  suggestedAttachmentType,
+} from '@/lib/comparableSalePresentation';
 
 const ConditionQualityStudy = lazy(
   () => import('@/components/ConditionQualityStudy'),
@@ -268,6 +280,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const [salesError, setSalesError] = useState<string | null>(null);
   const [salesNotice, setSalesNotice] = useState<string | null>(null);
   const [recommendationSummary, setRecommendationSummary] = useState<ComparableRecommendationsResponse | null>(null);
+  const [contractPriceSupport, setContractPriceSupport] = useState<api.ContractPriceSupportAnalysis | null>(null);
   const [competitiveReplacementSale, setCompetitiveReplacementSale] =
     useState<SaleRow | null>(null);
   const [marketConditionsDraft, setMarketConditionsDraft] =
@@ -316,7 +329,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const workfileSaveTimerRef = useRef<number | null>(null);
   const flushWorkfileSaveRef = useRef<() => void>(() => {});
   const workfileSelectionGenerationRef = useRef(0);
-
   useEffect(() => {
     let cancelled = false;
     const selectionGeneration = workfileSelectionGenerationRef.current;
@@ -384,7 +396,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       });
     return () => { cancelled = true; };
   }, [applicationSession, propertyId, requestedAssignmentFileId]);
-
   useLayoutEffect(() => {
     workfileSelectionGenerationRef.current += 1;
     setActiveAssignmentFile(null);
@@ -411,6 +422,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     propertyContextRequestRef.current = '';
     setRecommendationDetailsExpanded(false);
     setRecommendationSummary(null);
+    setContractPriceSupport(null);
     setSalesResults([]);
     setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
     setSelectedSecondarySales([]);
@@ -445,7 +457,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setListingError(null);
     setListingNotice(null);
   }, [applicationSession, propertyId, requestedAssignmentFileId]);
-
   const appraiserDefinedAdjustmentArea = useMemo<AppraiserDefinedAdjustmentArea | null>(() => {
     const customStudy = marketConditionsDraft?.response.analyses.find(
       (analysis) => analysis.market.key === 'custom',
@@ -928,67 +939,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     return Number.isFinite(parsed) ? parsed : null;
   };
 
-  const saleDateDisplay = (value: string | null): string => {
-    if (!value) return '';
-    const parsed = new Date(`${value.slice(0, 10)}T00:00:00`);
-    return Number.isNaN(parsed.getTime()) ? value : parsed.toLocaleDateString('en-US');
-  };
-
-  const saleIsOverOneYear = (sale: SaleRow): boolean => {
-    if (sale.soldOverOneYear != null) return sale.soldOverOneYear;
-    if (!sale.closing_date) return false;
-    const saleDate = new Date(`${sale.closing_date.slice(0, 10)}T12:00:00Z`);
-    if (Number.isNaN(saleDate.getTime())) return false;
-    const cutoffValue = monthsBeforeDate(salesAnalysisAsOf, 12);
-    const cutoff = new Date(`${cutoffValue}T12:00:00Z`);
-    if (Number.isNaN(cutoff.getTime())) return false;
-    return saleDate < cutoff;
-  };
-
-  const saleDisplayAddress = (sale: SaleRow): string => {
-    if (sale.address?.trim()) return sale.address.trim();
-    if (sale.primary_account_id) return `Account ${sale.primary_account_id} (address unavailable)`;
-    return `Unmatched sale${sale.source_row_number ? ` ${sale.source_row_number}` : ''}`;
-  };
-
-  const housingTypeNeedsReview = (sale: SaleRow): boolean =>
-    !(sale.structural_style || sale.housing_type || '').trim();
-
-  const attachmentNeedsReview = (sale: SaleRow): boolean =>
-    !housingTypeNeedsReview(sale) &&
-    (!sale.attachment_type || sale.attachment_type === 'unknown');
-
-  const housingTypeGridValue = (sale: SaleRow | null | undefined): string => {
-    if (!sale) return 'Not available';
-    if (housingTypeNeedsReview(sale)) return '⚠ Review';
-    return sale.structural_style || sale.housing_type || 'Not available';
-  };
-
-  const statisticalOutlierLabel = (sale: SaleRow): string => {
-    if (!sale.statistical_outlier) return '';
-    const direction = sale.statistical_outlier_direction === 'low' ? 'low' : 'high';
-    return `Statistical outlier · unusually ${direction} price/SF`;
-  };
-
-  const suggestedAttachmentType = (
-    housingType: string,
-    current: HousingEditForm['attachmentType'],
-  ): HousingEditForm['attachmentType'] => {
-    const normalized = housingType.trim().toLowerCase();
-    if (/\bdetached\b/.test(normalized) || normalized === 'single family') return 'detached';
-    if (
-      /\battached\b/.test(normalized) ||
-      normalized.includes('townhome') ||
-      normalized.includes('townhouse') ||
-      normalized.includes('condo') ||
-      normalized.includes('duplex')
-    ) {
-      return 'attached';
-    }
-    if (normalized.includes('multi-family') || normalized.includes('multifamily')) return 'mixed';
-    return current;
-  };
-
   const openHousingEditor = (sale: SaleRow) => {
     if (!sale.primary_account_id) {
       setSalesError('This MLS row is not matched to a CAD account, so its property type cannot be saved yet.');
@@ -1197,6 +1147,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         (draft.workspace?.appliedGroupedAdjustments || {}) as Record<string, AppliedGroupedAdjustment>,
       );
       setQualitativeAnalysis(draft.workspace?.qualitativeAnalysis || null);
+      setContractPriceSupport(draft.workspace?.contractPriceSupport || null);
       setAppliedConditionQualityAdjustments(
         (draft.workspace?.appliedConditionQualityAdjustments || {}) as Partial<
           Record<'condition' | 'quality', AppliedConditionQualityAdjustment>
@@ -1236,6 +1187,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesNotes(DEFAULT_SALES_NOTES);
       setAdjustmentNotes(DEFAULT_ADJUSTMENT_NOTES);
       setQualitativeAnalysis(null);
+      setContractPriceSupport(null);
       setCostToCureItems([createCostToCureLine()]);
     }
     setWorkfileReady(true);
@@ -1340,11 +1292,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompetitiveReplacementSale(null);
     setSalesNotice(`${address} replaced Comparable ${slot + 1} in the primary grid.`);
   };
-
   const removeComparable = (slot: number) => {
     const removedSale = selectedSales[slot];
     if (!removedSale) return;
-
     const retainedSlots = selectedSales.flatMap((sale, index) =>
       sale && index !== slot ? [index] : []);
 
@@ -1383,7 +1333,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       `${saleDisplayAddress(removedSale)} was removed. Remaining comparables shifted left.`,
     );
   };
-
   const moveComparable = (from: number, to: number) => {
     if (
       from < 0 ||
@@ -1408,7 +1357,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setCompRooms((current) => swapArrayItems(current, from, to));
     setSalesNotice(`${movedAddress} moved to Comparable ${to + 1}.`);
   };
-
   const movePrimaryComparableToSecondary = (slot: number) => {
     const sale = selectedSales[slot];
     if (!sale) return;
@@ -1423,7 +1371,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesError(null);
     setSalesNotice(`${saleDisplayAddress(sale)} moved to the secondary grid. Remaining primary comparables shifted left.`);
   };
-
   const focusComparableSearch = () => {
     salesSearchInputRef.current?.focus();
     salesSearchInputRef.current?.scrollIntoView({
@@ -1432,21 +1379,47 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     });
     setSalesNotice('Search or choose an available sale, then select “Use as Comparable” to add it to the next open grid position.');
   };
-
   const clearComparables = () => {
-    Array.from({ length: COMPARABLE_COUNT }, (_, index) => index).forEach(removeComparable);
+    setSelectedSales(Array(COMPARABLE_COUNT).fill(null));
+    setCompAddresses(Array(COMPARABLE_COUNT).fill(''));
+    setCompGla(Array(COMPARABLE_COUNT).fill(null));
+    setCompPrices(Array(COMPARABLE_COUNT).fill(null));
+    setCompConcessions(Array(COMPARABLE_COUNT).fill(null));
+    setCompTimeAdjustments(Array(COMPARABLE_COUNT).fill(null));
+    setCompSaleDates(Array(COMPARABLE_COUNT).fill(''));
+    setCompLandSize(Array(COMPARABLE_COUNT).fill(null));
+    setCompAges(Array(COMPARABLE_COUNT).fill(null));
+    setCompGarage(Array(COMPARABLE_COUNT).fill(null));
+    setCompConditions(Array(COMPARABLE_COUNT).fill(''));
+    setCompQualities(Array(COMPARABLE_COUNT).fill(''));
+    setCompRooms(Array.from(
+      { length: COMPARABLE_COUNT },
+      () => ({ tot: null, bd: null, full: null, half: null }),
+    ));
     setSelectedSecondarySales([]);
+    setCompetitiveReplacementSale(null);
     setSalesError(null);
   };
-
+  const loadContractSupportReviewSet = () => {
+    const reviewSet = contractPriceSupport?.review_set_sales || [];
+    if (!reviewSet.length) {
+      setSalesError('No local contract-support review set is available for this assignment.');
+      return;
+    }
+    clearComparables();
+    reviewSet.slice(0, COMPARABLE_COUNT).forEach((sale, slot) => {
+      applySaleToSlot(sale, slot);
+    });
+    setSalesNotice(contractSupportLoadNotice(contractPriceSupport, reviewSet.length, COMPARABLE_COUNT));
+  };
   const resetSalesForAnalysisPeriodChange = () => {
     setRecommendationSummary(null);
+    setContractPriceSupport(null);
     setSalesResults([]);
     setSalesNotice(null);
     setCompetitiveReplacementSale(null);
     clearComparables();
   };
-
   const runRecommendedSales = async () => {
     if (!marketConditionsDraft) {
       setSalesError('Complete the Market Conditions Analysis on the Property Report before recommending comparable sales.');
@@ -1478,6 +1451,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         searchProfile: comparableSearchProfile,
       });
       setRecommendationSummary(response);
+      setContractPriceSupport(response.contract_price_support);
       setSalesResults(response.sales);
       clearComparables();
       const recommendedSales = response.recommended_sales?.length
@@ -1491,6 +1465,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       }
     } catch (recommendationError: unknown) {
       setRecommendationSummary(null);
+      setContractPriceSupport(null);
       setSalesResults([]);
       const message = boundedErrorMessage(recommendationError, '');
       if (message.includes('subject_location_unavailable')) {
@@ -1504,7 +1479,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesLoading(false);
     }
   };
-
   const runSalesSearch = async () => {
     if (!marketConditionsDraft) {
       setSalesError('Complete the Market Conditions Analysis on the Property Report before searching comparable sales.');
@@ -1517,6 +1491,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     setSalesLoading(true);
     setSalesError(null);
     setSalesNotice(null);
+    setContractPriceSupport(null);
     try {
       const rows = await api.searchSales({
         q: salesQuery.trim() || undefined,
@@ -1546,7 +1521,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setSalesLoading(false);
     }
   };
-
   const appliedGroupedAdjustmentEntries = useMemo(
     () => Object.values(appliedGroupedAdjustments),
     [appliedGroupedAdjustments],
@@ -2193,6 +2167,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         appliedConditionQualityAdjustments,
         conditionQualityRatings,
         qualitativeAnalysis,
+        contractPriceSupport,
         ctcNotes,
       },
     };
@@ -2260,6 +2235,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     appliedConditionQualityAdjustments,
     conditionQualityRatings,
     qualitativeAnalysis,
+    contractPriceSupport,
     ctcNotes,
     workfileCanonicalName,
   ]);
@@ -3381,7 +3357,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                   <div>
                     <div className="font-semibold text-slate-900">Comparable {index + 1}</div>
                     <div className="mt-1 text-slate-700">{sale ? saleDisplayAddress(sale) : 'Not selected'}</div>
-                    {sale && saleIsOverOneYear(sale) && (
+                    {sale && saleIsOverOneYear(sale, salesAnalysisAsOf) && (
                       <div className="mt-1 text-xs font-semibold text-amber-800">Sale over one year old</div>
                     )}
                     {sale?.statistical_outlier && (
@@ -3483,6 +3459,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             </div>
           )}
 
+          {contractPriceSupport?.available && (
+            <ContractPriceSupportPanel
+              analysis={contractPriceSupport}
+              selectedSales={selectedSales}
+              onLoadReviewSet={loadContractSupportReviewSet}
+              onToggleSale={(sale, selectedSlot) => selectedSlot >= 0
+                ? removeComparable(selectedSlot)
+                : addCompetitiveSaleToPrimaryGrid(sale)}
+            />
+          )}
+
           {recommendationSummary?.statistical_analysis && (
             <div
               className={`mt-3 rounded-lg border px-4 py-3 text-sm ${
@@ -3560,7 +3547,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                         ? '0 garage spaces'
                         : 'Garage spaces unavailable';
                     const hasPool = booleanValue(sale.mls_pool_yn ?? sale.cad_pool);
-                    const olderThanOneYear = saleIsOverOneYear(sale);
+                    const olderThanOneYear = saleIsOverOneYear(sale, salesAnalysisAsOf);
                     const missingHousingType = housingTypeNeedsReview(sale);
                     const unknownAttachment = attachmentNeedsReview(sale);
                     return (

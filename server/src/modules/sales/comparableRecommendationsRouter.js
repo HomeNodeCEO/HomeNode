@@ -20,6 +20,10 @@ import {
   enqueuePropertyInfluenceAccounts,
   getPropertyInfluenceContexts,
 } from "../../services/propertyInfluenceStore.js";
+import {
+  analyzeContractPriceSupport,
+  loadComparableContractContext,
+} from "../../services/contractPriceSupport.js";
 
 function positiveSiteSize(value) {
   const parsed = typeof value === "string"
@@ -69,6 +73,8 @@ export function createComparableRecommendationsRouter({
   applyPolicy = applyRecommendationPolicy,
   analyzeOutliers = analyzeComparableOutliers,
   summarizeResults = summarizeComparableResults,
+  loadContractContext = loadComparableContractContext,
+  analyzeContractSupport = analyzeContractPriceSupport,
   currentDate = () => new Date().toISOString().slice(0, 10),
   requireCustomAccountScope,
   requirePropertyTaxAccountScope,
@@ -106,6 +112,8 @@ export function createComparableRecommendationsRouter({
     || typeof applyPolicy !== "function"
     || typeof analyzeOutliers !== "function"
     || typeof summarizeResults !== "function"
+    || typeof loadContractContext !== "function"
+    || typeof analyzeContractSupport !== "function"
     || typeof currentDate !== "function"
   ) {
     throw new TypeError("comparable_recommendations_dependency_required");
@@ -182,6 +190,12 @@ export function createComparableRecommendationsRouter({
           "read",
         );
       if (!accessGranted) return undefined;
+      const contractContext = assignmentFileId
+        ? await loadContractContext(pool, {
+          accountId: subjectAccountId,
+          assignmentFileId,
+        })
+        : null;
       await locationsReady;
       await enrichmentReady;
       if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
@@ -855,6 +869,13 @@ export function createComparableRecommendationsRouter({
         olderThanOneYearCount,
         olderThanTwoYearsCount,
       } = summarizeResults(analyzedSales);
+      const contractPriceSupport = analyzeContractSupport({
+        sales: analyzedSales,
+        contractPrice: contractContext?.contractPrice,
+        subjectCondition: contractContext?.subjectCondition,
+        subjectConditionNotes: contractContext?.subjectConditionNotes,
+        radiusMiles,
+      });
 
       const marketLabel = !marketBreakdown
         ? "All eligible sales"
@@ -944,6 +965,7 @@ export function createComparableRecommendationsRouter({
         influence_ranking: influenceRanked.policy,
         recommendation_policy: recommendationResult.policy,
         statistical_analysis: outlierResult.analysis,
+        contract_price_support: contractPriceSupport,
         analysis_period: {
           analysis_as_of: effectiveDateTo,
           date_from: effectiveDateFrom,

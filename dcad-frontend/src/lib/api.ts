@@ -878,6 +878,10 @@ export interface SaleRow {
   recommended?: boolean;
   recommendationRank?: number | null;
   recommendationExclusionReason?: string | null;
+  insideAnalysisPeriod?: boolean;
+  contract_price_difference?: number;
+  contract_price_difference_percent?: number;
+  contract_support_band?: 'within_5_percent' | 'within_10_percent' | 'outside_10_percent';
   price_per_square_foot?: number | null;
   price_per_square_foot_zscore?: number | null;
   price_per_square_foot_robust_zscore?: number | null;
@@ -1105,6 +1109,33 @@ export interface ComparableStatisticalAnalysis {
   warnings: Array<{ code: string; message: string }>;
 }
 
+export interface ContractPriceSupportAnalysis {
+  available: boolean;
+  reason: 'contract_price_unavailable' | null;
+  contract_price: number | null;
+  local_radius_miles: number;
+  local_sale_count?: number;
+  support_status: 'not_analyzed' | 'supported' | 'limited' | 'unsupported';
+  within_5_percent_count?: number;
+  within_10_percent_count?: number;
+  contract_percentile?: number | null;
+  upper_quartile_price?: number | null;
+  subject_condition?: string | null;
+  upper_tier_review?: boolean;
+  reconciliation?: string;
+  methodology?: {
+    purpose: 'independent_contract_price_plausibility_test';
+    primary_recommendations_unchanged: boolean;
+    price_band_percent: number;
+    close_support_band_percent: number;
+    minimum_physical_score: number;
+    condition_quality_verification_required: boolean;
+  };
+  support_sales: SaleRow[];
+  upper_tier_sales: SaleRow[];
+  review_set_sales: SaleRow[];
+}
+
 export interface ComparableRecommendationsResponse {
   subject: {
     account_id: string;
@@ -1191,6 +1222,7 @@ export interface ComparableRecommendationsResponse {
     olderSaleExclusionApplied: boolean;
   };
   statistical_analysis: ComparableStatisticalAnalysis;
+  contract_price_support: ContractPriceSupportAnalysis;
   analysis_period: {
     analysis_as_of: string;
     date_from: string;

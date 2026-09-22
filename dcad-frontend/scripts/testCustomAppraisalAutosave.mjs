@@ -3,11 +3,15 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  CUSTOM_APPRAISAL_AUTOSAVE_RETRY_MS,
   captureAssignmentSaveSelection,
   customAppraisalDraftsMatch,
   isVisibleManualAssignmentSave,
   reconcileCustomAppraisalDraft,
   retainCurrentDraftWhenUnchanged,
+  salesComparisonAutosaveDelay,
+  salesComparisonAutosaveRetryDelay,
+  salesComparisonDraftFingerprint,
 } from "../src/lib/customAppraisalAutosave.ts";
 
 const assignmentFilesHookSource = await readFile(
@@ -18,6 +22,36 @@ const propertyReportSource = await readFile(
   new URL("../src/pages/PropertyReport.tsx", import.meta.url),
   "utf8",
 );
+const salesComparisonSource = await readFile(
+  new URL("../src/pages/ComparableSalesAnalysis.tsx", import.meta.url),
+  "utf8",
+);
+
+test("sales comparison stops showing Loading after a successful DB-backed subject load", () => {
+  assert.match(salesComparisonSource, /setLoading\(false\);\s*return;\s*\} catch \{\s*\/\/ Fall through to scraper detail/u);
+});
+
+test("sales comparison dedupes only unchanged content, not timestamps", () => {
+  const first = { assignmentFileId: 42, savedAt: "first", salesNotes: "Initial" };
+  assert.equal(
+    salesComparisonDraftFingerprint(first),
+    salesComparisonDraftFingerprint({ ...first, savedAt: "later" }),
+  );
+  assert.notEqual(
+    salesComparisonDraftFingerprint(first),
+    salesComparisonDraftFingerprint({ ...first, salesNotes: "Edited" }),
+  );
+});
+
+test("sales comparison autosave has bounded idle wait and a nonzero failure retry", () => {
+  assert.equal(salesComparisonAutosaveDelay(1_000, 1_000), 10_000);
+  assert.equal(salesComparisonAutosaveDelay(1_000, 51_000), 5_000);
+  assert.equal(salesComparisonAutosaveDelay(1_000, 60_000), 0);
+  assert.ok(CUSTOM_APPRAISAL_AUTOSAVE_RETRY_MS >= 30_000);
+  assert.deepEqual([1, 2, 3, 4, 5, 6].map(salesComparisonAutosaveRetryDelay), [
+    30_000, 60_000, 120_000, 240_000, 480_000, 480_000,
+  ]);
+});
 
 test("save results apply only to the same assignment selection generation", () => {
   const generationRef = { current: 4 };

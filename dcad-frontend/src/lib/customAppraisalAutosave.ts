@@ -1,5 +1,24 @@
 export const CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS = 10_000;
 export const CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS = 55_000;
+export const CUSTOM_APPRAISAL_AUTOSAVE_RETRY_MS = 30_000;
+
+export function salesComparisonAutosaveRetryDelay(failureCount: number): number {
+  const exponent = Math.min(4, Math.max(0, Math.trunc(failureCount) - 1));
+  return CUSTOM_APPRAISAL_AUTOSAVE_RETRY_MS * 2 ** exponent;
+}
+
+export function salesComparisonDraftFingerprint<T extends { savedAt?: string }>(draft: T): string {
+  const stableDraft = { ...draft };
+  delete stableDraft.savedAt;
+  return JSON.stringify(stableDraft);
+}
+
+export function salesComparisonAutosaveDelay(pendingSince: number, now: number): number {
+  return Math.min(
+    CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
+    Math.max(0, CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS - Math.max(0, now - pendingSince)),
+  );
+}
 
 export type CustomAppraisalAutosaveState =
   | "idle"

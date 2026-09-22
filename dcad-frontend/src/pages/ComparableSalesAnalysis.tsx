@@ -32,6 +32,11 @@ import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls'
 import { fetchDetail } from '@/lib/dcad';
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
+  salesComparisonAutosaveDelay,
+  salesComparisonAutosaveRetryDelay,
+  salesComparisonDraftFingerprint,
+} from '@/lib/customAppraisalAutosave';
+import {
   editorCredentialForRequest,
   readEditorCredential,
   rememberEditorCredential,
@@ -323,10 +328,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const restoredWorkfileSignatureRef = useRef('');
   const pendingWorkfileSaveRef = useRef<{
     draft: AppraisalReportSalesDraft;
+    fingerprint: string;
     reason: 'autosave' | 'legacy_import';
   } | null>(null);
   const workfileSaveInFlightRef = useRef(false);
   const workfileSaveTimerRef = useRef<number | null>(null);
+  const workfileRetryTimerRef = useRef<number | null>(null);
+  const workfileRetryFailureCountRef = useRef(0);
+  const workfilePendingSinceRef = useRef<number | null>(null);
+  const lastSavedWorkfileFingerprintRef = useRef<string | null>(null);
   const flushWorkfileSaveRef = useRef<() => void>(() => {});
   const workfileSelectionGenerationRef = useRef(0);
   useEffect(() => {
@@ -408,6 +418,11 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     pendingWorkfileSaveRef.current = null;
     if (workfileSaveTimerRef.current !== null) window.clearTimeout(workfileSaveTimerRef.current);
     workfileSaveTimerRef.current = null;
+    if (workfileRetryTimerRef.current !== null) window.clearTimeout(workfileRetryTimerRef.current);
+    workfileRetryTimerRef.current = null;
+    workfileRetryFailureCountRef.current = 0;
+    workfilePendingSinceRef.current = null;
+    lastSavedWorkfileFingerprintRef.current = null;
     setMarketConditionsDraft(null);
     setSummary('');
     setSalesNotes(DEFAULT_SALES_NOTES);
@@ -899,6 +914,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             }
           } catch { /* optional scraper enrichment failed; keep the DB response */ }
         }
+        setLoading(false);
         return;
       } catch {
         // Fall through to scraper detail
@@ -2026,13 +2042,19 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   flushWorkfileSaveRef.current = () => {
     if (workfileSaveInFlightRef.current || !pendingWorkfileSaveRef.current) return;
+    if (workfileRetryTimerRef.current !== null) {
+      window.clearTimeout(workfileRetryTimerRef.current);
+      workfileRetryTimerRef.current = null;
+    }
     const pending = pendingWorkfileSaveRef.current;
     pendingWorkfileSaveRef.current = null;
+    workfilePendingSinceRef.current = null;
     if (!activeAssignmentFile || workfileLocked) return;
     const saveGeneration = workfileSelectionGenerationRef.current;
     const saveAssignmentFile = activeAssignmentFile;
     const selectionIsCurrent = () => workfileSelectionGenerationRef.current === saveGeneration;
     if (pending.draft.assignmentFileId !== saveAssignmentFile.id) return;
+    if (pending.fingerprint === lastSavedWorkfileFingerprintRef.current) return;
     const editorKey = editorCredentialForRequest();
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
@@ -2040,6 +2062,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       return;
     }
     workfileSaveInFlightRef.current = true;
+    let saveSucceeded = false;
+    let waitForConflictReload = false;
     setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
     void api.saveCustomAppraisalWorkfileSection(
       propertyId,
@@ -2055,6 +2079,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     ).then((response) => {
       if (!selectionIsCurrent()) return;
       workfileSectionRevisionRef.current = response.section.revision;
+      lastSavedWorkfileFingerprintRef.current = pending.fingerprint;
+      workfileRetryFailureCountRef.current = 0;
+      saveSucceeded = true;
       removeAppraisalReportDraft(propertyId, saveAssignmentFile.id, applicationSession);
       setWorkfileSaveStatus(
         `Saved to ${workfileCanonicalName || saveAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
@@ -2068,7 +2095,8 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         return;
       }
       if (/custom_appraisal_section_revision_conflict/i.test(message)) {
-        pendingWorkfileSaveRef.current = pending;
+        waitForConflictReload = true;
+        pendingWorkfileSaveRef.current ||= pending;
         void loadCustomAppraisalWorkfile(propertyId, saveAssignmentFile.id)
           .then((result) => {
             workfileSectionRevisionRef.current = Number(
@@ -2082,12 +2110,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
           });
         return;
       }
-      pendingWorkfileSaveRef.current = pending;
+      pendingWorkfileSaveRef.current ||= pending;
       setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
     }).finally(() => {
       workfileSaveInFlightRef.current = false;
       if (pendingWorkfileSaveRef.current) {
-        window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+        if (saveSucceeded || !selectionIsCurrent()) {
+          window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+        } else if (!waitForConflictReload && workfileRetryTimerRef.current === null) {
+          workfileRetryFailureCountRef.current += 1;
+          workfileRetryTimerRef.current = window.setTimeout(() => {
+            workfileRetryTimerRef.current = null;
+            flushWorkfileSaveRef.current();
+          }, salesComparisonAutosaveRetryDelay(workfileRetryFailureCountRef.current));
+        }
       }
     });
   };
@@ -2168,8 +2204,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         ctcNotes,
       },
     };
+    const fingerprint = salesComparisonDraftFingerprint(draft);
+    if (!workfileSaveInFlightRef.current && fingerprint === lastSavedWorkfileFingerprintRef.current) {
+      pendingWorkfileSaveRef.current = null;
+      workfilePendingSinceRef.current = null;
+      return;
+    }
     pendingWorkfileSaveRef.current = {
       draft,
+      fingerprint,
       reason: workfileSectionRevisionRef.current === 0 && Boolean(workfileDraftToRestore)
         ? 'legacy_import'
         : 'autosave',
@@ -2177,9 +2220,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (workfileSaveTimerRef.current !== null) {
       window.clearTimeout(workfileSaveTimerRef.current);
     }
+    if (workfileRetryTimerRef.current !== null) {
+      window.clearTimeout(workfileRetryTimerRef.current);
+      workfileRetryTimerRef.current = null;
+      workfileRetryFailureCountRef.current = 0;
+    }
+    workfilePendingSinceRef.current ??= Date.now();
     workfileSaveTimerRef.current = window.setTimeout(
       () => flushWorkfileSaveRef.current(),
-      900,
+      salesComparisonAutosaveDelay(workfilePendingSinceRef.current, Date.now()),
     );
     return () => {
       if (workfileSaveTimerRef.current !== null) {
@@ -2241,6 +2290,10 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (workfileSaveTimerRef.current !== null) {
       window.clearTimeout(workfileSaveTimerRef.current);
       workfileSaveTimerRef.current = null;
+    }
+    if (workfileRetryTimerRef.current !== null) {
+      window.clearTimeout(workfileRetryTimerRef.current);
+      workfileRetryTimerRef.current = null;
     }
     flushWorkfileSaveRef.current();
   }, []);

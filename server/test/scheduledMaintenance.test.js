@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  purgeExpiredWebSessions,
   recoverStaleScheduledMaintenanceRuns,
   resolveMaintenanceTasks,
   runScheduledMaintenance,
 } from "../src/services/scheduledMaintenance.js";
 
 test("routine maintenance refreshes cached parcel influences but excludes slower monthly source mirrors", () => {
-  assert.deepEqual(resolveMaintenanceTasks("routine"), ["documents", "sales-reconciliation", "census", "locations", "parcels", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("routine"), ["sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "influences"]);
 });
 
 test("maintenance tasks can be scheduled independently", () => {
@@ -17,9 +18,10 @@ test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
   assert.deepEqual(resolveMaintenanceTasks("sales"), ["sales-reconciliation", "locations", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("documents"), ["documents"]);
+  assert.deepEqual(resolveMaintenanceTasks("sessions"), ["sessions"]);
   assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
-    "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
+    "sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
   ]);
 });
 
@@ -41,6 +43,134 @@ test("stale maintenance history is closed without touching a live advisory lock"
     3,
   );
   assert.deepEqual(params, [75]);
+});
+
+test("expired and revoked web sessions are purged in a bounded skip-locked batch", async () => {
+  let statement = "";
+  let parameters = null;
+  const pool = {
+    async query(sql, values) {
+      if (/DELETE FROM app_auth\.web_sessions/.test(sql)) {
+        statement = sql;
+        parameters = values;
+        return { rowCount: 17, rows: [] };
+      }
+      return { rows: [] };
+    },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
+  };
+
+  assert.deepEqual(
+    await purgeExpiredWebSessions(pool, { retentionDays: 45, batchSize: 250 }),
+    { purged: 17, retention_days: 45, batch_size: 250 },
+  );
+  assert.match(statement, /FROM app_auth\.web_sessions/);
+  assert.match(
+    statement,
+    /WHERE LEAST\(expires_at, COALESCE\(revoked_at, expires_at\)\)\s+< now\(\)/,
+  );
+  assert.match(
+    statement,
+    /ORDER BY LEAST\(expires_at, COALESCE\(revoked_at, expires_at\)\), id/,
+  );
+  assert.doesNotMatch(statement, /\sOR\s/);
+  assert.match(statement, /LIMIT \$2/);
+  assert.match(statement, /FOR UPDATE SKIP LOCKED/);
+  assert.match(statement, /DELETE FROM app_auth\.web_sessions/);
+  assert.doesNotMatch(statement, /RETURNING/);
+  assert.deepEqual(parameters, [45, 250]);
+});
+
+test("web session purge settings remain inside conservative bounds", async () => {
+  const calls = [];
+  const pool = {
+    async query(_sql, values) {
+      if (/DELETE FROM app_auth\.web_sessions/.test(_sql)) calls.push(values);
+      return { rowCount: 0, rows: [] };
+    },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
+  };
+
+  assert.deepEqual(
+    await purgeExpiredWebSessions(pool, { retentionDays: -1, batchSize: 500_000 }),
+    { purged: 0, retention_days: 1, batch_size: 10_000 },
+  );
+  assert.deepEqual(calls, [[1, 10_000]]);
+});
+
+test("session purge times out within the remaining maintenance window and releases its connection", async () => {
+  const calls = [];
+  let released = false;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql, values) {
+          calls.push({ sql, values });
+          if (/DELETE FROM app_auth\.web_sessions/.test(sql)) return { rowCount: 1 };
+          return { rows: [] };
+        },
+        release() { released = true; },
+      };
+    },
+  };
+  const result = await purgeExpiredWebSessions(pool, { deadline: Date.now() + 5_000 });
+  assert.equal(result.purged, 1);
+  const timeout = calls.find(({ sql }) => /set_config\('statement_timeout'/.test(sql));
+  assert.ok(Number(timeout.values[0]) > 0 && Number(timeout.values[0]) <= 5_000);
+  assert.equal(calls.at(-1).sql, "COMMIT");
+  assert.equal(released, true);
+});
+
+test("failed session purge rolls back without deleting a second batch", async () => {
+  const calls = [];
+  let released = false;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          calls.push(sql);
+          if (/DELETE FROM app_auth\.web_sessions/.test(sql)) throw new Error("query_timeout");
+          return { rows: [] };
+        },
+        release() { released = true; },
+      };
+    },
+  };
+  await assert.rejects(purgeExpiredWebSessions(pool), /query_timeout/);
+  assert.equal(calls.at(-1), "ROLLBACK");
+  assert.equal(released, true);
+  assert.equal(calls.filter((sql) => /DELETE FROM app_auth\.web_sessions/.test(sql)).length, 1);
+});
+
+test("session maintenance records only aggregate purge results", async () => {
+  const pool = {
+    async query(sql, values) {
+      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) {
+        return { rows: [{ id: 93 }] };
+      }
+      if (/DELETE FROM app_auth\.web_sessions/.test(sql)) {
+        assert.deepEqual(values, [365, 1]);
+        return { rows: [], rowCount: 2 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
+  };
+
+  const result = await runScheduledMaintenance(pool, {
+    task: "sessions",
+    sessionRetentionDays: 999,
+    sessionPurgeBatchSize: -5,
+    logger: { info() {}, warn() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.results.sessions, {
+    purged: 2,
+    retention_days: 365,
+    batch_size: 1,
+  });
 });
 
 test("an overlapping scheduled run exits without starting task work", async () => {

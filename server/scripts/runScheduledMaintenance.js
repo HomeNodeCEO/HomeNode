@@ -29,6 +29,14 @@ try {
       "maximum-runtime-minutes",
       process.env.MAINTENANCE_MAX_RUNTIME_MINUTES || "45",
     ),
+    sessionRetentionDays: option(
+      "session-retention-days",
+      process.env.MAINTENANCE_SESSION_RETENTION_DAYS || "30",
+    ),
+    sessionPurgeBatchSize: option(
+      "session-purge-batch-size",
+      process.env.MAINTENANCE_SESSION_PURGE_BATCH_SIZE || "1000",
+    ),
     censusMaximumBatches: option(
       "census-maximum-batches",
       process.env.MAINTENANCE_CENSUS_MAX_BATCHES || "3",
@@ -121,4 +129,3 @@ try {
 } finally {
   await pool.end();
 }
-

@@ -40,10 +40,11 @@ import {
 const MAINTENANCE_LOCK_A = 48_632_941;
 const MAINTENANCE_LOCK_B = 20_260_812;
 const TASK_ALIASES = Object.freeze({
-  routine: ["documents", "sales-reconciliation", "census", "locations", "parcels", "influences"],
+  routine: ["sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "influences"],
   sales: ["sales-reconciliation", "locations", "influences"],
-  all: ["documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
+  all: ["sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences"],
   context: ["roads", "traffic", "floods", "zoning", "influences"],
+  sessions: ["sessions"],
   census: ["census"],
   locations: ["locations"],
   parcels: ["parcels"],
@@ -125,6 +126,53 @@ export async function recoverStaleScheduledMaintenanceRuns(pool, {
     [safeMinutes],
   );
   return rowCount || 0;
+}
+
+export async function purgeExpiredWebSessions(pool, {
+  retentionDays = 30,
+  batchSize = 1_000,
+  deadline = null,
+} = {}) {
+  const safeRetentionDays = boundedInteger(retentionDays, 30, 1, 365);
+  const safeBatchSize = boundedInteger(batchSize, 1_000, 1, 10_000);
+  // expires_at is non-null, so the earliest expiry/revocation timestamp is
+  // exactly the terminal age used by the matching retention expression index.
+  const client = await pool.connect();
+  let rowCount = 0;
+  try {
+    const remainingMs = deadline === null ? 30_000 : deadline - Date.now();
+    if (remainingMs <= 0) throw new Error("maintenance_deadline_reached");
+    const statementTimeoutMs = Math.max(1, Math.min(30_000, Math.trunc(remainingMs)));
+    await client.query("BEGIN");
+    await client.query("SELECT set_config('statement_timeout', $1, true)", [String(statementTimeoutMs)]);
+    const result = await client.query(
+      `WITH candidates AS MATERIALIZED (
+         SELECT id
+         FROM app_auth.web_sessions
+         WHERE LEAST(expires_at, COALESCE(revoked_at, expires_at))
+                 < now() - ($1::integer * interval '1 day')
+         ORDER BY LEAST(expires_at, COALESCE(revoked_at, expires_at)), id
+         LIMIT $2
+         FOR UPDATE SKIP LOCKED
+       )
+       DELETE FROM app_auth.web_sessions AS sessions
+       USING candidates
+       WHERE sessions.id = candidates.id`,
+      [safeRetentionDays, safeBatchSize],
+    );
+    rowCount = result.rowCount || 0;
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
+  return {
+    purged: rowCount || 0,
+    retention_days: safeRetentionDays,
+    batch_size: safeBatchSize,
+  };
 }
 
 async function acquireMaintenanceLock(pool) {
@@ -356,6 +404,13 @@ async function runSalesReconciliationTask(pool, options) {
 }
 
 async function runTask(pool, task, options) {
+  if (task === "sessions") {
+    return purgeExpiredWebSessions(pool, {
+      retentionDays: options.sessionRetentionDays,
+      batchSize: options.sessionPurgeBatchSize,
+      deadline: options.deadline,
+    });
+  }
   if (task === "documents") {
     const storageMigration = await migrateAssignmentDocumentStorageBatch(
       pool,
@@ -417,6 +472,8 @@ export async function runScheduledMaintenance(pool, {
   task = "routine",
   maximumRuntimeMinutes = 45,
   maximumAttempts = 5,
+  sessionRetentionDays = 30,
+  sessionPurgeBatchSize = 1_000,
   censusMaximumBatches = 3,
   censusBatchSize = 1_000,
   censusSeedLimit = 25_000,
@@ -477,6 +534,8 @@ export async function runScheduledMaintenance(pool, {
       workerId,
       deadline: Date.now() + safeRuntimeMinutes * 60_000,
       maximumAttempts: boundedInteger(maximumAttempts, 5, 1, 10),
+      sessionRetentionDays: boundedInteger(sessionRetentionDays, 30, 1, 365),
+      sessionPurgeBatchSize: boundedInteger(sessionPurgeBatchSize, 1_000, 1, 10_000),
       censusMaximumBatches,
       censusBatchSize,
       censusSeedLimit,
@@ -570,4 +629,3 @@ export async function runScheduledMaintenance(pool, {
     });
   }
 }
-

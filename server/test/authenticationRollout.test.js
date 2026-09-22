@@ -57,6 +57,8 @@ test("desktop latest-file lookups remain organization scoped after authenticatio
   assert.match(propertyTax, /FOR SHARE OF app_user, membership, membership_role/);
   assert.match(propertyTax, /canAttestComparables: !authorizationRequired/);
   assert.match(propertyTax, /decideAssignmentAccess\(currentAuth, row, "sign"\)/);
+  assert.match(propertyTax, /: "HomeNode legacy editor"/);
+  assert.doesNotMatch(propertyTax, /String\(input\.reviewer/);
   assert.match(server, /createDesktopPropertyTaxRouter/);
   assert.match(propertyTaxRouter, /organizationIds: exactFileId \? null : organizationIdsForRead\(req\)/);
   assert.match(propertyTaxRouter, /Exact-file routes must distinguish an absent file \(404\)/);

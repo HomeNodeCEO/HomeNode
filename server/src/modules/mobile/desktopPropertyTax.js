@@ -180,7 +180,7 @@ export async function saveDesktopPropertyTaxFile(
   const reviewer = normalizedActorUserId
     ? String(actorLabel || "Authenticated HomeNode user").trim().slice(0, 200)
       || "Authenticated HomeNode user"
-    : String(input.reviewer || "HomeNode desktop").trim().slice(0, 200) || "HomeNode desktop";
+    : "HomeNode legacy editor";
   let requestSha256 = null;
   if (clientOperationId) {
     try {

@@ -38,6 +38,7 @@ test("R2 operations retry bounded transient responses and expose safe resilience
   assert.equal(calls, 3);
   assert.equal(sleeps.length, 2);
   assert.equal(uploaded.etag, '"ok"');
+  assert.equal(uploadRequest.init.redirect, "manual");
   assert.equal(uploadRequest.init.headers["content-length"], String(Buffer.byteLength("<MESSAGE/>")));
   assert.equal(
     new URL(uploadRequest.url).searchParams.get("X-Amz-SignedHeaders"),
@@ -49,6 +50,75 @@ test("R2 operations retry bounded transient responses and expose safe resilience
     max_attempts: 3,
     max_buffered_download_bytes: 64 * 1024 * 1024,
   });
+});
+
+test("R2 operations refuse redirects without forwarding private object bytes", async () => {
+  const operations = [
+    {
+      name: "upload",
+      method: "PUT",
+      invoke: (storage) => storage.putObject({
+        objectKey: "organizations/org/private/report.pdf",
+        contentType: "application/pdf",
+        body: Buffer.from("private-appraisal-bytes"),
+      }),
+    },
+    {
+      name: "download",
+      method: "GET",
+      invoke: (storage) => storage.getObject({
+        objectKey: "organizations/org/private/report.pdf",
+        maxBytes: 1_024,
+      }),
+    },
+    {
+      name: "verification",
+      method: "HEAD",
+      invoke: (storage) => storage.inspectObject({
+        objectKey: "organizations/org/private/report.pdf",
+      }),
+    },
+    {
+      name: "delete",
+      method: "DELETE",
+      invoke: (storage) => storage.deleteObject({
+        objectKey: "organizations/org/private/report.pdf",
+      }),
+    },
+  ];
+  for (const operation of operations) {
+    for (const redirectedResponse of [
+      { status: 307, redirected: false },
+      { status: 200, redirected: true },
+    ]) {
+      let calls = 0;
+      let bodyCancelled = false;
+      const storage = createUadObjectStorage(ENVIRONMENT, {
+        fetchImpl: async (_url, init) => {
+          calls += 1;
+          assert.equal(init.redirect, "manual");
+          assert.equal(init.method, operation.method);
+          return {
+            ok: redirectedResponse.status >= 200 && redirectedResponse.status < 300,
+            status: redirectedResponse.status,
+            redirected: redirectedResponse.redirected,
+            headers: new Headers(),
+            body: {
+              async cancel() {
+                bodyCancelled = true;
+              },
+            },
+          };
+        },
+      });
+      await assert.rejects(
+        () => operation.invoke(storage),
+        (error) => error.message === `uad_object_${operation.name}_redirect_forbidden`,
+      );
+      assert.equal(calls, 1);
+      assert.equal(bodyCancelled, true);
+    }
+  }
 });
 
 test("R2 timeouts fail with a bounded public-safe error after the configured attempts", async () => {

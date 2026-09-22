@@ -12,6 +12,9 @@ function options(overrides = {}) {
     accountIdAllowed: () => true,
     requireCustomAccountScope: async () => true,
     findParcelsByAddress: async () => ({ query_address: "", parcels: [] }),
+    isLookupBusyError: (message) => message === "related_parcel_lookup_capacity_exceeded",
+    lookupRequestKey: (address) => String(address).toUpperCase(),
+    runLookupOperation: (_key, _principal, operation) => operation(),
     logger: { error() {} },
     ...overrides,
   };
@@ -255,6 +258,28 @@ test("DCAD outages degrade to a reviewable response instead of failing the route
   assert.equal(body.live_query_status, "unavailable");
   assert.equal(body.live_query_error, "dcad_temporarily_unavailable");
   assert.deepEqual(body.parcels, []);
+});
+
+test("related parcel lookup returns a stable retryable response when the DCAD budget is full", async (context) => {
+  let queryCount = 0;
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    pool: {
+      query: async () => {
+        queryCount += 1;
+        return { rows: [{ account_id: "A-1", address: "9 Oak St", county: "Dallas" }] };
+      },
+    },
+    runLookupOperation: async () => {
+      throw new Error("related_parcel_lookup_capacity_exceeded");
+    },
+  })));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("retry-after"), "5");
+  assert.deepEqual(await response.json(), { error: "related_parcel_lookup_busy" });
+  assert.equal(queryCount, 1);
 });
 
 test("unexpected related parcel failures retain stable diagnostics and error code", async (context) => {

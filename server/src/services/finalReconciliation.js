@@ -1,10 +1,12 @@
 const MAX_MONEY = 250_000_000;
 const DEFAULT_CERTIFICATION = "I certify that, to the best of my knowledge and belief, the statements of fact contained in this report are true and correct; the analyses, opinions, and conclusions are limited only by the reported assumptions and limiting conditions; and I have no undisclosed present or prospective interest in the property that is the subject of this report.";
 
+/** Normalize bounded user-facing text for reconciliation persistence. */
 function text(value, maxLength = 8_000) {
   return String(value || "").trim().replace(/\s+/g, " ").slice(0, maxLength);
 }
 
+/** Parse and range-check an optional numeric reconciliation value. */
 function number(value, { min = 0, max = MAX_MONEY, nullable = true } = {}) {
   if (value === null || value === undefined || value === "") return nullable ? null : min;
   const parsed = typeof value === "number"
@@ -16,6 +18,7 @@ function number(value, { min = 0, max = MAX_MONEY, nullable = true } = {}) {
   return parsed;
 }
 
+/** Round a numeric value to currency precision. */
 function money(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
@@ -28,6 +31,7 @@ function validIsoDate(value) {
   return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === normalized;
 }
 
+/** Return the first positive value among the authorized approach keys. */
 function approachValue(section, keys) {
   for (const key of keys) {
     const value = number(section?.[key]);
@@ -36,6 +40,7 @@ function approachValue(section, keys) {
   return 0;
 }
 
+/** Rebuild approach indications exclusively from authoritative workfile data. */
 function sourceApproaches(sections = {}) {
   const sales = sections.sales_comparison || {};
   const income = sections.income_approach || {};
@@ -66,6 +71,7 @@ function sourceApproaches(sections = {}) {
   };
 }
 
+/** Read and range-check a requested approach weight. */
 function requestedWeight(input, key, fallback = 0) {
   const direct = input?.weights?.[key];
   const legacy = input?.[`${key}_weight`];

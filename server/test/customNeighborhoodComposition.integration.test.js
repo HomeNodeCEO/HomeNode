@@ -109,15 +109,21 @@ for (const enabled of [false, true]) {
     assert.deepEqual(server.state.ratePaths, []);
   });
 
-  test(`upstream JSON statuses and 1 MiB limit remain unchanged when enabled=${enabled}`, async t => {
+  test(`route-local JSON parser retains authentication and its 4 MB limit when enabled=${enabled}`, async t => {
     const server = await start(t, { enabled });
-    await responseIs(await server.request(`${base}/catalog`, { body: '{' }), 400, 'invalid_json_body');
-    await responseIs(await server.request(`${base}/catalog`, { body: { payload: 'x'.repeat(1_048_576) } }), 413, 'request_body_too_large');
+    await responseIs(await server.request(`${base}/catalog`, { body: '{' }),
+      enabled ? 400 : 503, enabled ? 'invalid_neighborhood_request' : 'custom_neighborhood_workspace_disabled');
+    await responseIs(await server.request(`${base}/catalog`, { body: { payload: 'x'.repeat(1_100_000) } }),
+      enabled ? 400 : 503, enabled ? 'invalid_neighborhood_request' : 'custom_neighborhood_workspace_disabled');
+    await responseIs(await server.request(`${base}/catalog`, { body: { payload: 'x'.repeat(4_000_000) } }),
+      enabled ? 413 : 503, enabled ? 'neighborhood_request_too_large' : 'custom_neighborhood_workspace_disabled');
     await responseIs(await server.request(`${base}/catalog`, {
       body: '{}', headers: { ...BEARER, 'content-type': 'application/json; charset=unsupported-charset' },
     }), 415, 'unsupported_request_encoding');
     assert.equal(server.state.cohortConnections, 0); assert.equal(server.state.sessionQueries, 0);
-    assert.deepEqual(server.state.ratePaths, [], 'existing global parser still precedes bearer hydration/limiter');
+    assert.deepEqual(server.state.ratePaths, [
+      `${base}/catalog`, `${base}/catalog`, `${base}/catalog`, `${base}/catalog`,
+    ], 'global limiter must run before malformed, oversized, or unsupported JSON parsing');
   });
 }
 

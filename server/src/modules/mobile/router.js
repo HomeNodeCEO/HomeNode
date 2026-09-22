@@ -2,6 +2,8 @@ import express from "express";
 import { isIP } from "node:net";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
+import { jsonErrorHandler } from "../../security/httpSecurity.js";
+
 import { createMobileAuthenticator } from "./auth.js";
 import {
   completeInspectionSession,
@@ -189,6 +191,10 @@ export function createMobileRouter({
     return res.status(503).json({ error: "mobile_inspection_disabled" });
   });
   router.use(createMobileAuthenticator({ pool, verifier }));
+  // Throttle and authenticate before buffering JSON. Native clients do not
+  // need compressed request bodies, so refuse parser inflation entirely.
+  router.use(express.json({ limit: "1mb", inflate: false }));
+  router.use(jsonErrorHandler);
 
   router.get("/me", (req, res) => {
     res.json({ user: req.mobileAuth });

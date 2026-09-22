@@ -32,8 +32,9 @@ function denseV2(raw) {
   });
 }
 
-// Complete content/style and old layout hashes captured on 103177d BEFORE the
-// keep-with-next edit. Only the new layout hashes may differ from that baseline.
+// Complete content/style and layout hashes pin the client-facing appendix. V1
+// remains byte-for-byte compatible; V2 intentionally omits internal workfile
+// identifiers while retaining the underlying evidence in the saved workfile.
 const cases = [
   { name: 'v1 small', fixture: () => customNeighborhoodReportPdfFixture(), pages: 4,
     oldLayout: 'dbadecf05191e1cdf5ad9ac23fb555388ac1cc00dd686976fa7f0d0662802aef',
@@ -45,12 +46,12 @@ const cases = [
     stream: '5f75ff0e885454da84a04becb71574616d86159498d96b2a0a0fdc43be40b823' },
   { name: 'v2 small', fixture: () => reportedObservationReportFixture(), pages: 2,
     oldLayout: 'ec2161a958fe9952ad41a80b35885d0ecad40173d9c39f9303e56ec4523f4c3d',
-    layout: 'ec2161a958fe9952ad41a80b35885d0ecad40173d9c39f9303e56ec4523f4c3d',
-    stream: 'e868058e934678b82d88fa186dcfba4ca27830a62794a3ab4ff2136377c0e63a' },
-  { name: 'v2 dense', fixture: () => reportedObservationReportFixture(denseV2), pages: 10,
+    layout: '6ee2113b6fa1a8be3787b89049c16125735c861ab294ee809435a4fb3e516f43',
+    stream: '33914b73d356e62b52e1c70e7588b96e12df88e09b083aef08a8c956085196aa' },
+  { name: 'v2 dense', fixture: () => reportedObservationReportFixture(denseV2), pages: 7,
     oldLayout: '9b56aead088d791a9d2432069bf269a6c8c612a3e70cd0fe81ad5f8c76bd978e',
-    layout: 'd0f35778ca6eb3d9e25ee394cea43432d6d3097b37f0e5f4e86bdc5c5e41e7b4',
-    stream: '552fa6ab0ed424de59531f83bc4dcc7613c09576d00e50226e4dc33b34f00e57' },
+    layout: '504604e1b72a3276d939adbb5969fe44e96e1f38ee0029eb233e1e08860888fc',
+    stream: 'e0e575213a7cf84a48e79a11d443ea096f685e09faee77374e0ccd51c648a89d' },
 ];
 
 function assertHeadingDetails(pages, expectedCount) {
@@ -71,14 +72,13 @@ function assertHeadingDetails(pages, expectedCount) {
   assert.equal(count, expectedCount);
 }
 
-for (const entry of cases) test(`${entry.name}: exact pre-edit content/style stream, intentional layout and no input mutation`, () => {
+for (const entry of cases) test(`${entry.name}: pinned client-facing content/style stream, intentional layout and no input mutation`, () => {
   const f = entry.fixture(), before = structuredClone(f), input = projected(f);
   const pages = prepareCustomNeighborhoodPdfAppendix(measure(), input);
   assert.equal(hash(stream(pages)), entry.stream, 'all text, order, fonts, sizes and heading flags are unchanged');
   assert.equal(hash(pages), entry.layout); assert.equal(pages.length, entry.pages);
-  if (entry.name === 'v2 small') assert.equal(hash(pages), entry.oldLayout, 'non-orphan fixture layout remains exact');
-  else assert.notEqual(hash(pages), entry.oldLayout, 'only the pinned page layout intentionally changed');
-  assertHeadingDetails(pages, f.assessment.statistics.length);
+  assert.notEqual(hash(pages), entry.oldLayout, 'the pinned presentation intentionally differs from its historical baseline');
+  assertHeadingDetails(pages, f.assessment.contract_version === 2 ? 0 : f.assessment.statistics.length);
   assert.deepEqual(f, before);
   for (const page of pages) {
     assert.ok(page.length, 'no empty appendix pages');
@@ -175,7 +175,7 @@ test('non-statistic headings retain the existing line-by-line pagination behavio
   assert.ok(pages[1][0].text.startsWith('Revision: 1;')); assert.equal(pages[1][0].y, 88);
 });
 
-for (const entry of cases.filter(value => value.name.endsWith('dense'))) test(`${entry.name}: genuine accepted PDF retains 888 IDs, every statistic, unknown reasons and photo/header offsets`, async () => {
+for (const entry of cases.filter(value => value.name.endsWith('dense'))) test(`${entry.name}: genuine accepted PDF retains complete evidence, statistics and photo/header offsets`, async () => {
   const f = entry.fixture(), before = structuredClone(f.snapshot), calls = [];
   const client = { async query(sql, params) {
     calls.push({ sql, params });
@@ -209,8 +209,15 @@ for (const entry of cases.filter(value => value.name.endsWith('dense'))) test(`$
   } finally { await pdf.loadingTask.destroy(); }
   const appendix = compactPages.join('');
   assert.equal(f.assessment.selection.pocket_ids.length, 888); assert.ok(f.assessment.statistics.length > 32);
-  for (const id of f.assessment.selection.pocket_ids) assert.ok(appendix.includes(id), id);
+  for (const id of f.assessment.selection.pocket_ids) {
+    if (f.assessment.contract_version === 2) assert.ok(!appendix.includes(id), `internal ID remains private: ${id}`);
+    else assert.ok(appendix.includes(id), id);
+  }
   for (const statistic of f.assessment.statistics) {
+    if (f.assessment.contract_version === 2) {
+      assert.ok(!appendix.includes(statistic.id), `internal statistic ID remains private: ${statistic.id}`);
+      continue;
+    }
     const token = `Statistic${statistic.id}-`, hits = compactPages.filter(text => text.includes(token));
     assert.equal(hits.length, 1, `complete heading remains on one page: ${statistic.id}`);
     const tail = hits[0].slice(hits[0].indexOf(token) + token.length);

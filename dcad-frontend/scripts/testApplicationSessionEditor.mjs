@@ -93,6 +93,16 @@ test("the application shell contains render recovery and safe printable summarie
   assert.match(comparable, /createTextNode\(line\)/);
 });
 
+test("sales reconciliation cards use a compiled stylesheet", () => {
+  const queue = read("../src/components/SalesReconciliationQueue.tsx");
+  const styles = read("../src/components/SalesReconciliationQueue.css");
+  assert.match(queue, /import "\.\/SalesReconciliationQueue\.css"/);
+  assert.doesNotMatch(queue, /<style>/);
+  assert.match(queue, /<article className="sales-reconciliation__card"/);
+  assert.match(styles, /\.sales-reconciliation__card\s*\{/);
+  assert.match(styles, /\.sales-reconciliation__card-header\s*\{/);
+});
+
 test("remaining reviewed-data saves use the authenticated session path", () => {
   const comparable = read("../src/pages/ComparableSalesAnalysis.tsx");
   const propertyTaxReview = read("../src/components/PropertyTaxWorkfileReview.tsx");

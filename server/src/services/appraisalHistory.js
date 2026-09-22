@@ -4,6 +4,8 @@ import { loadCustomAppraisalPropertySnapshot } from "./customAppraisalReportPdf.
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const APPRAISAL_WORKFLOWS = new Set(["custom_appraisal", "uad_3_6"]);
+const DEFAULT_HISTORY_PAGE_SIZE = 25;
+const MAX_HISTORY_PAGE_SIZE = 50;
 const CUSTOM_PROPERTY_SNAPSHOT_RELATIONS = Object.freeze([
   "core.value_summary_current",
   "core.market_values",
@@ -34,6 +36,61 @@ export function normalizeReplicationMode(value) {
     throw new Error("invalid_replication_mode");
   }
   return mode;
+}
+
+function historyCursorDate(value) {
+  if (typeof value !== "string" || value.length > 40) throw new Error("invalid_appraisal_history_cursor");
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.valueOf()) || parsed.toISOString() !== value) {
+    throw new Error("invalid_appraisal_history_cursor");
+  }
+  return value;
+}
+
+function decodeAppraisalHistoryCursor(value) {
+  if (value === undefined || value === null || value === "") return null;
+  if (typeof value !== "string" || !/^[A-Za-z0-9_-]{1,512}$/.test(value)) {
+    throw new Error("invalid_appraisal_history_cursor");
+  }
+  let decoded;
+  try {
+    decoded = JSON.parse(Buffer.from(value, "base64url").toString("utf8"));
+  } catch {
+    throw new Error("invalid_appraisal_history_cursor");
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)
+    || Object.keys(decoded).sort().join(",") !== "c,i,u"
+    || !UUID_PATTERN.test(String(decoded.i || ""))) {
+    throw new Error("invalid_appraisal_history_cursor");
+  }
+  return Object.freeze({
+    updatedAt: historyCursorDate(decoded.u),
+    createdAt: historyCursorDate(decoded.c),
+    id: String(decoded.i).toLowerCase(),
+  });
+}
+
+function encodeAppraisalHistoryCursor(row) {
+  return Buffer.from(JSON.stringify({
+    u: new Date(row.updated_at).toISOString(),
+    c: new Date(row.created_at).toISOString(),
+    i: String(row.id).toLowerCase(),
+  }), "utf8").toString("base64url");
+}
+
+export function normalizeAppraisalHistoryPage(input = {}) {
+  if (!input || typeof input !== "object" || Array.isArray(input)) {
+    throw new Error("invalid_appraisal_history_page");
+  }
+  const rawLimit = input.limit;
+  const limit = rawLimit === undefined || rawLimit === null || rawLimit === ""
+    ? DEFAULT_HISTORY_PAGE_SIZE
+    : Number(rawLimit);
+  if (!Number.isInteger(limit) || limit < 1 || limit > MAX_HISTORY_PAGE_SIZE
+    || (typeof rawLimit === "string" && !/^[1-9][0-9]*$/.test(rawLimit))) {
+    throw new Error("invalid_appraisal_history_page");
+  }
+  return Object.freeze({ limit, cursor: decodeAppraisalHistoryCursor(input.cursor) });
 }
 
 function isoDate(value, code) {
@@ -482,9 +539,10 @@ export function summarizeAppraisalHistoryRow(row) {
   };
 }
 
-export async function listPreviousAppraisalFiles(pool, accountIdValue, accessScope = null) {
+export async function listPreviousAppraisalFiles(pool, accountIdValue, accessScope = null, pageInput = {}) {
   const accountId = String(accountIdValue || "").trim();
   if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
+  const page = normalizeAppraisalHistoryPage(pageInput);
   const { rows } = await pool.query(
     `SELECT report_file.*,
             case_record.effective_date,
@@ -557,7 +615,13 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue, accessSco
             )
           )
         )
-      ORDER BY report_file.updated_at DESC, report_file.created_at DESC, report_file.id`,
+        AND (
+          $7::timestamptz IS NULL
+          OR (report_file.updated_at, report_file.created_at, report_file.id)
+             < ($7::timestamptz, $8::timestamptz, $9::uuid)
+        )
+      ORDER BY report_file.updated_at DESC, report_file.created_at DESC, report_file.id DESC
+      LIMIT $10`,
     [
       accountId,
       accessScope?.organizationIds || null,
@@ -565,20 +629,22 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue, accessSco
       accessScope?.uadOrganizationWideReadIds || [],
       accessScope?.userId || null,
       Boolean(accessScope?.platformAdministrator),
+      page.cursor?.updatedAt || null,
+      page.cursor?.createdAt || null,
+      page.cursor?.id || null,
+      page.limit + 1,
     ],
   );
-  const currentRows = [];
-  for (const row of rows) {
-    try {
-      currentRows.push({ ...row, subject_data: await currentSubjectData(pool, row) });
-    } catch {
-      // Historical snapshots remain readable even if an optional live source is
-      // temporarily unavailable. Replication always performs a fresh capture.
-      currentRows.push(row);
-    }
-  }
+  const hasMore = rows.length > page.limit;
+  const pageRows = rows.slice(0, page.limit);
+  const lastRow = pageRows.at(-1);
   return {
     account_id: accountId,
-    files: currentRows.map(summarizeAppraisalHistoryRow),
+    files: pageRows.map(summarizeAppraisalHistoryRow),
+    page: {
+      limit: page.limit,
+      has_more: hasMore,
+      next_cursor: hasMore && lastRow ? encodeAppraisalHistoryCursor(lastRow) : null,
+    },
   };
 }

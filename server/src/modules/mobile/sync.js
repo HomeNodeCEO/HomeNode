@@ -5,6 +5,9 @@ import { normalizeUuid, sessionResponse } from "./reportFiles.js";
 const MAX_BATCH_SIZE = 25;
 const MAX_FIELD_PATH = 200;
 const MAX_PAYLOAD_BYTES = 16 * 1024;
+const MAX_SYNC_PAYLOAD_BYTES = 64 * 1024;
+const MAX_SYNC_PAYLOAD_DEPTH = 24;
+const MAX_SYNC_PAYLOAD_NODES = 4096;
 const FIELD_PATH_PATTERN = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,9}$/;
 const PAYLOAD_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const FIELD_SOURCES = new Set(["appraiser", "measurement", "device", "imported", "suggested"]);
@@ -16,24 +19,69 @@ function plainObject(value) {
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
 }
 
-export function canonicalJson(value) {
-  if (value === null) return "null";
-  if (typeof value === "string" || typeof value === "boolean") return JSON.stringify(value);
-  if (typeof value === "number") {
-    if (!Number.isFinite(value)) throw new Error("invalid_sync_payload");
-    return JSON.stringify(Object.is(value, -0) ? 0 : value);
+function canonicalJsonWithLimits(value, {
+  maxBytes = Number.POSITIVE_INFINITY,
+  maxDepth = Number.POSITIVE_INFINITY,
+  maxNodes = Number.POSITIVE_INFINITY,
+} = {}) {
+  let bytes = 0;
+  let nodes = 0;
+
+  function fragment(text) {
+    bytes += Buffer.byteLength(text, "utf8");
+    if (bytes > maxBytes) throw new Error("invalid_sync_payload");
+    return text;
   }
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  if (!plainObject(value)) throw new Error("invalid_sync_payload");
-  const entries = Object.keys(value).sort().map((key) => {
-    if (value[key] === undefined) throw new Error("invalid_sync_payload");
-    return `${JSON.stringify(key)}:${canonicalJson(value[key])}`;
-  });
-  return `{${entries.join(",")}}`;
+
+  function visit(current, depth) {
+    nodes += 1;
+    if (nodes > maxNodes || depth > maxDepth) throw new Error("invalid_sync_payload");
+    if (current === null) return fragment("null");
+    if (typeof current === "string" || typeof current === "boolean") {
+      return fragment(JSON.stringify(current));
+    }
+    if (typeof current === "number") {
+      if (!Number.isFinite(current)) throw new Error("invalid_sync_payload");
+      return fragment(JSON.stringify(Object.is(current, -0) ? 0 : current));
+    }
+    if (Array.isArray(current)) {
+      const entries = [];
+      fragment("[");
+      for (const [index, entry] of current.entries()) {
+        if (index) fragment(",");
+        entries.push(visit(entry, depth + 1));
+      }
+      fragment("]");
+      return `[${entries.join(",")}]`;
+    }
+    if (!plainObject(current)) throw new Error("invalid_sync_payload");
+    const entries = [];
+    fragment("{");
+    for (const [index, key] of Object.keys(current).sort().entries()) {
+      if (current[key] === undefined) throw new Error("invalid_sync_payload");
+      if (index) fragment(",");
+      const keyJson = fragment(JSON.stringify(key));
+      fragment(":");
+      entries.push(`${keyJson}:${visit(current[key], depth + 1)}`);
+    }
+    fragment("}");
+    return `{${entries.join(",")}}`;
+  }
+
+  return visit(value, 0);
+}
+
+export function canonicalJson(value) {
+  return canonicalJsonWithLimits(value);
 }
 
 export function syncPayloadSha256(payload) {
-  return createHash("sha256").update(canonicalJson(payload)).digest("hex");
+  const canonical = canonicalJsonWithLimits(payload, {
+    maxBytes: MAX_SYNC_PAYLOAD_BYTES,
+    maxDepth: MAX_SYNC_PAYLOAD_DEPTH,
+    maxNodes: MAX_SYNC_PAYLOAD_NODES,
+  });
+  return createHash("sha256").update(canonical).digest("hex");
 }
 
 function exactKeys(value, allowed) {
@@ -43,8 +91,11 @@ function exactKeys(value, allowed) {
 }
 
 function normalizedJsonValue(value) {
-  const canonical = canonicalJson(value);
-  if (Buffer.byteLength(canonical, "utf8") > MAX_PAYLOAD_BYTES) throw new Error("invalid_sync_payload");
+  const canonical = canonicalJsonWithLimits(value, {
+    maxBytes: MAX_PAYLOAD_BYTES,
+    maxDepth: MAX_SYNC_PAYLOAD_DEPTH,
+    maxNodes: MAX_SYNC_PAYLOAD_NODES,
+  });
   return JSON.parse(canonical);
 }
 
@@ -132,13 +183,13 @@ export function normalizeSyncBatch(input = {}) {
     if (!Number.isInteger(baseSessionRevision) || baseSessionRevision < 1) {
       throw new Error("invalid_base_session_revision");
     }
+    const payload = operationKind === "conflict.resolve"
+      ? normalizeResolutionPayload(operation.payload)
+      : normalizeFieldPayload(operationKind, operation.payload);
     const payloadSha256 = String(operation.payload_sha256 || "").toLowerCase();
     if (!PAYLOAD_HASH_PATTERN.test(payloadSha256) || syncPayloadSha256(operation.payload) !== payloadSha256) {
       throw new Error("invalid_payload_sha256");
     }
-    const payload = operationKind === "conflict.resolve"
-      ? normalizeResolutionPayload(operation.payload)
-      : normalizeFieldPayload(operationKind, operation.payload);
     return Object.freeze({
       clientOperationId: normalizeUuid(operation.client_operation_id, "invalid_client_operation_id"),
       operationKind,

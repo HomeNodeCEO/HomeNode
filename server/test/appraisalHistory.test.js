@@ -5,9 +5,58 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  listPreviousAppraisalFiles,
+  normalizeAppraisalHistoryPage,
   normalizeReplicationRequest,
   summarizeAppraisalHistoryRow,
 } from "../src/services/appraisalHistory.js";
+
+const HISTORY_FILE_IDS = [
+  "10000000-0000-4000-8000-000000000001",
+  "10000000-0000-4000-8000-000000000002",
+  "10000000-0000-4000-8000-000000000003",
+];
+
+test("appraisal-history pagination is bounded and cursor based", async () => {
+  assert.deepEqual(normalizeAppraisalHistoryPage(), { limit: 25, cursor: null });
+  assert.equal(normalizeAppraisalHistoryPage({ limit: "50" }).limit, 50);
+  for (const input of [{ limit: 0 }, { limit: 51 }, { limit: "1.5" }, { cursor: "not-json" }]) {
+    assert.throws(() => normalizeAppraisalHistoryPage(input), /invalid_appraisal_history_/);
+  }
+
+  const calls = [];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return {
+        rows: HISTORY_FILE_IDS.map((id, index) => ({
+          id,
+          account_id: "subject-1",
+          workflow_type: "custom_appraisal",
+          file_number: `FILE-${index + 1}`,
+          custom_assignment_file_id: index + 1,
+          created_at: new Date(Date.UTC(2026, 8, 20 - index)).toISOString(),
+          updated_at: new Date(Date.UTC(2026, 8, 21 - index)).toISOString(),
+          subject_data: { account: { legal_description: `LOT ${index + 1}` } },
+        })),
+      };
+    },
+  };
+  const first = await listPreviousAppraisalFiles(pool, "subject-1", null, { limit: 2 });
+  assert.equal(calls.length, 1, "a history page must not run per-row live-data enrichment queries");
+  assert.match(calls[0].sql, /LIMIT \$10/);
+  assert.equal(calls[0].values[9], 3);
+  assert.equal(first.files.length, 2);
+  assert.equal(first.page.has_more, true);
+  assert.ok(first.page.next_cursor);
+
+  const cursor = normalizeAppraisalHistoryPage({ cursor: first.page.next_cursor }).cursor;
+  assert.deepEqual(cursor, {
+    updatedAt: "2026-09-20T00:00:00.000Z",
+    createdAt: "2026-09-19T00:00:00.000Z",
+    id: HISTORY_FILE_IDS[1],
+  });
+});
 
 test("replication requests require an explicit same-assignment attestation", () => {
   assert.throws(

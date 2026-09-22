@@ -103,6 +103,16 @@ test('rejects unsafe inline scripts independently of the style compatibility bou
   )
 })
 
+test('validates the first case-normalized directive when a policy contains duplicates', () => {
+  const headers = {
+    ...secureHeaders,
+    'content-security-policy': `STYLE-SRC 'unsafe-inline'; ${secureHeaders['content-security-policy']}`,
+  }
+  const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
+  assert.match(errors, /style-src must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src must not allow 'unsafe-inline'/)
+})
+
 test('rejects missing platform security headers', () => {
   const errors = validateFrontendSecurityHeaders({
     'content-security-policy': secureHeaders['content-security-policy'],

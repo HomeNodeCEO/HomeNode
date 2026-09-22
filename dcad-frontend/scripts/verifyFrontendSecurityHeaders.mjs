@@ -17,7 +17,8 @@ export function parseContentSecurityPolicy(policy) {
   for (const rawDirective of String(policy || '').split(';')) {
     const tokens = rawDirective.trim().split(/\s+/).filter(Boolean)
     if (tokens.length === 0) continue
-    directives.set(tokens[0], tokens.slice(1))
+    const name = tokens[0].toLowerCase()
+    if (!directives.has(name)) directives.set(name, tokens.slice(1))
   }
 
   return directives

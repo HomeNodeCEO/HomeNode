@@ -170,9 +170,11 @@ test("assignment document object keys are assignment-scoped and content-addresse
 test("a verified private upload stores metadata without duplicating PDF bytes in PostgreSQL", async () => {
   const pdf = Buffer.from("%PDF-test-private-storage");
   let insertValues;
-  const pool = {
+  const client = {
     async query(sql, values) {
-      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
+      if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) return { rows: [] };
       insertValues = values;
       return {
         rows: [{
@@ -201,6 +203,14 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
         }],
       };
     },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() { return client; },
   };
   const storage = {
     configured: true,
@@ -228,12 +238,15 @@ function propertyTaxQuotaPool(usage = {}) {
   const client = {
     async query(sql, values = []) {
       events.push({ sql, values });
+      if (sql === "COMMIT" && usage.commit_error) throw usage.commit_error;
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
       if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
-      if (/AS duplicate_exists/.test(sql)) {
+      if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) {
+        return { rows: usage.existing_document ? [usage.existing_document] : [] };
+      }
+      if (/AS document_count/.test(sql)) {
         return {
           rows: [{
-            duplicate_exists: false,
             document_count: 0,
             total_bytes: 0,
             active_extractions: 0,
@@ -242,6 +255,7 @@ function propertyTaxQuotaPool(usage = {}) {
         };
       }
       if (/INSERT INTO app\.assignment_documents/.test(sql)) {
+        if (usage.insert_error) throw usage.insert_error;
         return {
           rows: [{
             id: 91,
@@ -259,6 +273,9 @@ function propertyTaxQuotaPool(usage = {}) {
           }],
         };
       }
+      if (/UPDATE app\.assignment_documents\s+SET title/.test(sql)) {
+        return { rows: [{ ...usage.existing_document, title: values[1], file_name: values[2] }] };
+      }
       throw new Error(`unexpected client query: ${sql}`);
     },
     release() {
@@ -270,6 +287,9 @@ function propertyTaxQuotaPool(usage = {}) {
     pool: {
       async query(sql) {
         if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+        if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) {
+          return { rows: usage.committed_document ? [usage.committed_document] : [] };
+        }
         throw new Error(`unexpected pool query: ${sql}`);
       },
       async connect() {
@@ -300,17 +320,20 @@ test("Property Tax document quota serializes admission and bounds aggregate stor
   assert.ok(statements.indexOf("BEGIN") < statements.findIndex((sql) => /pg_advisory/.test(sql)));
   assert.ok(
     statements.findIndex((sql) => /pg_advisory/.test(sql))
-    < statements.findIndex((sql) => /AS duplicate_exists/.test(sql)),
+    < statements.findIndex((sql) => /SELECT \*\s+FROM app\.assignment_documents/.test(sql)),
   );
   assert.ok(
-    statements.findIndex((sql) => /AS duplicate_exists/.test(sql))
+    statements.findIndex((sql) => /SELECT \*\s+FROM app\.assignment_documents/.test(sql))
+    < statements.findIndex((sql) => /AS document_count/.test(sql)),
+  );
+  assert.ok(
+    statements.findIndex((sql) => /AS document_count/.test(sql))
     < statements.findIndex((sql) => /INSERT INTO app\.assignment_documents/.test(sql)),
   );
   assert.ok(statements.indexOf("COMMIT") < statements.indexOf("RELEASE"));
-  const aggregate = events.find(({ sql }) => /AS duplicate_exists/.test(sql));
+  const aggregate = events.find(({ sql }) => /AS document_count/.test(sql));
   assert.deepEqual(aggregate.values, [
     "30000000-0000-4000-8000-000000000003",
-    result.checksum_sha256,
     PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments + 1,
     PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions + 1,
     ["uploaded", "processing"],
@@ -345,7 +368,13 @@ test("Property Tax document quota rejects storage and extraction exhaustion atom
 
 test("Property Tax document quota permits idempotent duplicate re-uploads at capacity", async () => {
   const { pool, events } = propertyTaxQuotaPool({
-    duplicate_exists: true,
+    existing_document: {
+      id: 90,
+      account_id: "123",
+      tax_protest_file_id: "30000000-0000-4000-8000-000000000003",
+      storage_provider: "postgres",
+      object_key: null,
+    },
     document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments + 1,
     total_bytes: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumBytes + 1,
     active_extractions: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions + 1,
@@ -358,15 +387,54 @@ test("Property Tax document quota permits idempotent duplicate re-uploads at cap
     uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
   });
   assert.equal(result.id, 91);
+  assert.equal(events.some(({ sql }) => /AS document_count/.test(sql)), false);
   assert.ok(events.some(({ sql }) => /INSERT INTO app\.assignment_documents/.test(sql)));
   assert.ok(events.some(({ sql }) => sql === "COMMIT"));
   assert.equal(events.some(({ sql }) => sql === "ROLLBACK"), false);
 });
 
-test("Property Tax quota rejection removes a newly verified private object", async () => {
+test("a stored R2 duplicate reuses its object without uploading a filename variant", async () => {
+  const existing = {
+    id: 90,
+    account_id: "123",
+    tax_protest_file_id: "30000000-0000-4000-8000-000000000003",
+    document_type: "district_evidence",
+    file_name: "original.pdf",
+    title: "Original evidence",
+    checksum_sha256: "a".repeat(64),
+    file_size_bytes: Buffer.byteLength("%PDF-duplicate-r2"),
+    storage_provider: "r2",
+    storage_status: "stored",
+    storage_bucket: "private-evidence",
+    object_key: "documents/original.pdf",
+    processing_status: "reviewed",
+    extraction_summary: {},
+  };
+  const { pool, events } = propertyTaxQuotaPool({ existing_document: existing });
+  const storage = {
+    configured: true,
+    putObject: async () => assert.fail("a stored duplicate must not be uploaded again"),
+    inspectObject: async () => assert.fail("a stored duplicate must not be inspected again"),
+  };
+  const result = await createAssignmentDocument(pool, {
+    accountId: "123",
+    taxProtestFileId: existing.tax_protest_file_id,
+    fileName: "renamed.pdf",
+    content: Buffer.from("%PDF-duplicate-r2"),
+    storage,
+  });
+  assert.equal(result.id, existing.id);
+  assert.equal(result.storage_provider, "r2");
+  assert.equal(result.file_name, "renamed.pdf");
+  assert.equal(events.some(({ sql }) => /INSERT INTO app\.assignment_documents/.test(sql)), false);
+  assert.ok(events.some(({ sql }) => /UPDATE app\.assignment_documents\s+SET title/.test(sql)));
+  assert.ok(events.some(({ sql }) => sql === "COMMIT"));
+});
+
+test("Property Tax persistence failure removes a newly verified private object", async () => {
   const content = Buffer.from("%PDF-rejected-private-object");
   const { pool } = propertyTaxQuotaPool({
-    document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments,
+    insert_error: new Error("synthetic_insert_failure"),
   });
   const storageEvents = [];
   const storage = {
@@ -392,11 +460,78 @@ test("Property Tax quota rejection removes a newly verified private object", asy
       storage,
       uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
     }),
-    { message: "assignment_document_storage_quota_exceeded" },
+    { message: "synthetic_insert_failure" },
   );
   assert.equal(storageEvents.length, 2);
   assert.equal(storageEvents[0][0], "put");
   assert.deepEqual(storageEvents[1], ["delete", storageEvents[0][1]]);
+});
+
+test("an ambiguous commit never deletes an object referenced by the committed row", async () => {
+  const usage = { commit_error: new Error("synthetic_commit_connection_loss") };
+  const { pool, events } = propertyTaxQuotaPool(usage);
+  const deleted = [];
+  const content = Buffer.from("%PDF-ambiguous-commit");
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject({ objectKey }) {
+      usage.committed_document = { object_key: objectKey };
+    },
+    async inspectObject() {
+      return { byte_size: content.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+    async deleteObject({ objectKey }) {
+      deleted.push(objectKey);
+    },
+  };
+  await assert.rejects(
+    createAssignmentDocument(pool, {
+      organizationId: "10000000-0000-4000-8000-000000000001",
+      accountId: "123",
+      taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+      fileName: "ambiguous.pdf",
+      content,
+      storage,
+      uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+    }),
+    { message: "synthetic_commit_connection_loss" },
+  );
+  assert.deepEqual(deleted, []);
+  assert.ok(events.some(({ sql }) => sql === "COMMIT"));
+  assert.ok(events.some(({ sql }) => sql === "ROLLBACK"));
+});
+
+test("an ambiguous commit deletes an object only after confirming the row is absent", async () => {
+  const usage = { commit_error: new Error("synthetic_commit_connection_loss") };
+  const { pool } = propertyTaxQuotaPool(usage);
+  const deleted = [];
+  const content = Buffer.from("%PDF-ambiguous-commit-without-row");
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject() {},
+    async inspectObject() {
+      return { byte_size: content.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+    async deleteObject({ objectKey }) {
+      deleted.push(objectKey);
+    },
+  };
+  await assert.rejects(
+    createAssignmentDocument(pool, {
+      organizationId: "10000000-0000-4000-8000-000000000001",
+      accountId: "123",
+      taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+      fileName: "uncommitted.pdf",
+      content,
+      storage,
+      uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+    }),
+    { message: "synthetic_commit_connection_loss" },
+  );
+  assert.equal(deleted.length, 1);
+  assert.match(deleted[0], /uncommitted\.pdf$/);
 });
 
 test("document uploads accept only non-empty PDF buffers", async () => {

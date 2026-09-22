@@ -90,34 +90,56 @@ function normalizeDocumentUploadQuota(value) {
   return { maximumDocuments, maximumBytes, maximumActiveExtractions };
 }
 
-async function enforceTaxProtestDocumentUploadQuota(client, {
+function assignmentDocumentIdentity({
+  accountId,
+  assignmentFileId,
+  uadWorkfileId,
   taxProtestFileId,
   checksum,
+}) {
+  return [
+    accountId,
+    positiveInteger(assignmentFileId),
+    uadWorkfileId || null,
+    taxProtestFileId || null,
+    checksum,
+  ];
+}
+
+async function findAssignmentDocumentByIdentity(client, identity) {
+  const { rows } = await client.query(
+    `SELECT *
+     FROM app.assignment_documents
+     WHERE account_id = $1
+       AND COALESCE(assignment_file_id, 0) = COALESCE($2::bigint, 0)
+       AND COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid)
+         = COALESCE($3::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       AND COALESCE(tax_protest_file_id, '00000000-0000-0000-0000-000000000000'::uuid)
+         = COALESCE($4::uuid, '00000000-0000-0000-0000-000000000000'::uuid)
+       AND checksum_sha256 = $5
+     FOR UPDATE`,
+    identity,
+  );
+  return rows[0] || null;
+}
+
+async function enforceTaxProtestDocumentUploadQuota(client, {
+  taxProtestFileId,
   byteLength,
   quota,
 }) {
   if (!taxProtestFileId) {
     throw new TypeError("assignment_document_upload_quota_scope_required");
   }
-  const lockKey = `assignment-document-upload:${taxProtestFileId}`;
-  await client.query(
-    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
-    [lockKey],
-  );
   const { rows } = await client.query(
     `SELECT
-       EXISTS (
-         SELECT 1
-         FROM app.assignment_documents
-         WHERE tax_protest_file_id = $1 AND checksum_sha256 = $2
-       ) AS duplicate_exists,
        (
          SELECT COUNT(*)::integer
          FROM (
            SELECT 1
            FROM app.assignment_documents
            WHERE tax_protest_file_id = $1
-           LIMIT $3
+           LIMIT $2
          ) AS bounded_documents
        ) AS document_count,
        (
@@ -126,7 +148,7 @@ async function enforceTaxProtestDocumentUploadQuota(client, {
            SELECT file_size_bytes
            FROM app.assignment_documents
            WHERE tax_protest_file_id = $1
-           LIMIT $3
+           LIMIT $2
          ) AS bounded_documents
        ) AS total_bytes,
        (
@@ -135,21 +157,18 @@ async function enforceTaxProtestDocumentUploadQuota(client, {
            SELECT 1
            FROM app.assignment_documents
            WHERE tax_protest_file_id = $1
-             AND processing_status = ANY($5::text[])
-           LIMIT $4
+             AND processing_status = ANY($4::text[])
+           LIMIT $3
          ) AS bounded_active_documents
        ) AS active_extractions`,
     [
       taxProtestFileId,
-      checksum,
       quota.maximumDocuments + 1,
       quota.maximumActiveExtractions + 1,
       ACTIVE_DOCUMENT_PROCESSING_STATUSES,
     ],
   );
   const usage = rows[0] || {};
-  const duplicateExists = usage.duplicate_exists === true || usage.duplicate_exists === "t";
-  if (duplicateExists) return { duplicateExists: true };
   const documentCount = Number(usage.document_count || 0);
   const totalBytes = Number(usage.total_bytes || 0);
   const activeExtractions = Number(usage.active_extractions || 0);
@@ -159,17 +178,15 @@ async function enforceTaxProtestDocumentUploadQuota(client, {
     || totalBytes + byteLength > quota.maximumBytes
   ) {
     return {
-      duplicateExists: false,
       rejection: "assignment_document_storage_quota_exceeded",
     };
   }
   if (activeExtractions >= quota.maximumActiveExtractions) {
     return {
-      duplicateExists: false,
       rejection: "assignment_document_processing_capacity_exceeded",
     };
   }
-  return { duplicateExists: false, rejection: null };
+  return { rejection: null };
 }
 
 function normalizedDocumentStreetAddress(value) {
@@ -747,165 +764,231 @@ export async function createAssignmentDocument(pool, {
   const safeTitle = cleanText(title, 300) || safeFileName;
   const checksum = createHash("sha256").update(pdfContent).digest("hex");
   const normalizedUploadQuota = normalizeDocumentUploadQuota(uploadQuota);
-  let quotaClient = null;
-  let quotaTransactionStarted = false;
-  let quotaAdmission = null;
+  if (normalizedUploadQuota && !taxProtestFileId) {
+    throw new TypeError("assignment_document_upload_quota_scope_required");
+  }
+  const identity = assignmentDocumentIdentity({
+    accountId,
+    assignmentFileId,
+    uadWorkfileId,
+    taxProtestFileId,
+    checksum,
+  });
+  const needsTransaction = Boolean(normalizedUploadQuota || storage?.configured);
+  let transactionClient = null;
+  let transactionStarted = false;
+  let commitAttempted = false;
   let uploadedObjectKey = null;
   try {
-  let storedContent = pdfContent;
-  let storageProvider = "postgres";
-  let storageStatus = "stored";
-  let storageBucket = null;
-  let objectKey = null;
-  let storageEtag = null;
-  let storageContentType = null;
-  let storageVerifiedAt = null;
-  let storageLastError = null;
-  if (storage?.configured) {
-    try {
-      objectKey = buildAssignmentDocumentObjectKey({
-        organizationId,
-        accountId,
-        assignmentFileId,
-        uadWorkfileId,
-        taxProtestFileId,
-        checksumSha256: checksum,
-        fileName: safeFileName,
-      });
-      await storage.putObject({
+    let existing = null;
+    if (needsTransaction) {
+      if (typeof pool.connect !== "function") {
+        throw new TypeError("assignment_document_upload_transaction_required");
+      }
+      transactionClient = await pool.connect();
+      await transactionClient.query("BEGIN");
+      transactionStarted = true;
+      const lockKey = normalizedUploadQuota
+        ? `assignment-document-upload:${taxProtestFileId}`
+        : `assignment-document-identity:${identity.map((value) => value ?? "").join(":")}`;
+      await transactionClient.query(
+        "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+        [lockKey],
+      );
+      existing = await findAssignmentDocumentByIdentity(
+        transactionClient,
+        identity,
+      );
+      if (existing?.storage_provider === "r2" && existing.object_key) {
+        const { rows } = await transactionClient.query(
+          `UPDATE app.assignment_documents
+           SET title = $2,
+               file_name = $3,
+               document_type = CASE WHEN document_type = 'other' THEN $4 ELSE document_type END,
+               uploaded_by = COALESCE($5, uploaded_by),
+               updated_at = now()
+           WHERE id = $1
+           RETURNING *`,
+          [existing.id, safeTitle, safeFileName, normalizedType, cleanText(uploadedBy, 200)],
+        );
+        commitAttempted = true;
+        await transactionClient.query("COMMIT");
+        transactionStarted = false;
+        return publicDocument(rows[0]);
+      }
+      if (normalizedUploadQuota && !existing) {
+        const admission = await enforceTaxProtestDocumentUploadQuota(transactionClient, {
+          taxProtestFileId,
+          byteLength: pdfByteLength,
+          quota: normalizedUploadQuota,
+        });
+        if (admission.rejection) throw new Error(admission.rejection);
+      }
+    }
+
+    let storedContent = pdfContent;
+    let storageProvider = "postgres";
+    let storageStatus = "stored";
+    let storageBucket = null;
+    let objectKey = null;
+    let storageEtag = null;
+    let storageContentType = null;
+    let storageVerifiedAt = null;
+    let storageLastError = null;
+    if (storage?.configured) {
+      let stagedObjectKey = null;
+      try {
+        objectKey = buildAssignmentDocumentObjectKey({
+          organizationId,
+          accountId,
+          assignmentFileId,
+          uadWorkfileId,
+          taxProtestFileId,
+          checksumSha256: checksum,
+          fileName: safeFileName,
+        });
+        stagedObjectKey = objectKey;
+        await storage.putObject({
+          objectKey,
+          contentType: "application/pdf",
+          body: pdfContent,
+        });
+        const inspected = await storage.inspectObject({ objectKey });
+        const verified = verifiedR2Object(inspected, {
+          content: pdfContent,
+          checksumSha256: checksum,
+          byteLength: pdfByteLength,
+        });
+        storedContent = null;
+        storageProvider = "r2";
+        storageBucket = storage.bucket;
+        storageEtag = verified.storage_etag;
+        storageContentType = verified.storage_content_type;
+        storageVerifiedAt = new Date();
+        uploadedObjectKey = objectKey;
+      } catch (error) {
+        if (stagedObjectKey && typeof storage.deleteObject === "function") {
+          try {
+            await storage.deleteObject({ objectKey: stagedObjectKey });
+          } catch {
+            logger.warn?.("[documents] failed to clean up an unverified private document upload");
+          }
+        }
+        storageStatus = "migration_failed";
+        storageLastError = cleanText(error?.message || error, 2_000);
+        logger.warn?.(
+          "[documents] private object upload failed; retaining PostgreSQL fallback",
+          storageLastError,
+        );
+      }
+    }
+    const { rows } = await (transactionClient || pool).query(
+      `INSERT INTO app.assignment_documents (
+         account_id, assignment_file_id, uad_workfile_id, tax_protest_file_id, report_file_id,
+         document_type, title, file_name,
+         content_type, content, checksum_sha256, file_size_bytes, uploaded_by,
+         storage_provider, storage_status, storage_bucket, object_key,
+         storage_etag, storage_content_type, storage_verified_at, storage_last_error
+       ) VALUES (
+         $1, $2, $3, $4, $5, $6, $7, $8, 'application/pdf', $9, $10, $11, $12,
+         $13, $14, $15, $16, $17, $18, $19, $20
+       )
+       ON CONFLICT (
+         account_id,
+         (COALESCE(assignment_file_id, 0)),
+         (COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+         (COALESCE(tax_protest_file_id, '00000000-0000-0000-0000-000000000000'::uuid)),
+         checksum_sha256
+       ) DO UPDATE SET
+         title = EXCLUDED.title,
+         file_name = EXCLUDED.file_name,
+         document_type = CASE
+           WHEN app.assignment_documents.document_type = 'other' THEN EXCLUDED.document_type
+           ELSE app.assignment_documents.document_type
+         END,
+         uploaded_by = COALESCE(EXCLUDED.uploaded_by, app.assignment_documents.uploaded_by),
+         content = CASE
+           WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
+           ELSE app.assignment_documents.content
+         END,
+         storage_provider = CASE
+           WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_provider
+           ELSE app.assignment_documents.storage_provider
+         END,
+         storage_status = CASE
+           WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_status
+           ELSE app.assignment_documents.storage_status
+         END,
+         storage_bucket = COALESCE(EXCLUDED.storage_bucket, app.assignment_documents.storage_bucket),
+         object_key = COALESCE(EXCLUDED.object_key, app.assignment_documents.object_key),
+         storage_etag = COALESCE(EXCLUDED.storage_etag, app.assignment_documents.storage_etag),
+         storage_content_type = COALESCE(
+           EXCLUDED.storage_content_type,
+           app.assignment_documents.storage_content_type
+         ),
+         storage_verified_at = COALESCE(
+           EXCLUDED.storage_verified_at,
+           app.assignment_documents.storage_verified_at
+         ),
+         storage_last_error = CASE
+           WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
+           ELSE app.assignment_documents.storage_last_error
+         END,
+         updated_at = now()
+       RETURNING *`,
+      [
+        ...identity.slice(0, 4),
+        reportFileId || null,
+        normalizedType,
+        safeTitle,
+        safeFileName,
+        storedContent,
+        checksum,
+        pdfByteLength,
+        cleanText(uploadedBy, 200),
+        storageProvider,
+        storageStatus,
+        storageBucket,
         objectKey,
-        contentType: "application/pdf",
-        body: pdfContent,
-      });
-      const inspected = await storage.inspectObject({ objectKey });
-      const verified = verifiedR2Object(inspected, {
-        content: pdfContent,
-        checksumSha256: checksum,
-        byteLength: pdfByteLength,
-      });
-      storedContent = null;
-      storageProvider = "r2";
-      storageBucket = storage.bucket;
-      storageEtag = verified.storage_etag;
-      storageContentType = verified.storage_content_type;
-      storageVerifiedAt = new Date();
-      uploadedObjectKey = objectKey;
-    } catch (error) {
-      storageStatus = "migration_failed";
-      storageLastError = cleanText(error?.message || error, 2_000);
-      logger.warn?.("[documents] private object upload failed; retaining PostgreSQL fallback", storageLastError);
-    }
-  }
-  if (normalizedUploadQuota) {
-    if (typeof pool.connect !== "function") {
-      throw new TypeError("assignment_document_upload_quota_transaction_required");
-    }
-    quotaClient = await pool.connect();
-    await quotaClient.query("BEGIN");
-    quotaTransactionStarted = true;
-    quotaAdmission = await enforceTaxProtestDocumentUploadQuota(quotaClient, {
-      taxProtestFileId,
-      checksum,
-      byteLength: pdfByteLength,
-      quota: normalizedUploadQuota,
-    });
-    if (quotaAdmission.rejection) throw new Error(quotaAdmission.rejection);
-  }
-  const { rows } = await (quotaClient || pool).query(
-    `INSERT INTO app.assignment_documents (
-       account_id, assignment_file_id, uad_workfile_id, tax_protest_file_id, report_file_id,
-       document_type, title, file_name,
-       content_type, content, checksum_sha256, file_size_bytes, uploaded_by,
-       storage_provider, storage_status, storage_bucket, object_key,
-       storage_etag, storage_content_type, storage_verified_at, storage_last_error
-     ) VALUES (
-       $1, $2, $3, $4, $5, $6, $7, $8, 'application/pdf', $9, $10, $11, $12,
-       $13, $14, $15, $16, $17, $18, $19, $20
-     )
-     ON CONFLICT (
-       account_id,
-       (COALESCE(assignment_file_id, 0)),
-       (COALESCE(uad_workfile_id, '00000000-0000-0000-0000-000000000000'::uuid)),
-       (COALESCE(tax_protest_file_id, '00000000-0000-0000-0000-000000000000'::uuid)),
-       checksum_sha256
-     ) DO UPDATE SET
-       title = EXCLUDED.title,
-       file_name = EXCLUDED.file_name,
-       document_type = CASE
-         WHEN app.assignment_documents.document_type = 'other' THEN EXCLUDED.document_type
-         ELSE app.assignment_documents.document_type
-       END,
-       uploaded_by = COALESCE(EXCLUDED.uploaded_by, app.assignment_documents.uploaded_by),
-       content = CASE
-         WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
-         ELSE app.assignment_documents.content
-       END,
-       storage_provider = CASE
-         WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_provider
-         ELSE app.assignment_documents.storage_provider
-       END,
-       storage_status = CASE
-         WHEN EXCLUDED.storage_provider = 'r2' THEN EXCLUDED.storage_status
-         ELSE app.assignment_documents.storage_status
-       END,
-       storage_bucket = COALESCE(EXCLUDED.storage_bucket, app.assignment_documents.storage_bucket),
-       object_key = COALESCE(EXCLUDED.object_key, app.assignment_documents.object_key),
-       storage_etag = COALESCE(EXCLUDED.storage_etag, app.assignment_documents.storage_etag),
-       storage_content_type = COALESCE(
-         EXCLUDED.storage_content_type,
-         app.assignment_documents.storage_content_type
-       ),
-       storage_verified_at = COALESCE(
-         EXCLUDED.storage_verified_at,
-         app.assignment_documents.storage_verified_at
-       ),
-       storage_last_error = CASE
-         WHEN EXCLUDED.storage_provider = 'r2' THEN NULL
-         ELSE app.assignment_documents.storage_last_error
-       END,
-       updated_at = now()
-     RETURNING *`,
-    [
-      accountId,
-      positiveInteger(assignmentFileId),
-      uadWorkfileId || null,
-      taxProtestFileId || null,
-      reportFileId || null,
-      normalizedType,
-      safeTitle,
-      safeFileName,
-      storedContent,
-      checksum,
-      pdfByteLength,
-      cleanText(uploadedBy, 200),
-      storageProvider,
-      storageStatus,
-      storageBucket,
-      objectKey,
-      storageEtag,
-      storageContentType,
-      storageVerifiedAt,
-      storageLastError,
-    ],
-  );
-    if (quotaTransactionStarted) {
-      await quotaClient.query("COMMIT");
-      quotaTransactionStarted = false;
+        storageEtag,
+        storageContentType,
+        storageVerifiedAt,
+        storageLastError,
+      ],
+    );
+    if (transactionStarted) {
+      commitAttempted = true;
+      await transactionClient.query("COMMIT");
+      transactionStarted = false;
     }
     return publicDocument(rows[0]);
   } catch (error) {
-    if (quotaTransactionStarted) {
+    let rollbackConfirmed = false;
+    if (transactionStarted) {
       try {
-        await quotaClient.query("ROLLBACK");
+        await transactionClient.query("ROLLBACK");
+        rollbackConfirmed = true;
       } catch {
         // Preserve the original admission or persistence failure.
       }
     }
-    if (
-      uploadedObjectKey
-      && quotaAdmission?.duplicateExists === false
-      && typeof storage?.deleteObject === "function"
-    ) {
+    let cleanupAllowed = Boolean(
+      uploadedObjectKey && typeof storage?.deleteObject === "function",
+    );
+    const outcomeAmbiguous = transactionStarted && (commitAttempted || !rollbackConfirmed);
+    if (outcomeAmbiguous) {
+      transactionClient?.release?.(error);
+      transactionClient = null;
+    }
+    if (cleanupAllowed && outcomeAmbiguous) {
+      try {
+        const referenced = await findAssignmentDocumentByIdentity(pool, identity);
+        cleanupAllowed = referenced?.object_key !== uploadedObjectKey;
+      } catch {
+        cleanupAllowed = false;
+      }
+    }
+    if (cleanupAllowed) {
       try {
         await storage.deleteObject({ objectKey: uploadedObjectKey });
       } catch {
@@ -914,7 +997,7 @@ export async function createAssignmentDocument(pool, {
     }
     throw error;
   } finally {
-    quotaClient?.release?.();
+    transactionClient?.release?.();
   }
 }
 

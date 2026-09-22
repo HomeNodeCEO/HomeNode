@@ -169,7 +169,13 @@ function cookies(req) {
   for (const part of String(req.get?.("cookie") || "").split(";")) {
     const separator = part.indexOf("=");
     if (separator < 1) continue;
-    result.set(part.slice(0, separator).trim(), decodeURIComponent(part.slice(separator + 1).trim()));
+    const name = part.slice(0, separator).trim();
+    try {
+      result.set(name, decodeURIComponent(part.slice(separator + 1).trim()));
+    } catch {
+      // A malformed escape in one caller-controlled cookie must not throw out
+      // of authentication middleware or hide other independently valid cookies.
+    }
   }
   return result;
 }

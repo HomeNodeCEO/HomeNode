@@ -697,6 +697,7 @@ function AddressHero({
   const subjectYearBuilt = parseNumber(
     improvement?.effective_year_built ?? improvement?.year_built,
   );
+  const recordedSubjectYearBuilt = parseNumber(improvement?.year_built);
   useEffect(() => {
     if (!accountId || !activeAssignmentFile || !detail || activeAssignmentFile.workfile?.status === 'signed') return;
     const key = `${accountId}:${activeAssignmentFile.id}`;
@@ -711,12 +712,12 @@ function AddressHero({
       neighborhood: detail.property_location?.neighborhood,
       city: detail.property_location?.city,
       county: detail.property_location?.county,
-      yearBuilt: parseNumber(improvement?.year_built),
+      yearBuilt: recordedSubjectYearBuilt,
       housingType: housing?.housing_type,
     });
     setAssignmentDraft(current => current.subject_neighborhood_summary ? current
       : { ...current, subject_neighborhood_summary: summary });
-  }, [accountId, activeAssignmentFile, detail, subjectYearBuilt, housing?.housing_type]);
+  }, [accountId, activeAssignmentFile, detail, recordedSubjectYearBuilt, housing?.housing_type]);
   const subjectAge = reportedSubjectAge ?? (
     subjectYearBuilt !== null
       ? Math.max(0, new Date().getFullYear() - subjectYearBuilt)

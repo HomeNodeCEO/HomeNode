@@ -175,6 +175,21 @@ async function insertUadTarget(client, {
   return { uadWorkfileId: workfile.id, fileNumber: workfile.file_number };
 }
 
+export async function captureReplicationSource(client, sourceReportFileId, actorUserId, {
+  registerOriginalReport = registerOriginalAppraisalReport,
+  captureSubjectSnapshot = captureAppraisalSubjectSnapshot,
+} = {}) {
+  const registeredSource = await registerOriginalReport(client, sourceReportFileId, {
+    actorUserId,
+    captureReason: "replication_source_registration",
+  });
+  const sourceSnapshot = await captureSubjectSnapshot(client, sourceReportFileId, {
+    actorUserId,
+    captureReason: "replication_source_capture",
+  });
+  return { registeredSource, sourceSnapshot };
+}
+
 export async function replicateAppraisalFile(pool, {
   accountId: accountIdValue,
   sourceReportFileId: sourceReportFileIdValue,
@@ -269,9 +284,11 @@ export async function replicateAppraisalFile(pool, {
       throw new Error("same_assignment_requires_alternate_workflow");
     }
 
-    const registeredSource = await registerOriginalAppraisalReport(client, source.id, {
-      captureReason: "replication_source_registration",
-    });
+    const { registeredSource, sourceSnapshot } = await captureReplicationSource(
+      client,
+      source.id,
+      actorUserId,
+    );
     const caseResult = await client.query(
       `SELECT effective_date, inspection_date
          FROM app.appraisal_cases
@@ -283,10 +300,6 @@ export async function replicateAppraisalFile(pool, {
     if (request.mode === "same_assignment_alternate") {
       assertSameAssignmentReplicationDates(sourceCase, request);
     }
-    const sourceSnapshot = await captureAppraisalSubjectSnapshot(client, source.id, {
-      captureReason: "replication_source_capture",
-    });
-
     const fileAllocation = await availableFileNumber(client, {
       accountId,
       organizationId: source.organization_id,
@@ -359,6 +372,7 @@ export async function replicateAppraisalFile(pool, {
       );
     } else {
       const registered = await registerOriginalAppraisalReport(client, targetReportFileId, {
+        actorUserId,
         effectiveDate: request.effectiveDate,
         inspectionDate: request.inspectionDate,
         captureReason: "new_assignment_current_source_capture",

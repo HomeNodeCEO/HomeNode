@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   assertSameAssignmentReplicationDates,
+  captureReplicationSource,
   replicateAppraisalFile,
 } from "../src/services/appraisalReplication.js";
 
@@ -107,6 +108,45 @@ test("same-assignment replication dates must match existing source-case dates", 
     ),
     /same_assignment_inspection_date_conflict/,
   );
+});
+
+test("replication source snapshots record the authenticated replicating actor", async () => {
+  const client = {};
+  const calls = [];
+  const registeredSource = { appraisalCaseId: IDS.appraisalCase };
+  const sourceSnapshot = { id: IDS.snapshot };
+  const result = await captureReplicationSource(client, IDS.source, IDS.actor, {
+    async registerOriginalReport(receivedClient, reportFileId, input) {
+      calls.push({ operation: "register", receivedClient, reportFileId, input });
+      return registeredSource;
+    },
+    async captureSubjectSnapshot(receivedClient, reportFileId, input) {
+      calls.push({ operation: "capture", receivedClient, reportFileId, input });
+      return sourceSnapshot;
+    },
+  });
+
+  assert.deepEqual(result, { registeredSource, sourceSnapshot });
+  assert.deepEqual(calls, [
+    {
+      operation: "register",
+      receivedClient: client,
+      reportFileId: IDS.source,
+      input: {
+        actorUserId: IDS.actor,
+        captureReason: "replication_source_registration",
+      },
+    },
+    {
+      operation: "capture",
+      receivedClient: client,
+      reportFileId: IDS.source,
+      input: {
+        actorUserId: IDS.actor,
+        captureReason: "replication_source_capture",
+      },
+    },
+  ]);
 });
 
 test("a committed replication retry returns the original file when history enrichment is unavailable", async () => {

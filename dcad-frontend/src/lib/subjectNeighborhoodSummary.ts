@@ -3,7 +3,7 @@
 export function buildSubjectNeighborhoodSummary(input: {
   address?: string | null; subdivision?: string | null; neighborhood?: string | null;
   city?: string | null; county?: string | null;
-  yearBuilt?: number | null; housingType?: string | null;
+  yearBuilt?: number | null; housingType?: string | null; effectiveDate?: string | null;
 }): string {
   const clean = (value?: string | null) => typeof value === 'string'
     ? value.replace(/\s+/g, ' ').trim().slice(0, 120) : '';
@@ -17,8 +17,14 @@ export function buildSubjectNeighborhoodSummary(input: {
   const housing = clean(input.housingType).replace(/[_-]+/g, ' ').toLowerCase()
     .replace(/single family/g, 'single-family');
   if (housing) parts.push(`The subject's recorded housing type is ${housing}.`);
-  if (Number.isSafeInteger(input.yearBuilt) && input.yearBuilt! >= 1800 && input.yearBuilt! <= 2200) {
+  const effectiveYear = /^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate || '')
+    ? Number(input.effectiveDate!.slice(0, 4)) : null;
+  if (Number.isSafeInteger(input.yearBuilt) && input.yearBuilt! >= 1800 && input.yearBuilt! <= 2200
+    && (effectiveYear === null || input.yearBuilt! <= effectiveYear)) {
     parts.push(`The recorded year built for the subject is ${input.yearBuilt}.`);
+  }
+  if (effectiveYear !== null && effectiveYear < new Date().getFullYear() - 1) {
+    parts.push(`This current-CAD description does not establish the neighborhood's characteristics on the retrospective effective date of ${input.effectiveDate}; historical conditions require separate verification.`);
   }
   parts.push('Potential competing properties should be compared for similar housing characteristics, size, age, condition, quality, and amenities. '
     + 'Subdivision names alone do not establish competitive equivalence. Properties outside the recorded subdivision may also compete with the subject, while some properties within it may be superior or inferior.');

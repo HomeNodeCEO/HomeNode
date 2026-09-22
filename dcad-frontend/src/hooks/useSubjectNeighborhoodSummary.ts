@@ -23,7 +23,7 @@ export function useSubjectSummary(
     const summary = buildSubjectNeighborhoodSummary({
       address: location.address, subdivision: location.subdivision,
       neighborhood: location.neighborhood, city: location.city, county: location.county,
-      yearBuilt, housingType,
+      yearBuilt, housingType, effectiveDate: file.effective_date,
     });
     setDraft(current => current.subject_neighborhood_summary ? current
       : { ...current, subject_neighborhood_summary: summary });

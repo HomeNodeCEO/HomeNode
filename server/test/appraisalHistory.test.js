@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  getPreviousAppraisalFileById,
   listPreviousAppraisalFiles,
   normalizeAppraisalHistoryPage,
   normalizeReplicationRequest,
@@ -46,6 +47,7 @@ test("appraisal-history pagination is bounded and cursor based", async () => {
   assert.equal(calls.length, 1, "a history page must not run per-row live-data enrichment queries");
   assert.match(calls[0].sql, /LIMIT \$10/);
   assert.equal(calls[0].values[9], 3);
+  assert.equal(calls[0].values[10], null);
   assert.equal(first.files.length, 2);
   assert.equal(first.page.has_more, true);
   assert.ok(first.page.next_cursor);
@@ -56,6 +58,33 @@ test("appraisal-history pagination is bounded and cursor based", async () => {
     createdAt: "2026-09-19T00:00:00.000Z",
     id: HISTORY_FILE_IDS[1],
   });
+});
+
+test("replication enrichment reads its exact historical file in one bounded query", async () => {
+  const calls = [];
+  const targetId = HISTORY_FILE_IDS[2];
+  const pool = {
+    async query(sql, values) {
+      calls.push({ sql, values });
+      return { rows: [{
+        id: targetId,
+        account_id: "subject-1",
+        workflow_type: "custom_appraisal",
+        file_number: "HISTORICAL-TARGET",
+        custom_assignment_file_id: 19,
+        created_at: "2026-08-01T00:00:00.000Z",
+        updated_at: "2026-08-02T00:00:00.000Z",
+        subject_data: { account: { legal_description: "LOT 19" } },
+      }] };
+    },
+  };
+  const file = await getPreviousAppraisalFileById(pool, "subject-1", targetId);
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].sql, /report_file\.id = \$11::uuid/);
+  assert.equal(calls[0].values[9], 2);
+  assert.equal(calls[0].values[10], targetId);
+  assert.equal(file.id, targetId);
+  assert.equal(file.file_number, "HISTORICAL-TARGET");
 });
 
 test("replication requests require an explicit same-assignment attestation", () => {

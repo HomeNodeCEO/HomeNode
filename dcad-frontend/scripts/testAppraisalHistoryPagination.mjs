@@ -13,7 +13,8 @@ const componentSource = await readFile(
 );
 
 test('appraisal history uses bounded cursor pagination', () => {
-  assert.match(historyApiSource, /cursor \? `\?cursor=\$\{encodeURIComponent\(cursor\)\}` : ''/);
+  assert.match(historyApiSource, /\{ cursor: cursor \|\| undefined \}/);
+  assert.doesNotMatch(historyApiSource, /\?cursor=/);
   assert.match(apiSource, /next_cursor: string \| null/);
   assert.match(componentSource, /getPreviousAppraisalFiles\(accountId, nextCursor\)/);
   assert.match(componentSource, /new Map\(current\.map\(\(file\) => \[file\.id, file\]\)\)/);

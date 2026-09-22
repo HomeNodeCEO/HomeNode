@@ -539,10 +539,7 @@ export function summarizeAppraisalHistoryRow(row) {
   };
 }
 
-export async function listPreviousAppraisalFiles(pool, accountIdValue, accessScope = null, pageInput = {}) {
-  const accountId = String(accountIdValue || "").trim();
-  if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
-  const page = normalizeAppraisalHistoryPage(pageInput);
+async function queryAppraisalHistoryRows(pool, accountId, accessScope, page, reportFileId = null) {
   const { rows } = await pool.query(
     `SELECT report_file.*,
             case_record.effective_date,
@@ -620,6 +617,7 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue, accessSco
           OR (report_file.updated_at, report_file.created_at, report_file.id)
              < ($7::timestamptz, $8::timestamptz, $9::uuid)
         )
+        AND ($11::uuid IS NULL OR report_file.id = $11::uuid)
       ORDER BY report_file.updated_at DESC, report_file.created_at DESC, report_file.id DESC
       LIMIT $10`,
     [
@@ -633,8 +631,17 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue, accessSco
       page.cursor?.createdAt || null,
       page.cursor?.id || null,
       page.limit + 1,
+      reportFileId,
     ],
   );
+  return rows;
+}
+
+export async function listPreviousAppraisalFiles(pool, accountIdValue, accessScope = null, pageInput = {}) {
+  const accountId = String(accountIdValue || "").trim();
+  if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
+  const page = normalizeAppraisalHistoryPage(pageInput);
+  const rows = await queryAppraisalHistoryRows(pool, accountId, accessScope, page);
   const hasMore = rows.length > page.limit;
   const pageRows = rows.slice(0, page.limit);
   const lastRow = pageRows.at(-1);
@@ -647,4 +654,24 @@ export async function listPreviousAppraisalFiles(pool, accountIdValue, accessSco
       next_cursor: hasMore && lastRow ? encodeAppraisalHistoryCursor(lastRow) : null,
     },
   };
+}
+
+export async function getPreviousAppraisalFileById(
+  pool,
+  accountIdValue,
+  reportFileIdValue,
+  accessScope = null,
+) {
+  const accountId = String(accountIdValue || "").trim();
+  if (!accountId || accountId.length > 100) throw new Error("invalid_account_id");
+  const reportFileId = normalizeAppraisalReportFileId(reportFileIdValue);
+  const page = normalizeAppraisalHistoryPage({ limit: 1 });
+  const rows = await queryAppraisalHistoryRows(
+    pool,
+    accountId,
+    accessScope,
+    page,
+    reportFileId,
+  );
+  return rows[0] ? summarizeAppraisalHistoryRow(rows[0]) : null;
 }

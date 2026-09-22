@@ -122,8 +122,7 @@ test('entrypoint validates once before pool/resources and mounts once after boun
   assert.ok(configuration < source.indexOf('new pg.Pool('));
   assert.ok(configuration < source.indexOf('createApplicationStartupResources({'));
   assert.ok(mount > source.indexOf('mountApplicationRouteBoundary(app,'));
-  assert.ok(mount > source.indexOf('app.use(createAssignmentWorkfileReadRouter('));
-  assert.ok(mount > source.indexOf('app.use(createAssignmentWorkfileMutationRouter('));
+  assert.ok(mount > source.indexOf('app.use(createAssignmentWorkfileRouter('));
   assert.ok(mount < source.indexOf('app.use(createGeographyOperationsRouter('));
   assert.equal(source.match(/createCustomNeighborhoodConfiguration\(process\.env\)/g)?.length, 1);
   assert.equal(source.match(/app\.use\(createCustomNeighborhoodApplicationRouter\(/g)?.length, 1);

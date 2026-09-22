@@ -61,7 +61,8 @@ import {
   reconciledMedianDaysOnMarket,
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
-import DeferredReportSection from "@/components/DeferredReportSection";
+import DeferredReportSection, { LazyReportContent } from "@/components/DeferredReportSection";
+import Workfile from "@/components/AppraisalWorkfileLauncher";
 import PreviousAppraisalFilesContent from "@/components/PreviousAppraisalFiles";
 import ReportTypeChooser from "@/components/ReportTypeChooser";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
@@ -88,7 +89,6 @@ import {
 const AssignmentDocumentCenter = memo(
   lazy(() => import("@/components/AssignmentDocumentCenter")),
 );
-const AppraisalWorkfileModal = lazy(() => import("@/components/AppraisalWorkfileModal"));
 const AssignmentPhotoCenter = memo(
   lazy(() => import("@/components/AssignmentPhotoCenter")),
 );
@@ -106,20 +106,7 @@ const ListingsContractsSalesContent = lazy(
 );
 const PreviousAppraisalFiles = memo(PreviousAppraisalFilesContent);
 
-function LazyReportContent({ label, className = "" }: { label: string; className?: string }) {
-  return (
-    <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 ${className}`}>
-      Loading {label}...
-    </div>
-  );
-}
-
-interface SubjectCarouselPhoto {
-  id: string;
-  url: string;
-  label: string;
-  detail: string;
-}
+type SubjectCarouselPhoto = { id:string; url:string; label:string; detail:string };
 import {
   displayValue,
   formatBaths,
@@ -189,7 +176,6 @@ function AddressHero({
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
   const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
-  const [workfileModalOpen, setWorkfileModalOpen] = useState(false);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
   const assignmentDirtyRef = useRef(false);
@@ -1730,14 +1716,7 @@ function AddressHero({
           >
             {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
           </button>
-          <button
-            type="button"
-            className="hn-action-gold btn btn-sm normal-case rounded-lg shadow-sm"
-            onClick={() => setWorkfileModalOpen(true)}
-            disabled={!activeAssignmentFile}
-          >
-            Workfile
-          </button>
+          <Workfile accountId={accountId || ""} assignmentFile={activeAssignmentFile} getEditorKey={editorKeyForSave} onAssignmentApplied={applyConfirmedDocumentApplication} subjectAddress={documentReviewSubjectAddress} />
           <button
             type="button"
             className="hn-action-gold btn btn-outline btn-sm normal-case rounded-lg shadow-sm"
@@ -3452,20 +3431,6 @@ function AddressHero({
           }}
           onClose={() => setAssignmentChooserOpen(false)}
         />
-      ) : null}
-      {workfileModalOpen && activeAssignmentFile ? (
-        <Suspense fallback={null}>
-          <AppraisalWorkfileModal
-            accountId={accountId || ""}
-            assignmentFileId={activeAssignmentFile.id}
-            fileNumber={activeAssignmentFile.file_number}
-            getEditorKey={editorKeyForSave}
-            onClose={() => setWorkfileModalOpen(false)}
-            onCustomAssignmentApplied={applyConfirmedDocumentApplication}
-            open
-            subjectAddress={documentReviewSubjectAddress}
-          />
-        </Suspense>
       ) : null}
     </div>
   );

@@ -3,18 +3,20 @@ import { createPortal } from 'react-dom';
 
 import AssignmentDocumentCenter from '@/components/AssignmentDocumentCenter';
 import {
+  getAssignmentFiles,
+  getCustomAppraisalWorkfile,
+  type AppraisalAssignmentFile,
+  type AssignmentDocumentApplication,
+} from '@/lib/api';
+import {
   createAssignmentWorkfileLink,
   deleteAssignmentWorkfileItem,
   downloadAssignmentWorkfileItem,
-  getAssignmentFiles,
   getAssignmentWorkfileItems,
-  getCustomAppraisalWorkfile,
   uploadAssignmentWorkfileItem,
-  type AppraisalAssignmentFile,
-  type AssignmentDocumentApplication,
   type AssignmentWorkfileItem,
   type AssignmentWorkfileItemScope,
-} from '@/lib/api';
+} from '@/lib/assignmentWorkfileItems';
 import {
   getUadEditor,
   listUadAssets,

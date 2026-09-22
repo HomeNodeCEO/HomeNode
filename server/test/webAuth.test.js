@@ -3,7 +3,11 @@ import test from "node:test";
 
 import express from "express";
 
-import { createWebAuthRouter, createWebSessionAuthenticator } from "../src/security/webAuth.js";
+import {
+  createWebAuthRouter,
+  createWebSessionAuthenticator,
+  WEB_SESSION_COOKIE,
+} from "../src/security/webAuth.js";
 
 const CONFIGURED_ENVIRONMENT = Object.freeze({
   OIDC_WEB_CLIENT_ID: "client-id",
@@ -77,7 +81,65 @@ test("web auth callback and logout handlers enforce their router-owned limiter",
     const limited = await fetch(`${baseUrl}/api/auth/logout`, { method: "POST" });
     assert.equal(first.status, 204);
     assert.equal(limited.status, 429);
+    assert.equal(limited.headers.get("cache-control"), "no-store");
   }, { rateLimiterOptions: strictTestRateLimiter() });
+});
+
+test("logout preserves a retry path when server-side revocation fails", async () => {
+  const token = "copied-session-token";
+  const queries = [];
+  const warnings = [];
+  const pool = {
+    async query(sql, values) {
+      queries.push({ sql, values });
+      if (queries.length === 1) throw new Error("private database connection details");
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const request = () => fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: `${WEB_SESSION_COOKIE}=${token}`,
+        origin: CONFIGURED_ENVIRONMENT.WEB_APP_URL,
+      },
+    });
+    const crossSite = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: {
+        cookie: `${WEB_SESSION_COOKIE}=${token}`,
+        origin: "https://attacker.example.test",
+      },
+    });
+    assert.equal(crossSite.status, 403);
+    assert.equal(crossSite.headers.get("cache-control"), "no-store");
+    assert.equal(crossSite.headers.get("set-cookie"), null);
+    assert.deepEqual(await crossSite.json(), { error: "csrf_origin_denied" });
+    assert.equal(queries.length, 0, "cross-site logout stops before session revocation");
+
+    const unavailable = await request();
+    assert.equal(unavailable.status, 503);
+    assert.equal(unavailable.headers.get("cache-control"), "no-store");
+    assert.equal(unavailable.headers.get("set-cookie"), null, "failed revocation keeps the retry cookie");
+    assert.deepEqual(await unavailable.json(), { error: "logout_unavailable" });
+
+    const revoked = await request();
+    assert.equal(revoked.status, 204);
+    assert.equal(revoked.headers.get("cache-control"), "no-store");
+    assert.match(
+      revoked.headers.get("set-cookie") || "",
+      /Expires=Thu, 01 Jan 1970 00:00:00 GMT/i,
+    );
+  }, { pool, logger: { warn(message) { warnings.push(message); } } });
+
+  assert.equal(queries.length, 2);
+  assert.match(queries[0].sql, /UPDATE app_auth\.web_sessions SET revoked_at = now\(\)/);
+  assert.deepEqual(queries[0].values, queries[1].values);
+  assert.equal(
+    queries[0].values[0],
+    "0587867ed54648eb9600c87c77b38013c6585cda5465bca02279a6a6085a7e18",
+  );
+  assert.deepEqual(warnings, ["[web-auth] logout failed reason=session_revocation_unavailable"]);
 });
 
 test("configured WorkOS remains optional until unified authentication is activated", async () => {

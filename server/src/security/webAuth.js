@@ -432,6 +432,12 @@ export function createWebAuthRouter({
   },
 }) {
   const router = express.Router();
+  // Set the non-storage guarantee before the router-owned limiter so a 429
+  // cannot cache logout state or be mistaken for a completed revocation.
+  router.use("/logout", (_req, res, next) => {
+    res.set("cache-control", "no-store");
+    next();
+  });
   // Keep the limiter on the router that owns these handlers. Besides making
   // the protection explicit to static analysis, this prevents a later mount
   // reordering from silently placing token exchange and session revocation
@@ -614,12 +620,24 @@ export function createWebAuthRouter({
   });
 
   router.post("/logout", async (req, res) => {
+    res.set("cache-control", "no-store");
     const token = cookies(req).get(SESSION_COOKIE);
     if (token) {
-      await pool.query(
-        `UPDATE app_auth.web_sessions SET revoked_at = now() WHERE token_sha256 = $1 AND revoked_at IS NULL`,
-        [sha256(token)],
-      ).catch(() => {});
+      const origin = String(req.get?.("origin") || "").trim();
+      if (!sessionSecurity.frontendOrigin || origin !== sessionSecurity.frontendOrigin) {
+        return res.status(403).json({ error: "csrf_origin_denied" });
+      }
+      try {
+        await pool.query(
+          `UPDATE app_auth.web_sessions SET revoked_at = now() WHERE token_sha256 = $1 AND revoked_at IS NULL`,
+          [sha256(token)],
+        );
+      } catch {
+        // Keep the browser cookie so the user can retry revocation. Clearing it
+        // here would report a false logout while a copied server session lives.
+        logger.warn?.("[web-auth] logout failed reason=session_revocation_unavailable");
+        return res.status(503).json({ error: "logout_unavailable" });
+      }
     }
     clearBrowserCookie(res, SESSION_COOKIE, sessionSecurity.cookieOptions);
     return res.status(204).end();

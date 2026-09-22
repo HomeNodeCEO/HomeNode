@@ -123,6 +123,16 @@ function encodeRfc3986(value) {
   return encodeURIComponent(value).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
 }
 
+function isR2HostLabel(value) {
+  return /^(?=.{1,63}$)[a-z0-9](?:[a-z0-9-]*[a-z0-9])?$/.test(String(value || ""));
+}
+
+function r2HostLabel(value, errorCode) {
+  const normalized = String(value || "").trim();
+  if (!isR2HostLabel(normalized)) throw new Error(errorCode);
+  return normalized;
+}
+
 function objectPath(objectKey) {
   return `/${String(objectKey).split("/").map(encodeRfc3986).join("/")}`;
 }
@@ -184,7 +194,10 @@ export function createR2PresignedUrl({
   now = new Date(),
 }) {
   const expires = Math.max(1, Math.min(Number(expiresInSeconds) || 900, 604800));
-  const host = `${bucket}.${accountId}.r2.cloudflarestorage.com`;
+  const host = `${r2HostLabel(bucket, "uad_object_bucket_invalid")}.${r2HostLabel(
+    accountId,
+    "uad_object_account_id_invalid",
+  )}.r2.cloudflarestorage.com`;
   const timestamp = amzTimestamp(now);
   const dateStamp = timestamp.slice(0, 8);
   const credentialScope = `${dateStamp}/auto/s3/aws4_request`;
@@ -282,7 +295,10 @@ export function createUadObjectStorage(env = process.env, {
       512 * 1024 * 1024,
     ),
   };
-  const configured = provider === "r2" && Object.values(config).slice(0, 4).every(Boolean);
+  const configured = provider === "r2"
+    && Object.values(config).slice(0, 4).every(Boolean)
+    && isR2HostLabel(config.accountId)
+    && isR2HostLabel(config.bucket);
 
   async function request(operation, url, init = {}, {
     attempts = config.maxAttempts,

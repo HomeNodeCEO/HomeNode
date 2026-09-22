@@ -140,6 +140,54 @@ test("creates a bounded R2 presigned PUT URL and requires complete configuration
   }), /uad_object_upload_size_invalid/);
 });
 
+test("R2 host configuration cannot escape the Cloudflare storage origin", () => {
+  const base = {
+    accountId: "example-account",
+    accessKeyId: "example-key",
+    secretAccessKey: "example-secret",
+    bucket: "homenode-uad",
+    objectKey: "organizations/org/private/report.pdf",
+    method: "GET",
+  };
+  for (const accountId of [
+    "example/account",
+    "example?account",
+    "example.account",
+    "-example-account",
+    "a".repeat(64),
+  ]) {
+    assert.throws(
+      () => createR2PresignedUrl({ ...base, accountId }),
+      (error) => error.message === "uad_object_account_id_invalid",
+    );
+  }
+  for (const bucket of [
+    "example/bucket",
+    "example#bucket",
+    "example.bucket",
+    "example-bucket-",
+    "b".repeat(64),
+  ]) {
+    assert.throws(
+      () => createR2PresignedUrl({ ...base, bucket }),
+      (error) => error.message === "uad_object_bucket_invalid",
+    );
+  }
+
+  const invalidStorage = createUadObjectStorage({
+    UAD_OBJECT_STORAGE_PROVIDER: "r2",
+    R2_ACCOUNT_ID: "example-account",
+    R2_ACCESS_KEY_ID: "example-key",
+    R2_SECRET_ACCESS_KEY: "example-secret",
+    R2_BUCKET: "attacker.example/path",
+  });
+  assert.equal(invalidStorage.configured, false);
+  assert.throws(
+    () => invalidStorage.createDownloadUrl({ objectKey: "private/report.pdf" }),
+    /uad_object_storage_not_configured/,
+  );
+});
+
 test("allows UAD storage to override the shared R2 bucket without mutating the environment", () => {
   const environment = {
     UAD_OBJECT_STORAGE_PROVIDER: "r2",

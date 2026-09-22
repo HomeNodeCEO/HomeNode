@@ -10,6 +10,7 @@ readiness workflow.
 
 - Inspection context and sparse field drafts persist across application restarts in SQLCipher-encrypted SQLite.
 - The database key is generated on the device and stored with `expo-secure-store`; cached work is scoped to the last authenticated HomeNode user and is not deleted merely because connectivity is unavailable.
+- Existing iOS plaintext caches are exported into a new SQLCipher database, checked for schema, row-count, sequence, and integrity parity, and proved unreadable without the device key before activation. The legacy file remains untouched if migration fails and is removed only after the encrypted database reopens successfully.
 - Every edit receives a client UUID and SHA-256 payload digest. The API applies it once, returns the prior result on safe retry, and rejects reuse of the UUID with different content.
 - Queued work retries when connectivity returns, when the app becomes active, and on a bounded exponential-backoff timer.
 - A stale edit is automatically rebased only when its recorded field-level base still matches HomeNode. A different server value becomes an explicit conflict with **Use HomeNode value** and **Keep mobile value** actions.

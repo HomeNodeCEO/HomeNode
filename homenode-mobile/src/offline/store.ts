@@ -1,4 +1,5 @@
 import * as Crypto from "expo-crypto";
+import { File } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { Platform } from "react-native";
@@ -22,6 +23,12 @@ import type {
 import { localInspectionCompletionReadiness } from "../completion/model";
 import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } from "../photos/model";
 import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
+import {
+  assertDatabaseSnapshotsEqual,
+  sqliteIdentifier,
+  sqliteStringLiteral,
+  type OfflineDatabaseSnapshot,
+} from "./databaseEncryption";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "./databaseRecovery";
 import {
   retryDelayMs,
@@ -297,24 +304,220 @@ async function databasePassword() {
   return generated;
 }
 
-async function activeDatabaseName() {
-  const stored = await SecureStore.getItemAsync(ACTIVE_DATABASE_NAME_KEY);
-  return stored && /^homenode-field-[a-z0-9-]+\.db$/.test(stored) ? stored : DATABASE_NAME;
+function validDatabaseName(value: string | null) {
+  return value && /^homenode-field-[a-z0-9-]+\.db$/.test(value) ? value : null;
 }
 
-function recoveredDatabaseName() {
-  return `homenode-field-${DATABASE_POLICY.recoveryGeneration}-${Date.now()}-${Crypto.randomUUID()}.db`;
+async function storedDatabaseName(key: string) {
+  return validDatabaseName(await SecureStore.getItemAsync(key));
 }
 
-async function openInitializedDatabase(databaseName: string) {
+function databaseFile(databaseName: string, suffix = "") {
+  const directory = SQLite.defaultDatabaseDirectory.replace(/\/+$/, "");
+  return new File(`${directory}/${databaseName}${suffix}`);
+}
+
+function databaseFileExists(databaseName: string) {
+  return databaseFile(databaseName).exists;
+}
+
+async function deleteDatabaseFiles(databaseName: string) {
+  for (const suffix of ["", "-wal", "-shm", "-journal"]) {
+    const file = databaseFile(databaseName, suffix);
+    if (file.exists) file.delete();
+  }
+}
+
+async function keyDatabase(database: SQLite.SQLiteDatabase) {
+  const password = await databasePassword();
+  await database.execAsync(`PRAGMA key = ${sqliteStringLiteral(password)}`);
+}
+
+async function verifySqlCipherAvailable(database: SQLite.SQLiteDatabase) {
+  const cipherVersion = await database.getFirstAsync<Record<string, unknown>>("PRAGMA cipher_version");
+  if (!cipherVersion || !Object.values(cipherVersion).some((value) => typeof value === "string" && value.length > 0)) {
+    throw new Error("mobile_offline_database_encryption_unavailable");
+  }
+}
+
+async function openKeyedDatabase(databaseName: string) {
   const database = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
   try {
     if (USE_SQLCIPHER) {
-      const password = await databasePassword();
-      await database.execAsync(`PRAGMA key = '${password}'`);
+      await keyDatabase(database);
+      await verifySqlCipherAvailable(database);
     }
-    // Authenticate SQLCipher databases and verify iOS-protected databases before schema work.
     await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+    return database;
+  } catch (reason) {
+    await database.closeAsync().catch(() => undefined);
+    throw reason;
+  }
+}
+
+async function databaseSnapshot(database: SQLite.SQLiteDatabase): Promise<OfflineDatabaseSnapshot> {
+  const autoVacuum = await database.getFirstAsync<{ auto_vacuum: number }>("PRAGMA auto_vacuum");
+  if (!autoVacuum || ![0, 1, 2].includes(autoVacuum.auto_vacuum)) {
+    throw new Error("mobile_offline_database_migration_verification_failed");
+  }
+  const schemaRows = await database.getAllAsync<{
+    type: string;
+    name: string;
+    tbl_name: string;
+    sql: string | null;
+  }>(`SELECT type, name, tbl_name, sql
+        FROM sqlite_schema
+       WHERE name NOT LIKE 'sqlite_%'
+       ORDER BY type, name`);
+  const tableCounts: Record<string, number> = {};
+  for (const row of schemaRows) {
+    if (row.type !== "table") continue;
+    const count = await database.getFirstAsync<{ row_count: number }>(
+      `SELECT count(*) AS row_count FROM ${sqliteIdentifier(row.name)}`,
+    );
+    if (!count || !Number.isSafeInteger(count.row_count) || count.row_count < 0) {
+      throw new Error("mobile_offline_database_migration_verification_failed");
+    }
+    tableCounts[row.name] = count.row_count;
+  }
+  const sequenceTable = await database.getFirstAsync<{ present: number }>(
+    "SELECT count(*) AS present FROM sqlite_schema WHERE type = 'table' AND name = 'sqlite_sequence'",
+  );
+  const sequences: Record<string, number> = {};
+  if (sequenceTable?.present === 1) {
+    const sequenceRows = await database.getAllAsync<{ name: string; seq: number }>(
+      "SELECT name, seq FROM sqlite_sequence ORDER BY name",
+    );
+    for (const row of sequenceRows) {
+      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(row.name) || !Number.isSafeInteger(row.seq) || row.seq < 0) {
+        throw new Error("mobile_offline_database_migration_verification_failed");
+      }
+      sequences[row.name] = row.seq;
+    }
+  }
+  const version = await database.getFirstAsync<{ user_version: number }>("PRAGMA user_version");
+  if (!version || !Number.isSafeInteger(version.user_version) || version.user_version < 0) {
+    throw new Error("mobile_offline_database_migration_verification_failed");
+  }
+  return {
+    autoVacuum: autoVacuum.auto_vacuum,
+    schema: schemaRows.map((row) => ({
+      type: row.type,
+      name: row.name,
+      tableName: row.tbl_name,
+      sql: row.sql,
+    })),
+    sequences,
+    tableCounts,
+    userVersion: version.user_version,
+  };
+}
+
+async function verifyDatabaseIntegrity(database: SQLite.SQLiteDatabase) {
+  const quickCheck = await database.getAllAsync<Record<string, unknown>>("PRAGMA quick_check");
+  const values = quickCheck.flatMap((row) => Object.values(row));
+  if (values.length !== 1 || values[0] !== "ok") {
+    throw new Error("mobile_offline_database_migration_verification_failed");
+  }
+}
+
+async function verifyEncryptedDatabaseIntegrity(database: SQLite.SQLiteDatabase) {
+  await verifyDatabaseIntegrity(database);
+  const cipherErrors = await database.getAllAsync<Record<string, unknown>>("PRAGMA cipher_integrity_check");
+  if (cipherErrors.length !== 0) {
+    throw new Error("mobile_offline_database_migration_verification_failed");
+  }
+}
+
+async function verifyDatabaseRequiresKey(databaseName: string) {
+  const probe = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
+  try {
+    try {
+      await probe.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+    } catch (reason) {
+      if (isUnreadableSqliteDatabaseError(reason)) return;
+      throw reason;
+    }
+  } finally {
+    await probe.closeAsync().catch(() => undefined);
+  }
+  throw new Error("mobile_offline_database_not_encrypted");
+}
+
+async function removeLegacyPlaintextDatabase(databaseName: string, activeNameKey: string) {
+  await deleteDatabaseFiles(databaseName);
+  await SecureStore.deleteItemAsync(activeNameKey);
+}
+
+async function migrateLegacyPlaintextDatabase(databaseName: string) {
+  const legacyPolicy = DATABASE_POLICY.legacyPlaintext;
+  if (!legacyPolicy) throw new Error("mobile_offline_database_migration_not_supported");
+  // Export into a unique file so a crash can never overwrite either the legacy
+  // cache or a previously activated encrypted generation. The plaintext source
+  // is removed only after independent keyed, integrity, parity, and no-key checks.
+  const destinationName = `homenode-field-ios-v3-migration-${Crypto.randomUUID().toLowerCase()}.db`;
+  await SecureStore.setItemAsync(legacyPolicy.activeDatabaseNameKey, databaseName, {
+    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+  });
+
+  const source = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
+  let attached = false;
+  let sourceSnapshot: OfflineDatabaseSnapshot;
+  try {
+    await source.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+    await verifySqlCipherAvailable(source);
+    await source.execAsync("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;");
+    await verifyDatabaseIntegrity(source);
+    sourceSnapshot = await databaseSnapshot(source);
+    const password = await databasePassword();
+    const destinationPath = databaseFile(destinationName).uri.replace(/^file:\/\//, "");
+    await source.runAsync(
+      "ATTACH DATABASE ? AS homenode_encrypted KEY ?",
+      destinationPath,
+      password,
+    );
+    attached = true;
+    await source.execAsync(`PRAGMA homenode_encrypted.auto_vacuum = ${sourceSnapshot.autoVacuum}`);
+    await source.getFirstAsync("SELECT sqlcipher_export('homenode_encrypted') AS exported");
+    await source.execAsync(`PRAGMA homenode_encrypted.user_version = ${sourceSnapshot.userVersion}`);
+    await source.execAsync("DETACH DATABASE homenode_encrypted");
+    attached = false;
+  } finally {
+    if (attached) await source.execAsync("DETACH DATABASE homenode_encrypted").catch(() => undefined);
+    await source.closeAsync().catch(() => undefined);
+  }
+
+  let activated = false;
+  try {
+    const destination = await openKeyedDatabase(destinationName);
+    try {
+      await verifyEncryptedDatabaseIntegrity(destination);
+      assertDatabaseSnapshotsEqual(sourceSnapshot, await databaseSnapshot(destination));
+    } finally {
+      await destination.closeAsync().catch(() => undefined);
+    }
+    await verifyDatabaseRequiresKey(destinationName);
+    await SecureStore.setItemAsync(ACTIVE_DATABASE_NAME_KEY, destinationName, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+    activated = true;
+    const database = await openInitializedDatabase(destinationName);
+    try {
+      await removeLegacyPlaintextDatabase(databaseName, legacyPolicy.activeDatabaseNameKey);
+      return database;
+    } catch (reason) {
+      await database.closeAsync().catch(() => undefined);
+      throw reason;
+    }
+  } catch (reason) {
+    if (!activated) await deleteDatabaseFiles(destinationName).catch(() => undefined);
+    throw reason;
+  }
+}
+
+async function openInitializedDatabase(databaseName: string) {
+  const database = await openKeyedDatabase(databaseName);
+  try {
     // DELETE journaling does not retain a WAL lock while iOS suspends HomeNode behind Camera/Photos.
     await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA journal_mode = DELETE; PRAGMA synchronous = NORMAL;");
     await database.execAsync(`
@@ -502,28 +705,48 @@ async function openInitializedDatabase(databaseName: string) {
 }
 
 async function initializeDatabase() {
-  const databaseName = await activeDatabaseName();
+  const databaseName = await storedDatabaseName(ACTIVE_DATABASE_NAME_KEY);
+  if (!databaseName && DATABASE_POLICY.legacyPlaintext) {
+    const legacyStoredName = await storedDatabaseName(DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
+    const legacyDatabaseName = legacyStoredName && databaseFileExists(legacyStoredName)
+      ? legacyStoredName
+      : databaseFileExists(DATABASE_POLICY.legacyPlaintext.databaseName)
+        ? DATABASE_POLICY.legacyPlaintext.databaseName
+        : null;
+    if (legacyDatabaseName) return migrateLegacyPlaintextDatabase(legacyDatabaseName);
+  }
+  const selectedDatabaseName = databaseName || DATABASE_NAME;
+  if (databaseName && !databaseFileExists(databaseName)) {
+    throw new Error("mobile_offline_database_missing");
+  }
   try {
-    return await openInitializedDatabase(databaseName);
+    const database = await openInitializedDatabase(selectedDatabaseName);
+    try {
+      if (!databaseName) {
+        await SecureStore.setItemAsync(ACTIVE_DATABASE_NAME_KEY, selectedDatabaseName, {
+          keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+        });
+      }
+      if (DATABASE_POLICY.legacyPlaintext) {
+        const legacyName = await storedDatabaseName(DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
+        if (legacyName) {
+          await removeLegacyPlaintextDatabase(legacyName, DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
+        }
+      }
+      return database;
+    } catch (reason) {
+      await database.closeAsync().catch(() => undefined);
+      throw reason;
+    }
   } catch (reason) {
     if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
     // A native connection can be poisoned after an iOS background transition. Retry the
-    // same encrypted file on a genuinely new handle before creating a recovery database.
+    // same encrypted file on a genuinely new handle, but never abandon unsynchronized data
+    // by silently switching the appraiser to an empty recovery database.
     try {
-      return await openInitializedDatabase(databaseName);
+      return await openInitializedDatabase(selectedDatabaseName);
     } catch (retryReason) {
-      if (!isUnreadableSqliteDatabaseError(retryReason)) throw retryReason;
-    }
-    const replacementName = recoveredDatabaseName();
-    const replacement = await openInitializedDatabase(replacementName);
-    try {
-      await SecureStore.setItemAsync(ACTIVE_DATABASE_NAME_KEY, replacementName, {
-        keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
-      });
-      return replacement;
-    } catch (secureStoreError) {
-      await replacement.closeAsync().catch(() => undefined);
-      throw secureStoreError;
+      throw retryReason;
     }
   }
 }
@@ -544,6 +767,7 @@ export async function clearActiveOfflineUser() {
 
 export class OfflineStore {
   private connectionRepair: Promise<void> | null = null;
+  private closedForExternalActivity = false;
 
   private constructor(private database: SQLite.SQLiteDatabase) {}
 
@@ -551,13 +775,24 @@ export class OfflineStore {
     return new OfflineStore(await openDatabase());
   }
 
+  async prepareForExternalActivity() {
+    if (this.connectionRepair) await this.connectionRepair;
+    if (this.closedForExternalActivity) return;
+    this.closedForExternalActivity = true;
+    const previous = this.database;
+    databasePromise = null;
+    await previous.closeAsync().catch(() => undefined);
+  }
+
   async ensureReady() {
     if (this.connectionRepair) return this.connectionRepair;
-    try {
-      await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
-      return;
-    } catch (reason) {
-      if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+    if (!this.closedForExternalActivity) {
+      try {
+        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+        return;
+      } catch (reason) {
+        if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
+      }
     }
     if (this.connectionRepair) return this.connectionRepair;
     this.connectionRepair = (async () => {
@@ -565,6 +800,7 @@ export class OfflineStore {
       databasePromise = null;
       await previous.closeAsync().catch(() => undefined);
       this.database = await openDatabase();
+      this.closedForExternalActivity = false;
     })().finally(() => {
       this.connectionRepair = null;
     });

@@ -22,10 +22,14 @@ export function isUnreadableSqliteDatabaseError(reason: unknown) {
 export function offlineDatabasePolicy(platform: string) {
   if (platform === "ios") {
     return Object.freeze({
-      databaseName: "homenode-field-ios-v2.db",
-      activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v2",
-      recoveryGeneration: "ios-v2",
-      useSqlCipher: false,
+      databaseName: "homenode-field-ios-v3.db",
+      activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v3",
+      recoveryGeneration: "ios-v3",
+      useSqlCipher: true,
+      legacyPlaintext: Object.freeze({
+        databaseName: "homenode-field-ios-v2.db",
+        activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v2",
+      }),
     });
   }
   return Object.freeze({
@@ -33,5 +37,6 @@ export function offlineDatabasePolicy(platform: string) {
     activeDatabaseNameKey: "homenode.mobile.active-offline-database.v1",
     recoveryGeneration: "recovered",
     useSqlCipher: true,
+    legacyPlaintext: null,
   });
 }

@@ -154,11 +154,82 @@ test("login transaction cookie is host-only, secure, HTTP-only, and short-lived"
     assert.match(setCookie, /Max-Age=600/i);
     assert.doesNotMatch(setCookie, /Domain=/i);
   }, {
-    fetchImpl: async () => new Response(JSON.stringify(discovery), {
-      status: 200,
-      headers: { "content-type": "application/json" },
-    }),
+    fetchImpl: async (_url, options) => {
+      assert.equal(options.redirect, "error");
+      return new Response(JSON.stringify(discovery), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
   });
+});
+
+test("browser OIDC discovery stays on the issuer and refuses redirects", async () => {
+  for (const endpoint of ["authorization_endpoint", "token_endpoint"]) {
+    let requestCount = 0;
+    await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+      assert.equal(response.status, 503);
+      assert.deepEqual(await response.json(), { error: "web_auth_unavailable" });
+    }, {
+      fetchImpl: async (_url, options) => {
+        requestCount += 1;
+        assert.equal(options.redirect, "error");
+        return new Response(JSON.stringify({
+          issuer: "https://identity.example.test",
+          authorization_endpoint: "https://identity.example.test/authorize",
+          token_endpoint: "https://identity.example.test/token",
+          [endpoint]: "https://127.0.0.1/internal",
+        }), { status: 200 });
+      },
+    });
+    assert.equal(requestCount, 1);
+  }
+
+  for (const endpoint of ["authorization_endpoint", "token_endpoint"]) {
+    for (const unsafeUrl of [
+      "https://user@identity.example.test/authorize",
+      "https://:secret@identity.example.test/token",
+      "https://identity.example.test/oauth2/endpoint#fragment",
+    ]) {
+      let requestCount = 0;
+      await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+        assert.equal(response.status, 503);
+        assert.deepEqual(await response.json(), { error: "web_auth_unavailable" });
+      }, {
+        fetchImpl: async (_url, options) => {
+          requestCount += 1;
+          assert.equal(options.redirect, "error");
+          return new Response(JSON.stringify({
+            issuer: "https://identity.example.test",
+            authorization_endpoint: "https://identity.example.test/authorize",
+            token_endpoint: "https://identity.example.test/token",
+            [endpoint]: unsafeUrl,
+          }), { status: 200 });
+        },
+      });
+      assert.equal(requestCount, 1, "invalid discovery URLs must not trigger a token request");
+    }
+  }
+
+  let bodyCancelled = false;
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/auth/login`, { redirect: "manual" });
+    assert.equal(response.status, 503);
+    assert.deepEqual(await response.json(), { error: "web_auth_unavailable" });
+  }, {
+    fetchImpl: async (_url, options) => {
+      assert.equal(options.redirect, "error");
+      return {
+        ok: true,
+        redirected: true,
+        headers: new Headers(),
+        body: { async cancel() { bodyCancelled = true; } },
+      };
+    },
+  });
+  assert.equal(bodyCancelled, true);
 });
 
 test("concurrent browser logins share one OIDC discovery request", async () => {
@@ -316,8 +387,9 @@ test("callback verifies the client-bound ID token and creates a secure cross-sit
     assert.match(sessionCookie, /SameSite=None/i);
     assert.doesNotMatch(sessionCookie, /Domain=/i);
   }, {
-    fetchImpl: async () => {
+    fetchImpl: async (_url, options) => {
       requestCount += 1;
+      assert.equal(options.redirect, "error");
       return requestCount === 1
         ? new Response(JSON.stringify(discovery), {
           status: 200,

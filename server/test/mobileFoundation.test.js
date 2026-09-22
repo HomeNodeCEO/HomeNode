@@ -736,6 +736,99 @@ test("concurrent cold OIDC verification shares one bounded JWKS request", async 
   assert.equal(claims.every((claim) => claim.sub === "user_123"), true);
 });
 
+test("OIDC discovery stays on the configured issuer and refuses redirects", async () => {
+  const requested = [];
+  const discovered = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    clientId: CLIENT_ID,
+    now: () => NOW,
+    fetchImpl: async (url, options) => {
+      requested.push(String(url));
+      assert.equal(options.redirect, "error");
+      return requested.length === 1
+        ? new Response(JSON.stringify({
+          issuer: ISSUER,
+          jwks_uri: `${ISSUER}/oauth2/jwks`,
+        }), { status: 200 })
+        : new Response(JSON.stringify({ keys: [publicJwk] }), { status: 200 });
+    },
+  });
+  const status = await discovered.preflight();
+  assert.equal(status.jwksUri, `${ISSUER}/oauth2/jwks`);
+  assert.deepEqual(requested, [
+    `${ISSUER}/.well-known/openid-configuration`,
+    `${ISSUER}/oauth2/jwks`,
+  ]);
+
+  let crossOriginRequests = 0;
+  const crossOrigin = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    now: () => NOW,
+    fetchImpl: async (_url, options) => {
+      crossOriginRequests += 1;
+      assert.equal(options.redirect, "error");
+      return new Response(JSON.stringify({
+        issuer: ISSUER,
+        jwks_uri: "https://127.0.0.1/internal/jwks",
+      }), { status: 200 });
+    },
+  });
+  await assert.rejects(
+    () => crossOrigin.preflight(),
+    (error) => error.statusCode === 503 && error.message === "invalid_oidc_jwks_uri",
+  );
+  assert.equal(crossOriginRequests, 1);
+
+  for (const jwksUri of [
+    "https://user@identity.example.test/oauth2/jwks",
+    "https://:secret@identity.example.test/oauth2/jwks",
+    "https://identity.example.test/oauth2/jwks#fragment",
+  ]) {
+    let unsafeUrlRequests = 0;
+    const unsafeUrl = createOidcAccessTokenVerifier({
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      now: () => NOW,
+      fetchImpl: async (_url, options) => {
+        unsafeUrlRequests += 1;
+        assert.equal(options.redirect, "error");
+        return new Response(JSON.stringify({
+          issuer: ISSUER,
+          jwks_uri: jwksUri,
+        }), { status: 200 });
+      },
+    });
+    await assert.rejects(
+      () => unsafeUrl.preflight(),
+      (error) => error.statusCode === 503 && error.message === "invalid_oidc_jwks_uri",
+    );
+    assert.equal(unsafeUrlRequests, 1, "invalid discovery URLs must not trigger a JWKS request");
+  }
+
+  let redirectedBodyCancelled = false;
+  const redirected = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    now: () => NOW,
+    fetchImpl: async (_url, options) => {
+      assert.equal(options.redirect, "error");
+      return {
+        ok: true,
+        redirected: true,
+        headers: new Headers(),
+        body: { async cancel() { redirectedBodyCancelled = true; } },
+      };
+    },
+  });
+  await assert.rejects(
+    () => redirected.preflight(),
+    (error) => error.statusCode === 503 && error.message === "oidc_discovery_unavailable",
+  );
+  assert.equal(redirectedBodyCancelled, true);
+});
+
 test("OIDC provider stalls and malformed JWKS fail as bounded 503 outages", async () => {
   const stalled = createOidcAccessTokenVerifier({
     issuer: ISSUER,

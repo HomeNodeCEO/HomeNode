@@ -101,13 +101,33 @@ export default function AppraisalWorkfileModal({
   const closeButton = useRef<HTMLButtonElement | null>(null);
   const dialogPanel = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
+  const loadGeneration = useRef(0);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
 
+  useEffect(() => {
+    loadGeneration.current += 1;
+    setItems([]);
+    setCustomFile(null);
+    setCustomWorkfile(null);
+    setUadEditor(null);
+    setUadAssets([]);
+    setUadSketches([]);
+    setScopeMutable(null);
+    setSelectedFile(null);
+    setFileTitle('');
+    setLinkTitle('');
+    setLinkUrl('');
+    setBusy(false);
+    setMessage('');
+  }, [scope]);
+
   const load = useCallback(async () => {
     if (!scope) return;
+    const generation = loadGeneration.current + 1;
+    loadGeneration.current = generation;
     setBusy(true);
     setMessage('');
     try {
@@ -117,6 +137,7 @@ export default function AppraisalWorkfileModal({
           getAssignmentFiles(accountId, scope.assignmentFileId),
           getCustomAppraisalWorkfile(accountId, scope.assignmentFileId),
         ]);
+        if (loadGeneration.current !== generation) return;
         setItems(itemState.items);
         setScopeMutable(itemState.mutable);
         setCustomFile(files.files.find((file) => file.id === scope.assignmentFileId) || null);
@@ -131,6 +152,7 @@ export default function AppraisalWorkfileModal({
           listUadAssets(scope.uadWorkfileId),
           listUadSketches(scope.uadWorkfileId),
         ]);
+        if (loadGeneration.current !== generation) return;
         setItems(itemState.items);
         setScopeMutable(itemState.mutable);
         setUadEditor(editor);
@@ -140,10 +162,11 @@ export default function AppraisalWorkfileModal({
         setCustomWorkfile(null);
       }
     } catch (error) {
+      if (loadGeneration.current !== generation) return;
       setScopeMutable(null);
       setMessage(error instanceof Error ? error.message : 'The workfile could not be loaded.');
     } finally {
-      setBusy(false);
+      if (loadGeneration.current === generation) setBusy(false);
     }
   }, [accountId, scope]);
 
@@ -177,6 +200,7 @@ export default function AppraisalWorkfileModal({
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => {
+      loadGeneration.current += 1;
       document.body.style.overflow = previousOverflow;
       window.removeEventListener('keydown', handleKeyDown);
     };

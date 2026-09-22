@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   fetchOfficialZoningAtPoint,
   getPropertyZoningEvidence,
+  savePropertyZoningVerification,
   syncOfficialZoningDocuments,
 } from "../src/services/zoningEvidence.js";
 import { DALLAS_COUNTY_ZONING_JURISDICTIONS } from "../src/services/propertyZoningSources.js";
@@ -234,4 +235,49 @@ test("official zoning document sync rejects declared oversized PDFs before buffe
   assert.equal(requestCount, result.attempted);
   assert.equal(cancellationCount, result.attempted);
   assert.equal(result.results.every((entry) => entry.error === "zoning_document_too_large"), true);
+});
+
+test("zoning verification stores only the separately authenticated reviewer", async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (/RETURNING \*/.test(sql)) {
+        return { rows: [{
+          id: 1,
+          account_id: "42",
+          assignment_file_id: 7,
+          provider_key: "city_dallas_official",
+          source_document_id: null,
+          source_type: "manual",
+          zoning_code: "PD-1",
+          zoning_description: "Planned Development District",
+          page_number: null,
+          confirmation_reference: null,
+          notes: null,
+          reviewer: values[10],
+          verified_at: "2026-09-22T12:00:00.000Z",
+        }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+
+  const result = await savePropertyZoningVerification(pool, {
+    accountId: "42",
+    assignmentFileId: 7,
+    reviewer: "Authenticated Appraiser",
+    input: {
+      jurisdiction_city: "Dallas",
+      zoning_code: "PD-1",
+      zoning_description: "Planned Development District",
+      source_type: "manual",
+      reviewer: "Impersonated Reviewer",
+    },
+  });
+
+  const insert = calls.find(({ sql }) => /INSERT INTO app\.property_zoning_verifications/.test(sql));
+  assert.equal(insert.values[10], "Authenticated Appraiser");
+  assert.equal(result.reviewer, "Authenticated Appraiser");
+  assert.doesNotMatch(JSON.stringify(insert.values), /Impersonated Reviewer/);
 });

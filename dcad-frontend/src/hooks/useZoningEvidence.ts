@@ -66,7 +66,7 @@ export function useZoningEvidence({
   }, []);
 
   const loadZoningEvidence = useCallback(async ({ open = false } = {}) => {
-    if (!accountId || !enabled) return;
+    if (!accountId || !assignmentFileId || !enabled) return;
     if (open) setZoningEvidenceOpen(true);
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
@@ -89,7 +89,7 @@ export function useZoningEvidence({
 
   useEffect(() => {
     requestVersionRef.current += 1;
-    if (!enabled || !accountId) {
+    if (!enabled || !accountId || !assignmentFileId) {
       setZoningEvidenceLoading(false);
       return;
     }
@@ -97,7 +97,7 @@ export function useZoningEvidence({
   }, [accountId, assignmentFileId, enabled, loadZoningEvidence]);
 
   const saveZoningEvidence = useCallback(async () => {
-    if (!accountId || !zoningEvidence?.jurisdiction) return;
+    if (!accountId || !assignmentFileId || !zoningEvidence?.jurisdiction) return;
     if (!zoningDraft.zoningCode.trim()) {
       setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
       return;

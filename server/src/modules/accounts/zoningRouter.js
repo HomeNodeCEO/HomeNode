@@ -9,6 +9,16 @@ import {
   savePropertyZoningVerification,
 } from "../../services/zoningEvidence.js";
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) return null;
+  for (const value of [req.mobileAuth?.displayName, req.mobileAuth?.email, userId]) {
+    const label = String(value || "").trim();
+    if (label) return label.slice(0, 200);
+  }
+  return null;
+}
+
 export function createZoningRouter({
   pool,
   ensureAvailable,
@@ -47,20 +57,31 @@ export function createZoningRouter({
   /** Load official zoning evidence and the subject jurisdiction's review contact. */
   router.get("/api/accounts/:id/zoning-evidence", async (req, res) => {
     const requestedId = String(req.params.id || "").trim();
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
     try {
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
       const assignmentFileId = normalizeFileId(req.query.assignment_file_id);
+      if (!assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
+      if (!await requireAssignmentAccess(req, res, accountId, assignmentFileId, "read")) {
+        return;
+      }
       const evidence = await getEvidence(pool, { accountId, assignmentFileId });
       return res.json({ ok: true, account_id: accountId, evidence });
     } catch (error) {
-      const message = error?.message || "zoning_evidence_lookup_failed";
-      return res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
+      if (error?.message === "account_not_found") {
+        return res.status(404).json({ error: "account_not_found" });
+      }
+      logger.error?.("zoning_evidence_lookup_failed");
+      return res.status(500).json({ error: "zoning_evidence_lookup_failed" });
     }
   });
 
   /** Stream the immutable cached PDF inline; old versions remain auditable. */
   router.get("/api/zoning-source-documents/:id/content", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
     const documentId = Number(req.params.id);
     if (!Number.isInteger(documentId) || documentId < 1) {
       return res.status(400).json({ error: "invalid_zoning_document_id" });
@@ -77,14 +98,15 @@ export function createZoningRouter({
         "X-Content-Type-Options": "nosniff",
       });
       return res.send(document.content);
-    } catch (error) {
-      logger.error?.("zoning document stream failed", error);
+    } catch {
+      logger.error?.("zoning_document_stream_failed");
       return res.status(500).json({ error: "zoning_document_stream_failed" });
     }
   });
 
   /** Suggest the verbatim district wording beside a confirmed zoning code. */
   router.get("/api/zoning-source-documents/:id/description-suggestion", async (req, res) => {
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
     try {
       await ensureAvailable();
       const result = await getDescriptionSuggestion(pool, {
@@ -93,11 +115,14 @@ export function createZoningRouter({
       });
       return res.json({ ok: true, ...result });
     } catch (error) {
-      const message = error?.message || "zoning_description_suggestion_failed";
-      const status = message === "zoning_document_not_found"
-        ? 404
-        : message === "invalid_zoning_document_id" ? 400 : 500;
-      return res.status(status).json({ error: message });
+      if (error?.message === "zoning_document_not_found") {
+        return res.status(404).json({ error: "zoning_document_not_found" });
+      }
+      if (error?.message === "invalid_zoning_document_id") {
+        return res.status(400).json({ error: "invalid_zoning_document_id" });
+      }
+      logger.error?.("zoning_description_suggestion_failed");
+      return res.status(500).json({ error: "zoning_description_suggestion_failed" });
     }
   });
 
@@ -105,6 +130,12 @@ export function createZoningRouter({
   router.put("/api/accounts/:id/zoning-verification", async (req, res) => {
     const requestedId = String(req.params.id || "").trim();
     if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
+    const reviewer = authenticatedReviewer(req);
+    if (!reviewer) {
+      return res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+    }
     try {
       await ensureAvailable();
       const accountId = await resolveAccountId(pool, requestedId);
@@ -118,6 +149,7 @@ export function createZoningRouter({
       const verification = await saveVerification(pool, {
         accountId,
         assignmentFileId,
+        reviewer,
         input: req.body,
       });
       return res.json({ ok: true, account_id: accountId, verification });
@@ -131,7 +163,11 @@ export function createZoningRouter({
         "invalid_zoning_source_type",
         "invalid_zoning_source_document",
       ]);
-      return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+      if (clientErrors.has(message)) {
+        return res.status(400).json({ error: message });
+      }
+      logger.error?.("zoning_verification_failed");
+      return res.status(500).json({ error: "zoning_verification_failed" });
     }
   });
 

@@ -9,5 +9,5 @@ python-multipart==0.0.32
 pypdf==6.16.1
 reportlab==4.2.2
 SQLAlchemy==2.0.32
-psycopg2-binary==2.9.9
+psycopg2-binary==2.9.12
 python-dotenv==1.2.3

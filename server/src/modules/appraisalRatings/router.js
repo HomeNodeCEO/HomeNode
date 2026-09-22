@@ -6,6 +6,16 @@ import {
   normalizeEffectiveDate,
 } from "../../util/appraisalRatings.js";
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) return null;
+  for (const value of [req.mobileAuth?.displayName, req.mobileAuth?.email, userId]) {
+    const label = String(value || "").trim();
+    if (label) return label.slice(0, 200);
+  }
+  return null;
+}
+
 export function createAppraisalRatingsRouter({
   pool,
   ratingsReady,
@@ -47,8 +57,8 @@ export function createAppraisalRatingsRouter({
         [id, effectiveDate],
       );
       return res.json({ rating: rows[0] || null });
-    } catch (error) {
-      logger.error?.("subject appraisal rating load failed", error);
+    } catch {
+      logger.error?.("subject_rating_load_failed");
       return res.status(500).json({ error: "subject_rating_failed" });
     }
   });
@@ -59,6 +69,12 @@ export function createAppraisalRatingsRouter({
       return res.status(400).json({ error: "invalid_account_id" });
     }
     if (!requireEditor(req, res)) return undefined;
+    const reviewer = authenticatedReviewer(req);
+    if (!reviewer) {
+      return res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+    }
 
     let effectiveDate;
     let update;
@@ -114,7 +130,7 @@ export function createAppraisalRatingsRouter({
           update.conditionRating,
           update.qualityRating,
           update.notes,
-          update.reviewer,
+          reviewer,
           nextRevision,
         ],
       );
@@ -136,9 +152,9 @@ export function createAppraisalRatingsRouter({
       );
       await client.query("COMMIT");
       return res.json({ ok: true, rating });
-    } catch (error) {
+    } catch {
       await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("subject appraisal rating update failed", error);
+      logger.error?.("subject_rating_update_failed");
       return res.status(500).json({ error: "subject_rating_update_failed" });
     } finally {
       client.release();
@@ -162,8 +178,8 @@ export function createAppraisalRatingsRouter({
         [id],
       );
       return res.json({ history: rows });
-    } catch (error) {
-      logger.error?.("subject appraisal rating history failed", error);
+    } catch {
+      logger.error?.("subject_rating_history_failed");
       return res.status(500).json({ error: "subject_rating_history_failed" });
     }
   });

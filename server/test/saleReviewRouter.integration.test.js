@@ -6,6 +6,12 @@ import express from "express";
 
 import { createSaleReviewRouter } from "../src/modules/appraisalRatings/saleReviewRouter.js";
 
+const AUTHENTICATED_REVIEWER = Object.freeze({
+  userId: "user-authenticated-appraiser",
+  email: "appraiser@example.test",
+  displayName: "Authenticated Appraiser",
+});
+
 function createDatabase({
   query = async () => ({ rows: [] }),
   clientQuery = async () => ({ rows: [] }),
@@ -40,7 +46,10 @@ function baseOptions(database, overrides = {}) {
   return {
     pool: database.pool,
     ratingsReady: Promise.resolve(),
-    requireEditor: () => true,
+    requireEditor: (req) => {
+      req.mobileAuth = AUTHENTICATED_REVIEWER;
+      return true;
+    },
     logger: { error() {} },
     ...overrides,
   };
@@ -135,7 +144,7 @@ test("valid comparable rating updates use the shared normalizer and preserve aud
     condition_rating: "C3",
     quality_rating: "Q4",
     notes: "Verified at inspection",
-    reviewer: "Appraiser One",
+    reviewer: "Authenticated Appraiser",
     revision: 3,
   };
   const database = createDatabase({
@@ -159,7 +168,7 @@ test("valid comparable rating updates use the shared normalizer and preserve aud
     condition_rating: " c3 ",
     quality_rating: " q4 ",
     notes: "  Verified at inspection  ",
-    reviewer: "  Appraiser One  ",
+    reviewer: "  Impersonated Reviewer  ",
     expected_revision: 2,
   });
   assert.equal(response.status, 200);
@@ -180,7 +189,7 @@ test("valid comparable rating updates use the shared normalizer and preserve aud
     "C3",
     "Q4",
     "Verified at inspection",
-    "Appraiser One",
+    "Authenticated Appraiser",
     3,
   ]);
   assert.deepEqual(client.queries[4].params, [
@@ -192,6 +201,18 @@ test("valid comparable rating updates use the shared normalizer and preserve aud
     review.reviewer,
     review.revision,
   ]);
+});
+
+test("sale review writes fail closed when the editor policy omits authenticated identity", async (context) => {
+  const database = createDatabase();
+  const server = await startRouter(baseOptions(database, { requireEditor: () => true }));
+  context.after(server.close);
+
+  const response = await saveReview(server.baseUrl, "71", { condition_rating: "C3" });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "authentication_required" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(database.clients.length, 0);
 });
 
 test("missing sources and revision conflicts roll back without writing review history", async (context) => {
@@ -255,7 +276,8 @@ test("sale review update failures roll back, release, and keep diagnostics out o
   const response = await saveReview(server.baseUrl, "71", { condition_rating: "C3" });
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "sale_review_update_failed" });
-  assert.deepEqual(logs, [["/api/sales/:sourceRecordId/review failed", diagnostic]]);
+  assert.deepEqual(logs, [["sale_review_update_failed"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /db\.internal|secret-token/);
   assert.deepEqual(database.clients[0].queries.map(({ sql }) => sql), [
     "BEGIN",
     "SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR SHARE",
@@ -300,9 +322,10 @@ test("sale review read failures return stable codes and bounded diagnostics", as
   assert.equal(history.status, 500);
   assert.deepEqual(await history.json(), { error: "sale_review_history_failed" });
   assert.deepEqual(logs, [
-    ["/api/sales/reviews failed", diagnostic],
-    ["sale review history failed", diagnostic],
+    ["sale_reviews_load_failed"],
+    ["sale_review_history_failed"],
   ]);
+  assert.doesNotMatch(JSON.stringify(logs), /db\.internal|secret-token/);
 });
 
 test("sale review composition is explicit and inline handlers are absent", () => {

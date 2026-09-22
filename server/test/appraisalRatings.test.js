@@ -17,10 +17,17 @@ test("normalizes UAD full and half-grade ranges", () => {
       conditionRating: "C4-C3",
       qualityRating: "Q4",
       notes: null,
-      reviewer: "HomeNode editor",
       expectedRevision: 2,
     },
   );
+});
+
+test("ignores browser-supplied reviewer identity", () => {
+  const update = normalizeAppraisalRatingUpdate({
+    condition_rating: "C3",
+    reviewer: "Impersonated Reviewer",
+  });
+  assert.equal(Object.hasOwn(update, "reviewer"), false);
 });
 
 test("rejects invalid ratings and missing updates", () => {

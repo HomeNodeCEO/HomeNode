@@ -50,6 +50,7 @@ const MIGRATIONS = Object.freeze([
   "20261019_neighborhood_revision_contract_projection.sql",
   "20261020_market_spatial_runtime.sql",
   "20261021_assignment_workfile_items.sql",
+  "20261022_auth_session_retention.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

@@ -2,13 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  purgeExpiredWebSessions,
   recoverStaleScheduledMaintenanceRuns,
   resolveMaintenanceTasks,
   runScheduledMaintenance,
 } from "../src/services/scheduledMaintenance.js";
 
 test("routine maintenance refreshes cached parcel influences but excludes slower monthly source mirrors", () => {
-  assert.deepEqual(resolveMaintenanceTasks("routine"), ["documents", "sales-reconciliation", "census", "locations", "parcels", "influences"]);
+  assert.deepEqual(resolveMaintenanceTasks("routine"), ["sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "influences"]);
 });
 
 test("maintenance tasks can be scheduled independently", () => {
@@ -17,9 +18,10 @@ test("maintenance tasks can be scheduled independently", () => {
   assert.deepEqual(resolveMaintenanceTasks("traffic"), ["traffic"]);
   assert.deepEqual(resolveMaintenanceTasks("sales"), ["sales-reconciliation", "locations", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("documents"), ["documents"]);
+  assert.deepEqual(resolveMaintenanceTasks("sessions"), ["sessions"]);
   assert.deepEqual(resolveMaintenanceTasks("context"), ["roads", "traffic", "floods", "zoning", "influences"]);
   assert.deepEqual(resolveMaintenanceTasks("all"), [
-    "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
+    "sessions", "documents", "sales-reconciliation", "census", "locations", "parcels", "roads", "traffic", "floods", "zoning", "influences",
   ]);
 });
 
@@ -41,6 +43,77 @@ test("stale maintenance history is closed without touching a live advisory lock"
     3,
   );
   assert.deepEqual(params, [75]);
+});
+
+test("expired and revoked web sessions are purged in a bounded skip-locked batch", async () => {
+  let statement = "";
+  let parameters = null;
+  const pool = {
+    async query(sql, values) {
+      statement = sql;
+      parameters = values;
+      return { rowCount: 17, rows: [] };
+    },
+  };
+
+  assert.deepEqual(
+    await purgeExpiredWebSessions(pool, { retentionDays: 45, batchSize: 250 }),
+    { purged: 17, retention_days: 45, batch_size: 250 },
+  );
+  assert.match(statement, /FROM app_auth\.web_sessions/);
+  assert.match(statement, /revoked_at IS NOT NULL/);
+  assert.match(statement, /expires_at < now\(\)/);
+  assert.match(statement, /LIMIT \$2/);
+  assert.match(statement, /FOR UPDATE SKIP LOCKED/);
+  assert.match(statement, /DELETE FROM app_auth\.web_sessions/);
+  assert.doesNotMatch(statement, /RETURNING/);
+  assert.deepEqual(parameters, [45, 250]);
+});
+
+test("web session purge settings remain inside conservative bounds", async () => {
+  const calls = [];
+  const pool = {
+    async query(_sql, values) {
+      calls.push(values);
+      return { rowCount: 0, rows: [] };
+    },
+  };
+
+  assert.deepEqual(
+    await purgeExpiredWebSessions(pool, { retentionDays: -1, batchSize: 500_000 }),
+    { purged: 0, retention_days: 1, batch_size: 10_000 },
+  );
+  assert.deepEqual(calls, [[1, 10_000]]);
+});
+
+test("session maintenance records only aggregate purge results", async () => {
+  const pool = {
+    async query(sql, values) {
+      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) {
+        return { rows: [{ id: 93 }] };
+      }
+      if (/DELETE FROM app_auth\.web_sessions/.test(sql)) {
+        assert.deepEqual(values, [365, 1]);
+        return { rows: [], rowCount: 2 };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+
+  const result = await runScheduledMaintenance(pool, {
+    task: "sessions",
+    sessionRetentionDays: 999,
+    sessionPurgeBatchSize: -5,
+    logger: { info() {}, warn() {} },
+  });
+
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.results.sessions, {
+    purged: 2,
+    retention_days: 365,
+    batch_size: 1,
+  });
 });
 
 test("an overlapping scheduled run exits without starting task work", async () => {

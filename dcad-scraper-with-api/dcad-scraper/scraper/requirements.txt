@@ -1,5 +1,5 @@
 playwright==1.47.0
-beautifulsoup4==4.12.3
+beautifulsoup4==4.15.0
 lxml==6.1.2
 psycopg2-binary==2.9.9
 SQLAlchemy==2.0.32

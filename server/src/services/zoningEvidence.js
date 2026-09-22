@@ -242,13 +242,17 @@ async function fetchOfficialPdf(url, fetchImpl) {
   const timeout = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS);
   try {
     const response = await fetchImpl(parsed, {
-      redirect: "follow",
+      redirect: "manual",
       signal: controller.signal,
       headers: {
         accept: "application/pdf",
         "user-agent": "HomeNode zoning evidence cache/1.0",
       },
     });
+    if (response?.redirected || (Number(response?.status) >= 300 && Number(response?.status) < 400)) {
+      await response?.body?.cancel?.().catch(() => undefined);
+      throw new Error("zoning_document_redirect_forbidden");
+    }
     if (!response.ok) throw new Error(`zoning_document_http_${response.status}`);
     const buffer = await readBoundedResponseBuffer(response, {
       maximumBytes: MAX_DOCUMENT_BYTES,

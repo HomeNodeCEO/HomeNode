@@ -250,6 +250,7 @@ test("official zoning document sync rejects declared oversized PDFs before buffe
     fetchImpl: async (_url, options) => {
       requestCount += 1;
       assert.ok(options.signal instanceof AbortSignal);
+      assert.equal(options.redirect, "manual");
       return new Response(new ReadableStream({
         cancel() {
           cancellationCount += 1;
@@ -265,6 +266,41 @@ test("official zoning document sync rejects declared oversized PDFs before buffe
   assert.equal(requestCount, result.attempted);
   assert.equal(cancellationCount, result.attempted);
   assert.equal(result.results.every((entry) => entry.error === "zoning_document_too_large"), true);
+});
+
+test("official zoning document sync refuses redirects without downloading another origin", async () => {
+  for (const redirectedResponse of [
+    { status: 302, redirected: false },
+    { status: 200, redirected: true },
+  ]) {
+    let requestCount = 0;
+    let cancellationCount = 0;
+    const result = await syncOfficialZoningDocuments({
+      async query() {
+        return { rows: [] };
+      },
+    }, {
+      logger: { warn() {} },
+      fetchImpl: async (_url, options) => {
+        requestCount += 1;
+        assert.equal(options.redirect, "manual");
+        return {
+          ok: redirectedResponse.status >= 200 && redirectedResponse.status < 300,
+          status: redirectedResponse.status,
+          redirected: redirectedResponse.redirected,
+          body: { async cancel() { cancellationCount += 1; } },
+        };
+      },
+    });
+    assert.equal(result.attempted > 0, true);
+    assert.equal(result.failed, result.attempted);
+    assert.equal(requestCount, result.attempted);
+    assert.equal(cancellationCount, result.attempted);
+    assert.equal(
+      result.results.every((entry) => entry.error === "zoning_document_redirect_forbidden"),
+      true,
+    );
+  }
 });
 
 test("zoning verification stores only the separately authenticated reviewer", async () => {

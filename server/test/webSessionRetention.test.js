@@ -15,6 +15,18 @@ const runner = await readFile(new URL("../src/database/mobileMigrations.js", imp
 const checksum = (value) => createHash("sha256")
   .update(value.replaceAll("\r\n", "\n"))
   .digest("hex");
+const validIndexRow = {
+  indisvalid: true,
+  indisready: true,
+  indislive: true,
+  unfiltered: true,
+  key_count: 2,
+  first_options: 0,
+  second_options: 0,
+  first_key: "LEAST(expires_at, COALESCE(revoked_at, expires_at))",
+  second_key: "id",
+  access_method: "btree",
+};
 
 test("web session retention migration delegates concurrent indexing to the runner", () => {
   assert.match(migration, /auth_session_retention_post_migration_required/);
@@ -68,7 +80,7 @@ test("an invalid interrupted retention index is replaced concurrently", async ()
       const text = String(sql).trim();
       statements.push(text);
       if (/FROM pg_catalog\.pg_index/.test(text)) {
-        return { rows: [{ indisvalid: false, definition: "CREATE INDEX interrupted" }] };
+        return { rows: [{ ...validIndexRow, indisvalid: false }] };
       }
       return { rows: [] };
     },
@@ -86,16 +98,7 @@ test("a valid retention index makes the post-migration step idempotent", async (
       const text = String(sql).trim();
       statements.push(text);
       if (/FROM pg_catalog\.pg_index/.test(text)) {
-        return {
-          rows: [{
-            indisvalid: true,
-            definition: [
-              "CREATE INDEX web_sessions_retention_cleanup_idx",
-              "ON app_auth.web_sessions USING btree",
-              "(LEAST(expires_at, COALESCE(revoked_at, expires_at)), id)",
-            ].join(" "),
-          }],
-        };
+        return { rows: [validIndexRow] };
       }
       return { rows: [] };
     },
@@ -103,6 +106,27 @@ test("a valid retention index makes the post-migration step idempotent", async (
 
   await applyAuthSessionRetentionPostMigration(client, { logger: {} });
   assert.equal(statements.some((text) => /(?:CREATE|DROP) INDEX CONCURRENTLY/.test(text)), false);
+});
+
+test("a valid index with reversed keys, wrong sort, or partial coverage is rebuilt", async () => {
+  for (const row of [
+    { ...validIndexRow, first_key: "id", second_key: validIndexRow.first_key },
+    { ...validIndexRow, first_options: 1 },
+    { ...validIndexRow, unfiltered: false },
+  ]) {
+    const statements = [];
+    const client = {
+      async query(sql) {
+        const text = String(sql).trim();
+        statements.push(text);
+        if (/FROM pg_catalog\.pg_index/.test(text)) return { rows: [row] };
+        return { rows: [] };
+      },
+    };
+    await applyAuthSessionRetentionPostMigration(client, { logger: {} });
+    assert.ok(statements.some((text) => text.startsWith("DROP INDEX CONCURRENTLY")));
+    assert.ok(statements.some((text) => text.startsWith("CREATE INDEX CONCURRENTLY")));
+  }
 });
 
 test("the runner records retention migration only after concurrent indexing", async () => {

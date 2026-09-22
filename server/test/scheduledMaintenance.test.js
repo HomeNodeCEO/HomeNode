@@ -50,10 +50,14 @@ test("expired and revoked web sessions are purged in a bounded skip-locked batch
   let parameters = null;
   const pool = {
     async query(sql, values) {
-      statement = sql;
-      parameters = values;
-      return { rowCount: 17, rows: [] };
+      if (/DELETE FROM app_auth\.web_sessions/.test(sql)) {
+        statement = sql;
+        parameters = values;
+        return { rowCount: 17, rows: [] };
+      }
+      return { rows: [] };
     },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
   };
 
   assert.deepEqual(
@@ -81,9 +85,10 @@ test("web session purge settings remain inside conservative bounds", async () =>
   const calls = [];
   const pool = {
     async query(_sql, values) {
-      calls.push(values);
+      if (/DELETE FROM app_auth\.web_sessions/.test(_sql)) calls.push(values);
       return { rowCount: 0, rows: [] };
     },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
   };
 
   assert.deepEqual(
@@ -91,6 +96,50 @@ test("web session purge settings remain inside conservative bounds", async () =>
     { purged: 0, retention_days: 1, batch_size: 10_000 },
   );
   assert.deepEqual(calls, [[1, 10_000]]);
+});
+
+test("session purge times out within the remaining maintenance window and releases its connection", async () => {
+  const calls = [];
+  let released = false;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql, values) {
+          calls.push({ sql, values });
+          if (/DELETE FROM app_auth\.web_sessions/.test(sql)) return { rowCount: 1 };
+          return { rows: [] };
+        },
+        release() { released = true; },
+      };
+    },
+  };
+  const result = await purgeExpiredWebSessions(pool, { deadline: Date.now() + 5_000 });
+  assert.equal(result.purged, 1);
+  const timeout = calls.find(({ sql }) => /set_config\('statement_timeout'/.test(sql));
+  assert.ok(Number(timeout.values[0]) > 0 && Number(timeout.values[0]) <= 5_000);
+  assert.equal(calls.at(-1).sql, "COMMIT");
+  assert.equal(released, true);
+});
+
+test("failed session purge rolls back without deleting a second batch", async () => {
+  const calls = [];
+  let released = false;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          calls.push(sql);
+          if (/DELETE FROM app_auth\.web_sessions/.test(sql)) throw new Error("query_timeout");
+          return { rows: [] };
+        },
+        release() { released = true; },
+      };
+    },
+  };
+  await assert.rejects(purgeExpiredWebSessions(pool), /query_timeout/);
+  assert.equal(calls.at(-1), "ROLLBACK");
+  assert.equal(released, true);
+  assert.equal(calls.filter((sql) => /DELETE FROM app_auth\.web_sessions/.test(sql)).length, 1);
 });
 
 test("session maintenance records only aggregate purge results", async () => {
@@ -106,6 +155,7 @@ test("session maintenance records only aggregate purge results", async () => {
       }
       return { rows: [], rowCount: 0 };
     },
+    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
   };
 
   const result = await runScheduledMaintenance(pool, {

@@ -7,6 +7,8 @@ export const EXPECTED_R2_ORIGIN =
   'https://homenode-shared-production.407656745429dce8902facc0209852d0.r2.cloudflarestorage.com'
 export const RETIRED_R2_ORIGIN =
   'https://e407656745429dce8902facc0209852d.r2.cloudflarestorage.com'
+export const EXPECTED_STYLE_SOURCES = Object.freeze(["'self'", 'https://unpkg.com'])
+export const EXPECTED_STYLE_ATTRIBUTE_SOURCES = Object.freeze(["'unsafe-inline'"])
 
 /** Parse a Content-Security-Policy header into directive/source entries. */
 export function parseContentSecurityPolicy(policy) {
@@ -15,7 +17,8 @@ export function parseContentSecurityPolicy(policy) {
   for (const rawDirective of String(policy || '').split(';')) {
     const tokens = rawDirective.trim().split(/\s+/).filter(Boolean)
     if (tokens.length === 0) continue
-    directives.set(tokens[0], tokens.slice(1))
+    const name = tokens[0].toLowerCase()
+    if (!directives.has(name)) directives.set(name, tokens.slice(1))
   }
 
   return directives
@@ -53,6 +56,9 @@ export function validateFrontendSecurityHeaders(headers) {
 
   const exactDirectives = new Map([
     ['default-src', ["'self'"]],
+    ['style-src', EXPECTED_STYLE_SOURCES],
+    ['style-src-elem', EXPECTED_STYLE_SOURCES],
+    ['style-src-attr', EXPECTED_STYLE_ATTRIBUTE_SOURCES],
     ['object-src', ["'none'"]],
     ['base-uri', ["'self'"]],
     ['frame-ancestors', ["'none'"]],
@@ -62,6 +68,12 @@ export function validateFrontendSecurityHeaders(headers) {
     const actual = directives.get(directive) || []
     if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
       errors.push(`${directive} must remain exactly ${expected.join(' ')}`)
+    }
+  }
+
+  for (const directive of ['script-src', 'style-src', 'style-src-elem']) {
+    if ((directives.get(directive) || []).includes("'unsafe-inline'")) {
+      errors.push(`${directive} must not allow 'unsafe-inline'`)
     }
   }
 

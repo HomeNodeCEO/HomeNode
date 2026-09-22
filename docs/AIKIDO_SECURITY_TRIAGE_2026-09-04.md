@@ -23,12 +23,21 @@ The `HomeNode-frontend` Render static site now emits these rules for `/*`:
 - `Content-Security-Policy: frame-ancestors 'none'; base-uri 'self'; object-src 'none'`
 - `X-Frame-Options: DENY`
 
+The pending Render style-policy rollout is complete only when the live verifier
+confirms that `style-src` and `style-src-elem` permit only same-origin styles and
+the pinned MapLibre runtime origin, and neither permits `unsafe-inline`.
+`style-src-attr` retains the narrower inline-attribute compatibility required by
+existing React dynamic styles and MapLibre layout while injected `<style>`
+elements remain blocked.
+
 The live response also emits HSTS and `X-Content-Type-Options: nosniff`. This addresses the CSP and clickjacking DAST findings without restricting the application's existing scripts, styles, API requests, images, or embedded document previews.
 
 `npm run verify:deployed-security-headers` performs a credential-free HTTPS check of
 the production response. The `Deployed frontend security headers` workflow runs it
 after every merge to `main`, every day, and on demand so Render dashboard drift is
-reported in GitHub even when no repository file changes.
+reported in GitHub even when no repository file changes. The verifier also rejects
+any regression that restores `unsafe-inline` to scripts, style elements, or the
+`style-src` fallback.
 
 ## Confirmed controls requiring scanner review
 

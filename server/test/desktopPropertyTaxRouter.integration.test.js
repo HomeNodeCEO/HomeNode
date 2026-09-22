@@ -407,15 +407,19 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
 test("Property Tax sketch saves bind the authenticated actor and retain sketch error contracts", async (context) => {
   const calls = [];
   const errors = [];
-  const body = { expected_revision: 4, sketch: { areas: [], rooms: [] } };
+  const body = {
+    expected_revision: 4,
+    reviewer: "Forged Browser Reviewer",
+    sketch: { areas: [], rooms: [] },
+  };
   const options = baseOptions({
     getFile: async () => ({
       tax_protest_file_id: "file-1",
       organization_id: "org-allowed",
       assigned_appraiser_user_id: "user-1",
     }),
-    saveSketch: async (pool, accountId, fileId, input, actorUserId) => {
-      calls.push({ pool, accountId, fileId, input, actorUserId });
+    saveSketch: async (pool, accountId, fileId, input, actorAuth, confirmationAuthorized) => {
+      calls.push({ pool, accountId, fileId, input, actorAuth, confirmationAuthorized });
       const messages = {
         missing: "property_tax_protest_sketch_not_found",
         conflict: "sketch_revision_conflict",
@@ -443,8 +447,15 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
     accountId: calls[0].accountId,
     fileId: calls[0].fileId,
     input: calls[0].input,
-    actorUserId: calls[0].actorUserId,
-  }, { accountId: "LEGACY_1", fileId: "file-1", input: body, actorUserId: "user-1" });
+    actorAuth: calls[0].actorAuth,
+    confirmationAuthorized: calls[0].confirmationAuthorized,
+  }, {
+    accountId: "LEGACY_1",
+    fileId: "file-1",
+    input: body,
+    actorAuth: identity,
+    confirmationAuthorized: true,
+  });
 
   for (const [fileId, status, responseBody] of [
     ["missing", 404, { error: "property_tax_protest_sketch_not_found" }],
@@ -462,6 +473,26 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
     assert.doesNotMatch(JSON.stringify(received), /password|secret/);
   }
   assert.equal(errors.length, 1);
+});
+
+test("Property Tax sketch updates require an authenticated server identity", async (context) => {
+  let getFileCalls = 0;
+  let saveCalls = 0;
+  const server = await startRouter(baseOptions({
+    getFile: async () => { getFileCalls += 1; return null; },
+    saveSketch: async () => { saveCalls += 1; return {}; },
+  }), null);
+  context.after(server.close);
+
+  const response = await patchSketch(server.baseUrl, "123", "file-1", {
+    expected_revision: 1,
+    reviewer: "Forged Browser Reviewer",
+    sketch: { review_status: "draft" },
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "authentication_required" });
+  assert.equal(getFileCalls, 0);
+  assert.equal(saveCalls, 0);
 });
 
 test("appraiser-confirmed Property Tax sketches require sign authority before saving", async (context) => {

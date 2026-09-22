@@ -324,6 +324,9 @@ export function createDesktopPropertyTaxRouter({
     const requestedId = requestedAccountId(req, res);
     if (!requestedId) return undefined;
     if (!requireEditor(req, res)) return undefined;
+    if (!String(req.mobileAuth?.userId || "").trim()) {
+      return res.status(401).json({ error: "authentication_required" });
+    }
     try {
       await Promise.all([accountQualityReady, propertyEnrichmentReady]);
       const canonicalId = await resolveAccountId(pool, requestedId);
@@ -344,7 +347,7 @@ export function createDesktopPropertyTaxRouter({
         canonicalId,
         req.params.fileId,
         req.body || {},
-        req.mobileAuth?.userId || null,
+        req.mobileAuth,
         decideAccess(req.mobileAuth, existingFile, "sign"),
       );
       return res.json({ ok: true, ...result });
@@ -360,6 +363,9 @@ export function createDesktopPropertyTaxRouter({
       }
       if (error?.message === "inspection_sketch_confirmation_access_denied") {
         return res.status(403).json({ error: error.message });
+      }
+      if (error?.message === "authentication_required") {
+        return res.status(401).json({ error: error.message });
       }
       if (
         String(error?.message || "").startsWith("invalid_")

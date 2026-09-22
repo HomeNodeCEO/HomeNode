@@ -5,6 +5,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { UAD_MIGRATION_NAMES } from "../src/database/uadMigrations.js";
+import { authenticatedDesktopSketchActor } from "../src/modules/mobile/desktopSketches.js";
 import { normalizeUadSketchInput } from "../src/modules/uad/sketches.js";
 
 const directory = path.dirname(fileURLToPath(import.meta.url));
@@ -52,6 +53,27 @@ test("one desktop measured-sketch editor is wired to all three report workflows"
   assert.match(propertyTaxRouter, /property-tax-protest\/:fileId\/sketch/);
   assert.match(desktopSketches, /saveDesktopInspectionSketch/);
   assert.match(desktopSketches, /savePropertyTaxInspectionSketch/);
+  assert.doesNotMatch(desktopSketches, /input\.reviewer/);
+});
+
+test("desktop sketch audit labels come only from an authenticated identity", () => {
+  assert.deepEqual(authenticatedDesktopSketchActor({
+    userId: " user-1 ",
+    displayName: " Authenticated Appraiser ",
+    email: "appraiser@example.com",
+  }), { userId: "user-1", reviewer: "Authenticated Appraiser" });
+  assert.deepEqual(authenticatedDesktopSketchActor({
+    userId: "user-2",
+    email: " fallback@example.com ",
+  }), { userId: "user-2", reviewer: "fallback@example.com" });
+  assert.deepEqual(authenticatedDesktopSketchActor({ userId: "user-3" }), {
+    userId: "user-3",
+    reviewer: "user-3",
+  });
+  assert.throws(
+    () => authenticatedDesktopSketchActor({ displayName: "Forged Browser Reviewer" }),
+    /authentication_required/,
+  );
 });
 
 test("every report file exposes a safe mobile-sync sketch workspace", () => {

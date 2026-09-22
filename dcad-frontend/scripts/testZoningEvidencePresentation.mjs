@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
 import test from "node:test";
 
 import {
@@ -59,4 +60,20 @@ test("review-required zoning prefills the best suggestion without duplicating th
   assert.equal(draft.zoningCode, "PD");
   assert.equal(draft.zoningDescription, "Planned Development District");
   assert.equal(draft.confirmationReference, "");
+});
+
+test("assignment changes clear zoning state and stale scopes cannot save", () => {
+  const hookSource = fs.readFileSync(
+    new URL("../src/hooks/useZoningEvidence.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(
+    hookSource,
+    /zoningEvidenceScopeRef\.current = "";[\s\S]*setZoningEvidence\(null\);[\s\S]*setZoningDraft\(EMPTY_ZONING_EVIDENCE_DRAFT\);/,
+  );
+  assert.match(
+    hookSource,
+    /if \(zoningEvidenceScopeRef\.current !== scopeKey\) return;/,
+  );
+  assert.match(hookSource, /}, \[accountId, assignmentFileId\]\);/);
 });

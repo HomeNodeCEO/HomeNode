@@ -13,6 +13,10 @@ import {
 
 const zoningEvidenceRequests = new Map<string, Promise<PropertyZoningEvidence>>();
 
+function zoningEvidenceScopeKey(accountId?: string, assignmentFileId?: number | null): string {
+  return accountId && assignmentFileId ? `${accountId}:${assignmentFileId}` : "";
+}
+
 function loadSharedZoningEvidence(
   accountId: string,
   assignmentFileId?: number | null,
@@ -49,6 +53,7 @@ export function useZoningEvidence({
   const [zoningDraft, setZoningDraft] = useState<ZoningEvidenceDraft>(
     EMPTY_ZONING_EVIDENCE_DRAFT,
   );
+  const zoningEvidenceScopeRef = useRef("");
   const requestVersionRef = useRef(0);
   const editorKeyRef = useRef(getEditorKey);
   const credentialRejectedRef = useRef(onCredentialRejected);
@@ -60,7 +65,11 @@ export function useZoningEvidence({
     credentialRejectedRef.current = onCredentialRejected;
   }, [onCredentialRejected]);
 
-  const hydrateZoningEvidence = useCallback((evidence: PropertyZoningEvidence) => {
+  const hydrateZoningEvidence = useCallback((
+    evidence: PropertyZoningEvidence,
+    scopeKey: string,
+  ) => {
+    zoningEvidenceScopeRef.current = scopeKey;
     setZoningEvidence(evidence);
     setZoningDraft((current) => zoningDraftFromEvidence(evidence, current));
   }, []);
@@ -70,12 +79,13 @@ export function useZoningEvidence({
     if (open) setZoningEvidenceOpen(true);
     const requestVersion = requestVersionRef.current + 1;
     requestVersionRef.current = requestVersion;
+    const scopeKey = zoningEvidenceScopeKey(accountId, assignmentFileId);
     setZoningEvidenceLoading(true);
     setZoningEvidenceMessage("");
     try {
       const evidence = await loadSharedZoningEvidence(accountId, assignmentFileId);
       if (requestVersion !== requestVersionRef.current) return;
-      hydrateZoningEvidence(evidence);
+      hydrateZoningEvidence(evidence, scopeKey);
     } catch (error) {
       if (requestVersion === requestVersionRef.current) {
         setZoningEvidenceMessage(
@@ -89,6 +99,16 @@ export function useZoningEvidence({
 
   useEffect(() => {
     requestVersionRef.current += 1;
+    zoningEvidenceScopeRef.current = "";
+    setZoningEvidence(null);
+    setZoningEvidenceOpen(false);
+    setZoningEvidenceLoading(false);
+    setZoningEvidenceMessage("");
+    setZoningDraft(EMPTY_ZONING_EVIDENCE_DRAFT);
+  }, [accountId, assignmentFileId]);
+
+  useEffect(() => {
+    requestVersionRef.current += 1;
     if (!enabled || !accountId || !assignmentFileId) {
       setZoningEvidenceLoading(false);
       return;
@@ -98,6 +118,8 @@ export function useZoningEvidence({
 
   const saveZoningEvidence = useCallback(async () => {
     if (!accountId || !assignmentFileId || !zoningEvidence?.jurisdiction) return;
+    const scopeKey = zoningEvidenceScopeKey(accountId, assignmentFileId);
+    if (zoningEvidenceScopeRef.current !== scopeKey) return;
     if (!zoningDraft.zoningCode.trim()) {
       setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
       return;
@@ -137,7 +159,7 @@ export function useZoningEvidence({
         ...zoningEvidence,
         review_required: false,
         verification: response.verification,
-      });
+      }, scopeKey);
       setZoningEvidenceMessage("Confirmed zoning and source provenance saved to this property file.");
     } catch (error) {
       const message = error instanceof Error ? error.message : "The zoning verification could not be saved.";

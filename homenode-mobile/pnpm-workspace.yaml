@@ -34,4 +34,5 @@ auditConfig:
     - GHSA-5p2g-fcmc-qvqq
 patchedDependencies:
   image-size@1.2.1: patches/image-size@1.2.1.patch
+  yargs@17.7.3: patches/yargs@17.7.3.patch
   zod@3.25.76: patches/zod@3.25.76.patch

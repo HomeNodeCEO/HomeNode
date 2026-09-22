@@ -4,7 +4,7 @@ import { readFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import path from 'node:path';
 import test from 'node:test';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const require = createRequire(import.meta.url);
 const mobileRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
@@ -117,6 +117,27 @@ test('patched Expo Zod v4 object catchalls cannot replace the result prototype',
     assert.equal(Object.hasOwn(parsed, '__proto__'), false);
     assert.equal('isAdmin' in parsed, false);
   }
+});
+
+test('patched Expo yargs config extension cannot replace the result prototype', async () => {
+  const yargsRoot = path.dirname(expoCliRequire.resolve('yargs/package.json'));
+  const { applyExtends } = await import(
+    pathToFileURL(path.join(yargsRoot, 'build/lib/utils/apply-extends.js')).href
+  ) as {
+    applyExtends: (
+      config: Record<string, unknown>,
+      cwd: string,
+      mergeExtends: boolean,
+      shim: Record<string, unknown>,
+    ) => Record<string, unknown>;
+  };
+  const input = JSON.parse('{"__proto__":{"isAdmin":true},"name":"alice"}') as Record<string, unknown>;
+  const merged = applyExtends(input, mobileRoot, true, {});
+
+  assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+  assert.equal(Object.hasOwn(merged, '__proto__'), false);
+  assert.equal('isAdmin' in merged, false);
+  assert.equal(merged.name, 'alice');
 });
 
 test('Expo xcode tooling resolves the patched uuid release', () => {

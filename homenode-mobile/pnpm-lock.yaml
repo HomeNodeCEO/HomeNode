@@ -11,6 +11,7 @@ overrides:
 
 patchedDependencies:
   image-size@1.2.1: 636201128a1b539010a60f0e5af1a38383474a256c8855f2395fc001bc13724d
+  yargs@17.7.3: 81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843
   zod@3.25.76: 783243785d58621251bd363b1130f7026fe982f55b5a349f844a7f6d44e17429
 
 importers:
@@ -3265,7 +3266,7 @@ snapshots:
       invariant: 2.2.4
       nullthrows: 1.1.1
       tinyglobby: 0.2.17
-      yargs: 17.7.3
+      yargs: 17.7.3(patch_hash=81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843)
 
   '@react-native/codegen@0.86.3(@babel/core@7.29.7(supports-color@8.1.1))':
     dependencies:
@@ -3275,7 +3276,7 @@ snapshots:
       invariant: 2.2.4
       nullthrows: 1.1.1
       tinyglobby: 0.2.17
-      yargs: 17.7.3
+      yargs: 17.7.3(patch_hash=81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843)
 
   '@react-native/community-cli-plugin@0.86.3(supports-color@8.1.1)':
     dependencies:
@@ -4390,7 +4391,7 @@ snapshots:
       source-map: 0.5.7
       throat: 5.0.0
       ws: 7.5.13
-      yargs: 17.7.3
+      yargs: 17.7.3(patch_hash=81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843)
     transitivePeerDependencies:
       - bufferutil
       - supports-color
@@ -4590,7 +4591,7 @@ snapshots:
       tinyglobby: 0.2.17
       whatwg-fetch: 3.6.20
       ws: 7.5.13
-      yargs: 17.7.3
+      yargs: 17.7.3(patch_hash=81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843)
     optionalDependencies:
       '@types/react': 19.2.18
     transitivePeerDependencies:
@@ -4887,7 +4888,7 @@ snapshots:
 
   yargs-parser@21.1.1: {}
 
-  yargs@17.7.3:
+  yargs@17.7.3(patch_hash=81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843):
     dependencies:
       cliui: 8.0.1
       escalade: 3.2.0

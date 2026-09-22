@@ -2,7 +2,7 @@ playwright==1.47.0
 beautifulsoup4==4.12.3
 lxml==6.1.2
 psycopg2-binary==2.9.9
-SQLAlchemy==2.0.32
+SQLAlchemy==2.0.52
 pydantic==2.13.4
 python-dotenv==1.2.3
 fastapi==0.141.1

@@ -254,10 +254,56 @@ test("DCAD outages degrade to a reviewable response instead of failing the route
   const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.query_address, "9 Oak St");
+  assert.equal(body.query_address, "9 OAK ST");
   assert.equal(body.live_query_status, "unavailable");
   assert.equal(body.live_query_error, "dcad_temporarily_unavailable");
   assert.deepEqual(body.parcels, []);
+});
+
+test("shared outage results never expose another account address suffix", async (context) => {
+  const cached = new Map();
+  let lookupCount = 0;
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    pool: {
+      query: async (sql, params) => {
+        if (/FROM core\.accounts WHERE account_id/.test(String(sql))) {
+          return {
+            rows: [{
+              account_id: params[0],
+              address: params[0] === "A-1"
+                ? "9 Oak St, Dallas, TX"
+                : "9 Oak St, Private Suffix, TX",
+              county: "Dallas",
+            }],
+          };
+        }
+        return { rows: [] };
+      },
+    },
+    lookupRequestKey: (address) => String(address)
+      .split(",")[0]
+      .trim()
+      .toUpperCase(),
+    runLookupOperation: async (key, _principal, operation) => {
+      if (cached.has(key)) return cached.get(key);
+      const result = await operation();
+      cached.set(key, result);
+      return result;
+    },
+    findParcelsByAddress: async () => {
+      lookupCount += 1;
+      throw new Error("dcad_temporarily_unavailable");
+    },
+  })));
+  context.after(server.close);
+
+  const first = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
+  const second = await fetch(`${server.baseUrl}/api/accounts/B-2/related-parcels`);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal((await first.json()).query_address, "9 OAK ST");
+  assert.equal((await second.json()).query_address, "9 OAK ST");
+  assert.equal(lookupCount, 1);
 });
 
 test("related parcel lookup returns a stable retryable response when the DCAD budget is full", async (context) => {

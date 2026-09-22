@@ -82,8 +82,9 @@ export function createRelatedParcelsRouter({
         const principal = String(
           req.mobileAuth?.userId || req.ip || req.socket?.remoteAddress || "legacy",
         ).trim();
+        const liveLookupKey = lookupRequestKey(requestedAddress);
         const lookup = await runLookupOperation(
-          lookupRequestKey(requestedAddress),
+          liveLookupKey,
           principal,
           async () => {
             try {
@@ -95,7 +96,7 @@ export function createRelatedParcelsRouter({
             } catch (error) {
               return {
                 status: "unavailable",
-                result: { query_address: requestedAddress, parcels: [] },
+                result: { query_address: liveLookupKey, parcels: [] },
                 error: String(error?.message || "dcad_address_query_failed"),
               };
             }

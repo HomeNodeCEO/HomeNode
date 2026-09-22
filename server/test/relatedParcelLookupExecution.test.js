@@ -130,3 +130,40 @@ test("related-parcel lookup keys and busy errors remain stable", () => {
   );
   assert.equal(isRelatedParcelLookupBusyError("dcad_unavailable"), false);
 });
+
+test("blank execution settings retain safe operational defaults", async () => {
+  const gate = createRelatedParcelLookupExecutionGate({
+    maxConcurrent: " ",
+    maxQueued: "",
+    maxConcurrentPerPrincipal: "",
+    maxQueuedPerPrincipal: " ",
+    queueTimeoutMs: "",
+    successCacheTtlMs: " ",
+    unavailableCacheTtlMs: "",
+    maxCacheEntries: " ",
+  });
+  let executions = 0;
+  const operation = async () => ({
+    status: "complete",
+    result: { executions: ++executions },
+    error: null,
+  });
+
+  assert.equal((await gate.run("same", "user", operation)).result.executions, 1);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal((await gate.run("same", "user", operation)).result.executions, 1);
+  assert.deepEqual(gate.snapshot(), {
+    active: 0,
+    queued: 0,
+    in_flight: 0,
+    cached: 1,
+    cache_hits: 1,
+    max_concurrent: 2,
+    max_queued: 4,
+    max_concurrent_per_principal: 1,
+    max_queued_per_principal: 1,
+    completed: 1,
+    failed: 0,
+    saturated: false,
+  });
+});

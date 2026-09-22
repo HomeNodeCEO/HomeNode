@@ -134,6 +134,25 @@ class SearchIndexTests(unittest.TestCase):
             ):
                 search_index.read_bounded_detail(path, maximum_bytes=64)
 
+    def test_snapshot_skips_empty_and_malformed_fixtures(self):
+        with tempfile.TemporaryDirectory() as directory:
+            empty_id = "12345678901234567"
+            malformed_id = "23456789012345678"
+            valid_id = "34567890123456789"
+            (Path(directory) / f"{empty_id}.json").write_bytes(b"")
+            (Path(directory) / f"{malformed_id}.json").write_bytes(b"{not-json")
+            self.write_detail(directory, valid_id, {
+                "property_location": {"address": "123 Main Street"},
+            })
+
+            snapshot = search_index.build_data_snapshot(Path(directory))
+
+            self.assertEqual(set(snapshot.detail_files), {valid_id})
+            self.assertEqual(
+                [record.account_id for record in snapshot.search_records],
+                [valid_id],
+            )
+
     def test_concurrency_guard_refuses_excess_work_and_releases_on_failure(self):
         guard = search_index.SearchConcurrencyGuard(1)
         with guard.slot():

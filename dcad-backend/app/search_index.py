@@ -113,8 +113,10 @@ def load_detail_object(raw: Dict[str, Any]) -> Dict[str, Any]:
 def _read_bounded_payload(path: Path, maximum_bytes: int) -> bytes:
     with path.open("rb") as handle:
         payload = handle.read(maximum_bytes + 1)
-    if not payload or len(payload) > maximum_bytes:
+    if len(payload) > maximum_bytes:
         raise SearchIndexLimitError("dcad_data_file_size_limit_exceeded")
+    if not payload:
+        raise ValueError("empty_dcad_data_file")
     return payload
 
 
@@ -176,19 +178,19 @@ def build_data_snapshot(data_dir: Path) -> DataSnapshot:
     search_records: List[SearchRecord] = []
     source_bytes = 0
     for path in _bounded_fixture_paths(data_dir):
-        payload = _read_bounded_payload(path, MAX_DATA_FILE_BYTES)
-        source_bytes += len(payload)
-        if source_bytes > MAX_TOTAL_INDEX_SOURCE_BYTES:
-            raise SearchIndexLimitError("dcad_data_total_size_limit_exceeded")
-        account_id = path.stem
-        detail_files[account_id] = path
         try:
+            payload = _read_bounded_payload(path, MAX_DATA_FILE_BYTES)
+            source_bytes += len(payload)
+            if source_bytes > MAX_TOTAL_INDEX_SOURCE_BYTES:
+                raise SearchIndexLimitError("dcad_data_total_size_limit_exceeded")
             raw = json.loads(payload)
             if not isinstance(raw, dict):
                 continue
             detail = load_detail_object(raw)
-        except (UnicodeError, ValueError, json.JSONDecodeError):
+        except (UnicodeError, ValueError):
             continue
+        account_id = path.stem
+        detail_files[account_id] = path
         search_records.append(_search_record(account_id, detail))
     return DataSnapshot(
         detail_files=MappingProxyType(detail_files),

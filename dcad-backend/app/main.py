@@ -11,6 +11,7 @@ from app.search_index import (
     MAX_SEARCH_RESULTS,
     SearchCapacityError,
     SearchConcurrencyGuard,
+    SearchIndexLimitError,
     build_data_snapshot,
     read_bounded_detail,
     search_snapshot,
@@ -64,7 +65,10 @@ def get_detail(account_id: str):
     if fp is None or not fp.is_file():
         raise HTTPException(status_code=404, detail="Not Found")
 
-    detail = read_bounded_detail(fp)
+    try:
+        detail = read_bounded_detail(fp)
+    except (OSError, ValueError, SearchIndexLimitError) as error:
+        raise HTTPException(status_code=404, detail="Not Found") from error
 
     return {
         "account_id": account_id,

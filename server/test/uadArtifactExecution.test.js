@@ -21,7 +21,7 @@ test("artifact execution is single-flight for duplicate workfile operations", as
     executions += 1;
     return work.promise;
   };
-  const first = gate.run("pdf:workfile-1", operation);
+  const first = gate.run("pdf:workfile-1", operation, { signal: null });
   const duplicate = gate.run("pdf:workfile-1", operation);
   assert.notEqual(first, duplicate);
   await new Promise((resolve) => setImmediate(resolve));

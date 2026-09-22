@@ -121,7 +121,7 @@ export function createUadArtifactExecutionGate({
     if (typeof operation !== "function") return Promise.reject(new Error("uad_artifact_operation_required"));
     const key = String(keyValue || "").trim();
     if (!key) return Promise.reject(new Error("uad_artifact_operation_key_required"));
-    if (signal !== undefined && !(signal instanceof AbortSignal)) {
+    if (signal != null && !(signal instanceof AbortSignal)) {
       return Promise.reject(new Error("uad_artifact_abort_signal_invalid"));
     }
     if (signal?.aborted) return Promise.reject(abortedError());

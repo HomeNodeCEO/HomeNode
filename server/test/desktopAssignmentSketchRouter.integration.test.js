@@ -6,7 +6,11 @@ import express from "express";
 
 import { createDesktopAssignmentSketchRouter } from "../src/modules/mobile/desktopAssignmentSketchRouter.js";
 
-const identity = Object.freeze({ userId: "user-1" });
+const identity = Object.freeze({
+  userId: "user-1",
+  displayName: "Authenticated Appraiser",
+  email: "appraiser@example.com",
+});
 
 function baseOptions(overrides = {}) {
   return {
@@ -327,7 +331,11 @@ test("artifact routes preserve not-found, validation, and diagnostic-safe failur
 
 test("desktop sketch saves bind canonical assignment, request body, and authenticated actor", async (context) => {
   const calls = [];
-  const body = { expected_revision: 2, reviewer: "Reviewer", sketch: { areas: [], rooms: [] } };
+  const body = {
+    expected_revision: 2,
+    reviewer: "Forged Browser Reviewer",
+    sketch: { areas: [], rooms: [] },
+  };
   const result = { sketch: { id: "sketch-1", revision: 3 }, report_registry_revision: 8 };
   const options = baseOptions({
     ensureAssignmentFilesAvailable: async () => { calls.push("assignment-schema"); },
@@ -338,8 +346,16 @@ test("desktop sketch saves bind canonical assignment, request body, and authenti
       return true;
     },
     getSketch: async () => null,
-    saveSketch: async (pool, accountId, fileId, input, actorUserId) => {
-      calls.push({ type: "save", pool, accountId, fileId, input, actorUserId });
+    saveSketch: async (pool, accountId, fileId, input, actorAuth, confirmationAuthorized) => {
+      calls.push({
+        type: "save",
+        pool,
+        accountId,
+        fileId,
+        input,
+        actorAuth,
+        confirmationAuthorized,
+      });
       return result;
     },
   });
@@ -363,13 +379,35 @@ test("desktop sketch saves bind canonical assignment, request body, and authenti
     accountId: saved.accountId,
     fileId: saved.fileId,
     input: saved.input,
-    actorUserId: saved.actorUserId,
+    actorAuth: saved.actorAuth,
+    confirmationAuthorized: saved.confirmationAuthorized,
   }, {
     accountId: "CANONICAL_1",
     fileId: 9,
     input: body,
-    actorUserId: "user-1",
+    actorAuth: identity,
+    confirmationAuthorized: false,
   });
+});
+
+test("desktop sketch updates require an authenticated server identity", async (context) => {
+  let accessCalls = 0;
+  let saveCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireAssignmentAccess: async () => { accessCalls += 1; return true; },
+    saveSketch: async () => { saveCalls += 1; return {}; },
+  }));
+  context.after(server.close);
+
+  const response = await patchSketch(server.baseUrl, "123", 1, {
+    expected_revision: 1,
+    reviewer: "Forged Browser Reviewer",
+    sketch: { review_status: "draft" },
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "authentication_required" });
+  assert.equal(accessCalls, 0);
+  assert.equal(saveCalls, 0);
 });
 
 test("appraiser-confirmed assignment sketches require sign authority before saving", async (context) => {
@@ -452,7 +490,7 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
       throw error;
     },
     logger: { error(...args) { errors.push(args); } },
-  }));
+  }), identity);
   context.after(server.close);
 
   for (const [fileId, status, body] of [

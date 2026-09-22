@@ -18,6 +18,18 @@ function propertyLabel(row) {
   return [row.address, row.city, row.state, row.postal_code].filter(Boolean).join(", ");
 }
 
+export function authenticatedDesktopSketchActor(auth) {
+  const userId = String(auth?.userId || "").trim();
+  if (!userId) throw new Error("authentication_required");
+  for (const value of [auth?.displayName, auth?.email, userId]) {
+    const reviewer = String(value || "").trim();
+    if (reviewer) {
+      return Object.freeze({ userId, reviewer: reviewer.slice(0, 200) });
+    }
+  }
+  throw new Error("authentication_required");
+}
+
 async function assignmentSketchRow(client, accountId, assignmentFileId, { lock = false } = {}) {
   const sql = [
     "SELECT sketch.*,",
@@ -138,9 +150,10 @@ async function saveDesktopInspectionSketch(
   loadRow,
   requestScope,
   input = {},
-  actorUserId = null,
+  actorAuth = null,
   confirmationAuthorized = false,
 ) {
+  const { userId: actorUserId, reviewer } = authenticatedDesktopSketchActor(actorAuth);
   const expectedRevision = Number(input.expected_revision);
   if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {
     throw new Error("invalid_sketch_expected_revision");
@@ -148,7 +161,6 @@ async function saveDesktopInspectionSketch(
   const clientOperationId = input.client_operation_id
     ? normalizeUuid(input.client_operation_id, "invalid_sketch_operation_id")
     : randomUUID();
-  const reviewer = String(input.reviewer || "HomeNode editor").trim().slice(0, 200) || "HomeNode editor";
   const document = normalizeManualSketchDocument(input.sketch);
   const requestSha = hashRequest({ ...requestScope, expectedRevision, document });
   const client = await pool.connect();
@@ -212,7 +224,7 @@ async function saveDesktopInspectionSketch(
         document.review_status,
         JSON.stringify(document),
         JSON.stringify(document.summary),
-        actorUserId || row.updated_by_user_id,
+        actorUserId,
       ],
     );
     const sketchRow = updatedResult.rows[0];
@@ -348,7 +360,7 @@ export async function saveAssignmentInspectionSketch(
   accountId,
   assignmentFileId,
   input = {},
-  actorUserId = null,
+  actorAuth = null,
   confirmationAuthorized = false,
 ) {
   return saveDesktopInspectionSketch(
@@ -361,7 +373,7 @@ export async function saveAssignmentInspectionSketch(
       notFoundCode: "assignment_sketch_not_found",
     },
     input,
-    actorUserId,
+    actorAuth,
     confirmationAuthorized,
   );
 }
@@ -371,7 +383,7 @@ export async function savePropertyTaxInspectionSketch(
   accountId,
   fileId,
   input = {},
-  actorUserId = null,
+  actorAuth = null,
   confirmationAuthorized = false,
 ) {
   return saveDesktopInspectionSketch(
@@ -384,7 +396,7 @@ export async function savePropertyTaxInspectionSketch(
       notFoundCode: "property_tax_protest_sketch_not_found",
     },
     input,
-    actorUserId,
+    actorAuth,
     confirmationAuthorized,
   );
 }

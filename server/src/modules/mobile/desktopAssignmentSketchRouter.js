@@ -206,6 +206,9 @@ export function createDesktopAssignmentSketchRouter({
       return res.status(400).json({ error: "invalid_account_id" });
     }
     if (!requireEditor(req, res)) return undefined;
+    if (!String(req.mobileAuth?.userId || "").trim()) {
+      return res.status(401).json({ error: "authentication_required" });
+    }
     try {
       const assignmentFileId = normalizeAssignmentId(req.params.fileId, { required: true });
       await Promise.all([
@@ -244,7 +247,7 @@ export function createDesktopAssignmentSketchRouter({
         canonicalId,
         assignmentFileId,
         req.body,
-        req.mobileAuth?.userId || null,
+        req.mobileAuth,
         confirmationAuthorized,
       );
       return res.json({ ok: true, ...result });
@@ -260,6 +263,9 @@ export function createDesktopAssignmentSketchRouter({
       }
       if (error?.message === "inspection_sketch_confirmation_access_denied") {
         return res.status(403).json({ error: error.message });
+      }
+      if (error?.message === "authentication_required") {
+        return res.status(401).json({ error: error.message });
       }
       if (
         String(error?.message || "").startsWith("invalid_")

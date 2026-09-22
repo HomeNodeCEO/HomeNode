@@ -370,6 +370,22 @@ test("opening UAD contract evidence is read-only and remains usable when the PDF
   assert.match(centerSource, /The contract details are available below/);
 });
 
+test("locked shared workfiles keep evidence visible while disabling document mutations", async () => {
+  const { readFile } = await import("node:fs/promises");
+  const [modalSource, centerSource] = await Promise.all([
+    readFile(new URL("../../dcad-frontend/src/components/AppraisalWorkfileModal.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx", import.meta.url), "utf8"),
+  ]);
+  assert.match(modalSource, /readOnly=\{scopeMutable !== true\}/);
+  assert.match(modalSource, /const opener = useRef<HTMLElement \| null>\(null\)/);
+  assert.match(modalSource, /elementToRestore\?\.isConnected/);
+  assert.match(centerSource, /readOnly\?: boolean/);
+  assert.match(centerSource, /const requireMutableWorkfile/);
+  assert.match(centerSource, /disabled=\{readOnly \|\| loading \|\| !selectedFile\}/);
+  assert.match(centerSource, /disabled=\{readOnly \|\| loading \|\| confirmationBlocked\}/);
+  assert.match(centerSource, /Existing documents remain available for review and download/);
+});
+
 test("opening a legacy UAD purchase contract upgrades its stored extraction candidates once", async () => {
   const { readFile } = await import("node:fs/promises");
   const [routerSource, documentSource] = await Promise.all([

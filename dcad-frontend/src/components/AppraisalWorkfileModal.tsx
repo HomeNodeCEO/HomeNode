@@ -100,12 +100,26 @@ export default function AppraisalWorkfileModal({
   const [message, setMessage] = useState('');
   const closeButton = useRef<HTMLButtonElement | null>(null);
   const dialogPanel = useRef<HTMLElement | null>(null);
+  const opener = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
   const loadGeneration = useRef(0);
 
   useEffect(() => {
     onCloseRef.current = onClose;
   }, [onClose]);
+
+  useEffect(() => {
+    if (!open) return;
+    const initiatingElement = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    opener.current = initiatingElement;
+    return () => {
+      const elementToRestore = opener.current;
+      opener.current = null;
+      if (elementToRestore?.isConnected) window.setTimeout(() => elementToRestore.focus(), 0);
+    };
+  }, [open]);
 
   useEffect(() => {
     loadGeneration.current += 1;
@@ -346,6 +360,7 @@ export default function AppraisalWorkfileModal({
               getEditorKey={getEditorKey}
               onCustomAssignmentApplied={onCustomAssignmentApplied}
               onUadApplied={onUadApplied}
+              readOnly={scopeMutable !== true}
               subjectAddress={subjectAddress}
               uadWorkfileId={uadWorkfileId}
             />

@@ -28,6 +28,7 @@ overrides:
   uuid@7.0.3: 11.1.1
   expo-constants: 57.0.15
   compression: 1.8.2
+  brace-expansion: 5.0.12
 auditConfig:
   ignoreGhsas:
     - GHSA-w3rx-r6r6-pgpr

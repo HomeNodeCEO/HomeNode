@@ -165,6 +165,15 @@ function verifyPatchedCompressionResolution() {
 
 test('Expo CLI resolves the patched compression release', verifyPatchedCompressionResolution);
 
+/** Verify Expo's minimatch path cannot resolve the vulnerable expansion parser. */
+function verifyPatchedBraceExpansionResolution() {
+  const minimatchRequire = createRequire(expoCliRequire.resolve('minimatch/package.json'));
+  const braceExpansionPackage = minimatchRequire('brace-expansion/package.json') as { version: string };
+  assert.equal(braceExpansionPackage.version, '5.0.12');
+}
+
+test('Expo CLI resolves the patched brace-expansion release', verifyPatchedBraceExpansionResolution);
+
 test('dependency security gates reject moderate or higher findings', () => {
   const workflow = readFileSync(
     path.join(repositoryRoot, '.github/workflows/dependency-security.yml'),

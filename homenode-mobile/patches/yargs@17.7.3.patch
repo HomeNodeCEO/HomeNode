@@ -1,0 +1,12 @@
+diff --git a/build/lib/utils/apply-extends.js b/build/lib/utils/apply-extends.js
+index 7c467d5..b635df4 100644
+--- a/build/lib/utils/apply-extends.js
++++ b/build/lib/utils/apply-extends.js
+@@ -48,6 +48,7 @@ function mergeDeep(config1, config2) {
+     }
+     Object.assign(target, config1);
+     for (const key of Object.keys(config2)) {
++        if (key === '__proto__') continue;
+         if (isObject(config2[key]) && isObject(target[key])) {
+             target[key] = mergeDeep(config1[key], config2[key]);
+         }

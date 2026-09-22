@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createDesktopPropertyTaxRouter } from "../src/modules/mobile/desktopPropertyTaxRouter.js";
+import { PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA } from "../src/services/assignmentDocuments.js";
 
 const identity = Object.freeze({
   userId: "user-1",
@@ -684,12 +685,44 @@ test("Property Tax uploads bind only the canonical protest and report files", as
   assert.equal(calls[1].options.documentType, "district_evidence");
   assert.ok(Buffer.isBuffer(calls[1].options.content));
   assert.equal(calls[1].options.storage, storage);
+  assert.equal(calls[1].options.uploadQuota, PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA);
   assert.deepEqual(calls[2], {
     type: "process",
     documentId: 42,
     options: { storage, ocrProvider },
   });
   assert.equal(calls[1].options.uploadedBy, identity.userId);
+});
+
+test("Property Tax uploads return bounded conflicts when aggregate quotas are exhausted", async (context) => {
+  const file = {
+    tax_protest_file_id: "tax-file-1",
+    report_file_id: "report-file-1",
+    organization_id: "org-allowed",
+    assigned_appraiser_user_id: "user-1",
+  };
+  const servers = await Promise.all([
+    "assignment_document_storage_quota_exceeded",
+    "assignment_document_processing_capacity_exceeded",
+  ].map((message) => startRouter(baseOptions({
+    getFile: async () => file,
+    createDocument: async () => { throw new Error(message); },
+  }))));
+  context.after(async () => Promise.all(servers.map((server) => server.close())));
+
+  for (const [index, error] of [
+    "assignment_document_storage_quota_exceeded",
+    "assignment_document_processing_capacity_exceeded",
+  ].entries()) {
+    const response = await uploadDocument(
+      servers[index].baseUrl,
+      "123",
+      "tax-file-1",
+    );
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error });
+  }
 });
 
 test("Property Tax document failures return bounded diagnostics", async (context) => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
@@ -170,6 +170,11 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const scopeKey = isUad
+    ? `uad:${uadWorkfileId || ''}`
+    : `custom:${accountId}:${assignmentFileId ?? ''}`;
+  const currentScopeKeyRef = useRef(scopeKey);
+  currentScopeKeyRef.current = scopeKey;
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -228,8 +233,23 @@ export default function AssignmentDocumentCenter({
     setReviewer((current) => current.trim() || authenticatedReviewer);
   }, [defaultReviewer]);
 
+  useEffect(() => {
+    setDocuments([]);
+    setSelectedDocument(null);
+    setCandidateValues({});
+    setSelectedFile(null);
+    setDocumentTitle('');
+    setMessage('');
+    setLoading(false);
+    setViewerUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return '';
+    });
+  }, [scopeKey]);
+
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;
+    const requestedScopeKey = scopeKey;
     setLoading(true);
     setMessage('');
     try {
@@ -238,19 +258,22 @@ export default function AssignmentDocumentCenter({
       const loaded = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       setDocuments(loaded);
       if (selectedDocument?.id) {
         const matching = loaded.find((document) => document.id === selectedDocument.id);
         if (!matching) setSelectedDocument(null);
       }
     } catch (error) {
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       setMessage(error instanceof Error ? error.message : 'Documents could not be loaded.');
     } finally {
-      setLoading(false);
+      if (currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, isUad, selectedDocument?.id, uadWorkfileId]);
+  }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, selectedDocument?.id, uadWorkfileId]);
 
   const loadDocument = useCallback(async (documentId: number) => {
+    const requestedScopeKey = scopeKey;
     setLoading(true);
     setMessage('');
     try {
@@ -265,6 +288,7 @@ export default function AssignmentDocumentCenter({
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
       if (documentResult.status === 'rejected') throw documentResult.reason;
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       const document = documentResult.value;
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
@@ -282,11 +306,12 @@ export default function AssignmentDocumentCenter({
         setMessage(`Contract information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
       }
     } catch (error) {
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be loaded.');
     } finally {
-      setLoading(false);
+      if (currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
     }
-  }, [getEditorKey, isUad, uadWorkfileId]);
+  }, [getEditorKey, isUad, scopeKey, uadWorkfileId]);
 
   useEffect(() => {
     if (embedded || open) void loadDocuments();

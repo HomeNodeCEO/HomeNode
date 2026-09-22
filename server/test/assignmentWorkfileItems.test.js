@@ -66,6 +66,20 @@ test("workfile file allowlist rejects executable content", async () => {
   );
 });
 
+test("workfile files reject non-buffer bodies before inspecting their length", async () => {
+  for (const content of ["not raw bytes", ["not", "raw", "bytes"], { length: 12 }]) {
+    await assert.rejects(
+      createAssignmentWorkfileFile(
+        { query: async () => ({ rows: [] }) },
+        { configured: true, putObject: async () => assert.fail("invalid content must not be stored") },
+        { assignmentFileId: 4 },
+        { organizationId, fileName: "evidence.pdf", contentType: "application/pdf", content },
+      ),
+      /workfile_file_content_required/,
+    );
+  }
+});
+
 test("workfile links accept only credential-free http or https URLs", async () => {
   await assert.rejects(
     createAssignmentWorkfileLink({ query: async () => ({ rows: [] }) }, { uadWorkfileId: "33333333-3333-4333-8333-333333333333" }, {

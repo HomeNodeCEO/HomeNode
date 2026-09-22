@@ -96,6 +96,25 @@ test("UAD file upload uses its isolated scope and storage", async context => {
   assert.deepEqual(calls[1].slice(1), [{ uadWorkfileId: workfileId }, "org-uad", "sales.csv", "address,price"]);
 });
 
+test("workfile uploads reject bodies parsed as structured request values", async context => {
+  let createCalls = 0;
+  const server = await start(createAssignmentWorkfileItemRouter(options({
+    createFile: async () => { createCalls += 1; return { id: "unexpected" }; },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/workfile/items/files`, {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-workfile-file-name": "evidence.pdf",
+    },
+    body: JSON.stringify(["not", "raw", "bytes"]),
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "workfile_file_upload_body_invalid" });
+  assert.equal(createCalls, 0);
+});
+
 test("workfile links reject requests denied by workflow policy", async context => {
   const server = await start(createAssignmentWorkfileItemRouter(options({
     requireWorkflowAccess: (_req, res) => { res.status(403).json({ error: "application_access_denied" }); return false; },

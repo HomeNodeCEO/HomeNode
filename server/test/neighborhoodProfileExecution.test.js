@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   compactNeighborhoodProfileResponse,
   createNeighborhoodProfileExecutionGate,
+  marketAnalysisRequestKey,
   neighborhoodProfileRequestKey,
 } from "../src/services/neighborhoodProfileExecution.js";
 
@@ -122,6 +123,24 @@ test("neighborhood profile request keys cover every analysis input", () => {
   assert.notEqual(neighborhoodProfileRequestKey(base), neighborhoodProfileRequestKey({
     ...base,
     periodMonths: 24,
+  }));
+});
+
+test("market analysis keys are namespaced and include the selected area sequence", () => {
+  const request = {
+    subjectAccountId: " 123 ",
+    areaKeys: ["city", "radius_3"],
+    asOfDate: "2026-09-21",
+    periodMonths: 24,
+    customGeometry: null,
+    marketContextOverride: null,
+  };
+  const key = marketAnalysisRequestKey(request);
+  assert.match(key, /"operation":"market_analysis"/);
+  assert.notEqual(key, neighborhoodProfileRequestKey(request));
+  assert.notEqual(key, marketAnalysisRequestKey({
+    ...request,
+    areaKeys: ["radius_3", "city"],
   }));
 });
 

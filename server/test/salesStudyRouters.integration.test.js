@@ -31,6 +31,10 @@ function valuationOptions(overrides = {}) {
     accountIdAllowed: () => true,
     requireCustomAccountScope: async () => true,
     buildMarketAnalyses: async () => { throw new Error("unexpected_market_analysis"); },
+    isMarketAnalysisBusyError: (message) => message === "neighborhood_profile_capacity_exceeded",
+    marketRequestKey: (request) => JSON.stringify(request),
+    normalizeMarketRequest: (request) => request,
+    runMarketAnalysisOperation: (_key, operation) => operation(),
     marketErrorStatus: () => 400,
     buildRegression: async () => { throw new Error("unexpected_regression"); },
     regressionErrorStatus: () => 400,
@@ -214,9 +218,22 @@ test("comparison study failures retain domain status mapping, detail, and diagno
 
 test("market analysis preserves every selected analytical input", async (context) => {
   const calls = [];
+  const executionCalls = [];
   const result = { analyses: [{ area_key: "city" }] };
   const options = valuationOptions({
     buildMarketAnalyses: async (pool, input) => { calls.push({ pool, input }); return result; },
+    normalizeMarketRequest: (request) => {
+      executionCalls.push({ type: "normalize", request });
+      return { ...request, areaKeys: ["city", "radius_3mi"], periodMonths: 24 };
+    },
+    marketRequestKey: (request) => {
+      executionCalls.push({ type: "key", request });
+      return "market-analysis-key";
+    },
+    runMarketAnalysisOperation: async (key, operation, settings) => {
+      executionCalls.push({ type: "run", key, settings });
+      return operation();
+    },
   });
   const server = await startRouter(createValuationStudyRouter(options));
   context.after(server.close);
@@ -239,12 +256,61 @@ test("market analysis preserves every selected analytical input", async (context
       subjectAccountId: "A-1",
       areaKeys: ["city", "radius_3mi"],
       asOfDate: "2026-09-02",
-      periodMonths: 0,
+      periodMonths: 24,
       customGeometry: geometry,
       marketContextOverride: override,
       accountIdAllowed: options.accountIdAllowed,
     },
   }]);
+  assert.deepEqual(executionCalls, [
+    {
+      type: "normalize",
+      request: {
+        subjectAccountId: "A-1",
+        areaKeys: ["city", "radius_3mi"],
+        asOfDate: "2026-09-02",
+        periodMonths: 0,
+        customGeometry: geometry,
+        marketContextOverride: override,
+      },
+    },
+    {
+      type: "key",
+      request: {
+        subjectAccountId: "A-1",
+        areaKeys: ["city", "radius_3mi"],
+        asOfDate: "2026-09-02",
+        periodMonths: 24,
+        customGeometry: geometry,
+        marketContextOverride: override,
+      },
+    },
+    {
+      type: "run",
+      key: "market-analysis-key",
+      settings: { allowCached: false, cacheResult: false },
+    },
+  ]);
+});
+
+test("market analysis returns a retryable response when the shared analysis budget is full", async (context) => {
+  let serviceCalls = 0;
+  const server = await startRouter(createValuationStudyRouter(valuationOptions({
+    buildMarketAnalyses: async () => { serviceCalls += 1; },
+    runMarketAnalysisOperation: async () => {
+      throw new Error("neighborhood_profile_capacity_exceeded");
+    },
+  })));
+  context.after(server.close);
+
+  const response = await post(server.baseUrl, "/api/sales/market-analysis", {
+    subject_account_id: "A-1",
+    area_keys: ["city"],
+  });
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("retry-after"), "10");
+  assert.deepEqual(await response.json(), { error: "market_analysis_busy" });
+  assert.equal(serviceCalls, 0);
 });
 
 test("regression and site studies preserve shared market inputs independently", async (context) => {
@@ -375,6 +441,14 @@ test("sales study composition preserves route positions and removes inline handl
   );
   assert.throws(
     () => createValuationStudyRouter(valuationOptions({ buildRegression: null })),
+    /valuation_study_dependency_required/,
+  );
+  assert.throws(
+    () => createValuationStudyRouter(valuationOptions({ runMarketAnalysisOperation: null })),
+    /valuation_study_dependency_required/,
+  );
+  assert.throws(
+    () => createValuationStudyRouter(valuationOptions({ normalizeMarketRequest: null })),
     /valuation_study_dependency_required/,
   );
 

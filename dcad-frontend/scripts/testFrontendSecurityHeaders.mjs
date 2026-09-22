@@ -5,13 +5,15 @@ import { fileURLToPath } from 'node:url'
 
 import {
   EXPECTED_R2_ORIGIN,
+  EXPECTED_STYLE_ATTRIBUTE_SOURCES,
+  EXPECTED_STYLE_SOURCES,
   RETIRED_R2_ORIGIN,
   DEFAULT_FRONTEND_URL,
   validateFrontendSecurityHeaders,
 } from './verifyFrontendSecurityHeaders.mjs'
 
 const secureHeaders = {
-  'content-security-policy': `default-src 'self'; img-src 'self' data: ${EXPECTED_R2_ORIGIN}; connect-src 'self' ${EXPECTED_R2_ORIGIN}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'`,
+  'content-security-policy': `default-src 'self'; script-src 'self' https://unpkg.com; style-src ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-elem ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-attr ${EXPECTED_STYLE_ATTRIBUTE_SOURCES.join(' ')}; img-src 'self' data: ${EXPECTED_R2_ORIGIN}; connect-src 'self' ${EXPECTED_R2_ORIGIN}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'`,
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -63,6 +65,42 @@ test('rejects wildcard storage access and weakened framing directives', () => {
   const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
   assert.match(errors, /img-src contains a wildcard source/)
   assert.match(errors, /frame-ancestors must remain exactly 'none'/)
+})
+
+test('rejects inline style elements while retaining the explicit style-attribute compatibility boundary', () => {
+  const headers = {
+    ...secureHeaders,
+    'content-security-policy': secureHeaders['content-security-policy']
+      .replace("style-src 'self' https://unpkg.com", "style-src 'self' 'unsafe-inline' https://unpkg.com"),
+  }
+  const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
+  assert.match(errors, /style-src must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src must not allow 'unsafe-inline'/)
+  assert.doesNotMatch(errors, /style-src-attr/)
+})
+
+test('rejects missing element and attribute-specific style boundaries', () => {
+  const headers = {
+    ...secureHeaders,
+    'content-security-policy': secureHeaders['content-security-policy']
+      .replace(/; style-src-elem[^;]+/, '')
+      .replace(/; style-src-attr[^;]+/, ''),
+  }
+  const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
+  assert.match(errors, /style-src-elem must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src-attr must remain exactly 'unsafe-inline'/)
+})
+
+test('rejects unsafe inline scripts independently of the style compatibility boundary', () => {
+  const headers = {
+    ...secureHeaders,
+    'content-security-policy': secureHeaders['content-security-policy']
+      .replace("script-src 'self'", "script-src 'self' 'unsafe-inline'"),
+  }
+  assert.match(
+    validateFrontendSecurityHeaders(headers).errors.join('\n'),
+    /script-src must not allow 'unsafe-inline'/,
+  )
 })
 
 test('rejects missing platform security headers', () => {

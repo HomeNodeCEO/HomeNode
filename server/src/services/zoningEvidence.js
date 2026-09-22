@@ -91,8 +91,13 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
     });
     const response = await fetchImpl(`${querySource.url}?${params}`, {
       headers: { accept: "application/json" },
+      redirect: "manual",
       signal: AbortSignal.timeout(10_000),
     });
+    if (response?.redirected || (Number(response?.status) >= 300 && Number(response?.status) < 400)) {
+      await response?.body?.cancel?.().catch(() => undefined);
+      throw new Error("official_zoning_redirect_forbidden");
+    }
     if (!response.ok) throw new Error(`official_zoning_http_${response.status}`);
     const payload = await readBoundedJsonResponse(response, {
       maximumBytes: MAX_GIS_RESPONSE_BYTES,

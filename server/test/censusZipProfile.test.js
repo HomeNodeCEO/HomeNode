@@ -44,6 +44,7 @@ test("maps the ACS unemployment rate for one ZIP", async () => {
       requestedUrl = String(url);
       assert.ok(options.signal instanceof AbortSignal);
       assert.equal(options.signal.aborted, false);
+      assert.equal(options.redirect, "manual");
       return jsonResponse([
         ["NAME", "DP03_0009PE", "zip code tabulation area"],
         ["ZCTA5 75044", "4.2", "75044"],
@@ -103,6 +104,33 @@ test("bounds the Census ZIP response before parsing it", async () => {
     (error) => error?.code === "census_zip_profile_response_too_large" && error?.status === 502,
   );
   assert.equal(cancelled, true);
+});
+
+test("Census profiles refuse redirects before exposing the API key to another origin", async () => {
+  for (const redirectedResponse of [
+    { status: 307, redirected: false },
+    { status: 200, redirected: true },
+  ]) {
+    let cancelled = false;
+    await assert.rejects(
+      () => fetchCensusZipProfile("75044", {
+        apiKey: "private-test-key",
+        useCache: false,
+        fetchImpl: async (url, options) => {
+          assert.match(String(url), /key=private-test-key/);
+          assert.equal(options.redirect, "manual");
+          return {
+            ok: redirectedResponse.status >= 200 && redirectedResponse.status < 300,
+            status: redirectedResponse.status,
+            redirected: redirectedResponse.redirected,
+            body: { async cancel() { cancelled = true; } },
+          };
+        },
+      }),
+      (error) => error?.code === "census_zip_profile_redirect_forbidden" && error?.status === 502,
+    );
+    assert.equal(cancelled, true);
+  }
 });
 
 test("bounds the statewide Census place table before parsing it", async () => {

@@ -37,6 +37,7 @@ function uploadHarness({
   expiredReservations = [],
   pendingCount = 0,
   pendingBytes = 0,
+  deleteObjectImpl = null,
 } = {}) {
   const statements = [];
   const storageCalls = [];
@@ -148,6 +149,7 @@ function uploadHarness({
     },
     async deleteObject({ objectKey }) {
       deletedObjects.push(objectKey);
+      await deleteObjectImpl?.({ objectKey });
     },
   };
 
@@ -348,6 +350,47 @@ test("asset upload creation audits and removes stale reservations then deletes o
   const commit = statementIndex(harness, (statement) => statement === "COMMIT");
   const release = statementIndex(harness, (statement) => statement === "RELEASE");
   assert.ok(release > commit);
+});
+
+test("expired reservation cleanup has bounded concurrency and cannot hold the upload response open", async () => {
+  const reservationCount = UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency + 1;
+  const expiredReservations = Array.from({ length: reservationCount }, (_, index) => {
+    const id = `33333333-3333-4333-8333-${String(index).padStart(12, "0")}`;
+    const original_file_name = `expired-${index}.jpg`;
+    return {
+      id,
+      original_file_name,
+      object_key: buildUadObjectKey({
+        organizationId: ORGANIZATION_ID,
+        workfileId: WORKFILE_ID,
+        assetId: id,
+        fileName: original_file_name,
+      }),
+    };
+  });
+  const releases = [];
+  const harness = uploadHarness({
+    expiredReservations,
+    deleteObjectImpl: () => new Promise((resolve) => releases.push(resolve)),
+  });
+  let safetyTimer;
+  try {
+    const result = await Promise.race([
+      createUadAssetUpload(harness.pool, harness.storage, WORKFILE_ID, UPLOAD_INPUT),
+      new Promise((_, reject) => {
+        safetyTimer = setTimeout(() => reject(new Error("cleanup_response_budget_not_enforced")), 2_000);
+      }),
+    ]);
+    assert.match(result.asset_id, /^[0-9a-f-]{36}$/);
+    assert.equal(harness.deletedObjects.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency);
+    assert.equal(releases.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency);
+  } finally {
+    clearTimeout(safetyTimer);
+    for (const release of releases) release();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.deletedObjects.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency,
+    "workers stop accepting more cleanup work after the response budget is exhausted");
 });
 
 test("asset upload creation preserves terminal-status refusals before storage or mutation", async () => {

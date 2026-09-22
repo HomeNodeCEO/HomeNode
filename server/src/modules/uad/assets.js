@@ -97,6 +97,8 @@ export const UAD_ASSET_UPLOAD_RESERVATION_LIMITS = Object.freeze({
   maximumPendingUploads: 100,
   maximumPendingBytes: 1024 * 1024 * 1024,
   cleanupBatchSize: 250,
+  cleanupConcurrency: 4,
+  cleanupResponseBudgetMs: 250,
 });
 const UAD_ASSET_UPLOAD_EXPIRY_GRACE = "24 hours";
 const SECTION_CAPTION_TYPES = new Map([
@@ -502,6 +504,39 @@ async function cleanupOwnedUadUploadSource(storage, workfileId, assetId, source)
   }
 }
 
+async function cleanupExpiredUadAssetReservations(
+  storage,
+  workfileId,
+  organizationId,
+  expiredReservations,
+) {
+  if (!expiredReservations.length) return;
+  let cursor = 0;
+  let deadlineReached = false;
+  const workers = Array.from({
+    length: Math.min(UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency, expiredReservations.length),
+  }, async () => {
+    while (!deadlineReached && cursor < expiredReservations.length) {
+      const expired = expiredReservations[cursor];
+      cursor += 1;
+      await cleanupOwnedUadUploadSource(storage, workfileId, expired.id, {
+        organization_id: organizationId,
+        object_key: expired.object_key,
+        original_file_name: expired.original_file_name,
+      }).catch(() => undefined);
+    }
+  });
+  let deadline;
+  const responseBudget = new Promise((resolve) => {
+    deadline = setTimeout(() => {
+      deadlineReached = true;
+      resolve();
+    }, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupResponseBudgetMs);
+  });
+  await Promise.race([Promise.all(workers), responseBudget]);
+  clearTimeout(deadline);
+}
+
 async function deleteExpiredUadAssetReservations(client, workfileId) {
   const { rows } = await client.query(
     `WITH expired_candidates AS (
@@ -635,13 +670,12 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   } finally {
     client.release();
   }
-  for (const expired of outcome.expiredReservations) {
-    await cleanupOwnedUadUploadSource(storage, workfileId, expired.id, {
-      organization_id: outcome.organizationId,
-      object_key: expired.object_key,
-      original_file_name: expired.original_file_name,
-    });
-  }
+  await cleanupExpiredUadAssetReservations(
+    storage,
+    workfileId,
+    outcome.organizationId,
+    outcome.expiredReservations,
+  );
   if (outcome.errorCode) throw new Error(outcome.errorCode);
   return outcome.upload;
 }

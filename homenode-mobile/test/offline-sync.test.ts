@@ -1,8 +1,21 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { networkAvailable, retryDelayMs, stableJson } from "../src/offline/model";
+import {
+  assertDatabaseSnapshotsEqual,
+  legacyDatabaseNamesForRemoval,
+  sqliteIdentifier,
+  sqliteStringLiteral,
+  staleIosMigrationDatabaseNames,
+  type OfflineDatabaseSnapshot,
+} from "../src/offline/databaseEncryption";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "../src/offline/databaseRecovery";
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 test("recognizes native SQLite error 26 through wrapped causes", () => {
   assert.equal(isUnreadableSqliteDatabaseError(new Error("file is not a database")), true);
@@ -13,14 +26,89 @@ test("recognizes native SQLite error 26 through wrapped causes", () => {
   assert.equal(isUnreadableSqliteDatabaseError(new Error("database is busy")), false);
 });
 
-test("quarantines the unreadable iOS cache in a new app-protected database generation", () => {
+test("migrates the legacy iOS cache into a SQLCipher-protected database generation", () => {
   assert.deepEqual(offlineDatabasePolicy("ios"), {
-    databaseName: "homenode-field-ios-v2.db",
-    activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v2",
-    recoveryGeneration: "ios-v2",
-    useSqlCipher: false,
+    databaseName: "homenode-field-ios-v3.db",
+    activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v3",
+    recoveryGeneration: "ios-v3",
+    useSqlCipher: true,
+    legacyPlaintext: {
+      databaseName: "homenode-field-ios-v2.db",
+      activeDatabaseNameKey: "homenode.mobile.active-offline-database.ios-v2",
+    },
   });
-  assert.equal(offlineDatabasePolicy("android").useSqlCipher, true);
+  assert.deepEqual(offlineDatabasePolicy("android"), {
+    databaseName: "homenode-field-v1.db",
+    activeDatabaseNameKey: "homenode.mobile.active-offline-database.v1",
+    recoveryGeneration: "recovered",
+    useSqlCipher: true,
+    legacyPlaintext: null,
+  });
+});
+
+test("SQLCipher migration SQL quotes values and rejects attacker-shaped identifiers", () => {
+  assert.equal(sqliteStringLiteral("a'b"), "'a''b'");
+  assert.equal(sqliteIdentifier("photo_drafts"), '"photo_drafts"');
+  assert.throws(() => sqliteIdentifier('photo_drafts"; DROP TABLE photo_drafts; --'), {
+    message: "mobile_offline_database_schema_invalid",
+  });
+});
+
+test("SQLCipher migration cleanup removes interrupted generations but preserves the active one", () => {
+  const stale = "homenode-field-ios-v3-migration-00000000-0000-4000-8000-000000000001.db";
+  const active = "homenode-field-ios-v3-migration-00000000-0000-4000-8000-000000000002.db";
+  assert.deepEqual(staleIosMigrationDatabaseNames([
+    stale,
+    `${stale}-wal`,
+    `${stale}-shm`,
+    active,
+    `${active}-journal`,
+    "homenode-field-ios-v2.db",
+    "homenode-field-ios-v3-migration-not-a-uuid.db",
+  ], active), [stale]);
+});
+
+test("SQLCipher legacy cleanup includes stored and canonical plaintext candidates", () => {
+  assert.deepEqual(legacyDatabaseNamesForRemoval(
+    "homenode-field-ios-v2-recovered.db",
+    "homenode-field-ios-v2.db",
+  ), ["homenode-field-ios-v2-recovered.db", "homenode-field-ios-v2.db"]);
+  assert.deepEqual(legacyDatabaseNamesForRemoval(
+    "homenode-field-ios-v2.db",
+    "homenode-field-ios-v2.db",
+  ), ["homenode-field-ios-v2.db"]);
+});
+
+test("offline store wrappers share external-activity connection lifecycle state", () => {
+  const source = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
+  const prepareForExternalActivity = source.match(/async prepareForExternalActivity\(\)[\s\S]*?\n  }\n\n  async ensureReady\(\)/)?.[0] || "";
+  assert.match(source, /type OfflineDatabaseConnection = \{[\s\S]*closedForExternalActivity: boolean;[\s\S]*database: SQLite\.SQLiteDatabase;[\s\S]*pendingClose: Promise<void> \| null;[\s\S]*repair: Promise<void> \| null;/);
+  assert.match(source, /private constructor\(private readonly connection: OfflineDatabaseConnection\)/);
+  assert.match(prepareForExternalActivity, /const pendingClose = previous\.closeAsync\(\)\.finally\([\s\S]*this\.connection\.pendingClose = pendingClose;[\s\S]*return pendingClose;/);
+  assert.doesNotMatch(prepareForExternalActivity, /closeAsync\(\)\.catch\(\(\) => undefined\)/);
+  assert.match(source, /async ensureReady\(\) \{[\s\S]*if \(this\.connection\.pendingClose\)[\s\S]*await this\.connection\.pendingClose\.catch\(\(\) => undefined\);/);
+  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await initializeDatabase\(\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
+  assert.match(source, /this\.connection\.database = await initializeDatabase\(\)/);
+  assert.doesNotMatch(source, /private closedForExternalActivity|private connectionRepair/);
+});
+
+test("SQLCipher migration verifies schema, row counts, and user version before activation", () => {
+  const snapshot: OfflineDatabaseSnapshot = {
+    autoVacuum: 0,
+    schema: [{ type: "table", name: "field_drafts", tableName: "field_drafts", sql: "CREATE TABLE field_drafts (id TEXT)" }],
+    sequences: { sync_queue: 9 },
+    tableCounts: { field_drafts: 3 },
+    userVersion: 7,
+  };
+  assert.doesNotThrow(() => assertDatabaseSnapshotsEqual(snapshot, snapshot));
+  assert.throws(() => assertDatabaseSnapshotsEqual(snapshot, {
+    ...snapshot,
+    tableCounts: { field_drafts: 2 },
+  }), { message: "mobile_offline_database_migration_verification_failed" });
+  assert.throws(() => assertDatabaseSnapshotsEqual(snapshot, {
+    ...snapshot,
+    sequences: { sync_queue: 8 },
+  }), { message: "mobile_offline_database_migration_verification_failed" });
 });
 
 test("offline payloads use deterministic canonical JSON", () => {
@@ -41,4 +129,3 @@ test("network state treats explicit offline signals as unavailable", () => {
   assert.equal(networkAvailable({ isConnected: false }), false);
   assert.equal(networkAvailable({ isConnected: true, isInternetReachable: false }), false);
 });
-

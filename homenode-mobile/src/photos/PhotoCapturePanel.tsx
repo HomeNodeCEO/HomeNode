@@ -248,6 +248,7 @@ export function PhotoCapturePanel({
     if (busy) return;
     setBusy(true);
     try {
+      await store.prepareForExternalActivity();
       const assets = await captureCameraPhoto();
       await store.ensureReady();
       await prepare(assets, "camera");
@@ -263,6 +264,7 @@ export function PhotoCapturePanel({
     if (busy) return;
     setBusy(true);
     try {
+      await store.prepareForExternalActivity();
       const assets = await importLibraryPhotos(remaining);
       await store.ensureReady();
       await prepare(assets, "library");

@@ -67,8 +67,9 @@ test("live official zoning lookup maps Duncanville's current GIS attributes", as
   const result = await fetchOfficialZoningAtPoint(jurisdiction, {
     latitude: 32.65,
     longitude: -96.9,
-    fetchImpl: async (url) => {
+    fetchImpl: async (url, options) => {
       requestedUrl = new URL(url);
+      assert.equal(options.redirect, "manual");
       return jsonResponse({ features: [{ attributes: {
         FID: 15,
         NEW_ZONING: "SF-10, Single-Family Residential District (SF-10)",
@@ -206,6 +207,35 @@ test("live official zoning rejects oversized provider JSON", async () => {
     { message: "official_zoning_response_too_large" },
   );
   assert.equal(bodyCancelled, true);
+});
+
+test("live official zoning refuses provider redirects before reading a response", async () => {
+  const jurisdiction = DALLAS_COUNTY_ZONING_JURISDICTIONS.find(
+    (entry) => entry.city === "Duncanville",
+  );
+  for (const redirectedResponse of [
+    { status: 302, redirected: false },
+    { status: 200, redirected: true },
+  ]) {
+    let bodyCancelled = false;
+    await assert.rejects(
+      () => fetchOfficialZoningAtPoint(jurisdiction, {
+        latitude: 32.65,
+        longitude: -96.9,
+        fetchImpl: async (_url, options) => {
+          assert.equal(options.redirect, "manual");
+          return {
+            ok: redirectedResponse.status >= 200 && redirectedResponse.status < 300,
+            status: redirectedResponse.status,
+            redirected: redirectedResponse.redirected,
+            body: { async cancel() { bodyCancelled = true; } },
+          };
+        },
+      }),
+      { message: "official_zoning_redirect_forbidden" },
+    );
+    assert.equal(bodyCancelled, true);
+  }
 });
 
 test("official zoning document sync rejects declared oversized PDFs before buffering", async () => {

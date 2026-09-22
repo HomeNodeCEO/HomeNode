@@ -59,10 +59,15 @@ async function fetchCensusPayload(url, {
         accept: "application/json",
         "user-agent": "HomeNode neighborhood-characteristics/1.0",
       },
+      redirect: "manual",
       signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
     });
   } catch {
     throw serviceError(`${errorPrefix}_unavailable`, 502);
+  }
+  if (response?.redirected || (Number(response?.status) >= 300 && Number(response?.status) < 400)) {
+    await response?.body?.cancel?.().catch(() => undefined);
+    throw serviceError(`${errorPrefix}_redirect_forbidden`, 502);
   }
   if (!response?.ok) {
     const status = Number.isInteger(response?.status) ? response.status : "unknown";

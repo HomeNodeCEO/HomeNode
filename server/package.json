@@ -95,6 +95,9 @@
         "unpdf": "1.8.1",
         "xmllint-wasm": "5.3.0"
     },
+    "overrides": {
+        "proxy-addr": "2.0.8"
+    },
     "engines": {
         "node": ">=22.23.2 <23"
     },

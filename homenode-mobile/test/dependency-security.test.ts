@@ -136,6 +136,14 @@ test('Expo xcode tooling resolves the patched uuid release', () => {
   assert.match(project.generateUuid(), /^[A-F0-9]{24}$/);
 });
 
+/** Verify Expo CLI resolves the zlib cleanup fix for aborted responses. */
+function verifyPatchedCompressionResolution() {
+  const compressionPackage = expoCliRequire('compression/package.json') as { version: string };
+  assert.equal(compressionPackage.version, '1.8.2');
+}
+
+test('Expo CLI resolves the patched compression release', verifyPatchedCompressionResolution);
+
 test('dependency security gates reject moderate or higher findings', () => {
   const workflow = readFileSync(
     path.join(repositoryRoot, '.github/workflows/dependency-security.yml'),

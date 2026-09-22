@@ -1438,7 +1438,14 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
         } });
         local = localUploadStorage(() => {
           assert.equal(observed.trace[0], READ_COMMITTED_BEGIN);
-          assert.ok(observed.trace.at(-1).includes("AS has_signatures"));
+          const signatureIndex = observed.trace.findIndex(sql => sql.includes("AS has_signatures"));
+          const cleanupIndex = observed.trace.findIndex(sql => sql.includes("uad_asset.upload_reservation_expired"));
+          const capacityIndex = observed.trace.findIndex(sql => sql.includes("AS pending_count"));
+          assert.ok(signatureIndex > 0, "signature immutability is checked under the workfile lock");
+          assert.ok(cleanupIndex > signatureIndex, "expired reservations are removed only after the signature check");
+          assert.ok(capacityIndex > cleanupIndex, "reservation capacity is checked after bounded cleanup");
+          assert.equal(capacityIndex, observed.trace.length - 1,
+            "the capacity check is the final database operation before issuing the local capability");
           assert.equal(observed.trace.some(sql => sql.includes("INSERT INTO appraisal.uad_assets")), false);
         });
         try {

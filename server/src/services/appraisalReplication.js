@@ -7,7 +7,7 @@ import {
 } from "./customAppraisalWorkfiles.js";
 import {
   captureAppraisalSubjectSnapshot,
-  listPreviousAppraisalFiles,
+  getPreviousAppraisalFileById,
   normalizeAppraisalReportFileId,
   normalizeReplicationRequest,
   registerOriginalAppraisalReport,
@@ -445,8 +445,12 @@ export async function replicateAppraisalFile(pool, {
   let targetFile = null;
   let enrichmentFailed = false;
   try {
-    const history = await listPreviousAppraisalFiles(pool, accountId, sourceOrganizationScope(organizationId));
-    targetFile = history.files.find((file) => file.id === targetReportFileId) || null;
+    targetFile = await getPreviousAppraisalFileById(
+      pool,
+      accountId,
+      targetReportFileId,
+      sourceOrganizationScope(organizationId),
+    );
   } catch {
     enrichmentFailed = true;
   }

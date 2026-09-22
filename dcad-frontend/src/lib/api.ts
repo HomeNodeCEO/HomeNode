@@ -626,14 +626,7 @@ export interface PreviousAppraisalFile {
 export interface PreviousAppraisalFilesResponse {
   account_id: string;
   files: PreviousAppraisalFile[];
-}
-
-export async function getPreviousAppraisalFiles(
-  accountId: string,
-): Promise<PreviousAppraisalFilesResponse> {
-  return fetchJSON<PreviousAppraisalFilesResponse>(
-    makeUrl(`/api/accounts/${encodeURIComponent(String(accountId || '').trim())}/appraisal-history`),
-  );
+  page: { limit: number; has_more: boolean; next_cursor: string | null };
 }
 
 export async function replicatePreviousAppraisalFile(

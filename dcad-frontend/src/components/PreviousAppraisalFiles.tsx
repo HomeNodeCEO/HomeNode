@@ -1,12 +1,12 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  getPreviousAppraisalFiles,
   replicatePreviousAppraisalFile,
   type AppraisalHistoryWorkflow,
   type AppraisalReplicationMode,
   type PreviousAppraisalFile,
 } from '@/lib/api';
+import { getPreviousAppraisalFiles } from '@/lib/appraisalHistoryApi';
 import {
   forgetEditorCredential,
   requestEditorCredential,
@@ -212,24 +212,59 @@ export default function PreviousAppraisalFiles({
 }) {
   const [files, setFiles] = useState<PreviousAppraisalFile[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingMore, setLoadingMore] = useState(false);
+  const [nextCursor, setNextCursor] = useState<string | null>(null);
   const [error, setError] = useState('');
   const [activeReplicationId, setActiveReplicationId] = useState<string | null>(null);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<{ text: string; url?: string } | null>(null);
+  const loadGeneration = useRef(0);
 
   const load = useCallback(async () => {
-    if (!accountId) return;
+    const generation = ++loadGeneration.current;
+    setLoadingMore(false);
+    if (!accountId) {
+      setFiles([]);
+      setNextCursor(null);
+      setLoading(false);
+      return;
+    }
     setLoading(true);
     setError('');
     try {
       const response = await getPreviousAppraisalFiles(accountId);
+      if (generation !== loadGeneration.current) return;
       setFiles(response.files || []);
+      setNextCursor(response.page?.next_cursor || null);
     } catch (reason) {
+      if (generation !== loadGeneration.current) return;
       setError(reason instanceof Error ? reason.message : 'Previous appraisal files could not be loaded.');
     } finally {
-      setLoading(false);
+      if (generation === loadGeneration.current) setLoading(false);
     }
   }, [accountId]);
+
+  const loadMore = useCallback(async () => {
+    if (!accountId || !nextCursor || loadingMore) return;
+    const generation = loadGeneration.current;
+    setLoadingMore(true);
+    setError('');
+    try {
+      const response = await getPreviousAppraisalFiles(accountId, nextCursor);
+      if (generation !== loadGeneration.current) return;
+      setFiles((current) => {
+        const byId = new Map(current.map((file) => [file.id, file]));
+        for (const file of response.files || []) byId.set(file.id, file);
+        return [...byId.values()];
+      });
+      setNextCursor(response.page?.next_cursor || null);
+    } catch (reason) {
+      if (generation !== loadGeneration.current) return;
+      setError(reason instanceof Error ? reason.message : 'Older appraisal files could not be loaded.');
+    } finally {
+      if (generation === loadGeneration.current) setLoadingMore(false);
+    }
+  }, [accountId, loadingMore, nextCursor]);
 
   useEffect(() => {
     void load();
@@ -410,10 +445,19 @@ export default function PreviousAppraisalFiles({
               ) : null}
             </article>
           ))}
+          {nextCursor ? (
+            <button
+              className="hn-action-primary btn btn-sm w-full normal-case"
+              disabled={loadingMore}
+              onClick={() => void loadMore()}
+              type="button"
+            >
+              {loadingMore ? 'Loading older files.' : 'Load older files'}
+            </button>
+          ) : null}
         </div>
       )}
       </div>
     </details>
   );
 }
-

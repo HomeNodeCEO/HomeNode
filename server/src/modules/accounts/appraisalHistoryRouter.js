@@ -80,7 +80,10 @@ export function createAppraisalHistoryRouter({
         return res.status(503).json({ error: "appraisal_history_schema_unavailable" });
       }
       const accessScope = buildAccessScope(req.mobileAuth);
-      return res.json(await listHistory(pool, canonicalId, accessScope));
+      return res.json(await listHistory(pool, canonicalId, accessScope, {
+        limit: req.query.limit,
+        cursor: req.query.cursor,
+      }));
     } catch (error) {
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });

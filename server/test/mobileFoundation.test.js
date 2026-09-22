@@ -294,6 +294,28 @@ test("canonicalizes and validates offline sync operations", () => {
       payload: incompleteTargetPayload,
     }],
   }), /invalid_sync_payload/);
+
+  const unexpectedPayload = { ...payload };
+  Object.defineProperty(unexpectedPayload, "unexpected", {
+    enumerable: true,
+    get() {
+      throw new Error("unexpected_payload_was_hashed");
+    },
+  });
+  assert.throws(() => normalizeSyncBatch({
+    operations: [{
+      client_operation_id: "10000000-0000-4000-8000-000000000004",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: "0".repeat(64),
+      payload: unexpectedPayload,
+    }],
+  }), /invalid_sync_payload/);
+
+  let deeplyNested = "bounded";
+  for (let depth = 0; depth < 30; depth += 1) deeplyNested = { child: deeplyNested };
+  assert.throws(() => syncPayloadSha256(deeplyNested), /invalid_sync_payload/);
+  assert.throws(() => syncPayloadSha256({ value: "x".repeat(65 * 1024) }), /invalid_sync_payload/);
 });
 
 test("property tax adapter exposes a bounded canonical field catalog", () => {

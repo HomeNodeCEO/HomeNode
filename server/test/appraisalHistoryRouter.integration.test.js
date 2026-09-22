@@ -125,15 +125,15 @@ test("enforced history listing scopes results after schema readiness", async (co
       calls.push({ type: "scope", auth });
       return accessScope;
     },
-    listHistory: async (pool, accountId, scope) => {
-      calls.push({ type: "list", pool, accountId, scope });
+    listHistory: async (pool, accountId, scope, page) => {
+      calls.push({ type: "list", pool, accountId, scope, page });
       return history;
     },
   });
   const server = await startRouter(options, identity);
   context.after(server.close);
 
-  const response = await fetch(`${server.baseUrl}/api/accounts/legacy_1/appraisal-history`);
+  const response = await fetch(`${server.baseUrl}/api/accounts/legacy_1/appraisal-history?limit=10&cursor=cursor-1`);
   assert.equal(response.status, 200);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), history);
@@ -143,6 +143,7 @@ test("enforced history listing scopes results after schema readiness", async (co
   assert.equal(calls[2].auth, identity);
   assert.equal(calls[3].scope, accessScope);
   assert.equal(calls[3].accountId, "CANONICAL_1");
+  assert.deepEqual(calls[3].page, { limit: "10", cursor: "cursor-1" });
 });
 
 test("rollout history remains scoped and fails closed when schema is unavailable", async (context) => {

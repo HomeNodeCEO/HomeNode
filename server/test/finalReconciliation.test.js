@@ -109,7 +109,13 @@ test("requires weights totaling 100 percent and certification confirmation", () 
   assert.ok(errors.some((message) => /confirm the appraiser certification/i.test(message)));
 });
 
-test("rejects impossible calendar dates while accepting a valid leap day", () => {
+/** Return whether readiness reported a missing or invalid effective date. */
+function includesEffectiveDateError(errors) {
+  return errors.some((message) => /effective date/i.test(message));
+}
+
+/** Verify strict calendar semantics without accepting truncated date prefixes. */
+function testStrictEffectiveDateValidation() {
   const completeInput = {
     weights: {
       sales_comparison: 60,
@@ -127,17 +133,16 @@ test("rejects impossible calendar dates while accepting a valid leap day", () =>
     "2026-13-01",
     "2026-00-10",
     "2026-01-00",
+    "2026-08-20T00:00:00.000Z",
+    "2026-08-20junk",
   ]) {
     const result = normalizeFinalReconciliationSection({
       ...completeInput,
       effective_date: effectiveDate,
     }, sources);
     assert.equal(result.developed, false, effectiveDate);
-    assert.ok(
-      finalReconciliationReadinessErrors(result)
-        .some((message) => /effective date/i.test(message)),
-      effectiveDate,
-    );
+    assert.equal(result.effective_date, effectiveDate);
+    assert.ok(includesEffectiveDateError(finalReconciliationReadinessErrors(result)), effectiveDate);
   }
 
   const leapDay = normalizeFinalReconciliationSection({
@@ -145,9 +150,7 @@ test("rejects impossible calendar dates while accepting a valid leap day", () =>
     effective_date: "2024-02-29",
   }, sources);
   assert.equal(leapDay.developed, true);
-  assert.equal(
-    finalReconciliationReadinessErrors(leapDay)
-      .some((message) => /effective date/i.test(message)),
-    false,
-  );
-});
+  assert.equal(includesEffectiveDateError(finalReconciliationReadinessErrors(leapDay)), false);
+}
+
+test("rejects impossible calendar dates while accepting a valid leap day", testStrictEffectiveDateValidation);

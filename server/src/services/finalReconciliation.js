@@ -106,8 +106,8 @@ export function normalizeFinalReconciliationSection(input = {}, sections = {}) {
   const normalized = {
     schema_version: 1,
     developed: false,
-    effective_date: text(input.effective_date, 10) ||
-      text(sections.sales_comparison?.workspace?.search?.asOfDate, 10) || null,
+    effective_date: text(input.effective_date, 40) ||
+      text(sections.sales_comparison?.workspace?.search?.asOfDate, 40) || null,
     approaches,
     weights: {
       sales_comparison: salesWeight,
@@ -131,6 +131,7 @@ export function normalizeFinalReconciliationSection(input = {}, sections = {}) {
   return normalized;
 }
 
+/** Return the complete set of blockers that prevent final reconciliation. */
 export function finalReconciliationReadinessErrors(section = {}) {
   const errors = [];
   if (!validIsoDate(section.effective_date)) {

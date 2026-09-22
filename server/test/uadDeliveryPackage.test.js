@@ -158,11 +158,56 @@ test("streamed ZIP output matches deterministic buffered output without retainin
   }
 });
 
+test("streamed ZIP generation rejects an abandoned artifact before opening output", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-cancelled-zip-test-"));
+  try {
+    const outputPath = path.join(directory, "package.zip");
+    const controller = new AbortController();
+    controller.abort();
+    await assert.rejects(
+      () => writeDeterministicZipToFile(
+        [{ path: "report.xml", body: Buffer.from("xml") }],
+        outputPath,
+        { signal: controller.signal },
+      ),
+      /uad_artifact_request_aborted/,
+    );
+    await assert.rejects(() => readFile(outputPath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("streamed ZIP generation removes partial output after cancellation", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-interrupted-zip-test-"));
+  try {
+    const sourcePath = path.join(directory, "large-source.bin");
+    const outputPath = path.join(directory, "package.zip");
+    await writeFile(sourcePath, Buffer.alloc(4 * 1024 * 1024, 1));
+    const controller = new AbortController();
+    const generation = writeDeterministicZipToFile(
+      [{ path: "Images/large.bin", file_path: sourcePath }],
+      outputPath,
+      { signal: controller.signal },
+    );
+    setImmediate(() => controller.abort());
+    await assert.rejects(
+      () => generation,
+      (error) => error.name === "AbortError" || error.message === "uad_artifact_request_aborted",
+    );
+    await assert.rejects(() => readFile(outputPath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("wires package routes and keeps the legacy report renderer isolated", () => {
   const router = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/modules/uad/router.js"), "utf8");
   const legacy = fs.readFileSync(path.join(TEST_DIRECTORY, "../src/services/customAppraisalReportPdf.js"), "utf8");
   assert.match(router, /artifacts\/submission-package/);
   assert.match(router, /generateUadSubmissionPackage/);
+  assert.match(router, /abortDisconnectedRequest/);
+  assert.match(router, /\{ signal: controller\.signal \}/);
   assert.doesNotMatch(legacy, /submission_package|images_manifest/);
 });
 
@@ -175,4 +220,6 @@ test("keeps the audit manifest outside the strict UCDP delivery ZIP", () => {
   assert.doesNotMatch(zipInputs, /manifest\.content|manifestFileName/);
   assert.match(service, /streamed_generation: true/);
   assert.match(service, /artifactType: "images_manifest"/);
+  assert.match(service, /\{ signal: executionSignal \}/);
+  assert.match(service, /writeDeterministicZipToFile\([\s\S]*\{ signal \}\)/);
 });

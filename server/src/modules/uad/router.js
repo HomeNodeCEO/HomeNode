@@ -495,10 +495,29 @@ export function createUadRouter({
   });
 
   router.post("/workfiles/:workfileId/artifacts/submission-package", async (req, res) => {
+    const controller = new AbortController();
+    const abortDisconnectedRequest = () => {
+      if (!res.writableEnded && !controller.signal.aborted) {
+        controller.abort(new Error("uad_artifact_request_aborted"));
+      }
+    };
+    req.once("aborted", abortDisconnectedRequest);
+    res.once("close", abortDisconnectedRequest);
     try {
-      res.status(201).json(await generateUadSubmissionPackage(pool, storage, req.params.workfileId));
+      const result = await generateUadSubmissionPackage(
+        pool,
+        storage,
+        req.params.workfileId,
+        { signal: controller.signal },
+      );
+      if (controller.signal.aborted || res.destroyed) return;
+      res.status(201).json(result);
     } catch (error) {
+      if (controller.signal.aborted || res.destroyed) return;
       sendError(res, error);
+    } finally {
+      req.removeListener("aborted", abortDisconnectedRequest);
+      res.removeListener("close", abortDisconnectedRequest);
     }
   });
 

@@ -69,6 +69,91 @@ test("R2 timeouts fail with a bounded public-safe error after the configured att
   assert.equal(calls, 3);
 });
 
+test("R2 requests stop immediately when artifact generation is abandoned", async () => {
+  let calls = 0;
+  const started = Promise.withResolvers();
+  const controller = new AbortController();
+  const storage = createUadObjectStorage(ENVIRONMENT, {
+    sleep: async () => {
+      throw new Error("aborted_requests_must_not_retry");
+    },
+    fetchImpl: async (_url, init) => {
+      calls += 1;
+      started.resolve();
+      return new Promise((resolve, reject) => {
+        init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+      });
+    },
+  });
+  const request = storage.getObject({
+    objectKey: "private/abandoned-package",
+    maxBytes: 1024,
+    signal: controller.signal,
+  });
+  await started.promise;
+  controller.abort();
+  await assert.rejects(
+    () => request,
+    (error) => error.name === "AbortError" && error.message === "uad_artifact_request_aborted",
+  );
+  assert.equal(calls, 1);
+});
+
+test("R2 retry backoff is interruptible by artifact cancellation", async () => {
+  const sleeping = Promise.withResolvers();
+  const controller = new AbortController();
+  const storage = createUadObjectStorage(ENVIRONMENT, {
+    sleep: async () => {
+      sleeping.resolve();
+      return new Promise(() => {});
+    },
+    fetchImpl: async () => new Response(null, { status: 503 }),
+  });
+  const request = storage.getObject({
+    objectKey: "private/abandoned-retry",
+    maxBytes: 1024,
+    signal: controller.signal,
+  });
+  await sleeping.promise;
+  controller.abort();
+  await assert.rejects(() => request, /uad_artifact_request_aborted/);
+});
+
+test("cancelled R2 file downloads remove partial disk output", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-r2-cancelled-test-"));
+  try {
+    const filePath = path.join(directory, "partial.bin");
+    const streaming = Promise.withResolvers();
+    const controller = new AbortController();
+    const storage = createUadObjectStorage(ENVIRONMENT, {
+      fetchImpl: async (_url, init) => new Response(new ReadableStream({
+        start(stream) {
+          stream.enqueue(new Uint8Array([1, 2, 3, 4]));
+          streaming.resolve({ stream, signal: init.signal });
+        },
+      }), { status: 200 }),
+    });
+    const request = storage.downloadObjectToFile({
+      objectKey: "private/abandoned-file",
+      filePath,
+      maxBytes: 1024,
+      signal: controller.signal,
+    });
+    const active = await streaming.promise;
+    await new Promise((resolve) => setImmediate(resolve));
+    active.signal.addEventListener(
+      "abort",
+      () => active.stream.error(active.signal.reason),
+      { once: true },
+    );
+    controller.abort();
+    await assert.rejects(() => request, /uad_artifact_request_aborted/);
+    await assert.rejects(() => readFile(filePath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
 test("buffered R2 downloads stop before an advertised oversized body is allocated", async () => {
   const storage = createUadObjectStorage(ENVIRONMENT, {
     fetchImpl: async () => new Response("x", {

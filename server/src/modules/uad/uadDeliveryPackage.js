@@ -155,9 +155,20 @@ function crc32(buffer) {
   return (crc ^ 0xffffffff) >>> 0;
 }
 
-async function fileCrc32(filePath) {
+function throwIfPackageAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error("uad_artifact_request_aborted");
+  error.name = "AbortError";
+  throw error;
+}
+
+async function fileCrc32(filePath, signal = null) {
+  throwIfPackageAborted(signal);
   let crc = 0xffffffff;
-  for await (const chunk of createReadStream(filePath)) crc = updateCrc32(crc, chunk);
+  for await (const chunk of createReadStream(filePath, signal ? { signal } : undefined)) {
+    throwIfPackageAborted(signal);
+    crc = updateCrc32(crc, chunk);
+  }
   return (crc ^ 0xffffffff) >>> 0;
 }
 
@@ -238,16 +249,21 @@ export function buildDeterministicZip(files = []) {
   };
 }
 
-export async function writeDeterministicZipToFile(files = [], outputPath) {
+export async function writeDeterministicZipToFile(files = [], outputPath, { signal = null } = {}) {
   if (!Array.isArray(files) || files.length > UAD_ZIP_LIMITS.max_entries) {
     throw new Error("uad_package_entry_count_exceeded");
   }
   if (!outputPath) throw new Error("uad_package_output_path_required");
+  if (signal !== null && !(signal instanceof AbortSignal)) {
+    throw new Error("uad_artifact_abort_signal_invalid");
+  }
+  throwIfPackageAborted(signal);
   const sorted = [...files].sort((left, right) => String(left.path).localeCompare(String(right.path)));
   const entries = [];
   const seen = new Set();
   let totalUncompressedBytes = 0;
   for (const file of sorted) {
+    throwIfPackageAborted(signal);
     const path = validateZipPath(file.path);
     const portablePath = path.toLocaleLowerCase("en-US");
     if (seen.has(portablePath)) throw new Error("uad_package_entry_duplicate");
@@ -270,22 +286,27 @@ export async function writeDeterministicZipToFile(files = [], outputPath) {
       filePath: file.file_path || null,
       removeAfterWrite: Boolean(file.remove_after_write),
       byteSize: fileSize,
-      crc: body ? crc32(body) : await fileCrc32(file.file_path),
+      crc: body ? crc32(body) : await fileCrc32(file.file_path, signal),
     });
   }
 
+  throwIfPackageAborted(signal);
   const handle = await open(outputPath, "w");
   const digest = createHash("sha256");
   const centralParts = [];
   let position = 0;
+  let completed = false;
   const writePart = async (part) => {
+    throwIfPackageAborted(signal);
     const buffer = Buffer.isBuffer(part) ? part : Buffer.from(part);
     await handle.write(buffer, 0, buffer.length, position);
+    throwIfPackageAborted(signal);
     position += buffer.length;
     digest.update(buffer);
   };
   try {
     for (const entry of entries) {
+      throwIfPackageAborted(signal);
       const offset = position;
       const local = Buffer.alloc(30);
       local.writeUInt32LE(0x04034b50, 0);
@@ -302,7 +323,10 @@ export async function writeDeterministicZipToFile(files = [], outputPath) {
       if (entry.body) {
         await writePart(entry.body);
       } else {
-        for await (const chunk of createReadStream(entry.filePath)) await writePart(chunk);
+        for await (const chunk of createReadStream(
+          entry.filePath,
+          signal ? { signal } : undefined,
+        )) await writePart(chunk);
         if (entry.removeAfterWrite) await rm(entry.filePath, { force: true });
       }
 
@@ -331,8 +355,10 @@ export async function writeDeterministicZipToFile(files = [], outputPath) {
     end.writeUInt32LE(centralOffset, 16);
     await writePart(end);
     await handle.sync();
+    completed = true;
   } finally {
     await handle.close();
+    if (!completed) await rm(outputPath, { force: true }).catch(() => undefined);
   }
   return {
     file_path: outputPath,

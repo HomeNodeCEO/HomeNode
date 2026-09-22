@@ -25,6 +25,13 @@ const MAX_PACKAGE_ASSETS = 500;
 const MAX_PACKAGE_BYTES = 500 * 1024 * 1024;
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["signed", "exported", "submitted"]);
 
+function throwIfPackageAborted(signal) {
+  if (!signal?.aborted) return;
+  const error = new Error("uad_artifact_request_aborted");
+  error.name = "AbortError";
+  throw error;
+}
+
 function artifactResponse(row, workfile, storage) {
   if (!row) return null;
   const revisionNumber = Number(row.revision_number);
@@ -78,7 +85,8 @@ export function bindDownloadedFilePath(downloaded, filePath, errorPrefix) {
   return { ...downloaded, file_path: expectedFilePath };
 }
 
-async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBytes) {
+async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBytes, signal = null) {
+  throwIfPackageAborted(signal);
   const expectedFilePath = path.resolve(filePath);
   let downloaded;
   if (typeof storage.downloadObjectToFile === "function") {
@@ -86,16 +94,18 @@ async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBy
       objectKey: row.object_key,
       filePath: expectedFilePath,
       maxBytes,
+      signal,
     });
   } else {
-    const buffered = await storage.getObject({ objectKey: row.object_key, maxBytes });
-    await writeFile(expectedFilePath, buffered.body);
+    const buffered = await storage.getObject({ objectKey: row.object_key, maxBytes, signal });
+    await writeFile(expectedFilePath, buffered.body, signal ? { signal } : undefined);
     downloaded = {
       file_path: expectedFilePath,
       byte_size: buffered.body.length,
       checksum_sha256: createHash("sha256").update(buffered.body).digest("hex"),
     };
   }
+  throwIfPackageAborted(signal);
   downloaded = bindDownloadedFilePath(downloaded, expectedFilePath, errorPrefix);
   const expectedByteSize = row.expected_byte_size ?? row.byte_size;
   const expectedChecksum = row.expected_checksum_sha256 ?? row.checksum_sha256;
@@ -171,8 +181,9 @@ export async function getLatestUadSubmissionPackage(pool, storage, workfileIdVal
   };
 }
 
-async function generateUadSubmissionPackageOperation(pool, storage, workfileIdValue) {
+async function generateUadSubmissionPackageOperation(pool, storage, workfileIdValue, { signal = null } = {}) {
   if (!storage?.configured) throw new Error("uad_object_storage_not_configured");
+  throwIfPackageAborted(signal);
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   const client = await pool.connect();
   let workfile;
@@ -180,6 +191,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
   let deliveryEntries;
   let sourceArtifacts;
   try {
+    throwIfPackageAborted(signal);
     await client.query("BEGIN");
     const locked = await client.query(
       `SELECT id, organization_id, file_number, current_revision,
@@ -194,6 +206,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     if (!DOWNLOADABLE_WORKFILE_STATUSES.has(workfile.status)) throw new Error("uad_package_signature_required");
 
     const editor = await getUadEditor(client, workfileId);
+    throwIfPackageAborted(signal);
     const [assetSnapshot, rawAssets, sketches, validationResult, signaturesResult, artifactsResult] = await Promise.all([
       listUadAssets(client, workfileId),
       loadDeliveryAssets(client, workfileId),
@@ -217,6 +230,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         [workfileId, Number(workfile.current_revision)],
       ),
     ]);
+    throwIfPackageAborted(signal);
     inputDigest = buildUadValidationInputDigest(editor, assetSnapshot, sketches);
     const validation = validationResult.rows[0];
     if (!validation || validation.status !== "passed" || validation.metadata?.input_digest_sha256 !== inputDigest) {
@@ -255,6 +269,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     client.release();
   }
 
+  throwIfPackageAborted(signal);
   const temporaryDirectory = await mkdtemp(path.join(tmpdir(), "homenode-uad-package-"));
   try {
     const pdfArtifact = sourceArtifacts.get("pdf");
@@ -267,6 +282,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
       "uad_package_pdf",
       pdfFilePath,
       MAX_PACKAGE_BYTES,
+      signal,
     );
     const xml = await downloadVerifiedToFile(
       storage,
@@ -274,10 +290,12 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
       "uad_package_xml",
       xmlFilePath,
       MAX_PACKAGE_BYTES,
+      signal,
     );
     const verifiedEntries = [];
     let totalAssetBytes = 0;
     for (const [index, entry] of deliveryEntries.entries()) {
+      throwIfPackageAborted(signal);
       const assetFilePath = path.join(
         temporaryDirectory,
         `asset-${String(index + 1).padStart(4, "0")}.bin`,
@@ -288,12 +306,16 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         "uad_package_asset",
         assetFilePath,
         Math.min(MAX_PACKAGE_BYTES, Number(entry.byte_size || MAX_PACKAGE_BYTES)),
+        signal,
       );
       try {
-        const body = await readFile(assetFilePath);
+        const body = await readFile(assetFilePath, signal ? { signal } : undefined);
+        throwIfPackageAborted(signal);
         const inspected = inspectUadAssetPayload(body, entry.content_type);
         if (inspected.content_type === "application/pdf") await inspectUadPdfSafety(body);
+        throwIfPackageAborted(signal);
       } catch {
+        throwIfPackageAborted(signal);
         throw new Error("uad_package_asset_payload_invalid");
       }
       totalAssetBytes += downloaded.byte_size;
@@ -324,13 +346,15 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         byte_size: entry.byte_size,
         remove_after_write: true,
       })),
-    ], path.join(temporaryDirectory, "submission-package.zip"));
+    ], path.join(temporaryDirectory, "submission-package.zip"), { signal });
     if (zip.byte_size > MAX_PACKAGE_BYTES) throw new Error("uad_package_bytes_exceeded");
 
+    throwIfPackageAborted(signal);
     const persistClient = await pool.connect();
     let manifestRow;
     let packageRow;
     try {
+      throwIfPackageAborted(signal);
       await persistClient.query("BEGIN");
       const unchanged = await persistClient.query(
         `SELECT id, organization_id, file_number, current_revision,
@@ -345,6 +369,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         || !DOWNLOADABLE_WORKFILE_STATUSES.has(unchanged.rows[0].status)) {
         throw new Error("uad_package_workfile_changed");
       }
+      throwIfPackageAborted(signal);
       const commonMetadata = {
         input_digest_sha256: inputDigest,
         source_pdf_artifact_id: pdfArtifact.id,
@@ -382,26 +407,31 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     }
 
     try {
+      throwIfPackageAborted(signal);
       const packageUpload = typeof storage.putFile === "function"
         ? storage.putFile({
             objectKey: packageRow.object_key,
             contentType: PACKAGE_CONTENT_TYPE,
             filePath: zip.file_path,
             byteSize: zip.byte_size,
+            signal,
           })
-        : readFile(zip.file_path).then((body) => storage.putObject({
+        : readFile(zip.file_path, signal ? { signal } : undefined).then((body) => storage.putObject({
             objectKey: packageRow.object_key,
             contentType: PACKAGE_CONTENT_TYPE,
             body,
+            signal,
           }));
       const [manifestUpload, uploadedPackage] = await Promise.all([
         storage.putObject({
           objectKey: manifestRow.object_key,
           contentType: MANIFEST_CONTENT_TYPE,
           body: manifest.content,
+          signal,
         }),
         packageUpload,
       ]);
+      throwIfPackageAborted(signal);
       const finalized = await pool.query(
         `WITH finalized AS (
            UPDATE appraisal.uad_generated_artifacts
@@ -448,11 +478,17 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
   }
 }
 
-export function generateUadSubmissionPackage(pool, storage, workfileIdValue) {
+export function generateUadSubmissionPackage(pool, storage, workfileIdValue, { signal = null } = {}) {
   const workfileId = normalizeUadWorkfileId(workfileIdValue);
   return runUadArtifactOperation(
     "submission-package",
     workfileId,
-    () => generateUadSubmissionPackageOperation(pool, storage, workfileId),
+    (executionSignal) => generateUadSubmissionPackageOperation(
+      pool,
+      storage,
+      workfileId,
+      { signal: executionSignal },
+    ),
+    { signal },
   );
 }

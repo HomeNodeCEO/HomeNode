@@ -736,6 +736,75 @@ test("concurrent cold OIDC verification shares one bounded JWKS request", async 
   assert.equal(claims.every((claim) => claim.sub === "user_123"), true);
 });
 
+test("unknown OIDC signing keys cannot amplify JWKS refresh requests", async () => {
+  let currentTime = NOW;
+  let requestCount = 0;
+  let activeKeys = [publicJwk];
+  const oidc = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    clientId: CLIENT_ID,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => currentTime,
+    refreshCooldownMilliseconds: 30_000,
+    fetchImpl: async () => {
+      requestCount += 1;
+      return new Response(JSON.stringify({ keys: activeKeys }), { status: 200 });
+    },
+  });
+
+  await oidc.verify(token());
+  const rotatedToken = token({}, { kid: "rotated-key" });
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    await assert.rejects(
+      () => oidc.verify(rotatedToken),
+      (error) => error.diagnostic === "signing_key_not_found",
+    );
+  }
+  assert.equal(requestCount, 1, "unknown kids reuse the fresh bounded cache");
+
+  currentTime += 30_001;
+  activeKeys = [{ ...publicJwk, kid: "rotated-key" }];
+  const rotatedClaims = await Promise.all([
+    oidc.verify(rotatedToken),
+    oidc.verify(rotatedToken),
+  ]);
+  assert.equal(rotatedClaims.every((claims) => claims.sub === "user_123"), true);
+  assert.equal(requestCount, 2, "legitimate key rotation refreshes after the cooldown");
+});
+
+test("failed JWKS requests enter a bounded fail-closed cooldown", async () => {
+  let currentTime = NOW;
+  let requestCount = 0;
+  const oidc = createOidcAccessTokenVerifier({
+    issuer: ISSUER,
+    audience: AUDIENCE,
+    clientId: CLIENT_ID,
+    jwksUri: `${ISSUER}/.well-known/jwks.json`,
+    now: () => currentTime,
+    refreshCooldownMilliseconds: 30_000,
+    fetchImpl: async () => {
+      requestCount += 1;
+      await new Promise((resolve) => setImmediate(resolve));
+      throw new Error("private provider failure");
+    },
+  });
+  const unavailable = (error) => (
+    error.statusCode === 503 && error.message === "oidc_jwks_unavailable"
+  );
+
+  await Promise.all([
+    assert.rejects(() => oidc.verify(token()), unavailable),
+    assert.rejects(() => oidc.verify(token()), unavailable),
+  ]);
+  await assert.rejects(() => oidc.verify(token()), unavailable);
+  assert.equal(requestCount, 1, "concurrent and sequential failures share the cooldown");
+
+  currentTime += 30_001;
+  await assert.rejects(() => oidc.verify(token()), unavailable);
+  assert.equal(requestCount, 2, "the provider is retried after the bounded cooldown");
+});
+
 test("OIDC discovery stays on the configured issuer and refuses redirects", async () => {
   const requested = [];
   const discovered = createOidcAccessTokenVerifier({

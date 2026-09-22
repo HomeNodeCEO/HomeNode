@@ -300,6 +300,7 @@ export function createUadObjectStorage(env = process.env, {
         const timeoutSignal = AbortSignal.timeout(timeoutMs);
         response = await fetchImpl(url, {
           ...init,
+          redirect: "manual",
           ...(body === undefined ? {} : { body }),
           signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
         });
@@ -309,6 +310,10 @@ export function createUadObjectStorage(env = process.env, {
         if (attempt >= attempts || !transientStorageError(lastError)) throw lastError;
         await waitForRetry(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))), signal);
         continue;
+      }
+      if (response.redirected || (Number(response.status) >= 300 && Number(response.status) < 400)) {
+        await response.body?.cancel?.().catch(() => undefined);
+        throw new Error(`uad_object_${operation}_redirect_forbidden`);
       }
       if (response.ok) return response;
       lastError = new Error(`uad_object_${operation}_failed:${response.status}`);

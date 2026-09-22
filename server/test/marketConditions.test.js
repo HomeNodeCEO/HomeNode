@@ -5,17 +5,116 @@ import {
   buildMarketTrendRecommendation,
   calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
+  ensureSpatialSupport,
   getMarketContext,
+  MARKET_AREA_KEYS,
+  marketConditionsErrorStatus,
+  normalizeMarketAnalysisRequest,
   parseMarketAreaKeys,
   validateCustomMarketGeometry,
   weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
+import { MARKET_SPATIAL_MIGRATION_NAME } from "../src/database/marketSpatialMigration.js";
+
+test("spatial support is a shared migration-and-index readiness probe, never request-path maintenance", async () => {
+  const statements = [];
+  const parameters = [];
+  const pool = {
+    query: async (sql, values) => {
+      statements.push(String(sql));
+      parameters.push(values);
+      return {
+        rows: [{
+          column_present: true,
+          migration_applied: true,
+          index_valid: true,
+        }],
+      };
+    },
+  };
+
+  await Promise.all([
+    ensureSpatialSupport(pool),
+    ensureSpatialSupport(pool),
+  ]);
+  await ensureSpatialSupport(pool);
+  assert.equal(statements.length, 1);
+  assert.deepEqual(parameters, [[MARKET_SPATIAL_MIGRATION_NAME]]);
+  assert.match(statements[0], /market_spatial_support_probe/);
+  assert.match(statements[0], /pg_catalog\.pg_attribute/);
+  assert.match(statements[0], /app\.schema_migrations/);
+  assert.match(statements[0], /pg_catalog\.pg_index/);
+  assert.match(statements[0], /index_state\.indisvalid/);
+  assert.doesNotMatch(statements[0], /FROM core\.account_locations/);
+  assert.doesNotMatch(statements[0], /::regclass/);
+  assert.doesNotMatch(
+    statements[0],
+    /\b(?:CREATE|ALTER|UPDATE|INSERT|DELETE|DROP|TRIGGER)\b/i,
+  );
+});
+
+test("spatial support fails closed until the migration and index are complete, then retries", async () => {
+  let ready = false;
+  let calls = 0;
+  const pool = {
+    async query() {
+      calls += 1;
+      return {
+        rows: [{
+          column_present: ready,
+          migration_applied: ready,
+          index_valid: ready,
+        }],
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => ensureSpatialSupport(pool),
+    /market_spatial_support_not_ready/,
+  );
+  ready = true;
+  await ensureSpatialSupport(pool);
+  await ensureSpatialSupport(pool);
+  assert.equal(calls, 2);
+  assert.equal(marketConditionsErrorStatus("market_spatial_support_not_ready"), 503);
+});
+
+test("spatial catalog failures are bounded as retryable unavailability and are not cached", async () => {
+  const diagnostic = new Error("relation core.account_locations does not exist");
+  let calls = 0;
+  const pool = {
+    async query() {
+      calls += 1;
+      if (calls === 1) throw diagnostic;
+      return {
+        rows: [{ column_present: true, migration_applied: true, index_valid: true }],
+      };
+    },
+  };
+
+  await assert.rejects(
+    () => ensureSpatialSupport(pool),
+    (error) => error.message === "market_spatial_support_not_ready" && error.cause === diagnostic,
+  );
+  await ensureSpatialSupport(pool);
+  assert.equal(calls, 2);
+});
 
 test("market context can use an environment-scoped account-id policy", async () => {
   const statements = [];
   const pool = {
     async query(sql) {
       statements.push(String(sql));
+      if (/market_spatial_support_probe/.test(String(sql))) {
+        return {
+          rows: [{
+            column_present: true,
+            migration_applied: true,
+            index_valid: true,
+          }],
+        };
+      }
       if (/SELECT\s+account\.account_id/.test(String(sql))) {
         return {
           rows: [{
@@ -82,6 +181,43 @@ test("market areas preserve the requested independent scopes", () => {
   assert.deepEqual(
     areas.map((area) => area.key),
     ["city", "zip", "radius_1", "radius_5", "custom"],
+  );
+});
+
+test("market area selection rejects work beyond the supported scope count", () => {
+  assert.throws(
+    () => parseMarketAreaKeys(Array(MARKET_AREA_KEYS.length + 1).fill("city")),
+    /market_area_limit_exceeded/,
+  );
+  assert.throws(
+    () => parseMarketAreaKeys(`city,${",".repeat(MARKET_AREA_KEYS.length)}`),
+    /market_area_limit_exceeded/,
+  );
+  assert.throws(
+    () => parseMarketAreaKeys(`city,${",".repeat(1_000_000)}`),
+    /market_area_limit_exceeded/,
+  );
+});
+
+test("a single trailing comma does not reject the complete supported area selection", () => {
+  assert.deepEqual(
+    parseMarketAreaKeys(`${MARKET_AREA_KEYS.join(",")},`).map((area) => area.key),
+    MARKET_AREA_KEYS,
+  );
+});
+
+test("equivalent market analysis inputs share one canonical representation", () => {
+  assert.deepEqual(
+    normalizeMarketAnalysisRequest({
+      subjectAccountId: " A-1 ",
+      areaKeys: " city, radius_3 ",
+      periodMonths: "24",
+    }),
+    normalizeMarketAnalysisRequest({
+      subjectAccountId: "A-1",
+      areaKeys: ["city", "radius_3"],
+      periodMonths: 24,
+    }),
   );
 });
 

@@ -3,6 +3,11 @@ import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import {
+  applyMarketSpatialPostMigration,
+  MARKET_SPATIAL_MIGRATION_NAME,
+} from "./marketSpatialMigration.js";
+
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
 const MIGRATIONS = Object.freeze([
@@ -43,6 +48,7 @@ const MIGRATIONS = Object.freeze([
   "20261017_neighborhood_reported_observations.sql",
   "20261018_sales_source_metadata.sql",
   "20261019_neighborhood_revision_contract_projection.sql",
+  "20261020_market_spatial_runtime.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 
@@ -86,6 +92,13 @@ export async function applyMobileMigrations(pool, { logger = console } = {}) {
       await client.query("BEGIN");
       try {
         await client.query(sql);
+        if (migrationName === MARKET_SPATIAL_MIGRATION_NAME) {
+          // Commit schema/trigger installation first. The resumable data repair
+          // and concurrent index build must run outside this transaction.
+          await client.query("COMMIT");
+          await applyMarketSpatialPostMigration(client, { logger });
+          await client.query("BEGIN");
+        }
         await client.query(
           `INSERT INTO app.schema_migrations (migration_name, checksum_sha256)
            VALUES ($1, $2)`,

@@ -175,6 +175,25 @@ export function neighborhoodProfileRequestKey({
   });
 }
 
+export function marketAnalysisRequestKey({
+  subjectAccountId,
+  areaKeys,
+  asOfDate,
+  periodMonths,
+  customGeometry,
+  marketContextOverride,
+}) {
+  return JSON.stringify({
+    operation: "market_analysis",
+    subject_account_id: String(subjectAccountId || "").trim(),
+    area_keys: areaKeys ?? null,
+    as_of: String(asOfDate || "").trim(),
+    period_months: periodMonths ?? 24,
+    custom_geometry: customGeometry || null,
+    context_override: marketContextOverride || null,
+  });
+}
+
 /**
  * The property report only consumes aggregate market statistics. The full
  * market-study response also carries every mapped sale and chart series, which

@@ -3,7 +3,13 @@ import express from "express";
 import {
   buildMarketConditionsAnalyses,
   marketConditionsErrorStatus,
+  normalizeMarketAnalysisRequest,
 } from "../../services/marketConditions.js";
+import {
+  isNeighborhoodProfileBusyError,
+  marketAnalysisRequestKey,
+  runNeighborhoodProfileOperation,
+} from "../../services/neighborhoodProfileExecution.js";
 import {
   buildRegressionStudy,
   regressionAnalysisErrorStatus,
@@ -26,6 +32,10 @@ export function createValuationStudyRouter({
   accountIdAllowed,
   requireCustomAccountScope,
   buildMarketAnalyses = buildMarketConditionsAnalyses,
+  isMarketAnalysisBusyError = isNeighborhoodProfileBusyError,
+  marketRequestKey = marketAnalysisRequestKey,
+  normalizeMarketRequest = normalizeMarketAnalysisRequest,
+  runMarketAnalysisOperation = runNeighborhoodProfileOperation,
   marketErrorStatus = marketConditionsErrorStatus,
   buildRegression = buildRegressionStudy,
   regressionErrorStatus = regressionAnalysisErrorStatus,
@@ -46,6 +56,10 @@ export function createValuationStudyRouter({
   if (
     typeof requireCustomAccountScope !== "function"
     || typeof buildMarketAnalyses !== "function"
+    || typeof isMarketAnalysisBusyError !== "function"
+    || typeof marketRequestKey !== "function"
+    || typeof normalizeMarketRequest !== "function"
+    || typeof runMarketAnalysisOperation !== "function"
     || typeof marketErrorStatus !== "function"
     || typeof buildRegression !== "function"
     || typeof regressionErrorStatus !== "function"
@@ -62,26 +76,39 @@ export function createValuationStudyRouter({
   const router = express.Router();
 
   router.post("/api/sales/market-analysis", async (req, res) => {
-    const subjectAccountId = String(req.body?.subject_account_id || "").trim();
-    if (!accountIdAllowed(subjectAccountId)) {
+    const request = {
+      subjectAccountId: String(req.body?.subject_account_id || "").trim(),
+      areaKeys: req.body?.area_keys,
+      asOfDate: String(req.body?.as_of || "").trim(),
+      periodMonths: req.body?.period_months ?? 24,
+      customGeometry: req.body?.custom_geometry || null,
+      marketContextOverride: req.body?.context_override || null,
+    };
+    if (!accountIdAllowed(request.subjectAccountId)) {
       return res.status(400).json({ error: "invalid_subject_account_id" });
     }
     if (!await requireCustomAccountScope(
-      req, res, subjectAccountId, req.body?.assignment_file_id, "read",
+      req, res, request.subjectAccountId, req.body?.assignment_file_id, "read",
     )) return undefined;
     try {
-      const result = await buildMarketAnalyses(pool, {
-        subjectAccountId,
-        areaKeys: req.body?.area_keys,
-        asOfDate: String(req.body?.as_of || "").trim(),
-        periodMonths: req.body?.period_months ?? 24,
-        customGeometry: req.body?.custom_geometry || null,
-        marketContextOverride: req.body?.context_override || null,
-        accountIdAllowed,
-      });
+      const normalizedRequest = normalizeMarketRequest(request);
+      const result = await runMarketAnalysisOperation(
+        marketRequestKey(normalizedRequest),
+        () => buildMarketAnalyses(pool, {
+          ...normalizedRequest,
+          accountIdAllowed,
+        }),
+        // A full response can contain up to 1,000 mapped sales per selected
+        // area. Share concurrent work, but never retain those large payloads.
+        { allowCached: false, cacheResult: false },
+      );
       return res.json(result);
     } catch (error) {
       const message = error?.message || "market_analysis_failed";
+      if (isMarketAnalysisBusyError(message)) {
+        res.set("Retry-After", "10");
+        return res.status(503).json({ error: "market_analysis_busy" });
+      }
       logger.error?.("/api/sales/market-analysis failed", error);
       return res.status(marketErrorStatus(message)).json({
         error: message,

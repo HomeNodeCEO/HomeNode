@@ -16,6 +16,15 @@ function createAnalysisPool() {
     async query(sql) {
       const statement = String(sql);
       statements.push(statement);
+      if (/market_spatial_support_probe/.test(statement)) {
+        return {
+          rows: [{
+            column_present: true,
+            migration_applied: true,
+            index_valid: true,
+          }],
+        };
+      }
       if (/SELECT\s+account\.account_id/.test(statement)) {
         return {
           rows: [{

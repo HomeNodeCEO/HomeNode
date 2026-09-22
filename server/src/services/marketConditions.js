@@ -1,7 +1,5 @@
-import {
-  ensureAccountLocationsTable,
-  refreshAccountLocations,
-} from "./accountLocations.js";
+import { MARKET_SPATIAL_MIGRATION_NAME } from "../database/marketSpatialMigration.js";
+import { refreshAccountLocations } from "./accountLocations.js";
 
 export const MARKET_AREA_KEYS = Object.freeze([
   "city",
@@ -200,12 +198,17 @@ export function validateCustomMarketGeometry(value) {
 }
 
 export function parseMarketAreaKeys(value) {
-  const raw = Array.isArray(value)
+  const values = Array.isArray(value)
     ? value
-    : String(value || "")
-        .split(",")
-        .map((item) => item.trim())
-        .filter(Boolean);
+    : String(value || "").split(",", MARKET_AREA_KEYS.length + 2);
+  // A conventional single trailing delimiter does not represent another area.
+  // Retain all other raw segments until after the bound check so repeated
+  // delimiters or duplicate inputs cannot inflate parsing work without limit.
+  if (!Array.isArray(value) && values.at(-1)?.trim() === "") values.pop();
+  if (values.length > MARKET_AREA_KEYS.length) {
+    throw new Error("market_area_limit_exceeded");
+  }
+  const raw = values.map((item) => String(item || "").trim()).filter(Boolean);
   const keys = [...new Set(raw)];
   if (!keys.length) throw new Error("market_areas_required");
   const areas = keys.map((key) => AREA_BY_KEY.get(key));
@@ -215,55 +218,104 @@ export function parseMarketAreaKeys(value) {
   return areas;
 }
 
-export async function ensureSpatialSupport(pool) {
-  await ensureAccountLocationsTable(pool);
-  await pool.query(`
-    CREATE EXTENSION IF NOT EXISTS postgis;
-    ALTER TABLE core.account_locations
-      ADD COLUMN IF NOT EXISTS location_geom geometry(Point, 4326);
-    UPDATE core.account_locations
-    SET location_geom = ST_SetSRID(ST_MakePoint(longitude, latitude), 4326)
-    WHERE latitude IS NOT NULL
-      AND longitude IS NOT NULL
-      AND (
-        location_geom IS NULL
-        OR ST_X(location_geom) IS DISTINCT FROM longitude
-        OR ST_Y(location_geom) IS DISTINCT FROM latitude
-      );
-    CREATE OR REPLACE FUNCTION core.sync_account_location_geom()
-    RETURNS trigger
-    LANGUAGE plpgsql
-    AS $$
-    BEGIN
-      NEW.location_geom :=
-        CASE
-          WHEN NEW.latitude IS NULL OR NEW.longitude IS NULL THEN NULL
-          ELSE ST_SetSRID(ST_MakePoint(NEW.longitude, NEW.latitude), 4326)
-        END;
-      RETURN NEW;
-    END;
-    $$;
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1
-        FROM pg_trigger
-        WHERE tgname = 'account_locations_sync_geom'
-          AND tgrelid = 'core.account_locations'::regclass
-      ) THEN
-        CREATE TRIGGER account_locations_sync_geom
-        BEFORE INSERT OR UPDATE OF latitude, longitude
-        ON core.account_locations
-        FOR EACH ROW
-        EXECUTE FUNCTION core.sync_account_location_geom();
-      END IF;
-    END;
-    $$;
-    CREATE INDEX IF NOT EXISTS account_locations_geom_gist_idx
-      ON core.account_locations
-      USING GIST (location_geom)
-      WHERE status = 'matched' AND location_geom IS NOT NULL;
-  `);
+export function normalizeMarketAnalysisRequest({
+  subjectAccountId,
+  areaKeys,
+  asOfDate = "",
+  periodMonths = 24,
+  customGeometry = null,
+  marketContextOverride = null,
+}) {
+  const normalizedPeriodMonths = Number(periodMonths);
+  if (![12, 24, 36].includes(normalizedPeriodMonths)) {
+    throw new Error("invalid_market_period");
+  }
+  return {
+    subjectAccountId: String(subjectAccountId || "").trim(),
+    areaKeys: parseMarketAreaKeys(areaKeys).map((area) => area.key),
+    asOfDate: String(asOfDate || "").trim(),
+    periodMonths: normalizedPeriodMonths,
+    customGeometry: customGeometry || null,
+    marketContextOverride: marketContextOverride || null,
+  };
+}
+
+const spatialSupportReadinessByPool = new WeakMap();
+
+/**
+ * Confirms the versioned spatial migration once per pool without doing DDL,
+ * scanning business rows, or repairing data in an HTTP request. Requiring both
+ * the migration ledger and the final valid index keeps rolling deployments from
+ * admitting radius/custom-area work while a resumable repair is still running.
+ */
+export function ensureSpatialSupport(pool) {
+  const existing = spatialSupportReadinessByPool.get(pool);
+  if (existing) return existing;
+  const readiness = Promise.resolve()
+    .then(() => pool.query(`
+      /* market_spatial_support_probe */
+      SELECT
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_attribute column_catalog
+          JOIN pg_catalog.pg_class table_catalog
+            ON table_catalog.oid = column_catalog.attrelid
+          JOIN pg_catalog.pg_namespace table_namespace
+            ON table_namespace.oid = table_catalog.relnamespace
+          WHERE table_namespace.nspname = 'core'
+            AND table_catalog.relname = 'account_locations'
+            AND table_catalog.relkind IN ('r', 'p')
+            AND column_catalog.attname = 'location_geom'
+            AND column_catalog.attnum > 0
+            AND NOT column_catalog.attisdropped
+        ) AS column_present,
+        EXISTS (
+          SELECT 1
+          FROM app.schema_migrations
+          WHERE migration_name = $1
+        ) AS migration_applied,
+        EXISTS (
+          SELECT 1
+          FROM pg_catalog.pg_index index_state
+          JOIN pg_catalog.pg_class index_catalog
+            ON index_catalog.oid = index_state.indexrelid
+          JOIN pg_catalog.pg_namespace index_namespace
+            ON index_namespace.oid = index_catalog.relnamespace
+          JOIN pg_catalog.pg_class table_catalog
+            ON table_catalog.oid = index_state.indrelid
+          JOIN pg_catalog.pg_namespace table_namespace
+            ON table_namespace.oid = table_catalog.relnamespace
+          WHERE index_namespace.nspname = 'core'
+            AND index_catalog.relname = 'account_locations_geom_gist_idx'
+            AND table_namespace.nspname = 'core'
+            AND table_catalog.relname = 'account_locations'
+            AND index_state.indisvalid
+            AND LOWER(pg_get_indexdef(index_state.indexrelid))
+              LIKE '%using gist (location_geom)%'
+            AND LOWER(pg_get_indexdef(index_state.indexrelid))
+              LIKE '%where (location_geom is not null)%'
+            AND LOWER(pg_get_indexdef(index_state.indexrelid)) NOT LIKE '%status%'
+        ) AS index_valid
+    `, [MARKET_SPATIAL_MIGRATION_NAME]))
+    .then(({ rows }) => {
+      if (
+        rows?.length !== 1 ||
+        rows[0].column_present !== true ||
+        rows[0].migration_applied !== true ||
+        rows[0].index_valid !== true
+      ) {
+        throw new Error("market_spatial_support_not_ready");
+      }
+    })
+    .catch((error) => {
+      if (spatialSupportReadinessByPool.get(pool) === readiness) {
+        spatialSupportReadinessByPool.delete(pool);
+      }
+      if (error?.message === "market_spatial_support_not_ready") throw error;
+      throw new Error("market_spatial_support_not_ready", { cause: error });
+    });
+  spatialSupportReadinessByPool.set(pool, readiness);
+  return readiness;
 }
 
 async function loadSubject(pool, subjectAccountId) {
@@ -1288,18 +1340,18 @@ function normalizeSeriesPoint(item) {
 
 export async function buildMarketConditionsAnalyses(
   pool,
-  {
+  input,
+) {
+  const accountIdAllowed = input?.accountIdAllowed;
+  const {
     subjectAccountId,
     areaKeys,
-    asOfDate = "",
-    periodMonths = 24,
-    customGeometry = null,
-    marketContextOverride = null,
-    accountIdAllowed,
-  },
-) {
-  const areas = parseMarketAreaKeys(areaKeys);
-  const parsedPeriodMonths = Number(periodMonths);
+    asOfDate,
+    periodMonths: parsedPeriodMonths,
+    customGeometry,
+    marketContextOverride,
+  } = normalizeMarketAnalysisRequest(input || {});
+  const areas = areaKeys.map((key) => AREA_BY_KEY.get(key));
   const calendarWindow = completeCalendarMonthWindow(
     asOfDate,
     parsedPeriodMonths,
@@ -1424,6 +1476,7 @@ export async function buildMarketConditionsAnalyses(
 
 export function marketConditionsErrorStatus(message) {
   if (message === "subject_not_found") return 404;
+  if (message === "market_spatial_support_not_ready") return 503;
   if (
     [
       "custom_area_geometry_invalid",
@@ -1436,7 +1489,8 @@ export function marketConditionsErrorStatus(message) {
     String(message || "").startsWith("invalid_") ||
     String(message || "").startsWith("market_context_") ||
     String(message || "").startsWith("custom_") ||
-    message === "market_areas_required"
+    message === "market_areas_required" ||
+    message === "market_area_limit_exceeded"
   ) {
     return 400;
   }

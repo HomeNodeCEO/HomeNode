@@ -175,6 +175,7 @@ export default function AssignmentDocumentCenter({
     : `custom:${accountId}:${assignmentFileId ?? ''}`;
   const currentScopeKeyRef = useRef(scopeKey);
   currentScopeKeyRef.current = scopeKey;
+  const loadDocumentRequestRef = useRef(0);
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -234,6 +235,7 @@ export default function AssignmentDocumentCenter({
   }, [defaultReviewer]);
 
   useEffect(() => {
+    loadDocumentRequestRef.current += 1;
     setDocuments([]);
     setSelectedDocument(null);
     setCandidateValues({});
@@ -274,6 +276,12 @@ export default function AssignmentDocumentCenter({
 
   const loadDocument = useCallback(async (documentId: number) => {
     const requestedScopeKey = scopeKey;
+    const requestId = loadDocumentRequestRef.current + 1;
+    loadDocumentRequestRef.current = requestId;
+    const requestIsCurrent = () => (
+      currentScopeKeyRef.current === requestedScopeKey
+      && loadDocumentRequestRef.current === requestId
+    );
     setLoading(true);
     setMessage('');
     try {
@@ -288,7 +296,7 @@ export default function AssignmentDocumentCenter({
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
       if (documentResult.status === 'rejected') throw documentResult.reason;
-      if (currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!requestIsCurrent()) return;
       const document = documentResult.value;
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
@@ -306,10 +314,10 @@ export default function AssignmentDocumentCenter({
         setMessage(`Contract information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
       }
     } catch (error) {
-      if (currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!requestIsCurrent()) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be loaded.');
     } finally {
-      if (currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
+      if (requestIsCurrent()) setLoading(false);
     }
   }, [getEditorKey, isUad, scopeKey, uadWorkfileId]);
 

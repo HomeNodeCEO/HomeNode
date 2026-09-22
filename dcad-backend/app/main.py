@@ -39,14 +39,17 @@ def _detail_file_path(account_id: str, data_dir: Path) -> Path | None:
     if not ACCOUNT_ID_PATTERN.fullmatch(normalized_account_id):
         raise ValueError("invalid_account_id")
     base_dir = data_dir.resolve()
-    candidate = (base_dir / f"{normalized_account_id}.json").resolve()
-    try:
-        relative = candidate.relative_to(base_dir)
-    except ValueError:
-        return None
-    if candidate.parent != base_dir or relative.name != candidate.name:
-        return None
-    return candidate if candidate.is_file() else None
+    for entry in base_dir.iterdir():
+        if entry.stem != normalized_account_id or entry.suffix.lower() != ".json":
+            continue
+        candidate = entry.resolve()
+        try:
+            relative = candidate.relative_to(base_dir)
+        except ValueError:
+            continue
+        if candidate.parent == base_dir and relative.name == entry.name and candidate.is_file():
+            return candidate
+    return None
 
 
 @app.get("/detail/{account_id}")
@@ -55,12 +58,10 @@ def get_detail(account_id: str):
     Returns: { "account_id": "...", "detail": {...} }
     The `detail` shape matches your scraper JSON.
     """
-    try:
-        requested_path = _detail_file_path(account_id, DATA_DIR)
-    except ValueError as error:
-        raise HTTPException(status_code=400, detail="Invalid account ID") from error
+    if not ACCOUNT_ID_PATTERN.fullmatch(str(account_id)):
+        raise HTTPException(status_code=400, detail="Invalid account ID")
     fp = DATA_SNAPSHOT.detail_files.get(account_id)
-    if requested_path is None or fp != requested_path or not fp.is_file():
+    if fp is None or not fp.is_file():
         raise HTTPException(status_code=404, detail="Not Found")
 
     detail = read_bounded_detail(fp)

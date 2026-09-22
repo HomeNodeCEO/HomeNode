@@ -93,6 +93,12 @@ const ALLOWED_CONTENT_TYPES = new Set([
 ]);
 
 const MAX_UAD_ASSET_BYTES = 50 * 1024 * 1024;
+export const UAD_ASSET_UPLOAD_RESERVATION_LIMITS = Object.freeze({
+  maximumPendingUploads: 100,
+  maximumPendingBytes: 1024 * 1024 * 1024,
+  cleanupBatchSize: 250,
+});
+const UAD_ASSET_UPLOAD_EXPIRY_GRACE = "24 hours";
 const SECTION_CAPTION_TYPES = new Map([
   [4, new Set(UAD_SITE_CAPTION_TYPES)],
   [5, new Set(["DisasterMitigationExhibit"])],
@@ -496,6 +502,95 @@ async function cleanupOwnedUadUploadSource(storage, workfileId, assetId, source)
   }
 }
 
+async function deleteExpiredUadAssetReservations(client, workfileId) {
+  const { rows } = await client.query(
+    `WITH expired_candidates AS (
+       SELECT id
+         FROM appraisal.uad_assets
+        WHERE workfile_id = $1
+          AND status = 'pending_upload'
+          AND upload_expires_at IS NOT NULL
+          AND upload_expires_at <= now() - $2::interval
+        ORDER BY upload_expires_at, id
+        LIMIT $3
+        FOR UPDATE
+     ), deleted_assets AS (
+       DELETE FROM appraisal.uad_assets AS asset
+        USING expired_candidates
+        WHERE asset.id = expired_candidates.id
+          AND asset.workfile_id = $1
+          AND asset.status = 'pending_upload'
+       RETURNING asset.id, asset.object_key, asset.original_file_name,
+                 jsonb_build_object(
+                   'status', asset.status,
+                   'storage_provider', asset.storage_provider,
+                   'storage_bucket', asset.storage_bucket,
+                   'object_key', asset.object_key,
+                   'original_file_name', asset.original_file_name,
+                   'content_type', asset.content_type,
+                   'capture_metadata', asset.capture_metadata,
+                   'upload_expires_at', asset.upload_expires_at,
+                   'created_at', asset.created_at
+                 ) AS before_data
+     ), recorded_events AS (
+       INSERT INTO appraisal.uad_audit_events (
+         workfile_id, event_type, entity_type, entity_id, before_data, metadata
+       )
+       SELECT $1, 'uad_asset.upload_reservation_expired', 'uad_asset', id::text,
+              before_data,
+              jsonb_build_object('reason', 'upload_url_expired', 'cleanup', 'automatic')
+         FROM deleted_assets
+       RETURNING entity_id
+     )
+     SELECT id, object_key, original_file_name
+       FROM deleted_assets
+      WHERE EXISTS (
+        SELECT 1 FROM recorded_events WHERE entity_id = deleted_assets.id::text
+      )`,
+    [
+      workfileId,
+      UAD_ASSET_UPLOAD_EXPIRY_GRACE,
+      UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupBatchSize,
+    ],
+  );
+  return rows;
+}
+
+async function uadAssetReservationCapacity(client, workfileId, expectedByteSize) {
+  const { rows } = await client.query(
+    `SELECT COUNT(*)::integer AS pending_count,
+            COALESCE(SUM(
+              CASE
+                WHEN capture_metadata ->> 'expected_byte_size' ~ '^[0-9]{1,12}$'
+                  THEN LEAST((capture_metadata ->> 'expected_byte_size')::bigint, $3::bigint)
+                ELSE $3::bigint
+              END
+            ), 0)::bigint AS pending_bytes
+       FROM (
+         SELECT capture_metadata
+           FROM appraisal.uad_assets
+          WHERE workfile_id = $1
+            AND status = 'pending_upload'
+          ORDER BY created_at, id
+          LIMIT $2
+       ) AS bounded_pending_assets`,
+    [
+      workfileId,
+      UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads + 1,
+      MAX_UAD_ASSET_BYTES,
+    ],
+  );
+  const usage = rows[0] || {};
+  const pendingCount = Number(usage.pending_count || 0);
+  const pendingBytes = Number(usage.pending_bytes || 0);
+  return {
+    allowed: pendingCount < UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads
+      && pendingBytes + expectedByteSize <= UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingBytes,
+    pendingCount,
+    pendingBytes,
+  };
+}
+
 async function rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, source, metadata) {
   await withUadAssetVerificationLock(pool, workfileId, assetId, source, async (client) => {
     const rejected = await client.query(
@@ -523,17 +618,32 @@ export async function createUadAssetUpload(pool, storage, workfileIdValue, input
   const normalized = normalizeAssetInput(input);
   const assetId = randomUUID();
   const client = await pool.connect();
+  let outcome;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
-    const upload = await createUadAssetUploadInTransaction(client, storage, workfileId, normalized, assetId);
+    outcome = await createUadAssetUploadInTransaction(
+      client,
+      storage,
+      workfileId,
+      normalized,
+      assetId,
+    );
     await client.query("COMMIT");
-    return upload;
   } catch (error) {
     try { await client.query("ROLLBACK"); } catch { /* Preserve the original creation failure. */ }
     throw error;
   } finally {
     client.release();
   }
+  for (const expired of outcome.expiredReservations) {
+    await cleanupOwnedUadUploadSource(storage, workfileId, expired.id, {
+      organization_id: outcome.organizationId,
+      object_key: expired.object_key,
+      original_file_name: expired.original_file_name,
+    });
+  }
+  if (outcome.errorCode) throw new Error(outcome.errorCode);
+  return outcome.upload;
 }
 
 // Private to the transaction-owning entry point above. URL signing is local;
@@ -565,6 +675,20 @@ async function createUadAssetUploadInTransaction(client, storage, workfileId, no
     entity = entityResult.rows[0];
   }
   assertUadAssetEntityRelationship(normalized, entity);
+  const expiredReservations = await deleteExpiredUadAssetReservations(client, workfileId);
+  const capacity = await uadAssetReservationCapacity(
+    client,
+    workfileId,
+    normalized.expectedByteSize,
+  );
+  if (!capacity.allowed) {
+    return {
+      errorCode: "uad_asset_upload_capacity_exceeded",
+      expiredReservations,
+      organizationId: workfileResult.rows[0].organization_id,
+      upload: null,
+    };
+  }
   if (normalized.sectionNumber === 14) {
     const maximum = UAD_SUBJECT_PROPERTY_AMENITIES_MAX_IMAGES[normalized.captionType];
     if (maximum) {
@@ -639,10 +763,15 @@ async function createUadAssetUploadInTransaction(client, storage, workfileId, no
   }
 
   return {
-    asset_id: assetId,
-    object_key: objectKey,
-    upload,
-    expires_at: expiresAt.toISOString(),
+    errorCode: null,
+    expiredReservations,
+    organizationId,
+    upload: {
+      asset_id: assetId,
+      object_key: objectKey,
+      upload,
+      expires_at: expiresAt.toISOString(),
+    },
   };
 }
 

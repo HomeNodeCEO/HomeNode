@@ -110,6 +110,7 @@ function errorStatus(error) {
     "uad_artifact_queue_timeout",
     "uad_artifact_executor_shutting_down",
   ].includes(message)) return 503;
+  if (message === "uad_asset_upload_capacity_exceeded") return 409;
   if (message.startsWith("uad_object_") && message.endsWith("_timeout")) return 504;
   if (message.startsWith("uad_object_") && (
     message.endsWith("_network_error") || message.includes("_failed:")

@@ -62,6 +62,7 @@ import { createAssignmentSalesImportRouter } from "./modules/assignmentFiles/sal
 import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
 import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
 import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
+import { createAssignmentWorkfileItemRouter } from "./modules/assignmentFiles/workfileItemRouter.js";
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
 import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistoryRouter.js";
 import { createDesktopAssignmentSketchRouter } from "./modules/mobile/desktopAssignmentSketchRouter.js";
@@ -571,6 +572,14 @@ app.use(createAssignmentDocumentRouter({
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
   ocrProvider: documentOcrProvider,
+}));
+
+app.use(createAssignmentWorkfileItemRouter({
+  pool,
+  sharedObjectStorage,
+  uadObjectStorage,
+  requireWorkflowAccess,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
 }));
 
 app.use(createAssignmentSalesImportRouter({ pool }));

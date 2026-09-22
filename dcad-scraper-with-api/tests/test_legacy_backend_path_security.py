@@ -1,15 +1,25 @@
 import importlib.util
 from pathlib import Path
+import sys
 import tempfile
 import unittest
 
 from fastapi import HTTPException
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[2]
-MODULE_PATH = REPOSITORY_ROOT / "dcad-backend" / "app" / "main.py"
-SPEC = importlib.util.spec_from_file_location("legacy_dcad_backend", MODULE_PATH)
-LEGACY_BACKEND = importlib.util.module_from_spec(SPEC)
-SPEC.loader.exec_module(LEGACY_BACKEND)
+LEGACY_BACKEND_ROOT = REPOSITORY_ROOT / "dcad-backend"
+MODULE_PATH = LEGACY_BACKEND_ROOT / "app" / "main.py"
+
+# Load the legacy backend through the same package root used by its production
+# uvicorn command while retaining the direct module handle this regression suite
+# uses for focused path-security tests.
+sys.path.insert(0, str(LEGACY_BACKEND_ROOT))
+try:
+    SPEC = importlib.util.spec_from_file_location("legacy_dcad_backend", MODULE_PATH)
+    LEGACY_BACKEND = importlib.util.module_from_spec(SPEC)
+    SPEC.loader.exec_module(LEGACY_BACKEND)
+finally:
+    sys.path.remove(str(LEGACY_BACKEND_ROOT))
 
 
 class LegacyBackendPathSecurityTests(unittest.TestCase):

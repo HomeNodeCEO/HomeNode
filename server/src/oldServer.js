@@ -14,7 +14,6 @@ import {
 import {
   createRequestPerformanceMonitor,
   environmentFlag,
-  normalizePerformancePath,
 } from "./util/requestPerformance.js";
 import { createUadRouter, uadBodyParserErrorHandler } from "./modules/uad/router.js";
 import { createUadObjectStorage } from "./modules/uad/r2Storage.js";
@@ -66,13 +65,11 @@ import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistor
 import { createDesktopAssignmentSketchRouter } from "./modules/mobile/desktopAssignmentSketchRouter.js";
 import { createDesktopPropertyTaxRouter } from "./modules/mobile/desktopPropertyTaxRouter.js";
 import {
-  authenticatedApiRateLimitKey,
   createCorsMiddleware,
   createHelmetConfiguration,
   createHttpSecurityConfiguration,
   jsonErrorHandler,
   securityHeaders,
-  shouldSkipGlobalApiRateLimit,
 } from "./security/httpSecurity.js";
 import { isLegacyAccountIdAllowed } from "./security/accountIdPolicy.js";
 import { createRedTeamIsolationConfiguration } from "./security/redTeamIsolation.js";
@@ -95,7 +92,10 @@ import { startApplicationHttpLifecycle } from "./application/httpLifecycle.js";
 import { createApplicationStartupResources } from "./application/startupResources.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
-import { mountApplicationRouteBoundary } from "./security/applicationRouteBoundary.js";
+import {
+  createApplicationRateLimiterOptions,
+  mountApplicationRouteBoundary,
+} from "./security/applicationRouteBoundary.js";
 import { createCustomNeighborhoodConfiguration, createCustomNeighborhoodApplicationRouter } from "./application/customNeighborhoodComposition.js";
 
 const customNeighborhoodConfiguration = createCustomNeighborhoodConfiguration(process.env);
@@ -144,30 +144,10 @@ app.use(requestPerformance.middleware);
 app.use(helmet(createHelmetConfiguration()));
 app.use(securityHeaders);
 app.use(createCorsMiddleware(httpSecurity));
-const globalApiRateLimiterOptions = {
-  windowMs: httpSecurity.apiRateLimitWindowMs,
-  limit: httpSecurity.apiRateLimitMax,
-  // UAD and mobile own stricter route-local limiters and response headers.
-  skip: (req) => shouldSkipGlobalApiRateLimit(req, httpSecurity),
-  standardHeaders: "draft-8",
-  legacyHeaders: false,
-  keyGenerator: (req) => {
-    const authenticatedKey = authenticatedApiRateLimitKey(req);
-    if (authenticatedKey) return authenticatedKey;
-    const forwarded = httpSecurity.rateLimitClientIpHeader
-      ? String(req.get(httpSecurity.rateLimitClientIpHeader) || "").trim()
-      : "";
-    return ipKeyGenerator(isIP(forwarded) ? forwarded : req.ip);
-  },
-  handler: (req, res) => {
-    console.warn("[security] api rate limit exceeded", {
-      method: String(req.method || "GET").toUpperCase(),
-      path: normalizePerformancePath(req.path || req.originalUrl),
-      authenticated: Boolean(authenticatedApiRateLimitKey(req)),
-    });
-    res.status(429).json({ error: "api_rate_limit_exceeded" });
-  },
-};
+const {
+  preAuthenticationApiRateLimiterOptions,
+  globalApiRateLimiterOptions,
+} = createApplicationRateLimiterOptions({ httpSecurity });
 
 const signupRateLimiter = rateLimit({
   windowMs: httpSecurity.signupRateLimitWindowMs,
@@ -258,6 +238,7 @@ mountApplicationRouteBoundary(app, {
   optionalApplicationAuthenticator: createOptionalApplicationAuthenticator(
     authenticateApplicationUser,
   ),
+  preAuthenticationRateLimiterOptions: preAuthenticationApiRateLimiterOptions,
   // Browser reports load in parallel; limit authenticated users independently.
   globalApiRateLimiterOptions,
   webAuthRouter: createWebAuthRouter({

@@ -29,7 +29,12 @@ const row = value => ({ rows: value ? [structuredClone(value)] : [], rowCount: v
 // cohort router; only bearer verification and SQL results are synthetic here.
 // This is not a PostgreSQL isolation/locking or provider-authorization test.
 async function start(t, { enabled = false, sourceMode, authenticationRequired = true, principal = identity, cohortPool } = {}) {
-  const app = express(), state = { sessionQueries: 0, ratePaths: [], cohortConnections: 0 };
+  const app = express(), state = {
+    sessionQueries: 0,
+    preAuthenticationPaths: [],
+    ratePaths: [],
+    cohortConnections: 0,
+  };
   const pool = {
     async query(sql) {
       state.sessionQueries++;
@@ -60,6 +65,15 @@ async function start(t, { enabled = false, sourceMode, authenticationRequired = 
     optionalApplicationAuthenticator(req, _res, next) {
       if (req.get('authorization') === BEARER.authorization) req.mobileAuth = principal;
       next();
+    },
+    preAuthenticationRateLimiterOptions: {
+      windowMs: 60_000, limit: 1000, standardHeaders: false, legacyHeaders: false,
+      skipSuccessfulRequests: true,
+      skip(req) { return /^\/api\/(?:uad|mobile)(?:\/|$)/.test(req.originalUrl); },
+      keyGenerator(req) {
+        state.preAuthenticationPaths.push(req.originalUrl);
+        return 'synthetic-pre-authentication-client';
+      },
     },
     globalApiRateLimiterOptions: { windowMs: 60_000, limit: 1000, standardHeaders: false, legacyHeaders: false,
       keyGenerator(req) { state.ratePaths.push(req.originalUrl); return `synthetic:${state.ratePaths.length}`; } },
@@ -95,7 +109,10 @@ for (const authenticationRequired of [true, false]) {
       await responseIs(await server.request(`${base}/${action}`, { body: {} }), 503, 'custom_neighborhood_workspace_disabled');
     }
     assert.equal(server.state.cohortConnections, 0); assert.equal(server.state.sessionQueries, 0);
-    assert.equal(server.state.ratePaths.length, 8, 'each request traverses the original global limiter exactly once');
+    assert.equal(server.state.preAuthenticationPaths.length, 8,
+      'each request is bounded before authentication dependencies');
+    assert.equal(server.state.ratePaths.length, 4,
+      'only authenticated requests enter the per-user limiter');
   });
 }
 
@@ -106,6 +123,7 @@ for (const enabled of [false, true]) {
       headers: { ...cookieHeaders, origin: 'https://hostile.example.test' }, body: '{',
     }), 403, 'csrf_origin_denied');
     assert.equal(server.state.sessionQueries, 0); assert.equal(server.state.cohortConnections, 0);
+    assert.deepEqual(server.state.preAuthenticationPaths, [`${base}/catalog`]);
     assert.deepEqual(server.state.ratePaths, []);
   });
 

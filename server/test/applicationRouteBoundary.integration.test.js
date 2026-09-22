@@ -3,7 +3,11 @@ import test from "node:test";
 
 import express from "express";
 
-import { mountApplicationRouteBoundary } from "../src/security/applicationRouteBoundary.js";
+import {
+  createApplicationRateLimiterOptions,
+  createPreAuthenticationRateLimiterOptions,
+  mountApplicationRouteBoundary,
+} from "../src/security/applicationRouteBoundary.js";
 import { jsonErrorHandler } from "../src/security/httpSecurity.js";
 
 const identity = Object.freeze({
@@ -12,8 +16,114 @@ const identity = Object.freeze({
   organizations: Object.freeze([]),
 });
 
-async function startApplication({ authenticationRequired = true, readinessError = null } = {}) {
+test("production pre-authentication limiter is bounded, route-aware, and no-store", () => {
+  const warnings = [];
+  const {
+    preAuthenticationApiRateLimiterOptions: options,
+    globalApiRateLimiterOptions,
+  } = createApplicationRateLimiterOptions({
+    httpSecurity: {
+      apiRateLimitEnabled: true,
+      apiRateLimitWindowMs: 60_000,
+      apiRateLimitMax: 25,
+      rateLimitEnabled: true,
+      rateLimitClientIpHeader: "cf-connecting-ip",
+    },
+    logger: { warn(...entry) { warnings.push(entry); } },
+  });
+  assert.equal(options.windowMs, 60_000);
+  assert.equal(options.limit, 25);
+  assert.equal(options.skipSuccessfulRequests, true);
+  assert.equal(options.skip({ originalUrl: "/api/uad/files" }), true);
+  assert.equal(options.skip({ originalUrl: "/api/mobile/sync" }), true);
+  assert.equal(options.skip({ originalUrl: "/api/legacy" }), false);
+
+  const req = {
+    method: "post",
+    path: "/api/legacy",
+    ip: "198.51.100.5",
+    get(name) {
+      if (name === "cf-connecting-ip") return "203.0.113.7";
+      if (name === "x-client-ip") return "192.0.2.9";
+      return "";
+    },
+  };
+  assert.equal(options.keyGenerator(req), "203.0.113.7");
+  assert.equal(globalApiRateLimiterOptions.skip({ originalUrl: "/api/mobile/sync" }), true);
+  assert.equal(globalApiRateLimiterOptions.skip({ originalUrl: "/api/legacy" }), false);
+  assert.equal(globalApiRateLimiterOptions.keyGenerator(req), "203.0.113.7");
+  assert.equal(globalApiRateLimiterOptions.keyGenerator({
+    ...req,
+    mobileAuth: { userId: "user_1" },
+  }), "user:user_1");
+  const response = {
+    headers: {},
+    statusCode: null,
+    payload: null,
+    set(name, value) { this.headers[name] = value; return this; },
+    status(value) { this.statusCode = value; return this; },
+    json(value) { this.payload = value; return this; },
+  };
+  assert.equal(options.handler(req, response), response);
+  assert.deepEqual(response.headers, { "cache-control": "no-store" });
+  assert.equal(response.statusCode, 429);
+  assert.deepEqual(response.payload, { error: "authentication_rate_limit_exceeded" });
+  const globalResponse = {
+    statusCode: null,
+    payload: null,
+    status(value) { this.statusCode = value; return this; },
+    json(value) { this.payload = value; return this; },
+  };
+  assert.equal(globalApiRateLimiterOptions.handler(req, globalResponse), globalResponse);
+  assert.equal(globalResponse.statusCode, 429);
+  assert.deepEqual(globalResponse.payload, { error: "api_rate_limit_exceeded" });
+  assert.deepEqual(warnings, [[
+    "[security] pre-authentication rate limit exceeded",
+    { method: "POST", path: "/api/legacy" },
+  ], [
+    "[security] api rate limit exceeded",
+    { method: "POST", path: "/api/legacy", authenticated: false },
+  ]]);
+
+  const uadFallback = createPreAuthenticationRateLimiterOptions({
+    httpSecurity: {
+      apiRateLimitEnabled: true,
+      apiRateLimitWindowMs: 60_000,
+      apiRateLimitMax: 25,
+      rateLimitEnabled: false,
+      rateLimitClientIpHeader: "",
+    },
+  });
+  assert.equal(uadFallback.skip({ originalUrl: "/api/uad/files" }), false);
+  assert.equal(uadFallback.skip({ originalUrl: "/api/mobile/sync" }), true);
+  assert.equal(uadFallback.keyGenerator({
+    ip: "198.51.100.8",
+    get(name) { return name === "x-client-ip" ? "192.0.2.9" : ""; },
+  }), "198.51.100.8");
+
+  const disabled = createPreAuthenticationRateLimiterOptions({
+    httpSecurity: {
+      apiRateLimitEnabled: false,
+      apiRateLimitWindowMs: 60_000,
+      apiRateLimitMax: 25,
+      rateLimitClientIpHeader: "",
+    },
+  });
+  assert.equal(disabled.skip({ originalUrl: "/api/legacy" }), true);
+  assert.throws(
+    () => createPreAuthenticationRateLimiterOptions(),
+    /http_security_configuration_required/,
+  );
+});
+
+async function startApplication({
+  authenticationRequired = true,
+  readinessError = null,
+  preAuthenticationLimit = 1_000,
+} = {}) {
   const app = express();
+  const preAuthenticationRequests = [];
+  const authenticationHydrations = [];
   const rateLimitedRequests = [];
   mountApplicationRouteBoundary(app, {
     authenticationPolicy: {
@@ -21,6 +131,7 @@ async function startApplication({ authenticationRequired = true, readinessError 
       mode: authenticationRequired ? "enforced" : "development_legacy",
     },
     webSessionAuthenticator(req, _res, next) {
+      authenticationHydrations.push(`web:${req.originalUrl}`);
       if (req.get("x-test-web-session") === "active") req.mobileAuth = identity;
       next();
     },
@@ -36,8 +147,27 @@ async function startApplication({ authenticationRequired = true, readinessError 
       return res.json({ ok: true, surface: "mobile", origin: req.get("origin") || null });
     },
     optionalApplicationAuthenticator(req, _res, next) {
+      authenticationHydrations.push(`bearer:${req.originalUrl}`);
       if (req.get("authorization") === "Bearer application-token") req.mobileAuth = identity;
       next();
+    },
+    preAuthenticationRateLimiterOptions: {
+      windowMs: 60_000,
+      limit: preAuthenticationLimit,
+      standardHeaders: false,
+      legacyHeaders: false,
+      skipSuccessfulRequests: true,
+      skip(req) {
+        return /^\/api\/(?:uad|mobile)(?:\/|$)/.test(req.originalUrl);
+      },
+      keyGenerator(req) {
+        preAuthenticationRequests.push(req.originalUrl);
+        return "pre-authentication-integration-client";
+      },
+      handler: (_req, res) => res
+        .set("cache-control", "no-store")
+        .status(429)
+        .json({ error: "authentication_rate_limit_exceeded" }),
     },
     globalApiRateLimiterOptions: {
       windowMs: 60_000,
@@ -84,6 +214,8 @@ async function startApplication({ authenticationRequired = true, readinessError 
   if (!address || typeof address === "string") throw new Error("test_server_address_unavailable");
   return {
     baseUrl: `http://127.0.0.1:${address.port}`,
+    authenticationHydrations,
+    preAuthenticationRequests,
     rateLimitedRequests,
     close: () => new Promise((resolve, reject) => server.close((error) => (
       error ? reject(error) : resolve()
@@ -122,8 +254,11 @@ test("application route boundary preserves UAD, mobile, web auth, and legacy ord
     headers: { authorization: "Bearer application-token" },
   });
   assert.equal(authenticatedLegacy.status, 200);
-  assert.deepEqual(server.rateLimitedRequests, [
+  assert.deepEqual(server.preAuthenticationRequests, [
     "/api/legacy",
+    "/api/legacy",
+  ]);
+  assert.deepEqual(server.rateLimitedRequests, [
     "/api/legacy",
   ]);
 });
@@ -189,8 +324,29 @@ test("legacy authentication and rate limiting settle before JSON parsing", async
   assert.deepEqual(server.rateLimitedRequests, [
     "/api/legacy",
     "/api/legacy",
-    "/api/legacy",
   ]);
+});
+
+test("failed authentication is throttled before bearer verification or session lookup", async (context) => {
+  const server = await startApplication({ preAuthenticationLimit: 1 });
+  context.after(server.close);
+  const request = () => fetch(`${server.baseUrl}/api/legacy`, {
+    headers: { authorization: "Bearer attacker-controlled-token" },
+  });
+
+  const rejected = await request();
+  assert.equal(rejected.status, 401);
+  assert.deepEqual(await rejected.json(), { error: "authentication_required" });
+
+  const limited = await request();
+  assert.equal(limited.status, 429);
+  assert.equal(limited.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await limited.json(), { error: "authentication_rate_limit_exceeded" });
+  assert.deepEqual(server.authenticationHydrations, [
+    "web:/api/legacy",
+    "bearer:/api/legacy",
+  ], "the limited retry stops before either authenticator");
+  assert.deepEqual(server.rateLimitedRequests, [], "anonymous failures never enter the user bucket");
 });
 
 test("route-local parser families retain their authorization and size boundaries", async (context) => {

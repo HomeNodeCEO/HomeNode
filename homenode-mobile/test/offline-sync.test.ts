@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { networkAvailable, retryDelayMs, stableJson } from "../src/offline/model";
 import {
@@ -11,6 +14,8 @@ import {
   type OfflineDatabaseSnapshot,
 } from "../src/offline/databaseEncryption";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "../src/offline/databaseRecovery";
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
 test("recognizes native SQLite error 26 through wrapped causes", () => {
   assert.equal(isUnreadableSqliteDatabaseError(new Error("file is not a database")), true);
@@ -72,6 +77,15 @@ test("SQLCipher legacy cleanup includes stored and canonical plaintext candidate
     "homenode-field-ios-v2.db",
     "homenode-field-ios-v2.db",
   ), ["homenode-field-ios-v2.db"]);
+});
+
+test("offline store wrappers share external-activity connection lifecycle state", () => {
+  const source = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
+  assert.match(source, /type OfflineDatabaseConnection = \{[\s\S]*closedForExternalActivity: boolean;[\s\S]*database: SQLite\.SQLiteDatabase;[\s\S]*repair: Promise<void> \| null;/);
+  assert.match(source, /private constructor\(private readonly connection: OfflineDatabaseConnection\)/);
+  assert.match(source, /this\.connection\.closedForExternalActivity = true/);
+  assert.match(source, /this\.connection\.database = await initializeDatabase\(\)/);
+  assert.doesNotMatch(source, /private closedForExternalActivity|private connectionRepair/);
 });
 
 test("SQLCipher migration verifies schema, row counts, and user version before activation", () => {

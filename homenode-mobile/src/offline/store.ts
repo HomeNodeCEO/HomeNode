@@ -771,13 +771,25 @@ async function initializeDatabase() {
   }
 }
 
-let databasePromise: Promise<SQLite.SQLiteDatabase> | null = null;
+type OfflineDatabaseConnection = {
+  closedForExternalActivity: boolean;
+  database: SQLite.SQLiteDatabase;
+  repair: Promise<void> | null;
+};
+
+let databasePromise: Promise<OfflineDatabaseConnection> | null = null;
 
 function openDatabase() {
-  databasePromise ||= initializeDatabase().catch((reason) => {
-    databasePromise = null;
-    throw reason;
-  });
+  databasePromise ||= initializeDatabase()
+    .then((database) => ({
+      closedForExternalActivity: false,
+      database,
+      repair: null,
+    }))
+    .catch((reason) => {
+      databasePromise = null;
+      throw reason;
+    });
   return databasePromise;
 }
 
@@ -786,45 +798,46 @@ export async function clearActiveOfflineUser() {
 }
 
 export class OfflineStore {
-  private connectionRepair: Promise<void> | null = null;
-  private closedForExternalActivity = false;
+  private constructor(private readonly connection: OfflineDatabaseConnection) {}
 
-  private constructor(private database: SQLite.SQLiteDatabase) {}
+  private get database() {
+    return this.connection.database;
+  }
 
   static async open() {
-    return new OfflineStore(await openDatabase());
+    const store = new OfflineStore(await openDatabase());
+    await store.ensureReady();
+    return store;
   }
 
   async prepareForExternalActivity() {
-    if (this.connectionRepair) await this.connectionRepair;
-    if (this.closedForExternalActivity) return;
-    this.closedForExternalActivity = true;
-    const previous = this.database;
-    databasePromise = null;
+    if (this.connection.repair) await this.connection.repair;
+    if (this.connection.closedForExternalActivity) return;
+    this.connection.closedForExternalActivity = true;
+    const previous = this.connection.database;
     await previous.closeAsync().catch(() => undefined);
   }
 
   async ensureReady() {
-    if (this.connectionRepair) return this.connectionRepair;
-    if (!this.closedForExternalActivity) {
+    if (this.connection.repair) return this.connection.repair;
+    if (!this.connection.closedForExternalActivity) {
       try {
-        await this.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
+        await this.connection.database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
         return;
       } catch (reason) {
         if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
       }
     }
-    if (this.connectionRepair) return this.connectionRepair;
-    this.connectionRepair = (async () => {
-      const previous = this.database;
-      databasePromise = null;
+    if (this.connection.repair) return this.connection.repair;
+    this.connection.repair = (async () => {
+      const previous = this.connection.database;
       await previous.closeAsync().catch(() => undefined);
-      this.database = await openDatabase();
-      this.closedForExternalActivity = false;
+      this.connection.database = await initializeDatabase();
+      this.connection.closedForExternalActivity = false;
     })().finally(() => {
-      this.connectionRepair = null;
+      this.connection.repair = null;
     });
-    return this.connectionRepair;
+    return this.connection.repair;
   }
 
   async cacheUser(user: MobileUser) {

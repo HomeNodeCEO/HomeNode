@@ -207,6 +207,62 @@ test("authenticated desktop saves record the server identity on every audit reco
   });
 });
 
+test("legacy desktop saves use a server identity instead of client reviewer text", async () => {
+  const calls = [];
+  const row = {
+    report_file_id: REPORT_ID,
+    registry_revision: 1,
+    is_current: true,
+    organization_id: "00000000-0000-4000-8000-000000000714",
+    tax_protest_file_id: FILE_ID,
+    account_id: "ACCOUNT-1",
+    file_number: "PT-2026-1",
+    previous_file_id: null,
+    workfile_data: { subject: { condition_rating: "C4" } },
+    assigned_appraiser_user_id: null,
+    status: "draft",
+    revision: 1,
+    completed_at: null,
+    created_at: new Date("2026-01-01T00:00:00Z"),
+    updated_at: new Date("2026-01-01T00:00:00Z"),
+  };
+  const client = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (sql.includes("SELECT report_file.id")) return { rows: [row] };
+      if (sql.includes("UPDATE app.tax_protest_files")) {
+        return { rows: [{ ...row, revision: 2, status: "in_progress", workfile_data: JSON.parse(values[1]) }] };
+      }
+      if (sql.includes("UPDATE app.report_files")) return { rows: [{ registry_revision: 2 }] };
+      return { rows: [] };
+    },
+    release() {},
+  };
+
+  await saveDesktopPropertyTaxFile(
+    { connect: async () => client },
+    "ACCOUNT-1",
+    FILE_ID,
+    {
+      expected_revision: 1,
+      workfile_data: { subject: { condition_rating: "C3" } },
+      reviewer: "Forged administrator",
+    },
+  );
+
+  const history = calls.find(({ sql }) => sql.includes("INSERT INTO app.tax_protest_file_history"));
+  assert.equal(history.values[4], null);
+  assert.equal(history.values[5], "HomeNode legacy editor saved the desktop protest workfile");
+  assert.doesNotMatch(history.values[5], /Forged administrator/);
+  const event = calls.find(({ sql }) => sql.includes("INSERT INTO app.report_file_events"));
+  assert.equal(event.values[1], null);
+  assert.deepEqual(JSON.parse(event.values[5]), {
+    tax_protest_revision: 2,
+    reviewer: "HomeNode legacy editor",
+    authentication_mode: "legacy_editor_key",
+  });
+});
+
 test("non-signers can stage draft comparables but cannot create or alter attestations", () => {
   const grid = (rows) => ({
     analysis: {

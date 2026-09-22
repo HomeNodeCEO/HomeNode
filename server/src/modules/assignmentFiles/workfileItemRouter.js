@@ -182,15 +182,17 @@ export function createAssignmentWorkfileItemRouter({
       async (req, res) => {
         try {
           const authorized = req.assignmentWorkfileItemAccess;
-          if (!Buffer.isBuffer(req.body)) {
+          const requestBody = req.body;
+          if (typeof requestBody === "string" || Array.isArray(requestBody) || !Buffer.isBuffer(requestBody)) {
             return res.status(400).json({ error: "workfile_file_upload_body_invalid" });
           }
+          const content = Buffer.from(requestBody);
           const item = await createFile(pool, authorized.storage, authorized.scope, {
             organizationId: authorized.organizationId,
             title: decodedHeader(req, "x-workfile-item-title"),
             fileName: decodedHeader(req, "x-workfile-file-name", "workfile-item"),
             contentType: req.get("content-type"),
-            content: req.body,
+            content,
             createdByUserId: req.mobileAuth?.userId || null,
           });
           return res.status(201).json({ ok: true, item });

@@ -147,8 +147,11 @@ export async function createAssignmentWorkfileFile(pool, storage, scope, input) 
   const normalized = normalizeScope(scope);
   const organizationId = cleanText(input?.organizationId, 80).toLowerCase();
   if (!organizationId) throw new Error("workfile_item_organization_required");
-  if (!Buffer.isBuffer(input?.content)) throw new Error("workfile_file_content_required");
-  const content = input.content;
+  const contentInput = input?.content;
+  if (typeof contentInput === "string" || Array.isArray(contentInput) || !Buffer.isBuffer(contentInput)) {
+    throw new Error("workfile_file_content_required");
+  }
+  const content = Buffer.from(contentInput);
   if (!content.length) throw new Error("workfile_file_content_required");
   if (content.length > MAX_ASSIGNMENT_WORKFILE_ITEM_BYTES) throw new Error("workfile_file_too_large");
   if (!storage?.configured || typeof storage.putObject !== "function") throw new Error("workfile_storage_not_configured");

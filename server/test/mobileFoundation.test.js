@@ -781,6 +781,32 @@ test("OIDC discovery stays on the configured issuer and refuses redirects", asyn
   );
   assert.equal(crossOriginRequests, 1);
 
+  for (const jwksUri of [
+    "https://user@identity.example.test/oauth2/jwks",
+    "https://:secret@identity.example.test/oauth2/jwks",
+    "https://identity.example.test/oauth2/jwks#fragment",
+  ]) {
+    let unsafeUrlRequests = 0;
+    const unsafeUrl = createOidcAccessTokenVerifier({
+      issuer: ISSUER,
+      audience: AUDIENCE,
+      now: () => NOW,
+      fetchImpl: async (_url, options) => {
+        unsafeUrlRequests += 1;
+        assert.equal(options.redirect, "error");
+        return new Response(JSON.stringify({
+          issuer: ISSUER,
+          jwks_uri: jwksUri,
+        }), { status: 200 });
+      },
+    });
+    await assert.rejects(
+      () => unsafeUrl.preflight(),
+      (error) => error.statusCode === 503 && error.message === "invalid_oidc_jwks_uri",
+    );
+    assert.equal(unsafeUrlRequests, 1, "invalid discovery URLs must not trigger a JWKS request");
+  }
+
   let redirectedBodyCancelled = false;
   const redirected = createOidcAccessTokenVerifier({
     issuer: ISSUER,

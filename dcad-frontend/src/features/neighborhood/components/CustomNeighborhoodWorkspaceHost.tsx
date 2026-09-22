@@ -129,6 +129,8 @@ function HostSession(props: Props) {
 
   // One owned action at a time, without reflecting per-request progress in the
   // page-wide assignment autosave state. Invalid/uncertain saves stay visible.
+  /** Serialize a workspace action and convert internal failures into bounded,
+   * appraiser-facing state without exposing provider or database diagnostics. */
   function act(action: () => Promise<unknown>, report = false) {
     if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return Promise.resolve(false);
     if (!report && (reportUncertainRef.current || reportRecoveryRef.current)) return Promise.resolve(false);
@@ -290,6 +292,8 @@ function HostSession(props: Props) {
       if (live.current && !abort.signal.aborted) setReportEpoch(value => value + 1);
     } finally { clearTimeout(timeout); if (reloadAbort.current === abort) reloadAbort.current = null; }
   }
+  /** Refresh authoritative workfile state, then continue the exact recorded
+   * operation only when the server still identifies it as pending. */
   async function recoverNeighborhood() {
     await reload();
     const lifecycle = owner.current, current = lifecycle?.getState();
@@ -297,6 +301,8 @@ function HostSession(props: Props) {
     // the authoritative checkpoint still records that exact pending operation.
     if (lifecycle && (current?.checkpoint?.pending_capture || current?.recovery === 'resume_pending')) await lifecycle.resumePending();
   }
+  /** Clear a server-confirmed incomplete attempt while retaining the last
+   * completed neighborhood and every observation already accepted from it. */
   async function chooseDifferentArea() {
     await reload();
     const lifecycle = owner.current, current = lifecycle?.getState();

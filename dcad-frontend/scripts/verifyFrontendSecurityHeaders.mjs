@@ -8,6 +8,7 @@ export const EXPECTED_R2_ORIGIN =
 export const RETIRED_R2_ORIGIN =
   'https://e407656745429dce8902facc0209852d.r2.cloudflarestorage.com'
 
+/** Parse a Content-Security-Policy header into directive/source entries. */
 export function parseContentSecurityPolicy(policy) {
   const directives = new Map()
 
@@ -20,6 +21,7 @@ export function parseContentSecurityPolicy(policy) {
   return directives
 }
 
+/** Return all security-header policy violations without mutating the input. */
 export function validateFrontendSecurityHeaders(headers) {
   const normalized = Object.fromEntries(
     Object.entries(headers || {}).map(([name, value]) => [

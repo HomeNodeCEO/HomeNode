@@ -129,5 +129,8 @@ jobs:
         env:
           PYTHONPATH: dcad-scraper-with-api
         run: python -m unittest discover -s dcad-scraper-with-api/tests -v
+      - name: Run legacy DCAD backend security tests
+        if: matrix.run_tests
+        run: python -m unittest discover -s dcad-backend/tests -v
       - name: Reject known Python vulnerabilities
         run: python -m pip_audit -r "${{ matrix.requirements }}"

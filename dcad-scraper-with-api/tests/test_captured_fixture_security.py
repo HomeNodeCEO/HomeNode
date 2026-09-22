@@ -8,6 +8,7 @@ CAPTURED_DETAIL = REPOSITORY_ROOT / "dcad-scraper-with-api" / "dcad-scraper" / "
 
 class CapturedFixtureSecurityTests(unittest.TestCase):
     def test_captured_detail_cannot_put_a_hearing_pin_in_a_url(self):
+        """Keep the captured third-party controls inert and credential-free."""
         html = CAPTURED_DETAIL.read_text(encoding="utf-8")
 
         self.assertNotIn("&amp;PIN=", html)

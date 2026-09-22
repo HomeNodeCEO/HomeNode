@@ -104,7 +104,7 @@ function authorizePropertyTaxFile(_pool, auth, input) {
   });
 }
 
-test("signup status exposes configuration booleans without credential values", async (context) => {
+test("signup SMTP deployment diagnostics are not externally routed", async (context) => {
   const server = await startRouter({
     pool: { query: async () => ({ rows: [] }) },
     signupRateLimiter(_req, _res, next) { next(); },
@@ -122,21 +122,9 @@ test("signup status exposes configuration booleans without credential values", a
   context.after(server.close);
 
   const response = await fetch(`${server.baseUrl}/api/signup/smtp-status`);
-  assert.deepEqual(await response.json(), {
-    ok: true,
-    smtp: {
-      configured: true,
-      using_url: true,
-      has_host: false,
-      port: 465,
-      secure: true,
-      has_user: true,
-      has_pass: true,
-      from_set: true,
-    },
-    cors_origin: "https://app.example.invalid",
-  });
-  assert.doesNotMatch(JSON.stringify(await (await fetch(`${server.baseUrl}/api/signup/smtp-status`)).json()), /secret/);
+  assert.equal(response.status, 404);
+  const body = await response.text();
+  assert.doesNotMatch(body, /secret|app\.example\.invalid/i);
 });
 
 test("signup submission preserves limiter, persistence, delivery, and response contracts", async (context) => {

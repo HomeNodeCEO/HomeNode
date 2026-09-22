@@ -108,3 +108,46 @@ test("requires weights totaling 100 percent and certification confirmation", () 
   assert.ok(errors.some((message) => /total 100%/i.test(message)));
   assert.ok(errors.some((message) => /confirm the appraiser certification/i.test(message)));
 });
+
+test("rejects impossible calendar dates while accepting a valid leap day", () => {
+  const completeInput = {
+    weights: {
+      sales_comparison: 60,
+      income_approach: 20,
+      cost_approach: 20,
+    },
+    explanation: "All developed approaches support the final opinion of value.",
+    certification_confirmed: true,
+  };
+
+  for (const effectiveDate of [
+    "2026-02-29",
+    "2026-02-30",
+    "2026-04-31",
+    "2026-13-01",
+    "2026-00-10",
+    "2026-01-00",
+  ]) {
+    const result = normalizeFinalReconciliationSection({
+      ...completeInput,
+      effective_date: effectiveDate,
+    }, sources);
+    assert.equal(result.developed, false, effectiveDate);
+    assert.ok(
+      finalReconciliationReadinessErrors(result)
+        .some((message) => /effective date/i.test(message)),
+      effectiveDate,
+    );
+  }
+
+  const leapDay = normalizeFinalReconciliationSection({
+    ...completeInput,
+    effective_date: "2024-02-29",
+  }, sources);
+  assert.equal(leapDay.developed, true);
+  assert.equal(
+    finalReconciliationReadinessErrors(leapDay)
+      .some((message) => /effective date/i.test(message)),
+    false,
+  );
+});

@@ -20,6 +20,14 @@ function money(value) {
   return Math.round((value + Number.EPSILON) * 100) / 100;
 }
 
+/** Return true only for a real calendar date in canonical YYYY-MM-DD form. */
+function validIsoDate(value) {
+  const normalized = String(value || "").trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(normalized)) return false;
+  const parsed = new Date(`${normalized}T12:00:00.000Z`);
+  return !Number.isNaN(parsed.valueOf()) && parsed.toISOString().slice(0, 10) === normalized;
+}
+
 function approachValue(section, keys) {
   for (const key of keys) {
     const value = number(section?.[key]);
@@ -125,7 +133,7 @@ export function normalizeFinalReconciliationSection(input = {}, sections = {}) {
 
 export function finalReconciliationReadinessErrors(section = {}) {
   const errors = [];
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(section.effective_date || ""))) {
+  if (!validIsoDate(section.effective_date)) {
     errors.push("Enter the appraisal effective date.");
   }
   if (!(Number(section.approaches?.sales_comparison?.indicated_value) > 0)) {

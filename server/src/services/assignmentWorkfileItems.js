@@ -130,6 +130,19 @@ export async function listAssignmentWorkfileItems(pool, scope) {
   return rows.map(normalizedItem);
 }
 
+export async function getAssignmentWorkfileScopeState(pool, scope) {
+  const normalized = normalizeScope(scope);
+  try {
+    await transact(pool, client => assertMutableScope(client, normalized));
+    return { mutable: true };
+  } catch (error) {
+    if (["assignment_workfile_status_locked", "uad_workfile_status_locked"].includes(error?.message)) {
+      return { mutable: false };
+    }
+    throw error;
+  }
+}
+
 export async function createAssignmentWorkfileFile(pool, storage, scope, input) {
   const normalized = normalizeScope(scope);
   const organizationId = cleanText(input?.organizationId, 80).toLowerCase();

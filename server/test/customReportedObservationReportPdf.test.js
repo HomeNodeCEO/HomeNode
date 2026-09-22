@@ -42,6 +42,8 @@ test('real accepted v2 PDF renders all five parts with account/source-record cou
   assert.match(neighborhood, /Median is not predominant/); assert.match(neighborhood, /not full parcel containment/);
   assert.match(neighborhood, /Provider coverage is not established/); assert.match(neighborhood, /no package price allocation is inferred/);
   assert.match(neighborhood, /source snapshots? retained in the assignment workfile/);
+  assert.doesNotMatch(neighborhood, /source snapshots? appear on appendix pages/);
+  assert.match(result.pages[2], /supplied populations and .* statistics appear on appendix pages .* source snapshots? are retained in the assignment workfile/);
   assert.doesNotMatch(neighborhood, /selected-shared-source-records|Selected recorded pocket IDs/);
   for (const source of f.assessment.source_snapshots) assert.ok(!neighborhood.includes(source.content_sha256));
 });

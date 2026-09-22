@@ -6,6 +6,7 @@ import {
   createAssignmentWorkfileFile,
   createAssignmentWorkfileLink,
   deleteAssignmentWorkfileItem,
+  getAssignmentWorkfileScopeState,
   getAssignmentWorkfileFile,
   listAssignmentWorkfileItems,
   MAX_ASSIGNMENT_WORKFILE_ITEM_BYTES,
@@ -67,6 +68,7 @@ export function createAssignmentWorkfileItemRouter({
   normalizeFileId = normalizeAssignmentFileId,
   authorizeUad = authorizeUadWorkfileAccess,
   listItems = listAssignmentWorkfileItems,
+  getScopeState = getAssignmentWorkfileScopeState,
   createFile = createAssignmentWorkfileFile,
   createLink = createAssignmentWorkfileLink,
   getFile = getAssignmentWorkfileFile,
@@ -79,7 +81,7 @@ export function createAssignmentWorkfileItemRouter({
   if (typeof requireWorkflowAccess !== "function" || typeof requireAssignmentAccess !== "function") {
     throw new TypeError("assignment_workfile_item_router_access_required");
   }
-  if ([resolveAccountId, normalizeFileId, authorizeUad, listItems, createFile, createLink, getFile, deleteItem]
+  if ([resolveAccountId, normalizeFileId, authorizeUad, listItems, getScopeState, createFile, createLink, getFile, deleteItem]
     .some(dependency => typeof dependency !== "function")) {
     throw new TypeError("assignment_workfile_item_router_dependency_required");
   }
@@ -144,7 +146,11 @@ export function createAssignmentWorkfileItemRouter({
       try {
         const authorized = await loadScope(req, res, "read");
         if (!authorized) return;
-        return res.json({ ok: true, items: await listItems(pool, authorized.scope) });
+        const [items, state] = await Promise.all([
+          listItems(pool, authorized.scope),
+          getScopeState(pool, authorized.scope),
+        ]);
+        return res.json({ ok: true, items, mutable: state.mutable });
       } catch (error) {
         const message = boundedItemError(error, "workfile_items_lookup_failed");
         logger.error?.("assignment workfile items list failed", { code: message });
@@ -216,12 +222,16 @@ export function createAssignmentWorkfileItemRouter({
         const authorized = await loadScope(req, res, "read");
         if (!authorized) return;
         const file = await getFile(pool, authorized.storage, authorized.scope, req.params.itemId);
-        const fileName = String(file.original_file_name || "workfile-item").replace(/[\r\n"]/g, "_");
+        const originalName = String(file.original_file_name || "workfile-item").replace(/[\r\n]/g, "_");
+        const asciiName = originalName.replace(/[^\x20-\x7e]/g, "_").replace(/["\\]/g, "_") || "workfile-item";
+        const encodedName = encodeURIComponent(originalName).replace(/['()*]/g, character => (
+          `%${character.charCodeAt(0).toString(16).toUpperCase()}`
+        ));
         res.set({
           "cache-control": "private, no-store",
           "content-type": file.content_type,
           "content-length": String(file.body.length),
-          "content-disposition": `attachment; filename="${fileName}"`,
+          "content-disposition": `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`,
           "x-content-type-options": "nosniff",
         });
         return res.send(file.body);

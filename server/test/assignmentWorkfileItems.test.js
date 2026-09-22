@@ -5,6 +5,7 @@ import test from "node:test";
 import {
   createAssignmentWorkfileFile,
   createAssignmentWorkfileLink,
+  getAssignmentWorkfileScopeState,
   getAssignmentWorkfileFile,
 } from "../src/services/assignmentWorkfileItems.js";
 
@@ -96,6 +97,25 @@ test("signed Custom workfiles reject new files and clean the staged object", asy
     /assignment_workfile_status_locked/,
   );
   assert.equal(removed, 1);
+});
+
+test("scope state uses the effective UAD signature guard even while status remains ready", async () => {
+  const queries = [];
+  const pool = {
+    async query(sql, values) {
+      queries.push([sql, values]);
+      if (/FROM appraisal\.uad_workfiles/.test(sql)) {
+        return { rows: [{ id: "33333333-3333-4333-8333-333333333333", status: "ready", signed_at: null }] };
+      }
+      if (/FROM appraisal\.uad_signatures/.test(sql)) return { rows: [{ has_signatures: true }] };
+      throw new Error("unexpected query");
+    },
+  };
+  const result = await getAssignmentWorkfileScopeState(pool, {
+    uadWorkfileId: "33333333-3333-4333-8333-333333333333",
+  });
+  assert.deepEqual(result, { mutable: false });
+  assert.equal(queries.length, 2);
 });
 
 test("download verifies both retained byte length and SHA-256", async () => {

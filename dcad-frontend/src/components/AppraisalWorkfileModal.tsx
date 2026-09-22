@@ -91,6 +91,7 @@ export default function AppraisalWorkfileModal({
   const [uadEditor, setUadEditor] = useState<UadEditorResponse | null>(null);
   const [uadAssets, setUadAssets] = useState<UadAsset[]>([]);
   const [uadSketches, setUadSketches] = useState<UadSketch[]>([]);
+  const [scopeMutable, setScopeMutable] = useState<boolean | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [fileTitle, setFileTitle] = useState('');
   const [linkTitle, setLinkTitle] = useState('');
@@ -98,6 +99,7 @@ export default function AppraisalWorkfileModal({
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState('');
   const closeButton = useRef<HTMLButtonElement | null>(null);
+  const dialogPanel = useRef<HTMLElement | null>(null);
   const onCloseRef = useRef(onClose);
 
   useEffect(() => {
@@ -110,25 +112,27 @@ export default function AppraisalWorkfileModal({
     setMessage('');
     try {
       if (scope.workflow === 'custom_appraisal') {
-        const [savedItems, files, workfile] = await Promise.all([
+        const [itemState, files, workfile] = await Promise.all([
           getAssignmentWorkfileItems(scope),
           getAssignmentFiles(accountId, scope.assignmentFileId),
           getCustomAppraisalWorkfile(accountId, scope.assignmentFileId),
         ]);
-        setItems(savedItems);
+        setItems(itemState.items);
+        setScopeMutable(itemState.mutable);
         setCustomFile(files.files.find((file) => file.id === scope.assignmentFileId) || null);
         setCustomWorkfile(workfile.workfile);
         setUadEditor(null);
         setUadAssets([]);
         setUadSketches([]);
       } else {
-        const [savedItems, editor, assets, sketches] = await Promise.all([
+        const [itemState, editor, assets, sketches] = await Promise.all([
           getAssignmentWorkfileItems(scope),
           getUadEditor(scope.uadWorkfileId),
           listUadAssets(scope.uadWorkfileId),
           listUadSketches(scope.uadWorkfileId),
         ]);
-        setItems(savedItems);
+        setItems(itemState.items);
+        setScopeMutable(itemState.mutable);
         setUadEditor(editor);
         setUadAssets(assets);
         setUadSketches(sketches);
@@ -136,6 +140,7 @@ export default function AppraisalWorkfileModal({
         setCustomWorkfile(null);
       }
     } catch (error) {
+      setScopeMutable(null);
       setMessage(error instanceof Error ? error.message : 'The workfile could not be loaded.');
     } finally {
       setBusy(false);
@@ -149,13 +154,31 @@ export default function AppraisalWorkfileModal({
     const previousOverflow = document.body.style.overflow;
     document.body.style.overflow = 'hidden';
     window.setTimeout(() => closeButton.current?.focus(), 0);
-    const escape = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onCloseRef.current();
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        onCloseRef.current();
+        return;
+      }
+      if (event.key !== 'Tab') return;
+      const focusable = Array.from(dialogPanel.current?.querySelectorAll<HTMLElement>(
+        'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
+      ) || []).filter((element) => element.getClientRects().length > 0);
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!first || !last) return;
+      if (event.shiftKey && (document.activeElement === first || !dialogPanel.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && (document.activeElement === last || !dialogPanel.current?.contains(document.activeElement))) {
+        event.preventDefault();
+        first.focus();
+      }
     };
-    window.addEventListener('keydown', escape);
+    window.addEventListener('keydown', handleKeyDown);
     return () => {
       document.body.style.overflow = previousOverflow;
-      window.removeEventListener('keydown', escape);
+      window.removeEventListener('keydown', handleKeyDown);
     };
   }, [load, open]);
 
@@ -235,15 +258,14 @@ export default function AppraisalWorkfileModal({
   const photoCount = customFile?.mobile_inspection_photos?.length || 0;
   const sectionCount = isUad ? uadEditor?.sections.length || 0 : Object.keys(customWorkfile?.sections || {}).length;
   const sketchCount = isUad ? uadSketches.length : customSketch ? 1 : 0;
-  const definitelyLocked = isUad
-    ? Boolean(uadEditor && !new Set(['draft', 'validating', 'ready', 'revised']).has(uadEditor.workfile.status))
-    : Boolean(customFile?.workfile && customFile.workfile.status !== 'draft');
+  const definitelyLocked = scopeMutable === false;
+  const canMutate = scopeMutable === true;
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-slate-950/70 p-2 backdrop-blur-sm sm:p-5" role="presentation" onMouseDown={(event) => {
       if (event.target === event.currentTarget) onCloseRef.current();
     }}>
-      <section className="hn-workspace-surface flex max-h-[96vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="appraisal-workfile-title">
+      <section ref={dialogPanel} className="hn-workspace-surface flex max-h-[96vh] w-full max-w-[1500px] flex-col overflow-hidden rounded-2xl border shadow-2xl" role="dialog" aria-modal="true" aria-labelledby="appraisal-workfile-title">
         <header className="hn-app-header flex flex-wrap items-start justify-between gap-4 border-b px-5 py-4 text-white">
           <div>
             <span className="hn-eyebrow text-[10px]">Assignment workfile</span>
@@ -312,23 +334,23 @@ export default function AppraisalWorkfileModal({
                 <p className="mt-1 text-xs leading-5 text-slate-600">Upload spreadsheets, documents, images, sketch exhibits, and supporting PDFs that do not need Evidence Center extraction.</p>
                 {definitelyLocked ? <p className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">This appraisal is locked. Its saved workfile remains available for review and download, but new material cannot be added.</p> : null}
                 <div className="mt-4 grid gap-3 sm:grid-cols-2">
-                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Optional title</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={fileTitle} onChange={(event) => setFileTitle(event.target.value)} placeholder="Defaults to the file name" /></label>
-                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">File</span><input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept={ACCEPTED_FILES} disabled={definitelyLocked} onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} /></label>
+                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Optional title</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={fileTitle} onChange={(event) => setFileTitle(event.target.value)} placeholder="Defaults to the file name" disabled={!canMutate} /></label>
+                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">File</span><input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept={ACCEPTED_FILES} disabled={!canMutate} onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} /></label>
                 </div>
-                <button className="hn-action-primary mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50" type="button" onClick={() => void upload()} disabled={busy || definitelyLocked || !selectedFile}>{busy ? 'Working…' : 'Add File to Workfile'}</button>
+                <button className="hn-action-primary mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50" type="button" onClick={() => void upload()} disabled={busy || !canMutate || !selectedFile}>{busy ? 'Working…' : 'Add File to Workfile'}</button>
                 <div className="my-5 border-t border-slate-200" />
                 <h4 className="text-sm font-semibold text-slate-900">Add a research or source link</h4>
                 <div className="mt-3 grid gap-3 sm:grid-cols-2">
-                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Link title</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="City zoning map" /></label>
-                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Web address</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://…" inputMode="url" /></label>
+                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Link title</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={linkTitle} onChange={(event) => setLinkTitle(event.target.value)} placeholder="City zoning map" disabled={!canMutate} /></label>
+                  <label className="block"><span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Web address</span><input className="input input-bordered input-sm mt-1 w-full bg-white" value={linkUrl} onChange={(event) => setLinkUrl(event.target.value)} placeholder="https://…" inputMode="url" disabled={!canMutate} /></label>
                 </div>
-                <button className="hn-action-gold mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50" type="button" onClick={() => void addLink()} disabled={busy || definitelyLocked || !linkTitle.trim() || !linkUrl.trim()}>Add Link to Workfile</button>
+                <button className="hn-action-gold mt-3 rounded-lg px-4 py-2 text-sm font-semibold disabled:opacity-50" type="button" onClick={() => void addLink()} disabled={busy || !canMutate || !linkTitle.trim() || !linkUrl.trim()}>Add Link to Workfile</button>
               </section>
               <section className="hn-subtle-panel rounded-xl border p-4">
                 <div className="flex items-center justify-between gap-3"><h3 className="font-semibold text-slate-950">Saved files & links</h3><span className="rounded-full bg-violet-100 px-2 py-1 text-xs font-semibold text-violet-900">{items.length}</span></div>
                 <div className="mt-3 space-y-2">
                   {items.length ? items.map((item) => <article className="rounded-lg border border-slate-200 bg-white p-3" key={item.id}>
-                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-950">{item.title}</div><div className="mt-1 text-xs text-slate-500">{item.item_type === 'file' ? `${item.original_file_name} · ${readableSize(item.file_size_bytes)}` : item.external_url}</div></div>{!definitelyLocked ? <button className="text-xs font-semibold text-rose-700" type="button" onClick={() => void removeItem(item)}>Remove</button> : null}</div>
+                    <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="truncate text-sm font-semibold text-slate-950">{item.title}</div><div className="mt-1 text-xs text-slate-500">{item.item_type === 'file' ? `${item.original_file_name} · ${readableSize(item.file_size_bytes)}` : item.external_url}</div></div>{canMutate ? <button className="text-xs font-semibold text-rose-700" type="button" onClick={() => void removeItem(item)}>Remove</button> : null}</div>
                     <div className="mt-2">{item.item_type === 'file' ? <button className="hn-action-secondary rounded-lg px-3 py-1.5 text-xs font-semibold" type="button" onClick={() => void downloadItem(item)}>Download</button> : <a className="hn-action-secondary inline-flex rounded-lg px-3 py-1.5 text-xs font-semibold" href={item.external_url || '#'} target="_blank" rel="noreferrer">Open Link</a>}</div>
                   </article>) : <p className="rounded-lg border border-dashed border-slate-300 p-4 text-sm text-slate-600">No additional files or links have been added. Evidence Center PDFs are available on their own tab.</p>}
                 </div>

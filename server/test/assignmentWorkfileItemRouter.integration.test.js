@@ -20,6 +20,7 @@ function options(overrides = {}) {
     normalizeFileId: value => Number(value),
     authorizeUad: async (_pool, _auth, id) => ({ id, organization_id: "org-uad" }),
     listItems: async () => [],
+    getScopeState: async () => ({ mutable: true }),
     createFile: async () => ({ id: "44444444-4444-4444-8444-444444444444", item_type: "file" }),
     createLink: async () => ({ id: "55555555-5555-4555-8555-555555555555", item_type: "link" }),
     getFile: async () => ({ original_file_name: "market.xlsx", content_type: "application/octet-stream", body: Buffer.from("sheet") }),
@@ -56,7 +57,7 @@ test("custom workfile listing enforces workflow and exact assignment access", as
   context.after(server.close);
   const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/workfile/items`);
   assert.equal(response.status, 200);
-  assert.deepEqual(await response.json(), { ok: true, items: [{ id: "one" }] });
+  assert.deepEqual(await response.json(), { ok: true, items: [{ id: "one" }], mutable: true });
   assert.deepEqual(calls, [
     ["custom_appraisal", "read"],
     ["canonical-42", 7, "read"],
@@ -141,4 +142,22 @@ test("unexpected provider failures remain bounded", async context => {
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "workfile_items_lookup_failed" });
   assert.deepEqual(logs, [["assignment workfile items list failed", { code: "workfile_items_lookup_failed" }]]);
+});
+
+test("workfile downloads use an ASCII fallback and RFC 5987 UTF-8 filename", async context => {
+  const server = await start(createAssignmentWorkfileItemRouter(options({
+    getFile: async () => ({
+      original_file_name: "résumé.xlsx",
+      content_type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+      body: Buffer.from("sheet"),
+    }),
+  })));
+  context.after(server.close);
+  const itemId = "44444444-4444-4444-8444-444444444444";
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/workfile/items/${itemId}/content`);
+  assert.equal(response.status, 200);
+  assert.equal(
+    response.headers.get("content-disposition"),
+    "attachment; filename=\"r_sum_.xlsx\"; filename*=UTF-8''r%C3%A9sum%C3%A9.xlsx",
+  );
 });

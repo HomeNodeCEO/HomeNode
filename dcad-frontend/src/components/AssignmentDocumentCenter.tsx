@@ -281,8 +281,8 @@ export default function AssignmentDocumentCenter({
   }, [getEditorKey, isUad, uadWorkfileId]);
 
   useEffect(() => {
-    if (open) void loadDocuments();
-  }, [open, loadDocuments]);
+    if (embedded || open) void loadDocuments();
+  }, [embedded, open, loadDocuments]);
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;

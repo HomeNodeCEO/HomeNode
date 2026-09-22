@@ -28,11 +28,11 @@ function itemsPath(scope: AssignmentWorkfileItemScope) {
 }
 
 export async function getAssignmentWorkfileItems(scope: AssignmentWorkfileItemScope) {
-  const response = await fetchJSON<{ ok: true; items: AssignmentWorkfileItem[] }>(
+  const response = await fetchJSON<{ ok: true; items: AssignmentWorkfileItem[]; mutable: boolean }>(
     makeUrl(itemsPath(scope)),
     { cache: 'no-store' },
   );
-  return response.items || [];
+  return { items: response.items || [], mutable: response.mutable === true };
 }
 
 export async function uploadAssignmentWorkfileItem(

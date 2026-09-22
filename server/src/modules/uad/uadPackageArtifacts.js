@@ -489,6 +489,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
          ), audit AS (
            INSERT INTO appraisal.uad_audit_events (
              workfile_id, event_type, entity_type, entity_id, after_data, metadata
+            )
             SELECT $6, 'uad_package.generated', 'uad_generated_artifact', $2,
                    jsonb_build_object('checksum_sha256', $8::text, 'byte_size', $9::bigint),
                    jsonb_build_object('revision_number', $7::integer, 'image_count', $10::integer)

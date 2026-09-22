@@ -63,7 +63,6 @@ export function normalizeAppraisalRatingUpdate(input = {}) {
     conditionRating,
     qualityRating,
     notes: optionalText(input.notes, 4000, "notes"),
-    reviewer: optionalText(input.reviewer, 200, "reviewer") || "HomeNode editor",
     expectedRevision,
   };
 }

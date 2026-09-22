@@ -5,6 +5,16 @@ import { normalizeAppraisalRatingUpdate } from "../../util/appraisalRatings.js";
 
 const SOURCE_RECORD_ID_PATTERN = /^\d+$/;
 
+function authenticatedReviewer(req) {
+  const userId = String(req.mobileAuth?.userId || "").trim();
+  if (!userId) return null;
+  for (const value of [req.mobileAuth?.displayName, req.mobileAuth?.email, userId]) {
+    const label = String(value || "").trim();
+    if (label) return label.slice(0, 200);
+  }
+  return null;
+}
+
 export function createSaleReviewRouter({
   pool,
   ratingsReady,
@@ -42,8 +52,8 @@ export function createSaleReviewRouter({
         [sourceRecordIds],
       );
       return res.json({ reviews: rows });
-    } catch (error) {
-      logger.error?.("/api/sales/reviews failed", error);
+    } catch {
+      logger.error?.("sale_reviews_load_failed");
       return res.status(500).json({ error: "sale_reviews_failed" });
     }
   });
@@ -55,6 +65,12 @@ export function createSaleReviewRouter({
       return res.status(400).json({ error: "invalid_source_record_id" });
     }
     if (!requireEditor(req, res)) return undefined;
+    const reviewer = authenticatedReviewer(req);
+    if (!reviewer) {
+      return res.set("cache-control", "no-store")
+        .status(401)
+        .json({ error: "authentication_required" });
+    }
 
     let update;
     try {
@@ -113,7 +129,7 @@ export function createSaleReviewRouter({
           update.conditionRating,
           update.qualityRating,
           update.notes,
-          update.reviewer,
+          reviewer,
           nextRevision,
         ],
       );
@@ -135,9 +151,9 @@ export function createSaleReviewRouter({
       );
       await client.query("COMMIT");
       return res.json({ ok: true, review });
-    } catch (error) {
+    } catch {
       await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("/api/sales/:sourceRecordId/review failed", error);
+      logger.error?.("sale_review_update_failed");
       return res.status(500).json({ error: "sale_review_update_failed" });
     } finally {
       client.release();
@@ -160,8 +176,8 @@ export function createSaleReviewRouter({
         [sourceRecordId],
       );
       return res.json({ history: rows });
-    } catch (error) {
-      logger.error?.("sale review history failed", error);
+    } catch {
+      logger.error?.("sale_review_history_failed");
       return res.status(500).json({ error: "sale_review_history_failed" });
     }
   });

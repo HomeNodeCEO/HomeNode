@@ -6,6 +6,12 @@ import express from "express";
 
 import { createAppraisalRatingsRouter } from "../src/modules/appraisalRatings/router.js";
 
+const AUTHENTICATED_REVIEWER = Object.freeze({
+  userId: "user-authenticated-appraiser",
+  email: "appraiser@example.test",
+  displayName: "Authenticated Appraiser",
+});
+
 function baseOptions(overrides = {}) {
   return {
     pool: {
@@ -14,7 +20,10 @@ function baseOptions(overrides = {}) {
     },
     ratingsReady: Promise.resolve(),
     accountIdAllowed: (value) => /^\d+$/.test(value),
-    requireEditor: () => true,
+    requireEditor: (req) => {
+      req.mobileAuth = AUTHENTICATED_REVIEWER;
+      return true;
+    },
     logger: { error() {} },
     ...overrides,
   };
@@ -79,7 +88,7 @@ test("rating writes preserve transaction, revision, history, and release behavio
     condition_rating: "C3",
     quality_rating: "Q4",
     notes: "Reviewed",
-    reviewer: "Appraiser",
+    reviewer: "Authenticated Appraiser",
     revision: 3,
   };
   const client = {
@@ -113,7 +122,7 @@ test("rating writes preserve transaction, revision, history, and release behavio
       condition_rating: "C3",
       quality_rating: "Q4",
       notes: "Reviewed",
-      reviewer: "Appraiser",
+      reviewer: "Impersonated Reviewer",
       expected_revision: 2,
     }),
   });
@@ -128,7 +137,40 @@ test("rating writes preserve transaction, revision, history, and release behavio
     "INSERT INTO app.subject_appraisal_rating_history (",
     "COMMIT",
   ]);
-  assert.deepEqual(calls[3].params, ["123", "2026-09-02", "C3", "Q4", "Reviewed", "Appraiser", 3]);
+  assert.deepEqual(calls[3].params, [
+    "123",
+    "2026-09-02",
+    "C3",
+    "Q4",
+    "Reviewed",
+    "Authenticated Appraiser",
+    3,
+  ]);
+});
+
+test("rating writes fail closed when the editor policy omits authenticated identity", async (context) => {
+  let connectCalls = 0;
+  const server = await startRouter(baseOptions({
+    requireEditor: () => true,
+    pool: {
+      query: async () => ({ rows: [] }),
+      connect: async () => {
+        connectCalls += 1;
+        throw new Error("unexpected_connect");
+      },
+    },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/123/appraisal-rating`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ effective_date: "2026-09-02", condition_rating: "C3" }),
+  });
+  assert.equal(response.status, 401);
+  assert.deepEqual(await response.json(), { error: "authentication_required" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(connectCalls, 0);
 });
 
 test("rating revision conflicts roll back and release without writing", async (context) => {
@@ -215,6 +257,28 @@ test("rating writes retain editor denial and bounded transaction failures", asyn
   assert.doesNotMatch(JSON.stringify(failureBody), /password|XX000/);
   assert.deepEqual(failedCalls, ["BEGIN", "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR SHARE", "ROLLBACK"]);
   assert.equal(released, 1);
+});
+
+test("rating failures log only stable codes", async (context) => {
+  const logs = [];
+  const server = await startRouter(baseOptions({
+    logger: { error: (...args) => logs.push(args) },
+    pool: {
+      query: async () => { throw new Error("private database diagnostic"); },
+      connect: async () => { throw new Error("unexpected_connect"); },
+    },
+  }));
+  context.after(server.close);
+
+  const load = await fetch(`${server.baseUrl}/api/accounts/123/appraisal-rating?effective_date=2026-09-02`);
+  const history = await fetch(`${server.baseUrl}/api/accounts/123/appraisal-rating-history`);
+  assert.equal(load.status, 500);
+  assert.equal(history.status, 500);
+  assert.deepEqual(logs, [
+    ["subject_rating_load_failed"],
+    ["subject_rating_history_failed"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /private database diagnostic/);
 });
 
 test("entrypoint mounts appraisal ratings at the original account-domain position", () => {

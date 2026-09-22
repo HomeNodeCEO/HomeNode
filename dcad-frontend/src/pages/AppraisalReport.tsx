@@ -1552,6 +1552,9 @@ export default function AppraisalReport() {
 
           <section className="report-section">
             <h2 className="report-section-title">Neighborhood Boundary</h2>
+            {neighborhoodDetails.subject_neighborhood_summary ? <div className="report-note">
+              <strong>Neighborhood summary</strong><br />{neighborhoodDetails.subject_neighborhood_summary}
+            </div> : null}
             <div className="report-facts">
               <Fact label="Boundary" value={neighborhoodDetails.neighborhood_boundary_label} wide />
               <Fact label="Source" value={neighborhoodDetails.neighborhood_boundary_source} />

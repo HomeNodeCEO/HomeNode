@@ -4,6 +4,7 @@ import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAss
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { prepareCustomCohortContextHeader } from '../src/services/neighborhoodAssessment/customCohortContextContract.js';
 import { decisionEvidenceFixture } from './fixtures/customCohortDecisionEvidenceFixture.js';
+import { saleWitnessMeaningFixture } from './fixtures/customCohortSaleWitnessMeaningFixture.js';
 import { setSection } from './fixtures/neighborhoodCustomMaterialInputsFixture.js';
 
 const row = value => ({ rowCount: value ? 1 : 0, rows: value ? [structuredClone(value)] : [] });
@@ -13,14 +14,15 @@ import { customCohortOpeningGroupIds, customCohortOpeningSelection, prepareCusto
 
 // Real retained loader/context/subject/presenters over scoped DB query fixtures.
 // No native locking, PostgreSQL isolation or actual provider authorization claim.
-async function setup(options) {
-  const f = await decisionEvidenceFixture(options), header = prepareCustomCohortContextHeader(f.input.context_header_json);
+async function setup(options, source = decisionEvidenceFixture) {
+  const f = await source(options), header = prepareCustomCohortContextHeader(f.input.context_header_json);
   await f.store.put(f.input.context_header_json);
   const scope = f.input.expected.target, target = f.f.state.input.target;
   const actor = '80000000-0000-4000-8000-000000000001';
   const context = { ...header.context_ref, header_content_sha256: header.header_blob.ref.content_sha256,
     header_canonical_utf8_bytes: header.header_blob.ref.canonical_utf8_bytes };
   const payloads = new Set(f.input.retained_inputs.acquisition.capture_result.source_capture.source_snapshots.map(source => source.content_sha256));
+  const fixtureGrant = { allowed: true, ...f.input.retained_inputs.acquisition.captured_query_request.market_decision };
   const state = { calls: [], policies: [], releases: [], connects: 0, commits: 0, rollbacks: 0, sourceReads: 0,
     assigned: actor, onPolicy: null, onCommit: null, failCommit: false };
   const baseQuery = f.client.query.bind(f.client);
@@ -57,7 +59,7 @@ async function setup(options) {
         commits: state.commits, call_index: state.calls.length });
       assert.equal(requested.retention, true); assert.equal(auth.userId, actor);
       assert.equal(current.scope.organization_id, scope.organization_id);
-      return state.onPolicy ? state.onPolicy(state.policies.length, requested.exposure, boundedClient) : { ...GRANT };
+      return state.onPolicy ? state.onPolicy(state.policies.length, requested.exposure, boundedClient) : { ...fixtureGrant };
     } });
   const input = { auth: { userId: actor, organizations: [{ organizationId: scope.organization_id, roles: ['appraiser'] }] },
     accountId: scope.account_id, assignmentFileId: scope.assignment_file_id, contextRef: header.context_ref,
@@ -268,8 +270,22 @@ test('all-group selection preserves empty catalogs and includes only nonempty un
     revision: 7, pockets: [{ id: 'discovery:selected', label: 'Selected observations', account_ids: ['A', 'B', 'C'] }] });
   assert.deepEqual(customCohortOpeningSelection(catalog, [], 7), { revision: 7, pockets: [] });
   assert.equal(prepareCustomCohortOpeningMode('all_catalog_groups'), 'all_catalog_groups');
+  assert.equal(prepareCustomCohortOpeningMode('recommended_area'), 'recommended_area');
   const hostile = { toString() { assert.fail('mode must not coerce values'); } };
   assert.throws(() => prepareCustomCohortOpeningMode(hostile), /invalid_input/);
+});
+
+test('new recommended-area opening carries the same exact selected union as its first map and statistics', async () => {
+  const { service, input } = await setup({ effectiveDate: '2026-09-06' }, saleWitnessMeaningFixture);
+  const result = await service.catalog({ ...input, catalogVersion: 3, includeRecommendation: true,
+    initialPreviewMode: 'recommended_area' });
+  const area = result.recommendation?.sales_aware_area;
+  assert.ok(area);
+  const ids = area.status === 'unavailable' || !area.selected_recorded_group_ids.length
+    ? customCohortOpeningGroupIds(result.catalog) : area.selected_recorded_group_ids;
+  const selection = customCohortOpeningSelection(result.catalog, ids, input.selection.revision);
+  assert.deepEqual(result.initial_preview, await service.present({ ...input, selection }));
+  assert.notEqual(result.apply.status, 'accepted');
 });
 
 for (const missingCounty of [false, true]) for (const includeRecommendation of [false, true]) {

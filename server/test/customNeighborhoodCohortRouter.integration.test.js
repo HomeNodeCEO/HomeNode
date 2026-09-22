@@ -128,6 +128,16 @@ test('fresh opening mode is exact, exclusive, and uses the existing combined env
     reason: 'catalog_response_byte_limit', membership_returned: false });
 });
 
+test('recommended-area opening passes a closed mode to the owner without granting report authority', async t => {
+  const normal = await start(t);
+  const response = await normal.request('catalog', { ...bodies.catalog, include_recommendation: true,
+    initial_preview_mode: 'recommended_area' });
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(normal.calls[0].args[0].initialPreviewMode, 'recommended_area');
+  assert.equal(normal.calls[0].args[0].includeRecommendation, true);
+});
+
 test('only capture receives two minutes; ordinary cohort actions keep one minute', async t => {
   const { request, calls } = await start(t);
   for (const action of ['capture', 'preview', 'catalog', 'members']) {

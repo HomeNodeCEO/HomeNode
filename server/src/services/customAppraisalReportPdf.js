@@ -670,8 +670,28 @@ async function assignmentReportPhotos(client, objectStorage, { accountId, assign
   });
 }
 
-function reportPageCount(assignmentPhotos = [], neighborhoodPageCount = 0) {
-  return BASE_REPORT_PAGE_COUNT + neighborhoodPageCount + Math.ceil(assignmentPhotos.length / PHOTOS_PER_APPENDIX_PAGE);
+function reportPageCount(assignmentPhotos = [], neighborhoodPageCount = 0, narrativePageCount = 0) {
+  return BASE_REPORT_PAGE_COUNT + neighborhoodPageCount + narrativePageCount + Math.ceil(assignmentPhotos.length / PHOTOS_PER_APPENDIX_PAGE);
+}
+
+function neighborhoodNarrativePages(doc, value) {
+  const words = cleanText(value, '').split(/\s+/).filter(Boolean);
+  if (!words.length) return [];
+  doc.font('Helvetica').fontSize(10);
+  const pages = [];
+  for (let start = 0; start < words.length;) {
+    let low = start + 1, high = words.length, end = low;
+    while (low <= high) {
+      const middle = Math.floor((low + high) / 2);
+      const candidate = words.slice(start, middle).join(' ');
+      if (doc.heightOfString(candidate, { width: CONTENT_WIDTH, lineGap: 3 }) <= 570) {
+        end = middle; low = middle + 1;
+      } else high = middle - 1;
+    }
+    pages.push(words.slice(start, end).join(' '));
+    start = end;
+  }
+  return pages;
 }
 
 function reportMeta(snapshot, property, checksum, pageCount = BASE_REPORT_PAGE_COUNT) {
@@ -982,10 +1002,10 @@ function renderCharacteristicsPage(doc, meta, property) {
   });
 }
 
-function renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, appendixPageCount) {
+function renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, appendixPageCount, narrativePageCount = 0) {
   addPage(doc, meta, "Neighborhood Characteristics", 3);
   if (neighborhood.status === "ready") {
-    renderCustomNeighborhoodPdfSummary(doc, neighborhood, { firstPage: BASE_REPORT_PAGE_COUNT + 1, pageCount: appendixPageCount });
+    renderCustomNeighborhoodPdfSummary(doc, neighborhood, { firstPage: BASE_REPORT_PAGE_COUNT + narrativePageCount + 1, pageCount: appendixPageCount });
     return;
   }
   const details = assignmentDetails(snapshot, property);
@@ -1360,19 +1380,27 @@ async function renderCustomAppraisalReportPdfResult({
     doc.on("error", reject);
   });
   const neighborhoodPages = neighborhood.status === "ready" ? prepareCustomNeighborhoodPdfAppendix(doc, neighborhood) : [];
-  const pageCount = reportPageCount(normalizedPhotos, neighborhoodPages.length);
+  const narrativePages = neighborhoodNarrativePages(doc, assignmentDetails(snapshot, property).subject_neighborhood_summary);
+  const narrativePageCount = narrativePages.length;
+  const pageCount = reportPageCount(normalizedPhotos, neighborhoodPages.length, narrativePageCount);
   meta.pageCount = pageCount;
   renderPropertyPage(doc, meta, snapshot, property, images, normalizedPhotos);
   renderCharacteristicsPage(doc, meta, property);
-  renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, neighborhoodPages.length);
+  renderNeighborhoodPage(doc, meta, snapshot, property, neighborhood, neighborhoodPages.length, narrativePageCount);
   renderMarketPage(doc, meta, snapshot);
   renderSalesPage(doc, meta, snapshot, property);
   renderAdjustmentPage(doc, meta, snapshot, property, images);
   approachPage(doc, meta, snapshot, property, "income", 7);
   approachPage(doc, meta, snapshot, property, "cost", 8);
   renderReconciliationPage(doc, meta, snapshot, property);
-  renderCustomNeighborhoodPdfAppendix(doc, neighborhoodPages, page => addPage(doc, meta, "Neighborhood Evidence Appendix", BASE_REPORT_PAGE_COUNT + page + 1));
-  renderPhotoAppendixPages(doc, meta, normalizedPhotos, neighborhoodPages.length);
+  narrativePages.forEach((page, index) => {
+    addPage(doc, meta, 'Neighborhood Summary', BASE_REPORT_PAGE_COUNT + index + 1);
+    sectionTitle(doc, 'Appraiser-Reviewed Neighborhood Summary', 90);
+    doc.font('Helvetica').fontSize(10).fillColor('#0f172a').text(page, PAGE.margin, 120,
+      { width: CONTENT_WIDTH, lineGap: 3 });
+  });
+  renderCustomNeighborhoodPdfAppendix(doc, neighborhoodPages, page => addPage(doc, meta, "Neighborhood Evidence Appendix", BASE_REPORT_PAGE_COUNT + narrativePageCount + page + 1));
+  renderPhotoAppendixPages(doc, meta, normalizedPhotos, neighborhoodPages.length + narrativePageCount);
   doc.end();
   return { content: await complete, page_count: pageCount };
 }

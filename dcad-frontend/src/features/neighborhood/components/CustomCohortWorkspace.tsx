@@ -198,9 +198,12 @@ function WorkspaceSession(props: Props) {
   const group = desired ? preview.group : null;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
   const selectionDisabled = selectionBlocked || !desired;
-  const suggested = recommendation?.recommended_recorded_group_ids ?? [];
+  const area = recommendation?.sales_aware_area;
+  const suggested = area && area.status !== 'unavailable' && area.selected_recorded_group_ids.length
+    ? area.selected_recorded_group_ids : recommendation?.recommended_recorded_group_ids ?? [];
   const suggestionActive = suggested.length === included.length && suggested.every(id => included.includes(id));
-  const suggestionDisabled = selectionDisabled || recommendation?.status !== 'recommendation_for_review' || !suggested.length || suggestionActive;
+  const suggestionDisabled = selectionDisabled || (!area && recommendation?.status !== 'recommendation_for_review')
+    || !suggested.length || suggestionActive;
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -223,11 +226,27 @@ function WorkspaceSession(props: Props) {
         No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.</p>}
       {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
-          <div><h4 className="font-semibold">Recommended pockets for review</h4>
-            <p className="text-sm">{suggested.length.toLocaleString('en-US')} suggested recorded groups · Current observations only</p></div>
+          <div><h4 className="font-semibold">Recommended area for review</h4>
+            <p className="text-sm">{suggested.length.toLocaleString('en-US')} recorded groups · Current observations only</p></div>
           <button type="button" className={button} disabled={suggestionDisabled}
-            onClick={() => { if (!suggestionDisabled) choose(suggested); }}>Use suggested selection</button>
+            onClick={() => { if (!suggestionDisabled) choose(suggested); }}>Use recommended area</button>
         </div>
+        {area && <div className="rounded-lg border border-violet-200 bg-white p-3 text-sm" aria-label="Recommended area sales and living-area check">
+          <p>{area.recorded_transaction_count.toLocaleString('en-US')} qualifying recorded transactions in the suggestion
+            {' '}of {area.available_qualifying_transaction_count.toLocaleString('en-US')} in the captured area; target 50.
+            {' '}{area.selected_account_count.toLocaleString('en-US')} CAD accounts selected.</p>
+          <p className="mt-1">{area.status === 'meets_targets'
+            ? 'Provisional count and populated-quarter GLA targets met; sale eligibility and at-sale GLA still require review.'
+            : area.status === 'insufficient_recorded_sales' ? 'Fewer than 50 qualifying recorded transactions were available in the compact selection.'
+            : area.status === 'quarterly_gla_mismatch' ? 'At least one populated quarter differs from the subject GLA by more than 5%.'
+            : 'A sales-aware selection could not be established from the retained observations.'}</p>
+          {area.quarterly_gla.length > 0 && <p className="mt-1 text-xs">Quarterly median current-CAD GLA versus subject:{' '}
+            {area.quarterly_gla.map(q => q.transaction_count
+              ? `${q.quarter} ${q.transaction_count} transactions, ${q.deviation_percent!.toFixed(1)}% ${q.within_tolerance ? 'within' : 'outside'} 5%`
+              : `${q.quarter} no qualifying transactions`).join(' · ')}.
+          </p>}
+          <p className="mt-1 text-xs">These are recorded transaction links and current CAD living areas—not verified market-eligible sales or measurements at sale. The suggestion is an appraiser-editable starting area, not a reliability probability.</p>
+        </div>}
         <p className="text-sm">Across all captured accounts: similarity bounds {boundsLabel(recommendation.all.similarity)} · Observed factor coverage{' '}
           {recommendation.all.similarity.known_weight_percent === null ? 'unavailable' : `${recommendation.all.similarity.known_weight_percent.toFixed(1)}%`}.</p>
         <p className="text-xs opacity-80">These bounds retain uncertainty from missing data; they are not confidence or reliability scores.

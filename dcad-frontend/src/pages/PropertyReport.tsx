@@ -73,6 +73,7 @@ import {
 } from "@/components/PropertyReportControls";
 import { hasSnapshotValue, mergeNonBlankSnapshot } from "@/lib/reportSnapshotMerge";
 import type { LegacyDcadDetail } from "@/lib/legacyDcadDetail";
+import { buildSubjectNeighborhoodSummary } from "@/lib/subjectNeighborhoodSummary";
 import {
   CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
   CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
@@ -178,6 +179,7 @@ function AddressHero({
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
+  const neighborhoodSummaryInitializedRef = useRef<string | null>(null);
   const assignmentDirtyRef = useRef(false);
   const activeAssignmentFileRef = useRef<AppraisalAssignmentFile | null>(null);
   const assignmentFirstDirtyAtRef = useRef<number | null>(null);
@@ -695,6 +697,26 @@ function AddressHero({
   const subjectYearBuilt = parseNumber(
     improvement?.effective_year_built ?? improvement?.year_built,
   );
+  useEffect(() => {
+    if (!accountId || !activeAssignmentFile || !detail || activeAssignmentFile.workfile?.status === 'signed') return;
+    const key = `${accountId}:${activeAssignmentFile.id}`;
+    if (neighborhoodSummaryInitializedRef.current === key) return;
+    neighborhoodSummaryInitializedRef.current = key;
+    // Initialize only an absent narrative. Autosave owns persistence and never
+    // regenerates or overwrites an appraiser-edited file description.
+    if (typeof activeAssignmentFile.assignment_details?.subject_neighborhood_summary === 'string') return;
+    const summary = buildSubjectNeighborhoodSummary({
+      address: detail.property_location?.address,
+      subdivision: detail.property_location?.subdivision,
+      neighborhood: detail.property_location?.neighborhood,
+      city: detail.property_location?.city,
+      county: detail.property_location?.county,
+      yearBuilt: parseNumber(improvement?.year_built),
+      housingType: housing?.housing_type,
+    });
+    setAssignmentDraft(current => current.subject_neighborhood_summary ? current
+      : { ...current, subject_neighborhood_summary: summary });
+  }, [accountId, activeAssignmentFile, detail, subjectYearBuilt, housing?.housing_type]);
   const subjectAge = reportedSubjectAge ?? (
     subjectYearBuilt !== null
       ? Math.max(0, new Date().getFullYear() - subjectYearBuilt)
@@ -3131,6 +3153,8 @@ function AddressHero({
             <div className="order-3">
               <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
                 <CustomNeighborhoodCharacteristicsSection
+                  neighborhoodSummary={assignmentDraft.subject_neighborhood_summary || ''}
+                  onNeighborhoodSummaryChange={value => updateAssignment('subject_neighborhood_summary', value)}
                   workspace={neighborhoodWorkspace}
                   acceptedNeighborhood={currentAcceptedNeighborhood}
                   assignmentFilesError={Boolean(assignmentFilesError)}

@@ -10,7 +10,7 @@ export interface CustomWorkspaceOperationOptions { readonly signal: AbortSignal;
 export interface CustomWorkspaceCatalogInput extends CustomCohortPreviewInput {
   readonly catalogVersion?: 1 | 2 | 3;
   readonly initialPreviewGroups?: readonly string[];
-  readonly initialPreviewMode?: 'all_catalog_groups';
+  readonly initialPreviewMode?: 'all_catalog_groups' | 'recommended_area';
 }
 type Recovery = 'reload' | 'resume_pending' | 'reopen' | null;
 export interface CustomWorkspaceLifecycleState {
@@ -144,10 +144,13 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     const catalog = checkCustomCohortPocketCatalog(response, input);
     requireThat(catalogVersion === undefined || catalog.catalog_version === catalogVersion, 'catalog_version_mismatch');
     requireThat(same(catalog.discovery, discovery?.profile_id === 'custom-city-polygon-v1' ? discovery : undefined), 'catalog_discovery_mismatch');
-    // Fresh captures already include every catalog group. Independently derive
-    // that exact selection from the checked catalog, not a recommended subset.
-    const initialPreviewGroups = opening?.initialPreviewMode === 'all_catalog_groups'
-      ? customCohortCatalogGroupIds(catalog) : opening?.initialPreviewGroups;
+    // Derive the exact opening selection from the checked catalog response.
+    // Unsupported recommendations retain the complete-catalog fallback.
+    const recommended = catalog.recommendation?.sales_aware_area;
+    const initialPreviewGroups = opening?.initialPreviewMode === 'recommended_area'
+      ? recommended && recommended.status !== 'unavailable' && recommended.selected_recorded_group_ids.length
+        ? recommended.selected_recorded_group_ids : customCohortCatalogGroupIds(catalog)
+      : opening?.initialPreviewMode === 'all_catalog_groups' ? customCohortCatalogGroupIds(catalog) : opening?.initialPreviewGroups;
     let initialPreview: CustomCohortInitialResponse | null = null;
     if (initialPreviewGroups !== undefined) {
       // Full summary/map admission remains with the preview controller. Never
@@ -156,7 +159,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
       initialPreview = Object.freeze({ input: Object.freeze({ ...input,
         selection: selectionFromRecordedGroups(catalog, initialPreviewGroups, revision) }), value: object(response.initial_preview) });
     }
-    return { catalog, initialPreview };
+    return { catalog, initialPreview, openingGroups: initialPreviewGroups };
   }
   function ready(catalog: CheckedPocketCatalog, initialPreview?: CustomCohortInitialResponse | null) {
     const restored = restoreCustomWorkspaceSelection({ value: state.checkpoint, revision: state.section_revision }, catalog);
@@ -202,8 +205,8 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     requireThat(draft.active?.context_ref.context_id === pending.operation_id, 'capture_operation_mismatch');
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
-    const { catalog, initialPreview } = await loadCatalog(draft.active.context_ref, 1, io, discovery,
-      { initialPreviewMode: 'all_catalog_groups' }, 3);
+    const { catalog, initialPreview, openingGroups } = await loadCatalog(draft.active.context_ref, 1, io, discovery,
+      { initialPreviewMode: 'recommended_area' }, 3);
     if (privateInput) {
       requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
         && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision
@@ -211,7 +214,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
         && catalog.private_sales.observation_period.end_date === pending.observation_period.end_date, 'catalog_private_sales_mismatch');
     } else requireThat(!catalog.private_sales, 'catalog_private_sales_mismatch');
     const value = prepareCustomWorkspaceCheckpoint({ ...draft, workspace_version: catalog.catalog_version === 3 ? 6 : catalog.catalog_version === 2 ? 5 : draft.workspace_version, active: { ...draft.active,
-      selection: { revision: 1, included_recorded_group_ids: customCohortCatalogGroupIds(catalog) } } });
+      selection: { revision: 1, included_recorded_group_ids: openingGroups ?? customCohortCatalogGroupIds(catalog) } } });
     stage('saving_active', 'reload'); await persist(value, io); attemptedPending = null; attemptedPrivateContext = null; ready(catalog, initialPreview);
   }
   return Object.freeze({

@@ -9,6 +9,7 @@ import { presentCustomCohortCadEvidence } from './customCohortCadEvidencePresent
 import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.js';
 import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { readCustomCohortStockComposition } from './customCohortStockComposition.js';
+import { buildCustomCohortSalesAwareArea } from './customCohortSalesAwareArea.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
@@ -112,7 +113,7 @@ function housingSummary(value, all, pockets) {
  * private target/source identities or selected-union calculations here. Rights,
  * exact retained loading and final freshness checks remain with the owner.
  */
-export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected, maximumBytes } = {}) {
+export function presentCustomCohortPocketRecommendation({ recommendation, catalog, expected, maximumBytes, observation_preview } = {}) {
   const version = recommendation?.recommendation_version;
   check([1, 2, 3].includes(version) && recommendation.authority === 'not_established'
     && recommendation.apply?.status === 'blocked' && ['recommendation_for_review', 'insufficient_observations'].includes(recommendation.status), 'recommendation');
@@ -211,6 +212,10 @@ export function presentCustomCohortPocketRecommendation({ recommendation, catalo
     // Never sacrifice the established complete recommendation/CAD evidence to
     // make room for optional composition. Even the diagnostic needs room.
     if (Buffer.byteLength(JSON.stringify(candidate)) <= remaining) result.stock_composition_v1 = candidate;
+  }
+  if (version === 3 && observation_preview) {
+    const area = buildCustomCohortSalesAwareArea({ recommendation, observation_preview, catalog });
+    if (area && Buffer.byteLength(JSON.stringify({ ...result, sales_aware_area: area })) <= byteLimit) result.sales_aware_area = area;
   }
   return freeze(result);
 }

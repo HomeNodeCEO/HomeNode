@@ -388,7 +388,7 @@ test('recommendation display preserves restored [] and does not auto-select or c
   const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
   assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1); assert.equal(h.catalogCalls.length, 0);
   assert.deepEqual(h.calls[0].request.selection.pockets, []);
-  assert.match(h.text(), /Recommended pockets for review/); assert.match(h.text(), /37.8–64.4 \/ 100/);
+  assert.match(h.text(), /Recommended area for review/); assert.match(h.text(), /37.8–64.4 \/ 100/);
   assert.match(h.text(), /73.3%/); assert.match(h.text(), /not confidence or reliability/);
   assert.match(h.text(), /subject’s recorded group is flagged separately/i);
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.checked === false));
@@ -397,7 +397,7 @@ test('recommendation display preserves restored [] and does not auto-select or c
 test('Use suggested selection emits one exact intent and updates map/statistics only after owner save and matching preview', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([]))); await h.tick(); await h.complete();
   const old = h.child('CustomCohortStatistics').group;
-  h.click('Use suggested selection'); assert.deepEqual(h.intents, [[groupId(2)]]);
+  h.click('Use recommended area'); assert.deepEqual(h.intents, [[groupId(2)]]);
   assert.equal(h.calls.length, 1); assert.equal(h.child('CustomCohortStatistics').group, old);
   const pending = withRecommendation(h.props([])); pending.workspace.saving = true; h.render(pending); await h.tick();
   assert.equal(h.calls.length, 1); assert.equal(h.child('CustomCohortStatistics').freshness, 'stale');
@@ -414,8 +414,8 @@ test('Use suggested selection emits one exact intent and updates map/statistics 
 for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture']) test(`${state} blocks Use suggested selection without mutating existing choices`, async t => {
   const h = harness(); t.after(() => h.unmount()); const p = withRecommendation(h.props([]));
   if (state === 'saving') p.workspace.saving = true; else p.workspace.blockedReason = state;
-  h.render(p); const use = h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection');
-  assert.ok(use.props.disabled); h.click('Use suggested selection'); await h.tick();
+  h.render(p); const use = h.nodes().find(n => n.type === 'button' && text(n) === 'Use recommended area');
+  assert.ok(use.props.disabled); h.click('Use recommended area'); await h.tick();
   assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 0);
 });
 
@@ -423,8 +423,8 @@ test('empty/insufficient suggestion cannot implicitly clear a saved selection; m
   const h = harness(); t.after(() => h.unmount());
   for (const value of [{ suggested: [] }, { status: 'insufficient_observations' }]) {
     h.render(withRecommendation(h.props([groupId(1)]), value));
-    assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection').props.disabled, true);
-    h.click('Use suggested selection'); assert.equal(h.intents.length, 0);
+    assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use recommended area').props.disabled, true);
+    h.click('Use recommended area'); assert.equal(h.intents.length, 0);
   }
   h.click('Exclude all'); assert.deepEqual(h.intents, [[]]);
 });
@@ -432,8 +432,8 @@ test('empty/insufficient suggestion cannot implicitly clear a saved selection; m
 test('an already active suggestion does not increment selection revision or write again', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(withRecommendation(h.props([groupId(2)], 19))); await h.tick(); await h.complete();
   assert.match(h.text(), /suggested selection is already active/);
-  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use suggested selection').props.disabled, true);
-  h.click('Use suggested selection'); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
+  assert.equal(h.nodes().find(n => n.type === 'button' && text(n) === 'Use recommended area').props.disabled, true);
+  h.click('Use recommended area'); assert.equal(h.intents.length, 0); assert.equal(h.calls.length, 1);
 });
 
 test('recommended group inspection remains independent and fresh equivalent recommendation objects do not cause request loops', async t => {

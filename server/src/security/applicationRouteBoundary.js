@@ -5,6 +5,26 @@ function requireMiddleware(value, code) {
   return value;
 }
 
+function rejectCompressedApiBody(req, res, next) {
+  const encoding = String(req.get?.("content-encoding") || "").trim().toLowerCase();
+  if (!encoding || encoding === "identity") return next();
+  return res.set("cache-control", "no-store")
+    .status(415)
+    .json({ error: "unsupported_request_encoding" });
+}
+
+function usesRouteLocalBodyParser(req) {
+  const path = String(req.originalUrl || req.url || "").split("?", 1)[0];
+  if (/^\/api\/accounts\/[^/]+\/assignment-files\/[^/]+\/sales-imports(?:\/|$)/.test(path)) {
+    return true;
+  }
+  if (!/^\/api\/accounts\/[^/]+\/neighborhood-cohort(?:\/|$)/.test(path)) return false;
+  // Preserve the shared parser's existing bounded 415 response for malformed
+  // charset declarations. Valid JSON is owned by the neighborhood 4 MB parser.
+  return /^application\/json(?:\s*;\s*charset=(?:utf-8|"utf-8"))?$/i
+    .test(String(req.get?.("content-type") || "").trim());
+}
+
 export function createLegacyApplicationAuthenticationGate(authenticationPolicy) {
   if (
     !authenticationPolicy
@@ -69,15 +89,14 @@ export function mountApplicationRouteBoundary(app, {
   }
 
   // Browser sessions are hydrated first so UAD may authorize either the web
-  // session or its native bearer token. UAD owns its bounded binary parsers,
-  // so it must remain ahead of the legacy global JSON parser.
+  // session or its native bearer token. UAD and mobile own their bounded body
+  // parsers, so both remain ahead of the legacy global JSON parser.
   app.use("/api", hydrateWebSession);
   app.use("/api/uad", routeUad);
   app.use("/api/uad", handleUadBodyError);
-  app.use(parseJson);
 
   // Native mobile owns independent bearer authentication and intentionally
-  // remains ahead of the legacy application gate.
+  // remains ahead of the legacy application gate and parser.
   app.use("/api/mobile", routeMobile);
   app.use("/api", hydrateBearer);
 
@@ -110,5 +129,11 @@ export function mountApplicationRouteBoundary(app, {
   app.use("/api/auth", routeWebAuth);
   app.use("/api", rateLimit);
   app.use("/api", createLegacyApplicationAuthenticationGate(authenticationPolicy));
+  // Authentication and throttling must settle before JSON decompression or
+  // buffering. Browser/native clients send JSON request bytes directly.
+  app.use("/api", rejectCompressedApiBody);
+  app.use("/api", (req, res, next) => (
+    usesRouteLocalBodyParser(req) ? next() : parseJson(req, res, next)
+  ));
   return app;
 }

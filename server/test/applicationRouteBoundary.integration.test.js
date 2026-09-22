@@ -4,6 +4,7 @@ import test from "node:test";
 import express from "express";
 
 import { mountApplicationRouteBoundary } from "../src/security/applicationRouteBoundary.js";
+import { jsonErrorHandler } from "../src/security/httpSecurity.js";
 
 const identity = Object.freeze({
   userId: "user_1",
@@ -60,6 +61,20 @@ async function startApplication({ authenticationRequired = true, readinessError 
     logger: { warn() {} },
   });
   app.get("/api/legacy", (_req, res) => res.json({ ok: true, surface: "legacy" }));
+  app.post("/api/legacy", (req, res) => res.json({ ok: true, body: req.body }));
+  app.post("/api/accounts/:id/neighborhood-cohort/catalog", express.json({ limit: 4_000_000 }), (req, res) => (
+    res.json({ ok: true, payload_bytes: Buffer.byteLength(req.body.payload) })
+  ));
+  app.post(
+    "/api/accounts/:id/assignment-files/:assignmentFileId/sales-imports/:batchId/reviews",
+    (req, res, next) => {
+      res.set("x-local-authorization-before-parser", String(req.body === undefined));
+      next();
+    },
+    express.json({ limit: 262_144, inflate: false, strict: true }),
+    (_req, res) => res.json({ ok: true }),
+  );
+  app.use(jsonErrorHandler);
 
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -134,6 +149,72 @@ test("browser session hydration protects session and readiness endpoints", async
     "/api/auth/me",
     "/api/auth/readiness",
   ]);
+});
+
+test("legacy authentication and rate limiting settle before JSON parsing", async (context) => {
+  const server = await startApplication();
+  context.after(server.close);
+  const url = `${server.baseUrl}/api/legacy`;
+  const malformed = {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{",
+  };
+
+  const anonymous = await fetch(url, malformed);
+  assert.equal(anonymous.status, 401);
+  assert.deepEqual(await anonymous.json(), { error: "authentication_required" });
+
+  const authenticated = await fetch(url, {
+    ...malformed,
+    headers: {
+      ...malformed.headers,
+      authorization: "Bearer application-token",
+    },
+  });
+  assert.equal(authenticated.status, 400);
+  assert.deepEqual(await authenticated.json(), { error: "invalid_json_body" });
+
+  const compressed = await fetch(url, {
+    method: "POST",
+    headers: {
+      authorization: "Bearer application-token",
+      "content-type": "application/json",
+      "content-encoding": "gzip",
+    },
+    body: "not-a-gzip-stream",
+  });
+  assert.equal(compressed.status, 415);
+  assert.deepEqual(await compressed.json(), { error: "unsupported_request_encoding" });
+  assert.deepEqual(server.rateLimitedRequests, [
+    "/api/legacy",
+    "/api/legacy",
+    "/api/legacy",
+  ]);
+});
+
+test("route-local parser families retain their authorization and size boundaries", async (context) => {
+  const server = await startApplication();
+  context.after(server.close);
+  const headers = {
+    authorization: "Bearer application-token",
+    "content-type": "application/json",
+  };
+
+  const neighborhood = await fetch(
+    `${server.baseUrl}/api/accounts/A-1/neighborhood-cohort/catalog`,
+    { method: "POST", headers, body: JSON.stringify({ payload: "x".repeat(1_100_000) }) },
+  );
+  assert.equal(neighborhood.status, 200, "the shared 1 MiB parser must not preempt the 4 MB parser");
+  assert.deepEqual(await neighborhood.json(), { ok: true, payload_bytes: 1_100_000 });
+
+  const salesReview = await fetch(
+    `${server.baseUrl}/api/accounts/A-1/assignment-files/7/sales-imports/batch-1/reviews`,
+    { method: "POST", headers, body: JSON.stringify({ payload: "x".repeat(300_000) }) },
+  );
+  assert.equal(salesReview.status, 413, "the route-local 256 KiB ceiling must remain authoritative");
+  assert.equal(salesReview.headers.get("x-local-authorization-before-parser"), "true");
+  assert.deepEqual(await salesReview.json(), { error: "request_body_too_large" });
 });
 
 test("readiness failures remain bounded and explicit local development preserves legacy access", async (context) => {

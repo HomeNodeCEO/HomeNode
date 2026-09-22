@@ -91,6 +91,18 @@ test("builds private mobile-upload object keys without trusting the original fil
     }),
     `organizations/org-1/uad/workfile-1/generated/revision-7/xml/${"a".repeat(64)}/FAS-007.xml`,
   );
+  assert.equal(
+    buildUadGeneratedArtifactObjectKey({
+      organizationId: "org-1",
+      workfileId: "workfile-1",
+      revisionNumber: 7,
+      artifactType: "submission_package",
+      generationAttemptId: "7B6C5B4A-3210-4FED-8CBA-9876543210AB",
+      checksumSha256: "B".repeat(64),
+      fileName: "FAS 007.zip",
+    }),
+    `organizations/org-1/uad/workfile-1/generated/revision-7/submission_package/attempt-7b6c5b4a-3210-4fed-8cba-9876543210ab/${"b".repeat(64)}/FAS-007.zip`,
+  );
 });
 
 test("creates a bounded R2 presigned PUT URL and requires complete configuration", () => {

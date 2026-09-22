@@ -101,6 +101,16 @@ function transientStorageError(error) {
   return retryableStatus(status);
 }
 
+function artifactRequestAborted() {
+  const error = new Error("uad_artifact_request_aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal) {
+  if (signal?.aborted) throw artifactRequestAborted();
+}
+
 function hmac(key, value, encoding) {
   return createHmac("sha256", key).update(value, "utf8").digest(encoding);
 }
@@ -150,12 +160,15 @@ export function buildUadGeneratedArtifactObjectKey({
   artifactType,
   checksumSha256,
   fileName,
+  generationAttemptId,
 }) {
   const organization = organizationId || "unassigned";
   const revision = Math.max(1, Number(revisionNumber) || 1);
   const checksum = String(checksumSha256 || "unverified").replace(/[^a-f0-9]/gi, "").toLowerCase().slice(0, 64)
     || "unverified";
-  return `organizations/${organization}/uad/${workfileId}/generated/revision-${revision}/${artifactType}/${checksum}/${sanitizeUadFileName(fileName)}`;
+  const attempt = String(generationAttemptId || "").replace(/[^a-f0-9-]/gi, "").toLowerCase().slice(0, 64);
+  const attemptPath = attempt ? `/attempt-${attempt}` : "";
+  return `organizations/${organization}/uad/${workfileId}/generated/revision-${revision}/${artifactType}${attemptPath}/${checksum}/${sanitizeUadFileName(fileName)}`;
 }
 
 export function createR2PresignedUrl({
@@ -275,34 +288,54 @@ export function createUadObjectStorage(env = process.env, {
     attempts = config.maxAttempts,
     bodyFactory = null,
     timeoutMs = config.requestTimeoutMs,
+    signal = null,
   } = {}) {
     if (typeof fetchImpl !== "function") throw new Error(`uad_object_${operation}_network_error`);
     let lastError = null;
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
+      throwIfAborted(signal);
       let response;
       try {
         const body = bodyFactory ? bodyFactory() : init.body;
+        const timeoutSignal = AbortSignal.timeout(timeoutMs);
         response = await fetchImpl(url, {
           ...init,
           ...(body === undefined ? {} : { body }),
-          signal: AbortSignal.timeout(timeoutMs),
+          signal: signal ? AbortSignal.any([signal, timeoutSignal]) : timeoutSignal,
         });
       } catch (error) {
+        if (signal?.aborted) throw artifactRequestAborted();
         lastError = normalizedStorageError(operation, error);
         if (attempt >= attempts || !transientStorageError(lastError)) throw lastError;
-        await sleep(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))));
+        await waitForRetry(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))), signal);
         continue;
       }
       if (response.ok) return response;
       lastError = new Error(`uad_object_${operation}_failed:${response.status}`);
       if (attempt >= attempts || !retryableStatus(response.status)) throw lastError;
       await response.body?.cancel?.().catch(() => undefined);
-      await sleep(retryDelayMs(response, attempt, config.retryBaseMs));
+      await waitForRetry(retryDelayMs(response, attempt, config.retryBaseMs), signal);
     }
     throw lastError || new Error(`uad_object_${operation}_network_error`);
   }
 
-  async function readBoundedResponse(response, maximumBytes) {
+  async function waitForRetry(milliseconds, signal) {
+    if (!signal) return sleep(milliseconds);
+    throwIfAborted(signal);
+    let abort;
+    const interrupted = new Promise((_, reject) => {
+      abort = () => reject(artifactRequestAborted());
+      signal.addEventListener("abort", abort, { once: true });
+    });
+    try {
+      return await Promise.race([sleep(milliseconds), interrupted]);
+    } finally {
+      signal.removeEventListener("abort", abort);
+    }
+  }
+
+  async function readBoundedResponse(response, maximumBytes, signal = null) {
+    throwIfAborted(signal);
     const maximum = boundedInteger(
       maximumBytes,
       config.maxBufferedDownloadBytes,
@@ -328,6 +361,7 @@ export function createUadObjectStorage(env = process.env, {
     const chunks = [];
     let bytes = 0;
     while (true) {
+      throwIfAborted(signal);
       const { done, value } = await reader.read();
       if (done) break;
       bytes += value.byteLength;
@@ -388,22 +422,24 @@ export function createUadObjectStorage(env = process.env, {
         expires_in_seconds: Math.max(1, Math.min(Number(expiresInSeconds) || 300, 604800)),
       };
     },
-    async putObject({ objectKey, contentType, body }) {
+    async putObject({ objectKey, contentType, body, signal = null }) {
+      throwIfAborted(signal);
       const byteSize = Buffer.byteLength(body);
       const upload = this.createUploadUrl({ objectKey, contentType, contentLength: byteSize });
       const response = await request("upload", upload.url, {
         method: upload.method,
         headers: upload.headers,
         body,
-      });
+      }, { signal });
       return {
         etag: response.headers.get("etag"),
         byte_size: byteSize,
         content_type: contentType,
       };
     },
-    async putFile({ objectKey, contentType, filePath, byteSize }) {
+    async putFile({ objectKey, contentType, filePath, byteSize, signal = null }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      throwIfAborted(signal);
       const { fileHandle, file } = await openExistingTemporaryFile(filePath);
       try {
         const size = Number(byteSize ?? file.size);
@@ -416,8 +452,13 @@ export function createUadObjectStorage(env = process.env, {
           headers: upload.headers,
           duplex: "half",
         }, {
-          bodyFactory: () => fileHandle.createReadStream({ autoClose: false, start: 0 }),
+          bodyFactory: () => fileHandle.createReadStream({
+            autoClose: false,
+            start: 0,
+            ...(signal ? { signal } : {}),
+          }),
           timeoutMs: config.streamTimeoutMs,
+          signal,
         });
         return {
           etag: response.headers.get("etag"),
@@ -454,10 +495,22 @@ export function createUadObjectStorage(env = process.env, {
       await request("delete", url, { method: "DELETE" });
       return { deleted: true };
     },
-    async getObject({ objectKey, maxBytes }) {
+    async getObject({ objectKey, maxBytes, signal = null }) {
+      throwIfAborted(signal);
       const download = this.createDownloadUrl({ objectKey, expiresInSeconds: 60 });
-      const response = await request("download", download.url, { method: download.method });
-      const body = await readBoundedResponse(response, maxBytes);
+      const response = await request(
+        "download",
+        download.url,
+        { method: download.method },
+        { signal },
+      );
+      let body;
+      try {
+        body = await readBoundedResponse(response, maxBytes, signal);
+      } catch (error) {
+        if (signal?.aborted) throw artifactRequestAborted();
+        throw error;
+      }
       return {
         body,
         byte_size: body.length,
@@ -465,18 +518,20 @@ export function createUadObjectStorage(env = process.env, {
         content_type: response.headers.get("content-type"),
       };
     },
-    async downloadObjectToFile({ objectKey, filePath, maxBytes }) {
+    async downloadObjectToFile({ objectKey, filePath, maxBytes, signal = null }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      throwIfAborted(signal);
       const safeFilePath = temporaryFilePath(filePath);
       const maximum = boundedInteger(maxBytes, 512 * 1024 * 1024, 1, 512 * 1024 * 1024);
       const download = this.createDownloadUrl({ objectKey, expiresInSeconds: 60 });
       let lastError = null;
       for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
+        throwIfAborted(signal);
         try {
           await rm(safeFilePath, { force: true }).catch(() => undefined);
           const response = await request("download", download.url, {
             method: download.method,
-          }, { attempts: 1, timeoutMs: config.streamTimeoutMs });
+          }, { attempts: 1, timeoutMs: config.streamTimeoutMs, signal });
           const contentLength = response.headers.get("content-length");
           const advertisedKnown = /^\d+$/.test(String(contentLength || ""));
           const advertised = advertisedKnown ? Number(contentLength) : 0;
@@ -502,6 +557,7 @@ export function createUadObjectStorage(env = process.env, {
             Readable.fromWeb(response.body),
             meter,
             createWriteStream(safeFilePath, { flags: "wx" }),
+            ...(signal ? [{ signal }] : []),
           );
           if (advertisedKnown && bytes !== advertised) {
             throw new Error("uad_object_download_size_mismatch");
@@ -515,9 +571,10 @@ export function createUadObjectStorage(env = process.env, {
           };
         } catch (error) {
           await rm(safeFilePath, { force: true }).catch(() => undefined);
+          if (signal?.aborted) throw artifactRequestAborted();
           lastError = normalizedStorageError("download", error);
           if (attempt >= config.maxAttempts || !transientStorageError(lastError)) throw lastError;
-          await sleep(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))));
+          await waitForRetry(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))), signal);
         }
       }
       throw lastError || new Error("uad_object_download_network_error");

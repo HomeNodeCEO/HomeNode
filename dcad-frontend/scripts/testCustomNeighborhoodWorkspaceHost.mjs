@@ -185,7 +185,18 @@ function harness(t, db, initialSection, overrides = {}) {
     html: () => renderToStaticMarkup(tree), text: () => text(tree),
     workspace: () => walk(tree).find(node => node.type === WorkspaceStub)?.props,
     adoption: () => walk(tree).find(node => node.type === AdoptionStub),
-    button(label) { return walk(tree).find(node => node.type === 'button' && text(node) === label); },
+    button(label) {
+      // Keep lifecycle-focused cases readable while the appraiser UI collapses
+      // the former multi-step recovery controls into one action.
+      let visibleLabel = ({
+        'Start 3-mile exploration': 'Explore 3-mile area',
+        'Capture a new 3-mile study': 'Explore a new 3-mile area',
+        'Update grouping from saved capture': 'Refresh subdivision grouping',
+      })[label] ?? label;
+      visibleLabel = visibleLabel.replace(/^Capture a new (5|10)-mile study$/, 'Explore a new $1-mile area')
+        .replace(/^Capture (.+ city polygon \(.+\)) study$/, 'Explore $1');
+      return walk(tree).find(node => node.type === 'button' && text(node) === visibleLabel);
+    },
     dates(start, end) { const inputs = walk(tree).filter(node => node.type === 'input' && node.props.type === 'date');
       assert.equal(inputs.length, 2); inputs[0].props.onChange({ target: { value: start } });
       inputs[1].props.onChange({ target: { value: end } }); flush(); },
@@ -225,9 +236,9 @@ for (const dates of [
   assert.equal(await h.controls.flush(), true);
 });
 
-for (const [code, guidance] of [
-  ['neighborhood_service_busy', 'neighborhood processing is busy'],
-  ['neighborhood_request_interrupted', 'Loading the saved study was interrupted'],
+for (const code of [
+  'neighborhood_service_busy',
+  'neighborhood_request_interrupted',
 ]) test(`catalog ${code} preserves pending UUID and requires explicit recovery, not another capture`, async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   const accepted = copy(db.file(TARGET).accepted);
@@ -235,7 +246,7 @@ for (const [code, guidance] of [
     : json({ error: code, detail: 'SECRET database text' }, 503));
   h.click('Capture a new 3-mile study'); await h.settle();
   const pending = copy(db.file(TARGET).section.value.pending_capture);
-  assert.ok(h.text().includes(guidance)); assert.doesNotMatch(h.text(), /SECRET|database text/);
+  assert.match(h.text(), /The neighborhood could not be updated\. Try again\./); assert.doesNotMatch(h.text(), /SECRET|database text/);
   assert.equal(h.workspace().workspace.blockedReason, 'reload_required');
   assert.equal(h.button('Resume saved capture').props.disabled, true);
   h.button('Resume saved capture').props.onClick(); await h.settle();
@@ -250,13 +261,13 @@ for (const [code, guidance] of [
 });
 
 for (const [status, code, guidance] of [
-  [401, 'authentication_required', 'Sign in again'],
-  [409, 'custom_appraisal_section_revision_conflict', 'changed in another request'],
-  [409, 'custom_appraisal_workfile_signed', 'signed and no longer accepts workspace changes'],
+  [401, 'authentication_required', /Please sign in again/],
+  [409, 'custom_appraisal_section_revision_conflict', /The neighborhood could not be updated/],
+  [409, 'custom_appraisal_workfile_signed', /Neighborhood analysis is not available/],
 ]) test(`pending save ${status}/${code} has fixed guidance and never calls capture`, async t => {
   const db = server(); db.overrides.set('save', () => json({ error: code, detail: 'SECRET ownership data' }, status));
   const h = harness(t, db); await h.settle();
-  assert.ok(h.text().includes(guidance)); assert.doesNotMatch(h.text(), /SECRET|ownership data/);
+  assert.match(h.text(), guidance); assert.doesNotMatch(h.text(), /SECRET|ownership data/);
   assert.deepEqual(kinds(db), ['save']); assert.equal(db.file(TARGET).section, undefined);
   assert.equal(await h.controls.flush(), false); assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
 });
@@ -265,8 +276,8 @@ test('unknown catalog and pending-save refusals remain generic and never display
   for (const kind of ['catalog', 'save']) {
     const db = server(); db.overrides.set(kind, () => json({ error: 'neighborhood_service_busy\n', detail: 'SECRET' }, 503));
     const h = harness(t, db); await h.settle();
-    assert.match(h.text(), /The neighborhood workspace could not finish updating/);
-    assert.doesNotMatch(h.text(), /SECRET|neighborhood processing is busy/);
+    assert.match(h.text(), /The neighborhood could not be updated\. Try again\./);
+    assert.doesNotMatch(h.text(), /SECRET|neighborhood processing is busy|workspace could not finish/);
     assert.equal(await h.controls.flush(), false); h.unmount();
   }
 });
@@ -279,7 +290,7 @@ test('fresh absent reload after uncertain pending save allows explicit same-UUID
   assert.deepEqual(kinds(db), ['save']); assert.equal(uuid.mock.callCount(), 1);
   assert.equal(db.file(TARGET).section, undefined); assert.equal(await h.controls.flush(), false);
   h.click('Reload saved choices'); await h.settle();
-  assert.deepEqual(kinds(db), ['save', 'read']); assert.match(h.text(), /pending study choice has not been confirmed/);
+  assert.deepEqual(kinds(db), ['save', 'read']); assert.match(h.text(), /neighborhood update was interrupted/);
   assert.equal(h.button('Resume saved capture').props.disabled, false);
   assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
   assert.equal(await h.controls.flush(), false); assert.equal(uuid.mock.callCount(), 1);
@@ -300,8 +311,8 @@ test('capacity after new capture preserves pending UUID, old study, exact reload
   assert.deepEqual(kinds(db), ['catalog', 'save', 'capture', 'catalog']);
   const pending = copy(db.file(TARGET).section.value.pending_capture), revision = db.file(TARGET).section.revision;
   assert.ok(pending.operation_id); assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
-  assert.match(h.text(), /exceeds the preview capacity before its recorded groups can be loaded/);
-  assert.match(h.text(), /If the previous study reopens/); assert.doesNotMatch(h.text(), /SECRET/);
+  assert.match(h.text(), /area could not be loaded completely/);
+  assert.doesNotMatch(h.text(), /If the previous study reopens|SECRET/);
   assert.equal(h.workspace().workspace.blockedReason, 'reload_required'); assert.equal(await h.controls.flush(), false);
   assert.equal(h.adoption(), undefined); assert.equal(h.button('Set aside pending capture').props.disabled, true);
   h.button('Resume saved capture').props.onClick(); await h.settle(); assert.equal(kinds(db).length, 4);
@@ -317,11 +328,56 @@ test('capacity after new capture preserves pending UUID, old study, exact reload
   assert.deepEqual(db.file(TARGET).accepted, accepted); assert.equal(db.maxOpen, 1);
 });
 
+test('appraiser Try again restores saved choices and resumes the exact pending area in one action', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  db.overrides.set('capture', () => json({ error: 'neighborhood_service_busy' }, 503));
+  h.radius('5'); h.click('Capture a new 5-mile study'); await h.settle();
+  const pending = copy(db.file(TARGET).section.value.pending_capture);
+  assert.ok(pending); assert.ok(h.button('Try again')); assert.match(h.text(), /neighborhood could not be updated/i);
+  db.overrides.delete('capture'); h.click('Try again'); await h.settle();
+  assert.deepEqual(db.calls.filter(call => call.kind === 'capture').map(call => call.body.operation_id),
+    [pending.operation_id, pending.operation_id]);
+  assert.equal(db.file(TARGET).section.value.pending_capture, null);
+  assert.equal(db.file(TARGET).section.value.active.discovery.radius_metres, '8046.72');
+  assert.equal(await h.controls.flush(), true);
+});
+
+test('appraiser can clear an incomplete area without changing the last completed study or report', async t => {
+  const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+  const accepted = copy(db.file(TARGET).accepted);
+  db.overrides.set('capture', () => json({ error: 'neighborhood_source_unavailable' }, 422));
+  h.radius('10'); h.click('Capture a new 10-mile study'); await h.settle();
+  assert.ok(h.button('Choose a different area')); h.click('Choose a different area'); await h.settle();
+  assert.equal(db.file(TARGET).section.value.pending_capture, null);
+  assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
+  assert.deepEqual(db.file(TARGET).accepted, accepted);
+  assert.equal(h.workspace().workspace.blockedReason ?? null, null);
+  assert.equal(await h.controls.flush(), true);
+});
+
+for (const recoveryAction of ['Try again', 'Choose a different area']) test(
+  `${recoveryAction} stops after authoritative reload discovers a finalized appraisal`, async t => {
+    const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+    db.overrides.set('capture', () => json({ error: 'neighborhood_service_busy' }, 503));
+    h.click('Capture a new 3-mile study'); await h.settle();
+    const beforeRecovery = kinds(db);
+    assert.ok(h.button(recoveryAction));
+
+    db.file(TARGET).status = 'signed';
+    db.overrides.delete('capture');
+    h.click(recoveryAction); await h.settle();
+
+    assert.deepEqual(kinds(db), [...beforeRecovery, 'read']);
+    assert.equal(h.workspace(), undefined);
+    assert.match(h.html(), /no longer editable/);
+    assert.equal(await h.controls.flush(), false);
+  });
+
 test('catalog capacity on reopen does not promise a working new-study escape or bypass recovery', async t => {
   const initial = activeSection([]), db = server(initial);
   db.overrides.set('catalog', () => json({ error: 'neighborhood_preview_capacity_exceeded' }, 422));
   const h = harness(t, db, initial); await h.settle();
-  assert.match(h.text(), /Retrying the same oversized study may reach the same limit/);
+  assert.match(h.text(), /area could not be loaded completely/);
   assert.equal(h.workspace(), undefined); assert.equal(h.adoption(), undefined); assert.equal(await h.controls.flush(), false);
   assert.equal(h.button('Start 3-mile exploration').props.disabled, true);
   assert.deepEqual(kinds(db), ['catalog']); assert.deepEqual(db.calls[0].body.selection.pockets, []);
@@ -360,7 +416,7 @@ for (const city of cityCatalog.cities) test(`installed ${city.name} study is exp
   const accepted = copy(db.file(TARGET).accepted), scope = cityChoice(city);
   h.radius(cityKey(scope)); await h.settle();
   assert.deepEqual(kinds(db), ['catalog']); assert.match(h.html(), /Displayed study: 3-mile radius/);
-  assert.match(h.text(), /not mailing-city names or the map's reference control/);
+  assert.doesNotMatch(h.text(), /mailing-city names|reference control/);
   h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
   assert.deepEqual(kinds(db), ['catalog', 'save', 'capture', 'catalog', 'save']);
   assert.deepEqual(db.calls[1].body.value.active, initial.value.active); assert.equal(db.calls[1].body.value.workspace_version, 4);
@@ -419,14 +475,14 @@ test('historical saved city reopens without substituting current asset and canno
 });
 
 for (const [errorCode, expectedText] of [
-  ['neighborhood_city_subject_outside_scope', 'The subject is outside the selected city polygon.'],
-  ['neighborhood_city_source_unavailable', 'The selected city polygon is unavailable for capture.'],
+  ['neighborhood_city_subject_outside_scope', 'The subject is outside the selected city area.'],
+  ['neighborhood_city_source_unavailable', 'That city area is currently unavailable.'],
 ]) test(`known city refusal ${errorCode} reaches the Host with safe set-aside guidance and unchanged study`, async t => {
   const initial = activeSection([]), city = cityCatalog.cities[0], db = server(initial), h = harness(t, db, initial); await h.settle();
   const accepted = copy(db.file(TARGET).accepted);
   db.overrides.set('capture', () => json({ error: errorCode, detail: 'secret local source path' }, 422));
   h.radius(cityKey(cityChoice(city))); h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
-  assert.ok(h.text().includes(expectedText)); assert.match(h.text(), /Reload saved choices, then use “Set aside pending capture”/);
+  assert.ok(h.text().includes(expectedText)); assert.match(h.text(), /Choose a different area/);
   assert.doesNotMatch(h.text(), /secret local source path|neighborhood_city_/);
   assert.equal(h.workspace().contextRef.context_id, OLD); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
   assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active); assert.deepEqual(db.file(TARGET).accepted, accepted);
@@ -443,29 +499,29 @@ test('unknown city error remains generic and never displays raw server text', as
   const initial = activeSection([]), city = cityCatalog.cities[0], db = server(initial), h = harness(t, db, initial); await h.settle();
   db.overrides.set('capture', () => json({ error: 'neighborhood_city_source_unavailable: secret local source path' }, 422));
   h.radius(cityKey(cityChoice(city))); h.click(`Capture ${city.name} city polygon (${cityCatalog.vintage}) study`); await h.settle();
-  assert.match(h.text(), /The neighborhood workspace could not finish updating/);
+  assert.match(h.text(), /The neighborhood could not be updated\. Try again\./);
   assert.doesNotMatch(h.text(), /secret local source path|selected city polygon is unavailable/);
   assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
 });
 
-for (const [status, errorCode, guidance] of [
-  [401, 'authentication_required', 'Sign in again'],
-  [403, 'neighborhood_access_denied', 'Confirm assignment and source access'],
-  [503, 'custom_neighborhood_workspace_disabled', 'disabled in this environment'],
-  [404, 'neighborhood_context_unavailable', 'saved capture target is unavailable'],
-  [422, 'neighborhood_source_unavailable', 'source data is unavailable or exceeds capture limits'],
-  [422, 'neighborhood_capture_capacity_exceeded', 'complete study exceeds the current processing capacity'],
-  [422, 'neighborhood_private_source_review_required', 'source-use review completed'],
-  [422, 'neighborhood_private_source_limit', 'private-sales source exceeds the capture limits'],
-  [409, 'neighborhood_private_review_changed', 'private-sales review changed'],
-  [409, 'neighborhood_private_source_read_only', 'no longer editable for a private-sales capture'],
-  [409, 'neighborhood_operation_conflict', 'do not retry it with changed inputs'],
-  [409, 'neighborhood_subject_changed', 'subject data changed during capture'],
-  [409, 'neighborhood_target_changed', 'appraisal target changed during capture'],
-  [409, 'neighborhood_market_policy_changed', 'Source access changed during capture'],
-  [409, 'neighborhood_operation_outcome_unknown', 'recover the same saved operation. Do not start another capture'],
-  [503, 'neighborhood_request_interrupted', 'retry the same saved operation'],
-  [503, 'neighborhood_service_busy', 'do not start a duplicate capture'],
+for (const [status, errorCode] of [
+  [401, 'authentication_required'],
+  [403, 'neighborhood_access_denied'],
+  [503, 'custom_neighborhood_workspace_disabled'],
+  [404, 'neighborhood_context_unavailable'],
+  [422, 'neighborhood_source_unavailable'],
+  [422, 'neighborhood_capture_capacity_exceeded'],
+  [422, 'neighborhood_private_source_review_required'],
+  [422, 'neighborhood_private_source_limit'],
+  [409, 'neighborhood_private_review_changed'],
+  [409, 'neighborhood_private_source_read_only'],
+  [409, 'neighborhood_operation_conflict'],
+  [409, 'neighborhood_subject_changed'],
+  [409, 'neighborhood_target_changed'],
+  [409, 'neighborhood_market_policy_changed'],
+  [409, 'neighborhood_operation_outcome_unknown'],
+  [503, 'neighborhood_request_interrupted'],
+  [503, 'neighborhood_service_busy'],
 ]) test(`capture refusal ${status}/${errorCode} shows fixed guidance while preserving pending operation and old display`, async t => {
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   db.overrides.set('capture', () => {
@@ -476,7 +532,7 @@ for (const [status, errorCode, guidance] of [
   });
   h.radius('5'); h.click('Capture a new 5-mile study'); await h.settle();
   const pending = copy(db.file(TARGET).section.value.pending_capture);
-  assert.ok(h.text().includes(guidance)); assert.match(h.text(), /This capture has not applied anything to the report/);
+  assert.match(h.text(), /Please sign in again|Neighborhood analysis is not available|area could not be loaded completely|neighborhood could not be updated/);
   assert.doesNotMatch(h.text(), /secret provider\/database data|your report has not changed|accepted report are unchanged/);
   assert.equal(h.workspace().contextRef.context_id, OLD); assert.deepEqual(h.workspace().workspace.selection, initial.value.active.selection);
   assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
@@ -497,7 +553,7 @@ test('unknown capture errors and strings normalized to known codes stay generic 
   const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
   db.overrides.set('capture', () => json({ error: 'authentication_required\n', detail: 'secret' }, 401));
   h.radius('5'); h.click('Capture a new 5-mile study'); await h.settle();
-  assert.match(h.text(), /This update has not applied anything to the report/);
+  assert.match(h.text(), /The neighborhood could not be updated\. Try again\./);
   assert.doesNotMatch(h.text(), /Sign in again|your report has not changed|secret/);
   assert.deepEqual(db.file(TARGET).section.value.active, initial.value.active);
 });
@@ -1033,7 +1089,7 @@ for (const phase of ['unknown Apply', 'acknowledged Apply awaiting fresh read'])
     assert.equal(await pending, false); assert.equal(signal.aborted, true);
     assert.equal(h.adoption().key, child.key); assert.equal(h.adoption().props.disabled, false);
     assert.equal(h.button('Reload saved choices').props.disabled, true);
-    assert.equal(await h.controls.flush(), false); assert.match(h.text(), /Saving and finalizing remain paused/);
+    assert.equal(await h.controls.flush(), false); assert.match(h.text(), /report did not finish updating\. Try again/);
     assert.equal(await h.adoption().props.run(async () => assert.fail('retry before underlying operation settles')), false);
     staleReload(); staleWorkspace.workspace.onSelectionIntent([groupId(1)]);
     assert.equal(await h.controls.useReviewedSales({ batch_id: OLD, expected_review_revision: 1 }), false);

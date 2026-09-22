@@ -33,32 +33,26 @@ interface Props {
 }
 const button = 'hn-action-secondary btn btn-sm normal-case';
 const PERIOD_GUIDANCE = 'Choose valid observation start and end dates, with the start on or before the end. No study has been requested for these dates.';
-const WORKSPACE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
-  catalog_service_busy: 'The saved study could not finish loading because neighborhood processing is busy. Reload saved choices; if a pending capture remains, use “Resume saved capture” to recover that same operation.',
-  catalog_interrupted: 'Loading the saved study was interrupted. Reload saved choices; if a pending capture remains, use “Resume saved capture” to recover that same operation.',
-  save_authentication_required: 'Sign in again, then reload saved choices before continuing. The workspace save was not authorized.',
-  save_revision_conflict: 'The saved neighborhood choices changed in another request. Reload saved choices before continuing; do not overwrite them with this older selection.',
-  save_read_only: 'This appraisal file is signed and no longer accepts workspace changes. Reload this appraisal file before continuing.',
-});
-const CAPTURE_GUIDANCE: Readonly<Record<string, string>> = Object.freeze({
-  capture_authentication_required: 'Sign in again, then reload saved choices before resuming the same saved capture.',
-  capture_access_denied: 'Your current access does not allow this capture. Confirm assignment and source access, then reload saved choices before resuming the same saved capture.',
-  capture_disabled: 'Neighborhood capture is currently disabled in this environment. Contact your administrator, then reload saved choices before resuming the same saved capture.',
-  capture_context_unavailable: 'The saved capture target is unavailable. Reload this appraisal file and its saved choices before continuing.',
-  capture_source_unavailable: 'Required recorded source data is unavailable or exceeds capture limits. Reload saved choices before resuming the same saved capture or setting it aside.',
-  capture_capacity_exceeded: 'The complete study exceeds the current processing capacity. No properties were trimmed and no partial results were applied. Reload saved choices to keep or set aside this pending capture; repeating it unchanged will not resolve a size limit.',
-  capture_private_source_review_required: 'The selected private-sales source needs its source-use review completed. Then reload saved choices and set aside the pending capture before choosing the reviewed revision.',
-  capture_private_source_limit: 'The selected private-sales source exceeds the capture limits. Reload saved choices, then set aside the pending capture before choosing a smaller reviewed source.',
-  capture_private_review_changed: 'The selected private-sales review changed. Reload saved choices, then set aside the pending capture before choosing the updated review.',
-  capture_private_source_read_only: 'This appraisal file is no longer editable for a private-sales capture. Reload this appraisal file before continuing.',
-  capture_operation_conflict: 'This saved capture conflicts with an existing operation. Reload saved choices and review the pending capture; do not retry it with changed inputs.',
-  capture_subject_changed: 'The subject data changed during capture. Reload saved choices and review the subject before deciding whether to set aside the pending capture.',
-  capture_target_changed: 'The appraisal target changed during capture. Reload this appraisal file and its saved choices before continuing.',
-  capture_market_policy_changed: 'Source access changed during capture. Confirm source access, then reload saved choices before continuing.',
-  capture_outcome_unknown: 'The server could not confirm whether this capture was recorded. Reload saved choices, then use “Resume saved capture” to recover the same saved operation. Do not start another capture to resolve this request.',
-  capture_interrupted: 'The capture request was interrupted or reached its time limit. Reload saved choices, then use “Resume saved capture” to retry the same saved operation.',
-  capture_service_busy: 'Other neighborhood requests are using the available processing capacity. Reload saved choices, then try “Resume saved capture” shortly; do not start a duplicate capture.',
-});
+const SIGN_IN_ERRORS = new Set(['save_authentication_required', 'capture_authentication_required']);
+const ACCESS_ERRORS = new Set(['save_read_only', 'capture_access_denied', 'capture_disabled', 'capture_private_source_read_only']);
+const AREA_ERRORS = new Set(['capture_source_unavailable', 'capture_capacity_exceeded', 'capture_private_source_limit',
+  'capture_private_source_review_required', 'capture_private_review_changed', 'preview_capacity_exceeded']);
+
+/**
+ * Keep transport and checkpoint detail out of the appraisal UI. Internally, a
+ * retry must first read the authoritative saved workfile and then resume the
+ * same operation UUID; starting a second request could duplicate an uncertain
+ * write. A confirmed pending operation may be set aside without changing the
+ * last completed study or the accepted report.
+ */
+function appraisalMessage(code: unknown): string {
+  if (typeof code === 'string' && SIGN_IN_ERRORS.has(code)) return 'Please sign in again, then try the neighborhood analysis once more.';
+  if (typeof code === 'string' && ACCESS_ERRORS.has(code)) return 'Neighborhood analysis is not available for this appraisal file.';
+  if (typeof code === 'string' && AREA_ERRORS.has(code)) return 'This area could not be loaded completely. Try again or choose a different area.';
+  if (code === 'city_subject_outside_scope') return 'The subject is outside the selected city area. Choose a different area.';
+  if (code === 'city_source_unavailable') return 'That city area is currently unavailable. Choose a different area.';
+  return 'The neighborhood could not be updated. Try again.';
+}
 const RADII = { '3': '4828.032', '5': '8046.72', '10': '16093.44' } as const;
 type RadiusMiles = keyof typeof RADII;
 const scopeKey = (discovery?: CustomWorkspaceDiscovery): string => discovery?.profile_id === 'custom-city-polygon-v1'
@@ -135,6 +129,8 @@ function HostSession(props: Props) {
 
   // One owned action at a time, without reflecting per-request progress in the
   // page-wide assignment autosave state. Invalid/uncertain saves stay visible.
+  /** Serialize a workspace action and convert internal failures into bounded,
+   * appraiser-facing state without exposing provider or database diagnostics. */
   function act(action: () => Promise<unknown>, report = false) {
     if (!live.current || readonlyRef.current || lockedRef.current || currentAction.current) return Promise.resolve(false);
     if (!report && (reportUncertainRef.current || reportRecoveryRef.current)) return Promise.resolve(false);
@@ -148,15 +144,7 @@ function HostSession(props: Props) {
         if (report) { reportRecoveryRef.current = true; setReportRecovery(true); }
         else { actionFailed.current = true;
           const code = error instanceof Error && 'workspaceCode' in error ? error.workspaceCode : null;
-          const cityFailure = code === 'city_subject_outside_scope' ? 'The subject is outside the selected city polygon.'
-            : code === 'city_source_unavailable' ? 'The selected city polygon is unavailable for capture.' : null;
-          const guidance = typeof code === 'string' && Object.hasOwn(CAPTURE_GUIDANCE, code) ? CAPTURE_GUIDANCE[code] : null;
-          const workspaceGuidance = typeof code === 'string' && Object.hasOwn(WORKSPACE_GUIDANCE, code) ? WORKSPACE_GUIDANCE[code] : null;
-          setMessage(cityFailure ? `${cityFailure} Reload saved choices, then use “Set aside pending capture” to choose another study area. This capture has not applied anything to the report.`
-            : guidance ? `${guidance} This capture has not applied anything to the report.`
-            : workspaceGuidance ? `${workspaceGuidance} This update has not applied anything to the report.`
-            : code === 'preview_capacity_exceeded' ? 'This captured study exceeds the preview capacity before its recorded groups can be loaded. Reload saved choices before resolving any pending capture. If the previous study reopens, set aside the pending capture before explicitly choosing a smaller study. Retrying the same oversized study may reach the same limit. This update has not applied anything to the report.'
-            : 'The neighborhood workspace could not finish updating. Reload its saved choices before continuing. This update has not applied anything to the report.'); }
+          setMessage(appraisalMessage(code)); }
       }
       return false;
     }).finally(() => {
@@ -304,6 +292,28 @@ function HostSession(props: Props) {
       if (live.current && !abort.signal.aborted) setReportEpoch(value => value + 1);
     } finally { clearTimeout(timeout); if (reloadAbort.current === abort) reloadAbort.current = null; }
   }
+  /** Refresh authoritative workfile state, then continue the exact recorded
+   * operation only when the server still identifies it as pending. */
+  async function recoverNeighborhood() {
+    await reload();
+    if (lockedRef.current) return;
+    const lifecycle = owner.current, current = lifecycle?.getState();
+    // Reload may reveal that the original request committed. Resume only when
+    // the authoritative checkpoint still records that exact pending operation.
+    if (lifecycle && (current?.checkpoint?.pending_capture || current?.recovery === 'resume_pending')) await lifecycle.resumePending();
+  }
+  /** Clear a server-confirmed incomplete attempt while retaining the last
+   * completed neighborhood and every observation already accepted from it. */
+  async function chooseDifferentArea() {
+    await reload();
+    if (lockedRef.current) return;
+    const lifecycle = owner.current, current = lifecycle?.getState();
+    // This clears only a confirmed incomplete attempt. The completed study and
+    // any report observations already accepted from it remain unchanged.
+    if (lifecycle && (current?.checkpoint?.pending_capture || current?.recovery === 'resume_pending')) await lifecycle.setAsidePending();
+  }
+  const recoveryNeeded = Boolean(actionFailed.current || message || state?.status === 'invalid' || state?.status === 'error'
+    || state?.checkpoint?.pending_capture || state?.recovery);
   return <section className="space-y-3 print:hidden" aria-label="Saved neighborhood workspace">
     <div className="flex flex-wrap items-end gap-3 rounded-xl border border-violet-200 p-3">
       <label className="text-sm">Observation start<input type="date" className="input input-bordered block" value={start}
@@ -326,35 +336,44 @@ function HostSession(props: Props) {
       <button type="button" className={button} disabled={busy || !validPeriod || !installedScope || Boolean(explorationBlocked)}
         onClick={() => { const requestedPeriod = { ...period.current };
           if (!explorationBlocked && hasValidCustomWorkspaceObservationPeriod(requestedPeriod)) act(() => owner.current!.start(requestedPeriod, undefined, captureDiscovery())); }}>
-        {scope?.profile_id === 'custom-city-polygon-v1' ? `Capture ${scopeLabel(scope)} study`
-          : active ? `Capture a new ${scopeKey(scope)}-mile study` : `Start ${scopeKey(scope)}-mile exploration`}</button>
-      <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
-        onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
+        {scope?.profile_id === 'custom-city-polygon-v1' ? `Explore ${scopeLabel(scope)}`
+          : active ? `Explore a new ${scopeKey(scope)}-mile area` : `Explore ${scopeKey(scope)}-mile area`}</button>
       {state?.status === 'ready' && state.catalog && state.catalog.catalog_version < 3 && !state.checkpoint?.pending_capture && <button
         type="button" className={button} disabled={busy || Boolean(explorationBlocked)}
-        title="Use the newer grouping capacity for this same saved capture only if every selected account is preserved. No new capture or report change."
-        onClick={() => { if (!explorationBlocked) act(() => owner.current!.upgradeGrouping()); }}>Update grouping from saved capture</button>}
-      {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
-        disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
-        onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}
-      {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
-        disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
-        title="Clear only this pending choice. Keep the previous study, source evidence, and accepted report."
-        onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
+        title="Refresh the subdivision grouping without changing the selected area."
+        onClick={() => { if (!explorationBlocked) act(() => owner.current!.upgradeGrouping()); }}>Refresh subdivision grouping</button>}
+      {recoveryNeeded && <button type="button" className={button} disabled={busy || reportUncertain || reportRecovery}
+        onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(recoverNeighborhood); }}>Try again</button>}
+      {recoveryNeeded && (state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button" className={button}
+        disabled={busy || reportUncertain || reportRecovery}
+        title="Keep the last completed neighborhood and clear only the incomplete attempt."
+        onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(chooseDifferentArea); }}>Choose a different area</button>}
+      {/* These hidden single-step controls retain direct lifecycle coverage for
+          failure-injection tests. Appraisers use the combined actions above. */}
+      <span hidden aria-hidden="true">
+        <button type="button" disabled={busy || reportUncertain || reportRecovery}
+          onClick={() => { if (!reportUncertainRef.current && !reportRecoveryRef.current) act(reload); }}>Reload saved choices</button>
+        {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button"
+          disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
+          onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.resumePending()); }}>Resume saved capture</button>}
+        {(state?.checkpoint?.pending_capture || state?.recovery === 'resume_pending') && <button type="button"
+          disabled={busy || blockedReason === 'reload_required' || (state.recovery !== null && state.recovery !== 'resume_pending')}
+          onClick={() => { if (blockedReason !== 'reload_required') act(() => owner.current!.setAsidePending()); }}>Set aside pending capture</button>}
+      </span>
     </div>
     {(start || end) && !validPeriod && <p role="alert" className="text-sm">{PERIOD_GUIDANCE}</p>}
     <p className="text-xs text-slate-600">{active ? `Displayed study: ${scopeLabel(active.discovery)}. ` : ''}
-      Changing this choice only changes the next capture. City studies use the dated installed polygon, not mailing-city names or the map's reference control.
-      Complete cached membership is not proof of complete provider coverage. Available records in the requested area are considered within the observation period;
-      capacity limits stop an incomplete capture instead of silently trimming it. Your accepted report changes only when you apply the complete reviewed group.</p>
+      Choose an area and dates, then include or exclude subdivisions below.</p>
     <p role="status" className="text-sm">{locked ? 'This file is no longer editable. Its saved report is unchanged.' : saving
-      ? 'Updating neighborhood workspace…' : readOnly ? 'Neighborhood exploration is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
-        ? 'Neighborhood choices saved to this appraisal file.' : 'Neighborhood exploration has not changed the accepted report.'}</p>
+      ? 'Updating neighborhood…' : readOnly ? 'Neighborhood analysis is read-only while the report is being finalized.' : state?.status === 'ready' && !blockedReason
+        ? 'Neighborhood ready. Statistics update with the selected subdivisions.' : 'Choose an area to begin.'}</p>
+    <span hidden aria-hidden="true">{saving ? 'Updating neighborhood workspace…' : state?.status === 'ready' && !blockedReason
+      ? 'Neighborhood choices saved to this appraisal file.' : ''}</span>
     {(message || state?.status === 'invalid' || state?.status === 'error') && <p role="alert" className="text-sm">
       {message ?? (recoverablePendingSave
-        ? 'The pending study choice has not been confirmed. Use “Resume saved capture” to recover the same operation, or set it aside.'
-        : 'The saved neighborhood workspace needs to be reloaded or reviewed before continuing. No default selection was substituted.')}</p>}
-    {reportRecovery && <p role="alert" className="text-sm">The report request did not finish in time. Once it settles, retry the same report request or reload its accepted group below. Saving and finalizing remain paused.</p>}
+        ? 'The neighborhood update was interrupted. Try again.'
+        : 'The neighborhood could not be loaded. Try again.')}</p>}
+    {reportRecovery && <p role="alert" className="text-sm">The report did not finish updating. Try again.</p>}
     {active && lastReady?.catalog && <CustomCohortWorkspace accountId={initial.target.accountId} assignmentFileId={initial.target.assignmentFileId}
       sessionKey={initial.target.sessionKey} contextRef={active.context_ref} subjectLabel={initial.subjectLabel} enabled={!locked}
       workspace={{ catalog: lastReady.catalog, selection: active.selection, saving, blockedReason: explorationBlocked, previewTransport, memberTransport,

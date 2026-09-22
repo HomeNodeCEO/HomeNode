@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createAssignmentPhotoRouter } from "../src/modules/assignmentFiles/photoRouter.js";
+import { jsonErrorHandler } from "../src/security/httpSecurity.js";
 
 const pool = { query: async () => ({ rows: [] }) };
 const objectStorage = { configured: true };
@@ -34,6 +35,7 @@ async function startRouter(router) {
   const app = express();
   app.use(express.json());
   app.use(router);
+  app.use(jsonErrorHandler);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
     listener.once("error", reject);
@@ -235,6 +237,41 @@ test("same-application object uploads retain the bounded raw image contract", as
     content: undefined,
   });
   assert.deepEqual([...inputs[0][2].content], [...content]);
+});
+
+test("photo object uploads authorize before buffering and reject compressed bodies", async (context) => {
+  let deniedUploads = 0;
+  const deniedServer = await startRouter(createAssignmentPhotoRouter(options({
+    requireAssignmentAccess: async (_req, res) => {
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    uploadPhotoObject: async () => { deniedUploads += 1; },
+  })));
+  context.after(deniedServer.close);
+  const suffix = "/api/accounts/42/assignment-files/7/photos/photo-1/objects/object-1/content";
+  const denied = await fetch(`${deniedServer.baseUrl}${suffix}`, {
+    method: "PUT",
+    headers: { "content-type": "image/jpeg", "content-encoding": "gzip" },
+    body: "not-a-gzip-stream",
+  });
+  assert.equal(denied.status, 403);
+  assert.deepEqual(await denied.json(), { error: "assignment_file_access_denied" });
+  assert.equal(deniedUploads, 0);
+
+  let allowedUploads = 0;
+  const allowedServer = await startRouter(createAssignmentPhotoRouter(options({
+    uploadPhotoObject: async () => { allowedUploads += 1; },
+  })));
+  context.after(allowedServer.close);
+  const compressed = await fetch(`${allowedServer.baseUrl}${suffix}`, {
+    method: "PUT",
+    headers: { "content-type": "image/jpeg", "content-encoding": "gzip" },
+    body: "not-a-gzip-stream",
+  });
+  assert.equal(compressed.status, 415);
+  assert.deepEqual(await compressed.json(), { error: "unsupported_request_encoding" });
+  assert.equal(allowedUploads, 0);
 });
 
 test("same-application object uploads reject JSON body type confusion before mutation", async (context) => {

@@ -131,6 +131,8 @@ interface AssignmentDocumentCenterProps {
   onCustomAssignmentApplied?: (application: AssignmentDocumentApplication) => void;
   onUadApplied?: (result: UadDocumentApplicationResult) => void;
   className?: string;
+  embedded?: boolean;
+  defaultOpen?: boolean;
 }
 
 export default function AssignmentDocumentCenter({
@@ -143,11 +145,13 @@ export default function AssignmentDocumentCenter({
   onCustomAssignmentApplied,
   onUadApplied,
   className = '',
+  embedded = false,
+  defaultOpen = false,
 }: AssignmentDocumentCenterProps) {
   const { session } = useApplicationAuth();
   const isUad = Boolean(uadWorkfileId);
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [documents, setDocuments] = useState<AssignmentDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<AssignmentDocument | null>(null);
   const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
@@ -626,10 +630,12 @@ export default function AssignmentDocumentCenter({
 
   return (
     <section
-      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
-      data-section-expanded={open ? 'true' : 'false'}
+      className={embedded
+        ? className
+        : `hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      data-section-expanded={embedded || open ? 'true' : 'false'}
     >
-      <button
+      {!embedded ? <button
         type="button"
         className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`}
         onClick={() => setOpen((value) => !value)}
@@ -647,10 +653,10 @@ export default function AssignmentDocumentCenter({
         <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>
           {open ? 'Close Documents' : `Review Documents${documents.length ? ` (${documents.length})` : ''}`}
         </span>
-      </button>
+      </button> : null}
 
-      {open ? (
-        <div className="border-t border-slate-200 p-5">
+      {embedded || open ? (
+        <div className={embedded ? '' : 'border-t border-slate-200 p-5'}>
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</span>

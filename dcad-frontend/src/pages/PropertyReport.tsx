@@ -88,6 +88,7 @@ import {
 const AssignmentDocumentCenter = memo(
   lazy(() => import("@/components/AssignmentDocumentCenter")),
 );
+const AppraisalWorkfileModal = lazy(() => import("@/components/AppraisalWorkfileModal"));
 const AssignmentPhotoCenter = memo(
   lazy(() => import("@/components/AssignmentPhotoCenter")),
 );
@@ -188,6 +189,7 @@ function AddressHero({
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
   const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
+  const [workfileModalOpen, setWorkfileModalOpen] = useState(false);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
   const assignmentDirtyRef = useRef(false);
@@ -1727,6 +1729,14 @@ function AddressHero({
             disabled={saveEverythingDisabled}
           >
             {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
+          </button>
+          <button
+            type="button"
+            className="hn-action-gold btn btn-sm normal-case rounded-lg shadow-sm"
+            onClick={() => setWorkfileModalOpen(true)}
+            disabled={!activeAssignmentFile}
+          >
+            Workfile
           </button>
           <button
             type="button"
@@ -3442,6 +3452,20 @@ function AddressHero({
           }}
           onClose={() => setAssignmentChooserOpen(false)}
         />
+      ) : null}
+      {workfileModalOpen && activeAssignmentFile ? (
+        <Suspense fallback={null}>
+          <AppraisalWorkfileModal
+            accountId={accountId || ""}
+            assignmentFileId={activeAssignmentFile.id}
+            fileNumber={activeAssignmentFile.file_number}
+            getEditorKey={editorKeyForSave}
+            onClose={() => setWorkfileModalOpen(false)}
+            onCustomAssignmentApplied={applyConfirmedDocumentApplication}
+            open
+            subjectAddress={documentReviewSubjectAddress}
+          />
+        </Suspense>
       ) : null}
     </div>
   );

@@ -165,9 +165,14 @@ function throwIfPackageAborted(signal) {
 async function fileCrc32(filePath, signal = null) {
   throwIfPackageAborted(signal);
   let crc = 0xffffffff;
-  for await (const chunk of createReadStream(filePath, signal ? { signal } : undefined)) {
-    throwIfPackageAborted(signal);
-    crc = updateCrc32(crc, chunk);
+  try {
+    for await (const chunk of createReadStream(filePath, signal ? { signal } : undefined)) {
+      throwIfPackageAborted(signal);
+      crc = updateCrc32(crc, chunk);
+    }
+  } catch (error) {
+    if (signal?.aborted) throwIfPackageAborted(signal);
+    throw error;
   }
   return (crc ^ 0xffffffff) >>> 0;
 }
@@ -323,10 +328,15 @@ export async function writeDeterministicZipToFile(files = [], outputPath, { sign
       if (entry.body) {
         await writePart(entry.body);
       } else {
-        for await (const chunk of createReadStream(
-          entry.filePath,
-          signal ? { signal } : undefined,
-        )) await writePart(chunk);
+        try {
+          for await (const chunk of createReadStream(
+            entry.filePath,
+            signal ? { signal } : undefined,
+          )) await writePart(chunk);
+        } catch (error) {
+          if (signal?.aborted) throwIfPackageAborted(signal);
+          throw error;
+        }
         if (entry.removeAfterWrite) await rm(entry.filePath, { force: true });
       }
 

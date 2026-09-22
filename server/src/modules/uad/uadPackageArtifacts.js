@@ -32,6 +32,36 @@ function throwIfPackageAborted(signal) {
   throw error;
 }
 
+export async function settleGeneratedArtifactUploads(storage, attempts, signal = null) {
+  const results = await Promise.allSettled(attempts.map(({ upload }) => upload));
+  const uploaded = results.flatMap((result, index) => (
+    result.status === "fulfilled" ? [attempts[index].objectKey] : []
+  ));
+  const failure = results.find((result) => result.status === "rejected");
+  if (!failure && !signal?.aborted) return results.map((result) => result.value);
+
+  let error = failure?.reason instanceof Error
+    ? failure.reason
+    : new Error("uad_artifact_upload_failed");
+  if (signal?.aborted) {
+    try {
+      throwIfPackageAborted(signal);
+    } catch (abortedError) {
+      error = abortedError;
+    }
+  }
+  const cleanupResults = await Promise.allSettled(uploaded.map((objectKey) => (
+    typeof storage.deleteObject === "function"
+      ? storage.deleteObject({ objectKey })
+      : Promise.reject(new Error("uad_object_cleanup_not_configured"))
+  )));
+  const cleanupPendingObjectKeys = cleanupResults.flatMap((result, index) => (
+    result.status === "rejected" ? [uploaded[index]] : []
+  ));
+  if (cleanupPendingObjectKeys.length) error.cleanup_pending_object_keys = cleanupPendingObjectKeys;
+  throw error;
+}
+
 function artifactResponse(row, workfile, storage) {
   if (!row) return null;
   const revisionNumber = Number(row.revision_number);
@@ -120,7 +150,7 @@ async function downloadVerifiedToFile(storage, row, errorPrefix, filePath, maxBy
 
 async function upsertGeneratingArtifact(queryable, {
   artifactId, workfile, storage, artifactType, contentType,
-  byteSize, checksumSha256, fileName, metadata,
+  byteSize, checksumSha256, fileName, metadata, generationAttemptId,
 }) {
   const objectKey = buildUadGeneratedArtifactObjectKey({
     organizationId: workfile.organization_id,
@@ -129,6 +159,7 @@ async function upsertGeneratingArtifact(queryable, {
     artifactType,
     checksumSha256,
     fileName,
+    generationAttemptId,
   });
   const result = await queryable.query(
     `INSERT INTO appraisal.uad_generated_artifacts (
@@ -226,7 +257,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
       client.query(
         `SELECT * FROM appraisal.uad_generated_artifacts
           WHERE workfile_id = $1 AND revision_number = $2
-            AND artifact_type IN ('xml', 'pdf')`,
+            AND artifact_type IN ('xml', 'pdf', 'images_manifest', 'submission_package')`,
         [workfileId, Number(workfile.current_revision)],
       ),
     ]);
@@ -353,6 +384,11 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     const persistClient = await pool.connect();
     let manifestRow;
     let packageRow;
+    const generationAttemptId = randomUUID();
+    const supersededObjectKeys = [
+      sourceArtifacts.get("images_manifest")?.object_key,
+      sourceArtifacts.get("submission_package")?.object_key,
+    ].filter(Boolean);
     try {
       throwIfPackageAborted(signal);
       await persistClient.query("BEGIN");
@@ -378,18 +414,20 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
         source_xml_checksum_sha256: xml.checksum_sha256,
         image_count: verifiedEntries.length,
         streamed_generation: true,
+        generation_attempt_id: generationAttemptId,
       };
       manifestRow = await upsertGeneratingArtifact(persistClient, {
         artifactId: randomUUID(), workfile, storage, artifactType: "images_manifest",
         contentType: MANIFEST_CONTENT_TYPE, byteSize: manifest.byte_size,
         checksumSha256: manifest.checksum_sha256, fileName: manifestFileName,
-        metadata: commonMetadata,
+        metadata: commonMetadata, generationAttemptId,
       });
       packageRow = await upsertGeneratingArtifact(persistClient, {
         artifactId: randomUUID(), workfile, storage, artifactType: "submission_package",
         contentType: PACKAGE_CONTENT_TYPE, byteSize: zip.byte_size,
         checksumSha256: zip.checksum_sha256, fileName: packageFileName,
         metadata: { ...commonMetadata, entry_count: zip.entry_count, manifest_artifact_id: manifestRow.id },
+        generationAttemptId,
       });
       for (const entry of verifiedEntries) {
         await persistClient.query(
@@ -422,41 +460,53 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
             body,
             signal,
           }));
-      const [manifestUpload, uploadedPackage] = await Promise.all([
-        storage.putObject({
+      const [manifestUpload, uploadedPackage] = await settleGeneratedArtifactUploads(storage, [
+        {
           objectKey: manifestRow.object_key,
-          contentType: MANIFEST_CONTENT_TYPE,
-          body: manifest.content,
-          signal,
-        }),
-        packageUpload,
-      ]);
+          upload: storage.putObject({
+            objectKey: manifestRow.object_key,
+            contentType: MANIFEST_CONTENT_TYPE,
+            body: manifest.content,
+            signal,
+          }),
+        },
+        { objectKey: packageRow.object_key, upload: packageUpload },
+      ], signal);
       throwIfPackageAborted(signal);
       const finalized = await pool.query(
         `WITH finalized AS (
            UPDATE appraisal.uad_generated_artifacts
               SET generation_status = 'ready', generated_at = now(),
                   metadata = metadata || CASE artifact_type
-                    WHEN 'images_manifest' THEN $3::jsonb ELSE $4::jsonb END
-            WHERE id IN ($1, $2)
+                    WHEN 'images_manifest' THEN $4::jsonb ELSE $5::jsonb END
+             WHERE id IN ($1, $2)
+               AND metadata->>'generation_attempt_id' = $3
             RETURNING *
          ), exported AS (
            UPDATE appraisal.uad_workfiles SET status = 'exported', updated_at = now()
-            WHERE id = $5 AND current_revision = $6
+            WHERE id = $6 AND current_revision = $7
+              AND (SELECT count(*) FROM finalized) = 2
          ), audit AS (
            INSERT INTO appraisal.uad_audit_events (
              workfile_id, event_type, entity_type, entity_id, after_data, metadata
-           ) VALUES ($5, 'uad_package.generated', 'uad_generated_artifact', $2,
-                     jsonb_build_object('checksum_sha256', $7::text, 'byte_size', $8::bigint),
-                     jsonb_build_object('revision_number', $6::integer, 'image_count', $9::integer))
-         ) SELECT * FROM finalized`,
+            SELECT $6, 'uad_package.generated', 'uad_generated_artifact', $2,
+                   jsonb_build_object('checksum_sha256', $8::text, 'byte_size', $9::bigint),
+                   jsonb_build_object('revision_number', $7::integer, 'image_count', $10::integer)
+             WHERE (SELECT count(*) FROM finalized) = 2
+          ) SELECT * FROM finalized`,
         [
-          manifestRow.id, packageRow.id,
+          manifestRow.id, packageRow.id, generationAttemptId,
           JSON.stringify({ storage_etag: manifestUpload.etag || null }),
           JSON.stringify({ storage_etag: uploadedPackage.etag || null }),
           workfileId, Number(workfile.current_revision), zip.checksum_sha256, zip.byte_size,
           verifiedEntries.length,
         ],
+      );
+      if (finalized.rows.length !== 2) throw new Error("uad_package_generation_superseded");
+      await Promise.allSettled(
+        [...new Set(supersededObjectKeys)]
+          .filter((objectKey) => objectKey !== manifestRow.object_key && objectKey !== packageRow.object_key)
+          .map((objectKey) => storage.deleteObject?.({ objectKey })),
       );
       const byType = new Map(finalized.rows.map((row) => [row.artifact_type, row]));
       const currentWorkfile = { ...workfile, status: "exported" };
@@ -467,9 +517,20 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
     } catch (error) {
       await pool.query(
         `UPDATE appraisal.uad_generated_artifacts
-            SET generation_status = 'failed', metadata = metadata || $3::jsonb
-          WHERE id IN ($1, $2)`,
-        [manifestRow.id, packageRow.id, JSON.stringify({ upload_error: String(error.message).split(":")[0] })],
+            SET generation_status = 'failed', metadata = metadata || $4::jsonb
+          WHERE id IN ($1, $2)
+            AND metadata->>'generation_attempt_id' = $3`,
+        [
+          manifestRow.id,
+          packageRow.id,
+          generationAttemptId,
+          JSON.stringify({
+            upload_error: String(error.message).split(":")[0],
+            ...(error.cleanup_pending_object_keys?.length
+              ? { cleanup_pending_object_keys: error.cleanup_pending_object_keys }
+              : {}),
+          }),
+        ],
       );
       throw error;
     }

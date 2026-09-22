@@ -193,7 +193,8 @@ test("streamed ZIP generation removes partial output after cancellation", async 
     setImmediate(() => controller.abort());
     await assert.rejects(
       () => generation,
-      (error) => error.name === "AbortError" || error.message === "uad_artifact_request_aborted",
+      (error) => error.name === "AbortError"
+        && error.message === "uad_artifact_request_aborted",
     );
     await assert.rejects(() => readFile(outputPath), { code: "ENOENT" });
   } finally {

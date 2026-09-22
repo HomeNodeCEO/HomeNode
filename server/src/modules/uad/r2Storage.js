@@ -160,12 +160,15 @@ export function buildUadGeneratedArtifactObjectKey({
   artifactType,
   checksumSha256,
   fileName,
+  generationAttemptId,
 }) {
   const organization = organizationId || "unassigned";
   const revision = Math.max(1, Number(revisionNumber) || 1);
   const checksum = String(checksumSha256 || "unverified").replace(/[^a-f0-9]/gi, "").toLowerCase().slice(0, 64)
     || "unverified";
-  return `organizations/${organization}/uad/${workfileId}/generated/revision-${revision}/${artifactType}/${checksum}/${sanitizeUadFileName(fileName)}`;
+  const attempt = String(generationAttemptId || "").replace(/[^a-f0-9-]/gi, "").toLowerCase().slice(0, 64);
+  const attemptPath = attempt ? `/attempt-${attempt}` : "";
+  return `organizations/${organization}/uad/${workfileId}/generated/revision-${revision}/${artifactType}${attemptPath}/${checksum}/${sanitizeUadFileName(fileName)}`;
 }
 
 export function createR2PresignedUrl({

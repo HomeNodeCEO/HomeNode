@@ -33,16 +33,34 @@ DATA_SNAPSHOT = build_data_snapshot(DATA_DIR)
 SEARCH_GUARD = SearchConcurrencyGuard()
 
 
+def _detail_file_path(account_id: str, data_dir: Path) -> Path | None:
+    """Resolve one direct numeric fixture without permitting path traversal."""
+    normalized_account_id = str(account_id)
+    if not ACCOUNT_ID_PATTERN.fullmatch(normalized_account_id):
+        raise ValueError("invalid_account_id")
+    base_dir = data_dir.resolve()
+    candidate = (base_dir / f"{normalized_account_id}.json").resolve()
+    try:
+        relative = candidate.relative_to(base_dir)
+    except ValueError:
+        return None
+    if candidate.parent != base_dir or relative.name != candidate.name:
+        return None
+    return candidate if candidate.is_file() else None
+
+
 @app.get("/detail/{account_id}")
 def get_detail(account_id: str):
     """
     Returns: { "account_id": "...", "detail": {...} }
     The `detail` shape matches your scraper JSON.
     """
-    if not ACCOUNT_ID_PATTERN.fullmatch(str(account_id)):
-        raise HTTPException(status_code=400, detail="Invalid account ID")
+    try:
+        requested_path = _detail_file_path(account_id, DATA_DIR)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail="Invalid account ID") from error
     fp = DATA_SNAPSHOT.detail_files.get(account_id)
-    if fp is None or not fp.is_file():
+    if requested_path is None or fp != requested_path or not fp.is_file():
         raise HTTPException(status_code=404, detail="Not Found")
 
     detail = read_bounded_detail(fp)

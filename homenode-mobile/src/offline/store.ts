@@ -1,5 +1,5 @@
 import * as Crypto from "expo-crypto";
-import { File } from "expo-file-system";
+import { Directory, File } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { Platform } from "react-native";
@@ -25,8 +25,10 @@ import { availablePhotoPositions, type LocalPhotoState, type PreparedPhoto } fro
 import { draftFromApiDocument, type ManualSketchDraft } from "../sketch/model";
 import {
   assertDatabaseSnapshotsEqual,
+  legacyDatabaseNamesForRemoval,
   sqliteIdentifier,
   sqliteStringLiteral,
+  staleIosMigrationDatabaseNames,
   type OfflineDatabaseSnapshot,
 } from "./databaseEncryption";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "./databaseRecovery";
@@ -328,6 +330,16 @@ async function deleteDatabaseFiles(databaseName: string) {
   }
 }
 
+async function removeStaleMigrationDatabases(activeDatabaseName: string | null) {
+  const directory = new Directory(SQLite.defaultDatabaseDirectory);
+  const fileNames = directory.list()
+    .filter((entry): entry is File => entry instanceof File)
+    .map((file) => file.name);
+  for (const databaseName of staleIosMigrationDatabaseNames(fileNames, activeDatabaseName)) {
+    await deleteDatabaseFiles(databaseName);
+  }
+}
+
 async function keyDatabase(database: SQLite.SQLiteDatabase) {
   const password = await databasePassword();
   await database.execAsync(`PRAGMA key = ${sqliteStringLiteral(password)}`);
@@ -445,7 +457,10 @@ async function verifyDatabaseRequiresKey(databaseName: string) {
 }
 
 async function removeLegacyPlaintextDatabase(databaseName: string, activeNameKey: string) {
-  await deleteDatabaseFiles(databaseName);
+  const canonicalName = DATABASE_POLICY.legacyPlaintext?.databaseName || null;
+  for (const legacyName of legacyDatabaseNamesForRemoval(databaseName, canonicalName)) {
+    await deleteDatabaseFiles(legacyName);
+  }
   await SecureStore.deleteItemAsync(activeNameKey);
 }
 
@@ -455,6 +470,7 @@ async function migrateLegacyPlaintextDatabase(databaseName: string) {
   // Export into a unique file so a crash can never overwrite either the legacy
   // cache or a previously activated encrypted generation. The plaintext source
   // is removed only after independent keyed, integrity, parity, and no-key checks.
+  await removeStaleMigrationDatabases(await storedDatabaseName(ACTIVE_DATABASE_NAME_KEY));
   const destinationName = `homenode-field-ios-v3-migration-${Crypto.randomUUID().toLowerCase()}.db`;
   await SecureStore.setItemAsync(legacyPolicy.activeDatabaseNameKey, databaseName, {
     keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
@@ -729,8 +745,12 @@ async function initializeDatabase() {
       }
       if (DATABASE_POLICY.legacyPlaintext) {
         const legacyName = await storedDatabaseName(DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
-        if (legacyName) {
-          await removeLegacyPlaintextDatabase(legacyName, DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
+        const canonicalLegacyName = DATABASE_POLICY.legacyPlaintext.databaseName;
+        if (legacyName || databaseFileExists(canonicalLegacyName)) {
+          await removeLegacyPlaintextDatabase(
+            legacyName || canonicalLegacyName,
+            DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey,
+          );
         }
       }
       return database;

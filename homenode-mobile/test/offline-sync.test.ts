@@ -4,8 +4,10 @@ import test from "node:test";
 import { networkAvailable, retryDelayMs, stableJson } from "../src/offline/model";
 import {
   assertDatabaseSnapshotsEqual,
+  legacyDatabaseNamesForRemoval,
   sqliteIdentifier,
   sqliteStringLiteral,
+  staleIosMigrationDatabaseNames,
   type OfflineDatabaseSnapshot,
 } from "../src/offline/databaseEncryption";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "../src/offline/databaseRecovery";
@@ -45,6 +47,31 @@ test("SQLCipher migration SQL quotes values and rejects attacker-shaped identifi
   assert.throws(() => sqliteIdentifier('photo_drafts"; DROP TABLE photo_drafts; --'), {
     message: "mobile_offline_database_schema_invalid",
   });
+});
+
+test("SQLCipher migration cleanup removes interrupted generations but preserves the active one", () => {
+  const stale = "homenode-field-ios-v3-migration-00000000-0000-4000-8000-000000000001.db";
+  const active = "homenode-field-ios-v3-migration-00000000-0000-4000-8000-000000000002.db";
+  assert.deepEqual(staleIosMigrationDatabaseNames([
+    stale,
+    `${stale}-wal`,
+    `${stale}-shm`,
+    active,
+    `${active}-journal`,
+    "homenode-field-ios-v2.db",
+    "homenode-field-ios-v3-migration-not-a-uuid.db",
+  ], active), [stale]);
+});
+
+test("SQLCipher legacy cleanup includes stored and canonical plaintext candidates", () => {
+  assert.deepEqual(legacyDatabaseNamesForRemoval(
+    "homenode-field-ios-v2-recovered.db",
+    "homenode-field-ios-v2.db",
+  ), ["homenode-field-ios-v2-recovered.db", "homenode-field-ios-v2.db"]);
+  assert.deepEqual(legacyDatabaseNamesForRemoval(
+    "homenode-field-ios-v2.db",
+    "homenode-field-ios-v2.db",
+  ), ["homenode-field-ios-v2.db"]);
 });
 
 test("SQLCipher migration verifies schema, row counts, and user version before activation", () => {

@@ -40,31 +40,6 @@ export function createSignupRouter({
   }
 
   const router = express.Router();
-  router.get("/api/signup/smtp-status", (_req, res) => {
-    const usingUrl = Boolean(environment.SMTP_URL || environment.SMTP_CONNECTION_URL);
-    const hasHost = Boolean(environment.SMTP_HOST);
-    const port = environment.SMTP_PORT ? parseInt(environment.SMTP_PORT, 10) : null;
-    const secure = environment.SMTP_SECURE === "1" || environment.SMTP_SECURE === "true";
-    const hasUser = Boolean(environment.SMTP_USER);
-    const hasPass = Boolean(environment.SMTP_PASS);
-    const fromSet = Boolean(environment.MAIL_FROM || environment.SMTP_FROM);
-    const cors = environment.CORS_ORIGIN || environment.CORS_ORIGINS || null;
-    return res.json({
-      ok: true,
-      smtp: {
-        configured: usingUrl || hasHost,
-        using_url: usingUrl,
-        has_host: hasHost,
-        port,
-        secure,
-        has_user: hasUser,
-        has_pass: hasPass,
-        from_set: fromSet,
-      },
-      cors_origin: cors,
-    });
-  });
-
   router.post("/api/signup/email", signupRateLimiter, async (req, res) => {
     try {
       if (!req.mobileAuth) {

@@ -787,6 +787,8 @@ export async function createAssignmentDocument(pool, {
       }
       transactionClient = await pool.connect();
       await transactionClient.query("BEGIN");
+      await transactionClient.query("SET LOCAL statement_timeout = '30s'");
+      await transactionClient.query("SET LOCAL idle_in_transaction_session_timeout = '30s'");
       transactionStarted = true;
       const lockKey = normalizedUploadQuota
         ? `assignment-document-upload:${taxProtestFileId}`

@@ -173,6 +173,7 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   const client = {
     async query(sql, values) {
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/^SET LOCAL /.test(sql)) return { rows: [] };
       if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
       if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) return { rows: [] };
       insertValues = values;
@@ -240,6 +241,7 @@ function propertyTaxQuotaPool(usage = {}) {
       events.push({ sql, values });
       if (sql === "COMMIT" && usage.commit_error) throw usage.commit_error;
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/^SET LOCAL /.test(sql)) return { rows: [] };
       if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
       if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) {
         return { rows: usage.existing_document ? [usage.existing_document] : [] };
@@ -317,6 +319,11 @@ test("Property Tax document quota serializes admission and bounds aggregate stor
   });
   assert.equal(result.id, 91);
   const statements = events.map(({ sql }) => sql);
+  const begin = statements.indexOf("BEGIN");
+  assert.deepEqual(statements.slice(begin + 1, begin + 3), [
+    "SET LOCAL statement_timeout = '30s'",
+    "SET LOCAL idle_in_transaction_session_timeout = '30s'",
+  ]);
   assert.ok(statements.indexOf("BEGIN") < statements.findIndex((sql) => /pg_advisory/.test(sql)));
   assert.ok(
     statements.findIndex((sql) => /pg_advisory/.test(sql))

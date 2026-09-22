@@ -618,6 +618,7 @@ test("authenticated UAD document uploads ignore a spoofed uploader and retain ex
   pool.connect = async () => ({
     async query(sql, params = []) {
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/^SET LOCAL /.test(sql)) return { rows: [] };
       if (sql.includes("pg_advisory_xact_lock")) return { rows: [{}] };
       if (sql.includes("SELECT *") && sql.includes("FROM app.assignment_documents")) {
         return { rows: [] };

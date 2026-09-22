@@ -3,6 +3,7 @@ import { createHash, createPublicKey, verify as verifySignature } from "node:cry
 const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
+const DEFAULT_JWKS_REFRESH_COOLDOWN_MILLISECONDS = 30_000;
 const DEFAULT_FETCH_TIMEOUT_MILLISECONDS = 5_000;
 const MAX_OIDC_JSON_BYTES = 256 * 1024;
 const ORIGINAL_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
@@ -224,6 +225,7 @@ export function createOidcAccessTokenVerifier({
   now = () => Date.now(),
   clockToleranceSeconds = 60,
   cacheMilliseconds = DEFAULT_CACHE_MILLISECONDS,
+  refreshCooldownMilliseconds = DEFAULT_JWKS_REFRESH_COOLDOWN_MILLISECONDS,
   fetchTimeoutMilliseconds = DEFAULT_FETCH_TIMEOUT_MILLISECONDS,
 } = {}) {
   const configured = Boolean(issuerValue && audienceValue);
@@ -257,10 +259,18 @@ export function createOidcAccessTokenVerifier({
     100,
     30_000,
   );
+  const refreshCooldown = boundedInteger(
+    refreshCooldownMilliseconds,
+    DEFAULT_JWKS_REFRESH_COOLDOWN_MILLISECONDS,
+    1_000,
+    DEFAULT_CACHE_MILLISECONDS,
+  );
   let discoveryCache = null;
   let jwksCache = null;
   let discoveryPromise = null;
   let jwksPromise = null;
+  let lastJwksRequestAt = null;
+  let lastJwksFailureAt = null;
 
   async function fetchJson(url, code) {
     const controller = new AbortController();
@@ -322,23 +332,49 @@ export function createOidcAccessTokenVerifier({
 
   async function keys({ refresh = false } = {}) {
     const nowMilliseconds = now();
+    if (refresh && jwksPromise) return jwksPromise;
     if (!refresh && jwksCache && jwksCache.expiresAt > nowMilliseconds) return jwksCache.keys;
+    if (
+      lastJwksFailureAt !== null
+      && nowMilliseconds - lastJwksFailureAt < refreshCooldown
+    ) {
+      throw providerUnavailable("oidc_jwks_unavailable");
+    }
+    // A token with an attacker-selected unknown kid must not force one provider
+    // request per verification attempt. Reuse a still-valid cache during the
+    // short refresh cooldown; a genuine rotation is retried after it expires.
+    if (
+      refresh
+      && jwksCache
+      && jwksCache.expiresAt > nowMilliseconds
+      && lastJwksRequestAt !== null
+      && nowMilliseconds - lastJwksRequestAt < refreshCooldown
+    ) {
+      return jwksCache.keys;
+    }
     if (!jwksPromise) {
+      lastJwksRequestAt = nowMilliseconds;
       jwksPromise = (async () => {
-        const jwks = await fetchJson(await resolveJwksUri(), "oidc_jwks_unavailable");
-        if (!Array.isArray(jwks?.keys)) throw providerUnavailable("invalid_oidc_jwks");
-        const imported = new Map();
-        for (const jwk of jwks.keys) {
-          if (jwk?.kty !== "RSA" || !jwk.kid || (jwk.use && jwk.use !== "sig")) continue;
-          if (jwk.alg && jwk.alg !== "RS256") continue;
-          try {
-            imported.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
-          } catch {
-            // Ignore malformed or unsupported keys. A usable matching key is required below.
+        try {
+          const jwks = await fetchJson(await resolveJwksUri(), "oidc_jwks_unavailable");
+          if (!Array.isArray(jwks?.keys)) throw providerUnavailable("invalid_oidc_jwks");
+          const imported = new Map();
+          for (const jwk of jwks.keys) {
+            if (jwk?.kty !== "RSA" || !jwk.kid || (jwk.use && jwk.use !== "sig")) continue;
+            if (jwk.alg && jwk.alg !== "RS256") continue;
+            try {
+              imported.set(jwk.kid, createPublicKey({ key: jwk, format: "jwk" }));
+            } catch {
+              // Ignore malformed or unsupported keys. A usable matching key is required below.
+            }
           }
+          lastJwksFailureAt = null;
+          jwksCache = { keys: imported, expiresAt: now() + cacheMilliseconds };
+          return imported;
+        } catch (error) {
+          lastJwksFailureAt = now();
+          throw error;
         }
-        jwksCache = { keys: imported, expiresAt: now() + cacheMilliseconds };
-        return imported;
       })();
     }
     const pending = jwksPromise;

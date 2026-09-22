@@ -4,6 +4,7 @@ import test from "node:test";
 
 import express from "express";
 
+import { UAD_ASSET_UPLOAD_RESERVATION_LIMITS } from "../src/modules/uad/assets.js";
 import { createUadRouter, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
@@ -703,6 +704,75 @@ test("authenticated UAD document uploads ignore a spoofed uploader and retain ex
 
   assert.equal(insert.params[11], USER_ID);
   assert.equal(responseBody.document.uploaded_by, USER_ID);
+});
+
+test("UAD asset upload reservation exhaustion returns a bounded conflict before URL signing", async () => {
+  const basePool = securityPool();
+  let released = 0;
+  const client = {
+    async query(sql, params = []) {
+      const statement = String(sql).trim().replace(/\s+/g, " ");
+      if (["BEGIN ISOLATION LEVEL READ COMMITTED", "COMMIT", "ROLLBACK"].includes(statement)) {
+        return { rows: [] };
+      }
+      if (statement.includes("FROM appraisal.uad_workfiles") && statement.endsWith("FOR UPDATE")) {
+        assert.deepEqual(params, [WORKFILE_ID]);
+        return { rows: [{
+          id: WORKFILE_ID,
+          organization_id: ORGANIZATION_ID,
+          status: "draft",
+          signed_at: null,
+        }] };
+      }
+      if (statement.includes("FROM appraisal.uad_signatures")) {
+        return { rows: [{ has_signatures: false }] };
+      }
+      if (statement.startsWith("WITH expired_candidates AS (")) return { rows: [] };
+      if (statement.includes("AS pending_count") && statement.includes("AS pending_bytes")) {
+        return { rows: [{
+          pending_count: UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads,
+          pending_bytes: 0,
+        }] };
+      }
+      throw new Error(`unexpected asset reservation query: ${statement}`);
+    },
+    release() {
+      released += 1;
+    },
+  };
+  const pool = {
+    ...basePool,
+    async connect() {
+      return client;
+    },
+  };
+  const storage = {
+    provider: "r2",
+    configured: true,
+    bucket: "synthetic-private-assets",
+    createUploadUrl() {
+      assert.fail("capacity rejection must occur before URL signing");
+    },
+  };
+
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/assets/upload-url`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer synthetic-token",
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        asset_kind: "photo",
+        content_type: "image/jpeg",
+        file_name: "bounded.jpg",
+        byte_size: 1024,
+      }),
+    });
+    assert.equal(response.status, 409);
+    assert.deepEqual(await response.json(), { error: "uad_asset_upload_capacity_exceeded" });
+  }, {}, { storage });
+  assert.equal(released, 1);
 });
 
 test("UAD document uploads deny unauthorized callers before schema, document, or storage access", async () => {

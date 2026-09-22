@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createUadAssetUpload } from "../src/modules/uad/assets.js";
+import {
+  createUadAssetUpload,
+  UAD_ASSET_UPLOAD_RESERVATION_LIMITS,
+} from "../src/modules/uad/assets.js";
+import { buildUadObjectKey } from "../src/modules/uad/r2Storage.js";
 
 const WORKFILE_ID = "11111111-1111-4111-8111-111111111111";
 const ORGANIZATION_ID = "22222222-2222-4222-8222-222222222222";
@@ -30,9 +34,14 @@ function uploadHarness({
   emptyInsert = false,
   commitError = null,
   rollbackError = null,
+  expiredReservations = [],
+  pendingCount = 0,
+  pendingBytes = 0,
+  deleteObjectImpl = null,
 } = {}) {
   const statements = [];
   const storageCalls = [];
+  const deletedObjects = [];
   const mutationQueries = [];
   let connectCount = 0;
   let releaseCount = 0;
@@ -60,6 +69,23 @@ function uploadHarness({
       assert.deepEqual(parameters, [WORKFILE_ID]);
       if (signatureError) throw signatureError;
       return signatureResult;
+    }
+    if (statement.startsWith("WITH expired_candidates AS (")
+      && statement.includes("uad_asset.upload_reservation_expired")) {
+      assert.deepEqual(parameters, [
+        WORKFILE_ID,
+        "24 hours",
+        UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupBatchSize,
+      ]);
+      return { rows: expiredReservations };
+    }
+    if (statement.includes("AS pending_count") && statement.includes("AS pending_bytes")) {
+      assert.deepEqual(parameters, [
+        WORKFILE_ID,
+        UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads + 1,
+        50 * 1024 * 1024,
+      ]);
+      return { rows: [{ pending_count: pendingCount, pending_bytes: pendingBytes }] };
     }
     if (
       statement.startsWith("WITH mutable_workfile AS (")
@@ -121,6 +147,10 @@ function uploadHarness({
         expires_in_seconds: 900,
       };
     },
+    async deleteObject({ objectKey }) {
+      deletedObjects.push(objectKey);
+      await deleteObjectImpl?.({ objectKey });
+    },
   };
 
   return {
@@ -128,6 +158,7 @@ function uploadHarness({
     storage,
     statements,
     storageCalls,
+    deletedObjects,
     mutationQueries,
     get connectCount() { return connectCount; },
     get releaseCount() { return releaseCount; },
@@ -253,6 +284,113 @@ test("asset upload creation preserves every explicitly unsigned mutable workflow
     assert.equal(harness.releaseCount, 1);
     assert.equal(harness.statements.at(-1)?.statement, "RELEASE");
   }
+});
+
+test("asset upload creation bounds pending count and bytes before signing another capability", async () => {
+  const boundaryHarness = uploadHarness({
+    pendingCount: UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads - 1,
+    pendingBytes: UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingBytes - UPLOAD_INPUT.byte_size,
+  });
+  const admitted = await createUadAssetUpload(
+    boundaryHarness.pool,
+    boundaryHarness.storage,
+    WORKFILE_ID,
+    UPLOAD_INPUT,
+  );
+  assert.match(admitted.asset_id, /^[0-9a-f-]{36}$/);
+  assert.equal(boundaryHarness.storageCalls.length, 1);
+  assert.equal(boundaryHarness.mutationQueries.length, 1);
+
+  for (const options of [
+    { pendingCount: UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingUploads },
+    {
+      pendingCount: 1,
+      pendingBytes: UAD_ASSET_UPLOAD_RESERVATION_LIMITS.maximumPendingBytes - UPLOAD_INPUT.byte_size + 1,
+    },
+  ]) {
+    const harness = uploadHarness(options);
+    const outcome = await captureUpload(harness);
+    assert.equal(outcome.result, undefined);
+    assert.match(outcome.error?.message || "", /uad_asset_upload_capacity_exceeded/);
+    assert.deepEqual(harness.storageCalls, []);
+    assert.deepEqual(harness.mutationQueries, []);
+    assert.ok(harness.statements.some(({ statement }) => statement === "COMMIT"));
+    assert.equal(harness.statements.some(({ statement }) => statement === "ROLLBACK"), false);
+    assert.equal(harness.releaseCount, 1);
+  }
+});
+
+test("asset upload creation audits and removes stale reservations then deletes only exact owned keys", async () => {
+  const expiredId = "33333333-3333-4333-8333-333333333333";
+  const expiredName = "expired-photo.jpg";
+  const ownedKey = buildUadObjectKey({
+    organizationId: ORGANIZATION_ID,
+    workfileId: WORKFILE_ID,
+    assetId: expiredId,
+    fileName: expiredName,
+  });
+  const harness = uploadHarness({
+    expiredReservations: [
+      { id: expiredId, object_key: ownedKey, original_file_name: expiredName },
+      {
+        id: "44444444-4444-4444-8444-444444444444",
+        object_key: "organizations/another-organization/uad/foreign-object.jpg",
+        original_file_name: "foreign-object.jpg",
+      },
+    ],
+  });
+  const result = await createUadAssetUpload(
+    harness.pool,
+    harness.storage,
+    WORKFILE_ID,
+    UPLOAD_INPUT,
+  );
+  assert.match(result.asset_id, /^[0-9a-f-]{36}$/);
+  assert.deepEqual(harness.deletedObjects, [ownedKey]);
+  const commit = statementIndex(harness, (statement) => statement === "COMMIT");
+  const release = statementIndex(harness, (statement) => statement === "RELEASE");
+  assert.ok(release > commit);
+});
+
+test("expired reservation cleanup has bounded concurrency and cannot hold the upload response open", async () => {
+  const reservationCount = UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency + 1;
+  const expiredReservations = Array.from({ length: reservationCount }, (_, index) => {
+    const id = `33333333-3333-4333-8333-${String(index).padStart(12, "0")}`;
+    const original_file_name = `expired-${index}.jpg`;
+    return {
+      id,
+      original_file_name,
+      object_key: buildUadObjectKey({
+        organizationId: ORGANIZATION_ID,
+        workfileId: WORKFILE_ID,
+        assetId: id,
+        fileName: original_file_name,
+      }),
+    };
+  });
+  const releases = [];
+  const harness = uploadHarness({
+    expiredReservations,
+    deleteObjectImpl: () => new Promise((resolve) => releases.push(resolve)),
+  });
+  let safetyTimer;
+  try {
+    const result = await Promise.race([
+      createUadAssetUpload(harness.pool, harness.storage, WORKFILE_ID, UPLOAD_INPUT),
+      new Promise((_, reject) => {
+        safetyTimer = setTimeout(() => reject(new Error("cleanup_response_budget_not_enforced")), 2_000);
+      }),
+    ]);
+    assert.match(result.asset_id, /^[0-9a-f-]{36}$/);
+    assert.equal(harness.deletedObjects.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency);
+    assert.equal(releases.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency);
+  } finally {
+    clearTimeout(safetyTimer);
+    for (const release of releases) release();
+  }
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(harness.deletedObjects.length, UAD_ASSET_UPLOAD_RESERVATION_LIMITS.cleanupConcurrency,
+    "workers stop accepting more cleanup work after the response budget is exhausted");
 });
 
 test("asset upload creation preserves terminal-status refusals before storage or mutation", async () => {

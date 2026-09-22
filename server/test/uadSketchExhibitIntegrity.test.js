@@ -208,6 +208,24 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
       log("applicability"); assert.deepEqual(parameters, [WORKFILE_ID, ["3300.0002"]]);
       return { rows: [{ uad_uid: "3300.0002", value: true }] };
     }
+    if (sql.startsWith("WITH expired_candidates AS (")
+      && sql.includes("uad_asset.upload_reservation_expired")) {
+      assert.ok(client?.transaction); assert.equal(client.phase, "creation");
+      log("expired_upload_cleanup"); assert.equal(parameters[0], WORKFILE_ID);
+      return { rows: [] };
+    }
+    if (sql.includes("AS pending_count") && sql.includes("AS pending_bytes")) {
+      assert.ok(client?.transaction); assert.equal(client.phase, "creation");
+      log("pending_upload_capacity"); assert.equal(parameters[0], WORKFILE_ID);
+      const pending = [...state.assets.values()].filter(row => row.status === "pending_upload");
+      return { rows: [{
+        pending_count: pending.length,
+        pending_bytes: pending.reduce(
+          (total, row) => total + Number(row.capture_metadata?.expected_byte_size || parameters[2]),
+          0,
+        ),
+      }] };
+    }
     if (sql.startsWith("WITH mutable_workfile") && sql.includes("inserted_asset AS")) {
       assert.ok(client?.transaction?.snapshot); assert.equal(client.phase, "creation");
       log("create_asset"); assert.equal(parameters[1], WORKFILE_ID);
@@ -406,7 +424,10 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
         && client.phase === "creation" && client.transaction !== null);
       assert.ok(creator, "upload capability is created inside its admitted creation transaction");
       assert.deepEqual(phaseCalls(state, "creation", label).map(call => call.kind),
-        ["begin", "asset_workfile", "signatures", "applicability"]);
+        [
+          "begin", "asset_workfile", "signatures", "applicability",
+          "expired_upload_cleanup", "pending_upload_capacity",
+        ]);
       state.storageCalls.push({ label, kind: "upload_url", objectKey, contentType });
       return { url: "https://unused-synthetic.invalid/upload", method: "PUT", headers: {}, expires_in_seconds: 900 };
     },
@@ -458,7 +479,9 @@ function harness({ existingRender = null, onCanonicalLock = null, lockError = nu
     assert.equal(creators.length, state.createdAssetIds.length);
     for (const creator of creators) {
       assert.deepEqual(state.calls.filter(call => call.client === creator.name).map(call => call.kind), [
-        "begin", "asset_workfile", "signatures", "applicability", "create_asset", "commit", "release",
+        "begin", "asset_workfile", "signatures", "applicability",
+        "expired_upload_cleanup", "pending_upload_capacity",
+        "create_asset", "commit", "release",
       ]);
     }
     for (const [label, stage] of state.verificationStages) {

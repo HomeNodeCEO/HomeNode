@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import {
-  getPreviousAppraisalFiles,
   replicatePreviousAppraisalFile,
   type AppraisalHistoryWorkflow,
   type AppraisalReplicationMode,
   type PreviousAppraisalFile,
 } from '@/lib/api';
+import { getPreviousAppraisalFiles } from '@/lib/appraisalHistoryApi';
 import {
   forgetEditorCredential,
   requestEditorCredential,
@@ -250,7 +250,7 @@ export default function PreviousAppraisalFiles({
     setLoadingMore(true);
     setError('');
     try {
-      const response = await getPreviousAppraisalFiles(accountId, { cursor: nextCursor });
+      const response = await getPreviousAppraisalFiles(accountId, nextCursor);
       if (generation !== loadGeneration.current) return;
       setFiles((current) => {
         const byId = new Map(current.map((file) => [file.id, file]));

@@ -140,6 +140,24 @@ function httpsUrl(value, code) {
   return parsed.toString();
 }
 
+function sameOriginProviderUrl(value, issuer, code) {
+  let parsed;
+  try {
+    parsed = new URL(httpsUrl(value, code));
+  } catch {
+    throw new Error(code);
+  }
+  if (
+    parsed.origin !== new URL(issuer).origin
+    || parsed.username
+    || parsed.password
+    || parsed.hash
+  ) {
+    throw new Error(code);
+  }
+  return parsed.toString();
+}
+
 export function normalizeOidcIssuer(value) {
   const raw = String(value || "").trim();
   const parsed = new URL(httpsUrl(raw, "invalid_oidc_issuer"));
@@ -250,9 +268,13 @@ export function createOidcAccessTokenVerifier({
     try {
       const response = await fetchImpl(url, {
         headers: { accept: "application/json" },
+        redirect: "error",
         signal: controller.signal,
       });
-      if (!response?.ok) throw providerUnavailable(code);
+      if (!response?.ok || response.redirected) {
+        await response?.body?.cancel?.().catch(() => undefined);
+        throw providerUnavailable(code);
+      }
       return await readBoundedJsonResponse(response, MAX_OIDC_JSON_BYTES);
     } catch {
       throw providerUnavailable(code);
@@ -278,7 +300,11 @@ export function createOidcAccessTokenVerifier({
         }
         let jwksUri;
         try {
-          jwksUri = httpsUrl(discovery?.jwks_uri, "invalid_oidc_jwks_uri");
+          jwksUri = sameOriginProviderUrl(
+            discovery?.jwks_uri,
+            issuer,
+            "invalid_oidc_jwks_uri",
+          );
         } catch {
           throw providerUnavailable("invalid_oidc_jwks_uri");
         }

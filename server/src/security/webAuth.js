@@ -67,8 +67,21 @@ async function fetchWithDeadline(fetchImpl, url, init, timeoutMs, errorCode, con
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   let response;
   try {
-    response = await fetchImpl(url, { ...init, signal: controller.signal });
+    response = await fetchImpl(url, {
+      ...init,
+      redirect: "error",
+      signal: controller.signal,
+    });
   } catch {
+    clearTimeout(timer);
+    throw new Error(errorCode);
+  }
+  if (!response || typeof response.ok !== "boolean" || response.redirected) {
+    try {
+      await response?.body?.cancel?.();
+    } catch {
+      // The provider response is already rejected; cancellation is best-effort cleanup.
+    }
     clearTimeout(timer);
     throw new Error(errorCode);
   }
@@ -77,6 +90,27 @@ async function fetchWithDeadline(fetchImpl, url, init, timeoutMs, errorCode, con
   } finally {
     clearTimeout(timer);
   }
+}
+
+function sameOriginProviderEndpoint(value, issuer) {
+  let endpoint;
+  let issuerUrl;
+  try {
+    endpoint = new URL(String(value || ""));
+    issuerUrl = new URL(String(issuer || ""));
+  } catch {
+    throw new Error("invalid_oidc_discovery");
+  }
+  if (
+    endpoint.protocol !== "https:"
+    || endpoint.origin !== issuerUrl.origin
+    || endpoint.username
+    || endpoint.password
+    || endpoint.hash
+  ) {
+    throw new Error("invalid_oidc_discovery");
+  }
+  return endpoint.toString();
 }
 
 async function readBoundedProviderJson(response) {
@@ -455,7 +489,14 @@ export function createWebAuthRouter({
         if (value.issuer !== verifier.issuer || !value.authorization_endpoint || !value.token_endpoint) {
           throw new Error("invalid_oidc_discovery");
         }
-        discovery = value;
+        discovery = Object.freeze({
+          ...value,
+          authorization_endpoint: sameOriginProviderEndpoint(
+            value.authorization_endpoint,
+            verifier.issuer,
+          ),
+          token_endpoint: sameOriginProviderEndpoint(value.token_endpoint, verifier.issuer),
+        });
         return discovery;
       })();
     }

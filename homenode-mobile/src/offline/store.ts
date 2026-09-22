@@ -774,6 +774,7 @@ async function initializeDatabase() {
 type OfflineDatabaseConnection = {
   closedForExternalActivity: boolean;
   database: SQLite.SQLiteDatabase;
+  pendingClose: Promise<void> | null;
   repair: Promise<void> | null;
 };
 
@@ -784,6 +785,7 @@ function openDatabase() {
     .then((database) => ({
       closedForExternalActivity: false,
       database,
+      pendingClose: null,
       repair: null,
     }))
     .catch((reason) => {
@@ -812,13 +814,21 @@ export class OfflineStore {
 
   async prepareForExternalActivity() {
     if (this.connection.repair) await this.connection.repair;
+    if (this.connection.pendingClose) return this.connection.pendingClose;
     if (this.connection.closedForExternalActivity) return;
     this.connection.closedForExternalActivity = true;
     const previous = this.connection.database;
-    await previous.closeAsync().catch(() => undefined);
+    const pendingClose = previous.closeAsync().finally(() => {
+      if (this.connection.pendingClose === pendingClose) this.connection.pendingClose = null;
+    });
+    this.connection.pendingClose = pendingClose;
+    return pendingClose;
   }
 
   async ensureReady() {
+    if (this.connection.pendingClose) {
+      await this.connection.pendingClose.catch(() => undefined);
+    }
     if (this.connection.repair) return this.connection.repair;
     if (!this.connection.closedForExternalActivity) {
       try {
@@ -828,9 +838,13 @@ export class OfflineStore {
         if (!isUnreadableSqliteDatabaseError(reason)) throw reason;
       }
     }
+    if (this.connection.pendingClose) {
+      await this.connection.pendingClose.catch(() => undefined);
+    }
     if (this.connection.repair) return this.connection.repair;
     this.connection.repair = (async () => {
       const previous = this.connection.database;
+      this.connection.closedForExternalActivity = true;
       await previous.closeAsync().catch(() => undefined);
       this.connection.database = await initializeDatabase();
       this.connection.closedForExternalActivity = false;

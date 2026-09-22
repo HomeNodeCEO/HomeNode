@@ -81,9 +81,13 @@ test("SQLCipher legacy cleanup includes stored and canonical plaintext candidate
 
 test("offline store wrappers share external-activity connection lifecycle state", () => {
   const source = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
-  assert.match(source, /type OfflineDatabaseConnection = \{[\s\S]*closedForExternalActivity: boolean;[\s\S]*database: SQLite\.SQLiteDatabase;[\s\S]*repair: Promise<void> \| null;/);
+  const prepareForExternalActivity = source.match(/async prepareForExternalActivity\(\)[\s\S]*?\n  }\n\n  async ensureReady\(\)/)?.[0] || "";
+  assert.match(source, /type OfflineDatabaseConnection = \{[\s\S]*closedForExternalActivity: boolean;[\s\S]*database: SQLite\.SQLiteDatabase;[\s\S]*pendingClose: Promise<void> \| null;[\s\S]*repair: Promise<void> \| null;/);
   assert.match(source, /private constructor\(private readonly connection: OfflineDatabaseConnection\)/);
-  assert.match(source, /this\.connection\.closedForExternalActivity = true/);
+  assert.match(prepareForExternalActivity, /const pendingClose = previous\.closeAsync\(\)\.finally\([\s\S]*this\.connection\.pendingClose = pendingClose;[\s\S]*return pendingClose;/);
+  assert.doesNotMatch(prepareForExternalActivity, /closeAsync\(\)\.catch\(\(\) => undefined\)/);
+  assert.match(source, /async ensureReady\(\) \{[\s\S]*if \(this\.connection\.pendingClose\)[\s\S]*await this\.connection\.pendingClose\.catch\(\(\) => undefined\);/);
+  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await initializeDatabase\(\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
   assert.match(source, /this\.connection\.database = await initializeDatabase\(\)/);
   assert.doesNotMatch(source, /private closedForExternalActivity|private connectionRepair/);
 });

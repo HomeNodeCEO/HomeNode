@@ -200,7 +200,7 @@ export function validateCustomMarketGeometry(value) {
 export function parseMarketAreaKeys(value) {
   const values = Array.isArray(value)
     ? value
-    : String(value || "").split(",");
+    : String(value || "").split(",", MARKET_AREA_KEYS.length + 2);
   // A conventional single trailing delimiter does not represent another area.
   // Retain all other raw segments until after the bound check so repeated
   // delimiters or duplicate inputs cannot inflate parsing work without limit.

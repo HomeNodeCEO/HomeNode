@@ -193,6 +193,10 @@ test("market area selection rejects work beyond the supported scope count", () =
     () => parseMarketAreaKeys(`city,${",".repeat(MARKET_AREA_KEYS.length)}`),
     /market_area_limit_exceeded/,
   );
+  assert.throws(
+    () => parseMarketAreaKeys(`city,${",".repeat(1_000_000)}`),
+    /market_area_limit_exceeded/,
+  );
 });
 
 test("a single trailing comma does not reject the complete supported area selection", () => {

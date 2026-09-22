@@ -16,7 +16,9 @@ import {
   comparableSaleKey,
   formatComparableCurrency,
   formatComparableSquareFeet,
+  groupedBreakdownSummary,
   parseComparableSaleNumber,
+  signedAdjustment,
 } from '../src/lib/comparableSalePresentation.ts';
 
 test('extracted comparable formatters preserve sales-grid values', () => {
@@ -28,6 +30,21 @@ test('extracted comparable formatters preserve sales-grid values', () => {
   assert.equal(parseComparableSaleNumber('1.2.3'), null);
   assert.equal(comparableSaleKey({ source_record_id: 12, sale_id: 7 }), 'source-12');
   assert.equal(comparableSaleKey({ source_record_id: null, sale_id: 7 }), 'legacy-7');
+});
+
+test('extracted adjustment summaries preserve selected and affected sale counts', () => {
+  assert.equal(signedAdjustment(12_000), '+$12,000');
+  assert.equal(signedAdjustment(-500), '−$500');
+  assert.match(groupedBreakdownSummary('pool', [0], [], [{}]), /No market adjustment has been applied yet/);
+  const study = {
+    id: 'study:1', dimensionKey: 'pool', marketLabel: 'Local market',
+    transitionLabel: 'Pool', optionLabel: 'Adjustment', baseAmount: 15_000,
+    amount: 7_500, factorPercent: 50,
+  };
+  assert.match(
+    groupedBreakdownSummary('pool', [7_500, 0], [study], [{}, {}]),
+    /adjusts 1 of 2 selected comparables/,
+  );
 });
 
 test('array helpers preserve the established comparable-slot behavior', () => {

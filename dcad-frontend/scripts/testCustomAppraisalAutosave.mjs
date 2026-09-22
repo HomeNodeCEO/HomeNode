@@ -31,6 +31,12 @@ test("sales comparison stops showing Loading after a successful DB-backed subjec
   assert.match(salesComparisonSource, /await loadComparableSubject\([^;]+;\s*\} catch \(loadError: unknown\) \{[\s\S]*?\} finally \{\s*setLoading\(false\);/u);
 });
 
+test("server drafts seed autosave dedupe and stale conflict reloads cannot apply", () => {
+  assert.match(salesComparisonSource, /lastSavedWorkfileFingerprintRef\.current = serverDraft\s*\? salesComparisonDraftFingerprint\(serverDraft\)\s*: null;/u);
+  assert.match(salesComparisonSource, /loadCustomAppraisalWorkfile\(propertyId, saveAssignmentFile\.id\)\s*\.then\(\(result\) => \{\s*if \(!selectionIsCurrent\(\)\) return;/u);
+  assert.match(salesComparisonSource, /workfileFollowupTimerRef\.current = window\.setTimeout\(\(\) => \{\s*workfileFollowupTimerRef\.current = null;\s*if \(selectionIsCurrent\(\)\) flushWorkfileSaveRef\.current\(\);/u);
+});
+
 test("sales comparison dedupes only unchanged content, not timestamps", () => {
   const first = { assignmentFileId: 42, savedAt: "first", salesNotes: "Initial" };
   assert.equal(

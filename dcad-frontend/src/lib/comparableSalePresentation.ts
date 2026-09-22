@@ -1,4 +1,5 @@
 import type { ContractPriceSupportAnalysis, SaleRow } from './api';
+import type { AppliedGroupedAdjustment } from '../components/GroupedAdjustmentAnalysis';
 import { monthsBeforeDate } from './comparableSalesPresentation.ts';
 
 export function formatComparableSquareFeet(value: unknown): string {
@@ -23,6 +24,59 @@ export function parseComparableSaleNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
   const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
   return Number.isFinite(parsed) ? parsed : null;
+}
+
+export function signedAdjustment(value: number): string {
+  const formatted = formatComparableCurrency(Math.abs(value));
+  return value > 0 ? `+${formatted}` : value < 0 ? `−${formatted}` : formatted;
+}
+
+export function groupedBreakdownSummary(
+  dimensionKey: AppliedGroupedAdjustment['dimensionKey'],
+  gridAdjustments: number[],
+  appliedStudies: AppliedGroupedAdjustment[],
+  selectedSales: Array<SaleRow | null>,
+): string {
+  const studies = appliedStudies.filter((adjustment) => adjustment.dimensionKey === dimensionKey);
+  if (!studies.length) {
+    return 'No market adjustment has been applied yet. Run a supported methodology above, enter any desired factor, and apply its result to update the grid.';
+  }
+  const study = studies[studies.length - 1];
+  const isPairedStudy = study.id.startsWith('paired:');
+  const unitLabel = dimensionKey === 'bathrooms'
+    ? 'full-bath equivalent'
+    : dimensionKey === 'garage'
+      ? 'garage space'
+    : dimensionKey === 'living_area'
+        ? 'square foot'
+        : dimensionKey === 'site_size'
+          ? 'site square foot'
+          : dimensionKey === 'age'
+            ? 'year of age'
+        : 'pool difference';
+  const hasLivingAreaFormula =
+    (dimensionKey === 'living_area' || dimensionKey === 'site_size') &&
+    study.sourcePriceDifference != null &&
+    study.sourceLivingAreaDifference != null &&
+    Number.isFinite(study.sourcePriceDifference) &&
+    Number.isFinite(study.sourceLivingAreaDifference) &&
+    study.sourceLivingAreaDifference > 0;
+  const appliedText = hasLivingAreaFormula
+    ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
+      `${signedAdjustment(study.sourcePriceDifference!)} ÷ ` +
+      `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(study.sourceLivingAreaDifference!)} SF = ` +
+      `${signedAdjustment(study.baseAmount)} per SF; ${study.factorPercent}% factoring = ` +
+      `${signedAdjustment(study.amount)} per SF`
+    : isPairedStudy
+      ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
+        `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% factoring = ` +
+        `${signedAdjustment(study.amount)} per ${unitLabel}`
+      : `${study.marketLabel} — ${study.transitionLabel} study selected: ` +
+        `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ` +
+        `${signedAdjustment(study.amount)} per ${unitLabel}`;
+  const selectedCount = selectedSales.filter(Boolean).length;
+  const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
+  return `${appliedText}. This universal rate currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
 }
 
 export function saleDateDisplay(value: string | null): string {

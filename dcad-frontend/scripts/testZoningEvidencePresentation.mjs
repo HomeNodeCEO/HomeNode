@@ -77,3 +77,22 @@ test("assignment changes clear zoning state and stale scopes cannot save", () =>
   );
   assert.match(hookSource, /}, \[accountId, assignmentFileId\]\);/);
 });
+
+test("pending zoning saves and prefills cannot update a replacement assignment", () => {
+  const hookSource = fs.readFileSync(
+    new URL("../src/hooks/useZoningEvidence.ts", import.meta.url),
+    "utf8",
+  );
+  const currentScopeGuard = /requestVersion === requestVersionRef\.current\s*&& zoningEvidenceScopeRef\.current === scopeKey/g;
+  assert.equal(
+    [...hookSource.matchAll(currentScopeGuard)].length,
+    2,
+    "save and prefill operations must each bind their updates to the captured assignment scope",
+  );
+  assert.match(hookSource, /const response = await savePropertyZoningVerification\([\s\S]*if \(!isCurrentScope\(\)\) return;[\s\S]*hydrateZoningEvidence\(/);
+  assert.match(hookSource, /const result = await getZoningDocumentDescriptionSuggestion\([\s\S]*if \(!isCurrentScope\(\)\) return;[\s\S]*setZoningDraft\(/);
+  assert.match(
+    hookSource,
+    /}, \[\s*accountId,\s*assignmentFileId,\s*zoningDraft\.sourceDocumentId,/,
+  );
+});

@@ -120,6 +120,11 @@ export function useZoningEvidence({
     if (!accountId || !assignmentFileId || !zoningEvidence?.jurisdiction) return;
     const scopeKey = zoningEvidenceScopeKey(accountId, assignmentFileId);
     if (zoningEvidenceScopeRef.current !== scopeKey) return;
+    const requestVersion = requestVersionRef.current;
+    const isCurrentScope = () => (
+      requestVersion === requestVersionRef.current
+      && zoningEvidenceScopeRef.current === scopeKey
+    );
     if (!zoningDraft.zoningCode.trim()) {
       setZoningEvidenceMessage("Enter the confirmed zoning code before saving.");
       return;
@@ -155,6 +160,7 @@ export function useZoningEvidence({
         },
         editorKey,
       );
+      if (!isCurrentScope()) return;
       hydrateZoningEvidence({
         ...zoningEvidence,
         review_required: false,
@@ -162,15 +168,19 @@ export function useZoningEvidence({
       }, scopeKey);
       setZoningEvidenceMessage("Confirmed zoning and source provenance saved to this property file.");
     } catch (error) {
+      if (!isCurrentScope()) return;
       const message = error instanceof Error ? error.message : "The zoning verification could not be saved.";
       if (/401|invalid_editor_key/i.test(message)) credentialRejectedRef.current();
       setZoningEvidenceMessage(message);
     } finally {
-      setZoningEvidenceLoading(false);
+      if (isCurrentScope()) setZoningEvidenceLoading(false);
     }
   }, [accountId, assignmentFileId, hydrateZoningEvidence, zoningDraft, zoningEvidence]);
 
   const prefillVerbatimZoningDescription = useCallback(async () => {
+    if (!accountId || !assignmentFileId) return;
+    const scopeKey = zoningEvidenceScopeKey(accountId, assignmentFileId);
+    if (zoningEvidenceScopeRef.current !== scopeKey) return;
     const sourceDocument = zoningEvidence?.documents.find(
       (document) => String(document.id) === zoningDraft.sourceDocumentId,
     ) || zoningEvidence?.documents[0] || null;
@@ -178,6 +188,11 @@ export function useZoningEvidence({
       setZoningEvidenceMessage("Select an official PDF and enter the zoning code first.");
       return;
     }
+    const requestVersion = requestVersionRef.current;
+    const isCurrentScope = () => (
+      requestVersion === requestVersionRef.current
+      && zoningEvidenceScopeRef.current === scopeKey
+    );
     setZoningEvidenceLoading(true);
     setZoningEvidenceMessage("");
     try {
@@ -185,6 +200,7 @@ export function useZoningEvidence({
         sourceDocument.id,
         zoningDraft.zoningCode.trim(),
       );
+      if (!isCurrentScope()) return;
       if (!result.suggestion?.raw_value) {
         setZoningEvidenceMessage(
           "That code was not found beside a reliable description in the PDF text layer. Review the visible document and city contact before confirming.",
@@ -202,13 +218,20 @@ export function useZoningEvidence({
         `Prefilled the exact wording found on PDF page ${result.suggestion.page_number || "unknown"}. Appraiser confirmation is still required.`,
       );
     } catch (error) {
+      if (!isCurrentScope()) return;
       setZoningEvidenceMessage(
         error instanceof Error ? error.message : "The zoning description could not be suggested.",
       );
     } finally {
-      setZoningEvidenceLoading(false);
+      if (isCurrentScope()) setZoningEvidenceLoading(false);
     }
-  }, [zoningDraft.sourceDocumentId, zoningDraft.zoningCode, zoningEvidence]);
+  }, [
+    accountId,
+    assignmentFileId,
+    zoningDraft.sourceDocumentId,
+    zoningDraft.zoningCode,
+    zoningEvidence,
+  ]);
 
   return {
     zoningEvidence,

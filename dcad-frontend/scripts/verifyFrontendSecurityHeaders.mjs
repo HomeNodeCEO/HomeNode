@@ -8,6 +8,7 @@ export const EXPECTED_R2_ORIGIN =
 export const RETIRED_R2_ORIGIN =
   'https://e407656745429dce8902facc0209852d.r2.cloudflarestorage.com'
 
+/** Parse a Content-Security-Policy header into directive/source entries. */
 export function parseContentSecurityPolicy(policy) {
   const directives = new Map()
 
@@ -20,6 +21,7 @@ export function parseContentSecurityPolicy(policy) {
   return directives
 }
 
+/** Return all security-header policy violations without mutating the input. */
 export function validateFrontendSecurityHeaders(headers) {
   const normalized = Object.fromEntries(
     Object.entries(headers || {}).map(([name, value]) => [
@@ -76,15 +78,11 @@ export function validateFrontendSecurityHeaders(headers) {
   return { errors, policy }
 }
 
-export function fetchFrontendHeaders(rawUrl, timeoutMs = 15_000) {
-  const target = new URL(rawUrl)
-  if (target.protocol !== 'https:' || target.username || target.password) {
-    throw new Error('Frontend verification URL must be credential-free HTTPS')
-  }
-
+/** Read headers only from the immutable production frontend target. */
+export function fetchFrontendHeaders(timeoutMs = 15_000) {
   return new Promise((resolveRequest, rejectRequest) => {
     const request = https.get(
-      target,
+      DEFAULT_FRONTEND_URL,
       {
         headers: {
           'Cache-Control': 'no-cache',
@@ -105,14 +103,15 @@ export function fetchFrontendHeaders(rawUrl, timeoutMs = 15_000) {
   })
 }
 
-export async function verifyDeployedFrontend(rawUrl = DEFAULT_FRONTEND_URL) {
-  const headers = await fetchFrontendHeaders(rawUrl)
+/** Verify the security headers served by the production frontend. */
+export async function verifyDeployedFrontend() {
+  const headers = await fetchFrontendHeaders()
   const result = validateFrontendSecurityHeaders(headers)
   if (result.errors.length > 0) {
     throw new Error(`Deployed frontend security-header verification failed:\n- ${result.errors.join('\n- ')}`)
   }
   return {
-    url: rawUrl,
+    url: DEFAULT_FRONTEND_URL,
     contentSecurityPolicy: result.policy,
     verified: true,
   }
@@ -120,7 +119,7 @@ export async function verifyDeployedFrontend(rawUrl = DEFAULT_FRONTEND_URL) {
 
 const isCli = process.argv[1] && pathToFileURL(resolve(process.argv[1])).href === import.meta.url
 if (isCli) {
-  verifyDeployedFrontend(process.env.FRONTEND_URL || DEFAULT_FRONTEND_URL)
+  verifyDeployedFrontend()
     .then((result) => console.log(JSON.stringify(result, null, 2)))
     .catch((error) => {
       console.error(error instanceof Error ? error.message : String(error))

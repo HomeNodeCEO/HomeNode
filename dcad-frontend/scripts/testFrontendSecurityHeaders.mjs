@@ -1,9 +1,12 @@
 import assert from 'node:assert/strict'
+import { readFileSync } from 'node:fs'
 import test from 'node:test'
+import { fileURLToPath } from 'node:url'
 
 import {
   EXPECTED_R2_ORIGIN,
   RETIRED_R2_ORIGIN,
+  DEFAULT_FRONTEND_URL,
   validateFrontendSecurityHeaders,
 } from './verifyFrontendSecurityHeaders.mjs'
 
@@ -69,4 +72,17 @@ test('rejects missing platform security headers', () => {
   assert.match(errors, /X-Frame-Options must remain DENY/)
   assert.match(errors, /X-Content-Type-Options must remain nosniff/)
   assert.match(errors, /Strict-Transport-Security is missing/)
+})
+
+test('deployed verification has no caller-controlled request target', () => {
+  const verifierSource = readFileSync(
+    fileURLToPath(new URL('./verifyFrontendSecurityHeaders.mjs', import.meta.url)),
+    'utf8',
+  )
+
+  assert.equal(DEFAULT_FRONTEND_URL, 'https://homenode-frontend.onrender.com/')
+  assert.doesNotMatch(verifierSource, /process\.env\.FRONTEND_URL/)
+  assert.match(verifierSource, /https\.get\(\s*DEFAULT_FRONTEND_URL,/)
+  assert.match(verifierSource, /export function fetchFrontendHeaders\(timeoutMs = 15_000\)/)
+  assert.match(verifierSource, /export async function verifyDeployedFrontend\(\)/)
 })

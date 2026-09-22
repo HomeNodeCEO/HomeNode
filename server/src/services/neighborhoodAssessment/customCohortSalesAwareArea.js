@@ -98,8 +98,9 @@ export function buildCustomCohortSalesAwareArea({ recommendation, observation_pr
     const candidates = eligible.filter(group => !selected.has(group.id)
       && accounts + group.account_ids.length <= POLICY.maximum_selected_accounts).map(group => {
       const extra = eventsByGroup.get(group.id), next = summarize([...events, ...extra], subjectGla, periods);
-      const groupFit = summarize(extra, subjectGla, periods).quarters.every(row => !row.transaction_count || row.within_tolerance);
-      const groupNear = summarize(extra, subjectGla, periods).quarters.every(row => !row.transaction_count
+      const groupSummary = summarize(extra, subjectGla, periods);
+      const groupFit = groupSummary.quarters.every(row => !row.transaction_count || row.within_tolerance);
+      const groupNear = groupSummary.quarters.every(row => !row.transaction_count
         || row.deviation_percent <= 15);
       return { group, extra, next, groupFit, groupNear,
         utility: (group.result.similarity.lower ?? 0) * extra.length / Math.max(1, group.account_ids.length) };

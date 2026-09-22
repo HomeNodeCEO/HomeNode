@@ -238,7 +238,7 @@ function WorkspaceSession(props: Props) {
           <p className="mt-1">{area.status === 'meets_targets'
             ? 'Provisional count and populated-quarter GLA targets met; sale eligibility and at-sale GLA still require review.'
             : area.status === 'insufficient_recorded_sales' ? 'Fewer than 50 qualifying recorded transactions were available in the compact selection.'
-            : area.status === 'quarterly_gla_mismatch' ? 'At least one populated quarter differs from the subject GLA by more than 5%.'
+            : area.status === 'quarterly_gla_mismatch' ? 'At least one quarter has no qualifying sales or its median current CAD GLA differs from the subject by more than 5%.'
             : 'A sales-aware selection could not be established from the retained observations.'}</p>
           {area.quarterly_gla.length > 0 && <p className="mt-1 text-xs">Quarterly median current-CAD GLA versus subject:{' '}
             {area.quarterly_gla.map(q => q.transaction_count

@@ -804,7 +804,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (Buffer.byteLength(JSON.stringify(response)) > 524288) fail('report_response_limit');
     return freeze(response);
   }
-  async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null, project } = {}) {
+  async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
+    recommendedAreaOpening = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
       const target = await resolveTarget(client, input, false, 'read');
@@ -884,6 +885,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           // recommendation, never a subset of its groups or a private observation.
           const { recommendation: _recommendation, ...withoutRecommendation } = response;
           response = withoutRecommendation;
+          if (recommendedAreaOpening && Object.hasOwn(response, 'initial_preview')) {
+            // A dropped recommendation cannot leave behind its private subset
+            // preview: the client would restore the complete-catalog fallback.
+            response.initial_preview = await presentOpening(customCohortOpeningSelection(response.catalog,
+              customCohortOpeningGroupIds(response.catalog), expected.selection_revision));
+          }
         }
       }
       if (Object.hasOwn(content, 'initial_preview')) {
@@ -1323,6 +1330,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
+      recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget) => {
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: catalogVersion }), preview, expected,

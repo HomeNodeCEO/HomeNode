@@ -142,6 +142,63 @@ test("logout preserves a retry path when server-side revocation fails", async ()
   assert.deepEqual(warnings, ["[web-auth] logout failed reason=session_revocation_unavailable"]);
 });
 
+test("malformed cookie escapes cannot trigger auth errors or hide a valid host cookie", async () => {
+  const queries = [];
+  const pool = {
+    async query(sql, values) {
+      queries.push({ sql, values });
+      return { rows: [{
+        session_id: "session-id",
+        user_id: "user-id",
+        email: "user@example.test",
+        display_name: "Test User",
+        organization_id: "organization-id",
+        organization_display_name: "Test Organization",
+        role_code: "appraiser",
+      }] };
+    },
+  };
+  const authenticate = createWebSessionAuthenticator({ pool, environment: CONFIGURED_ENVIRONMENT });
+  const response = {
+    status() { throw new Error("unexpected_authentication_response"); },
+  };
+  const request = (cookie) => ({
+    method: "GET",
+    get(name) { return String(name).toLowerCase() === "cookie" ? cookie : ""; },
+  });
+
+  let nextCalls = 0;
+  await authenticate(request(`${WEB_SESSION_COOKIE}=%E0%A4%A`), response, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 1);
+  assert.equal(queries.length, 0, "a malformed session cookie never reaches storage");
+
+  const validRequest = request(`unrelated=%E0%A4%A; ${WEB_SESSION_COOKIE}=opaque-session-token`);
+  await authenticate(validRequest, response, () => { nextCalls += 1; });
+  assert.equal(nextCalls, 2);
+  assert.equal(queries.length, 1);
+  assert.equal(validRequest.mobileAuth.userId, "user-id");
+  assert.equal(
+    queries[0].values[0],
+    "00f5c39025967a24e513257fc3a8572166ddddaa08809f00fd260414df28ba9f",
+  );
+
+  const logoutQueries = [];
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const logout = await fetch(`${baseUrl}/api/auth/logout`, {
+      method: "POST",
+      headers: { cookie: `${WEB_SESSION_COOKIE}=%E0%A4%A` },
+    });
+    assert.equal(logout.status, 204);
+    assert.equal(logout.headers.get("cache-control"), "no-store");
+    const setCookie = logout.headers.get("set-cookie") || "";
+    assert.match(setCookie, new RegExp(`^${WEB_SESSION_COOKIE}=;`));
+    assert.match(setCookie, /Expires=Thu, 01 Jan 1970/i);
+  }, {
+    pool: { async query(...args) { logoutQueries.push(args); return { rows: [] }; } },
+  });
+  assert.equal(logoutQueries.length, 0, "malformed logout cookies never reach session revocation");
+});
+
 test("configured WorkOS remains optional until unified authentication is activated", async () => {
   await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/auth/status`);

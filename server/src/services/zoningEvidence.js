@@ -625,6 +625,7 @@ export async function getZoningDocumentDescriptionSuggestion(pool, {
 export async function savePropertyZoningVerification(pool, {
   accountId,
   assignmentFileId = null,
+  reviewer: reviewerValue,
   input,
 } = {}) {
   await ensureZoningEvidenceSchema(pool);
@@ -632,7 +633,7 @@ export async function savePropertyZoningVerification(pool, {
   if (!jurisdiction) throw new Error("invalid_zoning_jurisdiction");
   const zoningCode = cleanText(input?.zoning_code, 200);
   const zoningDescription = cleanText(input?.zoning_description, 8_000);
-  const reviewer = cleanText(input?.reviewer, 200);
+  const reviewer = cleanText(reviewerValue, 200);
   const sourceType = cleanText(input?.source_type, 40);
   if (!zoningCode) throw new Error("zoning_code_required");
   if (!zoningDescription) throw new Error("zoning_description_required");

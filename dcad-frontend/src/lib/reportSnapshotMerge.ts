@@ -1,5 +1,13 @@
+const PROTOTYPE_CONTROL_KEYS = new Set(["__proto__", "constructor", "prototype"]);
+
 function isPlainObject(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function safeEntries(value: Record<string, unknown>): [string, unknown][] {
+  return Object.entries(value).filter(([key]) => !PROTOTYPE_CONTROL_KEYS.has(key));
 }
 
 /**
@@ -9,12 +17,15 @@ function isPlainObject(value: unknown): value is Record<string, unknown> {
  * back to the current source value.
  */
 export function mergeNonBlankSnapshot<T>(base: T, snapshot: unknown): T {
-  if (!isPlainObject(base) || !isPlainObject(snapshot)) {
+  if (!isPlainObject(snapshot)) {
     return hasSnapshotValue(snapshot) ? snapshot as T : base;
   }
+  if (!hasSnapshotValue(snapshot)) return base;
 
-  const merged: Record<string, unknown> = { ...base };
-  for (const [key, snapshotValue] of Object.entries(snapshot)) {
+  const merged: Record<string, unknown> = isPlainObject(base)
+    ? Object.fromEntries(safeEntries(base))
+    : {};
+  for (const [key, snapshotValue] of safeEntries(snapshot)) {
     const baseValue = merged[key];
     if (isPlainObject(snapshotValue)) {
       if (Object.keys(snapshotValue).length > 0) {
@@ -34,6 +45,7 @@ export function hasSnapshotValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === "string") return value.trim().length > 0;
   if (Array.isArray(value)) return value.length > 0;
-  if (isPlainObject(value)) return Object.values(value).some(hasSnapshotValue);
+  if (isPlainObject(value)) return safeEntries(value).some(([, entry]) => hasSnapshotValue(entry));
+  if (typeof value === "object") return false;
   return true;
 }

@@ -54,6 +54,31 @@ test('nonblank assignment values still override source values', () => {
   });
 });
 
+test('snapshot merges reject prototype-control keys at every level', () => {
+  const hostile = JSON.parse(`{
+    "__proto__": {"is_admin": true},
+    "constructor": {"prototype": {"polluted": true}},
+    "prototype": {"polluted": true},
+    "building": {"__proto__": {"is_admin": true}, "gla": 1900}
+  }`);
+  const merged = mergeNonBlankSnapshot(
+    { owner_name: 'CURRENT OWNER', building: { gla: 1840 } },
+    hostile,
+  );
+
+  assert.equal(Object.getPrototypeOf(merged), Object.prototype);
+  assert.equal(Object.getPrototypeOf(merged.building), Object.prototype);
+  for (const key of ['__proto__', 'constructor', 'prototype']) {
+    assert.equal(Object.hasOwn(merged, key), false);
+    assert.equal(Object.hasOwn(merged.building, key), false);
+  }
+  assert.equal(merged.is_admin, undefined);
+  assert.equal(merged.polluted, undefined);
+  assert.equal(merged.building.is_admin, undefined);
+  assert.equal(merged.building.gla, 1900);
+  assert.equal(Object.prototype.polluted, undefined);
+});
+
 test('report values retain their established formatting', () => {
   assert.equal(displayValue(''), 'Not reported');
   assert.equal(parseNumber('$292,315'), 292315);

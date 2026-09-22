@@ -1,10 +1,5 @@
-BEGIN;
-
-CREATE INDEX IF NOT EXISTS web_sessions_expiry_cleanup_idx
-  ON app_auth.web_sessions (expires_at, id);
-
-CREATE INDEX IF NOT EXISTS web_sessions_revoked_cleanup_idx
-  ON app_auth.web_sessions (revoked_at, id)
-  WHERE revoked_at IS NOT NULL;
-
-COMMIT;
+-- The application migration runner installs the retention index concurrently
+-- after committing this schema phase and before recording the migration. Keep
+-- this file transaction-owned by the runner; the resumable post-migration step
+-- is safe to retry after a deploy interruption.
+SELECT 1 AS auth_session_retention_post_migration_required;

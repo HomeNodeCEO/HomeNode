@@ -7,6 +7,10 @@ import {
   applyMarketSpatialPostMigration,
   MARKET_SPATIAL_MIGRATION_NAME,
 } from "./marketSpatialMigration.js";
+import {
+  applyAuthSessionRetentionPostMigration,
+  AUTH_SESSION_RETENTION_MIGRATION_NAME,
+} from "./authSessionRetentionMigration.js";
 
 const MODULE_DIRECTORY = path.dirname(fileURLToPath(import.meta.url));
 const SERVER_DIRECTORY = path.resolve(MODULE_DIRECTORY, "../..");
@@ -54,6 +58,11 @@ const MIGRATIONS = Object.freeze([
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 
+const POST_MIGRATIONS = new Map([
+  [MARKET_SPATIAL_MIGRATION_NAME, applyMarketSpatialPostMigration],
+  [AUTH_SESSION_RETENTION_MIGRATION_NAME, applyAuthSessionRetentionPostMigration],
+]);
+
 function checksum(contents) {
   // Keep migration checksums stable across Windows and Linux checkouts.
   return createHash("sha256").update(contents.replace(/\r\n/g, "\n")).digest("hex");
@@ -94,11 +103,12 @@ export async function applyMobileMigrations(pool, { logger = console } = {}) {
       await client.query("BEGIN");
       try {
         await client.query(sql);
-        if (migrationName === MARKET_SPATIAL_MIGRATION_NAME) {
-          // Commit schema/trigger installation first. The resumable data repair
-          // and concurrent index build must run outside this transaction.
+        const postMigration = POST_MIGRATIONS.get(migrationName);
+        if (postMigration) {
+          // Commit the schema phase first. Resumable data repairs and
+          // concurrent index builds must run outside this transaction.
           await client.query("COMMIT");
-          await applyMarketSpatialPostMigration(client, { logger });
+          await postMigration(client, { logger });
           await client.query("BEGIN");
         }
         await client.query(

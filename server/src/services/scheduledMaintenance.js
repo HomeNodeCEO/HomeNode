@@ -134,13 +134,14 @@ export async function purgeExpiredWebSessions(pool, {
 } = {}) {
   const safeRetentionDays = boundedInteger(retentionDays, 30, 1, 365);
   const safeBatchSize = boundedInteger(batchSize, 1_000, 1, 10_000);
+  // expires_at is non-null, so the earliest expiry/revocation timestamp is
+  // exactly the terminal age used by the matching retention expression index.
   const { rowCount } = await pool.query(
     `WITH candidates AS MATERIALIZED (
        SELECT id
        FROM app_auth.web_sessions
-       WHERE (revoked_at IS NOT NULL
-              AND revoked_at < now() - ($1::integer * interval '1 day'))
-          OR expires_at < now() - ($1::integer * interval '1 day')
+       WHERE LEAST(expires_at, COALESCE(revoked_at, expires_at))
+               < now() - ($1::integer * interval '1 day')
        ORDER BY LEAST(expires_at, COALESCE(revoked_at, expires_at)), id
        LIMIT $2
        FOR UPDATE SKIP LOCKED

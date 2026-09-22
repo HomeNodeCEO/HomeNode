@@ -61,8 +61,15 @@ test("expired and revoked web sessions are purged in a bounded skip-locked batch
     { purged: 17, retention_days: 45, batch_size: 250 },
   );
   assert.match(statement, /FROM app_auth\.web_sessions/);
-  assert.match(statement, /revoked_at IS NOT NULL/);
-  assert.match(statement, /expires_at < now\(\)/);
+  assert.match(
+    statement,
+    /WHERE LEAST\(expires_at, COALESCE\(revoked_at, expires_at\)\)\s+< now\(\)/,
+  );
+  assert.match(
+    statement,
+    /ORDER BY LEAST\(expires_at, COALESCE\(revoked_at, expires_at\)\), id/,
+  );
+  assert.doesNotMatch(statement, /\sOR\s/);
   assert.match(statement, /LIMIT \$2/);
   assert.match(statement, /FOR UPDATE SKIP LOCKED/);
   assert.match(statement, /DELETE FROM app_auth\.web_sessions/);

@@ -531,6 +531,25 @@ test("private UAD PDF uploads pass the bounded binary parser but still require a
   });
 });
 
+test("private UAD PDF uploads reject compressed bodies after exact workfile authorization", async () => {
+  const pool = securityPool();
+  await withServer(pool, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+      method: "POST",
+      headers: {
+        authorization: "Bearer synthetic-token",
+        "content-type": "application/pdf",
+        "content-encoding": "gzip",
+      },
+      body: "not-a-gzip-stream",
+    });
+    assert.equal(response.status, 415);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "unsupported_request_encoding" });
+    assert.deepEqual(pool.accessQueries, [[WORKFILE_ID]]);
+  });
+});
+
 test("authenticated UAD document uploads ignore a spoofed uploader and retain exact authorized scope", async () => {
   const basePool = securityPool();
   const schemaQueries = [];

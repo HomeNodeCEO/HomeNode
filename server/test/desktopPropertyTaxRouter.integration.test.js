@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createDesktopPropertyTaxRouter } from "../src/modules/mobile/desktopPropertyTaxRouter.js";
+import { jsonErrorHandler } from "../src/security/httpSecurity.js";
 import { PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA } from "../src/services/assignmentDocuments.js";
 
 const identity = Object.freeze({
@@ -47,6 +48,7 @@ async function startRouter(options, auth = identity) {
     });
   }
   app.use(createDesktopPropertyTaxRouter(options));
+  app.use(jsonErrorHandler);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
     listener.once("error", reject);
@@ -723,6 +725,49 @@ test("Property Tax uploads bind only the canonical protest and report files", as
     options: { storage, ocrProvider },
   });
   assert.equal(calls[1].options.uploadedBy, identity.userId);
+});
+
+test("Property Tax uploads authorize before buffering and reject compressed bodies", async (context) => {
+  const file = {
+    tax_protest_file_id: "tax-file-1",
+    report_file_id: "report-file-1",
+    organization_id: "org-allowed",
+    assigned_appraiser_user_id: "user-1",
+  };
+  let deniedCreates = 0;
+  const deniedServer = await startRouter(baseOptions({
+    getFile: async () => file,
+    decideAccess: () => false,
+    createDocument: async () => { deniedCreates += 1; },
+  }));
+  context.after(deniedServer.close);
+  const denied = await uploadDocument(
+    deniedServer.baseUrl,
+    "123",
+    "tax-file-1",
+    Buffer.from("not-a-gzip-stream"),
+    { "content-encoding": "gzip" },
+  );
+  assert.equal(denied.status, 403);
+  assert.deepEqual(await denied.json(), { error: "property_tax_protest_access_denied" });
+  assert.equal(deniedCreates, 0);
+
+  let allowedCreates = 0;
+  const allowedServer = await startRouter(baseOptions({
+    getFile: async () => file,
+    createDocument: async () => { allowedCreates += 1; },
+  }));
+  context.after(allowedServer.close);
+  const compressed = await uploadDocument(
+    allowedServer.baseUrl,
+    "123",
+    "tax-file-1",
+    Buffer.from("not-a-gzip-stream"),
+    { "content-encoding": "gzip" },
+  );
+  assert.equal(compressed.status, 415);
+  assert.deepEqual(await compressed.json(), { error: "unsupported_request_encoding" });
+  assert.equal(allowedCreates, 0);
 });
 
 test("Property Tax uploads return bounded conflicts when aggregate quotas are exhausted", async (context) => {

@@ -86,6 +86,19 @@ export function createAssignmentPhotoRouter({
     return { accountId, assignmentFileId };
   }
 
+  async function authorizePhotoObjectUpload(req, res, next) {
+    if (!requireEditor(req, res)) return undefined;
+    try {
+      const assignment = await resolveAssignment(req, res, "write");
+      if (!assignment) return undefined;
+      res.locals.assignmentPhotoUpload = assignment;
+      return next();
+    } catch (error) {
+      const message = error?.message || "assignment_photo_object_upload_failed";
+      return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+    }
+  }
+
   /** List one Custom Appraisal file's shared desktop and mobile photo evidence. */
   router.get("/api/accounts/:id/assignment-files/:assignmentFileId/photos", async (req, res) => {
     if (!requireWorkflowAccess(req, res, "custom_appraisal", "read")) return;
@@ -165,12 +178,12 @@ export function createAssignmentPhotoRouter({
   /** Authenticated fallback when a browser cannot PUT directly to private R2. */
   router.put(
     "/api/accounts/:id/assignment-files/:assignmentFileId/photos/:photoId/objects/:objectId/content",
-    express.raw({ type: PHOTO_CONTENT_TYPES, limit: "50mb" }),
+    // Resolve exact assignment ownership before buffering as much as 50 MiB.
+    authorizePhotoObjectUpload,
+    express.raw({ type: PHOTO_CONTENT_TYPES, limit: "50mb", inflate: false }),
     async (req, res) => {
-      if (!requireEditor(req, res)) return;
       try {
-        const assignment = await resolveAssignment(req, res, "write");
-        if (!assignment) return;
+        const assignment = res.locals.assignmentPhotoUpload;
         const content = req.body;
         if (
           typeof content !== "object"

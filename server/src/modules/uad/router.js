@@ -563,6 +563,7 @@ export function createUadRouter({
     express.raw({
       type: ["application/pdf", "application/octet-stream"],
       limit: MAX_ASSIGNMENT_DOCUMENT_BYTES,
+      inflate: false,
     }),
     async (req, res) => {
       try {

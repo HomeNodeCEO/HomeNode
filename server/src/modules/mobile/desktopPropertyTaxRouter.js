@@ -195,6 +195,23 @@ export function createDesktopPropertyTaxRouter({
     return res.set("cache-control", "no-store").status(500).json({ error: fallback });
   }
 
+  async function authorizePropertyTaxDocumentUpload(req, res, next) {
+    if (!requireWorkflowAccess(req, res, WORKFLOW, "write")) return undefined;
+    const requestedId = requestedAccountId(req, res);
+    if (!requestedId) return undefined;
+    if (!requireEditor(req, res)) return undefined;
+    try {
+      res.locals.propertyTaxDocumentUpload = await propertyTaxDocumentScope(
+        req,
+        requestedId,
+        "write",
+      );
+      return next();
+    } catch (error) {
+      return propertyTaxDocumentError(res, error, "property_tax_document_upload_failed");
+    }
+  }
+
   /** Load the current canonical Property Tax Protest file and accepted inspection evidence. */
   router.get("/api/accounts/:id/property-tax-protest", async (req, res) => {
     if (!requireWorkflowAccess(req, res, WORKFLOW, "read")) return undefined;
@@ -407,17 +424,16 @@ export function createDesktopPropertyTaxRouter({
   /** Upload and extract one district-evidence or MLS PDF for a protest file. */
   router.post(
     "/api/accounts/:id/property-tax-protest/:fileId/documents",
+    // Reject unowned files before buffering up to 25 MiB of evidence.
+    authorizePropertyTaxDocumentUpload,
     express.raw({
       type: ["application/pdf", "application/octet-stream"],
       limit: MAX_ASSIGNMENT_DOCUMENT_BYTES,
+      inflate: false,
     }),
     async (req, res) => {
-      if (!requireWorkflowAccess(req, res, WORKFLOW, "write")) return undefined;
-      const requestedId = requestedAccountId(req, res);
-      if (!requestedId) return undefined;
-      if (!requireEditor(req, res)) return undefined;
       try {
-        const { accountId, file } = await propertyTaxDocumentScope(req, requestedId, "write");
+        const { accountId, file } = res.locals.propertyTaxDocumentUpload;
         const document = await createDocument(pool, {
           organizationId: file.organization_id,
           accountId,

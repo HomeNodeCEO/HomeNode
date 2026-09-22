@@ -82,6 +82,51 @@ export function createAssignmentDocumentRouter({
 
   const router = express.Router();
 
+  function sendDocumentUploadError(res, error) {
+    const message = error?.message || "assignment_document_upload_failed";
+    const clientErrors = new Set([
+      "document_content_required",
+      "document_too_large",
+      "document_not_pdf",
+      "invalid_document_type",
+    ]);
+    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+  }
+
+  async function authorizeDocumentUpload(req, res, next) {
+    const requestedId = String(req.params.id || "").trim();
+    if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return undefined;
+    if (!requireEditor(req, res)) return undefined;
+    try {
+      await ensureAvailable();
+      const accountId = await resolveAccountId(pool, requestedId);
+      const assignmentFileId = normalizeFileId(req.get("x-assignment-file-id"));
+      if (!assignmentFileId) {
+        return res.status(400).json({ error: "assignment_file_required" });
+      }
+      const { rows } = await pool.query(
+        "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
+        [assignmentFileId, accountId],
+      );
+      if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
+      if (!await requireAssignmentAccess(
+        req,
+        res,
+        accountId,
+        assignmentFileId,
+        "write",
+      )) return undefined;
+      res.locals.assignmentDocumentUpload = {
+        accountId,
+        assignmentFileId,
+        organizationId: rows[0].organization_id || null,
+      };
+      return next();
+    } catch (error) {
+      return sendDocumentUploadError(res, error);
+    }
+  }
+
   async function requireDocumentAccess(req, res, documentIdValue, permission) {
     if (!req.mobileAuth) {
       res.set("cache-control", "no-store").status(401).json({ error: "authentication_required" });
@@ -146,36 +191,22 @@ export function createAssignmentDocumentRouter({
   /** Upload PDF bytes and schedule durable asynchronous extraction. */
   router.post(
     "/api/accounts/:id/documents",
+    // Establish exact assignment ownership before buffering the PDF body.
+    authorizeDocumentUpload,
     express.raw({
       type: ["application/pdf", "application/octet-stream"],
       limit: maxDocumentBytes,
+      inflate: false,
     }),
     async (req, res) => {
-      const requestedId = String(req.params.id || "").trim();
-      if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return;
-      if (!requireEditor(req, res)) return;
       try {
-        await ensureAvailable();
-        const accountId = await resolveAccountId(pool, requestedId);
-        const assignmentFileId = normalizeFileId(req.get("x-assignment-file-id"));
-        if (!assignmentFileId) {
-          return res.status(400).json({ error: "assignment_file_required" });
-        }
-        const { rows } = await pool.query(
-          "SELECT organization_id FROM app.assignment_files WHERE id = $1 AND account_id = $2",
-          [assignmentFileId, accountId],
-        );
-        if (!rows.length) return res.status(400).json({ error: "invalid_assignment_file" });
-        if (!await requireAssignmentAccess(
-          req,
-          res,
+        const {
           accountId,
           assignmentFileId,
-          "write",
-        )) return;
-        const documentOrganizationId = rows[0].organization_id || null;
+          organizationId,
+        } = res.locals.assignmentDocumentUpload;
         const document = await createDocument(pool, {
-          organizationId: documentOrganizationId,
+          organizationId,
           accountId,
           assignmentFileId,
           documentType: decodedDocumentHeader(req, "x-document-type", "other"),
@@ -195,14 +226,7 @@ export function createAssignmentDocumentRouter({
         }
         return res.status(201).json({ ok: true, account_id: accountId, document });
       } catch (error) {
-        const message = error?.message || "assignment_document_upload_failed";
-        const clientErrors = new Set([
-          "document_content_required",
-          "document_too_large",
-          "document_not_pdf",
-          "invalid_document_type",
-        ]);
-        return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+        return sendDocumentUploadError(res, error);
       }
     },
   );

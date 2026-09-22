@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createAssignmentDocumentRouter } from "../src/modules/assignmentFiles/documentRouter.js";
+import { jsonErrorHandler } from "../src/security/httpSecurity.js";
 
 const objectStorage = { configured: true };
 const ocrProvider = { configured: true, provider: async () => ({ text: "" }) };
@@ -68,6 +69,7 @@ async function startRouter(router, { mobileAuth = identity } = {}) {
   }
   app.use(express.json());
   app.use(router);
+  app.use(jsonErrorHandler);
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
     listener.once("error", reject);
@@ -222,6 +224,46 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
   assert.deepEqual([...calls[3][2].content], [...content]);
   assert.deepEqual(calls[4], ["process", pool, 17, { storage: objectStorage }]);
   assert.equal(calls[3][2].uploadedBy, "user-1");
+});
+
+test("document uploads authorize before buffering and reject compressed bodies", async (context) => {
+  let deniedCreates = 0;
+  const deniedServer = await startRouter(createAssignmentDocumentRouter(options({
+    requireAssignmentAccess: async (_req, res) => {
+      res.status(403).json({ error: "assignment_file_access_denied" });
+      return false;
+    },
+    createDocument: async () => { deniedCreates += 1; },
+  })));
+  context.after(deniedServer.close);
+  const path = "/api/accounts/42/documents";
+  const headers = {
+    "content-type": "application/pdf",
+    "content-encoding": "gzip",
+    "x-assignment-file-id": "7",
+  };
+  const denied = await fetch(`${deniedServer.baseUrl}${path}`, {
+    method: "POST",
+    headers,
+    body: "not-a-gzip-stream",
+  });
+  assert.equal(denied.status, 403);
+  assert.deepEqual(await denied.json(), { error: "assignment_file_access_denied" });
+  assert.equal(deniedCreates, 0);
+
+  let allowedCreates = 0;
+  const allowedServer = await startRouter(createAssignmentDocumentRouter(options({
+    createDocument: async () => { allowedCreates += 1; },
+  })));
+  context.after(allowedServer.close);
+  const compressed = await fetch(`${allowedServer.baseUrl}${path}`, {
+    method: "POST",
+    headers,
+    body: "not-a-gzip-stream",
+  });
+  assert.equal(compressed.status, 415);
+  assert.deepEqual(await compressed.json(), { error: "unsupported_request_encoding" });
+  assert.equal(allowedCreates, 0);
 });
 
 test("document access fails closed before reads in enforced mode", async (context) => {

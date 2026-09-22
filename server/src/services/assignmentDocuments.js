@@ -12,7 +12,16 @@ import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
+export const PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA = Object.freeze({
+  maximumDocuments: 100,
+  maximumBytes: 500 * 1024 * 1024,
+  maximumActiveExtractions: 8,
+});
 const STALE_PROCESSING_MINUTES = 15;
+const ACTIVE_DOCUMENT_PROCESSING_STATUSES = Object.freeze([
+  "uploaded",
+  "processing",
+]);
 
 export function assignmentDocumentRequestedType(document = {}) {
   const recordedType = (cleanText(
@@ -68,6 +77,99 @@ function cleanText(value, maximum = 4_000) {
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+function normalizeDocumentUploadQuota(value) {
+  if (value == null) return null;
+  const maximumDocuments = positiveInteger(value.maximumDocuments);
+  const maximumBytes = positiveInteger(value.maximumBytes);
+  const maximumActiveExtractions = positiveInteger(value.maximumActiveExtractions);
+  if (!maximumDocuments || !maximumBytes || !maximumActiveExtractions) {
+    throw new TypeError("assignment_document_upload_quota_invalid");
+  }
+  return { maximumDocuments, maximumBytes, maximumActiveExtractions };
+}
+
+async function enforceTaxProtestDocumentUploadQuota(client, {
+  taxProtestFileId,
+  checksum,
+  byteLength,
+  quota,
+}) {
+  if (!taxProtestFileId) {
+    throw new TypeError("assignment_document_upload_quota_scope_required");
+  }
+  const lockKey = `assignment-document-upload:${taxProtestFileId}`;
+  await client.query(
+    "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
+    [lockKey],
+  );
+  const { rows } = await client.query(
+    `SELECT
+       EXISTS (
+         SELECT 1
+         FROM app.assignment_documents
+         WHERE tax_protest_file_id = $1 AND checksum_sha256 = $2
+       ) AS duplicate_exists,
+       (
+         SELECT COUNT(*)::integer
+         FROM (
+           SELECT 1
+           FROM app.assignment_documents
+           WHERE tax_protest_file_id = $1
+           LIMIT $3
+         ) AS bounded_documents
+       ) AS document_count,
+       (
+         SELECT COALESCE(SUM(file_size_bytes), 0)::bigint
+         FROM (
+           SELECT file_size_bytes
+           FROM app.assignment_documents
+           WHERE tax_protest_file_id = $1
+           LIMIT $3
+         ) AS bounded_documents
+       ) AS total_bytes,
+       (
+         SELECT COUNT(*)::integer
+         FROM (
+           SELECT 1
+           FROM app.assignment_documents
+           WHERE tax_protest_file_id = $1
+             AND processing_status = ANY($5::text[])
+           LIMIT $4
+         ) AS bounded_active_documents
+       ) AS active_extractions`,
+    [
+      taxProtestFileId,
+      checksum,
+      quota.maximumDocuments + 1,
+      quota.maximumActiveExtractions + 1,
+      ACTIVE_DOCUMENT_PROCESSING_STATUSES,
+    ],
+  );
+  const usage = rows[0] || {};
+  const duplicateExists = usage.duplicate_exists === true || usage.duplicate_exists === "t";
+  if (duplicateExists) return { duplicateExists: true };
+  const documentCount = Number(usage.document_count || 0);
+  const totalBytes = Number(usage.total_bytes || 0);
+  const activeExtractions = Number(usage.active_extractions || 0);
+  if (
+    documentCount >= quota.maximumDocuments
+    || !Number.isSafeInteger(totalBytes)
+    || totalBytes + byteLength > quota.maximumBytes
+  ) {
+    return {
+      duplicateExists: false,
+      rejection: "assignment_document_storage_quota_exceeded",
+    };
+  }
+  if (activeExtractions >= quota.maximumActiveExtractions) {
+    return {
+      duplicateExists: false,
+      rejection: "assignment_document_processing_capacity_exceeded",
+    };
+  }
+  return { duplicateExists: false, rejection: null };
 }
 
 function normalizedDocumentStreetAddress(value) {
@@ -628,6 +730,7 @@ export async function createAssignmentDocument(pool, {
   content,
   uploadedBy,
   storage = null,
+  uploadQuota = null,
   logger = console,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
@@ -643,6 +746,12 @@ export async function createAssignmentDocument(pool, {
   const safeFileName = cleanText(fileName, 255) || "document.pdf";
   const safeTitle = cleanText(title, 300) || safeFileName;
   const checksum = createHash("sha256").update(pdfContent).digest("hex");
+  const normalizedUploadQuota = normalizeDocumentUploadQuota(uploadQuota);
+  let quotaClient = null;
+  let quotaTransactionStarted = false;
+  let quotaAdmission = null;
+  let uploadedObjectKey = null;
+  try {
   let storedContent = pdfContent;
   let storageProvider = "postgres";
   let storageStatus = "stored";
@@ -680,13 +789,29 @@ export async function createAssignmentDocument(pool, {
       storageEtag = verified.storage_etag;
       storageContentType = verified.storage_content_type;
       storageVerifiedAt = new Date();
+      uploadedObjectKey = objectKey;
     } catch (error) {
       storageStatus = "migration_failed";
       storageLastError = cleanText(error?.message || error, 2_000);
       logger.warn?.("[documents] private object upload failed; retaining PostgreSQL fallback", storageLastError);
     }
   }
-  const { rows } = await pool.query(
+  if (normalizedUploadQuota) {
+    if (typeof pool.connect !== "function") {
+      throw new TypeError("assignment_document_upload_quota_transaction_required");
+    }
+    quotaClient = await pool.connect();
+    await quotaClient.query("BEGIN");
+    quotaTransactionStarted = true;
+    quotaAdmission = await enforceTaxProtestDocumentUploadQuota(quotaClient, {
+      taxProtestFileId,
+      checksum,
+      byteLength: pdfByteLength,
+      quota: normalizedUploadQuota,
+    });
+    if (quotaAdmission.rejection) throw new Error(quotaAdmission.rejection);
+  }
+  const { rows } = await (quotaClient || pool).query(
     `INSERT INTO app.assignment_documents (
        account_id, assignment_file_id, uad_workfile_id, tax_protest_file_id, report_file_id,
        document_type, title, file_name,
@@ -763,7 +888,34 @@ export async function createAssignmentDocument(pool, {
       storageLastError,
     ],
   );
-  return publicDocument(rows[0]);
+    if (quotaTransactionStarted) {
+      await quotaClient.query("COMMIT");
+      quotaTransactionStarted = false;
+    }
+    return publicDocument(rows[0]);
+  } catch (error) {
+    if (quotaTransactionStarted) {
+      try {
+        await quotaClient.query("ROLLBACK");
+      } catch {
+        // Preserve the original admission or persistence failure.
+      }
+    }
+    if (
+      uploadedObjectKey
+      && quotaAdmission?.duplicateExists === false
+      && typeof storage?.deleteObject === "function"
+    ) {
+      try {
+        await storage.deleteObject({ objectKey: uploadedObjectKey });
+      } catch {
+        logger.warn?.("[documents] failed to clean up rejected private document upload");
+      }
+    }
+    throw error;
+  } finally {
+    quotaClient?.release?.();
+  }
 }
 
 export async function loadAssignmentDocumentContent(pool, documentId, { storage = null } = {}) {

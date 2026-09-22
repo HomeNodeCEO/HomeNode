@@ -7,6 +7,7 @@ import {
   getAssignmentDocument,
   listAssignmentDocuments,
   MAX_ASSIGNMENT_DOCUMENT_BYTES,
+  PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
   processAssignmentDocument,
 } from "../../services/assignmentDocuments.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
@@ -182,6 +183,8 @@ export function createDesktopPropertyTaxRouter({
       return res.set("cache-control", "no-store").status(503).json({ error: message });
     }
     if (new Set([
+      "assignment_document_processing_capacity_exceeded",
+      "assignment_document_storage_quota_exceeded",
       "document_processing_in_progress",
       "document_retry_not_due",
       "document_not_processable",
@@ -425,6 +428,7 @@ export function createDesktopPropertyTaxRouter({
           content: req.body,
           uploadedBy: req.mobileAuth?.userId || null,
           storage: documentStorage,
+          uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
         });
         if (document.processing_status === "uploaded") {
           void processDocument(pool, document.id, {

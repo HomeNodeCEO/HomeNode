@@ -14,6 +14,7 @@ import {
   createAssignmentDocument,
   deleteAssignmentDocument,
   loadAssignmentDocumentContent,
+  PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
   retainedAssignmentDocumentReview,
 } from "../src/services/assignmentDocuments.js";
 
@@ -220,6 +221,182 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   assert.equal(insertValues[12], "r2");
   assert.equal(result.storage_provider, "r2");
   assert.ok(result.storage_verified_at instanceof Date);
+});
+
+function propertyTaxQuotaPool(usage = {}) {
+  const events = [];
+  const client = {
+    async query(sql, values = []) {
+      events.push({ sql, values });
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
+      if (/AS duplicate_exists/.test(sql)) {
+        return {
+          rows: [{
+            duplicate_exists: false,
+            document_count: 0,
+            total_bytes: 0,
+            active_extractions: 0,
+            ...usage,
+          }],
+        };
+      }
+      if (/INSERT INTO app\.assignment_documents/.test(sql)) {
+        return {
+          rows: [{
+            id: 91,
+            account_id: values[0],
+            tax_protest_file_id: values[3],
+            report_file_id: values[4],
+            document_type: values[5],
+            title: values[6],
+            file_name: values[7],
+            content_type: "application/pdf",
+            checksum_sha256: values[9],
+            file_size_bytes: values[10],
+            processing_status: "uploaded",
+            extraction_summary: {},
+          }],
+        };
+      }
+      throw new Error(`unexpected client query: ${sql}`);
+    },
+    release() {
+      events.push({ sql: "RELEASE", values: [] });
+    },
+  };
+  return {
+    events,
+    pool: {
+      async query(sql) {
+        if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+        throw new Error(`unexpected pool query: ${sql}`);
+      },
+      async connect() {
+        events.push({ sql: "CONNECT", values: [] });
+        return client;
+      },
+    },
+  };
+}
+
+test("Property Tax document quota serializes admission and bounds aggregate storage", async () => {
+  const content = Buffer.from("%PDF-bounded-tax-evidence");
+  const { pool, events } = propertyTaxQuotaPool({
+    document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments - 1,
+    total_bytes: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumBytes - content.length,
+    active_extractions: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions - 1,
+  });
+  const result = await createAssignmentDocument(pool, {
+    accountId: "123",
+    taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+    reportFileId: "40000000-0000-4000-8000-000000000004",
+    fileName: "evidence.pdf",
+    content,
+    uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+  });
+  assert.equal(result.id, 91);
+  const statements = events.map(({ sql }) => sql);
+  assert.ok(statements.indexOf("BEGIN") < statements.findIndex((sql) => /pg_advisory/.test(sql)));
+  assert.ok(
+    statements.findIndex((sql) => /pg_advisory/.test(sql))
+    < statements.findIndex((sql) => /AS duplicate_exists/.test(sql)),
+  );
+  assert.ok(
+    statements.findIndex((sql) => /AS duplicate_exists/.test(sql))
+    < statements.findIndex((sql) => /INSERT INTO app\.assignment_documents/.test(sql)),
+  );
+  assert.ok(statements.indexOf("COMMIT") < statements.indexOf("RELEASE"));
+  const aggregate = events.find(({ sql }) => /AS duplicate_exists/.test(sql));
+  assert.deepEqual(aggregate.values, [
+    "30000000-0000-4000-8000-000000000003",
+    result.checksum_sha256,
+    PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments + 1,
+    PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions + 1,
+    ["uploaded", "processing"],
+  ]);
+});
+
+test("Property Tax document quota rejects storage and extraction exhaustion atomically", async () => {
+  for (const [usage, expected] of [
+    [{ document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments },
+      "assignment_document_storage_quota_exceeded"],
+    [{ total_bytes: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumBytes },
+      "assignment_document_storage_quota_exceeded"],
+    [{ active_extractions: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions },
+      "assignment_document_processing_capacity_exceeded"],
+  ]) {
+    const { pool, events } = propertyTaxQuotaPool(usage);
+    await assert.rejects(
+      createAssignmentDocument(pool, {
+        accountId: "123",
+        taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+        fileName: "evidence.pdf",
+        content: Buffer.from("%PDF-quota-test"),
+        uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+      }),
+      { message: expected },
+    );
+    assert.equal(events.some(({ sql }) => /INSERT INTO app\.assignment_documents/.test(sql)), false);
+    assert.ok(events.some(({ sql }) => sql === "ROLLBACK"));
+    assert.equal(events.at(-1).sql, "RELEASE");
+  }
+});
+
+test("Property Tax document quota permits idempotent duplicate re-uploads at capacity", async () => {
+  const { pool, events } = propertyTaxQuotaPool({
+    duplicate_exists: true,
+    document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments + 1,
+    total_bytes: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumBytes + 1,
+    active_extractions: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumActiveExtractions + 1,
+  });
+  const result = await createAssignmentDocument(pool, {
+    accountId: "123",
+    taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+    fileName: "duplicate.pdf",
+    content: Buffer.from("%PDF-duplicate"),
+    uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+  });
+  assert.equal(result.id, 91);
+  assert.ok(events.some(({ sql }) => /INSERT INTO app\.assignment_documents/.test(sql)));
+  assert.ok(events.some(({ sql }) => sql === "COMMIT"));
+  assert.equal(events.some(({ sql }) => sql === "ROLLBACK"), false);
+});
+
+test("Property Tax quota rejection removes a newly verified private object", async () => {
+  const content = Buffer.from("%PDF-rejected-private-object");
+  const { pool } = propertyTaxQuotaPool({
+    document_count: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA.maximumDocuments,
+  });
+  const storageEvents = [];
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject({ objectKey }) {
+      storageEvents.push(["put", objectKey]);
+    },
+    async inspectObject() {
+      return { byte_size: content.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+    async deleteObject({ objectKey }) {
+      storageEvents.push(["delete", objectKey]);
+    },
+  };
+  await assert.rejects(
+    createAssignmentDocument(pool, {
+      organizationId: "10000000-0000-4000-8000-000000000001",
+      accountId: "123",
+      taxProtestFileId: "30000000-0000-4000-8000-000000000003",
+      fileName: "rejected.pdf",
+      content,
+      storage,
+      uploadQuota: PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
+    }),
+    { message: "assignment_document_storage_quota_exceeded" },
+  );
+  assert.equal(storageEvents.length, 2);
+  assert.equal(storageEvents[0][0], "put");
+  assert.deepEqual(storageEvents[1], ["delete", storageEvents[0][1]]);
 });
 
 test("document uploads accept only non-empty PDF buffers", async () => {

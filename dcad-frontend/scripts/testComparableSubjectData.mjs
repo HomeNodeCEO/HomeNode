@@ -99,13 +99,16 @@ test('room refresh, summary, and error boundaries are deterministic', () => {
 });
 
 test('the comparable-sales page uses checked data and bounded scraper requests', async () => {
-  const [page, boundary] = await Promise.all([
+  const [page, boundary, loader] = await Promise.all([
     readFile(new URL('../src/pages/ComparableSalesAnalysis.tsx', import.meta.url), 'utf8'),
     readFile(new URL('../src/lib/comparableSubjectData.ts', import.meta.url), 'utf8'),
+    readFile(new URL('../src/lib/comparableSubjectLoader.ts', import.meta.url), 'utf8'),
   ]);
   const explicitAny = /\bas any\b|:\s*any\b|<any>|Record<string,\s*any>/;
   assert.doesNotMatch(page, explicitAny);
   assert.doesNotMatch(boundary, explicitAny);
-  assert.match(page, /AbortSignal\.timeout\(15_000\)/);
-  assert.match(page, /subjectFromDetailResponse/);
+  assert.doesNotMatch(loader, explicitAny);
+  assert.match(page, /await loadComparableSubject\(/);
+  assert.match(loader, /AbortSignal\.timeout\(15_000\)/);
+  assert.match(loader, /subjectFromDetailResponse/);
 });

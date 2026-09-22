@@ -1,5 +1,29 @@
 import type { ContractPriceSupportAnalysis, SaleRow } from './api';
-import { monthsBeforeDate } from './comparableSalesPresentation';
+import { monthsBeforeDate } from './comparableSalesPresentation.ts';
+
+export function formatComparableSquareFeet(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '-';
+  const number = typeof value === 'string' ? Number(String(value).replace(/[^0-9.-]/g, '')) : Number(value);
+  if (!isFinite(number) || number <= 0) return '-';
+  return `${number.toLocaleString('en-US')} sq. ft`;
+}
+
+export function formatComparableCurrency(value: unknown): string {
+  if (value === null || value === undefined || value === '') return '';
+  const number = typeof value === 'string' ? Number(String(value).replace(/[^0-9.-]/g, '')) : Number(value);
+  if (!isFinite(number)) return String(value);
+  return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(number);
+}
+
+export function comparableSaleKey(sale: SaleRow): string {
+  return sale.source_record_id != null ? `source-${sale.source_record_id}` : `legacy-${sale.sale_id}`;
+}
+
+export function parseComparableSaleNumber(value: unknown): number | null {
+  if (value === null || value === undefined || value === '') return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
+  return Number.isFinite(parsed) ? parsed : null;
+}
 
 export function saleDateDisplay(value: string | null): string {
   if (!value) return '';

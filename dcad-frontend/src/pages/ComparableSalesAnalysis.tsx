@@ -29,7 +29,7 @@ import ComparableSalesMap from '@/components/ComparableSalesMap';
 import ContractPriceSupportPanel from '@/components/ContractPriceSupportPanel';
 import DeferredReportSection from '@/components/DeferredReportSection';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
-import { fetchDetail } from '@/lib/dcad';
+import { loadComparableSubject } from '@/lib/comparableSubjectLoader';
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
   salesComparisonAutosaveDelay,
@@ -85,19 +85,19 @@ import {
   type SalesAnalysisPeriodMonths,
 } from '@/lib/comparableSalesPresentation';
 import {
-  accountNeedsRoomRefresh,
   boundedErrorMessage,
-  mergeSubjectData,
   responseSummary,
-  subjectFromAccountResponse,
-  subjectFromDetailResponse,
   type SubjectData,
 } from '@/lib/comparableSubjectData';
 import {
   attachmentNeedsReview,
+  comparableSaleKey as saleKey,
   contractSupportLoadNotice,
+  formatComparableCurrency as fmtCurrency,
+  formatComparableSquareFeet as fmtSqftSafe,
   housingTypeGridValue,
   housingTypeNeedsReview,
+  parseComparableSaleNumber as saleNumber,
   saleDateDisplay,
   saleDisplayAddress,
   saleIsOverOneYear,
@@ -879,81 +879,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       setLoading(true);
       setError(null);
       try {
-        // Prefer DB-backed endpoint
-        const accountResponse = await api.getAccount(propertyId, { assignmentFileId: activeAssignmentFile?.id });
-        setSubject(subjectFromAccountResponse(accountResponse, propertyId));
-
-        // Add checked legacy fields.
-        try {
-          const legacyResponse = await fetchDetail(propertyId);
-          const legacySubject = subjectFromDetailResponse(legacyResponse, propertyId);
-          setSubject((current) => mergeSubjectData(current, legacySubject, propertyId));
-        } catch { /* optional compatibility enrichment failed; keep the DB response */ }
-
-        // Refresh legacy rows missing room counts.
-        // This endpoint persists recovered values so later visits stay DB-backed.
-        if (accountNeedsRoomRefresh(accountResponse)) {
-          try {
-            const scraperBase = String(
-              import.meta.env.VITE_SCRAPER_BASE
-              || import.meta.env.VITE_SCRAPER_URL
-              || 'https://dcad-scraper-with-api.onrender.com',
-            ).replace(/\/+$/, '');
-            const response = await fetch(
-              `${scraperBase}/detail/${encodeURIComponent(propertyId)}`,
-              { signal: AbortSignal.timeout(15_000) },
-            );
-            if (response.ok) {
-              const payload: unknown = await response.json();
-              const scraperSubject = subjectFromDetailResponse(
-                payload,
-                propertyId,
-                { derivePool: true },
-              );
-              setSubject((current) => mergeSubjectData(current, scraperSubject, propertyId));
-            }
-          } catch { /* optional scraper enrichment failed; keep the DB response */ }
-        }
-        setLoading(false);
-        return;
-      } catch {
-        // Fall through to scraper detail
-      }
-      try {
-        const legacyResponse = await fetchDetail(propertyId);
-        setSubject(subjectFromDetailResponse(legacyResponse, propertyId));
+        const scraperBase = String(
+          import.meta.env.VITE_SCRAPER_BASE
+          || import.meta.env.VITE_SCRAPER_URL
+          || 'https://dcad-scraper-with-api.onrender.com',
+        ).replace(/\/+$/, '');
+        await loadComparableSubject(propertyId, activeAssignmentFile?.id, scraperBase, setSubject);
       } catch (loadError: unknown) {
         setError(boundedErrorMessage(loadError, 'Failed to load property'));
-      }
-      finally {
+      } finally {
         setLoading(false);
       }
     }
     load();
   }, [activeAssignmentFile?.id, propertyId]);
-
-  const fmtSqftSafe = (v: unknown) => {
-    if (v === null || v === undefined || v === '') return '-';
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    if (!isFinite(n) || n <= 0) return '-';
-    return `${n.toLocaleString('en-US')} sq. ft`;
-  };
-
-  const fmtCurrency = (v: unknown) => {
-    if (v === null || v === undefined || v === '') return '';
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    if (!isFinite(n)) return String(v);
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-  };
-
-  const saleKey = (sale: SaleRow): string =>
-    sale.source_record_id != null ? `source-${sale.source_record_id}` : `legacy-${sale.sale_id}`;
-
-  const saleNumber = (value: unknown): number | null => {
-    if (value === null || value === undefined || value === '') return null;
-    const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
 
   const openHousingEditor = (sale: SaleRow) => {
     if (!sale.primary_account_id) {

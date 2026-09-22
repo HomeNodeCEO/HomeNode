@@ -28,7 +28,7 @@ const salesComparisonSource = await readFile(
 );
 
 test("sales comparison stops showing Loading after a successful DB-backed subject load", () => {
-  assert.match(salesComparisonSource, /setLoading\(false\);\s*return;\s*\} catch \{\s*\/\/ Fall through to scraper detail/u);
+  assert.match(salesComparisonSource, /await loadComparableSubject\([^;]+;\s*\} catch \(loadError: unknown\) \{[\s\S]*?\} finally \{\s*setLoading\(false\);/u);
 });
 
 test("sales comparison dedupes only unchanged content, not timestamps", () => {

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import {
   getPropertyZoningEvidence,
   getZoningDocumentDescriptionSuggestion,
@@ -97,7 +97,7 @@ export function useZoningEvidence({
     }
   }, [accountId, assignmentFileId, enabled, hydrateZoningEvidence]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     requestVersionRef.current += 1;
     zoningEvidenceScopeRef.current = "";
     setZoningEvidence(null);

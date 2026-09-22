@@ -296,6 +296,7 @@ function HostSession(props: Props) {
    * operation only when the server still identifies it as pending. */
   async function recoverNeighborhood() {
     await reload();
+    if (lockedRef.current) return;
     const lifecycle = owner.current, current = lifecycle?.getState();
     // Reload may reveal that the original request committed. Resume only when
     // the authoritative checkpoint still records that exact pending operation.
@@ -305,6 +306,7 @@ function HostSession(props: Props) {
    * completed neighborhood and every observation already accepted from it. */
   async function chooseDifferentArea() {
     await reload();
+    if (lockedRef.current) return;
     const lifecycle = owner.current, current = lifecycle?.getState();
     // This clears only a confirmed incomplete attempt. The completed study and
     // any report observations already accepted from it remain unchanged.

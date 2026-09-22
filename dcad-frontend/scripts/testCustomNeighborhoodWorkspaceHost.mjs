@@ -355,6 +355,24 @@ test('appraiser can clear an incomplete area without changing the last completed
   assert.equal(await h.controls.flush(), true);
 });
 
+for (const recoveryAction of ['Try again', 'Choose a different area']) test(
+  `${recoveryAction} stops after authoritative reload discovers a finalized appraisal`, async t => {
+    const initial = activeSection([]), db = server(initial), h = harness(t, db, initial); await h.settle();
+    db.overrides.set('capture', () => json({ error: 'neighborhood_service_busy' }, 503));
+    h.click('Capture a new 3-mile study'); await h.settle();
+    const beforeRecovery = kinds(db);
+    assert.ok(h.button(recoveryAction));
+
+    db.file(TARGET).status = 'signed';
+    db.overrides.delete('capture');
+    h.click(recoveryAction); await h.settle();
+
+    assert.deepEqual(kinds(db), [...beforeRecovery, 'read']);
+    assert.equal(h.workspace(), undefined);
+    assert.match(h.html(), /no longer editable/);
+    assert.equal(await h.controls.flush(), false);
+  });
+
 test('catalog capacity on reopen does not promise a working new-study escape or bypass recovery', async t => {
   const initial = activeSection([]), db = server(initial);
   db.overrides.set('catalog', () => json({ error: 'neighborhood_preview_capacity_exceeded' }, 422));

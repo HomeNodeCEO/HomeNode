@@ -15,9 +15,17 @@ import {
   formatReportedBoolean,
   listingTimelineRows,
   parseNumber,
+  recordedExemptionRows,
   sellerComparisonSummary,
 } from '../src/lib/propertyReportPresentation.ts';
 import { mergeNonBlankSnapshot } from '../src/lib/reportSnapshotMerge.ts';
+
+test('recorded exemption rows preserve display order and omit entirely blank jurisdictions', () => {
+  const rows = recordedExemptionRows({ school: { homestead_exemption: '25000' },
+    city: { homestead_exemption: ' ' }, county: { taxable_value: '310000' } });
+  assert.deepEqual(rows.map(row => [row.key, row.fallbackLabel]),
+    [['school', 'School'], ['county', 'County']]);
+});
 
 test('legacy blank report snapshots cannot erase repaired CAD values', () => {
   const merged = mergeNonBlankSnapshot(

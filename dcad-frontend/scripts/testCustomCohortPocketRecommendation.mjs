@@ -18,6 +18,7 @@ for (const [version, count] of [[2, 887], [3, 1475]]) test(`all ${count} v${vers
   const catalog = presentCustomCohortPocketCatalog({ preview, expected,
     catalog: buildCustomCohortPocketCatalog({ retained_inputs: f.retained_inputs, preview, catalog_version: version }) });
   const recommendation = presentCustomCohortPocketRecommendation({ catalog, expected,
+    ...(version === 3 ? { observation_preview: preview } : {}),
     recommendation: buildCustomCohortPocketRecommendation({ ...f, catalog_version: version, observation_preview: preview,
       include_stock_composition: version === 3 }) });
   const target = f.retained_inputs.subject.target;
@@ -34,6 +35,8 @@ for (const [version, count] of [[2, 887], [3, 1475]]) test(`all ${count} v${vers
   assert.equal(checked.recommendation.cad_recorded_evidence.pocket_count, count);
   assert.equal(checked.recommendation.cad_recorded_evidence.member_count, count);
   if (version === 3) {
+    assert.equal(checked.recommendation.sales_aware_area?.status, 'insufficient_recorded_sales');
+    assert.ok(checked.recommendation.sales_aware_area.selected_recorded_group_ids.length > 0);
     assert.equal(checked.recommendation.stock_composition_v1.status, 'unavailable');
     assert.equal(checked.recommendation.stock_composition_v1.reason, 'group_limit');
     assert.deepEqual(checked.recommendation.stock_composition_v1, recommendation.stock_composition_v1);
@@ -45,6 +48,11 @@ for (const [version, count] of [[2, 887], [3, 1475]]) test(`all ${count} v${vers
     r => { r.recommendation.presentation_version = 1; }, r => { r.recommendation.recommendation_version = 1; },
     r => { r.recommendation.binding.selection_revision++; }]) {
     const bad = structuredClone(response); mutate(bad); assert.throws(() => checkCatalog(bad, input));
+  }
+  if (version === 3) {
+    const bad = structuredClone(response);
+    bad.recommendation.sales_aware_area.selected_account_count++;
+    assert.throws(() => checkCatalog(bad, input));
   }
   assert.deepEqual(input.selection, { revision: 1, pockets: [] });
 });

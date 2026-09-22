@@ -11,6 +11,8 @@ const CustomNeighborhoodWorkspaceHost = lazy(() => import('./CustomNeighborhoodW
 const MarketConditionsAnalysis = lazy(() => import('@/components/MarketConditionsAnalysis'));
 
 interface Props {
+  neighborhoodSummary: string;
+  onNeighborhoodSummaryChange: (value: string) => void;
   workspace: CustomNeighborhoodReportBridge;
   acceptedNeighborhood: AcceptedNeighborhoodState | null;
   assignmentFilesError: boolean;
@@ -55,6 +57,13 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
   return <SummarySection title="Neighborhood Characteristics"
     subtitle="Explore the complete captured area, review exact selected statistics, apply one boundary-and-statistics group, and reconcile market conditions"
     manuallyVerified={props.acceptedNeighborhood?.status === 'accepted'}>
+    <section className="mb-4 rounded-xl border border-violet-200 bg-white p-4" aria-label="Neighborhood summary">
+      <label htmlFor="custom-neighborhood-summary" className="block text-sm font-semibold text-slate-950">Neighborhood summary</label>
+      <p className="mt-1 text-xs text-slate-600">A source-limited starting description saved with this file. Review and edit before signing; verify any schools, amenities, services, and access details you add.</p>
+      <textarea id="custom-neighborhood-summary" className="textarea textarea-bordered mt-2 min-h-32 w-full bg-white"
+        value={props.neighborhoodSummary} onChange={event => props.onNeighborhoodSummaryChange(event.target.value)}
+        maxLength={8000} placeholder="Enter the appraiser-reviewed neighborhood description." />
+    </section>
     <div className="print:hidden">
       {props.workspace.message && <p role={props.workspace.status === 'unavailable' ? 'alert' : 'status'} className="mb-3 text-sm">
         {props.workspace.message}

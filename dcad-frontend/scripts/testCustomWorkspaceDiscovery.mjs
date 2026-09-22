@@ -38,7 +38,8 @@ const pending = (discovery, privateInput) => ({ operation_id: OP, observation_pe
   ...(privateInput ? { private_sales_import: copy(privateInput) } : {}), ...(discovery ? { discovery: copy(discovery) } : {}) });
 function catalog(input, privateInput) {
   const result = { status: 'catalog', subject_freshness: 'matched', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
-    ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
+    ...(input.initialPreviewMode === 'all_catalog_groups' || input.initialPreviewMode === 'recommended_area'
+      || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
       catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },

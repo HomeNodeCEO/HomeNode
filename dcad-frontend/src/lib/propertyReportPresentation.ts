@@ -1,3 +1,14 @@
+import type { DcadExemptionsMap } from './propertyReportEditableSections';
+
+export function recordedExemptionRows(exemptions?: DcadExemptionsMap) {
+  const order: Array<[keyof DcadExemptionsMap, string]> = [
+    ['city', 'City'], ['school', 'School'], ['county', 'County'],
+    ['college', 'College'], ['hospital', 'Hospital'], ['special_district', 'Special District'],
+  ];
+  return order.map(([key, fallbackLabel]) => ({ key, fallbackLabel, row: exemptions?.[key] }))
+    .filter(({ row }) => Boolean(row && Object.values(row).some(hasValue)));
+}
+
 export function hasValue(value: unknown): boolean {
   if (value === null || value === undefined) return false;
   if (typeof value === 'string') return value.trim().length > 0;

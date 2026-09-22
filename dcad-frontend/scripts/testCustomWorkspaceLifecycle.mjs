@@ -31,7 +31,7 @@ function captured(input) { return { status: 'registered', reused: false, context
 function catalog(input) {
   return { status: 'catalog', subject_freshness: 'matched', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
     // Opaque here: the preview controller separately admits summary/map bindings.
-    ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
+    ...(['all_catalog_groups', 'recommended_area'].includes(input.initialPreviewMode) || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
       catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },
@@ -150,7 +150,7 @@ for (const resume of [false, true]) for (const kind of ['mixed', 'named-only', '
       const state = await (resume ? h.controller.resumePending() : h.controller.start(PERIOD));
       assert.deepEqual(h.calls.map(c => c.kind), resume ? ['capture', 'catalog', 'save'] : ['save', 'capture', 'catalog', 'save']);
       const request = h.calls.find(c => c.kind === 'catalog').input;
-      assert.equal(request.initialPreviewMode, 'all_catalog_groups'); assert.equal(Object.hasOwn(request, 'initialPreviewGroups'), false);
+      assert.equal(request.initialPreviewMode, 'recommended_area'); assert.equal(Object.hasOwn(request, 'initialPreviewGroups'), false);
       assert.equal(request.catalogVersion, 3, 'new captures explicitly opt into v3 without changing old-client defaults');
       assert.deepEqual(request.selection, { revision: 1, pockets: [] });
       const expectedIds = kind.startsWith('dense') ? [...Array.from({ length: kind === 'dense1475' ? 1475 : 887 }, (_, i) => groupId(i + 1)), 'discovery:unassigned']
@@ -268,7 +268,7 @@ test('real retained producers cross combined transport, fresh lifecycle ACK and 
     request: async (url, init) => {
       requests.push({ url, init }); assert.match(url, /\/catalog$/);
       const body = JSON.parse(init.body);
-      assert.equal(body.initial_preview_mode, 'all_catalog_groups'); assert.equal(Object.hasOwn(body, 'initial_preview_groups'), false);
+      assert.equal(body.initial_preview_mode, 'recommended_area'); assert.equal(Object.hasOwn(body, 'initial_preview_groups'), false);
       assert.equal(body.catalog_version, 3);
       assert.deepEqual(body.selection, { revision: 1, pockets: [] }); assert.deepEqual(body.context_ref, f.context_ref);
       const expected = { context_ref: f.context_ref, selection_revision: body.selection.revision };

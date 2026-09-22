@@ -101,6 +101,10 @@ export function validateAssignmentDetails(value, { requireCompletion = true } = 
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("invalid_assignment_details");
   }
+  if (value.subject_neighborhood_summary !== undefined &&
+    (typeof value.subject_neighborhood_summary !== "string" || value.subject_neighborhood_summary.length > 8000)) {
+    throw new Error("invalid_subject_neighborhood_summary");
+  }
   if (value.pud !== undefined && typeof value.pud !== "boolean") {
     throw new Error("invalid_pud_value");
   }

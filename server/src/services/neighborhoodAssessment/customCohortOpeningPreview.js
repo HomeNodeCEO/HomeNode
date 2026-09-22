@@ -7,7 +7,7 @@ export const CUSTOM_COHORT_OPENING_RESPONSE_BYTES = 39_000_000;
 export const CUSTOM_COHORT_OPENING_PREVIEW_BYTES = 35_000_000;
 
 export function prepareCustomCohortOpeningMode(value) {
-  if (value !== 'all_catalog_groups') {
+  if (value !== 'all_catalog_groups' && value !== 'recommended_area') {
     throw Object.assign(new TypeError('custom_cohort_invalid_input'), { reason: 'invalid_input' });
   }
   return value;

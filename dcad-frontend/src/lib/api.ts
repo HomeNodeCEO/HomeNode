@@ -241,6 +241,7 @@ export interface ReportManualValue {
 }
 
 export interface AssignmentDetailsPayload {
+  subject_neighborhood_summary?: string;
   subject_condition_rating?: string;
   subject_condition_notes?: string;
   significant_physical_deficiencies?: boolean | null;

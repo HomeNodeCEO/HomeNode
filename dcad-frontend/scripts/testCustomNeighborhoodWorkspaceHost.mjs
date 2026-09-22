@@ -44,7 +44,7 @@ function catalog(account, body) {
   return { status: 'catalog', subject_freshness: 'matched', target: { account_id: account, assignment_file_id: body.assignment_file_id },
     // WorkspaceStub does not admit the nested map/summary; controller tests do.
     // Supply an opaque opening only when the real API explicitly requested it.
-    ...(body.initial_preview_mode === 'all_catalog_groups' || Object.hasOwn(body, 'initial_preview_groups')
+    ...(['all_catalog_groups', 'recommended_area'].includes(body.initial_preview_mode) || Object.hasOwn(body, 'initial_preview_groups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(body.context_ref), selection_revision: body.selection.revision, apply: { status: 'blocked' }, catalog: {
       catalog_version: body.catalog_version ?? 2, status: 'review_only', apply: { status: 'blocked' },

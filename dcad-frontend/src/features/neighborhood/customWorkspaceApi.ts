@@ -224,7 +224,7 @@ export function createCustomWorkspaceApi(options: Options) {
         const bound = identity(input.accountId, input.assignmentFileId);
         requireThat(input.catalogVersion === undefined || [1, 2, 3].includes(input.catalogVersion), 'invalid_input');
         const mode = Object.hasOwn(input, 'initialPreviewMode');
-        requireThat(!mode || (input.initialPreviewMode === 'all_catalog_groups'
+        requireThat(!mode || (['all_catalog_groups', 'recommended_area'].includes(input.initialPreviewMode || '')
           && !Object.hasOwn(input, 'initialPreviewGroups')), 'invalid_input');
         return knownFailure(CATALOG_FAILURES, () => cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true,

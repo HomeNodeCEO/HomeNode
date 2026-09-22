@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { extractText } from "unpdf";
 
 import {
   buildCustomAppraisalReportPdf,
@@ -24,6 +25,23 @@ test("fixed-layout appraisal PDF is valid, named, and contains nine Letter pages
   const pageObjects = content.toString("latin1").match(/\/Type \/Page\b/g) || [];
   assert.equal(pageObjects.length, CUSTOM_APPRAISAL_REPORT_PAGE_COUNT);
   assert.equal(customAppraisalReportFileName(snapshot), "fas-2026-00125-125.appraisal-report.pdf");
+});
+
+test('a saved neighborhood summary receives complete labeled PDF pages without truncating later photo pages', async () => {
+  const { snapshot, property } = customAppraisalReportFixture();
+  const narrative = 'Recorded subdivision and appraiser-reviewed area. '.repeat(95);
+  snapshot.assignment.assignment_details.subject_neighborhood_summary = narrative;
+  const pixel = Buffer.from(
+    'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+  const assignmentPhotos = [{ id: 'photo-after-summary', label: 'Dwelling Front', category: 'Front',
+    caption: 'Subject front elevation', origin: 'Desktop inspection', buffer: pixel }];
+  const content = await renderCustomAppraisalReportPdf({ snapshot, property, assignmentPhotos });
+  const pageObjects = content.toString('latin1').match(/\/Type \/Page\b/g) || [];
+  assert.ok(pageObjects.length >= CUSTOM_APPRAISAL_REPORT_PAGE_COUNT + 3,
+    'a long narrative receives additional pages before the labeled photo appendix');
+  const extracted = await extractText(new Uint8Array(content), { mergePages: false });
+  assert.match(extracted.text.at(-1).replace(/\s+/g, ' '), /Dwelling Front.*Subject front elevation/);
+  assert.match(extracted.text.at(-2).replace(/\s+/g, ' '), /APPRAISER-REVIEWED NEIGHBORHOOD SUMMARY/);
 });
 
 test("verified subject photos are retained in labeled appendix pages", async () => {

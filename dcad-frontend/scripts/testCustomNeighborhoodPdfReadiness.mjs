@@ -171,6 +171,15 @@ test('legacy browser print keeps its exact prior boundary checks while unresolve
   }
 });
 
+test('legacy browser print does not silently truncate an entered neighborhood summary', () => {
+  const f = reportedObservationReportFixture(), input = structuredClone(f.match);
+  input.section = undefined; input.response.neighborhood.status = 'not_accepted'; input.response.neighborhood.acceptance = null;
+  const legacy = match(input);
+  const details = { ...confirmed, subject_neighborhood_summary: 'Appraiser-reviewed neighborhood text' };
+  assert.deepEqual(readiness(legacy, input.accountId, input.assignmentFileId, details), []);
+  assert.match(printReadiness(legacy, input.accountId, input.assignmentFileId, details).join(' '), /complete neighborhood summary/);
+});
+
 test('signed server PDF remains available but even confirmed legacy fields cannot enable unsigned HTML printing', () => {
   const f = reportedObservationReportFixture(), state = { accountId: f.match.accountId,
     assignmentFileId: f.match.assignmentFileId, status: 'signed', assessment: null, message: '' };

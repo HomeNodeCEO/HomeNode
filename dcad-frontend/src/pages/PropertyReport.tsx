@@ -73,6 +73,7 @@ import {
 } from "@/components/PropertyReportControls";
 import { hasSnapshotValue, mergeNonBlankSnapshot } from "@/lib/reportSnapshotMerge";
 import type { LegacyDcadDetail } from "@/lib/legacyDcadDetail";
+import { useSubjectSummary } from "@/hooks/useSubjectNeighborhoodSummary";
 import {
   CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS,
   CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS,
@@ -119,6 +120,7 @@ import {
   hasValue,
   listingTimelineRows,
   parseNumber,
+  recordedExemptionRows,
   sellerComparisonSummary,
 } from "@/lib/propertyReportPresentation";
 import {
@@ -132,7 +134,7 @@ import {
 import {
   editablePropertyReportSectionValue,
   type DcadDetail, type DcadMainImprovement, type DcadHousingProfile,
-  type DcadImprovementRow, type DcadExemptionsMap,
+  type DcadImprovementRow,
 } from "@/lib/propertyReportEditableSections";
 import { useAssignmentFiles } from "@/hooks/useAssignmentFiles";
 import {
@@ -695,6 +697,8 @@ function AddressHero({
   const subjectYearBuilt = parseNumber(
     improvement?.effective_year_built ?? improvement?.year_built,
   );
+  useSubjectSummary(accountId, activeAssignmentFile, detail?.property_location,
+    parseNumber(improvement?.year_built), housing?.housing_type, setAssignmentDraft);
   const subjectAge = reportedSubjectAge ?? (
     subjectYearBuilt !== null
       ? Math.max(0, new Date().getFullYear() - subjectYearBuilt)
@@ -1540,23 +1544,7 @@ function AddressHero({
     manuallyVerified: Boolean(detail?.report_manual_values?.[key]),
   });
 
-  const exemptionOrder: Array<[keyof DcadExemptionsMap, string]> = [
-    ["city", "City"],
-    ["school", "School"],
-    ["county", "County"],
-    ["college", "College"],
-    ["hospital", "Hospital"],
-    ["special_district", "Special District"],
-  ];
-  const exemptionRows = exemptionOrder
-    .map(([key, fallbackLabel]) => ({
-      key,
-      fallbackLabel,
-      row: detail?.exemptions?.[key],
-    }))
-    .filter(({ row }) =>
-      Boolean(row && Object.values(row).some((value) => hasValue(value))),
-    );
+  const exemptionRows = recordedExemptionRows(detail?.exemptions);
   const exemptJurisdictionCount = exemptionRows.filter(
     ({ row }) => (parseNumber(row?.homestead_exemption) || 0) > 0,
   ).length;
@@ -3131,6 +3119,8 @@ function AddressHero({
             <div className="order-3">
               <Suspense fallback={<LazyReportContent label="neighborhood characteristics" />}>
                 <CustomNeighborhoodCharacteristicsSection
+                  neighborhoodSummary={assignmentDraft.subject_neighborhood_summary || ''}
+                  onNeighborhoodSummaryChange={value => updateAssignment('subject_neighborhood_summary', value)}
                   workspace={neighborhoodWorkspace}
                   acceptedNeighborhood={currentAcceptedNeighborhood}
                   assignmentFilesError={Boolean(assignmentFilesError)}

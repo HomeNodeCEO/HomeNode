@@ -37,6 +37,7 @@ export interface CheckedRecordedProximity {
   readonly counts: { readonly accounts: number; readonly parcels: number; readonly observed_accounts: number; readonly unknown_accounts: number };
 }
 export interface CheckedPocketRecommendation {
+  readonly sales_aware_area?: CheckedSalesAwareArea;
   readonly status: 'recommendation_for_review' | 'insufficient_observations';
   readonly policy: { readonly id: string; readonly revision: 1 | 2 | 3; readonly minimum_mean_lower_bound: number;
     readonly minimum_mean_known_weight_percent: number };
@@ -52,6 +53,16 @@ export interface CheckedPocketRecommendation {
   readonly recorded_housing?: CheckedRecordedHousing;
   readonly evidence_mode?: 'recorded_housing_only' | 'recorded_housing_and_proximity';
   readonly stock_composition_v1?: CheckedStockComposition;
+}
+export interface CheckedSalesAwareArea {
+  readonly status: 'meets_targets' | 'insufficient_recorded_sales' | 'quarterly_gla_mismatch' | 'unavailable';
+  readonly selected_recorded_group_ids: readonly string[];
+  readonly selected_account_count: number;
+  readonly recorded_transaction_count: number;
+  readonly available_qualifying_transaction_count: number;
+  readonly subject_gla_sqft: number | null;
+  readonly quarterly_gla: readonly { readonly quarter: string; readonly transaction_count: number;
+    readonly median_current_cad_gla_sqft: number | null; readonly deviation_percent: number | null; readonly within_tolerance: boolean }[];
 }
 type Catalog = Pick<CheckedPocketCatalog, 'status' | 'binding' | 'pockets' | 'unassigned' | 'coverage' | 'subject_membership'>
   & Partial<Pick<CheckedPocketCatalog, 'catalog_version'>>;
@@ -87,6 +98,9 @@ function array(value: unknown, maximum: number): unknown[] {
   return value;
 }
 function count(value: unknown): number { ensure(Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 50_000); return Number(value); }
+// The citywide captured transaction roster may exceed the catalog's parcel
+// count bound. These values are aggregates only, not expanded rows.
+function areaCount(value: unknown): number { ensure(Number.isSafeInteger(value) && Number(value) >= 0 && Number(value) <= 1_000_000); return Number(value); }
 function score(value: unknown): number { ensure(typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 100); return value; }
 function flag(value: unknown): boolean { ensure(typeof value === 'boolean'); return value; }
 function ids(value: unknown, maximum = 129): string[] {
@@ -216,11 +230,12 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   const hasHousing = value !== null && typeof value === 'object' && Object.hasOwn(value, 'recorded_housing');
   const hasMode = value !== null && typeof value === 'object' && Object.hasOwn(value, 'evidence_mode');
   const hasComposition = value !== null && typeof value === 'object' && Object.hasOwn(value, 'stock_composition_v1');
+  const hasArea = value !== null && typeof value === 'object' && Object.hasOwn(value, 'sales_aware_area');
   const r = object(value, ['presentation_version', 'recommendation_version', 'status', 'basis', 'selection_scope', 'authority',
     'binding', 'policy', 'subject', 'pockets', 'all', 'recommended_recorded_group_ids', 'unavailable_factors', 'limitations', 'apply',
     ...(hasCadEvidence ? ['cad_recorded_evidence'] : []), ...(hasProximity ? ['recorded_proximity'] : []),
     ...(hasHousing ? ['recorded_housing'] : []), ...(hasMode ? ['evidence_mode'] : []),
-    ...(hasComposition ? ['stock_composition_v1'] : [])]);
+    ...(hasComposition ? ['stock_composition_v1'] : []), ...(hasArea ? ['sales_aware_area'] : [])]);
   const dense = r.presentation_version === 2 || r.presentation_version === 3;
   const groupLimit = r.presentation_version === 3 ? 2049 : dense ? 1025 : 129;
   ensure((dense ? r.recommendation_version === r.presentation_version && catalog.catalog_version === r.presentation_version
@@ -303,6 +318,46 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
   if (composition) ensure(housing && composition.composition_version === housing.housing_version
     && (composition.status !== 'available' || composition.mapping_version === housing.mapping_version)
     && (!cad || composition.binding.captured_at === cad.binding.captured_at));
+  let area: CheckedSalesAwareArea | null = null;
+  if (hasArea) {
+    ensure(housingV3);
+    const a = object(r.sales_aware_area, ['area_version', 'basis', 'policy', 'subject_gla_sqft',
+      'selected_recorded_group_ids', 'selected_account_count', 'recorded_transaction_count',
+      'available_qualifying_transaction_count', 'quarterly_gla', 'limitations', 'status']);
+    const rule = object(a.policy, ['version', 'minimum_transactions', 'quarterly_median_gla_tolerance_percent',
+      'maximum_selected_accounts', 'maximum_selected_groups']);
+    ensure(a.area_version === 1 && a.basis === 'single_account_recorded_transactions_and_current_cad_gla'
+      && rule.version === 1 && rule.minimum_transactions === 50 && rule.quarterly_median_gla_tolerance_percent === 5
+      && rule.maximum_selected_accounts === 3000 && rule.maximum_selected_groups === 30);
+    const selected = ids(a.selected_recorded_group_ids, 30);
+    ensure(selected.every(id => known.has(id) && id !== 'discovery:unassigned')
+      && count(a.selected_account_count) === selected.reduce((sum, id) => sum + known.get(id)!.count, 0));
+    const transactions = areaCount(a.recorded_transaction_count), available = areaCount(a.available_qualifying_transaction_count);
+    ensure(transactions <= available && selected.length <= 30);
+    const subjectGla = a.subject_gla_sqft === null ? null : Number(a.subject_gla_sqft);
+    ensure(subjectGla === null || (Number.isFinite(subjectGla) && subjectGla > 0));
+    const quarters = array(a.quarterly_gla, 100).map(value => {
+      const q = object(value, ['quarter', 'transaction_count', 'median_current_cad_gla_sqft', 'deviation_percent', 'within_tolerance']);
+      const transactionsInQuarter = areaCount(q.transaction_count);
+      ensure(typeof q.quarter === 'string' && /^\d{4}-Q[1-4]$/.test(q.quarter)
+        && (transactionsInQuarter === 0 ? q.median_current_cad_gla_sqft === null && q.deviation_percent === null && q.within_tolerance === false
+          : Number.isFinite(q.median_current_cad_gla_sqft) && Number(q.median_current_cad_gla_sqft) > 0
+            && Number.isFinite(q.deviation_percent) && Number(q.deviation_percent) >= 0));
+      return { quarter: q.quarter, transaction_count: transactionsInQuarter,
+        median_current_cad_gla_sqft: q.median_current_cad_gla_sqft === null ? null : Number(q.median_current_cad_gla_sqft),
+        deviation_percent: q.deviation_percent === null ? null : Number(q.deviation_percent),
+        within_tolerance: flag(q.within_tolerance) };
+    });
+    ensure(quarters.reduce((sum, q) => sum + q.transaction_count, 0) === transactions
+      && quarters.every((q, index) => index === 0 || quarters[index - 1].quarter < q.quarter));
+    const status = a.status;
+    ensure(['meets_targets', 'insufficient_recorded_sales', 'quarterly_gla_mismatch', 'unavailable'].includes(String(status))
+      && (status !== 'meets_targets' || (transactions >= 50 && quarters.every(q => q.within_tolerance))));
+    array(a.limitations, 10).forEach(value => text(value, 120));
+    area = { status: status as CheckedSalesAwareArea['status'], selected_recorded_group_ids: selected,
+      selected_account_count: Number(a.selected_account_count), recorded_transaction_count: transactions,
+      available_qualifying_transaction_count: available, subject_gla_sqft: subjectGla, quarterly_gla: quarters };
+  }
   // The closed, bounded structure has now been checked before serialization.
   ensure(new TextEncoder().encode(JSON.stringify(value)).length <= (dense ? 2_500_000 : 512_000));
   return freeze({ status: r.status, policy: { id: housingV3 ? 'custom-current-observation-review-v3' : proximityV2 ? 'custom-current-observation-review-v2' : 'custom-current-observation-review-v1',
@@ -310,5 +365,5 @@ export function checkCustomCohortPocketRecommendation(value: unknown, catalog: C
     subject: { in_discovery, recorded_group_review_ids: subjectIds }, pockets, all, recommended_recorded_group_ids: recommended, limitations,
     ...(cad ? { cad_recorded_evidence: cad } : {}), ...(proximity ? { recorded_proximity: proximity } : {}),
     ...(housing ? { recorded_housing: housing, evidence_mode: r.evidence_mode as CheckedPocketRecommendation['evidence_mode'] } : {}),
-    ...(composition ? { stock_composition_v1: composition } : {}) });
+    ...(composition ? { stock_composition_v1: composition } : {}), ...(area ? { sales_aware_area: area } : {}) });
 }

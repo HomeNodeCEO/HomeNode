@@ -37,5 +37,6 @@ export function customNeighborhoodBrowserPrintReadinessErrors(state: AcceptedNei
   if (pdfErrors.length) return pdfErrors;
   if (state?.status === 'accepted') return ['Download the PDF for the accepted neighborhood group; this HTML preview does not contain that group.'];
   if (state?.status === 'signed') return ['Download the immutable signed PDF; this HTML preview is not the signed report.'];
+  if (details?.subject_neighborhood_summary) return ['Download the PDF for the complete neighborhood summary; this HTML preview may truncate it.'];
   return neighborhoodBoundaryReadinessErrors(details);
 }

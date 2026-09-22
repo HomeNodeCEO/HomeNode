@@ -113,7 +113,8 @@ test('transport retains existing display message cleanup while machine-code extr
 });
 function catalog(input) {
   return { status: 'catalog', subject_freshness: 'matched', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
-    ...(input.initialPreviewMode === 'all_catalog_groups' || Object.hasOwn(input, 'initialPreviewGroups')
+    ...(input.initialPreviewMode === 'all_catalog_groups' || input.initialPreviewMode === 'recommended_area'
+      || Object.hasOwn(input, 'initialPreviewGroups')
       ? { initial_preview: { fixture: 'opening' } } : {}),
     context_ref: copy(input.contextRef), selection_revision: input.selection.revision, apply: { status: 'blocked' }, catalog: {
       catalog_version: input.catalogVersion ?? 1, status: 'review_only', apply: { status: 'blocked' },

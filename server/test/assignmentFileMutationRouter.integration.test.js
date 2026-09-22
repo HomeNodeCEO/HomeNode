@@ -579,7 +579,7 @@ test("assignment mutation composition is explicit and inline handlers are absent
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
   const propertyTax = source.indexOf("app.use(createDesktopPropertyTaxRouter(");
   const mutations = source.indexOf("app.use(createAssignmentFileMutationRouter(");
-  const workfile = source.indexOf("app.use(createAssignmentWorkfileReadRouter(");
+  const workfile = source.indexOf("app.use(createAssignmentWorkfileRouter(");
   assert.ok(mutations > propertyTax);
   assert.ok(workfile > mutations);
   assert.equal(source.includes('app.post("/api/accounts/:id/assignment-files"'), false);

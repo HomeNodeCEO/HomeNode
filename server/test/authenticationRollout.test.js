@@ -114,7 +114,7 @@ test("custom appraisal signatures are identity-bound, authenticated, and append-
   const enrichment = read("../src/modules/operations/enrichmentMutationRouter.js");
   const workfiles = read("../src/services/customAppraisalWorkfiles.js");
   const migration = read("../migrations/20260929_custom_appraisal_signature_hardening.sql");
-  assert.match(server, /createAssignmentWorkfileMutationRouter/);
+  assert.match(server, /createAssignmentWorkfileRouter/);
   assert.match(mutations, /APP_SIGNING_SECRET/);
   assert.match(mutations, /authenticated_signer_required/);
   assert.match(workfiles, /custom_appraisal_signer_not_assigned/);

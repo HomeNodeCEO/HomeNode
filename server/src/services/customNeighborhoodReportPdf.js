@@ -91,8 +91,10 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
     y += heading ? 3 : 4;
   };
   paragraph("Accepted neighborhood - complete supplied evidence", true);
-  paragraph(`Assessment: ${assessment.id}; revision: ${assessment.revision}; evidence SHA-256: ${assessment.evidence_digest_sha256}.`);
-  paragraph(`Operation: ${projected.operation_id}; accepted editor revision: ${projected.accepted_editor_revision}. Effective date: ${assessment.effective_date}; data cutoff: ${assessment.data_cutoff}.`);
+  paragraph(reported
+    ? `Accepted neighborhood evidence. Effective date: ${assessment.effective_date}; data cutoff: ${assessment.data_cutoff}. Internal record identifiers and integrity checks are retained in the assignment workfile.`
+    : `Assessment: ${assessment.id}; revision: ${assessment.revision}; evidence SHA-256: ${assessment.evidence_digest_sha256}.`);
+  if (!reported) paragraph(`Operation: ${projected.operation_id}; accepted editor revision: ${projected.accepted_editor_revision}. Effective date: ${assessment.effective_date}; data cutoff: ${assessment.data_cutoff}.`);
   paragraph(`Study observation period: ${period(assessment.observation_period)}.`);
   paragraph(reported ? "Reported observations, not verified market facts. CAD accounts are not economic properties; source records are not canonical transactions. Provider coverage is not established. Non-ASCII characters are preserved as Unicode escapes."
     : "Values and statuses are producer-supplied, not recalculated. COD is dispersion, not reliability. Non-ASCII characters are preserved as Unicode escapes.");
@@ -101,30 +103,36 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
   const geography = assessment.geographic_neighborhood;
   paragraph(`Geography revision: ${geography.revision}; coordinate reference: ${geography.crs}; status: ${geography.status}.`);
   for (const direction of ["north", "east", "south", "west"]) paragraph(`${direction.toUpperCase()}: ${supplied(geography.cardinal_summaries[direction])}`);
-  for (const edge of geography.perimeter) paragraph(`Perimeter edge ${edge.edge_id}: ${supplied(edge.name)}; from ${edge.from_node} to ${edge.to_node}; sources: ${references(edge.source_refs)}.`);
-  paragraph(reported ? "Selected recorded pocket IDs" : "Selected competitive pocket IDs", true);
-  paragraph(assessment.selection.pocket_ids.length ? JSON.stringify(assessment.selection.pocket_ids) : reported ? "No recorded pockets selected (0 supplied IDs)." : "No competitive pockets selected (0 supplied IDs).");
-  paragraph(reported ? `Selection revision: ${assessment.selection.revision}; overrides: ${JSON.stringify(assessment.selection.overrides)}. Housing eligibility is not established by this observation profile.`
-    : `Selection revision: ${assessment.selection.revision}; housing eligibility: ${supplied(assessment.selection.housing_eligibility)}; overrides: ${JSON.stringify(assessment.selection.overrides)}.`);
+  for (const edge of geography.perimeter) paragraph(reported
+    ? `Boundary segment: ${supplied(edge.name)}.`
+    : `Perimeter edge ${edge.edge_id}: ${supplied(edge.name)}; from ${edge.from_node} to ${edge.to_node}; sources: ${references(edge.source_refs)}.`);
+  if (reported) {
+    paragraph("Selected neighborhood analysis", true);
+    paragraph(`${assessment.selection.pocket_ids.length} selected area${assessment.selection.pocket_ids.length === 1 ? "" : "s"}. Internal area identifiers and selection history are retained in the assignment workfile.`);
+    paragraph("Housing eligibility is not established by this observation profile.");
+  } else {
+    paragraph("Selected competitive pocket IDs", true);
+    paragraph(assessment.selection.pocket_ids.length ? JSON.stringify(assessment.selection.pocket_ids) : "No competitive pockets selected (0 supplied IDs).");
+    paragraph(`Selection revision: ${assessment.selection.revision}; housing eligibility: ${supplied(assessment.selection.housing_eligibility)}; overrides: ${JSON.stringify(assessment.selection.overrides)}.`);
+  }
   for (const population of assessment.populations) {
     if (reported) {
-      paragraph(`Population ${population.id} - ${population.kind === "account_observations" ? "CAD-account observations" : "Reported source-record observations"}`, true);
+      paragraph(population.kind === "account_observations" ? "Neighborhood property observations" : "Neighborhood sales observations", true);
       paragraph(`Definition: ${population.definition}`);
       paragraph(`Member count: ${displayCount(population.member_count)} (${population.member_unit === "account" ? "Accounts" : "Source records"}); unique account count: ${displayCount(population.unique_account_count)}; account link count: ${displayCount(population.account_link_count)}.`);
       paragraph(`Retained roster completeness: ${population.completeness}; provider coverage: not established; reasons: ${population.reasons.length ? JSON.stringify(population.reasons) : "none"}.`);
       paragraph(`Observation period: ${period(population.observation_period)}. Captured at: ${supplied(population.captured_at)}; temporal basis: ${population.temporal_basis}.`);
-      paragraph(`Pocket IDs: ${JSON.stringify(population.pocket_ids)}; sources: ${references(population.source_refs)}.`);
-      paragraph(`Members resource: ${population.members_resource_id}; member-set SHA-256: ${supplied(population.member_set_sha256)}.`);
+      paragraph(`${population.source_refs.length} source reference${population.source_refs.length === 1 ? "" : "s"} retained in the assignment workfile.`);
       const statistics = assessment.statistics.filter(statistic => statistic.population_id === population.id);
       if (!statistics.length) paragraph("Unavailable - no statistics supplied for this population.");
       for (const statistic of statistics) {
-        paragraph(`Statistic ${statistic.id} - ${reportedLabels[statistic.measurement]}`, true, true);
+        paragraph(reportedLabels[statistic.measurement], true, true);
         const value = statistic.status === "ready" ? `${reportedNumber(statistic.value, statistic.unit)} ${statistic.unit === "source_records" ? "source records" : statistic.unit}`
           : `Unavailable - ${statistic.reason || statistic.status}`;
         paragraph(`Estimator: ${estimators[statistic.estimator]}; status: ${statistic.status}; value: ${value}.`);
         if (statistic.value !== null) paragraph(`Exact retained value: ${statistic.value}; unit: ${statistic.unit}.`);
         paragraph(`Observed: ${displayCount(statistic.observed_count)}; missing: ${displayCount(statistic.missing_count)}; invalid: ${displayCount(statistic.invalid_count)}; conflicting: ${displayCount(statistic.conflicting_count)}; unsupported: ${displayCount(statistic.unsupported_count)}; denominator: ${displayCount(statistic.denominator_count)} (population members).`);
-        paragraph(`Observation period: ${period(statistic.observation_period)}. Sources: ${references(statistic.source_refs)}. Estimator metadata: ${JSON.stringify(statistic.estimator_parameters)}.`);
+        paragraph(`Observation period: ${period(statistic.observation_period)}. ${statistic.source_refs.length} source reference${statistic.source_refs.length === 1 ? "" : "s"} retained in the assignment workfile.`);
       }
       continue;
     }
@@ -157,13 +165,15 @@ export function prepareCustomNeighborhoodPdfAppendix(doc, projected) {
     paragraph("Median is not predominant. Recorded subject-point coverage is not full parcel containment or a legal subdivision assertion. Boundary and population membership remain separate.");
     paragraph(JSON.stringify(assessment.diagnostics.limitations));
   }
-  paragraph("Source snapshots", true);
-  for (const source of assessment.source_snapshots) {
-    paragraph(`Source ${source.id} - ${source.provider}`, true);
-    paragraph(`Revision: ${source.revision}; observed at: ${source.observed_at}; historical availability: ${source.historical_availability}.`);
-    paragraph(`Valid from: ${supplied(source.valid_from)}; valid through: ${supplied(source.valid_to)}; visibility: ${source.visibility}; scope: ${source.scope === null ? "public" : JSON.stringify(source.scope)}.`);
-    paragraph(`Content SHA-256: ${source.content_sha256}.`);
-  }
+  paragraph(reported ? "Source evidence" : "Source snapshots", true);
+  if (reported) {
+    paragraph(`${assessment.source_snapshots.length} source snapshot${assessment.source_snapshots.length === 1 ? "" : "s"} retained in the assignment workfile with capture details and integrity checks.`);
+  } else for (const source of assessment.source_snapshots) {
+      paragraph(`Source ${source.id} - ${source.provider}`, true);
+      paragraph(`Revision: ${source.revision}; observed at: ${source.observed_at}; historical availability: ${source.historical_availability}.`);
+      paragraph(`Valid from: ${supplied(source.valid_from)}; valid through: ${supplied(source.valid_to)}; visibility: ${source.visibility}; scope: ${source.scope === null ? "public" : JSON.stringify(source.scope)}.`);
+      paragraph(`Content SHA-256: ${source.content_sha256}.`);
+    }
   return pages;
 }
 
@@ -194,14 +204,14 @@ export function renderCustomNeighborhoodPdfSummary(doc, projected, appendix) {
   const write = (value, x, y, width = WIDTH, size = 8, bold = false, height = undefined) => doc.font(bold ? "Helvetica-Bold" : "Helvetica")
     .fontSize(size).fillColor("#0f172a").text(ascii(value), x, y, { width, ...(height ? { height, ellipsis: true } : {}) });
   write(reported ? "ACCEPTED REPORTED NEIGHBORHOOD OBSERVATIONS" : "ACCEPTED NEIGHBORHOOD GROUP", LEFT, 90, WIDTH, 9, true);
-  write(`Assessment ${assessment.id} / revision ${assessment.revision}`, LEFT, 108);
-  write(`Accepted operation ${projected.operation_id} / editor revision ${projected.accepted_editor_revision}`, LEFT, 124);
+  write(reported ? "Accepted appraiser-reviewed neighborhood evidence" : `Assessment ${assessment.id} / revision ${assessment.revision}`, LEFT, 108);
+  write(reported ? "Internal selection history and integrity checks are retained in the assignment workfile." : `Accepted operation ${projected.operation_id} / editor revision ${projected.accepted_editor_revision}`, LEFT, 124);
   write(`Effective date ${assessment.effective_date} / data cutoff ${assessment.data_cutoff}`, LEFT, 140);
   write(`Study period: ${period(assessment.observation_period)}`, LEFT, 156);
   drawCustomNeighborhoodOutline(doc, assessment.geographic_neighborhood.geometry, { x: LEFT, y: 184, width: 300, height: 202 });
   write("Descriptive geography", 355, 190, 210, 9, true);
   write("Stored geographic boundary only. The outline is a north-up longitude/latitude schematic, without a basemap. It does not depict competitive pocket shapes or measure distances.", 355, 210, 210);
-  write(`Selected ${reported ? "recorded" : "competitive"} pockets: ${displayCount(assessment.selection.pocket_ids.length)}. Exact IDs and complete boundary descriptions are retained in the appendix. Population membership is separate from descriptive geography.`, 355, 282, 210);
+  write(`Selected ${reported ? "neighborhood areas" : "competitive pockets"}: ${displayCount(assessment.selection.pocket_ids.length)}. ${reported ? "Internal IDs are retained in the assignment workfile." : "Exact IDs and complete boundary descriptions are retained in the appendix."} Population membership is separate from descriptive geography.`, 355, 282, 210);
   const short = value => {
     const result = ascii(value);
     return result.length <= 125 ? result : `${result.slice(0, 125)} [full text in appendix]`;
@@ -212,7 +222,9 @@ export function renderCustomNeighborhoodPdfSummary(doc, projected, appendix) {
     write(short(assessment.geographic_neighborhood.cardinal_summaries[direction]), x, y + 16, 250, 8, false, 52);
   });
   write("COMPLETE ACCEPTED EVIDENCE", LEFT, 574, WIDTH, 9, true);
-  write(`All ${displayCount(assessment.populations.length)} supplied populations, ${displayCount(assessment.statistics.length)} statistics and ${displayCount(assessment.source_snapshots.length)} source snapshots appear on appendix pages ${appendix.firstPage}-${appendix.firstPage + appendix.pageCount - 1}. No populations are pooled or limited to the first 30 sales.`, LEFT, 594);
+  write(reported
+    ? `All ${displayCount(assessment.populations.length)} supplied populations and ${displayCount(assessment.statistics.length)} statistics appear on appendix pages ${appendix.firstPage}-${appendix.firstPage + appendix.pageCount - 1}; ${displayCount(assessment.source_snapshots.length)} source snapshot${assessment.source_snapshots.length === 1 ? " is" : "s are"} retained in the assignment workfile. No populations are pooled or limited to the first 30 sales.`
+    : `All ${displayCount(assessment.populations.length)} supplied populations, ${displayCount(assessment.statistics.length)} statistics and ${displayCount(assessment.source_snapshots.length)} source snapshots appear on appendix pages ${appendix.firstPage}-${appendix.firstPage + appendix.pageCount - 1}. No populations are pooled or limited to the first 30 sales.`, LEFT, 594);
   write(reported ? "CAD accounts are not economic properties; source records are not canonical transactions. Reported ClosePrice and CurrentPrice remain distinct. Median is not predominant. Unsupported observations remain unavailable; exact retained scalars appear in the appendix."
     : "Recorded sale prices, package-allocated prices and CAD assessed values are distinct. Median is not predominant. Age at sale is not age at the effective date. Unsupported and incomplete statistics remain unavailable with their supplied reasons.", LEFT, 630);
   write(reported ? "Reported observations are not verified market facts. Provider coverage and historical stock are not established. Full source-record totals are not allocated to accounts. Legacy values are not mixed into this accepted group."

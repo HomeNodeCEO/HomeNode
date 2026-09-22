@@ -25,7 +25,7 @@ const checksum = (value) => createHash("sha256")
 test("market spatial schema is registered without transaction-bound repair or index work", () => {
   const registeredNames = [...migrationRegistry.matchAll(/"(20\d{6}_[^"]+\.sql)"/g)]
     .map((match) => match[1]);
-  assert.equal(registeredNames.at(-1), MARKET_SPATIAL_MIGRATION_NAME);
+  assert.ok(registeredNames.includes(MARKET_SPATIAL_MIGRATION_NAME));
   assert.match(migration, /set_config\('lock_timeout'/);
   assert.match(migration, /set_config\('statement_timeout'/);
   assert.match(migration, /account_locations_sync_geom/);
@@ -120,7 +120,7 @@ test("the runner records completion only after resumable repair and concurrent i
   const pool = { query: client.query, connect: async () => client };
 
   const results = await applyMobileMigrations(pool, { logger: {} });
-  assert.deepEqual(results.at(-1), {
+  assert.deepEqual(results.find(({ migration_name }) => migration_name === MARKET_SPATIAL_MIGRATION_NAME), {
     migration_name: MARKET_SPATIAL_MIGRATION_NAME,
     status: "applied",
   });

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useId, useMemo, useState } from 'react';
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import {
@@ -131,6 +131,9 @@ interface AssignmentDocumentCenterProps {
   onCustomAssignmentApplied?: (application: AssignmentDocumentApplication) => void;
   onUadApplied?: (result: UadDocumentApplicationResult) => void;
   className?: string;
+  embedded?: boolean;
+  defaultOpen?: boolean;
+  readOnly?: boolean;
 }
 
 export default function AssignmentDocumentCenter({
@@ -143,11 +146,14 @@ export default function AssignmentDocumentCenter({
   onCustomAssignmentApplied,
   onUadApplied,
   className = '',
+  embedded = false,
+  defaultOpen = false,
+  readOnly = false,
 }: AssignmentDocumentCenterProps) {
   const { session } = useApplicationAuth();
   const isUad = Boolean(uadWorkfileId);
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen);
   const [documents, setDocuments] = useState<AssignmentDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<AssignmentDocument | null>(null);
   const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
@@ -164,6 +170,12 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const scopeKey = isUad
+    ? `uad:${uadWorkfileId || ''}`
+    : `custom:${accountId}:${assignmentFileId ?? ''}`;
+  const currentScopeKeyRef = useRef(scopeKey);
+  currentScopeKeyRef.current = scopeKey;
+  const loadDocumentRequestRef = useRef(0);
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -210,14 +222,36 @@ export default function AssignmentDocumentCenter({
     candidate.review_status === 'rejected'
   )).length;
 
+  const requireMutableWorkfile = () => {
+    if (!readOnly) return true;
+    setMessage('This appraisal workfile is locked. Document evidence remains available for review, but it cannot be changed.');
+    return false;
+  };
+
   useEffect(() => {
     const authenticatedReviewer = defaultReviewer.trim();
     if (!authenticatedReviewer) return;
     setReviewer((current) => current.trim() || authenticatedReviewer);
   }, [defaultReviewer]);
 
+  useEffect(() => {
+    loadDocumentRequestRef.current += 1;
+    setDocuments([]);
+    setSelectedDocument(null);
+    setCandidateValues({});
+    setSelectedFile(null);
+    setDocumentTitle('');
+    setMessage('');
+    setLoading(false);
+    setViewerUrl((current) => {
+      if (current) URL.revokeObjectURL(current);
+      return '';
+    });
+  }, [scopeKey]);
+
   const loadDocuments = useCallback(async () => {
     if (!accountId) return;
+    const requestedScopeKey = scopeKey;
     setLoading(true);
     setMessage('');
     try {
@@ -226,19 +260,28 @@ export default function AssignmentDocumentCenter({
       const loaded = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       setDocuments(loaded);
       if (selectedDocument?.id) {
         const matching = loaded.find((document) => document.id === selectedDocument.id);
         if (!matching) setSelectedDocument(null);
       }
     } catch (error) {
+      if (currentScopeKeyRef.current !== requestedScopeKey) return;
       setMessage(error instanceof Error ? error.message : 'Documents could not be loaded.');
     } finally {
-      setLoading(false);
+      if (currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, isUad, selectedDocument?.id, uadWorkfileId]);
+  }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, selectedDocument?.id, uadWorkfileId]);
 
   const loadDocument = useCallback(async (documentId: number) => {
+    const requestedScopeKey = scopeKey;
+    const requestId = loadDocumentRequestRef.current + 1;
+    loadDocumentRequestRef.current = requestId;
+    const requestIsCurrent = () => (
+      currentScopeKeyRef.current === requestedScopeKey
+      && loadDocumentRequestRef.current === requestId
+    );
     setLoading(true);
     setMessage('');
     try {
@@ -253,6 +296,7 @@ export default function AssignmentDocumentCenter({
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
       if (documentResult.status === 'rejected') throw documentResult.reason;
+      if (!requestIsCurrent()) return;
       const document = documentResult.value;
       setSelectedDocument(document);
       setCandidateValues(Object.fromEntries(
@@ -270,15 +314,16 @@ export default function AssignmentDocumentCenter({
         setMessage(`Contract information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
       }
     } catch (error) {
+      if (!requestIsCurrent()) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be loaded.');
     } finally {
-      setLoading(false);
+      if (requestIsCurrent()) setLoading(false);
     }
-  }, [getEditorKey, isUad, uadWorkfileId]);
+  }, [getEditorKey, isUad, scopeKey, uadWorkfileId]);
 
   useEffect(() => {
-    if (open) void loadDocuments();
-  }, [open, loadDocuments]);
+    if (embedded || open) void loadDocuments();
+  }, [embedded, open, loadDocuments]);
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;
@@ -291,6 +336,7 @@ export default function AssignmentDocumentCenter({
   }, [viewerUrl]);
 
   const upload = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedFile) {
       setMessage('Choose a PDF before uploading.');
       return;
@@ -331,6 +377,7 @@ export default function AssignmentDocumentCenter({
     candidate: AssignmentDocumentCandidate,
     reviewStatus: 'confirmed' | 'rejected',
   ) => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedDocument || !candidate.id) return;
     if (!reviewer.trim()) {
       setMessage('Enter the appraiser or reviewer name before confirming extracted data.');
@@ -395,6 +442,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const reprocess = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedDocument) return;
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
@@ -414,6 +462,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const deleteFromFile = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedDocument) return;
     const confirmed = window.confirm(
       `Permanently delete "${selectedDocument.title}" from this appraisal file?\n\n`
@@ -445,6 +494,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const applyConfirmedDocumentFields = (document: AssignmentDocument) => {
+    if (!requireMutableWorkfile()) return 0;
     const applications = confirmedDocumentFieldApplications(document.candidates);
     applications.forEach(({ fieldKey, value }) => {
       onApplyConfirmedCandidate?.(fieldKey, value, document.document_type);
@@ -453,6 +503,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const applyConfirmedCandidateToUad = async (candidate: AssignmentDocumentCandidate) => {
+    if (!requireMutableWorkfile()) return null;
     if (!uadWorkfileId || !selectedDocument || !candidate.id) return null;
     const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
     onUadApplied?.(result);
@@ -460,6 +511,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const synchronizeReviewedUadPurchaseContract = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!uadWorkfileId || !selectedDocument || selectedDocument.document_type !== 'purchase_contract') return;
     setLoading(true);
     setMessage('');
@@ -477,6 +529,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const approveAllSuggestedFields = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedDocument || !suggestedCandidates.length) return;
     if (!reviewer.trim()) {
       setMessage('Enter the appraiser or reviewer name before approving extracted fields.');
@@ -572,6 +625,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const uploadAnyway = async () => {
+    if (!requireMutableWorkfile()) return;
     if (!selectedDocument) return;
     if (!reviewer.trim()) {
       setMessage('Enter the appraiser or reviewer name before overriding the address warning.');
@@ -626,10 +680,12 @@ export default function AssignmentDocumentCenter({
 
   return (
     <section
-      className={`hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
-      data-section-expanded={open ? 'true' : 'false'}
+      className={embedded
+        ? className
+        : `hn-custom-section ${open ? 'hn-custom-section-active' : ''} rounded-2xl border ${className}`}
+      data-section-expanded={embedded || open ? 'true' : 'false'}
     >
-      <button
+      {!embedded ? <button
         type="button"
         className={`hn-custom-section-header ${open ? 'hn-custom-section-header-active' : ''} flex w-full items-center justify-between gap-4 px-5 py-4 text-left`}
         onClick={() => setOpen((value) => !value)}
@@ -647,26 +703,31 @@ export default function AssignmentDocumentCenter({
         <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>
           {open ? 'Close Documents' : `Review Documents${documents.length ? ` (${documents.length})` : ''}`}
         </span>
-      </button>
+      </button> : null}
 
-      {open ? (
-        <div className="border-t border-slate-200 p-5">
+      {embedded || open ? (
+        <div className={embedded ? '' : 'border-t border-slate-200 p-5'}>
+          {readOnly ? (
+            <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
+              Document changes are unavailable while this workfile is locked or its status is being verified. Existing documents remain available for review and download.
+            </p>
+          ) : null}
           <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</span>
-              <select className="hn-document-type select select-bordered select-sm mt-1 w-full" value={documentType} onChange={(event) => setDocumentType(event.target.value as AssignmentDocumentType)}>
+              <select className="hn-document-type select select-bordered select-sm mt-1 w-full" value={documentType} onChange={(event) => setDocumentType(event.target.value as AssignmentDocumentType)} disabled={readOnly}>
                 {DOCUMENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
               </select>
             </label>
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Title</span>
-              <input className="input input-bordered input-sm mt-1 w-full bg-white" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} placeholder="Defaults to the PDF file name" />
+              <input className="input input-bordered input-sm mt-1 w-full bg-white" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} placeholder="Defaults to the PDF file name" disabled={readOnly} />
             </label>
             <label className="block">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">PDF File</span>
-              <input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept="application/pdf,.pdf" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} />
+              <input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept="application/pdf,.pdf" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} disabled={readOnly} />
             </label>
-            <button type="button" className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg" onClick={() => void upload()} disabled={loading || !selectedFile}>
+            <button type="button" className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg" onClick={() => void upload()} disabled={readOnly || loading || !selectedFile}>
               {loading ? 'Working...' : 'Upload and Analyze'}
             </button>
           </div>
@@ -711,7 +772,7 @@ export default function AssignmentDocumentCenter({
                   </button>
                 </div>
                 <span className="hn-evidence-reviewer-input-ring">
-                  <input id={reviewerInputId} className="hn-evidence-reviewer-input input input-sm w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" />
+                  <input id={reviewerInputId} className="hn-evidence-reviewer-input input input-sm w-full bg-white" value={reviewer} onChange={(event) => setReviewer(event.target.value)} placeholder="Required to confirm suggestions" disabled={readOnly} />
                 </span>
               </div>
               {selectedDocument ? (
@@ -724,7 +785,7 @@ export default function AssignmentDocumentCenter({
                       <p className="mt-1 break-words">Last error: {selectedDocument.last_processing_error}</p>
                     ) : null}
                     {!['uploaded', 'processing'].includes(selectedDocument.processing_status) ? (
-                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={loading}>
+                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg" onClick={() => void reprocess()} disabled={readOnly || loading}>
                         {['ocr_required', 'extraction_failed'].includes(selectedDocument.processing_status)
                           ? 'Retry Extraction'
                           : 'Re-run Extraction'}
@@ -735,7 +796,7 @@ export default function AssignmentDocumentCenter({
                     type="button"
                     className="hn-document-delete btn btn-sm w-full normal-case rounded-lg"
                     onClick={() => void deleteFromFile()}
-                    disabled={loading}
+                    disabled={readOnly || loading}
                   >
                     Delete From File
                   </button>
@@ -769,7 +830,7 @@ export default function AssignmentDocumentCenter({
                               type="button"
                               className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
                               onClick={() => void uploadAnyway()}
-                              disabled={loading}
+                              disabled={readOnly || loading}
                             >
                               {loading ? 'Recording Override...' : 'Upload Anyway'}
                             </button>
@@ -804,7 +865,7 @@ export default function AssignmentDocumentCenter({
                                   ? 'Confirmed engagement fields were reapplied to the current assignment draft; save Assignment Details to retain them.'
                                   : 'This document has no confirmed fields to apply.');
                               })()}
-                              disabled={loading}
+                              disabled={readOnly || loading}
                             >
                               Apply Confirmed Fields
                             </button>
@@ -828,7 +889,7 @@ export default function AssignmentDocumentCenter({
                         type="button"
                         className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg sm:min-w-40"
                         onClick={() => void approveAllSuggestedFields()}
-                        disabled={loading || confirmationBlocked}
+                        disabled={readOnly || loading || confirmationBlocked}
                         title={confirmationBlocked ? 'Resolve the engagement-letter subject mismatch before approving fields.' : undefined}
                       >
                         {loading ? 'Approving...' : `Approve All (${suggestedCandidates.length})`}
@@ -850,12 +911,13 @@ export default function AssignmentDocumentCenter({
                             className="select select-bordered select-sm mt-2 w-full bg-white"
                             value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value}
                             onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))}
+                            disabled={readOnly}
                           >
                             <option value="Yes">Yes</option>
                             <option value="No">No</option>
                           </select>
                         ) : (
-                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} />
+                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} disabled={readOnly} />
                         )}
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.id ? (
@@ -864,12 +926,12 @@ export default function AssignmentDocumentCenter({
                               type="button"
                               className="hn-action-primary btn btn-primary btn-xs flex-1 normal-case rounded-lg"
                               onClick={() => void reviewCandidate(candidate, 'confirmed')}
-                              disabled={loading || confirmationBlocked}
+                              disabled={readOnly || loading || confirmationBlocked}
                               title={confirmationBlocked ? 'Resolve the engagement-letter subject mismatch before confirming fields.' : undefined}
                             >
                               Confirm
                             </button>
-                            <button type="button" className="hn-action-secondary btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={loading}>Reject</button>
+                            <button type="button" className="hn-action-secondary btn btn-outline btn-xs flex-1 normal-case rounded-lg" onClick={() => void reviewCandidate(candidate, 'rejected')} disabled={readOnly || loading}>Reject</button>
                           </div>
                         ) : null}
                         {isUad && candidate.review_status === 'confirmed' && candidate.id ? (
@@ -890,7 +952,7 @@ export default function AssignmentDocumentCenter({
                                 setLoading(false);
                               }
                             })()}
-                            disabled={loading}
+                            disabled={readOnly || loading}
                           >
                             Apply to UAD 3.6
                           </button>
@@ -931,7 +993,7 @@ export default function AssignmentDocumentCenter({
                         type="button"
                         className="hn-action-secondary btn btn-outline btn-sm w-full normal-case rounded-lg"
                         onClick={() => void synchronizeReviewedUadPurchaseContract()}
-                        disabled={loading}
+                        disabled={readOnly || loading}
                       >
                         {loading ? 'Synchronizing...' : 'Sync Approved Contract to UAD 3.6'}
                       </button>

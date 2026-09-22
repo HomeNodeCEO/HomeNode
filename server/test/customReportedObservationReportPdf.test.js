@@ -41,8 +41,11 @@ test('real accepted v2 PDF renders all five parts with account/source-record cou
   assert.match(neighborhood, /not verified market facts/); assert.match(neighborhood, /historical housing stock/);
   assert.match(neighborhood, /Median is not predominant/); assert.match(neighborhood, /not full parcel containment/);
   assert.match(neighborhood, /Provider coverage is not established/); assert.match(neighborhood, /no package price allocation is inferred/);
-  assert.match(neighborhood, /historical availability: unknown/);
-  for (const source of f.assessment.source_snapshots) assert.ok(neighborhood.includes(source.content_sha256));
+  assert.match(neighborhood, /source snapshots? retained in the assignment workfile/);
+  assert.doesNotMatch(neighborhood, /source snapshots? appear on appendix pages/);
+  assert.match(result.pages[2], /supplied populations and .* statistics appear on appendix pages .* source snapshots? are retained in the assignment workfile/);
+  assert.doesNotMatch(neighborhood, /selected-shared-source-records|Selected recorded pocket IDs/);
+  for (const source of f.assessment.source_snapshots) assert.ok(!neighborhood.includes(source.content_sha256));
 });
 
 test('PDF retains exact oversized decimal strings, unavailable reasons and every statistic after thirty', async () => {
@@ -61,7 +64,8 @@ test('PDF retains exact oversized decimal strings, unavailable reasons and every
   assert.match(text, /Reported CurrentPrice \(not ClosePrice\)/); assert.match(text, /1999\.5 year/);
   assert.match(text, /Unavailable - No site unit has been reviewed/); assert.match(text, /EXACT_REASON_END/);
   assert.match(text, /Observed: 0; missing: 0; invalid: 0; conflicting: 0; unsupported: 1; denominator: 1/);
-  for (const statistic of f.assessment.statistics) assert.ok(text.includes(`Statistic ${statistic.id} -`), statistic.id);
+  assert.doesNotMatch(text, /ALL_REPORTED_STAT_|selected-shared-source-records/);
+  assert.ok((text.match(/Reported ClosePrice/g) || []).length >= f.assessment.statistics.filter(statistic => statistic.measurement === 'reported_close_price').length);
   assert.ok(result.page_count > 15);
   const pdf = await getDocumentProxy(new Uint8Array(result.content));
   try {

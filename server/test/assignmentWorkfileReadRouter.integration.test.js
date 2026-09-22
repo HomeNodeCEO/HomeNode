@@ -398,10 +398,12 @@ test("workfile read composition is explicit and inline handlers are absent", () 
   );
 
   const source = fs.readFileSync(new URL("../src/oldServer.js", import.meta.url), "utf8");
+  const composition = fs.readFileSync(new URL("../src/modules/assignmentFiles/workfileRouter.js", import.meta.url), "utf8");
   const mutations = source.indexOf("app.use(createAssignmentFileMutationRouter(");
-  const reads = source.indexOf("app.use(createAssignmentWorkfileReadRouter(");
-  const sections = source.indexOf("app.use(createAssignmentWorkfileMutationRouter(");
-  assert.ok(reads > mutations);
+  const workfiles = source.indexOf("app.use(createAssignmentWorkfileRouter(");
+  const reads = composition.indexOf("router.use(createAssignmentWorkfileReadRouter(");
+  const sections = composition.indexOf("router.use(createAssignmentWorkfileMutationRouter(");
+  assert.ok(workfiles > mutations);
   assert.ok(sections > reads);
   assert.equal(source.includes('app.get("/api/accounts/:id/assignment-files/:fileId/workfile"'), false);
   assert.equal(source.includes("workfile/readiness"), false);

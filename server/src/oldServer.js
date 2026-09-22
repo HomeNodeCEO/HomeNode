@@ -60,8 +60,7 @@ import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mu
 import { createAssignmentDocumentRouter } from "./modules/assignmentFiles/documentRouter.js";
 import { createAssignmentSalesImportRouter } from "./modules/assignmentFiles/salesImportRouter.js";
 import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
-import { createAssignmentWorkfileReadRouter } from "./modules/assignmentFiles/workfileReadRouter.js";
-import { createAssignmentWorkfileMutationRouter } from "./modules/assignmentFiles/workfileMutationRouter.js";
+import { createAssignmentWorkfileRouter } from "./modules/assignmentFiles/workfileRouter.js";
 import { createDesktopReportFilesRouter } from "./modules/accounts/reportFilesRouter.js";
 import { createAppraisalHistoryRouter } from "./modules/accounts/appraisalHistoryRouter.js";
 import { createDesktopAssignmentSketchRouter } from "./modules/mobile/desktopAssignmentSketchRouter.js";
@@ -404,21 +403,15 @@ app.use(createAssignmentFileMutationRouter({
   authenticationRequired: applicationAuthenticationRequired,
 }));
 
-app.use(createAssignmentWorkfileReadRouter({
+app.use(createAssignmentWorkfileRouter({
   pool,
   ensureCustomAppraisalWorkfilesAvailable,
   requireWorkflowAccess,
-  requireAssignmentAccess: requireCustomAssignmentAccess,
-  objectStorage: sharedObjectStorage,
-}));
-
-app.use(createAssignmentWorkfileMutationRouter({
-  pool,
-  ensureCustomAppraisalWorkfilesAvailable,
   requireEditor,
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
-  objectStorage: sharedObjectStorage,
+  sharedObjectStorage,
+  uadObjectStorage,
 }));
 
 app.use(createCustomNeighborhoodApplicationRouter({ pool, configuration: customNeighborhoodConfiguration }));

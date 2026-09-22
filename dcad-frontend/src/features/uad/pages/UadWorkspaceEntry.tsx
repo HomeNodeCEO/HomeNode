@@ -3,6 +3,7 @@ import { Link, useNavigate, useParams, useSearchParams } from "react-router-dom"
 
 import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
+import AppraisalWorkfileModal from "@/components/AppraisalWorkfileModal";
 import { getAccount } from "@/lib/api";
 
 import {
@@ -10,6 +11,7 @@ import {
   getUadCapabilities,
   listUadWorkfiles,
   type UadCapabilities,
+  type UadDocumentApplicationResult,
   type UadPropertyType,
   type UadSectionKey,
   type UadWorkfile,
@@ -38,6 +40,7 @@ export default function UadWorkspaceEntry() {
   const [activeWorkfileId, setActiveWorkfileId] = useState<string | null>(null);
   const [editorRefreshToken, setEditorRefreshToken] = useState(0);
   const [editorInitialSection, setEditorInitialSection] = useState<UadSectionKey>("assignment");
+  const [workfileModalOpen, setWorkfileModalOpen] = useState(false);
   const workfileEditorRef = useRef<UadWorkfileEditorHandle>(null);
   const displayedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId) || workfiles[0];
   const displayedPropertyType = displayedWorkfile?.property_type || capabilities?.initial_property_type;
@@ -109,6 +112,28 @@ export default function UadWorkspaceEntry() {
     navigate("/");
   }
 
+  function handleUadDocumentApplied(result: UadDocumentApplicationResult) {
+    if (!result.applied) return;
+    const listedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId);
+    const nextRevision = result.current_revision || listedWorkfile?.current_revision || 0;
+    if (
+      listedWorkfile
+      && nextRevision <= listedWorkfile.current_revision
+      && (result.changed_field_count || 0) === 0
+    ) return;
+    setWorkfiles((current) => current.map((workfile) => (
+      workfile.id === activeWorkfileId
+        ? {
+            ...workfile,
+            current_revision: nextRevision || workfile.current_revision,
+            updated_at: new Date().toISOString(),
+          }
+        : workfile
+    )));
+    setEditorInitialSection(result.section || "assignment");
+    setEditorRefreshToken((current) => current + 1);
+  }
+
   return (
     <div className="hn-app-shell">
       <div className="hn-app-header navbar shadow-sm">
@@ -118,13 +143,23 @@ export default function UadWorkspaceEntry() {
               <span className="hn-eyebrow block text-[10px]">HomeNode</span>
               <h1 className="text-xl font-semibold">UAD 3.6 Workspace</h1>
             </div>
-            <button
-              className="hn-action-secondary btn btn-ghost btn-sm normal-case"
-              onClick={handleCloseReport}
-              type="button"
-            >
-              ← Close Report
-            </button>
+            <div className="flex items-center gap-2">
+              <button
+                className="hn-action-gold btn btn-sm normal-case"
+                disabled={!activeWorkfileId}
+                onClick={() => setWorkfileModalOpen(true)}
+                type="button"
+              >
+                Workfile
+              </button>
+              <button
+                className="hn-action-secondary btn btn-ghost btn-sm normal-case"
+                onClick={handleCloseReport}
+                type="button"
+              >
+                ← Close Report
+              </button>
+            </div>
           </div>
         </div>
       </div>
@@ -248,27 +283,7 @@ export default function UadWorkspaceEntry() {
           <AssignmentDocumentCenter
             accountId={accountId}
             className="mt-4"
-            onUadApplied={(result) => {
-              if (!result.applied) return;
-              const listedWorkfile = workfiles.find((workfile) => workfile.id === activeWorkfileId);
-              const nextRevision = result.current_revision || listedWorkfile?.current_revision || 0;
-              if (
-                listedWorkfile
-                && nextRevision <= listedWorkfile.current_revision
-                && (result.changed_field_count || 0) === 0
-              ) return;
-              setWorkfiles((current) => current.map((workfile) => (
-                workfile.id === activeWorkfileId
-                  ? {
-                      ...workfile,
-                      current_revision: nextRevision || workfile.current_revision,
-                      updated_at: new Date().toISOString(),
-                    }
-                  : workfile
-              )));
-              setEditorInitialSection(result.section || "assignment");
-              setEditorRefreshToken((current) => current + 1);
-            }}
+            onUadApplied={handleUadDocumentApplied}
             subjectAddress={address}
             uadWorkfileId={activeWorkfileId}
           />
@@ -285,6 +300,18 @@ export default function UadWorkspaceEntry() {
         )}
 
         {accountId ? <PreviousAppraisalFiles accountId={accountId} /> : null}
+
+        {workfileModalOpen && activeWorkfileId && displayedWorkfile ? (
+          <AppraisalWorkfileModal
+            accountId={accountId}
+            fileNumber={displayedWorkfile.file_number}
+            onClose={() => setWorkfileModalOpen(false)}
+            onUadApplied={handleUadDocumentApplied}
+            open
+            subjectAddress={address}
+            uadWorkfileId={activeWorkfileId}
+          />
+        ) : null}
 
         <div className="mt-6 flex flex-wrap gap-3">
           <Link

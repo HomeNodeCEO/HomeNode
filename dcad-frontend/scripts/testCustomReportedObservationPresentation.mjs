@@ -49,7 +49,7 @@ for (const value of [1, '1e3', '-1', '1.0', '00', '0.12345678901234', '1'.repeat
   test(`invalid decimal is unavailable: ${value}`, () => assert.throws(() => formatReportedObservationDecimal(value)));
 }
 
-test('all statistics, exact money titles, year fractions, unsupported optional and all unavailable counts remain visible', () => {
+test('all statistics remain visible without exposing internal IDs, with exact values and unavailable counts', () => {
   const f = fixture(raw => {
     const price = raw.statistics.find(s => s.id === 'reported-price-median'); price.value = '9007199254740993.0199999999999';
     for (let i = 0; i < 35; i++) raw.statistics.push({ ...structuredClone(price), id: `reported-extra-${i}` });
@@ -59,7 +59,8 @@ test('all statistics, exact money titles, year fractions, unsupported optional a
       value: null, status: 'unsupported', estimator: 'unsupported', observed_count: 0, unsupported_count: 1, reason: 'unit_not_reviewed' });
   });
   const html = render(f.assessment);
-  for (const s of f.assessment.statistics) assert.ok(html.includes(`ID: ${s.id}`));
+  assert.equal((html.match(/<tr class="border-t border-slate-200">/g) || []).length, f.assessment.statistics.length);
+  for (const statistic of f.assessment.statistics) assert.ok(!html.includes(`ID: ${statistic.id}`));
   assert.match(html, /title="Exact retained value: 9007199254740993\.0199999999999"/);
   assert.match(html, /\$9,007,199,254,740,993\.02 USD/); assert.match(html, /1999\.5 year/);
   assert.match(html, /Reported CurrentPrice \(not ClosePrice\)/); assert.match(html, /Unavailable - unit_not_reviewed/);
@@ -76,7 +77,9 @@ test('later CSV capture retains exact nanosecond observation without claiming hi
   });
   assert.equal(matchCustomNeighborhoodAcceptedResponse(f.match).status, 'accepted');
   const html = render(f.assessment); assert.match(html, /2026-09-11T00:00:00\.000000001Z/);
-  assert.match(html, /Historical availability: unknown/); assert.match(html, /2026-01-01 through 2026-09-10; reported closing date/);
+  assert.match(html, /Later CSV capture does not establish historical availability/);
+  assert.doesNotMatch(html, /Historical availability:/);
+  assert.match(html, /2026-01-01 through 2026-09-10; reported closing date/);
 });
 
 test('zero retained source records stay zero while optional price remains explicitly unavailable', () => {

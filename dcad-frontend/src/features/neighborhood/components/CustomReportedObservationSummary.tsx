@@ -27,35 +27,30 @@ export default function CustomReportedObservationSummary({ assessment }: { asses
         <dd className="whitespace-pre-wrap break-words">{data.geographic_neighborhood.status === 'ready' ? data.geographic_neighborhood.cardinal_summaries[side] ?? 'Unavailable'
           : `Unavailable - ${data.geographic_neighborhood.reasons.join('; ')}`}</dd></div>)}</dl>
     </section>
-    <section className={panel}><h4 className="text-sm font-semibold">Selected recorded pocket IDs</h4><p className="mt-1 break-words text-xs">{data.selection.pocket_ids.join('; ') || 'None selected (0 IDs)'}</p>
-      <p className="text-xs">Selection revision: {data.selection.revision}. Membership and boundary descriptions remain separate.</p></section>
     <section className="space-y-3" aria-label="All reported population statistics">{data.populations.map(population => <article key={population.id} className={panel}>
-      <h4 className="text-sm font-semibold">{population.kind === 'account_observations' ? 'CAD-account observations' : 'Reported source-record observations'} - {population.id}</h4>
+      <h4 className="text-sm font-semibold">{population.kind === 'account_observations' ? 'Neighborhood property observations' : 'Neighborhood sales observations'}</h4>
       <p className="mt-1 whitespace-pre-wrap break-words text-sm">{population.definition}</p>
       <dl className="mt-2 grid gap-2 text-xs sm:grid-cols-3">
         <div><dt>Member count</dt><dd>{count(population.member_count)} {population.member_unit === 'account' ? 'accounts' : 'source records'}</dd></div>
         <div><dt>Unique account count</dt><dd>{count(population.unique_account_count)}</dd></div><div><dt>Account link count</dt><dd>{count(population.account_link_count)}</dd></div>
         <div><dt>Retained roster completeness</dt><dd>{population.completeness}{population.reasons.length ? ` - ${population.reasons.join('; ')}` : ''}</dd></div>
         <div><dt>Observation period</dt><dd>{period(population.observation_period)}</dd></div><div><dt>Captured at</dt><dd>{population.captured_at ?? 'Unavailable'}</dd></div>
-        <div><dt>Sources</dt><dd className="break-words">{population.source_refs.join('; ') || 'Unavailable'}</dd></div>
-        <div><dt>Pocket IDs</dt><dd className="break-words">{population.pocket_ids.join('; ') || 'None'}</dd></div>
+        <div><dt>Source records retained</dt><dd>{population.source_refs.length.toLocaleString('en-US')}</dd></div>
       </dl>
-      <div className="mt-3 overflow-x-auto" role="region" aria-label={`Statistics for ${population.id}`} tabIndex={0}><table className="w-full min-w-[760px] text-left text-xs">
-        <caption className="pb-2 text-left">Statistics for {population.id} — exact retained values are available in each value’s title.</caption>
+      <div className="mt-3 overflow-x-auto" role="region" aria-label="Neighborhood statistics" tabIndex={0}><table className="w-full min-w-[760px] text-left text-xs">
+        <caption className="pb-2 text-left">Neighborhood statistics — exact retained values are available in each value’s title.</caption>
         <thead><tr>{['Statistic / estimator', 'Supplied observation', 'Observed / unavailable counts', 'Period / sources'].map(title => <th className={cell} key={title} scope="col">{title}</th>)}</tr></thead>
         <tbody>{data.statistics.filter(stat => stat.population_id === population.id).map(stat => <tr key={stat.id} className="border-t border-slate-200">
-          <th scope="row" className={cell}>{reportedObservationMeasurements[stat.measurement].label}<span className="block font-normal">{estimator(stat.estimator, stat.estimator_parameters.probability)}</span><span className="block font-normal">ID: {stat.id}</span></th>
+          <th scope="row" className={cell}>{reportedObservationMeasurements[stat.measurement].label}<span className="block font-normal">{estimator(stat.estimator, stat.estimator_parameters.probability)}</span></th>
           <td className={cell} title={stat.value === null ? undefined : `Exact retained value: ${stat.value}`}>{reportedObservationValue(stat)}</td>
           <td className={cell}><dl>{(['observed', 'missing', 'invalid', 'conflicting', 'unsupported', 'denominator'] as const).map(key => <div key={key}><dt className="inline capitalize">{key}: </dt><dd className="inline">{count(stat[`${key}_count`])}</dd></div>)}</dl></td>
-          <td className={cell}>{period(stat.observation_period)}<span className="mt-1 block">Sources: {stat.source_refs.join('; ') || 'Unavailable'}</span></td>
+          <td className={cell}>{period(stat.observation_period)}<span className="mt-1 block">{stat.source_refs.length.toLocaleString('en-US')} retained source reference{stat.source_refs.length === 1 ? '' : 's'}</span></td>
         </tr>)}</tbody>
       </table></div>
       {!data.statistics.some(stat => stat.population_id === population.id) && <p className="text-sm">Unavailable - no statistics supplied.</p>}
     </article>)}</section>
-    <section className={panel} aria-label="Reported observation source snapshots"><h4 className="text-sm font-semibold">Source snapshots</h4>
-      {data.source_snapshots.map(source => <details className="mt-2 rounded border p-2 text-xs" key={source.id}><summary className="cursor-pointer break-words">{source.id} - {source.provider}</summary>
-        <p>Revision: {source.revision}; observed at: {source.observed_at}. Historical availability: unknown; historical validity interval: not established.</p><p className="break-all">SHA-256: {source.content_sha256}</p></details>)}
-      <p className="mt-2 whitespace-pre-wrap break-words text-xs">Limitations: {data.diagnostics.limitations.join('; ')}</p>
+    <section className={panel} aria-label="Neighborhood evidence retention"><h4 className="text-sm font-semibold">Evidence retained in the workfile</h4>
+      <p className="mt-1 text-xs">Source snapshots, internal record identifiers, selection revisions, and integrity checks remain available in the assignment workfile without appearing in the client-facing neighborhood summary.</p>
     </section>
   </section>;
 }

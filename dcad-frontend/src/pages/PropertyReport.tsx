@@ -61,7 +61,8 @@ import {
   reconciledMedianDaysOnMarket,
   type NeighborhoodLocationType,
 } from "@/lib/neighborhoodAutomation";
-import DeferredReportSection from "@/components/DeferredReportSection";
+import DeferredReportSection, { LazyReportContent } from "@/components/DeferredReportSection";
+import Workfile from "@/components/AppraisalWorkfileLauncher";
 import PreviousAppraisalFilesContent from "@/components/PreviousAppraisalFiles";
 import ReportTypeChooser from "@/components/ReportTypeChooser";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
@@ -105,20 +106,7 @@ const ListingsContractsSalesContent = lazy(
 );
 const PreviousAppraisalFiles = memo(PreviousAppraisalFilesContent);
 
-function LazyReportContent({ label, className = "" }: { label: string; className?: string }) {
-  return (
-    <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 ${className}`}>
-      Loading {label}...
-    </div>
-  );
-}
-
-interface SubjectCarouselPhoto {
-  id: string;
-  url: string;
-  label: string;
-  detail: string;
-}
+type SubjectCarouselPhoto = { id:string; url:string; label:string; detail:string };
 import {
   displayValue,
   formatBaths,
@@ -1728,6 +1716,7 @@ function AddressHero({
           >
             {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
           </button>
+          <Workfile accountId={accountId || ""} assignmentFile={activeAssignmentFile} getEditorKey={editorKeyForSave} onAssignmentApplied={applyConfirmedDocumentApplication} subjectAddress={documentReviewSubjectAddress} />
           <button
             type="button"
             className="hn-action-gold btn btn-outline btn-sm normal-case rounded-lg shadow-sm"

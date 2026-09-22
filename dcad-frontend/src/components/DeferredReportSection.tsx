@@ -2,6 +2,12 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { flushSync } from "react-dom";
 import type { ReactNode } from "react";
 
+export function LazyReportContent({ label, className = "" }: { label: string; className?: string }) {
+  return <div className={`rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600 ${className}`}>
+    Loading {label}...
+  </div>;
+}
+
 export default function DeferredReportSection({
   children,
   label,

@@ -28,7 +28,11 @@ const baseInput = {
 function recordingDatabase(options = {}) {
   const events = [];
   const state = { connections: 0, releases: 0 };
-  const rows = (values = []) => ({ rows: values });
+  const rows = (values = [], rowCount, command) => ({
+    rows: values,
+    ...(rowCount === undefined ? {} : { rowCount }),
+    ...(command === undefined ? {} : { command }),
+  });
   const client = {
     async query(statement, params = []) {
       const sql = statement.replace(/\s+/g, " ").trim();
@@ -68,6 +72,7 @@ function recordingDatabase(options = {}) {
       }
       if (operation === "sources") return rows(options.sourceRows ?? []);
       if (operation === "section") {
+        if (options.sectionQuotaExceeded) return rows([]);
         return rows([{
           section_key: params[1],
           section_value: JSON.parse(params[2]),
@@ -75,6 +80,11 @@ function recordingDatabase(options = {}) {
           updated_by: params[4],
           updated_at: SAVED_AT,
         }]);
+      }
+      if (operation === "history") {
+        return options.historyQuotaExceeded
+          ? rows([], 0, "INSERT")
+          : rows([{ id: "91" }], 1, "INSERT");
       }
       return rows();
     },
@@ -155,6 +165,13 @@ test("caller-owned helper preserves wrapper response and complete write path", a
   assert.match(eventFor(transaction, "assignment").sql, /assignment_file.account_id = \$2/);
   assert.match(eventFor(transaction, "status").sql, /FOR UPDATE$/);
   assert.match(eventFor(transaction, "revision").sql, /FOR UPDATE$/);
+  assert.match(eventFor(transaction, "section").sql, /LIMIT 65/);
+  assert.match(eventFor(transaction, "section").sql, /pg_column_size\(section_value\)/);
+  assert.match(eventFor(transaction, "section").sql, /section_count - usage\.existing_count \+ 1 <= 64/);
+  assert.match(eventFor(transaction, "history").sql, /LIMIT 10001/);
+  assert.match(eventFor(transaction, "history").sql, /history_count < 10000/);
+  assert.match(eventFor(transaction, "history").sql, /history_bytes \+ pg_column_size\(\$3::jsonb\)/);
+  assert.doesNotMatch(eventFor(transaction, "history").sql, /DELETE/i);
   assert.deepEqual(eventFor(transaction, "section").params,
     [41, "neighborhood", JSON.stringify(baseInput.sectionValue), 3, "Reviewer One"]);
   assert.deepEqual(eventFor(transaction, "history").params,
@@ -234,6 +251,33 @@ test("assignment, signed-state, and revision failures preserve transaction owner
       assert.deepEqual(operations(wrapper), [...preparePath, "BEGIN", ...path, "ROLLBACK", "release-client"]);
       assert.deepEqual(sectionWrites(wrapper), []);
       assert.equal(wrapper.state.releases, 1);
+    });
+  }
+});
+
+test("current and immutable-history quotas reject atomically without deleting audit evidence", async (t) => {
+  for (const [name, options, path] of [
+    ["current sections", { sectionQuotaExceeded: true }, writePath.slice(0, 5)],
+    ["section history", { historyQuotaExceeded: true }, writePath.slice(0, 6)],
+  ]) {
+    await t.test(name, async () => {
+      const expected = { message: "custom_appraisal_workfile_storage_quota_exceeded" };
+      const transaction = recordingDatabase(options);
+      await assert.rejects(
+        () => saveCustomAppraisalWorkfileSectionInTransaction(transaction.client, baseInput),
+        expected,
+      );
+      assert.deepEqual(operations(transaction), [SAVEPOINT, ...path]);
+      assert.equal(transaction.state.releases, 0);
+
+      const wrapper = recordingDatabase(options);
+      await assert.rejects(() => saveCustomAppraisalWorkfileSection(wrapper.pool, baseInput), expected);
+      assert.deepEqual(
+        operations(wrapper),
+        [...preparePath, "BEGIN", ...path, "ROLLBACK", "release-client"],
+      );
+      assert.equal(wrapper.state.releases, 1);
+      assert.ok(wrapper.events.every(({ sql = "" }) => !/DELETE/i.test(sql)));
     });
   }
 });

@@ -20,6 +20,12 @@ const SECTION_KEY_PATTERN = /^[a-z][a-z0-9_]{1,63}$/;
 const SAVE_REASONS = new Set(["autosave", "manual_save", "legacy_import"]);
 const READINESS_WARNING_CODE_PATTERN = /^[a-z][a-z0-9_]{1,95}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+// The workfile row lock serializes quota admission. Existing audit history is
+// immutable: an over-limit workfile becomes read-only rather than being pruned.
+const MAX_WORKFILE_SECTION_COUNT = 64;
+const MAX_WORKFILE_CURRENT_BYTES = 32 * 1024 * 1024;
+const MAX_WORKFILE_HISTORY_COUNT = 10_000;
+const MAX_WORKFILE_HISTORY_BYTES = 128 * 1024 * 1024;
 const schemaReadyByPool = new WeakMap();
 
 function jsonBytes(value) {
@@ -578,7 +584,24 @@ async function writeCustomAppraisalSection(client, prepared) {
     const { rows } = await client.query(
       `INSERT INTO app.custom_appraisal_workfile_sections (
          assignment_file_id, section_key, section_value, revision, updated_by
-       ) VALUES ($1, $2, $3::jsonb, $4, $5)
+       )
+       SELECT $1, $2, $3::jsonb, $4, $5
+         FROM (
+           SELECT COUNT(*)::integer AS section_count,
+                  COALESCE(SUM(pg_column_size(section_value)), 0)::bigint AS section_bytes,
+                  COUNT(*) FILTER (WHERE section_key = $2)::integer AS existing_count,
+                  COALESCE(SUM(pg_column_size(section_value))
+                    FILTER (WHERE section_key = $2), 0)::bigint AS existing_bytes
+             FROM (
+               SELECT section_key, section_value
+                 FROM app.custom_appraisal_workfile_sections
+                WHERE assignment_file_id = $1
+                LIMIT ${MAX_WORKFILE_SECTION_COUNT + 1}
+             ) bounded_sections
+         ) usage
+        WHERE usage.section_count - usage.existing_count + 1 <= ${MAX_WORKFILE_SECTION_COUNT}
+          AND usage.section_bytes - usage.existing_bytes + pg_column_size($3::jsonb)
+                <= ${MAX_WORKFILE_CURRENT_BYTES}
        ON CONFLICT (assignment_file_id, section_key) DO UPDATE SET
          section_value = EXCLUDED.section_value,
          revision = EXCLUDED.revision,
@@ -587,13 +610,34 @@ async function writeCustomAppraisalSection(client, prepared) {
        RETURNING section_key, section_value, revision, updated_by, updated_at`,
       [assignmentFileId, sectionKey, JSON.stringify(sectionValue), nextRevision, reviewer],
     );
-    await client.query(
+    if (!rows.length) {
+      throw new Error("custom_appraisal_workfile_storage_quota_exceeded");
+    }
+    const historyResult = await client.query(
       `INSERT INTO app.custom_appraisal_workfile_section_history (
          assignment_file_id, section_key, section_value, revision,
          event_type, changed_by
-       ) VALUES ($1, $2, $3::jsonb, $4, $5, $6)`,
+       )
+       SELECT $1, $2, $3::jsonb, $4, $5, $6
+         FROM (
+           SELECT COUNT(*)::integer AS history_count,
+                  COALESCE(SUM(pg_column_size(section_value)), 0)::bigint AS history_bytes
+             FROM (
+               SELECT section_value
+                 FROM app.custom_appraisal_workfile_section_history
+                WHERE assignment_file_id = $1
+                LIMIT ${MAX_WORKFILE_HISTORY_COUNT + 1}
+             ) bounded_history
+         ) usage
+        WHERE usage.history_count < ${MAX_WORKFILE_HISTORY_COUNT}
+          AND usage.history_bytes + pg_column_size($3::jsonb)
+                <= ${MAX_WORKFILE_HISTORY_BYTES}
+       RETURNING id`,
       [assignmentFileId, sectionKey, JSON.stringify(sectionValue), nextRevision, saveReason, reviewer],
     );
+    if (historyResult.command === "INSERT" && historyResult.rowCount === 0) {
+      throw new Error("custom_appraisal_workfile_storage_quota_exceeded");
+    }
     await client.query(
       `UPDATE app.custom_appraisal_workfiles SET updated_at = now()
         WHERE assignment_file_id = $1`,

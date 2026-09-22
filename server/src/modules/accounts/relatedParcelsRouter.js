@@ -1,6 +1,11 @@
 import express from "express";
 
 import { findDcadParcelsByAddress } from "../../services/accountLocations.js";
+import {
+  isRelatedParcelLookupBusyError,
+  relatedParcelLookupRequestKey,
+  runRelatedParcelLookupOperation,
+} from "../../services/relatedParcelLookupExecution.js";
 import { markMaterialParcelDifferences } from "../../util/relatedParcelDifferences.js";
 
 export function createRelatedParcelsRouter({
@@ -8,6 +13,9 @@ export function createRelatedParcelsRouter({
   accountIdAllowed,
   requireCustomAccountScope,
   findParcelsByAddress = findDcadParcelsByAddress,
+  isLookupBusyError = isRelatedParcelLookupBusyError,
+  lookupRequestKey = relatedParcelLookupRequestKey,
+  runLookupOperation = runRelatedParcelLookupOperation,
   markDifferences = markMaterialParcelDifferences,
   logger = console,
 } = {}) {
@@ -20,6 +28,9 @@ export function createRelatedParcelsRouter({
   if (
     typeof requireCustomAccountScope !== "function"
     || typeof findParcelsByAddress !== "function"
+    || typeof isLookupBusyError !== "function"
+    || typeof lookupRequestKey !== "function"
+    || typeof runLookupOperation !== "function"
     || typeof markDifferences !== "function"
   ) {
     throw new TypeError("related_parcels_dependency_required");
@@ -68,12 +79,32 @@ export function createRelatedParcelsRouter({
       let liveQueryStatus = isDallasCounty ? "complete" : "unsupported_county";
       let liveQueryError = null;
       if (isDallasCounty) {
-        try {
-          liveResult = await findParcelsByAddress(requestedAddress);
-        } catch (error) {
-          liveQueryStatus = "unavailable";
-          liveQueryError = String(error?.message || "dcad_address_query_failed");
-        }
+        const principal = String(
+          req.mobileAuth?.userId || req.ip || req.socket?.remoteAddress || "legacy",
+        ).trim();
+        const liveLookupKey = lookupRequestKey(requestedAddress);
+        const lookup = await runLookupOperation(
+          liveLookupKey,
+          principal,
+          async () => {
+            try {
+              return {
+                status: "complete",
+                result: await findParcelsByAddress(requestedAddress),
+                error: null,
+              };
+            } catch (error) {
+              return {
+                status: "unavailable",
+                result: { query_address: liveLookupKey, parcels: [] },
+                error: String(error?.message || "dcad_address_query_failed"),
+              };
+            }
+          },
+        );
+        liveResult = lookup.result;
+        liveQueryStatus = lookup.status;
+        liveQueryError = lookup.error;
       }
       const remoteIds = liveResult.parcels.map((parcel) => parcel.account_id);
       const { rows: localRows } = await pool.query(
@@ -179,6 +210,10 @@ export function createRelatedParcelsRouter({
         parcels,
       });
     } catch (error) {
+      if (isLookupBusyError(error?.message)) {
+        res.set("Retry-After", "5");
+        return res.status(503).json({ error: "related_parcel_lookup_busy" });
+      }
       logger.error?.("related parcel lookup failed", error);
       return res.status(500).json({ error: "related_parcel_lookup_failed" });
     }

@@ -12,6 +12,9 @@ function options(overrides = {}) {
     accountIdAllowed: () => true,
     requireCustomAccountScope: async () => true,
     findParcelsByAddress: async () => ({ query_address: "", parcels: [] }),
+    isLookupBusyError: (message) => message === "related_parcel_lookup_capacity_exceeded",
+    lookupRequestKey: (address) => String(address).toUpperCase(),
+    runLookupOperation: (_key, _principal, operation) => operation(),
     logger: { error() {} },
     ...overrides,
   };
@@ -251,10 +254,78 @@ test("DCAD outages degrade to a reviewable response instead of failing the route
   const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
   assert.equal(response.status, 200);
   const body = await response.json();
-  assert.equal(body.query_address, "9 Oak St");
+  assert.equal(body.query_address, "9 OAK ST");
   assert.equal(body.live_query_status, "unavailable");
   assert.equal(body.live_query_error, "dcad_temporarily_unavailable");
   assert.deepEqual(body.parcels, []);
+});
+
+test("shared outage results never expose another account address suffix", async (context) => {
+  const cached = new Map();
+  let lookupCount = 0;
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    pool: {
+      query: async (sql, params) => {
+        if (/FROM core\.accounts WHERE account_id/.test(String(sql))) {
+          return {
+            rows: [{
+              account_id: params[0],
+              address: params[0] === "A-1"
+                ? "9 Oak St, Dallas, TX"
+                : "9 Oak St, Private Suffix, TX",
+              county: "Dallas",
+            }],
+          };
+        }
+        return { rows: [] };
+      },
+    },
+    lookupRequestKey: (address) => String(address)
+      .split(",")[0]
+      .trim()
+      .toUpperCase(),
+    runLookupOperation: async (key, _principal, operation) => {
+      if (cached.has(key)) return cached.get(key);
+      const result = await operation();
+      cached.set(key, result);
+      return result;
+    },
+    findParcelsByAddress: async () => {
+      lookupCount += 1;
+      throw new Error("dcad_temporarily_unavailable");
+    },
+  })));
+  context.after(server.close);
+
+  const first = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
+  const second = await fetch(`${server.baseUrl}/api/accounts/B-2/related-parcels`);
+  assert.equal(first.status, 200);
+  assert.equal(second.status, 200);
+  assert.equal((await first.json()).query_address, "9 OAK ST");
+  assert.equal((await second.json()).query_address, "9 OAK ST");
+  assert.equal(lookupCount, 1);
+});
+
+test("related parcel lookup returns a stable retryable response when the DCAD budget is full", async (context) => {
+  let queryCount = 0;
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    pool: {
+      query: async () => {
+        queryCount += 1;
+        return { rows: [{ account_id: "A-1", address: "9 Oak St", county: "Dallas" }] };
+      },
+    },
+    runLookupOperation: async () => {
+      throw new Error("related_parcel_lookup_capacity_exceeded");
+    },
+  })));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
+  assert.equal(response.status, 503);
+  assert.equal(response.headers.get("retry-after"), "5");
+  assert.deepEqual(await response.json(), { error: "related_parcel_lookup_busy" });
+  assert.equal(queryCount, 1);
 });
 
 test("unexpected related parcel failures retain stable diagnostics and error code", async (context) => {

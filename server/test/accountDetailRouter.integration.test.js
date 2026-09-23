@@ -388,7 +388,7 @@ test("throwing account loggers cannot fail optional evidence or replace fixed fa
   }));
   context.after(async () => Promise.all([optional.close(), required.close()]));
 
-  const optionalResponse = await fetch(`${optional.baseUrl}/api/accounts/123`);
+  const optionalResponse = await fetch(`${optional.baseUrl}/api/accounts/123?assignment_file_id=test-file`);
   assert.equal(optionalResponse.status, 200);
   const optionalBody = await optionalResponse.json();
   assert.deepEqual(optionalBody.property_activity_history, []);

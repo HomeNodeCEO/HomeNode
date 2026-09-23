@@ -1,10 +1,9 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import * as api from '@/lib/api';
 import type { MarketConditionsSubject, SaleRow } from '@/lib/api';
+import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '@/lib/mapLibreRuntime';
 
-const MAPLIBRE_SCRIPT = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
-const MAPLIBRE_STYLE = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
-const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
+const MAP_STYLE_URL = MAPLIBRE_BASE_STYLE;
 
 type Props = {
   subjectAccountId: string;
@@ -53,10 +52,6 @@ type MapLibreRuntime = {
   NavigationControl: new (options: unknown) => unknown;
 };
 
-function currentMapLibre(): MapLibreRuntime | undefined {
-  return (window as unknown as { maplibregl?: MapLibreRuntime }).maplibregl;
-}
-
 function numberValue(value: unknown): number | null {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : null;
@@ -85,41 +80,8 @@ function displayAddress(sale: SaleRow): string {
     'Address unavailable';
 }
 
-function addStyle(): void {
-  if (document.querySelector('link[data-homenode-map-style="maplibre"]')) return;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = MAPLIBRE_STYLE;
-  link.dataset.homenodeMapStyle = 'maplibre';
-  document.head.appendChild(link);
-}
-
 function loadMapLibre(): Promise<MapLibreRuntime> {
-  addStyle();
-  const existingGlobal = currentMapLibre();
-  if (existingGlobal) return Promise.resolve(existingGlobal);
-  const existing = document.querySelector<HTMLScriptElement>(
-    'script[data-homenode-map-script="maplibre"]',
-  );
-  if (existing) {
-    return new Promise((resolve, reject) => {
-      existing.addEventListener('load', () => currentMapLibre()
-        ? resolve(currentMapLibre()!)
-        : reject(new Error('map_library_missing_global')), { once: true });
-      existing.addEventListener('error', () => reject(new Error('map_library_load_failed')), { once: true });
-    });
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = MAPLIBRE_SCRIPT;
-    script.async = true;
-    script.dataset.homenodeMapScript = 'maplibre';
-    script.addEventListener('load', () => currentMapLibre()
-      ? resolve(currentMapLibre()!)
-      : reject(new Error('map_library_missing_global')), { once: true });
-    script.addEventListener('error', () => reject(new Error('map_library_load_failed')), { once: true });
-    document.head.appendChild(script);
-  });
+  return loadMapLibreRuntime() as unknown as Promise<MapLibreRuntime>;
 }
 
 function markerIdentity(comparable: MappedComparable): string {

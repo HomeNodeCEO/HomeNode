@@ -2,72 +2,80 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 
-function environment({ existing = false, loaded = false } = {}) {
-  const elements = [], timers = new Map(); let next = 0;
-  function element(tagName) {
-    const listeners = new Map();
-    return { tagName, dataset: {}, listeners,
-      addEventListener(type, fn) { if (!listeners.has(type)) listeners.set(type, new Set()); listeners.get(type).add(fn); },
-      removeEventListener(type, fn) { listeners.get(type)?.delete(fn); },
-      emit(type) { [...(listeners.get(type) ?? [])].forEach(fn => fn()); },
-      remove() { elements.splice(elements.indexOf(this), 1); },
-    };
-  }
-  if (existing) { const script = element('script'); script.dataset.homenodeMapScript = 'maplibre'; elements.push(script); }
-  const runtime = { Map: class {} };
-  const window = { setTimeout(fn, delay) { timers.set(++next, { fn, delay }); return next; }, clearTimeout(id) { timers.delete(id); } };
-  if (loaded) window.maplibregl = runtime;
-  const document = { head: { appendChild(e) { elements.push(e); } }, createElement: element,
-    querySelector(selector) { return elements.find(e => e.tagName === (selector.startsWith('link') ? 'link' : 'script')) ?? null; } };
-  const loadedModule = loadTrustedRepositoryCommonJs(
-    new URL('../src/lib/mapLibreRuntime.ts', import.meta.url),
-    name => { throw new Error(`Unexpected map runtime dependency: ${name}`); },
-    { environment: { window, document } },
-  );
-  return { ...loadedModule, elements, window, timers, runtime,
-    script: () => elements.find(e => e.tagName === 'script'),
-    finish() { window.maplibregl = runtime; this.script().emit('load'); },
-  };
-}
-test('the pinned runtime shares the existing map DOM keys and one in-flight promise', async () => {
-  const e = environment(), first = e.loadMapLibreRuntime(), second = e.loadMapLibreRuntime();
-  assert.equal(first, second); assert.equal(e.elements.length, 2);
-  assert.equal(e.script().src, 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js');
-  assert.equal(e.elements[0].href, 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css');
-  assert.equal(e.elements[0].dataset.homenodeMapStyle, 'maplibre');
-  assert.equal(e.MAPLIBRE_BASE_STYLE, 'https://tiles.openfreemap.org/styles/bright');
-  e.finish(); assert.equal(await first, e.runtime); assert.equal(e.timers.size, 0);
-  assert.equal(e.script().listeners.get('load').size, 0); assert.equal(e.script().listeners.get('error').size, 0);
-  assert.equal(await e.loadMapLibreRuntime(), e.runtime); assert.equal(e.elements.length, 2);
-});
-test('a pre-existing report map script is reused instead of creating a second runtime', async () => {
-  const e = environment({ existing: true }), previous = e.script(), pending = e.loadMapLibreRuntime();
-  assert.equal(e.script(), previous); assert.equal(e.elements.filter(v => v.tagName === 'script').length, 1);
-  e.finish(); assert.equal(await pending, e.runtime); assert.equal(e.timers.size, 0);
-});
-test('a loaded global requires no script and still ensures the shared stylesheet', async () => {
-  const e = environment({ loaded: true }); assert.equal(await e.loadMapLibreRuntime(), e.runtime);
-  assert.equal(e.elements.length, 1); assert.equal(e.elements[0].tagName, 'link'); assert.equal(e.timers.size, 0);
-});
-for (const existing of [true, false]) {
-  test(`both new and pre-existing script loading have a finite timeout (${existing})`, async () => {
-    const e = environment({ existing }), pending = e.loadMapLibreRuntime();
-    assert.equal([...e.timers.values()][0].delay, 15_000);
-    [...e.timers.values()][0].fn(); await assert.rejects(pending, /map_load_timeout/);
-    assert.equal(e.timers.size, 0); assert.equal(e.script().dataset.homenodeMapFailed, 'true');
-    assert.equal(e.script().listeners.get('load').size, 0);
-    // No automatic retry or background loop; only an explicit later caller retries.
-    const previous = e.script(), next = e.loadMapLibreRuntime(); assert.notEqual(e.script(), previous);
-    assert.equal(e.elements.filter(v => v.tagName === 'script').length, 1); e.finish(); await next;
+function environment({ withDocument = true } = {}) {
+  const timers = new Map();
+  const imports = [];
+  let nextTimer = 0;
+  let resolvePackage;
+  let rejectPackage;
+  const packageLoad = new Promise((resolve, reject) => {
+    resolvePackage = resolve;
+    rejectPackage = reject;
   });
+  const window = {
+    setTimeout(fn, delay) { timers.set(++nextTimer, { fn, delay }); return nextTimer; },
+    clearTimeout(id) { timers.delete(id); },
+  };
+  const loaded = loadTrustedRepositoryCommonJs(
+    new URL('../src/lib/mapLibreRuntime.ts', import.meta.url),
+    (name) => {
+      imports.push(name);
+      if (name === 'maplibre-gl') return packageLoad;
+      if (name === 'maplibre-gl/dist/maplibre-gl.css') return {};
+      if (name === 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url') return { default: '/assets/map-worker.js' };
+      throw new Error(`Unexpected map runtime dependency: ${name}`);
+    },
+    { environment: { window, document: withDocument ? {} : undefined } },
+  );
+  return { ...loaded, imports, timers, resolvePackage, rejectPackage };
 }
-test('script load with no runtime fails closed and removes event listeners', async () => {
-  const e = environment(), pending = e.loadMapLibreRuntime(); e.script().emit('load');
-  await assert.rejects(pending, /map_runtime_unavailable/); assert.equal(e.timers.size, 0);
-  assert.equal(e.script().listeners.get('error').size, 0);
+
+test('same-origin JavaScript and CSS share one lazy in-flight import', async () => {
+  const e = environment();
+  const first = e.loadMapLibreRuntime();
+  const second = e.loadMapLibreRuntime();
+  assert.equal(first, second);
+  assert.equal([...e.timers.values()][0].delay, 15_000);
+  const workerUrls = [];
+  const runtime = { Map: class {}, setWorkerUrl(url) { workerUrls.push(url); } };
+  e.resolvePackage(runtime);
+  assert.equal(await first, runtime);
+  assert.deepEqual(e.imports.sort(), ['maplibre-gl', 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url', 'maplibre-gl/dist/maplibre-gl.css'].sort());
+  assert.deepEqual(workerUrls, ['/assets/map-worker.js']);
+  assert.equal(e.timers.size, 0);
+  assert.equal(await e.loadMapLibreRuntime(), runtime);
+  assert.equal(e.imports.length, 3);
+  assert.equal(e.MAPLIBRE_BASE_STYLE, 'https://tiles.openfreemap.org/styles/bright');
 });
-test('network failure has no retry and can be retried explicitly', async () => {
-  const e = environment(), pending = e.loadMapLibreRuntime(); e.script().emit('error');
-  await assert.rejects(pending, /map_load_failed/); assert.equal(e.timers.size, 0);
-  const next = e.loadMapLibreRuntime(); e.finish(); await next;
+
+test('a stalled map bundle has a finite deadline and an explicit retry path', async () => {
+  const e = environment();
+  const first = e.loadMapLibreRuntime();
+  [...e.timers.values()][0].fn();
+  await assert.rejects(first, /map_load_timeout/);
+  assert.equal(e.timers.size, 0);
+  const second = e.loadMapLibreRuntime();
+  assert.notEqual(second, first);
+  e.resolvePackage({ Map: class {}, setWorkerUrl() {} });
+  await second;
+});
+
+test('missing or failed bundled runtime fails closed', async () => {
+  const missing = environment();
+  const first = missing.loadMapLibreRuntime();
+  missing.resolvePackage({});
+  await assert.rejects(first, /map_runtime_unavailable/);
+  assert.equal(missing.timers.size, 0);
+
+  const failed = environment();
+  const second = failed.loadMapLibreRuntime();
+  failed.rejectPackage(new Error('bundle_download_failed'));
+  await assert.rejects(second, /bundle_download_failed/);
+  assert.equal(failed.timers.size, 0);
+});
+
+test('map loading requires a browser document', async () => {
+  const e = environment({ withDocument: false });
+  await assert.rejects(e.loadMapLibreRuntime(), /map_browser_required/);
+  assert.equal(e.imports.length, 0);
 });

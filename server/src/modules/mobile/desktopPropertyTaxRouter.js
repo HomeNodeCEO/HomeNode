@@ -12,6 +12,7 @@ import {
 } from "../../services/assignmentDocuments.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   getDesktopPropertyTaxEvidenceVersion,
   getDesktopPropertyTaxFile,
@@ -22,6 +23,81 @@ import { normalizeSketchReviewStatus } from "./sketches.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const WORKFLOW = "property_tax_protest";
+const PROPERTY_TAX_FILE_CLIENT_ERRORS = new Set([
+  "invalid_account_id",
+  "invalid_property_tax_protest_actor",
+  "invalid_property_tax_protest_client_operation_id",
+  "invalid_property_tax_protest_file_id",
+  "invalid_property_tax_protest_revision",
+  "invalid_property_tax_protest_update",
+  "invalid_property_tax_protest_workfile",
+]);
+const PROPERTY_TAX_DOCUMENT_CLIENT_ERRORS = new Set([
+  "invalid_document_candidate",
+  "invalid_document_id",
+  "invalid_document_review_status",
+  "invalid_document_type",
+]);
+const PROPERTY_TAX_SKETCH_CLIENT_ERRORS = new Set([
+  "invalid_sketch_expected_revision",
+  "invalid_sketch_operation_id",
+  "invalid_client_sketch_id",
+  "invalid_inspection_session_id",
+  "invalid_manual_sketch",
+  "invalid_mobile_photo_room_label",
+  "invalid_mobile_photo_sketch_room",
+  "invalid_sketch_alternate_standard",
+  "invalid_sketch_area_classification",
+  "invalid_sketch_area_id",
+  "invalid_sketch_area_label",
+  "invalid_sketch_area_notes",
+  "invalid_sketch_area_position",
+  "invalid_sketch_area",
+  "invalid_sketch_areas",
+  "invalid_sketch_base_revision",
+  "invalid_sketch_deduction_bounds",
+  "invalid_sketch_deduction_classification",
+  "invalid_sketch_dimension_label",
+  "invalid_sketch_dimension_labels",
+  "invalid_sketch_dimension_offset",
+  "invalid_sketch_dimension_segment",
+  "invalid_sketch_document_size",
+  "invalid_sketch_gla_classification",
+  "invalid_sketch_gla_treatment",
+  "invalid_sketch_level_label",
+  "invalid_sketch_measurement_method",
+  "invalid_sketch_measurement_standard",
+  "invalid_sketch_parent_area_id",
+  "invalid_sketch_parent_area",
+  "invalid_sketch_review_notes",
+  "invalid_sketch_review_status",
+  "invalid_sketch_room_anchor",
+  "invalid_sketch_room_area_id",
+  "invalid_sketch_room_area",
+  "invalid_sketch_room_id",
+  "invalid_sketch_room_label",
+  "invalid_sketch_room_position",
+  "invalid_sketch_room_type",
+  "invalid_sketch_room",
+  "invalid_sketch_rooms",
+  "duplicate_room_id",
+  "duplicate_sketch_area_id",
+  "duplicate_sketch_dimension_segment",
+  "duplicate_sketch_room_id",
+]);
+
+function propertyTaxErrorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch {
+    return "";
+  }
+}
+
+function logPropertyTaxFailure(logger, level, label, error) {
+  try { logger[level]?.(label, safeOperationalErrorCode(error)); } catch { /* Preserve the fixed response. */ }
+}
 
 export function createDesktopPropertyTaxRouter({
   pool,
@@ -158,7 +234,7 @@ export function createDesktopPropertyTaxRouter({
   }
 
   function propertyTaxDocumentError(res, error, fallback) {
-    const message = String(error?.message || fallback);
+    const message = propertyTaxErrorMessage(error);
     if (
       message === "account_not_found"
       || message === "property_tax_protest_file_not_found"
@@ -170,7 +246,8 @@ export function createDesktopPropertyTaxRouter({
       return res.set("cache-control", "no-store").status(403).json({ error: message });
     }
     if (
-      message.startsWith("invalid_")
+      PROPERTY_TAX_FILE_CLIENT_ERRORS.has(message)
+      || PROPERTY_TAX_DOCUMENT_CLIENT_ERRORS.has(message)
       || new Set([
         "document_content_required",
         "document_too_large",
@@ -191,7 +268,7 @@ export function createDesktopPropertyTaxRouter({
     ]).has(message)) {
       return res.set("cache-control", "no-store").status(409).json({ error: message });
     }
-    logger.error?.(fallback, error);
+    logPropertyTaxFailure(logger, "error", fallback, error);
     return res.set("cache-control", "no-store").status(500).json({ error: fallback });
   }
 
@@ -235,10 +312,11 @@ export function createDesktopPropertyTaxRouter({
       }
       return res.json({ account_id: canonicalId, file });
     } catch (error) {
-      if (String(error?.message || "").startsWith("invalid_")) {
-        return res.status(400).json({ error: error.message });
+      const message = propertyTaxErrorMessage(error);
+      if (PROPERTY_TAX_FILE_CLIENT_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
-      logger.error?.("property tax protest load failed", error);
+      logPropertyTaxFailure(logger, "error", "property tax protest load failed", error);
       return res.status(500).json({ error: "property_tax_protest_load_failed" });
     }
   });
@@ -264,10 +342,11 @@ export function createDesktopPropertyTaxRouter({
       }
       return res.set("cache-control", "no-store").json({ account_id: canonicalId, file });
     } catch (error) {
-      if (String(error?.message || "").startsWith("invalid_")) {
-        return res.status(400).json({ error: error.message });
+      const message = propertyTaxErrorMessage(error);
+      if (PROPERTY_TAX_FILE_CLIENT_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
-      logger.error?.("property tax protest evidence version failed", error);
+      logPropertyTaxFailure(logger, "error", "property tax protest evidence version failed", error);
       return res.status(500).json({ error: "property_tax_protest_evidence_version_failed" });
     }
   });
@@ -303,34 +382,35 @@ export function createDesktopPropertyTaxRouter({
       );
       return res.json({ ok: true, file });
     } catch (error) {
-      if (error?.message === "property_tax_protest_revision_conflict") {
+      const message = propertyTaxErrorMessage(error);
+      if (message === "property_tax_protest_revision_conflict") {
         return res.status(409).json({
-          error: error.message,
+          error: message,
           current_revision: error.currentRevision,
         });
       }
-      if (error?.message === "property_tax_protest_save_operation_conflict") {
-        return res.status(409).json({ error: error.message });
+      if (message === "property_tax_protest_save_operation_conflict") {
+        return res.status(409).json({ error: message });
       }
-      if (error?.message === "property_tax_comparable_reverification_required") {
-        return res.status(409).json({ error: error.message });
+      if (message === "property_tax_comparable_reverification_required") {
+        return res.status(409).json({ error: message });
       }
-      if (error?.message === "property_tax_comparable_housing_type_conflict") {
-        return res.status(409).json({ error: error.message });
+      if (message === "property_tax_comparable_housing_type_conflict") {
+        return res.status(409).json({ error: message });
       }
-      if (error?.message === "property_tax_protest_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      if (message === "property_tax_protest_file_not_found") {
+        return res.status(404).json({ error: message });
       }
-      if (error?.message === "property_tax_protest_access_denied") {
-        return res.status(403).json({ error: error.message });
+      if (message === "property_tax_protest_access_denied") {
+        return res.status(403).json({ error: message });
       }
-      if (error?.message === "property_tax_comparable_attestation_required") {
-        return res.status(403).json({ error: error.message });
+      if (message === "property_tax_comparable_attestation_required") {
+        return res.status(403).json({ error: message });
       }
-      if (String(error?.message || "").startsWith("invalid_")) {
-        return res.status(400).json({ error: error.message });
+      if (PROPERTY_TAX_FILE_CLIENT_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
-      logger.error?.("property tax protest save failed", error);
+      logPropertyTaxFailure(logger, "error", "property tax protest save failed", error);
       return res.status(500).json({ error: "property_tax_protest_save_failed" });
     }
   });
@@ -369,31 +449,32 @@ export function createDesktopPropertyTaxRouter({
       );
       return res.json({ ok: true, ...result });
     } catch (error) {
-      if (error?.message === "property_tax_protest_sketch_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = propertyTaxErrorMessage(error);
+      if (message === "property_tax_protest_sketch_not_found") {
+        return res.status(404).json({ error: message });
       }
-      if (error?.message === "sketch_revision_conflict") {
+      if (message === "sketch_revision_conflict") {
         return res.status(409).json({
-          error: error.message,
+          error: message,
           current_revision: error.currentRevision,
         });
       }
-      if (error?.message === "inspection_sketch_confirmation_access_denied") {
-        return res.status(403).json({ error: error.message });
+      if (message === "inspection_sketch_confirmation_access_denied") {
+        return res.status(403).json({ error: message });
       }
-      if (error?.message === "authentication_required") {
-        return res.status(401).json({ error: error.message });
+      if (message === "authentication_required") {
+        return res.status(401).json({ error: message });
       }
       if (
-        String(error?.message || "").startsWith("invalid_")
-        || String(error?.message || "").startsWith("duplicate_")
-        || error?.message === "sketch_not_ready_for_confirmation"
-        || error?.message === "sketch_operation_conflict"
+        PROPERTY_TAX_FILE_CLIENT_ERRORS.has(message)
+        || PROPERTY_TAX_SKETCH_CLIENT_ERRORS.has(message)
+        || message === "sketch_not_ready_for_confirmation"
+        || message === "sketch_operation_conflict"
       ) {
-        return res.status(error?.message === "sketch_operation_conflict" ? 409 : 400)
-          .json({ error: error.message });
+        return res.status(message === "sketch_operation_conflict" ? 409 : 400)
+          .json({ error: message });
       }
-      logger.error?.("property tax protest sketch review failed", error);
+      logPropertyTaxFailure(logger, "error", "property tax protest sketch review failed", error);
       return res.status(500).json({ error: "property_tax_protest_sketch_update_failed" });
     }
   });
@@ -457,8 +538,13 @@ export function createDesktopPropertyTaxRouter({
             storage: documentStorage,
             ocrProvider: documentOcrProvider,
           }).catch((processingError) => {
-            if (processingError?.message !== "document_processing_in_progress") {
-              logger.warn?.("[property tax documents] background extraction failed", processingError);
+            if (propertyTaxErrorMessage(processingError) !== "document_processing_in_progress") {
+              logPropertyTaxFailure(
+                logger,
+                "warn",
+                "[property tax documents] background extraction failed",
+                processingError,
+              );
             }
           });
         }

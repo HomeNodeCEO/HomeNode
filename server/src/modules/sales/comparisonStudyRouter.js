@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   getMarketContext,
   marketConditionsErrorStatus,
@@ -56,8 +57,11 @@ export function createComparisonStudyRouter({
       return res.json(result);
     } catch (error) {
       const message = error?.message || "paired_sales_analysis_failed";
-      logger.error?.("/api/sales/paired-analysis failed", error);
-      return res.status(pairedErrorStatus(message)).json({ error: message });
+      const status = pairedErrorStatus(message);
+      logger.error?.("/api/sales/paired-analysis failed", safeOperationalErrorCode(error));
+      return res.status(status).json({
+        error: status >= 500 ? "paired_sales_analysis_failed" : message,
+      });
     }
   });
 
@@ -76,10 +80,13 @@ export function createComparisonStudyRouter({
       return res.json({ subject });
     } catch (error) {
       const message = error?.message || "market_context_failed";
-      logger.error?.("/api/sales/market-context failed", error);
-      return res.status(marketErrorStatus(message)).json({
-        error: message,
-        ...(error?.detail ? { detail: error.detail } : {}),
+      const status = marketErrorStatus(message);
+      logger.error?.("/api/sales/market-context failed", safeOperationalErrorCode(error));
+      return res.status(status).json({
+        error: status >= 500 && message !== "market_spatial_support_not_ready"
+          ? "market_context_failed"
+          : message,
+        ...(status < 500 && error?.detail ? { detail: error.detail } : {}),
       });
     }
   });

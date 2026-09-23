@@ -211,8 +211,8 @@ test("comparison study failures retain domain status mapping, detail, and diagno
     detail: contextError.detail,
   });
   assert.deepEqual(logs, [
-    ["/api/sales/paired-analysis failed", pairedError],
-    ["/api/sales/market-context failed", contextError],
+    ["/api/sales/paired-analysis failed", "unknown"],
+    ["/api/sales/market-context failed", "unknown"],
   ]);
 });
 
@@ -420,10 +420,88 @@ test("valuation failures retain each domain mapper and asynchronous diagnostics"
     assert.deepEqual(await response.json(), { error: error.message, ...extra });
   }
   assert.deepEqual(logs, [
-    ["/api/sales/market-analysis failed", errors.market],
-    ["/api/sales/regression-analysis failed", errors.regression],
-    ["/api/sales/site-valuation failed", errors.site],
+    ["/api/sales/market-analysis failed", "unknown"],
+    ["/api/sales/regression-analysis failed", "unknown"],
+    ["/api/sales/site-valuation failed", "unknown"],
   ]);
+});
+
+test("unexpected comparison and valuation failures hide private response and log details", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), {
+    code: "08006",
+    detail: { connection_string: privateDetail },
+  });
+  const comparisonLogs = [];
+  const comparison = await startRouter(createComparisonStudyRouter(comparisonOptions({
+    buildPairedStudy: async () => { throw failure; },
+    pairedErrorStatus: () => 500,
+    loadMarketContext: async () => { throw failure; },
+    marketErrorStatus: () => 500,
+    logger: { error: (...args) => comparisonLogs.push(args) },
+  })));
+  context.after(comparison.close);
+  for (const [path, code] of [
+    ["/api/sales/paired-analysis", "paired_sales_analysis_failed"],
+    ["/api/sales/market-context", "market_context_failed"],
+  ]) {
+    const response = path.endsWith("market-context")
+      ? await fetch(`${comparison.baseUrl}${path}`)
+      : await post(comparison.baseUrl, path);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: code });
+  }
+  assert.deepEqual(comparisonLogs.map((args) => args[1]), ["08006", "08006"]);
+
+  const valuationLogs = [];
+  const valuation = await startRouter(createValuationStudyRouter(valuationOptions({
+    buildMarketAnalyses: async () => { throw failure; },
+    marketErrorStatus: () => 500,
+    buildRegression: async () => { throw failure; },
+    regressionErrorStatus: () => 500,
+    calculateDepreciatedCost: () => { throw failure; },
+    depreciatedCostErrorStatus: () => 500,
+    buildSiteValuation: async () => { throw failure; },
+    siteErrorStatus: () => 500,
+    calculateQualitative: () => { throw failure; },
+    qualitativeErrorStatus: () => 500,
+    logger: { error: (...args) => valuationLogs.push(args) },
+  })));
+  context.after(valuation.close);
+  for (const [path, code] of [
+    ["/api/sales/market-analysis", "market_analysis_failed"],
+    ["/api/sales/regression-analysis", "regression_analysis_failed"],
+    ["/api/sales/depreciated-cost-adjustment", "depreciated_cost_adjustment_failed"],
+    ["/api/sales/site-valuation", "site_valuation_failed"],
+    ["/api/sales/qualitative-analysis", "qualitative_analysis_failed"],
+  ]) {
+    const response = await post(valuation.baseUrl, path);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: code });
+  }
+  assert.deepEqual(valuationLogs.map((args) => args[1]), Array(5).fill("08006"));
+  assert.doesNotMatch(JSON.stringify([...comparisonLogs, ...valuationLogs]), /private-password/);
+});
+
+test("market spatial readiness retains its named 503 response in both study routers", async (context) => {
+  const failure = new Error("market_spatial_support_not_ready");
+  const comparison = await startRouter(createComparisonStudyRouter(comparisonOptions({
+    loadMarketContext: async () => { throw failure; },
+    marketErrorStatus: () => 503,
+  })));
+  context.after(comparison.close);
+  const contextResponse = await fetch(`${comparison.baseUrl}/api/sales/market-context`);
+  assert.equal(contextResponse.status, 503);
+  assert.deepEqual(await contextResponse.json(), { error: "market_spatial_support_not_ready" });
+
+  const valuation = await startRouter(createValuationStudyRouter(valuationOptions({
+    buildMarketAnalyses: async () => { throw failure; },
+    marketErrorStatus: () => 503,
+  })));
+  context.after(valuation.close);
+  const analysisResponse = await post(valuation.baseUrl, "/api/sales/market-analysis");
+  assert.equal(analysisResponse.status, 503);
+  assert.deepEqual(await analysisResponse.json(), { error: "market_spatial_support_not_ready" });
 });
 
 test("sales study composition preserves route positions and removes inline handlers", () => {

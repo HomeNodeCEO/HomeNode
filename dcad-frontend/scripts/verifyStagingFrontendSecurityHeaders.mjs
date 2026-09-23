@@ -74,12 +74,14 @@ export function fetchStagingFrontendHeaders(timeoutMs = 15_000, requestFactory =
         },
       },
       (response) => {
-        response.resume()
+        const headers = response.headers
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
           finish(new Error('staging_frontend_http_error'))
+          response.destroy()
           return
         }
-        finish(null, response.headers)
+        finish(null, headers)
+        response.destroy()
       },
     )
     request.once('error', (error) => finish(error))

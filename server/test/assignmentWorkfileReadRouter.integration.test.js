@@ -309,8 +309,11 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
   assert.equal(failedReport.status, 500);
   assert.equal(failedReport.headers.get("cache-control"), "no-store");
   assert.deepEqual(await failedReport.json(), { error: "custom_appraisal_report_pdf_failed" });
-  assert.equal(logs.length, 2);
-  assert.ok(logs.every(([, error]) => error === diagnostic));
+  assert.deepEqual(logs, [
+    ["custom appraisal workfile load failed", "unknown"],
+    ["custom appraisal report PDF failed", "unknown"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
 test("workfile conditional requests reauthorize after access changes and HEAD remains no-store", async (context) => {

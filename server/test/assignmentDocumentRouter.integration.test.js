@@ -574,8 +574,7 @@ test("document routes retain stable client, conflict, unavailable, and bounded e
     assert.equal(response.status, status);
     assert.deepEqual(await response.json(), { error });
   }
-  assert.equal(logs.length, 1);
-  assert.deepEqual(logs[0].slice(0, 1), ["assignment document lookup failed"]);
+  assert.deepEqual(logs, [["assignment document lookup failed", "unknown"]]);
 });
 
 test("document router validates composition and replaces every inline route", () => {

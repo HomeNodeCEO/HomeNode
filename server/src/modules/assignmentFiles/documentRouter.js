@@ -14,6 +14,7 @@ import {
   reviewAssignmentDocumentCandidate,
 } from "../../services/assignmentDocuments.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 function decodedDocumentHeader(req, name, fallback = "") {
   const value = String(req.get(name) || fallback);
@@ -220,7 +221,7 @@ export function createAssignmentDocumentRouter({
         if (document.processing_status === "uploaded") {
           void processDocument(pool, document.id, { storage: objectStorage }).catch((error) => {
             if (error?.message !== "document_processing_in_progress") {
-              logger.warn?.("[documents] background extraction failed", error?.message || error);
+              logger.warn?.("[documents] background extraction failed", safeOperationalErrorCode(error));
             }
           });
         }
@@ -241,7 +242,7 @@ export function createAssignmentDocumentRouter({
       if (!document) return res.status(404).json({ error: "document_not_found" });
       return res.json({ ok: true, document });
     } catch (error) {
-      logger.error?.("assignment document lookup failed", error);
+      logger.error?.("assignment document lookup failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "assignment_document_lookup_failed" });
     }
   });
@@ -268,7 +269,7 @@ export function createAssignmentDocumentRouter({
       });
       return res.send(document.content);
     } catch (error) {
-      logger.error?.("assignment document stream failed", error);
+      logger.error?.("assignment document stream failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "assignment_document_stream_failed" });
     }
   });
@@ -290,7 +291,7 @@ export function createAssignmentDocumentRouter({
       if (message === "assignment_document_storage_not_configured") {
         return res.status(503).json({ error: message });
       }
-      logger.error?.("assignment document delete failed", error);
+      logger.error?.("assignment document delete failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "assignment_document_delete_failed" });
     }
   });

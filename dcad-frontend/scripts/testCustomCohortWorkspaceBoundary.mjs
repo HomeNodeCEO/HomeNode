@@ -38,7 +38,9 @@ for (const name of ['CustomCohortWorkspace', 'CustomCohortPocketInspector']) {
   });
   test(`${name} structurally hides its complete observation surface for print`, () => {
     const rootSection = source.match(/return <section\b[^>]+>/)?.[0];
-    assert.match(rootSection, /className="[^"]*print:hidden/);
+    if (name === 'CustomCohortPocketInspector')
+      assert.match(rootSection, /className=\{props\.compact \? '[^']*print:hidden' : '[^']*print:hidden'\}/);
+    else assert.match(rootSection, /className="[^"]*print:hidden/);
   });
 }
 test('disabled exploration does not mount request ownership', () => {

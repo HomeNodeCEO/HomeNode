@@ -162,8 +162,6 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     get phasePreparationCount() { return phasePreparationCount; }, get phaseReadCount() { return phaseReadCount; },
     get standalonePhaseReadCount() { return standalonePhaseReadCount; },
     node, cityProps: () => node(n => n.type === CityReferenceStub)?.props ?? null,
-    changeColor(value) { const select = node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode');
-      assert.ok(select, 'actual map color select'); select.props.onChange({ target: { value }, currentTarget: { value } }); flush(); },
     showLabels(checked) { const input = node(n => n.type === 'input' && n.props.type === 'checkbox');
       assert.ok(input, 'actual recorded label checkbox'); input.props.onChange({ target: { checked }, currentTarget: { checked } }); flush(); },
     cityView(active) { const props = this.cityProps(); assert.ok(props, 'actual city reference child'); props.onViewChange(active); flush(); },
@@ -184,14 +182,15 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.equal(data.features[0].geometry.coordinates.length, 2);
   assert.equal(data.features[2].geometry.coordinates.length, 2);
   assert.equal(map.fits.length, 1); assert.equal(map.options.attributionControl, true);
-  assert.match(h.html(), /Colors describe inclusion, not similarity or reliability/);
+  assert.match(h.html(), /Included · red outline/);
+  assert.doesNotMatch(h.html(), /Color parcels by/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
 });
 test('recorded labels explicitly use the OpenFreeMap font across toggles and remounts', async () => {
   const props = fixture(), h = harness(); await h.ready(props);
   const assertFont = map => assert.deepEqual(map.getLayer('custom-cohort-group-labels-text').layout['text-font'], ['Noto Sans Regular']);
   assertFont(h.maps[0]);
-  h.showLabels(false); h.showLabels(true); h.changeColor('similarity');
+  h.showLabels(false); h.showLabels(true);
   assertFont(h.maps[0]); assert.equal(h.loadCount, 1);
   h.render({ ...props, group: { ...props.group, binding: { ...props.group.binding, assignmentFileId: '18' } } });
   await h.drain(); h.emit('load'); h.emit('idle');
@@ -203,8 +202,8 @@ test('selection color flags come from the coherent group, unresolved membership 
   const h = harness(); await h.ready(); const data = h.maps[0].getSource('custom-cohort-parcels').data;
   assert.deepEqual(data.features.map(f => [f.properties.selected, f.properties.unresolved, f.properties.subject]),
     [[true, false, true], [false, false, false], [true, true, false]]);
-  assert.ok(JSON.stringify(h.maps[0].layers).includes('#15803d'));
-  assert.match(h.html(), /included unresolved parcel has a green outline/);
+  assert.ok(JSON.stringify(h.maps[0].layers).includes('#dc2626'));
+  assert.match(h.html(), /Included · red outline/);
 });
 test('parcel clicks emit only exact recorded group/account callbacks, including unresolved accounts', async () => {
   const calls = [], props = { ...fixture(), onInspectPocket: id => calls.push(['group', id]), onInspectAccount: id => calls.push(['account', id]) };
@@ -310,12 +309,13 @@ function refreshedGeometry(props, suffix = 'c') {
   return { ...props, group: { ...props.group, binding: { ...props.group.binding, selectionFingerprint: suffix.repeat(64) },
     parcel_map: { ...props.group.parcel_map, geojson: structuredClone(props.group.parcel_map.geojson) } } };
 }
-test('default mode remains selection; similarity without a recommendation is explicitly unknown', async () => {
+test('single similarity view leaves unsupported scores unknown and keeps inclusion in the red outline', async () => {
   const props = fixture(), before = JSON.stringify(props), h = harness(); await h.ready(props);
-  assert.equal(h.node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode').props.value, 'selection');
-  assert.deepEqual(['A', 'B', 'C'].map(a => painted(h.maps[0], a).fillColor), ['#15803d', '#94a3b8', '#d97706']);
-  h.changeColor('similarity');
   assert.deepEqual(['A', 'B', 'C'].map(a => painted(h.maps[0], a).fillColor), ['#94a3b8', '#94a3b8', '#94a3b8']);
+  assert.equal(painted(h.maps[0], 'A').selected, true);
+  assert.equal(painted(h.maps[0], 'C').selected, true);
+  assert.ok(JSON.stringify(h.maps[0].getLayer('custom-cohort-parcels-outline').paint).includes('#dc2626'));
+  assert.equal(h.node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode'), null);
   assert.match(h.html(), /unknown/i); assert.match(h.html(), /group/i);
   assert.equal(JSON.stringify(props), before); assert.equal(h.maps[0].fits.length, 1); assert.equal(h.loadCount, 1);
 });
@@ -323,18 +323,18 @@ test('similarity uses exact fixed lower-bound bins, preserves selected flags and
   const props = scoredFixture(), h = harness(); await h.ready(props);
   const original = h.maps[0].getSource('custom-cohort-parcels').data;
   const selected = original.features.map(f => f.properties.selected);
-  h.changeColor('similarity'); const map = h.maps[0];
+  const map = h.maps[0];
   assert.deepEqual(['A', 'B', 'C', 'D', 'E', 'F'].map(a => painted(map, a).fillColor),
     ['#15803d', '#84cc16', '#eab308', '#ea580c', '#94a3b8', '#94a3b8']);
   assert.deepEqual(['A', 'B', 'C', 'D', 'E', 'F'].map(a => painted(map, a).selected), selected);
   assert.equal(map.getSource('custom-cohort-parcels').data, original); assert.equal(map.fits.length, 1);
   assert.deepEqual(map.getLayer('custom-cohort-parcels-fill').paint['fill-color'], ['coalesce', ['feature-state', 'fillColor'], ['get', 'fillColor']]);
-  assert.deepEqual(map.getLayer('custom-cohort-parcels-fill').paint['fill-opacity'], ['case', ['coalesce', ['feature-state', 'selected'], ['get', 'selected']], .55, .2]);
-  h.changeColor('selection'); assert.equal(painted(map, 'F').fillColor, '#d97706');
+  assert.deepEqual(map.getLayer('custom-cohort-parcels-fill').paint['fill-opacity'], ['case', ['coalesce', ['feature-state', 'selected'], ['get', 'selected']], .72, .38]);
+  assert.equal(painted(map, 'F').fillColor, '#94a3b8');
   assert.equal(h.maps.length, 1); assert.equal(h.loadCount, 1); assert.equal(map.fits.length, 1);
 });
 test('lower bounds immediately below a threshold stay in the preceding fixed bin', async () => {
-  const h = harness(); await h.ready(scoredFixture([74.999, 49.999, 24.999, 0, null])); h.changeColor('similarity');
+  const h = harness(); await h.ready(scoredFixture([74.999, 49.999, 24.999, 0, null]));
   assert.deepEqual(['A', 'B', 'C', 'D'].map(a => painted(h.maps[0], a).fillColor), ['#84cc16', '#eab308', '#ea580c', '#ea580c']);
 });
 test('all parcels in one recorded group share its mean even when inclusion and subject flags differ', async () => {
@@ -345,7 +345,7 @@ test('all parcels in one recorded group share its mean even when inclusion and s
     { id: 'recorded-cad:beta', member_count: 0, similarity: { lower: null, upper: null, known_weight_percent: null } },
     { id: 'discovery:unassigned', member_count: 1, similarity: { lower: 80, upper: 80, known_weight_percent: 100 } },
   ] };
-  const h = harness(); await h.ready(props); h.changeColor('similarity'); const map = h.maps[0];
+  const h = harness(); await h.ready(props); const map = h.maps[0];
   assert.equal(painted(map, 'A').fillColor, '#84cc16'); assert.equal(painted(map, 'B').fillColor, '#84cc16');
   assert.equal(painted(map, 'A').selected, true); assert.equal(painted(map, 'B').selected, false);
   assert.equal(painted(map, 'A').subject, true); assert.equal(painted(map, 'B').subject, false);
@@ -353,7 +353,7 @@ test('all parcels in one recorded group share its mean even when inclusion and s
 });
 test('insufficient recommendation leaves every similarity color unknown without changing inclusion', async () => {
   const props = scoredFixture(); props.catalog.recommendation.status = 'insufficient_observations';
-  const h = harness(); await h.ready(props); h.changeColor('similarity');
+  const h = harness(); await h.ready(props);
   assert.ok(['A', 'B', 'C', 'D', 'E', 'F'].every(a => painted(h.maps[0], a).fillColor === '#94a3b8'));
   assert.equal(painted(h.maps[0], 'A').selected, true);
 });
@@ -369,12 +369,12 @@ test('recorded label source equals actual helper output and is added after both 
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
   assert.equal(map.fits.length, 1);
 });
-test('label visibility and color switches never reload map/geometry, move camera or call selection/capture/save callbacks', async () => {
+test('label visibility never reloads map/geometry, moves camera or calls selection/capture/save callbacks', async () => {
   const calls = [], props = { ...scoredFixture(), onInspectPocket: id => calls.push(id), onInspectAccount: id => calls.push(id),
     onSelectionChange: () => calls.push('selection'), onCapture: () => calls.push('capture'), onSave: () => calls.push('save') };
   const h = harness(); await h.ready(props); const map = h.maps[0], data = map.getSource('custom-cohort-parcels').data;
   h.showLabels(false); assert.deepEqual(map.getSource('custom-cohort-group-labels').data, { type: 'FeatureCollection', features: [] });
-  h.changeColor('similarity'); h.showLabels(true); h.changeColor('selection'); h.showLabels(false);
+  h.showLabels(true); h.showLabels(false);
   assert.equal(map.getSource('custom-cohort-parcels').data, data); assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
   assert.equal(map.fits.length, 1); assert.equal(map.jumps.length, 0); assert.equal(h.loadCount, 1); assert.equal(h.maps.length, 1);
   assert.deepEqual(calls, []);
@@ -407,7 +407,7 @@ test('geometry refresh while city view is active updates real parcel source with
   const camera = structuredClone(map.camera); h.render(refreshedGeometry(props));
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 1);
   assert.equal(map.fits.length, 1); assert.deepEqual(map.camera, camera); assert.equal(map.jumps.length, 1);
-  h.emit('idle'); h.changeColor('similarity'); h.showLabels(false); h.showLabels(true);
+  h.emit('idle'); h.showLabels(false); h.showLabels(true);
   assert.equal(map.fits.length, 1); assert.deepEqual(map.camera, camera); assert.equal(h.maps.length, 1);
   h.cityView(false); h.render(refreshedGeometry(props, 'd'));
   assert.equal(map.fits.length, 2, 'normal geometry refresh can fit after city reference is released');
@@ -476,7 +476,7 @@ test('selection-only updates with shared geometry reuse actual presentation rath
   h.render(changed); assert.equal(h.presentationCount, 1);
   assert.equal(map.getSource('custom-cohort-group-labels').data, initialLabels);
   assert.equal(painted(map, 'A').selected, false); assert.equal(painted(map, 'B').selected, true);
-  h.emit('idle'); h.changeColor('similarity'); h.showLabels(false); h.showLabels(true);
+  h.emit('idle'); h.showLabels(false); h.showLabels(true);
   h.render({ ...changed, freshness: 'stale', inspectedPocketId: 'recorded-cad:group-1' });
   assert.equal(h.presentationCount, 1); assert.equal(painted(map, 'B').fillColor, '#84cc16');
   assert.equal(map.fits.length, 1); assert.equal(h.loadCount, 1);
@@ -547,7 +547,6 @@ test('parcel source promotes exact opaque parcel IDs and never generates array-i
 });
 test('every rendered feature-state ID matches its promoted parcel after reordering and geometry/source updates', async () => {
   const props = scoredFixture(), h = harness(); await h.ready(props); const map = h.maps[0];
-  h.changeColor('similarity');
   assert.equal(painted(map, 'B').fillColor, '#84cc16', 'modeled rendered color changes through the promoted identity');
   const reversed = { ...props, group: { ...props.group, binding: { ...props.group.binding, selectionRevision: 2 },
     parcel_map: { ...props.group.parcel_map, geojson: { type: 'FeatureCollection', features: [...props.group.parcel_map.geojson.features].reverse() } } } };
@@ -578,7 +577,7 @@ test('activation reads live zoom at each click: below 15 subdivision, at and abo
   const calls = [], legacy = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args),
     onInspectPocket: id => legacy.push(id) }, h = harness(); await h.ready(props);
   const map = h.maps[0];
-  assert.match(h.html(), /Subdivision view: click includes all captured related groups/);
+  assert.match(h.html(), /Subdivision view: clicks include all captured related phases/);
   for (const [zoom, mode] of [[14.999, 'subdivision'], [15, 'phase'], [15.001, 'phase'], [12, 'subdivision']]) {
     // Deliberately do not emit zoom or rerender: the callback must not use the
     // last React display mode, even when the camera changed moments ago.
@@ -589,6 +588,23 @@ test('activation reads live zoom at each click: below 15 subdivision, at and abo
   }
   assert.deepEqual(legacy, []); assert.equal(map.states.length, 0);
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
+});
+
+test('right-click requests exclusion at live zoom without opening inspection or changing the map locally', async () => {
+  const excluded = [], activated = [], props = { ...familyFixture(),
+    onExcludePocket: (...args) => excluded.push(args), onActivatePocket: (...args) => activated.push(args) };
+  const h = harness(); await h.ready(props); const map = h.maps[0]; let prevented = 0;
+  const originalEvent = { preventDefault() { prevented++; } };
+  map.camera.zoom = 14;
+  h.emit('contextmenu', { originalEvent, features: [{ properties: { account_id: 'B' } }] }, 'custom-cohort-parcels-fill');
+  map.camera.zoom = 15;
+  h.emit('contextmenu', { originalEvent, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
+  h.emit('contextmenu', { originalEvent, features: [{ properties: { subject_marker: true,
+    parcel_id: 'gis.dcad_parcels:1' } }] }, 'custom-cohort-subject-parcels-text');
+  assert.deepEqual(excluded, [['recorded-cad:beta', 'subdivision'], ['recorded-cad:alpha', 'phase'],
+    ['recorded-cad:alpha', 'phase']]);
+  assert.equal(prevented, 3); assert.deepEqual(activated, []);
+  assert.equal(map.states.length, 0); assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
 });
 
 test('zoom changes only interaction display and never reselects an excluded phase or replaces either source', async () => {
@@ -605,7 +621,7 @@ test('zoom changes only interaction display and never reselects an excluded phas
   assert.equal(source.replacements.length, 0); assert.equal(labels.replacements.length, 0);
   assert.equal(map.states.length, 0); assert.equal(map.fits.length, 1); assert.equal(h.presentationCount, 1);
   assert.equal(JSON.stringify(props), original); assert.equal(h.loadCount, 1);
-  assert.match(h.html(), /Zooming never changes selection/);
+  assert.match(h.html(), /Zooming does not change your choices/);
   assert.match(h.html(), /not verified legal phases or coverage outside this capture/);
 });
 
@@ -723,8 +739,8 @@ test('SUBJECT marker uses an exact subject exterior vertex, not another group me
   assert.equal(layer.layout['text-field'], 'SUBJECT\n▼');
   assert.equal(layer.layout['text-allow-overlap'], true); assert.equal(layer.layout['text-ignore-placement'], true);
   assert.equal(layer.paint['text-color'], '#7e22ce');
-  assert.match(h.html(), /SUBJECT marks the retained subject parcel/);
-  assert.match(h.html(), /not a rooftop or surveyed location/); assert.equal(JSON.stringify(props), original);
+  assert.match(h.html(), /Subject pointer/);
+  assert.doesNotMatch(h.html(), /SUBJECT marks the retained subject parcel/); assert.equal(JSON.stringify(props), original);
 });
 
 test('every disjoint subject parcel receives its own retained marker, including a MultiPolygon parcel', async () => {
@@ -735,14 +751,14 @@ test('every disjoint subject parcel receives its own retained marker, including 
   const h = harness(); await h.ready(props); const map = h.maps[0], markers = map.getSource('custom-cohort-subject-parcels').data.features;
   assert.equal(markers.length, 2); assert.deepEqual(markers.map(marker => marker.properties.parcel_id), ['gis.dcad_parcels:1', 'gis.dcad_parcels:91']);
   assert.deepEqual(markers[1].geometry.coordinates, [-96.2, 32]); assert.ok(markers.every(marker => marker.properties.account_id === 'A'));
-  assert.match(h.html(), /SUBJECT marks each of 2 retained subject parcels/);
+  assert.match(h.html(), /Subject pointer/);
   assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 4);
 });
 
 test('SUBJECT marker is independent of group-label visibility, zoom, inspection and selection styling', async () => {
   const calls = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args) }, h = harness(); await h.ready(props);
   const map = h.maps[0], source = map.getSource('custom-cohort-subject-parcels'), data = source.data;
-  h.showLabels(false); h.changeColor('similarity');
+  h.showLabels(false);
   map.camera.zoom = 17; h.emit('zoom'); map.camera.zoom = 12; h.emit('zoom');
   const next = { ...props, inspectedPocketIds: ['recorded-cad:beta'], group: { ...props.group,
     parcel_map: { ...props.group.parcel_map, geojson: { type: 'FeatureCollection', features: props.group.parcel_map.geojson.features.map(feature => ({
@@ -757,7 +773,7 @@ test('missing subject geometry has an explicit omitted marker, never a peer parc
   const props = fixture(); props.group.parcel_map.geojson.features = props.group.parcel_map.geojson.features.filter(feature => feature.properties.account_id !== 'A');
   const h = harness(); await h.ready(props);
   assert.deepEqual(h.maps[0].getSource('custom-cohort-subject-parcels').data.features, []);
-  assert.match(h.html(), /SUBJECT pointer unavailable: no retained subject parcel geometry/);
+  assert.match(h.html(), /Subject pointer unavailable because captured subject geometry is missing/);
 });
 
 test('invalid subject vertex does not become a guessed point, while valid retained parcels stay unchanged', async () => {
@@ -963,7 +979,6 @@ test('many map families share one actual phase metadata preparation per projecti
   const labelData = map.getSource('custom-cohort-group-labels').data;
   map.camera.zoom = 17; h.emit('zoom'); map.camera.zoom = 12; h.emit('zoom');
   h.render({ ...props, inspectedPocketIds: props.catalog.pockets.slice(0, 3).map(pocket => pocket.id) });
-  h.changeColor('similarity');
   assert.equal(h.phasePreparationCount, 1); assert.equal(h.phaseReadCount, count);
   assert.equal(map.getSource('custom-cohort-group-labels').data, labelData);
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);

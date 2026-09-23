@@ -65,6 +65,45 @@ function Population({ value, title }: { value: unknown; title: string }) {
   </section>;
 }
 
+/** Compact, source-formatted figures for the map-side comparison. These are
+ * descriptive medians from the same checked selection, never new calculations. */
+export function CustomCohortCompactStatistics({ group, freshness, title = 'Live neighborhood characteristics and market observations',
+  includePrivateSales = false }: { group: Props['group']; freshness: Props['freshness']; title?: string; includePrivateSales?: boolean }) {
+  if (!group) return <p role="status" className="text-sm text-slate-600">Preparing selected-area observations…</p>;
+  const summary = object(group.summary), selected = object(summary.selected);
+  const stock = object(selected.stock), transactions = object(selected.transactions), reported = object(selected.source_reported);
+  const effectiveDay = utcDay(summary.effective_date, true), captureDay = utcDay(summary.captured_at);
+  const rows = [
+    { key: 'gla_sqft', label: 'Living area', population: stock },
+    { key: 'year_built', label: 'Year built', population: stock },
+    { key: 'site_area_sqft', label: 'Site area', population: stock },
+    { key: 'recorded_total_price', label: 'Recorded transaction total', population: transactions },
+    { key: 'days_on_market', label: 'Source-reported marketing days', population: reported },
+  ];
+  return <section className="space-y-3 text-sm print:hidden" aria-label={title} data-selection-revision={group.binding.selectionRevision}
+    data-freshness={freshness}>
+    <div><h3 className="font-semibold text-violet-950">{title}</h3>
+      <p className="text-xs text-slate-600">{count(selected.account_count)} selected CAD accounts · {count(transactions.member_count)} recorded transactions</p>
+      <p className="text-xs text-slate-600">Period {text(object(summary.observation_period).start_date)}–{text(object(summary.observation_period).end_date)}</p></div>
+    {freshness === 'stale' && <p role="status" className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">Updating selection. These figures still match the previous map.</p>}
+    {effectiveDay && captureDay && effectiveDay < captureDay && <p className="rounded-md bg-amber-50 p-2 text-xs text-amber-900">
+      CAD characteristics were captured on {captureDay}, after the {effectiveDay} appraisal date. They are not verified historical characteristics.</p>}
+    <dl className="space-y-2">{rows.map(({ key, label, population }) => {
+      const metric = object(object(population.metrics)[key]), display = object(metric.display);
+      return <div key={key} className="rounded-lg border border-violet-100 bg-white/80 px-3 py-2" data-metric={key}>
+        <dt className="text-xs font-medium text-slate-600">{label}</dt>
+        <dd className="font-semibold tabular-nums text-violet-950">Median {text(display.median)}</dd>
+        <dd className="text-xs tabular-nums text-slate-600">Range {text(display.low)}–{text(display.high)} · {count(metric.count)} observed</dd>
+      </div>;
+    })}</dl>
+    {includePrivateSales && group.private_sales && <details className="rounded-lg border border-purple-200 p-2">
+      <summary className="cursor-pointer text-xs font-medium">Uploaded sales observations</summary>
+      <div className="mt-2"><CustomCohortPrivateSalesStatistics observations={group.private_sales} freshness={freshness} selectedOnly /></div>
+    </details>}
+    <p className="text-[11px] text-slate-600">Current CAD characteristics, recorded transaction totals, and source-reported marketing time have different evidence bases. Medians are descriptive, not a reliability score or supported sale price.</p>
+  </section>;
+}
+
 /** Display the server-formatted observation summary without recalculating,
  * relabeling its median as predominant, or inferring a reliability score. */
 export default function CustomCohortStatistics({ group, freshness, pocketId, selectedOnly = false, pocketOnly = false }: Props) {

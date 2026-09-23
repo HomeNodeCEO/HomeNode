@@ -229,8 +229,9 @@ const Workspace = loadTrustedRepositoryCommonJs(new URL('../src/features/neighbo
   if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortOperation() { requests++; assert.fail('No render-time request'); },
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
-  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector', './CustomCohortSubdivisionDialog'].includes(key));
-  return { __esModule: true, default: () => null };
+  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector',
+    './CustomCohortSubdivisionDialog', './CustomCohortMapSnapshot'].includes(key));
+  return { __esModule: true, default: () => null, CustomCohortCompactStatistics: () => null };
 }).default;
 function render(f) {
   return renderToStaticMarkup(React.createElement(Workspace, { ...f.input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'test',

@@ -86,7 +86,8 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   });
   const api = { requestCustomCohortObservationPreview: previewTransport,
     requestCustomCohortOperation: (...args) => { catalogCalls.push(args); return Promise.resolve(catalogResponse()); } };
-  const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortPocketInspector', 'CustomCohortMemberBrowser', 'CustomCohortSubdivisionDialog'].map(key => [key, function Stub() {}]));
+  const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortCompactStatistics',
+    'CustomCohortPocketInspector', 'CustomCohortMemberBrowser', 'CustomCohortSubdivisionDialog', 'CustomCohortMapSnapshot'].map(key => [key, function Stub() {}]));
   const component = loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url), key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
@@ -102,6 +103,8 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
         void task.then(() => fingerprints.delete(task), () => fingerprints.delete(task)); return task;
       },
       createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
+    if (key === './CustomCohortStatistics') return { default: stubs.CustomCohortStatistics,
+      CustomCohortCompactStatistics: stubs.CustomCohortCompactStatistics, __esModule: true };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
   }, { environment: {
     setTimeout: (fn, delay) => { timers.set(++serial, { fn, delay, at: now + delay }); return serial; },
@@ -127,7 +130,8 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
         previewTransport, onSelectionIntent: value => intents.push(value) } }; },
     render(value) { render(value); flush(); }, get propsNow() { return props; }, get tree() { return tree; },
     nodes: () => walk(tree), text: () => text(tree),
-    child(key) { return walk(tree).find(node => node.type === stubs[key])?.props; },
+    child(key) { if (key === 'CustomCohortMapSnapshot') return walk(tree).find(node => node.type === stubs.CustomCohortParcelMap)?.props.overlay?.props;
+      return walk(tree).find(node => node.type === stubs[key])?.props; },
     click(label) { const node = walk(tree).find(node => node.type === 'button' && text(node) === label); assert.ok(node, label); node.props.onClick(); flush(); },
     check(label) { const node = walk(tree).find(node => node.type === 'input' && node.props['aria-label'] === label); assert.ok(node, label); node.props.onChange(); flush(); },
     async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); flush(); },
@@ -164,6 +168,27 @@ test('controlled restored empty selection stays empty and makes no catalog read'
   assert.deepEqual(h.calls[0].request.selection, { revision: 7, pockets: [] }); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current');
   assert.ok(h.nodes().filter(n => n.props?.type === 'checkbox').every(n => n.props.checked === false)); h.unmount();
+});
+
+test('unassigned CAD evidence is distinguished from a grouping capacity failure', () => {
+  const review = harness(); review.render(review.props());
+  assert.match(review.text(), /CAD subdivision not confirmed/);
+  assert.doesNotMatch(review.text(), /Subdivision grouping reached a capacity limit/);
+  review.unmount();
+
+  const response = catalogResponse(), c = response.catalog;
+  c.status = 'incomplete'; c.pockets = [];
+  c.unassigned = { account_ids: ['A', 'B', 'C'], member_count: 3,
+    reason_counts: [{ reason: 'pocket_count_limit', member_count: 3 }] };
+  c.coverage = { discovery_member_count: 3, assigned_account_count: 0, unassigned_account_count: 3 };
+  c.subject_membership = { account_id: 'A', assigned_pocket_id: null, status: 'catalog_incomplete', recorded_label_match_only: true };
+  const incomplete = catalogHelpers.checkCustomCohortPocketCatalog(response, input);
+  const capacity = harness(), props = capacity.props([]); props.workspace.catalog = incomplete;
+  capacity.render(props);
+  assert.match(capacity.text(), /Grouping unavailable — capture limit/);
+  assert.match(capacity.text(), /Subdivision grouping reached a capacity limit: Too many distinct recorded names/);
+  assert.doesNotMatch(capacity.text(), /CAD subdivision not confirmed/);
+  capacity.unmount();
 });
 
 test('dense list pages50 groups while map selection and Include all retain887; map inspection can open an off-page group', async () => {
@@ -630,12 +655,12 @@ test('mixed bare/PH Willow broad activation unions all six original leaves once 
   const unrelated = [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], props = mixedWillowProps(h, unrelated);
   h.render(props); await h.tick(); await h.waitForRequest(0); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'subdivision'); await h.drain();
-  const dialog = h.child('CustomCohortSubdivisionDialog');
-  assert.equal(dialog.family.member_count, 307); assert.equal(dialog.family.pocket_ids.length, 6);
-  assert.equal(h.intents.length, 1); assert.deepEqual(h.intents[0], [...unrelated, ...dialog.family.pocket_ids]);
+  const snapshot = h.child('CustomCohortMapSnapshot');
+  assert.equal(snapshot.family.member_count, 307); assert.equal(snapshot.family.pocket_ids.length, 6);
+  assert.equal(h.intents.length, 1); assert.deepEqual(h.intents[0], [...unrelated, ...snapshot.family.pocket_ids]);
   assert.deepEqual([...h.intents[0]].sort(), [1, 2, 3, 4, 5, 6, 7].map(groupId).concat(catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP).sort());
-  assert.deepEqual(dialog.included, unrelated, 'no optimistic saved membership is invented');
-  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, dialog.family.pocket_ids);
+  assert.deepEqual(snapshot.included, unrelated, 'no optimistic saved membership is invented');
+  assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, snapshot.family.pocket_ids);
   h.render({ ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: h.intents[0] } } });
   await h.tick(); await h.waitForRequest(1); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(7), 'subdivision'); await h.drain();
@@ -648,36 +673,37 @@ test('broad click includes entire subdivision in one saved intent, preserves unr
   const prior = h.child('CustomCohortStatistics').group;
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(1), 'subdivision'); await h.drain();
   assert.deepEqual(h.intents, [[groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP, groupId(2)]]);
-  const dialog = h.child('CustomCohortSubdivisionDialog');
-  assert.equal(dialog.family.label, 'MONICA PARK'); assert.equal(dialog.phaseId, null);
-  assert.deepEqual(dialog.family.pocket_ids, [groupId(1), groupId(2)]);
-  assert.deepEqual(dialog.included, props.workspace.selection.included_recorded_group_ids, 'not optimistic saved choices');
+  const snapshot = h.child('CustomCohortMapSnapshot');
+  assert.equal(snapshot.family.label, 'MONICA PARK'); assert.equal(snapshot.phaseId, null);
+  assert.deepEqual(snapshot.family.pocket_ids, [groupId(1), groupId(2)]);
+  assert.deepEqual(snapshot.included, props.workspace.selection.included_recorded_group_ids, 'not optimistic saved choices');
   assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(1), groupId(2)]);
   assert.equal(h.child('CustomCohortStatistics').group, prior); assert.equal(h.calls.length, 1);
   h.render({ ...props, workspace: { ...props.workspace, saving: true } });
-  h.child('CustomCohortSubdivisionDialog').onInclude([groupId(2)]); assert.equal(h.intents.length, 1);
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); assert.equal(h.intents.length, 1);
   h.render(phasedProps(h, h.intents[0], 8)); await h.tick(); await h.complete();
   assert.deepEqual(h.calls[1].request.selection.pockets[0].account_ids, ['A', 'B', 'C']);
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'subdivision'); await h.drain();
   assert.equal(h.intents.length, 1, 'already included does not write again');
 });
-test('near inspection, phase exclusion, equivalent reopen and close never refill manual exclusions', async t => {
+test('near click includes a phase, right-click excludes it, and reopening never fills it silently', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(phasedProps(h, [groupId(1), groupId(2)])); await h.tick(); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();
-  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortSubdivisionDialog').phaseId, groupId(2));
+  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot').phaseId, groupId(2));
   assert.deepEqual(h.child('CustomCohortParcelMap').inspectedPocketIds, [groupId(2)]);
   const highlights = h.child('CustomCohortParcelMap').inspectedPocketIds;
   h.render(h.propsNow); assert.equal(h.child('CustomCohortParcelMap').inspectedPocketIds, highlights,
     'unrelated owner renders do not rebuild the full map just to highlight a phase');
-  h.child('CustomCohortSubdivisionDialog').onExclude([groupId(2)]); assert.deepEqual(h.intents, [[groupId(1)]]);
+  h.child('CustomCohortParcelMap').onExcludePocket(groupId(2), 'phase'); assert.deepEqual(h.intents, [[groupId(1)]]);
   h.render(phasedProps(h, [groupId(1)], 8)); await h.tick(); await h.complete();
-  h.child('CustomCohortSubdivisionDialog').onInspectPhase(null); await h.drain();
-  assert.equal(h.intents.length, 1); assert.equal(h.child('CustomCohortSubdivisionDialog').phaseId, null);
-  h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();
-  assert.equal(h.intents.length, 1, 'near click only inspects an excluded phase');
-  h.child('CustomCohortSubdivisionDialog').onClose(); await h.drain();
-  assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
+  h.child('CustomCohortMapSnapshot').onClose(); await h.drain();
+  assert.equal(h.intents.length, 1); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
   h.render(phasedProps(h, [groupId(1)], 8)); await h.tick(); assert.equal(h.intents.length, 1);
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();
+  assert.deepEqual(h.intents[1], [groupId(1), groupId(2)], 'near click deliberately includes the excluded phase');
+  h.child('CustomCohortMapSnapshot').onClose(); await h.drain();
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+  h.render(phasedProps(h, [groupId(1)], 8)); await h.tick(); assert.equal(h.intents.length, 2);
   assert.equal(h.calls.length, 2, 'same selection on render does not refetch');
 });
 for (const blocked of ['saving', 'read_only', 'reload_required', 'pending_capture']) test(`broad subdivision click respects ${blocked}`, async t => {
@@ -700,7 +726,7 @@ test('keyboard/list family review opens the same modal without silently selectin
   h.child('CustomCohortSubdivisionDialog').onInclude([groupId(1), groupId(2)]);
   assert.deepEqual(h.intents, [[groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP, groupId(2)]]);
 });
-test('near click on a county-name variant highlights the entire exact phase; exclusion saves all phase leaves once', async t => {
+test('near click on a county-name variant selects its exact phase; right-click excludes all phase leaves once', async t => {
   const h = harness(); t.after(() => h.unmount());
   const props = phasedProps(h, [groupId(1), groupId(2), groupId(3)]);
   const original = props.workspace.catalog;
@@ -709,13 +735,14 @@ test('near click on a county-name variant highlights the entire exact phase; exc
     coverage: { discovery_member_count: 4, assigned_account_count: 3, unassigned_account_count: 1 } };
   h.render(props); await h.tick(); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'phase'); await h.drain();
-  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortSubdivisionDialog').phaseId, groupId(3));
+  assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot').phaseId, groupId(3));
   assert.deepEqual([...h.child('CustomCohortParcelMap').inspectedPocketIds].sort(), [groupId(1), groupId(3)]);
-  h.child('CustomCohortSubdivisionDialog').onExclude([groupId(1), groupId(3)]);
+  h.child('CustomCohortParcelMap').onExcludePocket(groupId(3), 'phase');
   assert.deepEqual(h.intents, [[groupId(2)]]);
   const saved = { ...props, workspace: { ...props.workspace, selection: { revision: 8, included_recorded_group_ids: [groupId(2)] } } };
   h.render(saved); await h.tick(); await h.complete();
-  h.child('CustomCohortParcelMap').onActivatePocket(groupId(1), 'phase'); await h.drain(); assert.equal(h.intents.length, 1);
+  h.child('CustomCohortParcelMap').onActivatePocket(groupId(1), 'phase'); await h.drain(); assert.equal(h.intents.length, 2);
+  assert.deepEqual([...h.intents[1]].sort(), [groupId(1), groupId(2), groupId(3)]);
   assert.deepEqual(h.calls.at(-1).request.selection.pockets[0].account_ids, ['B']);
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(3), 'subdivision'); await h.drain();
   assert.deepEqual([...h.intents.at(-1)].sort(), [groupId(1), groupId(2), groupId(3)]);

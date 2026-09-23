@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreRuntime';
-import type { ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
+import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
 import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
 import type { CustomCohortMapLabel, CustomCohortMapScore } from '../customCohortMapPresentation';
@@ -18,8 +19,10 @@ interface Props {
   inspectedPocketIds?: readonly string[];
   subdivisionFamilies?: CustomCohortSubdivisionFamilies;
   onActivatePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
+  onExcludePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
   onInspectPocket?: (pocketId: string) => void;
   onInspectAccount?: (accountId: string) => void;
+  overlay?: ReactNode;
 }
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`;
@@ -75,7 +78,7 @@ function visibleLabel(label: DisplayLabel, mode: ActivationMode | null): boolean
   const text = mode === 'phase' ? label.properties.phase_label : label.properties.subdivision_label;
   return mode !== null && (text === undefined || text.length > 0);
 }
-const COLORS = { included: '#15803d', excluded: '#94a3b8', unresolved: '#d97706', inspected: '#eab308', subject: '#7e22ce' };
+const COLORS = { included: '#dc2626', excluded: '#64748b', unresolved: '#d97706', inspected: '#eab308', subject: '#7e22ce' };
 const SIMILARITY_COLORS = [['75–100', '#15803d'], ['50–<75', '#84cc16'], ['25–<50', '#eab308'], ['0–<25', '#ea580c'],
   ['Unknown / insufficient observations', '#94a3b8']] as const;
 const EMPTY_LABELS = { type: 'FeatureCollection' as const, features: [] };
@@ -137,13 +140,12 @@ const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get',
 /** Exact cached parcel outlines with optional existing group-level similarity.
  * View controls never change the accepted controller selection or statistics. */
 export default function CustomCohortParcelMap({ group, catalog, freshness, inspectedPocketId, inspectedPocketIds,
-  subdivisionFamilies, onActivatePocket, onInspectPocket, onInspectAccount }: Props) {
+  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount, overlay }: Props) {
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
   const paintedLabels = useRef(''), cityViewActive = useRef(false);
   const paintedSubject = useRef('');
   const [cityMap, setCityMap] = useState<ParcelMapRuntimeInstance | null>(null);
-  const [colorMode, setColorMode] = useState<'selection' | 'similarity'>('selection');
   const [showLabels, setShowLabels] = useState(true);
   const [displayMode, setDisplayMode] = useState<ActivationMode | null>(null);
   const [mapState, setMapState] = useState<'loading' | 'drawing' | 'ready' | 'failed'>('loading');
@@ -190,15 +192,14 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
       return { ...f, properties: { ...f.properties, map_feature_id: f.id, unresolved,
         inspected: Boolean(pocket && inspectedIds.has(pocket)),
         subject: f.properties.account_id === group.binding.accountId,
-        fillColor: colorMode === 'similarity' ? similarityColor(presentation?.status === 'available' && pocket ? presentation.scoresByGroup[pocket] : undefined)
-          : unresolved ? COLORS.unresolved : f.properties.selected ? COLORS.included : COLORS.excluded },
+        fillColor: similarityColor(presentation?.status === 'available' && pocket ? presentation.scoresByGroup[pocket] : undefined) },
       };
     }),
-  }), [group, matches, memberships, inspectedIds, colorMode, presentation]);
+  }), [group, matches, memberships, inspectedIds, presentation]);
   const latest = useRef({ geojson, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
-    memberships, onActivatePocket, onInspectPocket, onInspectAccount });
+    memberships, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount });
   latest.current = { geojson, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
-    memberships, onActivatePocket, onInspectPocket, onInspectAccount };
+    memberships, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount };
   const hasGeometry = matches && group.parcel_map.status === 'available' && geojson.features.length > 0;
   const ref = group.binding.contextRef;
   const contextKey = JSON.stringify([group.binding.accountId, group.binding.assignmentFileId,
@@ -238,12 +239,12 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           instance.addSource(SOURCE, { type: 'geojson', data, promoteId: 'map_feature_id' });
           instance.addLayer({ id: FILL, type: 'fill', source: SOURCE, paint: {
             'fill-color': state('fillColor'),
-            'fill-opacity': ['case', state('selected'), 0.55, 0.2],
+            'fill-opacity': ['case', state('selected'), 0.72, 0.38],
           } });
           instance.addLayer({ id: `${SOURCE}-outline`, type: 'line', source: SOURCE, paint: {
-            'line-color': ['case', state('subject'), COLORS.subject, state('inspected'), COLORS.inspected,
-              state('selected'), COLORS.included, state('unresolved'), COLORS.unresolved, COLORS.excluded],
-            'line-width': ['case', state('subject'), 3, state('inspected'), 2.5, 0.75],
+            'line-color': ['case', state('selected'), COLORS.included, state('inspected'), COLORS.inspected,
+              state('subject'), COLORS.subject, state('unresolved'), COLORS.unresolved, COLORS.excluded],
+            'line-width': ['case', state('selected'), 2.5, state('subject'), 2, state('inspected'), 2, 0.75],
           } });
           instance.addSource(LABEL_SOURCE, { type: 'geojson', data: latest.current.labels });
           instance.addLayer({ id: LABEL_LAYER, type: 'symbol', source: LABEL_SOURCE, minzoom: 9,
@@ -264,7 +265,8 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           paintedSubject.current = latest.current.subjectKey;
           const subjectHit = (properties: Readonly<Record<string, unknown>> | undefined) => properties?.subject_marker === true
             && typeof properties.parcel_id === 'string' && latest.current.subjectParcelIds.has(properties.parcel_id);
-          instance.on('click', FILL, event => {
+          const interactParcel = (event: ParcelMapClick, remove: boolean) => {
+            if (remove) event.originalEvent?.preventDefault?.();
             const account = event.features?.[0]?.properties?.account_id;
             if (disposed || typeof account !== 'string') return;
             const current = latest.current, mode = activationMode(instance);
@@ -280,13 +282,17 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
             }
             const pocket = current.memberships.get(account);
             if (!pocket) return;
+            if (remove) { current.onExcludePocket?.(pocket, mode); return; }
             if (current.onActivatePocket) current.onActivatePocket(pocket, mode);
             else current.onInspectPocket?.(pocket);
             current.onInspectAccount?.(account);
-          });
+          };
+          instance.on('click', FILL, event => interactParcel(event, false));
+          instance.on('contextmenu', FILL, event => interactParcel(event, true));
           instance.on('mouseenter', FILL, () => { if (!disposed && instance) instance.getCanvas().style.cursor = 'pointer'; });
           instance.on('mouseleave', FILL, () => { if (!disposed && instance) instance.getCanvas().style.cursor = ''; });
-          instance.on('click', LABEL_LAYER, event => {
+          const interactLabel = (event: ParcelMapClick, remove: boolean) => {
+            if (remove) event.originalEvent?.preventDefault?.();
             const pocket = event.features?.[0]?.properties?.pocket_id;
             if (disposed || typeof pocket !== 'string') return;
             const current = latest.current, mode = activationMode(instance);
@@ -296,21 +302,28 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
               try { if (instance?.queryRenderedFeatures(event.point, { layers: [SUBJECT_LAYER] }).some(hit => subjectHit(hit.properties))) return; }
               catch { return; }
             }
+            if (remove) { current.onExcludePocket?.(pocket, mode); return; }
             if (current.onActivatePocket) current.onActivatePocket(pocket, mode);
             else current.onInspectPocket?.(pocket);
-          });
+          };
+          instance.on('click', LABEL_LAYER, event => interactLabel(event, false));
+          instance.on('contextmenu', LABEL_LAYER, event => interactLabel(event, true));
           instance.on('mouseenter', LABEL_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = 'pointer'; });
           instance.on('mouseleave', LABEL_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = ''; });
-          instance.on('click', SUBJECT_LAYER, event => {
+          const interactSubject = (event: ParcelMapClick, remove: boolean) => {
+            if (remove) event.originalEvent?.preventDefault?.();
             if (disposed || !subjectHit(event.features?.[0]?.properties)) return;
             const current = latest.current, mode = activationMode(instance);
             const marker = current.subjectMarkers.features.find(item => item.properties.parcel_id === event.features?.[0]?.properties?.parcel_id);
             const pocket = marker && current.memberships.get(marker.properties.account_id);
             if (mode === null || !pocket) return;
+            if (remove) { current.onExcludePocket?.(pocket, mode); return; }
             if (current.onActivatePocket) current.onActivatePocket(pocket, mode);
             else current.onInspectPocket?.(pocket);
             current.onInspectAccount?.(marker.properties.account_id);
-          });
+          };
+          instance.on('click', SUBJECT_LAYER, event => interactSubject(event, false));
+          instance.on('contextmenu', SUBJECT_LAYER, event => interactSubject(event, true));
           instance.on('mouseenter', SUBJECT_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = 'pointer'; });
           instance.on('mouseleave', SUBJECT_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = ''; });
           const bounds = parcelBounds(data.features);
@@ -376,41 +389,26 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     <div className="space-y-2 px-4 py-3">
       <h3 className="font-semibold">Captured parcel selection</h3>
       <p className="text-xs text-slate-600">{onActivatePocket
-        ? 'Broad view: click to include all known captured groups in the subdivision name family and open details. Close view: click a recorded phase/group to inspect, then explicitly include or exclude it. Zooming never changes selection. '
+        ? 'Click a subdivision or phase to include it and compare the updated statistics. Right-click to remove it. Zooming does not change your choices. '
         : 'Click a parcel or subdivision label to inspect its recorded CAD group. '}
-        Outlines follow cached parcels, not legal subdivision or neighborhood boundaries. Phases appear only when retained in the recorded name.</p>
+        Shapes follow cached parcels, not legal subdivision or neighborhood boundaries.</p>
       {onActivatePocket && <p className="text-xs font-medium text-violet-900" role="status" data-map-interaction-mode={displayMode ?? 'unavailable'}>
-        {displayMode === 'subdivision' ? 'Subdivision view: click includes all captured related groups.'
-          : displayMode === 'phase' ? 'Phase view: click inspects only.' : 'Map interaction is not ready.'}
+        {displayMode === 'subdivision' ? 'Subdivision view: clicks include all captured related phases.'
+          : displayMode === 'phase' ? 'Phase view: clicks include the selected phase.' : 'Map interaction is not ready.'}
         {' '}Related names are review groupings, not verified legal phases or coverage outside this capture.
       </p>}
       <div className="flex flex-wrap items-center gap-4 text-xs">
-        <label className="inline-flex items-center gap-2">Color parcels by
-          <select aria-label="Map color mode" value={colorMode} disabled={!hasGeometry}
-            onChange={event => { if (event.target.value === 'selection' || event.target.value === 'similarity') setColorMode(event.target.value); }}
-            className="rounded-md border border-amber-300 bg-white px-2 py-1.5 text-violet-950">
-            <option value="selection">Included / excluded</option><option value="similarity">Pocket similarity</option>
-          </select>
-        </label>
         <label className="inline-flex items-center gap-2"><input type="checkbox" checked={showLabels} disabled={presentation?.status !== 'available'}
           onChange={event => setShowLabels(event.target.checked)} />Show recorded subdivision labels</label>
       </div>
-      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label="Selection colors">
-        {([['Included observations', COLORS.included], ['Excluded observations', COLORS.excluded],
-          ['Unresolved recorded group', COLORS.unresolved], ['Inspected group', COLORS.inspected], ['Subject parcel', COLORS.subject]] as const).map(([label, color]) =>
-          <li key={label} className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ backgroundColor: color }} />{label}</li>)}
+      <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label="Pocket similarity and inclusion colors">
+        {SIMILARITY_COLORS.map(([label, color]) => <li key={label} className="inline-flex items-center gap-1.5">
+          <span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ backgroundColor: color }} />{label}</li>)}
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border-[3px] bg-white" style={{ borderColor: COLORS.included }} />Included · red outline</li>
+        <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ borderColor: COLORS.subject }} />Subject pointer</li>
       </ul>
-      {matches && hasGeometry && <p className="text-xs text-slate-600">{subjectMarkers.features.length
-        ? `${subjectMarkers.features.length === 1 ? 'SUBJECT marks the retained subject parcel' : `SUBJECT marks each of ${subjectMarkers.features.length} retained subject parcels`} at a recorded exterior-ring vertex, not a rooftop or surveyed location.`
-        : 'SUBJECT pointer unavailable: no retained subject parcel geometry is available in this capture.'}</p>}
-      {colorMode === 'selection' ? <p className="text-xs text-slate-600">Colors describe inclusion, not similarity or reliability. An included unresolved parcel has a green outline.</p>
-        : <>
-          <ul className="flex flex-wrap gap-x-4 gap-y-1 text-xs" aria-label="Pocket similarity colors">
-            {SIMILARITY_COLORS.map(([label, color]) => <li key={label} className="inline-flex items-center gap-1.5">
-              <span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ backgroundColor: color }} />{label}</li>)}
-          </ul>
-          <p className="text-xs text-slate-600">Fill colors show each recorded group's existing mean similarity lower bound (0–100), not an individual property's score or statistical reliability. Unknown factors are not treated as matches. Excluded parcels stay faint; outlines still show selection, the inspected group and subject.</p>
-        </>}
+      <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+      {matches && hasGeometry && !subjectMarkers.features.length && <p className="text-xs text-slate-600">Subject pointer unavailable because captured subject geometry is missing.</p>}
       {matches && hasGeometry && presentation?.status !== 'available' && <p role="status" className="text-xs text-amber-800">Recorded labels and similarity colors are unavailable for this checked preview. The parcel selection is unchanged.</p>}
       {presentation?.unlabelled_group_ids.length ? <p className="text-xs text-slate-600">{presentation.unlabelled_group_ids.length} recorded groups have no retained parcel anchor for a label.</p> : null}
       {freshness === 'stale' && <p role="status" className="text-sm text-amber-800">Showing the previous map and statistics together. The changed selection is not represented yet.</p>}
@@ -423,6 +421,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         {(mapState === 'loading' || mapState === 'drawing') && <p role="status" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">{mapState === 'drawing' ? 'Drawing the matching parcel selection…' : 'Loading parcel map…'}</p>}
         {mapState === 'failed' && <p role="alert" className="absolute inset-0 grid place-content-center bg-white p-4 text-sm">The map could not be displayed. Use the recorded group list; no substitute boundary has been drawn.</p>}
         {tileError && mapState === 'ready' && <p role="status" className="absolute bottom-3 left-3 rounded bg-white/95 p-2 text-xs">Some basemap resources could not load. Parcel selection and statistics are unchanged.</p>}
+        {mapState !== 'failed' && overlay}
       </div>}
     <div className="px-4 pb-3"><NeighborhoodCityReferenceControl map={mapState === 'failed' ? null : cityMap}
       onViewChange={active => { if (cityMap && mapRef.current === cityMap && mapState !== 'failed') cityViewActive.current = active; }} /></div>

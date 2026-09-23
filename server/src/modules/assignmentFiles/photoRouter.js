@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   createAssignmentPhotoUpload,
   getAssignmentEvidenceVersion,
@@ -18,6 +19,25 @@ const PHOTO_CONTENT_TYPES = [
   "image/png",
   "image/webp",
 ];
+const CLIENT_PHOTO_ERRORS = new Set([
+  "invalid_assignment_photo_upload",
+  "invalid_assignment_photo_variant",
+  "invalid_assignment_photo_content_type",
+  "invalid_assignment_photo_display_content_type",
+  "invalid_assignment_photo_byte_size",
+  "invalid_assignment_photo_width",
+  "invalid_assignment_photo_height",
+  "invalid_assignment_photo_object_id",
+  "invalid_assignment_photo_file_name",
+  "invalid_assignment_photo_id",
+  "invalid_assignment_photo_category",
+  "invalid_assignment_photo_caption",
+  "invalid_assignment_photo_objects",
+  "invalid_assignment_photo_captured_at",
+  "invalid_assignment_photo_revision",
+  "invalid_assignment_photo_upload_body",
+  "invalid_assignment_photo_checksum",
+]);
 
 function assignmentPhotoErrorStatus(message) {
   if (message === "assignment_photo_file_not_found" || message === "assignment_photo_not_found"
@@ -25,7 +45,7 @@ function assignmentPhotoErrorStatus(message) {
   if (message === "custom_appraisal_workfile_signed" || message === "assignment_photo_limit_conflict"
       || message === "assignment_photo_id_conflict" || message === "assignment_photo_revision_conflict") return 409;
   if (message === "assignment_photo_storage_not_configured") return 503;
-  if (message === "invalid_assignment_file_id" || message.startsWith("invalid_assignment_photo")) return 400;
+  if (message === "invalid_assignment_file_id" || CLIENT_PHOTO_ERRORS.has(message)) return 400;
   return 500;
 }
 
@@ -45,6 +65,7 @@ export function createAssignmentPhotoRouter({
   verifyPhoto = verifyAssignmentPhoto,
   updatePhotoMetadata = updateAssignmentPhotoMetadata,
   removePhoto = removeAssignmentPhoto,
+  logger = console,
 } = {}) {
   if (!pool || typeof pool.query !== "function") {
     throw new TypeError("assignment_photo_router_pool_required");
@@ -73,6 +94,16 @@ export function createAssignmentPhotoRouter({
 
   const router = express.Router();
 
+  function sendPhotoError(res, error, fallback) {
+    let message = fallback;
+    try { message = String(error?.message || fallback); } catch { /* Preserve the fixed 500 boundary. */ }
+    const status = assignmentPhotoErrorStatus(message);
+    if (status === 500) {
+      try { logger.error?.(fallback, safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
+    }
+    return res.status(status).json({ error: status === 500 ? fallback : message });
+  }
+
   async function resolveAssignment(req, res, permission) {
     const accountId = await resolveAccountId(pool, String(req.params.id || "").trim());
     const assignmentFileId = normalizeFileId(req.params.assignmentFileId);
@@ -94,8 +125,7 @@ export function createAssignmentPhotoRouter({
       res.locals.assignmentPhotoUpload = assignment;
       return next();
     } catch (error) {
-      const message = error?.message || "assignment_photo_object_upload_failed";
-      return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+      return sendPhotoError(res, error, "assignment_photo_object_upload_failed");
     }
   }
 
@@ -108,8 +138,7 @@ export function createAssignmentPhotoRouter({
       const result = await listPhotos(pool, objectStorage, assignment);
       return res.json({ ok: true, account_id: assignment.accountId, ...result });
     } catch (error) {
-      const message = error?.message || "assignment_photos_lookup_failed";
-      return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+      return sendPhotoError(res, error, "assignment_photos_lookup_failed");
     }
   });
 
@@ -128,8 +157,7 @@ export function createAssignmentPhotoRouter({
           ...result,
         });
       } catch (error) {
-        const message = error?.message || "assignment_photo_version_lookup_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_version_lookup_failed");
       }
     },
   );
@@ -149,8 +177,7 @@ export function createAssignmentPhotoRouter({
           ...result,
         });
       } catch (error) {
-        const message = error?.message || "assignment_evidence_version_lookup_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_evidence_version_lookup_failed");
       }
     },
   );
@@ -169,8 +196,7 @@ export function createAssignmentPhotoRouter({
         });
         return res.status(201).json({ ok: true, ...result });
       } catch (error) {
-        const message = error?.message || "assignment_photo_upload_request_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_upload_request_failed");
       }
     },
   );
@@ -201,8 +227,7 @@ export function createAssignmentPhotoRouter({
         });
         return res.json({ ok: true, uploaded });
       } catch (error) {
-        const message = error?.message || "assignment_photo_object_upload_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_object_upload_failed");
       }
     },
   );
@@ -221,8 +246,7 @@ export function createAssignmentPhotoRouter({
         });
         return res.json({ ok: true, photo });
       } catch (error) {
-        const message = error?.message || "assignment_photo_verification_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_verification_failed");
       }
     },
   );
@@ -242,8 +266,7 @@ export function createAssignmentPhotoRouter({
         });
         return res.json({ ok: true, photo });
       } catch (error) {
-        const message = error?.message || "assignment_photo_update_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_update_failed");
       }
     },
   );
@@ -262,8 +285,7 @@ export function createAssignmentPhotoRouter({
         });
         return res.json({ ok: true, ...result });
       } catch (error) {
-        const message = error?.message || "assignment_photo_remove_failed";
-        return res.status(assignmentPhotoErrorStatus(message)).json({ error: message });
+        return sendPhotoError(res, error, "assignment_photo_remove_failed");
       }
     },
   );

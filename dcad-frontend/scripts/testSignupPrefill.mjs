@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
+import { createSignupAccountReader } from '../src/features/signup/signupAccountReader.ts';
 
 import {
   countyFromAccount,
@@ -13,6 +14,43 @@ import {
   subjectAddressFromAccount,
   subjectAddressFromDetail,
 } from '../src/features/signup/signupPrefill.ts';
+
+test('signup prefill shares one account request across independent field readers', async () => {
+  let accountCalls = 0;
+  let fallbackCalls = 0;
+  const reader = createSignupAccountReader(
+    '123',
+    async () => {
+      accountCalls += 1;
+      return { account: { address: '123 Main St', county: 'Dallas' } };
+    },
+    async () => { fallbackCalls += 1; throw new Error('unexpected fallback'); },
+  );
+  const [account, firstDetail, secondDetail] = await Promise.all([
+    reader.account(), reader.detail(), reader.detail(),
+  ]);
+  assert.equal(account.account.address, '123 Main St');
+  assert.equal(subjectAddressFromDetail(firstDetail), '123 Main St');
+  assert.equal(firstDetail, secondDetail);
+  assert.equal(accountCalls, 1);
+  assert.equal(fallbackCalls, 0);
+});
+
+test('signup prefill retains one legacy retry when the shared account request fails', async () => {
+  let accountCalls = 0;
+  let fallbackCalls = 0;
+  const fallback = { detail: { property_location: { address: 'Recovery Ln' } } };
+  const reader = createSignupAccountReader(
+    '456',
+    async () => { accountCalls += 1; throw new Error('temporary account failure'); },
+    async () => { fallbackCalls += 1; return fallback; },
+  );
+  const [first, second] = await Promise.all([reader.detail(), reader.detail()]);
+  assert.equal(first, fallback);
+  assert.equal(second, fallback);
+  assert.equal(accountCalls, 1);
+  assert.equal(fallbackCalls, 1);
+});
 
 test('signup prefill reads supported account and legacy detail shapes', () => {
   const account = {
@@ -86,6 +124,8 @@ test('the signup form boundary contains no explicit any or raw submission fetch'
   assert.match(source, /signatureDataUrl: sigUrl/);
   assert.match(source, /authorization: fields/);
   assert.match(source, /pending_manual_verification/);
+  assert.match(source, /createSignupAccountReader/);
+  assert.doesNotMatch(source, /await api\.getAccount\(accountId\)|await fetchDetail\(accountId\)/);
   assert.doesNotMatch(source, /URL\.createObjectURL/);
   assert.match(source, /legalDescriptionFromDetail\(det\) \|\| legalFromDetail/);
 });

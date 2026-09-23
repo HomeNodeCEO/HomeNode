@@ -1,6 +1,7 @@
 # scraper/dcad/fetch.py
 import time
 from contextlib import contextmanager
+from contextvars import ContextVar
 from typing import Generator
 import requests
 from requests.adapters import HTTPAdapter
@@ -17,6 +18,9 @@ DEFAULT_HEADERS = {
     "Referer": "https://www.dallascad.org/",
     "Connection": "keep-alive",
 }
+
+_worker_session = ContextVar("dcad_worker_session", default=None)
+_MAX_SESSION_ACCOUNTS = 100
 
 def _new_session() -> requests.Session:
     s = requests.Session()
@@ -37,12 +41,51 @@ def _new_session() -> requests.Session:
 
 @contextmanager
 def browser() -> Generator[requests.Session, None, None]:
-    """Context-managed requests.Session with reasonable defaults."""
-    s = _new_session()
+    """Use one account-scoped cookie jar, optionally reusing worker connections."""
+    holder = _worker_session.get()
+    if holder is None:
+        s = _new_session()
+        try:
+            yield s
+        finally:
+            s.close()
+        return
+
+    if holder["session"] is None:
+        holder["session"] = _new_session()
+    s = holder["session"]
     try:
         yield s
-    finally:
+    except BaseException:
+        holder["session"] = None
         s.close()
+        raise
+    else:
+        # Preserve per-account cookie isolation while retaining keep-alive TCP.
+        s.cookies.clear()
+        holder["accounts"] += 1
+        if holder["accounts"] >= holder["maximum_accounts"]:
+            holder["session"] = None
+            holder["accounts"] = 0
+            s.close()
+
+
+@contextmanager
+def reuse_browser_for_worker(maximum_accounts: int = _MAX_SESSION_ACCOUNTS) -> Generator[None, None, None]:
+    """Scope HTTP connection reuse to one sequential worker or batch."""
+    if maximum_accounts < 1:
+        raise ValueError("maximum_accounts must be positive")
+    if _worker_session.get() is not None:
+        yield
+        return
+    holder = {"session": None, "accounts": 0, "maximum_accounts": maximum_accounts}
+    token = _worker_session.set(holder)
+    try:
+        yield
+    finally:
+        _worker_session.reset(token)
+        if holder["session"] is not None:
+            holder["session"].close()
 
 def polite_pause(seconds: float = 1.0) -> None:
     """Small, configurable delay between requests."""

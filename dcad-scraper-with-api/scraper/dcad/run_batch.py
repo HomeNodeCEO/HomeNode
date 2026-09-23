@@ -14,6 +14,7 @@ except Exception:
     pass
 
 from .run_once import run_for_account
+from .fetch import reuse_browser_for_worker
 try:
     # When running as a package (python -m dcad.run_batch), import top-level utils
     from utils import normalize_account_id  # type: ignore
@@ -69,13 +70,14 @@ def main() -> None:
 
     delay = float(os.environ.get("BATCH_DELAY_SEC", "1.5"))
     log.info("Starting batch for %d accounts", len(accounts))
-    for i, acc in enumerate(accounts, 1):
-        try:
-            log.info("[%d/%d] Running account_id=%s", i, len(accounts), acc)
-            run_for_account(acc)
-        except Exception as e:
-            log.error("Account %s failed: %s", acc, e, exc_info=True)
-        time.sleep(delay)
+    with reuse_browser_for_worker():
+        for i, acc in enumerate(accounts, 1):
+            try:
+                log.info("[%d/%d] Running account_id=%s", i, len(accounts), acc)
+                run_for_account(acc)
+            except Exception as e:
+                log.error("Account %s failed: %s", acc, e, exc_info=True)
+            time.sleep(delay)
     log.info("Batch complete")
 
 

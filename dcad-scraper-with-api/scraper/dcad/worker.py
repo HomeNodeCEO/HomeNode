@@ -16,7 +16,7 @@ from sqlalchemy import Engine, text
 
 from dcad.account_recovery import dcad_site_is_healthy, exact_candidates, search_by_address
 from dcad.data_quality import CompletenessAssessment, IncompleteScrapeError
-from dcad.fetch import browser
+from dcad.fetch import browser, reuse_browser_for_worker
 from dcad.run_once import run_for_account
 from dcad.upsert import get_engine
 
@@ -1882,6 +1882,11 @@ def process_field_repair_safely(
 
 
 def run_worker(config: WorkerConfig, once: bool = False) -> int:
+    with reuse_browser_for_worker():
+        return _run_worker(config, once=once)
+
+
+def _run_worker(config: WorkerConfig, once: bool = False) -> int:
     if not os.getenv("DATABASE_URL"):
         raise RuntimeError("DATABASE_URL is not set")
 

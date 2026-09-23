@@ -135,6 +135,18 @@ test('rejects the retired CDN in scripts or styles', () => {
   }
 })
 
+test('rejects script-src-elem overriding script-src with a retired CDN origin', () => {
+  const headers = {
+    ...secureHeaders,
+    'content-security-policy': secureHeaders['content-security-policy'].replace(
+      "script-src 'self'",
+      "script-src 'self'; script-src-elem https://unpkg.com/",
+    ),
+  }
+  const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
+  assert.match(errors, /script-src-elem must remain exactly 'self'/)
+})
+
 test('deployed verification has no caller-controlled request target', () => {
   const verifierSource = readFileSync(
     fileURLToPath(new URL('./verifyFrontendSecurityHeaders.mjs', import.meta.url)),

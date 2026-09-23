@@ -75,6 +75,15 @@ export function validateFrontendSecurityHeaders(headers) {
     }
   }
 
+  // script-src-elem overrides script-src for <script> elements when present.
+  // Keep it optional because the deployed policy relies on script-src fallback.
+  const scriptElementSources = directives.get('script-src-elem')
+  if (scriptElementSources && (
+    scriptElementSources.length !== 1 || scriptElementSources[0] !== "'self'"
+  )) {
+    errors.push("script-src-elem must remain exactly 'self'")
+  }
+
   for (const directive of ['script-src', 'style-src', 'style-src-elem']) {
     if ((directives.get(directive) || []).includes("'unsafe-inline'")) {
       errors.push(`${directive} must not allow 'unsafe-inline'`)

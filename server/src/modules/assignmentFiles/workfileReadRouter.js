@@ -3,6 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
 import { getCustomAppraisalReportPdf } from "../../services/customAppraisalReportPdf.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { loadCustomNeighborhoodAcceptance } from "../../services/neighborhoodAssessment/customAcceptanceRead.js";
 import {
   getCustomAppraisalWorkfile,
@@ -99,11 +100,11 @@ export function createAssignmentWorkfileReadRouter({
       if (message.startsWith("custom_neighborhood_acceptance_") || message.startsWith("neighborhood_application_")
         || message.startsWith("invalid_neighborhood_assessment:") || message.startsWith("neighborhood_jsonb_storage_")
         || error instanceof SyntaxError || message === "custom_neighborhood_saved_group_unavailable") {
-        logger.error?.("custom neighborhood accepted group unavailable", error);
+        logger.error?.("custom neighborhood accepted group unavailable", safeOperationalErrorCode(error));
         return res.status(409).json({ error: "custom_neighborhood_saved_group_unavailable" });
       }
       if (error?.code === "42P01") return res.status(503).json({ error: "custom_neighborhood_storage_unavailable" });
-      logger.error?.("custom neighborhood accepted group load failed", error);
+      logger.error?.("custom neighborhood accepted group load failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_neighborhood_load_failed" });
     }
   });
@@ -136,7 +137,7 @@ export function createAssignmentWorkfileReadRouter({
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile load failed", error);
+      logger.error?.("custom appraisal workfile load failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_appraisal_workfile_load_failed" });
     }
   });
@@ -169,7 +170,7 @@ export function createAssignmentWorkfileReadRouter({
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile readiness failed", error);
+      logger.error?.("custom appraisal workfile readiness failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_appraisal_workfile_readiness_failed" });
     }
   });
@@ -214,7 +215,7 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "custom_appraisal_signing_secret_not_configured") {
         return res.status(503).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile download failed", error);
+      logger.error?.("custom appraisal workfile download failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_appraisal_workfile_download_failed" });
     }
   });
@@ -266,7 +267,7 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "custom_appraisal_signing_secret_not_configured") {
         return res.status(503).json({ error: error.message });
       }
-      logger.error?.("custom appraisal report PDF failed", error);
+      logger.error?.("custom appraisal report PDF failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_appraisal_report_pdf_failed" });
     }
   });

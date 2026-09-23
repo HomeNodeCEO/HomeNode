@@ -210,7 +210,8 @@ test("section save failures preserve not-found, conflict, validation, and bounde
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), item.body);
   }
-  assert.deepEqual(logs, [["custom appraisal workfile section save failed", diagnostic]]);
+  assert.deepEqual(logs, [["custom appraisal workfile section save failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
 test("signing derives identity and audit inputs exclusively from the session in every mode", async (context) => {
@@ -364,7 +365,8 @@ test("sign failures retain signer, readiness, conflict, availability, and diagno
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), item.body);
   }
-  assert.deepEqual(logs, [["custom appraisal workfile signing failed", diagnostic]]);
+  assert.deepEqual(logs, [["custom appraisal workfile signing failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
 test("workfile mutation composition is explicit and inline handlers are absent", () => {

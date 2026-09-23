@@ -6,6 +6,7 @@ import {
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
 } from "../../services/customAppraisalWorkfiles.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 
@@ -128,7 +129,7 @@ export function createAssignmentWorkfileMutationRouter({
         ) {
           return res.status(400).json({ error: error.message });
         }
-        logger.error?.("custom appraisal workfile section save failed", error);
+        logger.error?.("custom appraisal workfile section save failed", safeOperationalErrorCode(error));
         return res.status(500).json({ error: "custom_appraisal_workfile_save_failed" });
       }
     },
@@ -205,7 +206,7 @@ export function createAssignmentWorkfileMutationRouter({
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile signing failed", error);
+      logger.error?.("custom appraisal workfile signing failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "custom_appraisal_workfile_sign_failed" });
     }
   });

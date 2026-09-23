@@ -26,7 +26,9 @@ test('extracted comparable formatters preserve sales-grid values', () => {
   assert.equal(formatComparableSquareFeet(0), '-');
   assert.equal(formatComparableCurrency('$282,500'), '$282,500');
   assert.equal(formatComparableCurrency(''), '');
+  assert.equal(formatComparableCurrency('unavailable'), 'unavailable');
   assert.equal(parseComparableSaleNumber('$1,234.50'), 1234.5);
+  assert.equal(parseComparableSaleNumber('unavailable'), null);
   assert.equal(parseComparableSaleNumber('1.2.3'), null);
   assert.equal(comparableSaleKey({ source_record_id: 12, sale_id: 7 }), 'source-12');
   assert.equal(comparableSaleKey({ source_record_id: null, sale_id: 7 }), 'legacy-7');

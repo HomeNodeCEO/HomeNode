@@ -883,24 +883,33 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   }
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       if (!propertyId) return;
       setLoading(true);
       setError(null);
+      setSubject(null);
       try {
         const scraperBase = String(
           import.meta.env.VITE_SCRAPER_BASE
           || import.meta.env.VITE_SCRAPER_URL
           || 'https://dcad-scraper-with-api.onrender.com',
         ).replace(/\/+$/, '');
-        await loadComparableSubject(propertyId, activeAssignmentFile?.id, scraperBase, setSubject);
+        await loadComparableSubject(
+          propertyId,
+          activeAssignmentFile?.id,
+          scraperBase,
+          (update) => { if (!cancelled) setSubject(update); },
+          () => { if (!cancelled) setLoading(false); },
+        );
       } catch (loadError: unknown) {
-        setError(boundedErrorMessage(loadError, 'Failed to load property'));
+        if (!cancelled) setError(boundedErrorMessage(loadError, 'Failed to load property'));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
-    load();
+    void load();
+    return () => { cancelled = true; };
   }, [activeAssignmentFile?.id, propertyId]);
 
   const openHousingEditor = (sale: SaleRow) => {
@@ -2000,21 +2009,20 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (!activeAssignmentFile || workfileLocked) return;
     const saveGeneration = workfileSelectionGenerationRef.current;
     const saveAssignmentFile = activeAssignmentFile;
-    const selectionIsCurrent = () => (
-      !workfileUnmountedRef.current && workfileSelectionGenerationRef.current === saveGeneration
-    );
+    const selectionIsCurrent = () => workfileSelectionGenerationRef.current === saveGeneration;
+    const canUpdateUi = () => selectionIsCurrent() && !workfileUnmountedRef.current;
     if (pending.draft.assignmentFileId !== saveAssignmentFile.id) return;
     if (pending.fingerprint === lastSavedWorkfileFingerprintRef.current) return;
     const editorKey = editorCredentialForRequest();
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
-      setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
+      if (canUpdateUi()) setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
       return;
     }
     workfileSaveInFlightRef.current = true;
     let saveSucceeded = false;
     let waitForConflictReload = false;
-    setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
+    if (canUpdateUi()) setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
     void api.saveCustomAppraisalWorkfileSection(
       propertyId,
       saveAssignmentFile.id,
@@ -2033,15 +2041,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
       workfileRetryFailureCountRef.current = 0;
       saveSucceeded = true;
       removeAppraisalReportDraft(propertyId, saveAssignmentFile.id, applicationSession);
-      setWorkfileSaveStatus(
+      if (canUpdateUi()) setWorkfileSaveStatus(
         `Saved to ${workfileCanonicalName || saveAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
       );
     }).catch((saveError) => {
       if (!selectionIsCurrent()) return;
       const message = saveError instanceof Error ? saveError.message : String(saveError);
       if (/custom_appraisal_workfile_signed/i.test(message)) {
-        setWorkfileLocked(true);
-        setWorkfileSaveStatus('This signed appraisal is locked. Start another file to make changes.');
+        if (canUpdateUi()) {
+          setWorkfileLocked(true);
+          setWorkfileSaveStatus('This signed appraisal is locked. Start another file to make changes.');
+        }
         return;
       }
       if (/custom_appraisal_section_revision_conflict/i.test(message)) {
@@ -2053,7 +2063,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             workfileSectionRevisionRef.current = Number(
               result.workfile.sections.sales_comparison?.revision || 0,
             );
-            setWorkfileSaveStatus('Reconciling a newer workfile revision...');
+            if (canUpdateUi()) setWorkfileSaveStatus('Reconciling a newer workfile revision...');
             if (workfileFollowupTimerRef.current !== null) window.clearTimeout(workfileFollowupTimerRef.current);
             workfileFollowupTimerRef.current = window.setTimeout(() => {
               workfileFollowupTimerRef.current = null;
@@ -2061,14 +2071,14 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
             }, 0);
           })
           .catch(() => {
-            if (selectionIsCurrent()) {
+            if (canUpdateUi()) {
               setWorkfileSaveStatus('Autosave found a newer revision. Reload before continuing.');
             }
           });
         return;
       }
       pendingWorkfileSaveRef.current ||= pending;
-      setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
+      if (canUpdateUi()) setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
     }).finally(() => {
       workfileSaveInFlightRef.current = false;
       if (pendingWorkfileSaveRef.current) {

@@ -18,10 +18,12 @@ export async function loadComparableSubject(
   assignmentFileId: number | undefined,
   scraperBase: string,
   updateSubject: (update: SubjectUpdate) => void,
+  onInitialSubject: () => void,
 ): Promise<void> {
   try {
     const accountResponse = await api.getAccount(propertyId, { assignmentFileId });
     updateSubject(subjectFromAccountResponse(accountResponse, propertyId));
+    onInitialSubject();
 
     try {
       const legacyResponse = await fetchDetail(propertyId);

@@ -26,15 +26,28 @@ const salesComparisonSource = await readFile(
   new URL("../src/pages/ComparableSalesAnalysis.tsx", import.meta.url),
   "utf8",
 );
+const subjectLoaderSource = await readFile(
+  new URL("../src/lib/comparableSubjectLoader.ts", import.meta.url),
+  "utf8",
+);
 
 test("sales comparison stops showing Loading after a successful DB-backed subject load", () => {
-  assert.match(salesComparisonSource, /await loadComparableSubject\([^;]+;\s*\} catch \(loadError: unknown\) \{[\s\S]*?\} finally \{\s*setLoading\(false\);/u);
+  assert.match(subjectLoaderSource, /updateSubject\(subjectFromAccountResponse\(accountResponse, propertyId\)\);\s*onInitialSubject\(\);/u);
+  assert.match(salesComparisonSource, /\(\) => \{ if \(!cancelled\) setLoading\(false\); \}/u);
+  assert.match(salesComparisonSource, /return \(\) => \{ cancelled = true; \};\s*\}, \[activeAssignmentFile\?\.id, propertyId\]\);/u);
 });
 
 test("server drafts seed autosave dedupe and stale conflict reloads cannot apply", () => {
   assert.match(salesComparisonSource, /lastSavedWorkfileFingerprintRef\.current = serverDraft\s*\? salesComparisonDraftFingerprint\(serverDraft\)\s*: null;/u);
   assert.match(salesComparisonSource, /loadCustomAppraisalWorkfile\(propertyId, saveAssignmentFile\.id\)\s*\.then\(\(result\) => \{\s*if \(!selectionIsCurrent\(\)\) return;/u);
   assert.match(salesComparisonSource, /workfileFollowupTimerRef\.current = window\.setTimeout\(\(\) => \{\s*workfileFollowupTimerRef\.current = null;\s*if \(selectionIsCurrent\(\)\) flushWorkfileSaveRef\.current\(\);/u);
+});
+
+test("unmount flush retains revision and pending-save processing without updating closed UI", () => {
+  assert.match(salesComparisonSource, /const selectionIsCurrent = \(\) => workfileSelectionGenerationRef\.current === saveGeneration;/u);
+  assert.match(salesComparisonSource, /const canUpdateUi = \(\) => selectionIsCurrent\(\) && !workfileUnmountedRef\.current;/u);
+  assert.match(salesComparisonSource, /if \(!selectionIsCurrent\(\)\) return;\s*workfileSectionRevisionRef\.current = response\.section\.revision;/u);
+  assert.match(salesComparisonSource, /if \(canUpdateUi\(\)\) setWorkfileSaveStatus\(/u);
 });
 
 test("sales comparison dedupes only unchanged content, not timestamps", () => {

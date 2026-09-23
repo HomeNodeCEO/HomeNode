@@ -11,7 +11,9 @@ export function formatComparableSquareFeet(value: unknown): string {
 
 export function formatComparableCurrency(value: unknown): string {
   if (value === null || value === undefined || value === '') return '';
-  const number = typeof value === 'string' ? Number(String(value).replace(/[^0-9.-]/g, '')) : Number(value);
+  const sanitized = typeof value === 'string' ? value.replace(/[^0-9.-]/g, '') : String(value);
+  if (!/\d/.test(sanitized)) return String(value);
+  const number = Number(sanitized);
   if (!isFinite(number)) return String(value);
   return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(number);
 }
@@ -22,7 +24,9 @@ export function comparableSaleKey(sale: SaleRow): string {
 
 export function parseComparableSaleNumber(value: unknown): number | null {
   if (value === null || value === undefined || value === '') return null;
-  const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
+  const sanitized = String(value).replace(/[^0-9.-]/g, '');
+  if (!/\d/.test(sanitized)) return null;
+  const parsed = Number(sanitized);
   return Number.isFinite(parsed) ? parsed : null;
 }
 

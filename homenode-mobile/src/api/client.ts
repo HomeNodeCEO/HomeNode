@@ -4,6 +4,7 @@ import { canReplayAfterAuthenticationFailure } from "../auth/refreshPolicy";
 import type { WorkflowType } from "../domain/workflows";
 import type { FieldState, JsonValue, SyncOperationRequest } from "../offline/model";
 import type { ManualSketchApiDocument } from "../sketch/model";
+import { NetworkTimeoutError, withNetworkTimeout } from "./networkTimeout";
 
 export type Organization = {
   organizationId: string;
@@ -491,6 +492,7 @@ export class MobileApi {
   constructor(
     private readonly config: MobileConfig,
     private readonly getAccessToken: (request?: AccessTokenRequest) => Promise<string>,
+    private readonly requestTimeoutMs = 30_000,
   ) {}
 
   private async authenticatedFetch(
@@ -500,29 +502,37 @@ export class MobileApi {
   ) {
     const token = await this.getAccessToken(request);
     try {
-      return await fetch(`${this.config.apiBaseUrl}${path}`, {
-        ...init,
-        headers: {
-          accept: "application/json",
-          authorization: `Bearer ${token}`,
-          ...(init.body ? { "content-type": "application/json" } : {}),
-          ...init.headers,
-        },
-      });
-    } catch {
+      return await withNetworkTimeout(async (signal) => {
+        const response = await fetch(`${this.config.apiBaseUrl}${path}`, {
+          ...init,
+          signal,
+          headers: {
+            accept: "application/json",
+            authorization: `Bearer ${token}`,
+            ...(init.body ? { "content-type": "application/json" } : {}),
+            ...init.headers,
+          },
+        });
+        const payload = await response.json().catch((reason: unknown) => {
+          if (signal.aborted) throw reason;
+          return {};
+        }) as { error?: string; details?: unknown };
+        return { response, payload };
+      }, this.requestTimeoutMs, init.signal);
+    } catch (reason) {
+      if (reason instanceof NetworkTimeoutError) throw new ApiError(0, reason.message);
       throw new ApiError(0, "network_request_failed");
     }
   }
 
   private async request<T>(path: string, init: RequestInit = {}): Promise<T> {
-    let response = await this.authenticatedFetch(path, init);
+    let { response, payload } = await this.authenticatedFetch(path, init);
     if (
       response.status === 401
       && canReplayAfterAuthenticationFailure(init.method)
     ) {
-      response = await this.authenticatedFetch(path, init, { forceRefresh: true });
+      ({ response, payload } = await this.authenticatedFetch(path, init, { forceRefresh: true }));
     }
-    const payload = await response.json().catch(() => ({})) as { error?: string; details?: unknown };
     if (!response.ok) {
       throw new ApiError(response.status, payload.error || `http_${response.status}`, payload.details);
     }

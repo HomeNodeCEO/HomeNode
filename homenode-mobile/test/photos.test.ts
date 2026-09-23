@@ -8,17 +8,104 @@ import {
   inferredImageContentType,
   isPhotoVisible,
   photoSyncErrorMessage,
+  photoUploadTimeoutMs,
   remainingPhotoCapacity,
   safePhotoFileName,
   UAD_PHOTO_CATEGORIES,
 } from "../src/photos/model";
 import { runWithConcurrency } from "../src/offline/concurrency";
+import type { MobileApi, PresignedPhotoUpload } from "../src/api/client";
+import type { LocalPhotoDraft, OfflineStore } from "../src/offline/store";
+import { synchronizeDuePhotosWithDependencies, uploadPhotoObject } from "../src/photos/syncCore";
 
 test("photo capacity is bounded to 100 active inspection photos", () => {
   assert.equal(remainingPhotoCapacity(0), 100);
   assert.equal(remainingPhotoCapacity(99), 1);
   assert.equal(remainingPhotoCapacity(100), 0);
   assert.equal(remainingPhotoCapacity(120), 0);
+});
+
+test("photo upload deadlines allow slow originals but have an upper bound", () => {
+  assert.equal(photoUploadTimeoutMs(1_000_000), 120_000);
+  assert.equal(photoUploadTimeoutMs(10 * 1024 * 1024), 190_000);
+  assert.equal(photoUploadTimeoutMs(50 * 1024 * 1024), 830_000);
+  assert.equal(photoUploadTimeoutMs(100 * 1024 * 1024), 900_000);
+  assert.match(photoSyncErrorMessage("mobile_photo_upload_timeout"), /saved on this device/);
+});
+
+test("a stalled photo PUT aborts and remains queued for a verified retry", async () => {
+  const photo = {
+    clientPhotoId: "photo_1",
+    sessionId: "inspection_1",
+    serverPhotoId: null,
+    serverRevision: null,
+    removeOperationId: null,
+    metadataOperationId: null,
+    objects: [{ variant: "original", uri: "file://original.jpg", byteSize: 512 }],
+  } as unknown as LocalPhotoDraft;
+  const upload: PresignedPhotoUpload = {
+    variant: "original",
+    object_id: "object_1",
+    method: "PUT",
+    url: "https://storage.example.test/signed-secret",
+    headers: { "content-type": "image/jpeg" },
+    expires_in_seconds: 900,
+  };
+  let draft: LocalPhotoDraft | null = photo;
+  let storedFailure: string | null = null;
+  let verified = 0;
+  let deleted = 0;
+  let uploadAttempts = 0;
+  let firstSignal: AbortSignal | undefined;
+  const store = {
+    async ensureReady() {},
+    async duePhotoDrafts() { return draft ? [draft] : []; },
+    async markPhotoDraftState() {},
+    photoUploadRequest() { return { client_photo_id: "photo_1" }; },
+    async cacheRegisteredPhoto() {},
+    async recordPhotoFailure(_owner: string, _draft: LocalPhotoDraft, code: string) { storedFailure = code; },
+    async applyServerPhoto() { draft = null; },
+    async deletePhotoDraft() { deleted += 1; draft = null; },
+  } as unknown as OfflineStore;
+  const api = {
+    async createPhotoUploadRequests() {
+      return { photos: [{ photo: { id: "server_photo_1", status: "pending" }, uploads: [upload] }] };
+    },
+    async verifyPhoto() { verified += 1; return { id: "server_photo_1", status: "verified" }; },
+  } as unknown as MobileApi;
+  const dependencies = {
+    uploadObject: (draftPhoto: LocalPhotoDraft, presigned: PresignedPhotoUpload) => uploadPhotoObject(
+      draftPhoto,
+      presigned,
+      {
+        createFile: () => ({ exists: true, size: 512 }),
+        put: async (url: string, request: { signal: AbortSignal; headers: Record<string, string> }) => {
+          assert.equal(url, upload.url);
+          assert.deepEqual(request.headers, upload.headers);
+          uploadAttempts += 1;
+          if (uploadAttempts === 1) {
+            firstSignal = request.signal;
+            return new Promise<Response>(() => {});
+          }
+          return new Response(null, { status: 200 });
+        },
+        timeoutMs: 10,
+      },
+    ),
+    async deletePreparedPhotoFiles() { deleted += 1; },
+  };
+
+  await synchronizeDuePhotosWithDependencies(store, api, "appraiser_1", dependencies);
+  assert.equal(firstSignal?.aborted, true);
+  assert.equal(storedFailure, "mobile_photo_upload_timeout");
+  assert.equal(verified, 0);
+  assert.equal(deleted, 0);
+  assert.equal(draft, photo);
+
+  await synchronizeDuePhotosWithDependencies(store, api, "appraiser_1", dependencies);
+  assert.equal(uploadAttempts, 2);
+  assert.equal(verified, 1);
+  assert.equal(draft, null);
 });
 
 test("offline photo positions reuse an excluded slot", () => {
@@ -66,9 +153,10 @@ test("turns cloud photo failures into actionable field messages", () => {
     photoSyncErrorMessage("mobile_photo_verification_failed"),
     "Cloud storage received the photo, but verification could not be completed.",
   );
-  assert.match(
-    photoSyncErrorMessage("mobile_photo_upload_transport_failed:Network request failed"),
-    /iPhone could not transfer/,
+  assert.match(photoSyncErrorMessage("mobile_photo_upload_transport_failed"), /saved locally/);
+  assert.doesNotMatch(
+    photoSyncErrorMessage("mobile_photo_upload_transport_failed:https://signed.example/token"),
+    /signed\.example|token/,
   );
 });
 

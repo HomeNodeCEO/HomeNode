@@ -13,7 +13,7 @@ import {
 } from './verifyFrontendSecurityHeaders.mjs'
 
 const secureHeaders = {
-  'content-security-policy': `default-src 'self'; script-src 'self' https://unpkg.com; style-src ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-elem ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-attr ${EXPECTED_STYLE_ATTRIBUTE_SOURCES.join(' ')}; img-src 'self' data: ${EXPECTED_R2_ORIGIN}; connect-src 'self' ${EXPECTED_R2_ORIGIN}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'`,
+  'content-security-policy': `default-src 'self'; script-src 'self'; style-src ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-elem ${EXPECTED_STYLE_SOURCES.join(' ')}; style-src-attr ${EXPECTED_STYLE_ATTRIBUTE_SOURCES.join(' ')}; img-src 'self' data: ${EXPECTED_R2_ORIGIN}; connect-src 'self' ${EXPECTED_R2_ORIGIN}; object-src 'none'; base-uri 'self'; frame-ancestors 'none'; form-action 'self'`,
   'strict-transport-security': 'max-age=31536000; includeSubDomains',
   'x-content-type-options': 'nosniff',
   'x-frame-options': 'DENY',
@@ -71,10 +71,10 @@ test('rejects inline style elements while retaining the explicit style-attribute
   const headers = {
     ...secureHeaders,
     'content-security-policy': secureHeaders['content-security-policy']
-      .replace("style-src 'self' https://unpkg.com", "style-src 'self' 'unsafe-inline' https://unpkg.com"),
+      .replace("style-src 'self'", "style-src 'self' 'unsafe-inline'"),
   }
   const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
-  assert.match(errors, /style-src must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src must remain exactly 'self'/)
   assert.match(errors, /style-src must not allow 'unsafe-inline'/)
   assert.doesNotMatch(errors, /style-src-attr/)
 })
@@ -87,7 +87,7 @@ test('rejects missing element and attribute-specific style boundaries', () => {
       .replace(/; style-src-attr[^;]+/, ''),
   }
   const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
-  assert.match(errors, /style-src-elem must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src-elem must remain exactly 'self'/)
   assert.match(errors, /style-src-attr must remain exactly 'unsafe-inline'/)
 })
 
@@ -109,7 +109,7 @@ test('validates the first case-normalized directive when a policy contains dupli
     'content-security-policy': `STYLE-SRC 'unsafe-inline'; ${secureHeaders['content-security-policy']}`,
   }
   const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
-  assert.match(errors, /style-src must remain exactly 'self' https:\/\/unpkg\.com/)
+  assert.match(errors, /style-src must remain exactly 'self'/)
   assert.match(errors, /style-src must not allow 'unsafe-inline'/)
 })
 
@@ -120,6 +120,19 @@ test('rejects missing platform security headers', () => {
   assert.match(errors, /X-Frame-Options must remain DENY/)
   assert.match(errors, /X-Content-Type-Options must remain nosniff/)
   assert.match(errors, /Strict-Transport-Security is missing/)
+})
+
+test('rejects the retired CDN in scripts or styles', () => {
+  for (const directive of ['script-src', 'style-src', 'style-src-elem']) {
+    const headers = {
+      ...secureHeaders,
+      'content-security-policy': secureHeaders['content-security-policy']
+        .replace(`${directive} 'self'`, `${directive} 'self' https://unpkg.com`),
+    }
+    const errors = validateFrontendSecurityHeaders(headers).errors.join('\n')
+    assert.match(errors, /retired unpkg runtime origin/)
+    assert.match(errors, new RegExp(`${directive} must remain exactly 'self'`))
+  }
 })
 
 test('deployed verification has no caller-controlled request target', () => {

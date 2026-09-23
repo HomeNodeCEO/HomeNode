@@ -130,6 +130,19 @@ test("rejects unsafe bearer credentials without including them in diagnostics", 
   );
 });
 
+test("never sends a bearer credential to a loopback HTTP target", async () => {
+  let requests = 0;
+  await assert.rejects(
+    runUadStagingSmoke({
+      baseUrl: "http://127.0.0.1:4000",
+      fixtureBearerToken: "staging-test-token",
+      fetchImpl: async () => { requests += 1; throw new Error("unexpected_request"); },
+    }),
+    /insecure_uad_staging_bearer_transport/,
+  );
+  assert.equal(requests, 0);
+});
+
 test("can require external compliance without exposing response bodies", async () => {
   const result = await runUadStagingSmoke({
     baseUrl: "https://staging.example.com",

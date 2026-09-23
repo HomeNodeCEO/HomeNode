@@ -1,5 +1,6 @@
 import * as api from './api';
 import { fetchDetail } from './dcad';
+import { mapAccountDetailToLegacy } from './legacyDcadDetail';
 import {
   accountNeedsRoomRefresh,
   mergeSubjectData,
@@ -26,7 +27,8 @@ export async function loadComparableSubject(
     onInitialSubject();
 
     try {
-      const legacyResponse = await fetchDetail(propertyId);
+      // Derive compatibility fields from the same assignment-scoped response.
+      const legacyResponse = mapAccountDetailToLegacy(accountResponse);
       const legacySubject = subjectFromDetailResponse(legacyResponse, propertyId);
       updateSubject((current) => mergeSubjectData(current, legacySubject, propertyId));
     } catch { /* optional compatibility enrichment failed; keep the DB response */ }
@@ -53,6 +55,6 @@ export async function loadComparableSubject(
     // Fall through to compatibility detail only when the DB path failed.
   }
 
-  const legacyResponse = await fetchDetail(propertyId);
+  const legacyResponse = await fetchDetail(propertyId, 1, { assignmentFileId });
   updateSubject(subjectFromDetailResponse(legacyResponse, propertyId));
 }

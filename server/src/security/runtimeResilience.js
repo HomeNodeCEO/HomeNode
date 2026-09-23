@@ -1,4 +1,5 @@
 import http from "node:http";
+import { safeOperationalErrorCode } from "./safeOperationalErrorCode.js";
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -138,7 +139,7 @@ export function installGracefulShutdown({
       onBegin?.(signal);
     } catch (error) {
       processTarget.exitCode = 1;
-      logger.error?.("[shutdown] shutdown hook failed", error?.message || error);
+      logger.error?.("[shutdown] shutdown hook failed", safeOperationalErrorCode(error));
     }
     server.close((error) => {
       if (forceTimer) clearTimeoutImpl(forceTimer);

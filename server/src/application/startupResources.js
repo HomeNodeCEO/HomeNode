@@ -15,6 +15,7 @@ import {
 import { ensurePropertyContextSchema } from "../services/propertyContextStore.js";
 import { ensurePropertyEnrichmentSchema } from "../services/propertyEnrichment.js";
 import { ensureSalesReconciliationSchema } from "../services/salesReconciliation.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { environmentFlag } from "../util/requestPerformance.js";
 
 const defaultDependencies = Object.freeze({
@@ -94,7 +95,7 @@ export function createApplicationStartupResources({
     .track("signups_schema", ensureSignupsTable, { required: false })
     .then(() => logger.log("[init] app.signups ensured"))
     .catch((error) => {
-      logger.warn("[init] ensureSignupsTable failed (continuing)", error?.message || error);
+      logger.warn("[init] ensureSignupsTable failed (continuing)", safeOperationalErrorCode(error));
     });
 
   const accountLocationsReady = startupInitialization
@@ -103,7 +104,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensureAccountLocationsTable failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -113,7 +114,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensureAccountQualitySchema failed (continuing)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -123,7 +124,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensureAppraisalRatingsSchema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -133,7 +134,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensurePropertyEnrichmentSchema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -147,7 +148,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensureAssignmentFilesSchema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -172,7 +173,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] custom appraisal workfile schema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -198,7 +199,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] assignment document evidence schema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -226,7 +227,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] property-context schema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -244,7 +245,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] ensureSalesReconciliationSchema failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -281,7 +282,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] location backfill queue failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 
@@ -315,7 +316,7 @@ export function createApplicationStartupResources({
     .catch((error) => {
       logger.warn(
         "[init] census geography initialization failed (will retry on request)",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     });
 

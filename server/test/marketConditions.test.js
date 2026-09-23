@@ -142,6 +142,41 @@ test("market context can use an environment-scoped account-id policy", async () 
   assert.ok(statements.some((statement) => /location_geom/.test(statement)));
 });
 
+test("location-refresh failures preserve market context without logging private diagnostics", async () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const pool = {
+    async query(sql) {
+      if (String(sql).includes("market_spatial_support_probe")) {
+        return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+      }
+      if (/SELECT\s+account\.account_id/.test(String(sql))) {
+        return { rows: [{
+          account_id: "UAD-REDTEAM-SFR-0001",
+          county: "Dallas",
+          location_status: "unmatched",
+          latitude: null,
+          longitude: null,
+        }] };
+      }
+      throw Object.assign(new Error(privateDetail), { code: "42P01" });
+    },
+  };
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const subject = await getMarketContext(pool, "UAD-REDTEAM-SFR-0001", {
+      accountIdAllowed: (value) => value === "UAD-REDTEAM-SFR-0001",
+    });
+    assert.equal(subject.account_id, "UAD-REDTEAM-SFR-0001");
+    assert.equal(subject.location_status, "unmatched");
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(warnings, [["[market-conditions] subject location refresh failed", "42P01"]]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
+});
+
 test("market studies use the requested number of complete calendar months", () => {
   assert.deepEqual(completeCalendarMonthWindow("2026-08-03", 24), {
     analysisAsOf: "2026-08-03",

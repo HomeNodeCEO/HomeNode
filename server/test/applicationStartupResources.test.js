@@ -173,6 +173,38 @@ test("failed assignment initialization remains visible and retries on demand", a
   assert.ok(logger.messages.some((entry) => entry[0] === "warn"));
 });
 
+test("startup failure warnings retain resource and SQLSTATE without private error text", async () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), { code: "42P01" });
+  const failed = async () => { throw failure; };
+  const logger = createLogger();
+  const resources = createApplicationStartupResources({
+    pool: { query: failed },
+    startupInitialization: createStartupInitializationRegistry(),
+    environment: {},
+    logger,
+    dependencies: createDependencies({
+      ensureAccountLocationsTable: failed,
+      ensureAccountQualitySchema: failed,
+      ensureAppraisalRatingsSchema: failed,
+      ensureAssignmentDocumentsSchema: failed,
+      ensureAssignmentFilesSchema: failed,
+      ensureCensusGeographySchema: failed,
+      ensureCustomAppraisalWorkfileSchema: failed,
+      ensureLocationBackfillQueueSchema: failed,
+      ensurePropertyContextSchema: failed,
+      ensurePropertyEnrichmentSchema: failed,
+      ensureSalesReconciliationSchema: failed,
+    }),
+  });
+
+  await Promise.all(startupPromises(resources));
+  const warnings = logger.messages.filter((entry) => entry[0] === "warn");
+  assert.equal(warnings.length, 12);
+  assert.ok(warnings.every((entry) => entry.length === 3 && entry[2] === "42P01"));
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password|database\.example/);
+});
+
 test("inline workers receive the established bounded environment settings", async () => {
   const workerCalls = [];
   const environment = {

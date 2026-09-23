@@ -135,6 +135,37 @@ test("graceful shutdown drains once, closes idle sockets, and releases the pool"
   }
 });
 
+test("shutdown hook failure preserves drain and logs a bounded diagnostic", async () => {
+  const processTarget = new EventEmitter();
+  processTarget.exitCode = 0;
+  const errors = [];
+  let closeCallback = null;
+  const controller = installGracefulShutdown({
+    server: {
+      close(callback) { closeCallback = callback; },
+      closeIdleConnections() {},
+    },
+    pool: { async end() {} },
+    graceMs: 5_000,
+    processTarget,
+    logger: { error: (...args) => errors.push(args) },
+    onBegin() {
+      throw Object.assign(new Error("postgresql://private-user:private-password@example/db"), {
+        code: "08006",
+      });
+    },
+  });
+  try {
+    assert.equal(controller.begin("test"), true);
+    assert.equal(processTarget.exitCode, 1);
+    assert.deepEqual(errors, [["[shutdown] shutdown hook failed", "08006"]]);
+    closeCallback(null);
+    await new Promise((resolve) => setImmediate(resolve));
+  } finally {
+    controller.dispose();
+  }
+});
+
 test("shutdown deadline force-closes stuck connections and releases the database pool", async () => {
   const processTarget = new EventEmitter();
   processTarget.exitCode = 0;

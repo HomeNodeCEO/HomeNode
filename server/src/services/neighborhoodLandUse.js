@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 import { validateCustomMarketGeometry } from "./marketConditions.js";
 import { esriGeometryToGeoJson } from "../util/parcelArea.js";
@@ -1154,7 +1155,7 @@ export async function buildNeighborhoodLandUseAnalysis(
       sourceState: sourceHealth || { source_mode: sourceMode },
       ttlHours: 24,
     }).catch((error) => {
-      console.warn("[neighborhood-land-use] persistent cache write failed", error?.message || error);
+      console.warn("[neighborhood-land-use] persistent cache write failed", safeOperationalErrorCode(error));
     });
   }
   return result;

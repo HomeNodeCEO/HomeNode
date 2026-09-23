@@ -4,6 +4,7 @@ import { normalizeUadWorkfileId } from "./workfiles.js";
 import { cleanupFailedUadSketchRender } from "./sketchExhibitCleanup.js";
 import { renderSketchPng } from "../mobile/sketchPng.js";
 import { normalizeManualSketchDocument } from "../mobile/sketches.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { getReportEvidenceVersion } from "../../services/reportEvidenceVersion.js";
 
 // Private per-invocation ownership, never serialized or accepted from input.
@@ -587,7 +588,7 @@ export async function editUadSketch(
       ],
     ).catch((error) => {
       console.warn("Unable to mark prior UAD sketch exhibit as superseded", {
-        error: error?.message,
+        error: safeOperationalErrorCode(error),
         workfileId,
         sketchId,
         priorAssetId: current.prior_asset_id,

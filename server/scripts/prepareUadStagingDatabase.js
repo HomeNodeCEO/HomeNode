@@ -334,6 +334,83 @@ try {
       ADD COLUMN IF NOT EXISTS sec_imp_ext_wall text,
       ADD COLUMN IF NOT EXISTS sec_imp_value numeric;
 
+    -- The account-detail reader treats these normalized sources as required
+    -- relations, even when a synthetic staging account has no rows in them.
+    CREATE TABLE IF NOT EXISTS core.account_housing_profiles (
+      account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      structural_style text,
+      housing_type text,
+      attachment_type text,
+      architectural_style text,
+      source_name text,
+      source_url text,
+      source_record_reference text,
+      observed_at timestamptz,
+      confidence numeric,
+      notes text,
+      updated_at timestamptz NOT NULL DEFAULT now()
+    );
+
+    CREATE OR REPLACE VIEW core.v_account_housing_profiles AS
+      SELECT account_id, structural_style, housing_type, attachment_type,
+             architectural_style, source_name, source_url,
+             source_record_reference, observed_at, confidence,
+             'verified_override'::text AS profile_source
+      FROM core.account_housing_profiles;
+
+    CREATE TABLE IF NOT EXISTS core.owner_summary (
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      owner_name text,
+      mailing_address text,
+      PRIMARY KEY (account_id, tax_year)
+    );
+
+    CREATE TABLE IF NOT EXISTS core.owner_parties (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      owner_name text,
+      ownership_pct numeric
+    );
+
+    CREATE INDEX IF NOT EXISTS owner_parties_account_year_idx
+      ON core.owner_parties (account_id, tax_year DESC);
+
+    CREATE TABLE IF NOT EXISTS core.legal_description_current (
+      account_id text PRIMARY KEY REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer,
+      legal_lines jsonb,
+      legal_text text,
+      deed_transfer_date date
+    );
+
+    CREATE TABLE IF NOT EXISTS core.legal_description_history (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer,
+      legal_lines jsonb,
+      legal_text text,
+      deed_transfer_date date
+    );
+
+    CREATE INDEX IF NOT EXISTS legal_description_history_account_year_idx
+      ON core.legal_description_history (account_id, tax_year DESC);
+
+    CREATE TABLE IF NOT EXISTS core.exemptions_summary (
+      id bigserial PRIMARY KEY,
+      account_id text NOT NULL REFERENCES core.accounts(account_id) ON DELETE CASCADE,
+      tax_year integer NOT NULL,
+      jurisdiction_key text,
+      taxing_jurisdiction text,
+      homestead_exemption numeric,
+      disabled_vet numeric,
+      taxable_value numeric
+    );
+
+    CREATE INDEX IF NOT EXISTS exemptions_summary_account_year_idx
+      ON core.exemptions_summary (account_id, tax_year DESC);
+
     -- The normal HomeNode search tile joins these optional enrichment sources.
     -- Empty staging-compatible relations keep that shared search path usable
     -- without copying production owner, sales, or tax records.

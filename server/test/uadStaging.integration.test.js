@@ -3,8 +3,34 @@ import test from "node:test";
 import pg from "pg";
 
 import { getUadEditor } from "../src/modules/uad/editor.js";
+import { loadAccountDetailSections } from "../src/services/accountDetailSections.js";
+import { ensurePropertyContextSchema } from "../src/services/propertyContextStore.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("UAD staging bootstrap supports the authenticated account-detail read path", {
+  skip: !databaseUrl || !databaseUrl.toLowerCase().includes("staging"),
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  const optionalErrors = [];
+  try {
+    await ensurePropertyContextSchema(pool);
+    const sections = await loadAccountDetailSections(pool, "UAD-STAGING-SFR-0001", {
+      fetchImpl: async () => { throw new Error("live DCAD fallback disabled in staging test"); },
+      logger: {
+        warn() {},
+        error(message, error) { optionalErrors.push({ message, error }); },
+      },
+    });
+    assert.equal(sections.primaryImprovement?.year_built, 2005);
+    assert.equal(sections.landRows.length, 1);
+    assert.equal(sections.housingProfile, null);
+    assert.deepEqual(sections.additionalImprovements, []);
+    assert.deepEqual(optionalErrors, []);
+  } finally {
+    await pool.end();
+  }
+});
 
 test("UAD staging bootstrap supports site-built and manufactured-home search tiles", {
   skip: !databaseUrl || !databaseUrl.toLowerCase().includes("staging"),

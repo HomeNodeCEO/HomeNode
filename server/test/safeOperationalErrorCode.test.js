@@ -5,7 +5,7 @@ import test from "node:test";
 import { safeOperationalErrorCode } from "../src/security/safeOperationalErrorCode.js";
 
 function warningCalls(source) {
-  return [...source.matchAll(/\b(?:console|logger)\.warn\([\s\S]*?\);/g)].map((match) => match[0]);
+  return [...source.matchAll(/\b(?:console|logger)\??\.warn(?:\?\.)?\([\s\S]*?\);/g)].map((match) => match[0]);
 }
 
 function assertWarningCallSafe(call) {
@@ -54,6 +54,8 @@ test("unexpected router and idle-pool errors use only safe diagnostic classes", 
 test("startup and background warning sites never print raw exception messages", async () => {
   for (const unsafeWarning of [
     'logger.warn("failure",\n  safeOperationalErrorCode(error),\n  error);',
+    'logger.warn?.("failure",\n  safeOperationalErrorCode(error),\n  error);',
+    'logger?.warn?.("failure",\n  safeOperationalErrorCode(error),\n  error);',
     'logger.warn("failure",\n  safeOperationalErrorCode(error),\n  error?.message);',
     'console.warn("failure",\n  safeOperationalErrorCode(error),\n  error.message);',
     'console.warn("failure", { error });',
@@ -69,7 +71,9 @@ test("startup and background warning sites never print raw exception messages", 
     "../src/services/marketConditions.js"]) {
     const source = await readFile(new URL(relativePath, import.meta.url), "utf8");
     assert.match(source, /safeOperationalErrorCode\(/);
-    for (const call of warningCalls(source)) {
+    const calls = warningCalls(source);
+    assert.equal(calls.length, [...source.matchAll(/\b(?:console|logger)\??\.warn(?:\?\.)?\(/g)].length);
+    for (const call of calls) {
       assertWarningCallSafe(call);
     }
     assert.doesNotMatch(source, /error:\s*(?:error|synchronizationError|extractionError)\??\.message\b/);

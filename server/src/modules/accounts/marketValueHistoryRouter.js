@@ -1,4 +1,5 @@
 import express from "express";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 function pickMarketValueKey(row) {
   const keys = Object.keys(row || {});
@@ -56,8 +57,8 @@ export function createMarketValueHistoryRouter({
         return res.json([]);
       }
     } catch (error) {
-      logger.error?.(error);
-      return res.status(500).json({ error: error?.message || "history_failed" });
+      logger.error?.("[accounts] market value history failed", safeOperationalErrorCode(error));
+      return res.status(500).json({ error: "market_value_history_failed" });
     }
   });
 

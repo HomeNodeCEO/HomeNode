@@ -5,6 +5,8 @@ import test from "node:test";
 import express from "express";
 
 import { createNeighborhoodAnalysisRouter } from "../src/modules/sales/neighborhoodAnalysisRouter.js";
+import { marketConditionsErrorStatus } from "../src/services/marketConditions.js";
+import { neighborhoodLandUseErrorStatus } from "../src/services/neighborhoodLandUse.js";
 
 function createPool() {
   return { query: async () => ({ rows: [] }) };
@@ -173,7 +175,10 @@ test("neighborhood analyses stop before services when assignment scope is denied
 });
 
 test("street lookup failure degrades the profile without discarding market evidence", async (context) => {
-  const streetError = new Error("boundary_provider_unavailable");
+  const streetError = Object.assign(
+    new Error("postgresql://private-user:private-password@database.example/private-db"),
+    { code: "08006" },
+  );
   const warnings = [];
   const options = routerOptions({
     buildMarketAnalyses: async () => ({ subject: { account_id: "A-1" }, analyses: [] }),
@@ -189,12 +194,13 @@ test("street lookup failure degrades the profile without discarding market evide
     subject: { account_id: "A-1" },
     analyses: [],
     boundary_streets: null,
-    boundary_street_warning: streetError.message,
+    boundary_street_warning: "boundary_street_lookup_failed",
   });
   assert.deepEqual(warnings, [[
     "/api/sales/neighborhood-profile street lookup failed",
-    streetError,
+    "08006",
   ]]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
 });
 
 test("profile capacity and domain failures retain bounded response contracts", async (context) => {
@@ -228,7 +234,7 @@ test("profile capacity and domain failures retain bounded response contracts", a
     error: domainError.message,
     detail: domainError.detail,
   });
-  assert.deepEqual(logs, [["/api/sales/neighborhood-profile failed", domainError]]);
+  assert.deepEqual(logs, [["/api/sales/neighborhood-profile failed", "unknown"]]);
 });
 
 test("neighborhood land use preserves subject and polygon scope", async (context) => {
@@ -278,7 +284,56 @@ test("land-use failures retain domain status, detail, and server diagnostics", a
     error: failure.message,
     detail: failure.detail,
   });
-  assert.deepEqual(logs, [["/api/sales/neighborhood-land-use failed", failure]]);
+  assert.deepEqual(logs, [["/api/sales/neighborhood-land-use failed", "unknown"]]);
+});
+
+test("unexpected profile and land-use failures never expose private diagnostics", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), {
+    code: "08006",
+    detail: { connection_string: privateDetail },
+  });
+  const logs = [];
+  const server = await startRouter(createNeighborhoodAnalysisRouter(routerOptions({
+    runProfileOperation: async () => { throw failure; },
+    buildLandUseAnalysis: async () => { throw failure; },
+    marketErrorStatus: marketConditionsErrorStatus,
+    landUseErrorStatus: neighborhoodLandUseErrorStatus,
+    logger: { error: (...args) => logs.push(args), warn() {} },
+  })));
+  context.after(server.close);
+
+  const profile = await post(server.baseUrl, "/api/sales/neighborhood-profile");
+  assert.equal(profile.status, 500);
+  assert.deepEqual(await profile.json(), { error: "neighborhood_profile_failed" });
+  const landUse = await post(server.baseUrl, "/api/sales/neighborhood-land-use");
+  assert.equal(landUse.status, 500);
+  assert.deepEqual(await landUse.json(), { error: "neighborhood_land_use_analysis_failed" });
+  assert.deepEqual(logs, [
+    ["/api/sales/neighborhood-profile failed", "08006"],
+    ["/api/sales/neighborhood-land-use failed", "08006"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
+});
+
+test("known provider and spatial-readiness failures retain bounded retry codes", async (context) => {
+  const spatial = new Error("market_spatial_support_not_ready");
+  const provider = new Error("dcad_land_use_query_http_503");
+  const server = await startRouter(createNeighborhoodAnalysisRouter(routerOptions({
+    runProfileOperation: async () => { throw spatial; },
+    buildLandUseAnalysis: async () => { throw provider; },
+    marketErrorStatus: marketConditionsErrorStatus,
+    landUseErrorStatus: neighborhoodLandUseErrorStatus,
+    logger: { error() {}, warn() {} },
+  })));
+  context.after(server.close);
+
+  const profile = await post(server.baseUrl, "/api/sales/neighborhood-profile");
+  assert.equal(profile.status, 503);
+  assert.deepEqual(await profile.json(), { error: "market_spatial_support_not_ready" });
+  const landUse = await post(server.baseUrl, "/api/sales/neighborhood-land-use");
+  assert.equal(landUse.status, 502);
+  assert.deepEqual(await landUse.json(), { error: "dcad_land_use_query_http_503" });
 });
 
 test("neighborhood analysis composition is explicit and replaces both inline routes", () => {

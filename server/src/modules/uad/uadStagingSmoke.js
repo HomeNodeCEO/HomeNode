@@ -150,6 +150,9 @@ export async function runUadStagingSmoke({
   }
   if (publicOnly && fixtureBearerToken) throw new Error("conflicting_uad_staging_smoke_modes");
   const base = normalizeUadSmokeBaseUrl(baseUrl);
+  if (fixtureBearerToken && new URL(base).protocol !== "https:") {
+    throw new Error("insecure_uad_staging_bearer_transport");
+  }
   const appBase = appUrl ? normalizeUadSmokeBaseUrl(appUrl) : null;
   const timeout = Math.max(1_000, Math.min(Number(timeoutMs) || 15_000, 60_000));
   const account = encodeURIComponent(String(fixtureAccountId || DEFAULT_FIXTURE_ACCOUNT_ID));

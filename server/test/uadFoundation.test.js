@@ -417,6 +417,33 @@ test("the staging bootstrap is guarded against production execution", () => {
   assert.doesNotMatch(source, /DROP\s+(?:DATABASE|SCHEMA|TABLE)/i);
 });
 
+test("the staging account-detail tables retain red-team column compatibility", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const stagingSource = fs.readFileSync(
+    path.resolve(directory, "../scripts/prepareUadStagingDatabase.js"),
+    "utf8",
+  );
+  const redTeamSource = fs.readFileSync(
+    path.resolve(directory, "../scripts/prepareRedteamBaseDatabase.js"),
+    "utf8",
+  );
+  const addedColumns = (source, table) => {
+    const statement = source.match(new RegExp(`ALTER TABLE core\\.${table}\\s+([\\s\\S]*?);`))?.[1];
+    assert.ok(statement, `missing ${table} ALTER TABLE statement`);
+    return new Set([...statement.matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)].map((match) => match[1]));
+  };
+
+  for (const table of ["primary_improvements", "land_detail", "secondary_improvements"]) {
+    const redTeamColumns = addedColumns(redTeamSource, table);
+    const stagingColumns = addedColumns(stagingSource, table);
+    assert.deepEqual(
+      [...redTeamColumns].filter((column) => !stagingColumns.has(column)),
+      [],
+      `${table} staging columns must cover the shared account-detail reader`,
+    );
+  }
+});
+
 test("casts the subject snapshot parameter before using PostgreSQL JSON operators", () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(

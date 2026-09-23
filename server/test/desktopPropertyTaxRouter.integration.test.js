@@ -378,6 +378,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
         denied: "property_tax_protest_access_denied",
         attestation: "property_tax_comparable_attestation_required",
         invalid: "invalid_property_tax_protest_update",
+        leaky: "invalid_database_password=secret",
         failed: "database_password=secret",
       };
       const error = new Error(messages[fileId]);
@@ -395,6 +396,7 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
     ["denied", 403, { error: "property_tax_protest_access_denied" }],
     ["attestation", 403, { error: "property_tax_comparable_attestation_required" }],
     ["invalid", 400, { error: "invalid_property_tax_protest_update" }],
+    ["leaky", 500, { error: "property_tax_protest_save_failed" }],
     ["failed", 500, { error: "property_tax_protest_save_failed" }],
   ]) {
     const response = await patchFile(server.baseUrl, "123", fileId);
@@ -403,7 +405,10 @@ test("Property Tax file failures preserve revision status and bounded diagnostic
     assert.deepEqual(responseBody, body);
     assert.doesNotMatch(JSON.stringify(responseBody), /password|secret/);
   }
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [
+    ["property tax protest save failed", "unknown"],
+    ["property tax protest save failed", "unknown"],
+  ]);
 });
 
 test("Property Tax sketch saves bind the authenticated actor and retain sketch error contracts", async (context) => {
@@ -427,6 +432,8 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
         conflict: "sketch_revision_conflict",
         invalid: "invalid_sketch_expected_revision",
         duplicate: "duplicate_room_id",
+        leakyInvalid: "invalid_database_password=secret",
+        leakyDuplicate: "duplicate_database_password=secret",
         unready: "sketch_not_ready_for_confirmation",
         operation: "sketch_operation_conflict",
         failed: "database_password=secret",
@@ -464,6 +471,8 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
     ["conflict", 409, { error: "sketch_revision_conflict", current_revision: 12 }],
     ["invalid", 400, { error: "invalid_sketch_expected_revision" }],
     ["duplicate", 400, { error: "duplicate_room_id" }],
+    ["leakyInvalid", 500, { error: "property_tax_protest_sketch_update_failed" }],
+    ["leakyDuplicate", 500, { error: "property_tax_protest_sketch_update_failed" }],
     ["unready", 400, { error: "sketch_not_ready_for_confirmation" }],
     ["operation", 409, { error: "sketch_operation_conflict" }],
     ["failed", 500, { error: "property_tax_protest_sketch_update_failed" }],
@@ -474,7 +483,9 @@ test("Property Tax sketch saves bind the authenticated actor and retain sketch e
     assert.deepEqual(received, responseBody);
     assert.doesNotMatch(JSON.stringify(received), /password|secret/);
   }
-  assert.equal(errors.length, 1);
+  assert.equal(errors.length, 3);
+  assert.ok(errors.every(([, code]) => code === "unknown"));
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
 });
 
 test("Property Tax sketch updates require an authenticated server identity", async (context) => {
@@ -543,10 +554,12 @@ test("Property Tax read failures remain validation-aware and diagnostic-safe", a
   const server = await startRouter(baseOptions({
     getFile: async (_pool, _accountId, fileId) => {
       if (fileId === "invalid") throw new Error("invalid_property_tax_protest_file_id");
+      if (fileId === "leaky") throw new Error("invalid_database_password=secret");
       throw new Error("database_password=secret");
     },
     getEvidenceVersion: async (_pool, _accountId, fileId) => {
       if (fileId === "invalid") throw new Error("invalid_property_tax_protest_file_id");
+      if (fileId === "leaky") throw new Error("invalid_database_password=secret");
       throw new Error("database_password=secret");
     },
     logger: { error(...args) { errors.push(args); } },
@@ -556,8 +569,10 @@ test("Property Tax read failures remain validation-aware and diagnostic-safe", a
   for (const [url, status, error] of [
     ["/api/accounts/123/property-tax-protest?file_id=invalid", 400, "invalid_property_tax_protest_file_id"],
     ["/api/accounts/123/property-tax-protest?file_id=failed", 500, "property_tax_protest_load_failed"],
+    ["/api/accounts/123/property-tax-protest?file_id=leaky", 500, "property_tax_protest_load_failed"],
     ["/api/accounts/123/property-tax-protest/invalid/evidence/version", 400, "invalid_property_tax_protest_file_id"],
     ["/api/accounts/123/property-tax-protest/failed/evidence/version", 500, "property_tax_protest_evidence_version_failed"],
+    ["/api/accounts/123/property-tax-protest/leaky/evidence/version", 500, "property_tax_protest_evidence_version_failed"],
   ]) {
     const response = await fetch(server.baseUrl + url);
     assert.equal(response.status, status);
@@ -566,7 +581,9 @@ test("Property Tax read failures remain validation-aware and diagnostic-safe", a
     assert.deepEqual(body, { error });
     assert.doesNotMatch(JSON.stringify(body), /password|secret/);
   }
-  assert.equal(errors.length, 2);
+  assert.equal(errors.length, 4);
+  assert.ok(errors.every(([, code]) => code === "unknown"));
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
 });
 
 test("Property Tax document lists use the authenticated canonical file scope", async (context) => {
@@ -804,8 +821,8 @@ test("Property Tax uploads return bounded conflicts when aggregate quotas are ex
 test("Property Tax document failures return bounded diagnostics", async (context) => {
   const errors = [];
   const server = await startRouter(baseOptions({
-    getFile: async () => {
-      throw new Error("database_password=secret");
+    getFile: async (_pool, _accountId, fileId) => {
+      throw new Error(fileId === "leaky" ? "invalid_database_password=secret" : "database_password=secret");
     },
     logger: { error(...args) { errors.push(args); } },
   }));
@@ -816,7 +833,56 @@ test("Property Tax document failures return bounded diagnostics", async (context
   const body = await response.json();
   assert.deepEqual(body, { error: "property_tax_documents_lookup_failed" });
   assert.doesNotMatch(JSON.stringify(body), /password|secret/);
-  assert.equal(errors.length, 1);
+  const leakyResponse = await listDocuments(server.baseUrl, "123", "leaky");
+  assert.equal(leakyResponse.status, 500);
+  assert.deepEqual(await leakyResponse.json(), { error: "property_tax_documents_lookup_failed" });
+  assert.deepEqual(errors, [
+    ["property_tax_documents_lookup_failed", "unknown"],
+    ["property_tax_documents_lookup_failed", "unknown"],
+  ]);
+});
+
+test("throwing Property Tax diagnostics and loggers preserve fixed error responses", async (context) => {
+  const failure = {
+    get message() { throw new Error("private_password"); },
+    get code() { throw new Error("private_code"); },
+  };
+  const logger = {
+    error() { throw new Error("logger_private_password"); },
+    warn() { throw new Error("logger_private_password"); },
+  };
+  const readServer = await startRouter(baseOptions({
+    getFile: async () => { throw failure; },
+    logger,
+  }));
+  const writeServer = await startRouter(baseOptions({
+    getFile: async () => ({
+      tax_protest_file_id: "tax-file-1",
+      report_file_id: "report-file-1",
+      organization_id: "org-allowed",
+      assigned_appraiser_user_id: "user-1",
+    }),
+    saveFile: async () => { throw failure; },
+    saveSketch: async () => { throw failure; },
+    logger,
+  }));
+  context.after(async () => Promise.all([readServer.close(), writeServer.close()]));
+
+  const load = await fetch(`${readServer.baseUrl}/api/accounts/123/property-tax-protest`);
+  assert.equal(load.status, 500);
+  assert.deepEqual(await load.json(), { error: "property_tax_protest_load_failed" });
+
+  const documents = await listDocuments(readServer.baseUrl, "123", "tax-file-1");
+  assert.equal(documents.status, 500);
+  assert.deepEqual(await documents.json(), { error: "property_tax_documents_lookup_failed" });
+
+  const save = await patchFile(writeServer.baseUrl, "123", "tax-file-1");
+  assert.equal(save.status, 500);
+  assert.deepEqual(await save.json(), { error: "property_tax_protest_save_failed" });
+
+  const sketch = await patchSketch(writeServer.baseUrl, "123", "tax-file-1");
+  assert.equal(sketch.status, 500);
+  assert.deepEqual(await sketch.json(), { error: "property_tax_protest_sketch_update_failed" });
 });
 
 test("Property Tax PDF bytes stay identical but HTTP storage and stale conditional access are denied", async (context) => {

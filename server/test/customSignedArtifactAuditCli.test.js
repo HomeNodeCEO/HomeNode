@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
+import pg from "pg";
 
 import { runCustomSignedArtifactAudit } from "../scripts/auditCustomSignedArtifacts.js";
 
@@ -28,8 +29,29 @@ test("emits aggregate results only after pool shutdown", async () => {
   assert.equal(state.options.query_timeout, 6_000);
   assert.equal(state.options.idle_in_transaction_session_timeout, 10_000);
   assert.equal(state.options.connectionString, DATABASE_URL);
+  assert.deepEqual(state.options.ssl, { rejectUnauthorized: true });
+  assert.deepEqual(new pg.Client(state.options).connectionParameters.ssl, { rejectUnauthorized: true });
   assert.deepEqual(state.stdout.map(JSON.parse), [{ ok: true, signed_snapshot_count: 0 }]);
   assert.deepEqual(state.stderr, []);
+});
+
+test("remote audit rejects insecure URL overrides before creating a pool", async () => {
+  for (const suffix of ["?sslmode=disable", "?sslmode=no-verify", "?ssl=false", "?connectionTimeoutMillis=0"]) {
+    const { state, dependencies } = fixture();
+    dependencies.databaseUrl = `${DATABASE_URL}${suffix}`;
+    assert.equal(await runCustomSignedArtifactAudit(dependencies), 1);
+    assert.equal(state.options, null);
+    assert.deepEqual(state.stdout, []);
+    assert.deepEqual(state.stderr, ["custom_signed_artifact_audit_failed\n"]);
+  }
+});
+
+test("legacy sslmode=require URL cannot override verified TLS", async () => {
+  const { state, dependencies } = fixture();
+  dependencies.databaseUrl = `${DATABASE_URL}?sslmode=require`;
+  assert.equal(await runCustomSignedArtifactAudit(dependencies), 0);
+  assert.equal(new URL(state.options.connectionString).search, "");
+  assert.deepEqual(new pg.Client(state.options).connectionParameters.ssl, { rejectUnauthorized: true });
 });
 
 test("reports parity gaps with counts and a nonzero exit", async () => {

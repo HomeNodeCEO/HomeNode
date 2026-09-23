@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { EventEmitter } from "node:events";
 import test from "node:test";
+import pg from "pg";
 
 import { runCustomSignedPdfContentAudit } from "../scripts/auditCustomSignedPdfContent.js";
 
@@ -28,8 +29,30 @@ test("emits aggregate byte-integrity results only after clean shutdown", async (
   assert.equal(state.options.query_timeout, 12_000);
   assert.equal(state.options.idle_in_transaction_session_timeout, 20_000);
   assert.equal(state.options.connectionString, DATABASE_URL);
+  assert.equal(state.options.statement_timeout, 10_000);
+  assert.deepEqual(state.options.ssl, { rejectUnauthorized: true });
+  assert.deepEqual(new pg.Client(state.options).connectionParameters.ssl, { rejectUnauthorized: true });
   assert.deepEqual(state.stdout.map(JSON.parse), [{ ok: true, artifact_count: 0 }]);
   assert.deepEqual(state.stderr, []);
+});
+
+test("remote byte audit rejects insecure URL overrides before creating a pool", async () => {
+  for (const suffix of ["?sslmode=disable", "?sslmode=no-verify", "?ssl=false", "?query_timeout=0"]) {
+    const { state, dependencies } = fixture();
+    dependencies.databaseUrl = `${DATABASE_URL}${suffix}`;
+    assert.equal(await runCustomSignedPdfContentAudit(dependencies), 1);
+    assert.equal(state.options, null);
+    assert.deepEqual(state.stdout, []);
+    assert.deepEqual(state.stderr, ["custom_signed_pdf_content_audit_failed\n"]);
+  }
+});
+
+test("legacy sslmode=require URL cannot override verified TLS", async () => {
+  const { state, dependencies } = fixture();
+  dependencies.databaseUrl = `${DATABASE_URL}?sslmode=require`;
+  assert.equal(await runCustomSignedPdfContentAudit(dependencies), 0);
+  assert.equal(new URL(state.options.connectionString).search, "");
+  assert.deepEqual(new pg.Client(state.options).connectionParameters.ssl, { rejectUnauthorized: true });
 });
 
 test("reports content mismatch counts and exits nonzero", async () => {

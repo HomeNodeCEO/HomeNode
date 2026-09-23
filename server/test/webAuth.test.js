@@ -85,6 +85,36 @@ test("web auth callback and logout handlers enforce their router-owned limiter",
   }, { rateLimiterOptions: strictTestRateLimiter() });
 });
 
+test("browser callback with a missing transaction offers a safe fresh sign-in", async () => {
+  const warnings = [];
+  await withAuthServer(CONFIGURED_ENVIRONMENT, async (baseUrl) => {
+    const callback = await fetch(
+      `${baseUrl}/api/auth/callback?code=private-code&state=private-state`,
+      { headers: { accept: "text/html" }, redirect: "manual" },
+    );
+    assert.equal(callback.status, 401);
+    assert.match(callback.headers.get("content-type"), /^text\/html/);
+    assert.equal(callback.headers.get("cache-control"), "no-store");
+    assert.equal(callback.headers.get("referrer-policy"), "no-referrer");
+    assert.match(callback.headers.get("content-security-policy"), /default-src 'none'/);
+    const body = await callback.text();
+    assert.match(body, /Sign-in needs to restart/);
+    assert.match(body, /href="\/api\/auth\/login"/);
+    assert.doesNotMatch(body, /private-code|private-state|client-secret/);
+
+    const apiCallback = await fetch(
+      `${baseUrl}/api/auth/callback?code=private-code&state=private-state`,
+      { redirect: "manual" },
+    );
+    assert.equal(apiCallback.status, 401);
+    assert.deepEqual(await apiCallback.json(), { error: "authentication_failed" });
+  }, { logger: { warn(message) { warnings.push(message); } } });
+  assert.deepEqual(warnings, [
+    "[web-auth] callback failed stage=transaction reason=invalid_auth_transaction",
+    "[web-auth] callback failed stage=transaction reason=invalid_auth_transaction",
+  ]);
+});
+
 test("logout preserves a retry path when server-side revocation fails", async () => {
   const token = "copied-session-token";
   const queries = [];

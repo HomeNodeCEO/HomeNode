@@ -284,6 +284,25 @@ function authFailureReason(error) {
   return SAFE_AUTH_FAILURES.has(error?.message) ? error.message : "unexpected_error";
 }
 
+function browserWantsHtml(req) {
+  return String(req.get?.("accept") || "").toLowerCase().includes("text/html");
+}
+
+function sendBrowserTransactionRecovery(res) {
+  // The callback URL contains a one-time code and state. Never reflect either
+  // into the page or leak them as a referrer when restarting authentication.
+  return res.status(401)
+    .set("cache-control", "no-store")
+    .set("referrer-policy", "no-referrer")
+    .set("content-security-policy", "default-src 'none'; base-uri 'none'; frame-ancestors 'none'")
+    .type("html")
+    .send(`<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>Restart HomeNode sign-in</title>
+<h1>Sign-in needs to restart</h1>
+<p>This sign-in request is no longer valid. Your password may already have been accepted.</p>
+<p><a href="/api/auth/login">Start a fresh sign-in</a></p></html>`);
+}
+
 async function tokenExchangeFailure(response) {
   let providerCode = "provider_error";
   try {
@@ -555,6 +574,7 @@ export function createWebAuthRouter({
 
   router.get("/callback", async (req, res) => {
     clearBrowserCookie(res, TRANSACTION_COOKIE);
+    res.set("cache-control", "no-store");
     if (!configured) return res.status(503).json({ error: "web_auth_not_configured" });
     let stage = "transaction";
     try {
@@ -611,6 +631,12 @@ export function createWebAuthRouter({
       return res.redirect(302, frontendUrl);
     } catch (error) {
       logger.warn?.(`[web-auth] callback failed stage=${stage} reason=${authFailureReason(error)}`);
+      if (stage === "transaction"
+        && ["invalid_auth_transaction", "expired_auth_transaction", "invalid_auth_callback"]
+          .includes(error?.message)
+        && browserWantsHtml(req)) {
+        return sendBrowserTransactionRecovery(res);
+      }
       const accountUnavailable = ["identity_not_provisioned", "organization_membership_required"]
         .includes(error?.message);
       const providerUnavailable = ["oidc_discovery_unavailable", "token_exchange_unavailable"]

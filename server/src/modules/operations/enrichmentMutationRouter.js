@@ -1,6 +1,7 @@
 import express from "express";
 
 import { fetchParcelAreaSuggestion } from "../../services/parcelGis.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { assertPropertyAttributeKey } from "../../util/nonDallasEnrichment.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
@@ -134,7 +135,7 @@ export function createEnrichmentMutationRouter({
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("verified attribute update failed", error);
+      logger.error?.("verified attribute update failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "verified_attribute_update_failed" });
     } finally {
       client.release();
@@ -193,8 +194,8 @@ export function createEnrichmentMutationRouter({
       if (["dallas_enrichment_isolated", "county_gis_not_configured"].includes(message)) {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("parcel area suggestion failed", error);
-      return res.status(500).json({ error: message || "parcel_area_suggestion_failed" });
+      logger.error?.("parcel area suggestion failed", safeOperationalErrorCode(error));
+      return res.status(500).json({ error: "parcel_area_suggestion_failed" });
     }
   });
 
@@ -281,7 +282,7 @@ export function createEnrichmentMutationRouter({
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("parcel suggestion decision failed", error);
+      logger.error?.("parcel suggestion decision failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "parcel_suggestion_decision_failed" });
     } finally {
       client.release();
@@ -317,8 +318,8 @@ export function createEnrichmentMutationRouter({
       ) {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("Trestle preview failed", error);
-      return res.status(502).json({ error: message || "trestle_preview_failed" });
+      logger.error?.("Trestle preview failed", safeOperationalErrorCode(error));
+      return res.status(502).json({ error: "trestle_preview_failed" });
     }
   });
 

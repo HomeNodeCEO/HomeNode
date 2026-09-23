@@ -29,6 +29,11 @@ test("unknown maintenance tasks fail before any database work", () => {
   assert.throws(() => resolveMaintenanceTasks("mystery"), /Unknown maintenance task/);
 });
 
+test("maintenance fails fast when its pool cannot reserve a lock connection", async () => {
+  const pool = { options: { max: 1 }, async connect() { throw new Error("should_not_connect"); } };
+  await assert.rejects(runScheduledMaintenance(pool, { task: "sessions" }), /maintenance_pool_requires_two_connections/);
+});
+
 test("stale maintenance history is closed without touching a live advisory lock", async () => {
   let params = null;
   const pool = {
@@ -145,7 +150,7 @@ test("failed session purge rolls back without deleting a second batch", async ()
 test("session maintenance records only aggregate purge results", async () => {
   const pool = {
     async query(sql, values) {
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      assert.doesNotMatch(sql, /pg_try_advisory_lock|pg_advisory_unlock/);
       if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) {
         return { rows: [{ id: 93 }] };
       }
@@ -155,7 +160,16 @@ test("session maintenance records only aggregate purge results", async () => {
       }
       return { rows: [], rowCount: 0 };
     },
-    async connect() { return { query: (...args) => pool.query(...args), release() {} }; },
+    async connect() {
+      return {
+        query: (sql, values) => /pg_try_advisory_lock/.test(sql)
+          ? { rows: [{ acquired: true }] }
+          : /pg_advisory_unlock/.test(sql)
+            ? { rows: [{ pg_advisory_unlock: true }] }
+            : pool.query(sql, values),
+        release() {},
+      };
+    },
   };
 
   const result = await runScheduledMaintenance(pool, {
@@ -175,10 +189,16 @@ test("session maintenance records only aggregate purge results", async () => {
 
 test("an overlapping scheduled run exits without starting task work", async () => {
   let taskCalls = 0;
+  let released = false;
   const pool = {
-    async query(sql) {
-      assert.match(sql, /pg_try_advisory_lock/);
-      return { rows: [{ acquired: false }] };
+    async connect() {
+      return {
+        async query(sql) {
+          assert.match(sql, /pg_try_advisory_lock/);
+          return { rows: [{ acquired: false }] };
+        },
+        release() { released = true; },
+      };
     },
   };
   const result = await runScheduledMaintenance(pool, {
@@ -189,39 +209,104 @@ test("an overlapping scheduled run exits without starting task work", async () =
   assert.equal(result.skipped, true);
   assert.equal(result.reason, "already_running");
   assert.equal(taskCalls, 0);
+  assert.equal(released, true);
+});
+
+test("a failed advisory-lock query retires its checked-out connection", async () => {
+  const failure = new Error("lock_query_failed");
+  let releaseReason;
+  const pool = {
+    async connect() {
+      return {
+        async query() { throw failure; },
+        release(reason) { releaseReason = reason; },
+      };
+    },
+  };
+  await assert.rejects(runScheduledMaintenance(pool, { task: "sessions" }), /lock_query_failed/);
+  assert.equal(releaseReason, failure);
+});
+
+test("task failure unlocks through the original checked-out connection", async () => {
+  const lockStatements = [];
+  let releases = 0;
+  const pool = {
+    async query() { throw new Error("maintenance_schema_failed"); },
+    async connect() {
+      return {
+        async query(sql) {
+          lockStatements.push(sql);
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          assert.match(sql, /pg_advisory_unlock/);
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() { releases += 1; },
+      };
+    },
+  };
+  await assert.rejects(runScheduledMaintenance(pool, { task: "sessions", logger: { warn() {} } }), /maintenance_schema_failed/);
+  assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
+  assert.equal(releases, 1);
 });
 
 test("a scheduled run records completion and always releases its lock", async () => {
   const statements = [];
+  const lockStatements = [];
+  let lockReleased = false;
   const pool = {
     async query(sql) {
       statements.push(sql);
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      assert.doesNotMatch(sql, /pg_try_advisory_lock|pg_advisory_unlock/);
       if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) return { rows: [{ id: 91 }] };
       return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          lockStatements.push(sql);
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          assert.match(sql, /pg_advisory_unlock/);
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() { lockReleased = true; },
+      };
     },
   };
   const result = await runScheduledMaintenance(pool, {
     task: "census",
-    taskRunner: async (_pool, task) => ({ task, claimed: 0 }),
+    taskRunner: async (_pool, task) => {
+      assert.equal(lockReleased, false);
+      return { task, claimed: 0 };
+    },
     logger: { info() {}, warn() {} },
   });
   assert.equal(result.ok, true);
   assert.equal(result.run_id, 91);
   assert.deepEqual(result.results.census, { task: "census", claimed: 0 });
   assert.equal(statements.some((sql) => /status = \$2/.test(sql)), true);
-  assert.equal(statements.some((sql) => /pg_advisory_unlock/.test(sql)), true);
+  assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
+  assert.equal(lockReleased, true);
 });
 
 test("sales maintenance defaults can drain an import-sized backlog while staying bounded", async () => {
   const optionsByTask = new Map();
   const pool = {
     async query(sql) {
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      assert.doesNotMatch(sql, /pg_try_advisory_lock|pg_advisory_unlock/);
       if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) {
         return { rows: [{ id: 92 }] };
       }
       return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          assert.match(sql, /pg_advisory_unlock/);
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() {},
+      };
     },
   };
   const result = await runScheduledMaintenance(pool, {

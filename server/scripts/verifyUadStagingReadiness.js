@@ -12,6 +12,8 @@ const result = await runUadStagingSmoke({
   baseUrl,
   appUrl: option("app-url") || process.env.UAD_STAGING_APP_URL,
   fixtureAccountId: option("fixture-account") || process.env.UAD_STAGING_FIXTURE_ACCOUNT_ID,
+  fixtureBearerToken: process.env.UAD_STAGING_BEARER_TOKEN || null,
+  publicOnly: /^(1|true|yes|on)$/i.test(String(process.env.UAD_STAGING_PUBLIC_ONLY || "")),
   timeoutMs: option("timeout-ms") || process.env.UAD_STAGING_TIMEOUT_MS,
   requireCompliance: /^(1|true|yes|on)$/i.test(String(process.env.UAD_STAGING_REQUIRE_COMPLIANCE || "")),
 });
@@ -23,7 +25,9 @@ const evidence = {
     health: result.checks.health,
     capabilities: result.checks.capabilities,
     operational_readiness: result.checks.operational_readiness,
+    anonymous_boundary: result.checks.anonymous_boundary,
     synthetic_fixture: {
+      required: result.checks.synthetic_fixture.required,
       ready: result.checks.synthetic_fixture.ready,
       http_status: result.checks.synthetic_fixture.http_status,
       workfile_count: result.checks.synthetic_fixture.workfile_count,

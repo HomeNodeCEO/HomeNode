@@ -22,8 +22,8 @@ const secureHeaders = {
 
 test('accepts exact staging CSP and platform security headers', () => {
   assert.deepEqual(validateStagingFrontendSecurityHeaders(secureHeaders), [])
-  assert.match(EXPECTED_STAGING_CSP, new RegExp(STAGING_API_ORIGIN.replaceAll('.', '\\.')))
-  assert.match(EXPECTED_STAGING_CSP, new RegExp(STAGING_R2_ORIGIN.replaceAll('.', '\\.')))
+  assert.ok(EXPECTED_STAGING_CSP.includes(STAGING_API_ORIGIN))
+  assert.ok(EXPECTED_STAGING_CSP.includes(STAGING_R2_ORIGIN))
 });
 
 test('rejects omitted, weakened, or production-origin CSP', () => {

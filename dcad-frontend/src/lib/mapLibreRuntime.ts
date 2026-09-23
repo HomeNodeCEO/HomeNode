@@ -1,8 +1,5 @@
-/** The same pinned runtime and DOM keys used by the existing report maps.
- * This loader knows nothing about assignments, analyses, or report persistence. */
+/** Shared, lazy same-origin MapLibre runtime for report and neighborhood maps. */
 export const MAPLIBRE_BASE_STYLE = 'https://tiles.openfreemap.org/styles/bright';
-const SCRIPT = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
-const STYLE = 'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
 
 export interface ParcelMapClick {
   readonly point?: { readonly x: number; readonly y: number };
@@ -33,48 +30,31 @@ export interface ParcelMapRuntimeInstance {
 }
 export interface MapLibreRuntime {
   Map: new (options: Record<string, unknown>) => ParcelMapRuntimeInstance;
+  setWorkerUrl: (url: string) => void;
 }
 let pending: Promise<MapLibreRuntime> | null = null;
-const runtime = (): MapLibreRuntime | undefined =>
-  (window as unknown as { maplibregl?: MapLibreRuntime }).maplibregl;
 
 export function loadMapLibreRuntime(): Promise<MapLibreRuntime> {
   if (typeof window === 'undefined' || typeof document === 'undefined') return Promise.reject(new Error('map_browser_required'));
-  if (!document.querySelector('link[data-homenode-map-style="maplibre"]')) {
-    const link = document.createElement('link');
-    link.rel = 'stylesheet'; link.href = STYLE; link.dataset.homenodeMapStyle = 'maplibre';
-    document.head.appendChild(link);
-  }
-  const loaded = runtime();
-  if (loaded) return Promise.resolve(loaded);
   if (pending) return pending;
-  pending = new Promise<MapLibreRuntime>((resolve, reject) => {
-    let script = document.querySelector<HTMLScriptElement>('script[data-homenode-map-script="maplibre"]');
-    if (script?.dataset.homenodeMapFailed === 'true') { script.remove(); script = null; }
-    const isNew = !script;
-    const element = script ?? document.createElement('script');
-    let settled = false;
-    const cleanup = () => {
-      window.clearTimeout(timeout);
-      element.removeEventListener('load', onLoad); element.removeEventListener('error', onError);
-    };
-    const fail = (reason: string) => {
-      if (settled) return; settled = true; cleanup();
-      element.dataset.homenodeMapFailed = 'true'; reject(new Error(reason));
-    };
-    const onLoad = () => {
-      if (settled) return;
-      const result = runtime();
-      if (!result) { fail('map_runtime_unavailable'); return; }
-      settled = true; cleanup(); element.dataset.homenodeMapLoaded = 'true'; resolve(result);
-    };
-    const onError = () => fail('map_load_failed');
-    const timeout = window.setTimeout(() => fail('map_load_timeout'), 15_000);
-    element.addEventListener('load', onLoad); element.addEventListener('error', onError);
-    if (isNew) {
-      element.src = SCRIPT; element.async = true; element.dataset.homenodeMapScript = 'maplibre';
-      document.head.appendChild(element);
+  let timeout: number | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = window.setTimeout(() => reject(new Error('map_load_timeout')), 15_000);
+  });
+  const bundled = Promise.all([
+    import('maplibre-gl'),
+    import('maplibre-gl/dist/maplibre-gl.css'),
+    import('maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'),
+  ]).then(([module, , worker]) => {
+    if (typeof module.Map !== 'function' || typeof module.setWorkerUrl !== 'function' || typeof worker.default !== 'string') {
+      throw new Error('map_runtime_unavailable');
     }
-  }).catch(error => { pending = null; throw error; });
+    // Vite bundles this worker as a self-contained, same-origin asset. Set it before any map is created.
+    module.setWorkerUrl(worker.default);
+    return module as unknown as MapLibreRuntime;
+  });
+  pending = Promise.race([bundled, deadline])
+    .catch(error => { pending = null; throw error; })
+    .finally(() => { if (timeout !== undefined) window.clearTimeout(timeout); });
   return pending;
 }

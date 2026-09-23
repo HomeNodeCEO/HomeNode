@@ -29,14 +29,10 @@ import {
   type MarketAreaOrigin,
 } from '@/lib/marketAreaGeometry';
 import { makeNeighborhoodPocketFeatureCollection } from '@/lib/neighborhoodPocketMap';
+import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '@/lib/mapLibreRuntime';
 
-const MAPLIBRE_SCRIPT =
-  'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.js';
-const MAPLIBRE_STYLE =
-  'https://unpkg.com/maplibre-gl@5.12.0/dist/maplibre-gl.css';
-const MAP_STYLE_URL = 'https://tiles.openfreemap.org/styles/bright';
+const MAP_STYLE_URL = MAPLIBRE_BASE_STYLE;
 const CUSTOM_BOUNDARY_SOURCE_ID = 'custom-market-boundary';
-let mapLibrariesPromise: Promise<void> | null = null;
 
 type GeoJsonFeature = {
   type: 'Feature';
@@ -109,12 +105,6 @@ type MapLibreGlobal = {
   Map: new (options: Record<string, unknown>) => MapInstance;
   Marker: new (options?: Record<string, unknown>) => MarkerInstance;
 };
-
-declare global {
-  interface Window {
-    maplibregl?: MapLibreGlobal;
-  }
-}
 
 type TrendInterval = 'monthly' | 'quarterly' | 'semiannual' | 'yearly';
 
@@ -439,84 +429,6 @@ function periodLabel(value: string | null, interval: TrendInterval): string {
     return `${month < 6 ? 'H1' : 'H2'} ${year}`;
   }
   return String(year);
-}
-
-function addStyle(href: string, key: string): void {
-  if (document.querySelector(`link[data-homenode-map-style="${key}"]`)) return;
-  const link = document.createElement('link');
-  link.rel = 'stylesheet';
-  link.href = href;
-  link.dataset.homenodeMapStyle = key;
-  document.head.appendChild(link);
-}
-
-function loadScript(
-  src: string,
-  key: string,
-  ready: () => boolean,
-): Promise<void> {
-  if (ready()) return Promise.resolve();
-  const existing = document.querySelector<HTMLScriptElement>(
-    `script[data-homenode-map-script="${key}"]`,
-  );
-  if (existing) {
-    if (existing.dataset.homenodeMapFailed === 'true') {
-      existing.remove();
-      return loadScript(src, key, ready);
-    }
-    return new Promise((resolve, reject) => {
-      const timeout = window.setTimeout(
-        () => reject(new Error(`${key}_load_timeout`)),
-        15_000,
-      );
-      existing.addEventListener('load', () => {
-        window.clearTimeout(timeout);
-        resolve();
-      }, { once: true });
-      existing.addEventListener(
-        'error',
-        () => {
-          window.clearTimeout(timeout);
-          existing.dataset.homenodeMapFailed = 'true';
-          reject(new Error(`${key}_load_failed`));
-        },
-        { once: true },
-      );
-    });
-  }
-  return new Promise((resolve, reject) => {
-    const script = document.createElement('script');
-    script.src = src;
-    script.async = true;
-    script.dataset.homenodeMapScript = key;
-    script.addEventListener('load', () => {
-      script.dataset.homenodeMapLoaded = 'true';
-      resolve();
-    }, { once: true });
-    script.addEventListener(
-      'error',
-      () => {
-        script.dataset.homenodeMapFailed = 'true';
-        reject(new Error(`${key}_load_failed`));
-      },
-      { once: true },
-    );
-    document.head.appendChild(script);
-  });
-}
-
-async function ensureMapLibraries(): Promise<void> {
-  if (window.maplibregl) return;
-  if (!mapLibrariesPromise) {
-    addStyle(MAPLIBRE_STYLE, 'maplibre');
-    mapLibrariesPromise = loadScript(MAPLIBRE_SCRIPT, 'maplibre', () =>
-      Boolean(window.maplibregl),
-    ).catch((error) => {
-      mapLibrariesPromise = null;
-      throw error;
-    });
-  }
-  await mapLibrariesPromise;
 }
 
 function updateBoundaryAppearance(map: MapInstance | null, origin: MarketAreaOrigin): void {
@@ -1487,18 +1399,18 @@ export default function MarketConditionsAnalysis({
     }
     let cancelled = false;
     let map: MapInstance | null = null;
-    void ensureMapLibraries()
-      .then(() => {
+    void loadMapLibreRuntime()
+      .then((loaded) => {
+        const maplibre = loaded as unknown as MapLibreGlobal;
         if (
           cancelled ||
           !mapContainerRef.current ||
-          !window.maplibregl ||
           studyLatitude === null ||
           studyLongitude === null
         ) {
           return;
         }
-        map = new window.maplibregl.Map({
+        map = new maplibre.Map({
           container: mapContainerRef.current,
           style: MAP_STYLE_URL,
           center: [studyLongitude, studyLatitude],
@@ -1507,8 +1419,8 @@ export default function MarketConditionsAnalysis({
         });
         mapRef.current = map;
         map.on('load', () => {
-          if (!map || cancelled || !window.maplibregl) return;
-          new window.maplibregl.Marker({ color: '#dc2626' })
+          if (!map || cancelled) return;
+          new maplibre.Marker({ color: '#dc2626' })
             .setLngLat([
               studyLongitude,
               studyLatitude,

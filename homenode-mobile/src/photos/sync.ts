@@ -4,12 +4,16 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { AppState } from "react-native";
 
 import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../api/client";
+import { NetworkTimeoutError, withNetworkTimeout } from "../api/networkTimeout";
 import { OfflineStore, type LocalPhotoDraft, type PhotoQueueSummary } from "../offline/store";
 import { runWithConcurrency } from "../offline/concurrency";
 import { deletePreparedPhotoFiles } from "./capture";
+import { photoUploadTimeoutMs } from "./model";
 
 const EMPTY_SUMMARY: PhotoQueueSummary = { total: 0, pending: 0, synchronized: 0, failed: 0 };
 export const PHOTO_SYNC_CONCURRENCY = 3;
+
+class PhotoUploadHttpError extends Error {}
 
 async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload) {
   const object = photo.objects.find((item) => item.variant === upload.variant);
@@ -18,27 +22,30 @@ async function uploadObject(photo: LocalPhotoDraft, upload: PresignedPhotoUpload
   if (!file.exists || Number(file.size) !== object.byteSize || object.byteSize <= 0) {
     throw new Error("empty_mobile_photo_file");
   }
-  let response: Response;
   try {
-    response = await expoFetch(upload.url, {
-      method: "PUT",
-      headers: upload.headers,
-      body: file,
-    });
+    await withNetworkTimeout(async (signal) => {
+      const response = await expoFetch(upload.url, {
+        method: "PUT",
+        headers: upload.headers,
+        body: file,
+        signal,
+      });
+      if (!response.ok) {
+        const responseBody = await response.text().catch((reason: unknown) => {
+          if (signal.aborted) throw reason;
+          return "";
+        });
+        const providerCode = responseBody.match(/<Code>([^<]+)<\/Code>/i)?.[1]
+          ?.replace(/[^A-Za-z0-9_.-]/g, "")
+          .slice(0, 80);
+        throw new PhotoUploadHttpError(`mobile_photo_upload_http_${response.status}${providerCode ? `:${providerCode}` : ""}`);
+      }
+    }, photoUploadTimeoutMs(object.byteSize));
   } catch (reason) {
-    const detail = (reason instanceof Error ? reason.message : "unknown")
-      .replace(/[\u0000-\u001f\u007f]+/g, " ")
-      .replace(/\s+/g, " ")
-      .trim()
-      .slice(0, 160) || "unknown";
-    throw new Error(`mobile_photo_upload_transport_failed:${detail}`);
-  }
-  if (!response.ok) {
-    const responseBody = await response.text().catch(() => "");
-    const providerCode = responseBody.match(/<Code>([^<]+)<\/Code>/i)?.[1]
-      ?.replace(/[^A-Za-z0-9_.-]/g, "")
-      .slice(0, 80);
-    throw new Error(`mobile_photo_upload_http_${response.status}${providerCode ? `:${providerCode}` : ""}`);
+    if (reason instanceof NetworkTimeoutError) throw new Error("mobile_photo_upload_timeout");
+    if (reason instanceof PhotoUploadHttpError) throw reason;
+    // Native transport errors can contain the presigned URL; never persist it in the offline queue.
+    throw new Error("mobile_photo_upload_transport_failed");
   }
 }
 

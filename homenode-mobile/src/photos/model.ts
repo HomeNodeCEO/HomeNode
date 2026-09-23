@@ -3,6 +3,11 @@ import type { JsonValue } from "../offline/model";
 export const MAX_PHOTOS_PER_INSPECTION = 100;
 export const DISPLAY_MAX_WIDTH = 2048;
 
+// Allow slow cellular originals while ensuring a stalled native upload frees its queue lane.
+export function photoUploadTimeoutMs(byteSize: number) {
+  return Math.min(15 * 60_000, Math.max(2 * 60_000, 30_000 + Math.ceil(byteSize / 65_536) * 1_000));
+}
+
 export const CUSTOM_PHOTO_CATEGORIES = Object.freeze([
   "Front",
   "Rear",
@@ -148,7 +153,7 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
     return `Cloud storage rejected the upload (HTTP ${uploadHttp[1]}${uploadHttp[2] ? ` · ${uploadHttp[2]}` : ""}).`;
   }
   if (code.startsWith("mobile_photo_upload_transport_failed:")) {
-    return `The iPhone could not transfer this photo to cloud storage (${code.slice(code.indexOf(":") + 1)}).`;
+    return "The device could not transfer this photo to cloud storage. It remains saved locally.";
   }
   const messages: Record<string, string> = {
     mobile_camera_permission_required: "Camera access is required to take appraisal photos.",
@@ -162,6 +167,9 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
     mobile_photo_verification_failed: "Cloud storage received the photo, but verification could not be completed.",
     invalid_mobile_photo_upload: "The uploaded photo did not match its expected size or file type.",
     network_request_failed: "HomeNode could not reach the cloud service.",
+    network_request_timeout: "The cloud request timed out. The photo is saved on this device and will retry.",
+    mobile_photo_upload_timeout: "The cloud upload timed out. The photo is saved on this device and will retry.",
+    mobile_photo_upload_transport_failed: "The device could not transfer this photo to cloud storage. It remains saved locally.",
   };
   return messages[code] || code.replaceAll("_", " ");
 }

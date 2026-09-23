@@ -8,6 +8,7 @@ import {
   inferredImageContentType,
   isPhotoVisible,
   photoSyncErrorMessage,
+  photoUploadTimeoutMs,
   remainingPhotoCapacity,
   safePhotoFileName,
   UAD_PHOTO_CATEGORIES,
@@ -19,6 +20,14 @@ test("photo capacity is bounded to 100 active inspection photos", () => {
   assert.equal(remainingPhotoCapacity(99), 1);
   assert.equal(remainingPhotoCapacity(100), 0);
   assert.equal(remainingPhotoCapacity(120), 0);
+});
+
+test("photo upload deadlines allow slow originals but have an upper bound", () => {
+  assert.equal(photoUploadTimeoutMs(1_000_000), 120_000);
+  assert.equal(photoUploadTimeoutMs(10 * 1024 * 1024), 190_000);
+  assert.equal(photoUploadTimeoutMs(50 * 1024 * 1024), 830_000);
+  assert.equal(photoUploadTimeoutMs(100 * 1024 * 1024), 900_000);
+  assert.match(photoSyncErrorMessage("mobile_photo_upload_timeout"), /saved on this device/);
 });
 
 test("offline photo positions reuse an excluded slot", () => {
@@ -66,9 +75,10 @@ test("turns cloud photo failures into actionable field messages", () => {
     photoSyncErrorMessage("mobile_photo_verification_failed"),
     "Cloud storage received the photo, but verification could not be completed.",
   );
-  assert.match(
-    photoSyncErrorMessage("mobile_photo_upload_transport_failed:Network request failed"),
-    /iPhone could not transfer/,
+  assert.match(photoSyncErrorMessage("mobile_photo_upload_transport_failed"), /saved locally/);
+  assert.doesNotMatch(
+    photoSyncErrorMessage("mobile_photo_upload_transport_failed:https://signed.example/token"),
+    /signed\.example|token/,
   );
 });
 

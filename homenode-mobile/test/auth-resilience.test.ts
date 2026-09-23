@@ -165,3 +165,47 @@ test("a repeated read-only 401 is returned after exactly one replay", async (con
   ));
   assert.equal(fetchCalls, 2);
 });
+
+test("a stalled API fetch times out, aborts, and preserves temporary offline access", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  let requestSignal: AbortSignal | undefined;
+  globalThis.fetch = async (_input, init) => {
+    requestSignal = init?.signal || undefined;
+    return new Promise<Response>(() => {});
+  };
+  const api = new MobileApi(config, async () => "cached-token", 10);
+  await assert.rejects(api.me(), (error: unknown) => (
+    error instanceof ApiError
+      && error.status === 0
+      && error.code === "network_request_timeout"
+      && canUseCachedIdentityAfterMeFailure(error)
+  ));
+  assert.equal(requestSignal?.aborted, true);
+});
+
+test("a stalled API response body cannot hold a mobile request indefinitely", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async () => ({
+    status: 200,
+    ok: true,
+    json: async () => new Promise<never>(() => {}),
+  }) as unknown as Response;
+  const api = new MobileApi(config, async () => "cached-token", 10);
+  await assert.rejects(api.me(), (error: unknown) => (
+    error instanceof ApiError && error.code === "network_request_timeout"
+  ));
+});
+
+test("an abort-aware transport still reports a timeout rather than a revoked session", async (context) => {
+  const originalFetch = globalThis.fetch;
+  context.after(() => { globalThis.fetch = originalFetch; });
+  globalThis.fetch = async (_input, init) => new Promise<Response>((_resolve, reject) => {
+    init?.signal?.addEventListener("abort", () => reject(new Error("AbortError")), { once: true });
+  });
+  const api = new MobileApi(config, async () => "cached-token", 10);
+  await assert.rejects(api.me(), (error: unknown) => (
+    error instanceof ApiError && error.code === "network_request_timeout"
+  ));
+});

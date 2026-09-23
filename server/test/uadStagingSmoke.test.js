@@ -14,7 +14,7 @@ function response(body, status = 200, contentType = "application/json") {
   });
 }
 
-function readyResponse(url) {
+function readyResponse(url, init) {
   if (url.endsWith("/health")) return response({ ok: true });
   if (url.endsWith("/api/uad/capabilities")) return response({
     enabled: true,
@@ -30,7 +30,11 @@ function readyResponse(url) {
     blockers: [],
     checks: { compliance: { providers: {} } },
   });
-  if (url.includes("/api/uad/accounts/")) return response({ workfiles: [{ id: "fixture" }] });
+  if (url.includes("/api/uad/accounts/")) {
+    return init?.headers?.authorization === "Bearer staging-test-token"
+      ? response({ workfiles: [{ id: "fixture" }] })
+      : response({ error: "authentication_required" }, 401);
+  }
   if (url.includes("/uad-3.6/")) {
     return response('<div id="root"></div>', 200, "text/html; charset=utf-8");
   }
@@ -52,12 +56,13 @@ test("verifies health, release, storage, readiness, and the synthetic SFR fixtur
     requested.push(url);
     assert.equal(init.redirect, "error");
     assert.equal(init.signal instanceof AbortSignal, true);
-    return readyResponse(url);
+    return readyResponse(url, init);
   };
 
   const result = await runUadStagingSmoke({
     baseUrl: "https://staging.example.com",
     appUrl: "https://app-staging.example.com",
+    fixtureBearerToken: "staging-test-token",
     fetchImpl,
     checkedAt: "2026-08-21T12:00:00.000Z",
   });
@@ -65,15 +70,71 @@ test("verifies health, release, storage, readiness, and the synthetic SFR fixtur
   assert.equal(result.ok, true);
   assert.equal(result.checks.capabilities.mapped_field_count, 857);
   assert.equal(result.checks.synthetic_fixture.workfile_count, 1);
+  assert.equal(result.checks.anonymous_boundary.http_status, 401);
   assert.equal(result.checks.external_compliance.ready, false);
   assert.equal(result.checks.web_app.ready, true);
-  assert.equal(requested.length, 5);
+  assert.equal(requested.length, 6);
+});
+
+test("public-only mode verifies denial without claiming the fixture was read", async () => {
+  const requested = [];
+  const result = await runUadStagingSmoke({
+    baseUrl: "https://staging.example.com",
+    publicOnly: true,
+    fetchImpl: async (url, init) => {
+      requested.push({ url, authorization: init.headers.authorization });
+      return readyResponse(url, init);
+    },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(result.checks.anonymous_boundary.ready, true);
+  assert.equal(result.checks.synthetic_fixture.required, false);
+  assert.equal(result.checks.synthetic_fixture.ready, false);
+  assert.equal(result.checks.synthetic_fixture.error_code, "not_checked");
+  assert.equal(requested.length, 4);
+  assert.equal(requested.every((entry) => entry.authorization === undefined), true);
+});
+
+test("full mode requires a bearer credential and rejects an unexpectedly public fixture", async () => {
+  const missing = await runUadStagingSmoke({
+    baseUrl: "https://staging.example.com",
+    fetchImpl: readyResponse,
+  });
+  assert.equal(missing.ok, false);
+  assert.equal(missing.checks.synthetic_fixture.error_code, "credential_required");
+
+  const publicFixture = await runUadStagingSmoke({
+    baseUrl: "https://staging.example.com",
+    fixtureBearerToken: "staging-test-token",
+    fetchImpl: async (url, init) => url.includes("/api/uad/accounts/")
+      ? response({ workfiles: [{ id: "fixture" }] })
+      : readyResponse(url, init),
+  });
+  assert.equal(publicFixture.ok, false);
+  assert.equal(publicFixture.checks.anonymous_boundary.ready, false);
+  assert.equal(publicFixture.checks.synthetic_fixture.ready, true);
+});
+
+test("rejects unsafe bearer credentials without including them in diagnostics", async () => {
+  await assert.rejects(
+    runUadStagingSmoke({ baseUrl: "https://staging.example.com", fixtureBearerToken: "bad\nsecret" }),
+    /invalid_uad_staging_bearer_token/,
+  );
+  await assert.rejects(
+    runUadStagingSmoke({
+      baseUrl: "https://staging.example.com",
+      fixtureBearerToken: "staging-test-token",
+      publicOnly: true,
+    }),
+    /conflicting_uad_staging_smoke_modes/,
+  );
 });
 
 test("can require external compliance without exposing response bodies", async () => {
   const result = await runUadStagingSmoke({
     baseUrl: "https://staging.example.com",
-    fetchImpl: async (url) => readyResponse(url),
+    fetchImpl: async (url, init) => readyResponse(url, init),
+    fixtureBearerToken: "staging-test-token",
     requireCompliance: true,
   });
   assert.equal(result.ok, false);
@@ -97,8 +158,8 @@ test("bounds and cancels oversized JSON and HTML responses", async () => {
   ];
   for (const fixture of cases) {
     let cancelled = false;
-    const fetchImpl = async (url) => {
-      if (!fixture.matches(url)) return readyResponse(url);
+    const fetchImpl = async (url, init) => {
+      if (!fixture.matches(url)) return readyResponse(url, init);
       return new Response(new ReadableStream({
         cancel() {
           cancelled = true;
@@ -113,6 +174,7 @@ test("bounds and cancels oversized JSON and HTML responses", async () => {
     const result = await runUadStagingSmoke({
       baseUrl: "https://staging.example.com",
       appUrl: "https://app-staging.example.com",
+      fixtureBearerToken: "staging-test-token",
       fetchImpl,
     });
     assert.equal(result.ok, false);
@@ -125,7 +187,7 @@ test("keeps the timeout active through stalled response bodies", async () => {
   let aborted = false;
   let keepAlive;
   const fetchImpl = async (url, init) => {
-    if (!url.endsWith("/api/uad/capabilities")) return readyResponse(url);
+    if (!url.endsWith("/api/uad/capabilities")) return readyResponse(url, init);
     return new Response(new ReadableStream({
       start(controller) {
         keepAlive = setTimeout(() => {}, 1_500);
@@ -141,6 +203,7 @@ test("keeps the timeout active through stalled response bodies", async () => {
     const result = await runUadStagingSmoke({
       baseUrl: "https://staging.example.com",
       fetchImpl,
+      fixtureBearerToken: "staging-test-token",
       timeoutMs: 1_000,
     });
     assert.equal(aborted, true);
@@ -184,8 +247,8 @@ test("cancels invalid and unsuccessful response bodies with stable diagnostics",
     },
   ]) {
     let cancelled = false;
-    const fetchImpl = async (url) => {
-      if (!fixture.matches(url)) return readyResponse(url);
+    const fetchImpl = async (url, init) => {
+      if (!fixture.matches(url)) return readyResponse(url, init);
       return new Response(new ReadableStream({
         cancel() {
           cancelled = true;
@@ -198,6 +261,7 @@ test("cancels invalid and unsuccessful response bodies with stable diagnostics",
     const result = await runUadStagingSmoke({
       baseUrl: "https://staging.example.com",
       appUrl: "https://app-staging.example.com",
+      fixtureBearerToken: "staging-test-token",
       fetchImpl,
     });
     assert.equal(result.ok, false);

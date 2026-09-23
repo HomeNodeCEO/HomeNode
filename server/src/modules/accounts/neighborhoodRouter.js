@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   generateNeighborhoodBoundary,
   getLatestNeighborhoodBoundary,
@@ -71,7 +72,7 @@ export function createNeighborhoodRouter({
         county: req.query.county || "Dallas",
       }));
     } catch (error) {
-      logger.error?.("/api/neighborhood-engine/readiness failed", error);
+      logger.error?.("/api/neighborhood-engine/readiness failed", safeOperationalErrorCode(error));
       if (error?.message === "neighborhood_engine_county_not_configured") {
         return res.status(400).json({ error: error.message });
       }
@@ -95,7 +96,8 @@ export function createNeighborhoodRouter({
       const status = message === "account_not_found" ? 404
         : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
           : 500;
-      return res.status(status).json({ error: message });
+      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-boundary failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_lookup_failed" : message });
     }
   });
 
@@ -117,7 +119,7 @@ export function createNeighborhoodRouter({
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
       const message = error?.message || "neighborhood_boundary_generation_failed";
-      logger.error?.("/api/accounts/:id/neighborhood-boundary/generate failed", error);
+      logger.error?.("/api/accounts/:id/neighborhood-boundary/generate failed", safeOperationalErrorCode(error));
       const clientErrors = new Set([
         "invalid_account_id",
         "invalid_assignment_file",
@@ -128,7 +130,7 @@ export function createNeighborhoodRouter({
         message === "subject_parcel_geometry_unavailable" ? 404
         : clientErrors.has(message) ? 400
           : 500;
-      return res.status(status).json({ error: message });
+      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_generation_failed" : message });
     }
   });
 
@@ -164,7 +166,8 @@ export function createNeighborhoodRouter({
         message === "neighborhood_boundary_assessment_not_found" ? 404
         : clientErrors.has(message) ? 400
           : 500;
-      return res.status(status).json({ error: message });
+      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-boundary review failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_review_failed" : message });
     }
   });
 
@@ -181,9 +184,11 @@ export function createNeighborhoodRouter({
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
       const message = error?.message || "neighborhood_relevance_lookup_failed";
-      return res.status(message === "account_not_found" ? 404
+      const status = message === "account_not_found" ? 404
         : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
-          : 500).json({ error: message });
+          : 500;
+      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-relevance failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status === 500 ? "neighborhood_relevance_lookup_failed" : message });
     }
   });
 
@@ -204,7 +209,7 @@ export function createNeighborhoodRouter({
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
       const message = error?.message || "neighborhood_relevance_generation_failed";
-      logger.error?.("/api/accounts/:id/neighborhood-relevance/generate failed", error);
+      logger.error?.("/api/accounts/:id/neighborhood-relevance/generate failed", safeOperationalErrorCode(error));
       const clientErrors = new Set([
         "invalid_account_id",
         "invalid_assignment_file",
@@ -215,7 +220,7 @@ export function createNeighborhoodRouter({
         : clientErrors.has(message) ? 400
           : message === "neighborhood_relevance_candidates_unavailable" ? 422
             : 500;
-      return res.status(status).json({ error: message });
+      return res.status(status).json({ error: status === 500 ? "neighborhood_relevance_generation_failed" : message });
     }
   });
 

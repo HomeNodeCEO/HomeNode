@@ -124,8 +124,9 @@ test("undefined primary table falls back to legacy market values with the same m
   assert.deepEqual(database.queries[1].params, ["A-1"]);
 });
 
-test("non-schema history failures preserve the legacy response and logging behavior", async (context) => {
-  const diagnostic = Object.assign(new Error("database unavailable"), { code: "XX000" });
+test("non-schema history failures hide private diagnostics while retaining a visible failure", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const diagnostic = Object.assign(new Error(privateDetail), { code: "XX000" });
   const logs = [];
   const database = createPool(async () => { throw diagnostic; });
   const server = await startRouter({
@@ -136,9 +137,32 @@ test("non-schema history failures preserve the legacy response and logging behav
 
   const response = await fetch(`${server.baseUrl}/api/accounts/A-1/market_value_history`);
   assert.equal(response.status, 500);
-  assert.deepEqual(await response.json(), { error: "database unavailable" });
-  assert.deepEqual(logs, [[diagnostic]]);
+  assert.deepEqual(await response.json(), { error: "market_value_history_failed" });
+  assert.deepEqual(logs, [["[accounts] market value history failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
   assert.equal(database.queries.length, 1);
+});
+
+test("legacy fallback failures also hide private diagnostics", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const logs = [];
+  const database = createPool(async (sql) => {
+    if (sql.includes("FROM core.market_value_history")) {
+      throw Object.assign(new Error("missing relation"), { code: "42P01" });
+    }
+    throw new Error(privateDetail);
+  });
+  const server = await startRouter({
+    pool: database.pool,
+    logger: { error: (...args) => logs.push(args) },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1/market_value_history`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "market_value_history_failed" });
+  assert.deepEqual(logs, [["[accounts] market value history failed", "unknown"]]);
+  assert.equal(database.queries.length, 2);
 });
 
 test("market value history composition is explicit and its inline handler is absent", () => {

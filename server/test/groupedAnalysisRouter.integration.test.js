@@ -334,8 +334,11 @@ test("a single unavailable market retains the established 422 contract", async (
   assert.equal(queries, 1);
 });
 
-test("grouped analysis failures are bounded unless the explicit debug switch is active", async (context) => {
-  const failure = Object.assign(new Error("database_connection_failed"), { code: "08006" });
+test("grouped analysis failures stay bounded even when the explicit debug switch is active", async (context) => {
+  const failure = Object.assign(
+    new Error("postgresql://private-user:private-password@database.example/private-db"),
+    { code: "08006" },
+  );
   const logs = [];
   const base = routerOptions({
     pool: { query: async () => { throw failure; } },
@@ -356,13 +359,13 @@ test("grouped analysis failures are bounded unless the explicit debug switch is 
   assert.equal(debug.status, 500);
   assert.deepEqual(await debug.json(), {
     error: "grouped_analysis_failed",
-    detail: failure.message,
-    database_code: failure.code,
+    diagnostic_code: "08006",
   });
   assert.deepEqual(logs, [
-    ["/api/sales/grouped-analysis failed", failure],
-    ["/api/sales/grouped-analysis failed", failure],
+    ["/api/sales/grouped-analysis failed", "08006"],
+    ["/api/sales/grouped-analysis failed", "08006"],
   ]);
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
 });
 
 test("grouped-analysis composition is explicit and replaces the inline route", () => {

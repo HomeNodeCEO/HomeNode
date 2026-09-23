@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { refreshAccountLocations } from "../../services/accountLocations.js";
 import { buildGroupedAnalysis } from "../../util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "../../util/groupedAnalysisBreakdowns.js";
@@ -543,15 +544,11 @@ export function createGroupedAnalysisRouter({
         unavailable_breakdowns: unavailableBreakdowns,
       });
     } catch (error) {
-      logger.error?.("/api/sales/grouped-analysis failed", error);
+      const diagnosticCode = safeOperationalErrorCode(error);
+      logger.error?.("/api/sales/grouped-analysis failed", diagnosticCode);
       res.status(500).json({
         error: "grouped_analysis_failed",
-        ...(debugEnabled()
-          ? {
-              detail: error?.message || String(error),
-              database_code: error?.code || null,
-            }
-          : {}),
+        ...(debugEnabled() ? { diagnostic_code: diagnosticCode } : {}),
       });
     }
   });

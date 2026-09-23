@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { loadBoundaryStreetNames } from "../../services/boundaryStreets.js";
 import {
   buildMarketConditionsAnalyses,
@@ -91,8 +92,11 @@ export function createNeighborhoodAnalysisRouter({
           try {
             boundaryStreets = await loadBoundaryStreets(pool, request.customGeometry);
           } catch (error) {
-            boundaryStreetWarning = error?.message || "boundary_street_lookup_failed";
-            logger.warn?.("/api/sales/neighborhood-profile street lookup failed", error);
+            boundaryStreetWarning = "boundary_street_lookup_failed";
+            logger.warn?.(
+              "/api/sales/neighborhood-profile street lookup failed",
+              safeOperationalErrorCode(error),
+            );
           }
           return compactProfileResponse({
             ...market,
@@ -109,10 +113,13 @@ export function createNeighborhoodAnalysisRouter({
         res.set("Retry-After", "10");
         return res.status(503).json({ error: "neighborhood_profile_busy" });
       }
-      logger.error?.("/api/sales/neighborhood-profile failed", error);
-      return res.status(marketErrorStatus(message)).json({
-        error: message,
-        ...(error?.detail ? { detail: error.detail } : {}),
+      const status = marketErrorStatus(message);
+      logger.error?.("/api/sales/neighborhood-profile failed", safeOperationalErrorCode(error));
+      return res.status(status).json({
+        error: status >= 500 && message !== "market_spatial_support_not_ready"
+          ? "neighborhood_profile_failed"
+          : message,
+        ...(status < 500 && error?.detail ? { detail: error.detail } : {}),
       });
     }
   });
@@ -137,10 +144,14 @@ export function createNeighborhoodAnalysisRouter({
       return res.json(result);
     } catch (error) {
       const message = error?.message || "neighborhood_land_use_analysis_failed";
-      logger.error?.("/api/sales/neighborhood-land-use failed", error);
-      return res.status(landUseErrorStatus(message)).json({
-        error: message,
-        ...(error?.detail ? { detail: error.detail } : {}),
+      const status = landUseErrorStatus(message);
+      const publicProviderCode = /^dcad_land_use_query_(?:timeout|unavailable|http_(?:[1-5]\d\d|unknown)|provider_(?:\d{1,6}|error))$/.test(message);
+      logger.error?.("/api/sales/neighborhood-land-use failed", safeOperationalErrorCode(error));
+      return res.status(status).json({
+        error: status >= 500 && !publicProviderCode
+          ? "neighborhood_land_use_analysis_failed"
+          : message,
+        ...(status < 500 && error?.detail ? { detail: error.detail } : {}),
       });
     }
   });

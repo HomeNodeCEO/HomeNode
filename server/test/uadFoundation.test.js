@@ -444,6 +444,30 @@ test("the staging account-detail tables retain red-team column compatibility", (
   }
 });
 
+test("the staging bootstrap provides every core account-detail relation", () => {
+  const directory = path.dirname(fileURLToPath(import.meta.url));
+  const stagingSource = fs.readFileSync(
+    path.resolve(directory, "../scripts/prepareUadStagingDatabase.js"),
+    "utf8",
+  );
+  const accountDetailSource = fs.readFileSync(
+    path.resolve(directory, "../src/services/accountDetailSections.js"),
+    "utf8",
+  );
+  const relations = new Set(
+    [...accountDetailSource.matchAll(/\b(?:FROM|JOIN)\s+core\.([a-z_]+)/g)]
+      .map((match) => match[1]),
+  );
+  assert.ok(relations.has("v_account_housing_profiles"));
+  for (const relation of relations) {
+    assert.match(
+      stagingSource,
+      new RegExp(`CREATE (?:TABLE IF NOT EXISTS|OR REPLACE VIEW) core\\.${relation}\\b`),
+      `staging account-detail relation ${relation} must exist`,
+    );
+  }
+});
+
 test("casts the subject snapshot parameter before using PostgreSQL JSON operators", () => {
   const directory = path.dirname(fileURLToPath(import.meta.url));
   const source = fs.readFileSync(

@@ -231,7 +231,10 @@ test("task failure unlocks through the original checked-out connection", async (
   const lockStatements = [];
   let releases = 0;
   const pool = {
-    async query() { throw new Error("maintenance_schema_failed"); },
+    async query(sql) {
+      if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) return { rows: [{ id: 93 }] };
+      return { rows: [], rowCount: 0 };
+    },
     async connect() {
       return {
         async query(sql) {
@@ -244,7 +247,13 @@ test("task failure unlocks through the original checked-out connection", async (
       };
     },
   };
-  await assert.rejects(runScheduledMaintenance(pool, { task: "sessions", logger: { warn() {} } }), /maintenance_schema_failed/);
+  const result = await runScheduledMaintenance(pool, {
+    task: "sessions",
+    taskRunner: async () => { throw new Error("maintenance_task_failed"); },
+    logger: { info() {}, warn() {} },
+  });
+  assert.equal(result.ok, false);
+  assert.equal(result.failures[0].error, "maintenance_task_failed");
   assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
   assert.equal(releases, 1);
 });

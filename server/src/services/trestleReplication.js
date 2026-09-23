@@ -918,9 +918,6 @@ export async function runTrestlePropertyReplication(pool, trestleClient, {
     throw new Error("trestle_pool_requires_two_connections");
   }
   await ensureTrestleReplicationSchema(pool);
-  const lockClient = await acquireReplicationLock(pool);
-  if (!lockClient) return { ok: true, skipped: true, reason: "trestle_replication_already_running" };
-
   const workerId = `trestle-property-${randomUUID()}`;
   let runId = null;
   let cursorStartedAt = null;
@@ -935,6 +932,8 @@ export async function runTrestlePropertyReplication(pool, trestleClient, {
     mediaQueued: 0,
     canonicalSales: 0,
   };
+  const lockClient = await acquireReplicationLock(pool);
+  if (!lockClient) return { ok: true, skipped: true, reason: "trestle_replication_already_running" };
   try {
     const state = await pool.query(
       `SELECT cursor_timestamp FROM app.trestle_replication_state

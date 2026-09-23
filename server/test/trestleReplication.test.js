@@ -166,32 +166,40 @@ test("overlapping replication releases the unacquired lock client", async () => 
 });
 
 test("replication failure unlocks through the original connection", async () => {
-  const lockStatements = [];
-  let releases = 0;
-  const pool = {
-    async query(sql) {
-      if (/SELECT cursor_timestamp FROM app\.trestle_replication_state/.test(sql)) {
-        throw new Error("cursor_read_failed");
-      }
-      return { rows: [], rowCount: 0 };
-    },
-    async connect() {
-      return {
-        async query(sql) {
-          lockStatements.push(sql);
-          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
-          assert.match(sql, /pg_advisory_unlock/);
-          return { rows: [{ pg_advisory_unlock: true }] };
-        },
-        release() { releases += 1; },
-      };
-    },
-  };
-  await assert.rejects(runTrestlePropertyReplication(pool, {
-    status: () => ({ configured: true, enabled: true, replication_ready: true }),
-  }), /cursor_read_failed/);
-  assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
-  assert.equal(releases, 1);
+  for (const unlockFailure of [null, "query_rejected", "not_owned"]) {
+    const lockStatements = [];
+    const warnings = [];
+    let releaseReason;
+    let releases = 0;
+    const pool = {
+      async query(sql) {
+        if (/SELECT cursor_timestamp FROM app\.trestle_replication_state/.test(sql)) {
+          throw new Error("cursor_read_failed");
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        return {
+          async query(sql) {
+            lockStatements.push(sql);
+            if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+            assert.match(sql, /pg_advisory_unlock/);
+            if (unlockFailure === "query_rejected") throw new Error("unlock_query_failed");
+            return { rows: [{ pg_advisory_unlock: unlockFailure !== "not_owned" }] };
+          },
+          release(reason) { releases += 1; releaseReason = reason; },
+        };
+      },
+    };
+    await assert.rejects(runTrestlePropertyReplication(pool, {
+      status: () => ({ configured: true, enabled: true, replication_ready: true }),
+    }, { logger: { warn(...args) { warnings.push(args); } } }), /cursor_read_failed/);
+    assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
+    assert.equal(releases, 1);
+    assert.equal(releaseReason instanceof Error, Boolean(unlockFailure));
+    assert.equal(warnings.length, unlockFailure ? 1 : 0);
+    if (unlockFailure) assert.deepEqual(warnings[0], ["[trestle] advisory lock release failed", "trestle_lock_release_failed"]);
+  }
 });
 
 test("replication follows pages, advances the durable cursor, and aggregates outcomes", async () => {

@@ -560,6 +560,17 @@ test("mobile verifier failures never echo private outage messages or rejection d
   assert.deepEqual(mutableOutage.res.body, { error: "oidc_jwks_unavailable" });
   assert.equal(messageReads, 1);
 
+  const throwingOutage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => {
+        throw { statusCode: 503, get message() { throw new Error(privateDetail); } };
+      },
+    },
+  }).run();
+  assert.equal(throwingOutage.res.statusCode, 503);
+  assert.deepEqual(throwingOutage.res.body, { error: "oidc_unavailable" });
+
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => { warnings.push(args); };
@@ -595,12 +606,36 @@ test("mobile verifier failures never echo private outage messages or rejection d
     assert.equal(mutableRejection.res.statusCode, 401);
     assert.deepEqual(mutableRejection.res.body, { error: "invalid_access_token" });
     assert.equal(diagnosticReads, 1);
+
+    const throwingDiagnostic = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw { get diagnostic() { throw new Error(privateDetail); } };
+        },
+      },
+    }).run();
+    assert.equal(throwingDiagnostic.res.statusCode, 401);
+    assert.deepEqual(throwingDiagnostic.res.body, { error: "invalid_access_token" });
+
+    const throwingStatus = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw { get statusCode() { throw new Error(privateDetail); } };
+        },
+      },
+    }).run();
+    assert.equal(throwingStatus.res.statusCode, 401);
+    assert.deepEqual(throwingStatus.res.body, { error: "invalid_access_token" });
   } finally {
     console.warn = originalWarn;
   }
   assert.deepEqual(warnings, [
     ["[mobile] access token rejected reason=unknown"],
     ["[mobile] access token rejected reason=signature_invalid"],
+    ["[mobile] access token rejected reason=unknown"],
+    ["[mobile] access token rejected reason=unknown"],
   ]);
   assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
 });

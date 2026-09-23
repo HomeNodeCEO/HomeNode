@@ -41,6 +41,14 @@ const MAX_ORIGINAL_RECORD_BYTES = 16_384;
 const verifiedClaimProofs = new WeakMap();
 const originalMobileAttempts = new WeakMap();
 
+function readFailureField(error, field) {
+  try {
+    return error?.[field];
+  } catch {
+    return undefined;
+  }
+}
+
 function tokenDigest(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -522,12 +530,12 @@ export function createMobileAuthenticator({ pool, verifier }) {
       }
     } catch (error) {
       originalAttempt?.retire();
-      if (error?.statusCode === 503) {
-        const message = error?.message;
+      if (readFailureField(error, "statusCode") === 503) {
+        const message = readFailureField(error, "message");
         const code = PUBLIC_OIDC_OUTAGE_CODES.has(message) ? message : "oidc_unavailable";
         return res.status(503).json({ error: code });
       }
-      const diagnosticValue = error?.diagnostic;
+      const diagnosticValue = readFailureField(error, "diagnostic");
       const diagnostic = TOKEN_REJECTION_DIAGNOSTICS.has(diagnosticValue)
         ? diagnosticValue
         : "unknown";

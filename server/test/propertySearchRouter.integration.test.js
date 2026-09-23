@@ -252,7 +252,21 @@ test("property search failures return a stable code and bounded diagnostics", as
   const response = await fetch(`${server.baseUrl}/api/search?city=plano`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "search_failed" });
-  assert.deepEqual(logs, [[diagnostic]]);
+  assert.deepEqual(logs, [["property search failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
+});
+
+test("throwing property search logger cannot replace the fixed failure response", async (context) => {
+  const database = createPool(async () => { throw new Error("private_password"); });
+  const server = await startRouter(baseOptions(database, {
+    normalizeCity: () => "PLANO",
+    logger: { error() { throw new Error("logger_private_password"); } },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/search?city=plano`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "search_failed" });
 });
 
 test("property search composition is explicit and its inline handler is absent", () => {

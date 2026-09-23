@@ -7,6 +7,7 @@ import { ensureCensusGeographySchema } from "../../services/censusGeography.js";
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import { authorizePublicCadastralCatalogRead } from "../../security/publicCadastralCatalog.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 function requirePromise(value, code) {
   if (!value || typeof value.then !== "function") throw new TypeError(code);
@@ -147,7 +148,7 @@ export function createAccountDetailRouter({
         ? loadPropertyActivity(pool, canonicalId)
         : Promise.resolve([]))
         .catch((error) => {
-          logger.warn?.("property activity lookup failed", error?.code || "unknown_error");
+          try { logger.warn?.("property activity lookup failed", safeOperationalErrorCode(error)); } catch { /* Keep optional evidence optional. */ }
           return [];
         });
       const censusGeographyPromise = (async () => {
@@ -164,7 +165,7 @@ export function createAccountDetailRouter({
         );
         return rows[0] || null;
       })().catch((error) => {
-        logger.warn?.("census geography lookup failed", error?.message || error);
+        try { logger.warn?.("census geography lookup failed", safeOperationalErrorCode(error)); } catch { /* Keep optional evidence optional. */ }
         return null;
       });
       const reportManualValuesPromise = Promise.resolve({});
@@ -206,7 +207,7 @@ export function createAccountDetailRouter({
 
       return res.set("cache-control", "no-store").json(response);
     } catch (error) {
-      logger.error?.("account detail load failed", error);
+      try { logger.error?.("account detail load failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "accounts_failed" });
     }
   });

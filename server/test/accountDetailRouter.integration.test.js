@@ -325,6 +325,11 @@ test("optional account evidence failures preserve a bounded usable response", as
   assert.equal(body.owner_summary, null);
   assert.deepEqual(body.owner_parties, []);
   assert.equal(warnings.length, 2);
+  assert.deepEqual(warnings, [
+    ["property activity lookup failed", "08006"],
+    ["census geography lookup failed", "unknown"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(warnings), /password/);
   assert.doesNotMatch(JSON.stringify(body), /password|XX000|08006/);
 });
 
@@ -352,6 +357,46 @@ test("required account failures retain the stable response without diagnostics",
   assert.deepEqual(body, { error: "accounts_failed" });
   assert.doesNotMatch(JSON.stringify(body), /password|secret/);
   assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["account detail load failed", "unknown"]]);
+});
+
+test("throwing account loggers cannot fail optional evidence or replace fixed failures", async (context) => {
+  const logger = {
+    warn() { throw new Error("logger_private_password"); },
+    error() { throw new Error("logger_private_password"); },
+  };
+  const optional = await startRouter(baseOptions({
+    pool: {
+      async query(sql) {
+        if (/FROM core\.accounts a/.test(sql)) return { rows: [{ account_id: "123" }] };
+        if (/FROM core\.account_census_geographies/.test(sql)) throw new Error("private_password");
+        return { rows: [] };
+      },
+    },
+    loadPropertyActivity: async () => { throw new Error("private_password"); },
+    logger,
+  }));
+  const required = await startRouter(baseOptions({
+    pool: {
+      async query(sql) {
+        if (/FROM core\.accounts a/.test(sql)) return { rows: [{ account_id: "123" }] };
+        return { rows: [] };
+      },
+    },
+    loadDetailSections: async () => { throw new Error("private_password"); },
+    logger,
+  }));
+  context.after(async () => Promise.all([optional.close(), required.close()]));
+
+  const optionalResponse = await fetch(`${optional.baseUrl}/api/accounts/123`);
+  assert.equal(optionalResponse.status, 200);
+  const optionalBody = await optionalResponse.json();
+  assert.deepEqual(optionalBody.property_activity_history, []);
+  assert.equal(optionalBody.census_geography, null);
+
+  const requiredResponse = await fetch(`${required.baseUrl}/api/accounts/123`);
+  assert.equal(requiredResponse.status, 500);
+  assert.deepEqual(await requiredResponse.json(), { error: "accounts_failed" });
 });
 
 test("account detail composition fails fast for missing startup dependencies", () => {

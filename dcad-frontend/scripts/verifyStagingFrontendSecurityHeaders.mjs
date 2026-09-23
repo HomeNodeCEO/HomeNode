@@ -31,19 +31,41 @@ export function validateStagingFrontendSecurityHeaders(headers) {
     errors.push('staging_content_type_options_mismatch')
   }
   const hsts = normalized['strict-transport-security'] || ''
-  const maxAge = hsts.match(/(?:^|;)\s*max-age=(\d+)(?:;|$)/i)
   if (!hsts) {
     errors.push('staging_hsts_missing')
-  } else if (!maxAge || Number(maxAge[1]) < 31_536_000 ||
-      !/(?:^|;)\s*includesubdomains(?:;|$)/i.test(hsts)) {
-    errors.push('staging_hsts_weak')
+  } else {
+    const directives = new Map()
+    let malformed = false
+    for (const part of hsts.split(';')) {
+      const match = part.trim().match(/^([a-z][a-z0-9-]*)(?:\s*=\s*(.*))?$/i)
+      const name = match?.[1].toLowerCase()
+      if (!name || directives.has(name)) {
+        malformed = true
+        break
+      }
+      directives.set(name, match[2])
+    }
+    const maxAge = directives.get('max-age')
+    if (malformed || !/^\d+$/.test(maxAge || '') || Number(maxAge) < 31_536_000 ||
+        !directives.has('includesubdomains') || directives.get('includesubdomains') !== undefined) {
+      errors.push('staging_hsts_weak')
+    }
   }
   return errors
 }
 
-export function fetchStagingFrontendHeaders(timeoutMs = 15_000) {
+export function fetchStagingFrontendHeaders(timeoutMs = 15_000, requestFactory = https.get) {
   return new Promise((resolveRequest, rejectRequest) => {
-    const request = https.get(
+    let settled = false
+    let deadline
+    const finish = (error, headers) => {
+      if (settled) return
+      settled = true
+      clearTimeout(deadline)
+      if (error) rejectRequest(error)
+      else resolveRequest(headers)
+    }
+    const request = requestFactory(
       STAGING_FRONTEND_URL,
       {
         headers: {
@@ -54,14 +76,15 @@ export function fetchStagingFrontendHeaders(timeoutMs = 15_000) {
       (response) => {
         response.resume()
         if ((response.statusCode || 0) < 200 || (response.statusCode || 0) >= 300) {
-          rejectRequest(new Error('staging_frontend_http_error'))
+          finish(new Error('staging_frontend_http_error'))
           return
         }
-        resolveRequest(response.headers)
+        finish(null, response.headers)
       },
     )
-    request.setTimeout(timeoutMs, () => request.destroy(new Error('staging_frontend_timeout')))
-    request.on('error', rejectRequest)
+    request.once('error', (error) => finish(error))
+    // A wall-clock deadline also covers DNS and connection setup, unlike socket inactivity.
+    deadline = setTimeout(() => request.destroy(new Error('staging_frontend_timeout')), timeoutMs)
   })
 }
 

@@ -377,14 +377,14 @@ for (const [search, requestedFileId] of [['?propertyId=%20ACCOUNT%20A%20', undef
 
 test('actual shared approach loader refuses invalid intent before any request and missing explicit ID before account/workfile reads', async () => {
   const invalid = contextHarness(); await assert.rejects(invalid.load(null)); assert.deepEqual(invalid.calls, []);
-  const missing = contextHarness(); await assert.rejects(missing.load(77)); assert.deepEqual(missing.calls, [['list', ACCOUNT]]);
+  const missing = contextHarness(); await assert.rejects(missing.load(77)); assert.deepEqual(missing.calls, [['list', ACCOUNT, 77]]);
 });
 
 for (const [requested, id] of [[8, 8], [undefined, 9]]) test(`actual shared approach loader returns exact ${requested === undefined ? 'latest' : 'older'} assignment and paired account/workfile`, async () => {
   const h = contextHarness(), result = await h.load(requested);
   assert.equal(result.assignmentFile.id, id); assert.equal(result.workfile.assignment_file_id, id);
   assert.equal(result.property.account.account_id, ACCOUNT);
-  assert.deepEqual(h.calls, [['list', ACCOUNT], ['account', ACCOUNT, { assignmentFileId: id }], ['workfile', ACCOUNT, id]]);
+  assert.deepEqual(h.calls, [['list', ACCOUNT, requested], ['account', ACCOUNT, { assignmentFileId: id }], ['workfile', ACCOUNT, id]]);
 });
 
 for (const label of ['list account', 'assignment account', 'property account', 'workfile account', 'workfile id']) {
@@ -397,7 +397,7 @@ for (const label of ['list account', 'assignment account', 'property account', '
     if (label === 'workfile account') options.workfile.account_id = 'OTHER';
     if (label === 'workfile id') options.workfile.workfile.assignment_file_id = 9;
     const h = contextHarness(options); await assert.rejects(h.load(8));
-    if (label === 'list account' || label === 'assignment account') assert.deepEqual(h.calls, [['list', ACCOUNT]]);
+    if (label === 'list account' || label === 'assignment account') assert.deepEqual(h.calls, [['list', ACCOUNT, 8]]);
   });
 }
 

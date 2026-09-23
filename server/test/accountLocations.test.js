@@ -2,9 +2,38 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   accountLocationInternals,
+  ensureAccountLocationsTable,
   findDcadParcelsByAddress,
   refreshAccountLocations,
 } from "../src/services/accountLocations.js";
+
+test("account-location schema ensure shares one per-pool attempt and caches success", async () => {
+  let finish;
+  const pending = new Promise((resolve) => { finish = resolve; });
+  let calls = 0;
+  const pool = { query: () => { calls += 1; return pending; } };
+  const first = ensureAccountLocationsTable(pool);
+  const second = ensureAccountLocationsTable(pool);
+  assert.equal(calls, 1);
+  finish({ rows: [] });
+  await Promise.all([first, second]);
+  await ensureAccountLocationsTable(pool);
+  assert.equal(calls, 1);
+
+  await ensureAccountLocationsTable({ query: async () => { calls += 1; } });
+  assert.equal(calls, 2);
+});
+
+test("account-location schema ensure retries after a failed attempt", async () => {
+  let calls = 0;
+  const pool = { query: async () => {
+    calls += 1;
+    if (calls === 1) throw new Error("database unavailable");
+  } };
+  await assert.rejects(ensureAccountLocationsTable(pool), /database unavailable/);
+  await ensureAccountLocationsTable(pool);
+  assert.equal(calls, 2);
+});
 
 function jsonResponse(value, init = {}) {
   return new Response(JSON.stringify(value), {

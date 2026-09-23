@@ -3,8 +3,60 @@ import test from "node:test";
 
 import {
   enqueueLocationBackfillAccounts,
+  ensureLocationBackfillQueueSchema,
   locationBackfillRetryDelaySeconds,
 } from "../src/services/locationBackfillQueue.js";
+
+test("location-backfill schema ensure shares one per-pool attempt and caches success", async () => {
+  let finishQueue;
+  const queuePending = new Promise((resolve) => { finishQueue = resolve; });
+  let markQueueStarted;
+  const queueStarted = new Promise((resolve) => { markQueueStarted = resolve; });
+  const calls = [];
+  const pool = { query: (sql) => {
+    calls.push(sql);
+    if (calls.length === 2) {
+      markQueueStarted();
+      return queuePending;
+    }
+    return Promise.resolve({ rows: [] });
+  } };
+  const first = ensureLocationBackfillQueueSchema(pool);
+  const second = ensureLocationBackfillQueueSchema(pool);
+  await queueStarted;
+  assert.equal(calls.length, 2);
+  finishQueue({ rows: [] });
+  await Promise.all([first, second]);
+  await ensureLocationBackfillQueueSchema(pool);
+  assert.equal(calls.length, 2);
+  assert.match(calls[0], /core\.account_locations/);
+  assert.match(calls[1], /app\.location_backfill_queue/);
+});
+
+test("location-backfill schema ensure retries only its failed phase", async () => {
+  const calls = [];
+  const pool = { query: async (sql) => {
+    calls.push(sql);
+    if (calls.length === 2) throw new Error("queue schema unavailable");
+  } };
+  await assert.rejects(ensureLocationBackfillQueueSchema(pool), /queue schema unavailable/);
+  await ensureLocationBackfillQueueSchema(pool);
+  assert.equal(calls.length, 3);
+  assert.match(calls[2], /app\.location_backfill_queue/);
+});
+
+test("location-backfill schema ensure retries both phases after its prerequisite fails", async () => {
+  const calls = [];
+  const pool = { query: async (sql) => {
+    calls.push(sql);
+    if (calls.length === 1) throw new Error("account locations unavailable");
+  } };
+  await assert.rejects(ensureLocationBackfillQueueSchema(pool), /account locations unavailable/);
+  await ensureLocationBackfillQueueSchema(pool);
+  assert.equal(calls.length, 3);
+  assert.match(calls[1], /core\.account_locations/);
+  assert.match(calls[2], /app\.location_backfill_queue/);
+});
 
 test("location backfill retries use bounded exponential delays", () => {
   assert.equal(locationBackfillRetryDelaySeconds(1), 30);

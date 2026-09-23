@@ -3,8 +3,26 @@ import test from "node:test";
 import pg from "pg";
 
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
+import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("custom signed-PDF byte audit verifies digest against migrated PostgreSQL without writes", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const builtInDigest = await pool.query("SELECT encode(sha256('abc'::bytea), 'hex') AS sha256");
+    assert.equal(builtInDigest.rows[0].sha256,
+      "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad");
+    const result = await auditCustomSignedPdfContent(pool);
+    assert.notEqual(result.code, "custom_signed_pdf_content_schema_missing");
+    assert.equal(Number.isSafeInteger(result.artifact_count), true);
+    assert.equal(Number.isSafeInteger(result.content_digest_mismatch_count), true);
+  } finally {
+    await pool.end();
+  }
+});
 
 test("custom signed-PDF parity audit runs against migrated PostgreSQL without writes", {
   skip: !databaseUrl,

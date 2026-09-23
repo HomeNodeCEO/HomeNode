@@ -99,7 +99,10 @@ if (isCli) {
   verifyDeployedStagingFrontend()
     .then((result) => console.log(JSON.stringify(result)))
     .catch((error) => {
-      console.error(error instanceof Error ? error.message : 'staging_frontend_verification_failed')
+      const code = error instanceof Error && error.message === 'staging_frontend_timeout'
+        ? 'staging_frontend_timeout'
+        : 'staging_frontend_verification_failed'
+      console.error(code)
       process.exitCode = 1
     })
 }

@@ -10,6 +10,23 @@ import {
   subjectFromAccountResponse,
   subjectFromDetailResponse,
 } from '../src/lib/comparableSubjectData.ts';
+import { mapAccountDetailToLegacy } from '../src/lib/legacyDcadDetail.ts';
+
+test('assignment-scoped account data supplies legacy comparable fields without another request', () => {
+  const scopedAccount = {
+    account: { address: '1909 Snowmass Ln', latest_market_value: 325000 },
+    primary_improvements: { living_area_sqft: 1840, bedroom_count: 3, baths_full: 2 },
+    secondary_improvements: [{ imp_desc: 'Detached Garage', area_size: 420 }],
+  };
+  const subject = subjectFromDetailResponse(
+    mapAccountDetailToLegacy(scopedAccount),
+    'A-1',
+  );
+  assert.equal(subject.address, '1909 Snowmass Ln');
+  assert.equal(subject.total_living_area, 1840);
+  assert.equal(subject.market_value, 325000);
+  assert.equal(subject.garage_area_sqft, 420);
+});
 
 test('account responses populate only checked comparable subject fields', () => {
   const subject = subjectFromAccountResponse({
@@ -111,4 +128,7 @@ test('the comparable-sales page uses checked data and bounded scraper requests',
   assert.match(page, /await loadComparableSubject\(/);
   assert.match(loader, /AbortSignal\.timeout\(15_000\)/);
   assert.match(loader, /subjectFromDetailResponse/);
+  assert.match(loader, /mapAccountDetailToLegacy\(accountResponse\)/);
+  assert.match(loader, /fetchDetail\(propertyId, 1, \{ assignmentFileId \}\)/);
+  assert.doesNotMatch(loader, /await fetchDetail\(propertyId\)/);
 });

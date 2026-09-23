@@ -25,7 +25,7 @@ export async function loadAppraisalFileContext(
   requestedFileId: number | null | undefined,
 ) {
   if (!propertyId.trim() || requestedFileId === null) throw new Error(CUSTOM_ASSIGNMENT_REQUEST_ERROR);
-  const files = await loadAssignmentFiles(propertyId);
+  const files = await loadAssignmentFiles(propertyId, requestedFileId);
   const assignmentFile = selectCustomAssignmentFile(files, propertyId, requestedFileId);
   const [property, workfileResult] = await Promise.all([
     api.getAccount(propertyId, { assignmentFileId: assignmentFile?.id }),

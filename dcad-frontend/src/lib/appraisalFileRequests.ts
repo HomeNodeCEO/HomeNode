@@ -10,11 +10,14 @@ type WorkfileResponse = Awaited<ReturnType<typeof getCustomAppraisalWorkfile>>;
 
 const workfileRequests = createInFlightRequestCache<WorkfileResponse>();
 
-export function loadAssignmentFiles(accountId: string): Promise<AssignmentFilesResponse> {
+export function loadAssignmentFiles(
+  accountId: string,
+  assignmentFileId?: number | null,
+): Promise<AssignmentFilesResponse> {
   const normalizedAccountId = accountId.trim().toUpperCase();
   return assignmentFileRequests.load(
-    normalizedAccountId,
-    () => getAssignmentFiles(accountId),
+    `${normalizedAccountId}:${assignmentFileId ?? "all"}`,
+    () => getAssignmentFiles(accountId, assignmentFileId),
   );
 }
 

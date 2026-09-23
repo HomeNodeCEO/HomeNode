@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -66,4 +67,10 @@ test("failed in-flight requests are released for retry", async () => {
     /temporary/,
   );
   assert.equal(await cache.load("ACCOUNT:2", async () => "recovered"), "recovered");
+});
+
+test("assignment-file request coalescing keeps exact file scopes separate", async () => {
+  const source = await readFile(new URL("../src/lib/appraisalFileRequests.ts", import.meta.url), "utf8");
+  assert.match(source, /`\$\{normalizedAccountId\}:\$\{assignmentFileId \?\? "all"\}`/u);
+  assert.match(source, /getAssignmentFiles\(accountId, assignmentFileId\)/u);
 });

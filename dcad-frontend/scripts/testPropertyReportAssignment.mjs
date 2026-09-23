@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
@@ -6,6 +7,12 @@ import {
   assignmentValidationErrors,
 } from "../src/lib/propertyReportAssignment.ts";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "../src/lib/propertyReportHydration.ts";
+
+test("Property Report refreshes only the active assignment's mobile evidence and conflict revision", async () => {
+  const source = await readFile(new URL("../src/pages/PropertyReport.tsx", import.meta.url), "utf8");
+  assert.match(source, /const response = await getAssignmentFiles\(accountId, activeAssignmentFileId\);/u);
+  assert.match(source, /const latestResponse = await getAssignmentFiles\(accountId, fileAtStart\.id\);/u);
+});
 
 for (const observed of [false, true]) for (const zip of [undefined, null, '', '  ', 0, '3.5'])
   for (const city of [undefined, null, '', '  ', 0, '4.5']) {

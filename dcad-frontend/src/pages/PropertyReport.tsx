@@ -663,7 +663,7 @@ function AddressHero({
     sketchEvidenceRefreshInFlight.current = true;
     setSketchEvidenceRefreshing(true);
     try {
-      const response = await getAssignmentFiles(accountId);
+      const response = await getAssignmentFiles(accountId, activeAssignmentFileId);
       const refreshed = response.files.find((file) => file.id === activeAssignmentFileId);
       if (!refreshed) return;
       const mergeEvidence = (current: AppraisalAssignmentFile): AppraisalAssignmentFile => ({
@@ -678,7 +678,7 @@ function AddressHero({
         file.id === refreshed.id ? mergeEvidence(file) : file
       )));
     } catch {
-      // Non-blocking evidence refresh.
+      // Optional refresh.
     } finally {
       sketchEvidenceRefreshInFlight.current = false;
       setSketchEvidenceRefreshing(false);
@@ -1060,7 +1060,7 @@ function AddressHero({
         if (/401|invalid_editor_key/i.test(message)) forgetEditorCredential();
         if (message === "assignment_file_revision_conflict" && allowConflictRetry) {
           try {
-            const latestResponse = await getAssignmentFiles(accountId);
+            const latestResponse = await getAssignmentFiles(accountId, fileAtStart.id);
             if (!selectionIsCurrent()) return false;
             const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id);
             if (latestFile) {
@@ -1112,7 +1112,7 @@ function AddressHero({
               return reconciliation.localChangedKeys.length === 0;
             }
           } catch {
-            // Fall through to the actionable conflict message below.
+            // Report the conflict below.
           }
         }
         setAssignmentAutosaveState("error");

@@ -529,6 +529,117 @@ test("normal native 401/403/503 failures never create private provenance", async
   }
 });
 
+test("mobile verifier failures never echo private outage messages or rejection diagnostics", async () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const outage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => { throw Object.assign(new Error(privateDetail), { statusCode: 503 }); },
+    },
+  }).run();
+  assert.equal(outage.res.statusCode, 503);
+  assert.deepEqual(outage.res.body, { error: "oidc_unavailable" });
+  assert.equal(outage.original(), null);
+
+  let messageReads = 0;
+  const mutableOutage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => {
+        throw {
+          statusCode: 503,
+          get message() {
+            messageReads += 1;
+            return messageReads === 1 ? "oidc_jwks_unavailable" : privateDetail;
+          },
+        };
+      },
+    },
+  }).run();
+  assert.equal(mutableOutage.res.statusCode, 503);
+  assert.deepEqual(mutableOutage.res.body, { error: "oidc_jwks_unavailable" });
+  assert.equal(messageReads, 1);
+
+  const throwingOutage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => {
+        throw { statusCode: 503, get message() { throw new Error(privateDetail); } };
+      },
+    },
+  }).run();
+  assert.equal(throwingOutage.res.statusCode, 503);
+  assert.deepEqual(throwingOutage.res.body, { error: "oidc_unavailable" });
+
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const rejected = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw Object.assign(new Error("invalid_access_token"), {
+            diagnostic: `invalid\n${privateDetail}`,
+          });
+        },
+      },
+    }).run();
+    assert.equal(rejected.res.statusCode, 401);
+    assert.deepEqual(rejected.res.body, { error: "invalid_access_token" });
+    assert.equal(rejected.original(), null);
+
+    let diagnosticReads = 0;
+    const mutableRejection = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw {
+            get diagnostic() {
+              diagnosticReads += 1;
+              return diagnosticReads === 1 ? "signature_invalid" : privateDetail;
+            },
+          };
+        },
+      },
+    }).run();
+    assert.equal(mutableRejection.res.statusCode, 401);
+    assert.deepEqual(mutableRejection.res.body, { error: "invalid_access_token" });
+    assert.equal(diagnosticReads, 1);
+
+    const throwingDiagnostic = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw { get diagnostic() { throw new Error(privateDetail); } };
+        },
+      },
+    }).run();
+    assert.equal(throwingDiagnostic.res.statusCode, 401);
+    assert.deepEqual(throwingDiagnostic.res.body, { error: "invalid_access_token" });
+
+    const throwingStatus = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw { get statusCode() { throw new Error(privateDetail); } };
+        },
+      },
+    }).run();
+    assert.equal(throwingStatus.res.statusCode, 401);
+    assert.deepEqual(throwingStatus.res.body, { error: "invalid_access_token" });
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(warnings, [
+    ["[mobile] access token rejected reason=unknown"],
+    ["[mobile] access token rejected reason=signature_invalid"],
+    ["[mobile] access token rejected reason=unknown"],
+    ["[mobile] access token rejected reason=unknown"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
+});
+
 test("absent browser session and lookup outage preserve ordinary clearing/failure behavior", async () => {
   const missing = await fixture("web", { poolOptions: { resultRows: [] } }).run();
   healthy(missing);

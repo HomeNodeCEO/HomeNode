@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 import { jsonErrorHandler } from "../../security/httpSecurity.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 import { createMobileAuthenticator } from "./auth.js";
 import {
@@ -71,7 +72,7 @@ function sendError(res, error) {
     ? "mobile_request_failed"
     : String(error?.message || "mobile_request_failed").split(":")[0];
   if (code === "uad_workfile_status_locked") res.set("Cache-Control", "no-store");
-  if (status === 500) console.error("[mobile] request failed", error);
+  if (status === 500) console.error("[mobile] request failed", safeOperationalErrorCode(error));
   return res.status(status).json({
     error: code,
     ...(code === "inspection_not_ready_conflict" ? { details: error.details } : {}),

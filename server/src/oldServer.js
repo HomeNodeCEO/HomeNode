@@ -92,6 +92,7 @@ import { startApplicationHttpLifecycle } from "./application/httpLifecycle.js";
 import { createApplicationStartupResources } from "./application/startupResources.js";
 import { createRuntimeHealthHandlers } from "./security/runtimeHealth.js";
 import { createStartupInitializationRegistry } from "./security/startupInitialization.js";
+import { safeOperationalErrorCode } from "./security/safeOperationalErrorCode.js";
 import {
   createApplicationRateLimiterOptions,
   mountApplicationRouteBoundary,
@@ -130,7 +131,7 @@ const pool = new pg.Pool({
   application_name: "homenode-web",
 });
 pool.on("error", (error) => {
-  console.error("[database] idle pool client error", error?.message || error);
+  console.error("[database] idle pool client error", safeOperationalErrorCode(error));
 });
 const requestPerformance = createRequestPerformanceMonitor({ pool });
 const loadDcadScraperStatus = redTeamIsolation.external_status_enabled

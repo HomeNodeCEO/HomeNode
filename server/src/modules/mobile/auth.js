@@ -1,6 +1,35 @@
 import { createHash, createPublicKey, verify as verifySignature } from "node:crypto";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+
 const TOKEN_PATTERN = /^Bearer\s+([^\s]+)$/i;
+const PUBLIC_OIDC_OUTAGE_CODES = new Set([
+  "mobile_oidc_not_configured",
+  "oidc_discovery_unavailable",
+  "oidc_discovery_issuer_mismatch",
+  "invalid_oidc_jwks_uri",
+  "oidc_jwks_unavailable",
+  "invalid_oidc_jwks",
+  "oidc_jwks_has_no_supported_keys",
+]);
+const TOKEN_REJECTION_DIAGNOSTICS = new Set([
+  "bearer_missing_or_malformed",
+  "payload_not_object",
+  "issuer_mismatch",
+  "audience_mismatch",
+  "client_id_mismatch",
+  "subject_missing_or_invalid",
+  "expired_or_missing_expiration",
+  "not_yet_valid",
+  "issued_in_future",
+  "authorized_party_mismatch",
+  "token_missing_or_too_large",
+  "jwt_format_invalid",
+  "jwt_header_unsupported",
+  "signing_key_not_found",
+  "signature_verification_failed",
+  "signature_invalid",
+]);
 const MAX_TOKEN_LENGTH = 16_384;
 const DEFAULT_CACHE_MILLISECONDS = 5 * 60 * 1000;
 const DEFAULT_JWKS_REFRESH_COOLDOWN_MILLISECONDS = 30_000;
@@ -11,6 +40,14 @@ const MAX_ORIGINAL_RECORD_BYTES = 16_384;
 // Neither proofs nor their minting operations are exported or attached to auth.
 const verifiedClaimProofs = new WeakMap();
 const originalMobileAttempts = new WeakMap();
+
+function readFailureField(error, field) {
+  try {
+    return error?.[field];
+  } catch {
+    return undefined;
+  }
+}
 
 function tokenDigest(value) {
   return createHash("sha256").update(value).digest("hex");
@@ -493,10 +530,16 @@ export function createMobileAuthenticator({ pool, verifier }) {
       }
     } catch (error) {
       originalAttempt?.retire();
-      if (error?.statusCode === 503) {
-        return res.status(503).json({ error: String(error.message || "oidc_unavailable") });
+      if (readFailureField(error, "statusCode") === 503) {
+        const message = readFailureField(error, "message");
+        const code = PUBLIC_OIDC_OUTAGE_CODES.has(message) ? message : "oidc_unavailable";
+        return res.status(503).json({ error: code });
       }
-      console.warn(`[mobile] access token rejected reason=${error?.diagnostic || "unknown"}`);
+      const diagnosticValue = readFailureField(error, "diagnostic");
+      const diagnostic = TOKEN_REJECTION_DIAGNOSTICS.has(diagnosticValue)
+        ? diagnosticValue
+        : "unknown";
+      console.warn(`[mobile] access token rejected reason=${diagnostic}`);
       return res.status(401).json({ error: "invalid_access_token" });
     }
     try {
@@ -568,7 +611,7 @@ export function createMobileAuthenticator({ pool, verifier }) {
       return next();
     } catch (error) {
       originalAttempt?.retire();
-      console.error("[mobile] identity lookup failed", error?.message || error);
+      console.error("[mobile] identity lookup failed", safeOperationalErrorCode(error));
       return res.status(503).json({ error: "mobile_auth_unavailable" });
     }
   };

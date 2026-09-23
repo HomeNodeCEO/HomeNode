@@ -77,6 +77,40 @@ test("mobile endpoints reject requests beyond the configured client limit", asyn
   assert.deepEqual(await blocked.json(), { error: "mobile_rate_limit_exceeded" });
 });
 
+test("unexpected mobile route failures log only bounded diagnostic codes", async (t) => {
+  const fixture = authenticatedFixture();
+  const originalQuery = fixture.pool.query;
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  fixture.pool.query = async (sql, ...args) => {
+    if (String(sql).includes("WITH accessible_files AS")) {
+      throw Object.assign(new Error(privateDetail), { code: "secret\nforged-log-line" });
+    }
+    return originalQuery(sql, ...args);
+  };
+  const app = express();
+  app.use("/api/mobile", createMobileRouter({
+    pool: fixture.pool,
+    verifier: fixture.verifier,
+    enabled: true,
+    security: { apiRateLimitEnabled: false },
+  }));
+  const baseUrl = await listen(app, t);
+  const calls = [];
+  const originalError = console.error;
+  console.error = (...args) => { calls.push(args); };
+  try {
+    const response = await fetch(`${baseUrl}/api/mobile/properties/search?q=Main`, {
+      headers: { authorization: "Bearer test-token" },
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "mobile_request_failed" });
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(calls, [["[mobile] request failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(calls), /private-password|forged-log-line/);
+});
+
 test("mobile rate limiting and authentication settle before JSON parsing", async (t) => {
   const fixture = authenticatedFixture();
   const app = express();

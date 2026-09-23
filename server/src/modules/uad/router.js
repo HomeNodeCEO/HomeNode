@@ -2,6 +2,8 @@ import express from "express";
 import { isIP } from "node:net";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+
 import {
   createUadAssetUpload,
   deleteUadAsset,
@@ -161,8 +163,8 @@ function errorStatus(error) {
 function sendError(res, error) {
   const status = errorStatus(error);
   const code = status === 500 ? "uad_request_failed" : String(error?.message || "uad_request_failed").split(":")[0];
-  if (status === 500) console.error("[uad] request failed", error);
-  res.status(status).json({ error: code, ...(error?.details ? { details: error.details } : {}) });
+  if (status === 500) console.error("[uad] request failed", safeOperationalErrorCode(error));
+  res.status(status).json({ error: code, ...(status !== 500 && error?.details ? { details: error.details } : {}) });
 }
 
 export function uadBodyParserErrorHandler(error, _req, res, next) {

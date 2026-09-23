@@ -383,12 +383,13 @@ test("assignment photo routes retain stable error status mappings", async (conte
       throw new Error("assignment_photo_storage_not_configured");
     },
     verifyPhoto: async () => { throw new Error("invalid_assignment_photo_checksum"); },
+    logger: { error() {} },
   })));
   context.after(server.close);
   const prefix = `${server.baseUrl}/api/accounts/42/assignment-files/7`;
   const requests = [
     [fetch(`${prefix}/photos`), 404, "assignment_photo_file_not_found"],
-    [fetch(`${prefix}/photos/version`), 500, "database_failure"],
+    [fetch(`${prefix}/photos/version`), 500, "assignment_photo_version_lookup_failed"],
     [fetch(`${prefix}/photos/upload-requests`, jsonRequest("POST")), 409,
       "assignment_photo_limit_conflict"],
     [fetch(`${prefix}/photos/photo-1/objects/object-1/content`, {
@@ -404,6 +405,102 @@ test("assignment photo routes retain stable error status mappings", async (conte
     assert.equal(response.status, status);
     assert.deepEqual(await response.json(), { error });
   }
+});
+
+test("unexpected photo failures hide private details across reads and mutations", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), { code: "08006" });
+  const logs = [];
+  const server = await startRouter(createAssignmentPhotoRouter(options({
+    listPhotos: async () => { throw failure; },
+    getPhotoVersion: async () => { throw failure; },
+    getEvidenceVersion: async () => { throw failure; },
+    createPhotoUpload: async () => { throw failure; },
+    uploadPhotoObject: async () => { throw failure; },
+    verifyPhoto: async () => { throw failure; },
+    updatePhotoMetadata: async () => { throw failure; },
+    removePhoto: async () => { throw failure; },
+    logger: { error: (...args) => logs.push(args) },
+  })));
+  context.after(server.close);
+  const prefix = `${server.baseUrl}/api/accounts/42/assignment-files/7`;
+  const requests = [
+    [fetch(`${prefix}/photos`), "assignment_photos_lookup_failed"],
+    [fetch(`${prefix}/photos/version`), "assignment_photo_version_lookup_failed"],
+    [fetch(`${prefix}/evidence/version`), "assignment_evidence_version_lookup_failed"],
+    [fetch(`${prefix}/photos/upload-requests`, jsonRequest("POST")), "assignment_photo_upload_request_failed"],
+    [fetch(`${prefix}/photos/photo-1/objects/object-1/content`, {
+      method: "PUT",
+      headers: { "content-type": "image/png" },
+      body: Uint8Array.from([1]),
+    }), "assignment_photo_object_upload_failed"],
+    [fetch(`${prefix}/photos/photo-1/verify`, jsonRequest("POST")), "assignment_photo_verification_failed"],
+    [fetch(`${prefix}/photos/photo-1`, jsonRequest("PATCH")), "assignment_photo_update_failed"],
+    [fetch(`${prefix}/photos/photo-1`, { method: "DELETE" }), "assignment_photo_remove_failed"],
+  ];
+  for (const [pending, error] of requests) {
+    const response = await pending;
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error });
+  }
+  assert.equal(logs.length, requests.length);
+  assert.ok(logs.every(([, code]) => code === "08006"));
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
+
+  const uploadLogs = [];
+  const deniedBeforeBuffering = await startRouter(createAssignmentPhotoRouter(options({
+    resolveAccountId: async () => { throw failure; },
+    logger: { error: (...args) => uploadLogs.push(args) },
+  })));
+  context.after(deniedBeforeBuffering.close);
+  const uploadResponse = await fetch(
+    `${deniedBeforeBuffering.baseUrl}/api/accounts/42/assignment-files/7/photos/photo-1/objects/object-1/content`,
+    { method: "PUT", headers: { "content-type": "image/png" }, body: Uint8Array.from([1]) },
+  );
+  assert.equal(uploadResponse.status, 500);
+  assert.deepEqual(await uploadResponse.json(), { error: "assignment_photo_object_upload_failed" });
+  assert.deepEqual(uploadLogs, [["assignment_photo_object_upload_failed", "08006"]]);
+});
+
+test("throwing diagnostic getters cannot bypass the fixed photo failure response", async (context) => {
+  const failure = {
+    get message() { throw new Error("private_message"); },
+    get code() { throw new Error("private_code"); },
+  };
+  const logs = [];
+  const server = await startRouter(createAssignmentPhotoRouter(options({
+    listPhotos: async () => { throw failure; },
+    logger: { error: (...args) => logs.push(args) },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/photos`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "assignment_photos_lookup_failed" });
+  assert.deepEqual(logs, [["assignment_photos_lookup_failed", "unknown"]]);
+});
+
+test("throwing photo failure logger cannot replace the fixed response", async (context) => {
+  const server = await startRouter(createAssignmentPhotoRouter(options({
+    listPhotos: async () => { throw new Error("private_password"); },
+    logger: { error() { throw new Error("logger_private_password"); } },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/photos`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "assignment_photos_lookup_failed" });
+});
+
+test("unrecognized invalid-photo prefixes cannot echo private exception text", async (context) => {
+  const logs = [];
+  const server = await startRouter(createAssignmentPhotoRouter(options({
+    listPhotos: async () => { throw new Error("invalid_assignment_photo_private_password"); },
+    logger: { error: (...args) => logs.push(args) },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/photos`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "assignment_photos_lookup_failed" });
+  assert.deepEqual(logs, [["assignment_photos_lookup_failed", "unknown"]]);
 });
 
 test("assignment photo router validates composition and replaces inline routes", () => {

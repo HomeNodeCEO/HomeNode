@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import * as api from '@/lib/api';
 import { fetchDetail } from '@/lib/dcad';
+import { createSignupAccountReader } from '@/features/signup/signupAccountReader';
 import {
   countyFromAccount,
   legalDescriptionFromAccount,
@@ -59,6 +60,10 @@ export default function SignUpForm() {
     const p = new URLSearchParams(location.search);
     return p.get('ownerName') || '';
   }, [location.search]);
+  const accountReader = useMemo(
+    () => accountId ? createSignupAccountReader(accountId, api.getAccount, fetchDetail) : null,
+    [accountId],
+  );
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [sigUrl, setSigUrl] = useState<string | null>(null);
@@ -106,12 +111,12 @@ export default function SignUpForm() {
 
   // If arrived from Property Report with an accountId, fetch owner name and prefill
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountReader) return;
     if (ownerNameFromQuery) return; // priority: honor explicitly provided ownerName
     let cancelled = false;
     (async () => {
       try {
-        const detail: unknown = await fetchDetail(accountId);
+        const detail: unknown = await accountReader.detail();
         const ownerName = ownerNameFromDetail(detail);
         if (!cancelled && ownerName) {
           setFields(f => ({ ...f, ownerName }));
@@ -121,7 +126,7 @@ export default function SignUpForm() {
       }
     })();
     return () => { cancelled = true; };
-  }, [accountId, ownerNameFromQuery]);
+  }, [accountReader, ownerNameFromQuery]);
 
   // If ownerName is passed via query param, set it immediately
   useEffect(() => {
@@ -140,14 +145,14 @@ export default function SignUpForm() {
 
   // Auto-fill Appraisal District Name using DB county (preferred) or mapsco (fallback)
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountReader) return;
     let cancelled = false;
     (async () => {
       try {
         let name = '';
         // Prefer county from DB
         try {
-          const d = await api.getAccount(accountId);
+          const d = await accountReader.account();
           const trimmed = countyFromAccount(d);
           if (trimmed) {
             const base = titleCaseCounty(trimmed.replace(/\s*county$/i, '').trim());
@@ -157,7 +162,7 @@ export default function SignUpForm() {
         // Fallback to mapsco via scraper detail => Dallas CAD
         if (!name) {
           try {
-            const det: unknown = await fetchDetail(accountId);
+            const det: unknown = await accountReader.detail();
             const mapsco = mapscoFromDetail(det);
             if (mapsco) name = 'Dallas Central Appraisal District';
           } catch {}
@@ -170,15 +175,15 @@ export default function SignUpForm() {
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [accountReader]);
 
   // Force legal description from Property Report detail (Ownership section) to ensure all lines are captured
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountReader) return;
     let cancelled = false;
     (async () => {
       try {
-        const det: unknown = await fetchDetail(accountId);
+        const det: unknown = await accountReader.detail();
         const text = legalDescriptionFromDetail(det);
         if (!cancelled && text) {
           setFields(f => {
@@ -191,7 +196,7 @@ export default function SignUpForm() {
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [accountReader]);
 
   // --- Step 1 auto-fill: Address/City/State/Zip from mailing address when it matches subject address ---
   function parseMailingParts(addr: string): { line: string; city: string; state: string; zip: string } {
@@ -225,7 +230,7 @@ export default function SignUpForm() {
   }
 
   useEffect(() => {
-    if (!accountId) return;
+    if (!accountReader) return;
     let cancelled = false;
     (async () => {
       try {
@@ -233,14 +238,14 @@ export default function SignUpForm() {
         let subjectAddress = '';
         let legalFromDetail: string = '';
         try {
-          const d = await api.getAccount(accountId);
+          const d = await accountReader.account();
           subjectAddress = subjectAddressFromAccount(d);
           // Prefer legal description from DB current if available
           legalFromDetail = legalDescriptionFromAccount(d);
         } catch {}
         if (!subjectAddress) {
           try {
-            const det: unknown = await fetchDetail(accountId);
+            const det: unknown = await accountReader.detail();
             subjectAddress = subjectAddressFromDetail(det);
             // Try to extract legal description lines
             legalFromDetail = legalDescriptionFromDetail(det) || legalFromDetail;
@@ -249,7 +254,7 @@ export default function SignUpForm() {
         // Mailing address from Property Report
         let mailingAddress = '';
         try {
-          const det: unknown = await fetchDetail(accountId);
+          const det: unknown = await accountReader.detail();
           mailingAddress = mailingAddressFromDetail(det);
         } catch {}
         if (mailingAddress) {
@@ -282,7 +287,7 @@ export default function SignUpForm() {
       } catch {}
     })();
     return () => { cancelled = true; };
-  }, [accountId]);
+  }, [accountId, accountReader]);
 
   function openFilePicker() {
     inputRef.current?.click();
@@ -654,4 +659,3 @@ export default function SignUpForm() {
     </div>
   );
 }
-

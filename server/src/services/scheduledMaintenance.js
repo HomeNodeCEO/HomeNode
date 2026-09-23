@@ -176,18 +176,36 @@ export async function purgeExpiredWebSessions(pool, {
 }
 
 async function acquireMaintenanceLock(pool) {
-  const { rows } = await pool.query(
-    "SELECT pg_try_advisory_lock($1, $2) AS acquired",
-    [MAINTENANCE_LOCK_A, MAINTENANCE_LOCK_B],
-  );
-  return Boolean(rows[0]?.acquired);
+  const client = await pool.connect();
+  let rows;
+  try {
+    ({ rows } = await client.query(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      [MAINTENANCE_LOCK_A, MAINTENANCE_LOCK_B],
+    ));
+  } catch (error) {
+    client.release(error);
+    throw error;
+  }
+  if (rows[0]?.acquired) return client;
+  client.release();
+  return null;
 }
 
-async function releaseMaintenanceLock(pool) {
-  await pool.query(
-    "SELECT pg_advisory_unlock($1, $2)",
-    [MAINTENANCE_LOCK_A, MAINTENANCE_LOCK_B],
-  );
+async function releaseMaintenanceLock(client) {
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_advisory_unlock($1, $2)",
+      [MAINTENANCE_LOCK_A, MAINTENANCE_LOCK_B],
+    );
+    if (rows[0]?.pg_advisory_unlock !== true) {
+      throw new Error("maintenance_lock_release_not_owned");
+    }
+  } catch (error) {
+    client.release(error);
+    throw error;
+  }
+  client.release();
 }
 
 async function runCensusTask(pool, options) {
@@ -507,9 +525,13 @@ export async function runScheduledMaintenance(pool, {
   taskRunner = runTask,
 } = {}) {
   const tasks = resolveMaintenanceTasks(task);
+  const maximumConnections = Number(pool.options?.max);
+  if (Number.isFinite(maximumConnections) && maximumConnections < 2) {
+    throw new Error("maintenance_pool_requires_two_connections");
+  }
   const workerId = `scheduled-maintenance-${randomUUID()}`;
-  const acquired = await acquireMaintenanceLock(pool);
-  if (!acquired) {
+  const lockClient = await acquireMaintenanceLock(pool);
+  if (!lockClient) {
     logger.info?.("[scheduled-maintenance] another run owns the advisory lock; skipping");
     return { ok: true, skipped: true, reason: "already_running", tasks };
   }
@@ -624,7 +646,7 @@ export async function runScheduledMaintenance(pool, {
     }
     throw error;
   } finally {
-    await releaseMaintenanceLock(pool).catch((error) => {
+    await releaseMaintenanceLock(lockClient).catch((error) => {
       logger.warn?.("[scheduled-maintenance] advisory lock release failed", errorMessage(error));
     });
   }

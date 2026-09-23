@@ -7,7 +7,7 @@ export const EXPECTED_R2_ORIGIN =
   'https://homenode-shared-production.407656745429dce8902facc0209852d0.r2.cloudflarestorage.com'
 export const RETIRED_R2_ORIGIN =
   'https://e407656745429dce8902facc0209852d.r2.cloudflarestorage.com'
-export const EXPECTED_STYLE_SOURCES = Object.freeze(["'self'", 'https://unpkg.com'])
+export const EXPECTED_STYLE_SOURCES = Object.freeze(["'self'"])
 export const EXPECTED_STYLE_ATTRIBUTE_SOURCES = Object.freeze(["'unsafe-inline'"])
 
 /** Parse a Content-Security-Policy header into directive/source entries. */
@@ -53,9 +53,13 @@ export function validateFrontendSecurityHeaders(headers) {
   if (allSources.has(RETIRED_R2_ORIGIN)) {
     errors.push('CSP still contains the retired R2 origin')
   }
+  if (allSources.has('https://unpkg.com')) {
+    errors.push('CSP still allows the retired unpkg runtime origin')
+  }
 
   const exactDirectives = new Map([
     ['default-src', ["'self'"]],
+    ['script-src', ["'self'"]],
     ['style-src', EXPECTED_STYLE_SOURCES],
     ['style-src-elem', EXPECTED_STYLE_SOURCES],
     ['style-src-attr', EXPECTED_STYLE_ATTRIBUTE_SOURCES],
@@ -69,6 +73,15 @@ export function validateFrontendSecurityHeaders(headers) {
     if (actual.length !== expected.length || actual.some((value, index) => value !== expected[index])) {
       errors.push(`${directive} must remain exactly ${expected.join(' ')}`)
     }
+  }
+
+  // script-src-elem overrides script-src for <script> elements when present.
+  // Keep it optional because the deployed policy relies on script-src fallback.
+  const scriptElementSources = directives.get('script-src-elem')
+  if (scriptElementSources && (
+    scriptElementSources.length !== 1 || scriptElementSources[0] !== "'self'"
+  )) {
+    errors.push("script-src-elem must remain exactly 'self'")
   }
 
   for (const directive of ['script-src', 'style-src', 'style-src-elem']) {

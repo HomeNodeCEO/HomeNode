@@ -3,11 +3,14 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 import re
 from typing import Any, Dict, List, Optional
 import json
 from urllib.parse import urljoin, parse_qs, urlparse
 from .na_utils import fill_na
+
+logger = logging.getLogger(__name__)
 
 import httpx
 from bs4 import BeautifulSoup
@@ -1084,6 +1087,20 @@ async def signup_submit(req: SignupRequest):
 if _legacy_signup_enabled():
     app.add_api_route('/signup/submit', signup_submit, methods=['POST'], include_in_schema=False)
 
+
+def _load_detail_from_db(account_id: str):
+    engine = _db_engine_or_none()
+    if engine is None:
+        raise HTTPException(status_code=503, detail="database_unavailable")
+    with engine.connect() as conn:
+        return engine, _build_detail_from_db(conn, account_id)
+
+
+def _run_db_transaction(engine, operation):
+    with engine.begin() as conn:
+        operation(conn)
+
+
 @app.get("/detail/{account_id}", response_model=DetailResponse)
 async def get_detail(account_id: str):
     try:
@@ -1093,11 +1110,7 @@ async def get_detail(account_id: str):
 
     try:
         # DB-only: try to build detail from Postgres; do NOT scrape
-        engine = _db_engine_or_none()
-        if engine is None:
-            raise HTTPException(status_code=503, detail="database_unavailable")
-        with engine.connect() as conn:
-            db_detail = _build_detail_from_db(conn, account_id)
+        engine, db_detail = await asyncio.to_thread(_load_detail_from_db, account_id)
         if db_detail:
             # If critical fields are missing, attempt a light scrape to fill them
             try:
@@ -1253,7 +1266,7 @@ async def get_detail(account_id: str):
                                 db_detail["legal_description"]["deed_transfer_date"] = parsed_legal.get("deed_transfer_date")
 
                     try:
-                        with engine.begin() as conn2:
+                        def persist_recovery(conn2):
                             addr = (db_detail.get("property_location") or {}).get("address")
                             nbh = (db_detail.get("property_location") or {}).get("neighborhood")
                             mco = (db_detail.get("property_location") or {}).get("mapsco")
@@ -1375,6 +1388,7 @@ async def get_detail(account_id: str):
                                         "building_class": refreshed_primary.get("building_class"),
                                     },
                                 )
+                        await asyncio.to_thread(_run_db_transaction, engine, persist_recovery)
                     except Exception:
                         pass
             except Exception:
@@ -1428,8 +1442,9 @@ async def get_detail(account_id: str):
         raise HTTPException(status_code=404, detail="not_found_in_db")
     except HTTPException:
         raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"db_lookup_failed: {e}")
+    except Exception as error:
+        logger.error("scraper_db_lookup_failed error_type=%s", type(error).__name__)
+        raise HTTPException(status_code=500, detail="db_lookup_failed")
 
 def _row_to_item(row: Dict[str, Any]) -> AddressSearchItem:
     return AddressSearchItem(

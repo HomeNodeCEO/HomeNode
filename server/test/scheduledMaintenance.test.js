@@ -249,6 +249,43 @@ test("task failure unlocks through the original checked-out connection", async (
   assert.equal(releases, 1);
 });
 
+test("unlock failures retire the lock client and remain visible without hiding completed work", async () => {
+  for (const unlockFailure of ["query_rejected", "not_owned"]) {
+    const warnings = [];
+    let releaseReason;
+    const pool = {
+      async query(sql) {
+        if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) return { rows: [{ id: 94 }] };
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        return {
+          async query(sql) {
+            if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+            assert.match(sql, /pg_advisory_unlock/);
+            if (unlockFailure === "query_rejected") throw new Error("unlock_query_failed");
+            return { rows: [{ pg_advisory_unlock: false }] };
+          },
+          release(reason) { releaseReason = reason; },
+        };
+      },
+    };
+    const result = await runScheduledMaintenance(pool, {
+      task: "census",
+      taskRunner: async () => ({ completed: true }),
+      logger: { info() {}, warn(...args) { warnings.push(args); } },
+    });
+    assert.equal(result.ok, true);
+    assert.deepEqual(result.results.census, { completed: true });
+    assert.equal(releaseReason instanceof Error, true);
+    assert.match(releaseReason.message, unlockFailure === "query_rejected"
+      ? /unlock_query_failed/
+      : /maintenance_lock_release_not_owned/);
+    assert.equal(warnings.length, 1);
+    assert.match(warnings[0][0], /advisory lock release failed/);
+  }
+});
+
 test("a scheduled run records completion and always releases its lock", async () => {
   const statements = [];
   const lockStatements = [];

@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict'
+import { EventEmitter } from 'node:events'
 import { readFileSync } from 'node:fs'
 import test from 'node:test'
 import { fileURLToPath } from 'node:url'
@@ -8,6 +9,7 @@ import {
   STAGING_API_ORIGIN,
   STAGING_FRONTEND_URL,
   STAGING_R2_ORIGIN,
+  fetchStagingFrontendHeaders,
   validateStagingFrontendSecurityHeaders,
 } from './verifyStagingFrontendSecurityHeaders.mjs'
 
@@ -43,7 +45,12 @@ test('rejects missing framing, MIME, or transport safeguards', () => {
     validateStagingFrontendSecurityHeaders({ 'content-security-policy': EXPECTED_STAGING_CSP }),
     ['staging_frame_options_mismatch', 'staging_content_type_options_mismatch', 'staging_hsts_missing'],
   )
-  for (const hsts of ['max-age=0; includeSubDomains', 'max-age=31536000']) {
+  for (const hsts of [
+    'max-age=0; includeSubDomains',
+    'max-age=31536000',
+    'max-age=31536000; includeSubDomains; max-age=0',
+    'max-age=31536000; includeSubDomains; includeSubDomains',
+  ]) {
     assert.deepEqual(
       validateStagingFrontendSecurityHeaders({
         ...secureHeaders,
@@ -54,6 +61,21 @@ test('rejects missing framing, MIME, or transport safeguards', () => {
   }
 });
 
+test('total request deadline also fires before a socket connects', async () => {
+  const request = new EventEmitter()
+  request.destroy = (error) => request.emit('error', error)
+  const requestFactory = (url, options, onResponse) => {
+    assert.equal(url, STAGING_FRONTEND_URL)
+    assert.ok(options.headers['User-Agent'])
+    assert.equal(typeof onResponse, 'function')
+    return request
+  }
+  await assert.rejects(
+    fetchStagingFrontendHeaders(10, requestFactory),
+    { message: 'staging_frontend_timeout' },
+  )
+});
+
 test('staging verifier has a fixed HTTPS request target', () => {
   const source = readFileSync(
     fileURLToPath(new URL('./verifyStagingFrontendSecurityHeaders.mjs', import.meta.url)),
@@ -61,5 +83,6 @@ test('staging verifier has a fixed HTTPS request target', () => {
   )
   assert.equal(STAGING_FRONTEND_URL, 'https://homenode-uad-staging.onrender.com/')
   assert.doesNotMatch(source, /process\.env\.\w*URL/)
-  assert.match(source, /https\.get\(\s*STAGING_FRONTEND_URL,/)
+  assert.match(source, /requestFactory\(\s*STAGING_FRONTEND_URL,/)
+  assert.doesNotMatch(source, /request\.setTimeout\(/)
 });

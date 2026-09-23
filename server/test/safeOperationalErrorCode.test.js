@@ -14,6 +14,15 @@ test("logs only bounded SQLSTATE and known network diagnostic classes", () => {
   }
   assert.equal(safeOperationalErrorCode(new Error("postgresql://private-user:private-password@example/db")), "unknown");
   assert.equal(safeOperationalErrorCode(null), "unknown");
+  let codeReads = 0;
+  assert.equal(safeOperationalErrorCode({
+    get code() {
+      codeReads += 1;
+      return codeReads === 1 ? "23505" : "TOKEN";
+    },
+  }), "23505");
+  assert.equal(codeReads, 1);
+  assert.equal(safeOperationalErrorCode({ get code() { throw new Error("private detail"); } }), "unknown");
 });
 
 test("unexpected router and idle-pool errors use only safe diagnostic classes", async () => {

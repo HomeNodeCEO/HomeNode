@@ -5,6 +5,7 @@ import ts from 'typescript';
 import * as navigation from '../src/lib/customAssignmentNavigation.ts';
 import { selectAssignmentFile } from '../src/lib/assignmentFileSelection.ts';
 import { reportDestination } from '../src/lib/reportDestinations.ts';
+import { salesComparisonDraftFingerprint } from '../src/lib/customAppraisalAutosave.ts';
 import { executeTrustedRepositoryExpression, loadTrustedRepositoryCommonJs,
   readTrustedRepositoryTypeScript } from './trustedRepositoryModuleHarness.mjs';
 
@@ -289,6 +290,7 @@ function pageLoadHarness(page, options = {}) {
     setPrintBlocker: value => messages.push(value), setWorkfileSaveStatus: value => messages.push(value),
     setAcceptedNeighborhood() {}, setAssignmentLoading() {}, setCostDraft() {}, setIncomeDraft() {}, setFinalDraft() {},
     setWorkfileReady() {}, setWorkfileCanonicalName() {}, setWorkfileLocked() {}, workfileSectionRevisionRef: { current: 0 },
+    lastSavedWorkfileFingerprintRef: { current: null }, salesComparisonDraftFingerprint,
   };
   const effect = actualExpression(`pages/${page}`, (node, ast) => ts.isCallExpression(node)
     && node.expression.getText(ast) === 'useEffect'

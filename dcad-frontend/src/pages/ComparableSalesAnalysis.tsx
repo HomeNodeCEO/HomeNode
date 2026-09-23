@@ -29,8 +29,13 @@ import ComparableSalesMap from '@/components/ComparableSalesMap';
 import ContractPriceSupportPanel from '@/components/ContractPriceSupportPanel';
 import DeferredReportSection from '@/components/DeferredReportSection';
 import { MlsPhoto, UadRatingSelect } from '@/components/ComparableSalesControls';
-import { fetchDetail } from '@/lib/dcad';
+import { loadComparableSubject } from '@/lib/comparableSubjectLoader';
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
+import {
+  salesComparisonAutosaveDelay,
+  salesComparisonAutosaveRetryDelay,
+  salesComparisonDraftFingerprint,
+} from '@/lib/customAppraisalAutosave';
 import {
   editorCredentialForRequest,
   readEditorCredential,
@@ -80,19 +85,21 @@ import {
   type SalesAnalysisPeriodMonths,
 } from '@/lib/comparableSalesPresentation';
 import {
-  accountNeedsRoomRefresh,
   boundedErrorMessage,
-  mergeSubjectData,
   responseSummary,
-  subjectFromAccountResponse,
-  subjectFromDetailResponse,
   type SubjectData,
 } from '@/lib/comparableSubjectData';
 import {
   attachmentNeedsReview,
+  comparableSaleKey as saleKey,
   contractSupportLoadNotice,
+  formatComparableCurrency as fmtCurrency,
+  formatComparableSquareFeet as fmtSqftSafe,
+  groupedBreakdownSummary,
   housingTypeGridValue,
   housingTypeNeedsReview,
+  parseComparableSaleNumber as saleNumber,
+  signedAdjustment,
   saleDateDisplay,
   saleDisplayAddress,
   saleIsOverOneYear,
@@ -323,10 +330,17 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   const restoredWorkfileSignatureRef = useRef('');
   const pendingWorkfileSaveRef = useRef<{
     draft: AppraisalReportSalesDraft;
+    fingerprint: string;
     reason: 'autosave' | 'legacy_import';
   } | null>(null);
   const workfileSaveInFlightRef = useRef(false);
+  const workfileUnmountedRef = useRef(false);
   const workfileSaveTimerRef = useRef<number | null>(null);
+  const workfileFollowupTimerRef = useRef<number | null>(null);
+  const workfileRetryTimerRef = useRef<number | null>(null);
+  const workfileRetryFailureCountRef = useRef(0);
+  const workfilePendingSinceRef = useRef<number | null>(null);
+  const lastSavedWorkfileFingerprintRef = useRef<string | null>(null);
   const flushWorkfileSaveRef = useRef<() => void>(() => {});
   const workfileSelectionGenerationRef = useRef(0);
   useEffect(() => {
@@ -362,6 +376,9 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         const section = result.workfile.sections.sales_comparison;
         const marketSection = result.workfile.sections.market_conditions;
         const serverDraft = section?.value as AppraisalReportSalesDraft | undefined;
+        lastSavedWorkfileFingerprintRef.current = serverDraft
+          ? salesComparisonDraftFingerprint(serverDraft)
+          : null;
         const legacyDraft = !serverDraft
           ? readAppraisalReportDraft(propertyId, assignmentFile.id, applicationSession)
           : null;
@@ -408,6 +425,13 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     pendingWorkfileSaveRef.current = null;
     if (workfileSaveTimerRef.current !== null) window.clearTimeout(workfileSaveTimerRef.current);
     workfileSaveTimerRef.current = null;
+    if (workfileFollowupTimerRef.current !== null) window.clearTimeout(workfileFollowupTimerRef.current);
+    workfileFollowupTimerRef.current = null;
+    if (workfileRetryTimerRef.current !== null) window.clearTimeout(workfileRetryTimerRef.current);
+    workfileRetryTimerRef.current = null;
+    workfileRetryFailureCountRef.current = 0;
+    workfilePendingSinceRef.current = null;
+    lastSavedWorkfileFingerprintRef.current = null;
     setMarketConditionsDraft(null);
     setSummary('');
     setSalesNotes(DEFAULT_SALES_NOTES);
@@ -859,85 +883,34 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
   }
 
   useEffect(() => {
+    let cancelled = false;
     async function load() {
       if (!propertyId) return;
       setLoading(true);
       setError(null);
+      setSubject(null);
       try {
-        // Prefer DB-backed endpoint
-        const accountResponse = await api.getAccount(propertyId, { assignmentFileId: activeAssignmentFile?.id });
-        setSubject(subjectFromAccountResponse(accountResponse, propertyId));
-
-        // Add checked legacy fields.
-        try {
-          const legacyResponse = await fetchDetail(propertyId);
-          const legacySubject = subjectFromDetailResponse(legacyResponse, propertyId);
-          setSubject((current) => mergeSubjectData(current, legacySubject, propertyId));
-        } catch { /* optional compatibility enrichment failed; keep the DB response */ }
-
-        // Refresh legacy rows missing room counts.
-        // This endpoint persists recovered values so later visits stay DB-backed.
-        if (accountNeedsRoomRefresh(accountResponse)) {
-          try {
-            const scraperBase = String(
-              import.meta.env.VITE_SCRAPER_BASE
-              || import.meta.env.VITE_SCRAPER_URL
-              || 'https://dcad-scraper-with-api.onrender.com',
-            ).replace(/\/+$/, '');
-            const response = await fetch(
-              `${scraperBase}/detail/${encodeURIComponent(propertyId)}`,
-              { signal: AbortSignal.timeout(15_000) },
-            );
-            if (response.ok) {
-              const payload: unknown = await response.json();
-              const scraperSubject = subjectFromDetailResponse(
-                payload,
-                propertyId,
-                { derivePool: true },
-              );
-              setSubject((current) => mergeSubjectData(current, scraperSubject, propertyId));
-            }
-          } catch { /* optional scraper enrichment failed; keep the DB response */ }
-        }
-        return;
-      } catch {
-        // Fall through to scraper detail
-      }
-      try {
-        const legacyResponse = await fetchDetail(propertyId);
-        setSubject(subjectFromDetailResponse(legacyResponse, propertyId));
+        const scraperBase = String(
+          import.meta.env.VITE_SCRAPER_BASE
+          || import.meta.env.VITE_SCRAPER_URL
+          || 'https://dcad-scraper-with-api.onrender.com',
+        ).replace(/\/+$/, '');
+        await loadComparableSubject(
+          propertyId,
+          activeAssignmentFile?.id,
+          scraperBase,
+          (update) => { if (!cancelled) setSubject(update); },
+          () => { if (!cancelled) setLoading(false); },
+        );
       } catch (loadError: unknown) {
-        setError(boundedErrorMessage(loadError, 'Failed to load property'));
-      }
-      finally {
-        setLoading(false);
+        if (!cancelled) setError(boundedErrorMessage(loadError, 'Failed to load property'));
+      } finally {
+        if (!cancelled) setLoading(false);
       }
     }
-    load();
+    void load();
+    return () => { cancelled = true; };
   }, [activeAssignmentFile?.id, propertyId]);
-
-  const fmtSqftSafe = (v: unknown) => {
-    if (v === null || v === undefined || v === '') return '-';
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    if (!isFinite(n) || n <= 0) return '-';
-    return `${n.toLocaleString('en-US')} sq. ft`;
-  };
-
-  const fmtCurrency = (v: unknown) => {
-    if (v === null || v === undefined || v === '') return '';
-    const n = typeof v === 'string' ? Number(String(v).replace(/[^0-9.-]/g, '')) : Number(v);
-    if (!isFinite(n)) return String(v);
-    return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD', maximumFractionDigits: 0 }).format(n);
-  };
-
-  const saleKey = (sale: SaleRow): string =>
-    sale.source_record_id != null ? `source-${sale.source_record_id}` : `legacy-${sale.sale_id}`;
-
-  const saleNumber = (value: unknown): number | null => {
-    if (value === null || value === undefined || value === '') return null;
-    const parsed = Number(String(value).replace(/[^0-9.-]/g, ''));
-    return Number.isFinite(parsed) ? parsed : null;
-  };
 
   const openHousingEditor = (sale: SaleRow) => {
     if (!sale.primary_account_id) {
@@ -2026,21 +1999,30 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   flushWorkfileSaveRef.current = () => {
     if (workfileSaveInFlightRef.current || !pendingWorkfileSaveRef.current) return;
+    if (workfileRetryTimerRef.current !== null) {
+      window.clearTimeout(workfileRetryTimerRef.current);
+      workfileRetryTimerRef.current = null;
+    }
     const pending = pendingWorkfileSaveRef.current;
     pendingWorkfileSaveRef.current = null;
+    workfilePendingSinceRef.current = null;
     if (!activeAssignmentFile || workfileLocked) return;
     const saveGeneration = workfileSelectionGenerationRef.current;
     const saveAssignmentFile = activeAssignmentFile;
     const selectionIsCurrent = () => workfileSelectionGenerationRef.current === saveGeneration;
+    const canUpdateUi = () => selectionIsCurrent() && !workfileUnmountedRef.current;
     if (pending.draft.assignmentFileId !== saveAssignmentFile.id) return;
-    const editorKey = editorCredentialForRequest();
+    if (pending.fingerprint === lastSavedWorkfileFingerprintRef.current) return;
+    const editorKey = editorCredentialForRequest(housingEditorKey);
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
-      setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
+      if (canUpdateUi()) setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
       return;
     }
     workfileSaveInFlightRef.current = true;
-    setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
+    let saveSucceeded = false;
+    let waitForConflictReload = false;
+    if (canUpdateUi()) setWorkfileSaveStatus(`Saving ${saveAssignmentFile.file_number}...`);
     void api.saveCustomAppraisalWorkfileSection(
       propertyId,
       saveAssignmentFile.id,
@@ -2055,39 +2037,64 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     ).then((response) => {
       if (!selectionIsCurrent()) return;
       workfileSectionRevisionRef.current = response.section.revision;
+      lastSavedWorkfileFingerprintRef.current = pending.fingerprint;
+      workfileRetryFailureCountRef.current = 0;
+      saveSucceeded = true;
       removeAppraisalReportDraft(propertyId, saveAssignmentFile.id, applicationSession);
-      setWorkfileSaveStatus(
+      if (canUpdateUi()) setWorkfileSaveStatus(
         `Saved to ${workfileCanonicalName || saveAssignmentFile.file_number} at ${new Date(response.section.updated_at).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}`,
       );
     }).catch((saveError) => {
       if (!selectionIsCurrent()) return;
       const message = saveError instanceof Error ? saveError.message : String(saveError);
       if (/custom_appraisal_workfile_signed/i.test(message)) {
-        setWorkfileLocked(true);
-        setWorkfileSaveStatus('This signed appraisal is locked. Start another file to make changes.');
+        if (canUpdateUi()) {
+          setWorkfileLocked(true);
+          setWorkfileSaveStatus('This signed appraisal is locked. Start another file to make changes.');
+        }
         return;
       }
       if (/custom_appraisal_section_revision_conflict/i.test(message)) {
-        pendingWorkfileSaveRef.current = pending;
+        waitForConflictReload = true;
+        pendingWorkfileSaveRef.current ||= pending;
         void loadCustomAppraisalWorkfile(propertyId, saveAssignmentFile.id)
           .then((result) => {
+            if (!selectionIsCurrent()) return;
             workfileSectionRevisionRef.current = Number(
               result.workfile.sections.sales_comparison?.revision || 0,
             );
-            setWorkfileSaveStatus('Reconciling a newer workfile revision...');
-            window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+            if (canUpdateUi()) setWorkfileSaveStatus('Reconciling a newer workfile revision...');
+            if (workfileFollowupTimerRef.current !== null) window.clearTimeout(workfileFollowupTimerRef.current);
+            workfileFollowupTimerRef.current = window.setTimeout(() => {
+              workfileFollowupTimerRef.current = null;
+              if (selectionIsCurrent()) flushWorkfileSaveRef.current();
+            }, 0);
           })
           .catch(() => {
-            setWorkfileSaveStatus('Autosave found a newer revision. Reload before continuing.');
+            if (canUpdateUi()) {
+              setWorkfileSaveStatus('Autosave found a newer revision. Reload before continuing.');
+            }
           });
         return;
       }
-      pendingWorkfileSaveRef.current = pending;
-      setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
+      pendingWorkfileSaveRef.current ||= pending;
+      if (canUpdateUi()) setWorkfileSaveStatus(`Autosave needs attention: ${message}`);
     }).finally(() => {
       workfileSaveInFlightRef.current = false;
       if (pendingWorkfileSaveRef.current) {
-        window.setTimeout(() => flushWorkfileSaveRef.current(), 0);
+        if (saveSucceeded || !selectionIsCurrent()) {
+          if (workfileFollowupTimerRef.current !== null) window.clearTimeout(workfileFollowupTimerRef.current);
+          workfileFollowupTimerRef.current = window.setTimeout(() => {
+            workfileFollowupTimerRef.current = null;
+            flushWorkfileSaveRef.current();
+          }, 0);
+        } else if (!waitForConflictReload && workfileRetryTimerRef.current === null) {
+          workfileRetryFailureCountRef.current += 1;
+          workfileRetryTimerRef.current = window.setTimeout(() => {
+            workfileRetryTimerRef.current = null;
+            flushWorkfileSaveRef.current();
+          }, salesComparisonAutosaveRetryDelay(workfileRetryFailureCountRef.current));
+        }
       }
     });
   };
@@ -2168,8 +2175,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
         ctcNotes,
       },
     };
+    const fingerprint = salesComparisonDraftFingerprint(draft);
+    if (!workfileSaveInFlightRef.current && fingerprint === lastSavedWorkfileFingerprintRef.current) {
+      pendingWorkfileSaveRef.current = null;
+      workfilePendingSinceRef.current = null;
+      return;
+    }
     pendingWorkfileSaveRef.current = {
       draft,
+      fingerprint,
       reason: workfileSectionRevisionRef.current === 0 && Boolean(workfileDraftToRestore)
         ? 'legacy_import'
         : 'autosave',
@@ -2177,9 +2191,15 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     if (workfileSaveTimerRef.current !== null) {
       window.clearTimeout(workfileSaveTimerRef.current);
     }
+    if (workfileRetryTimerRef.current !== null) {
+      window.clearTimeout(workfileRetryTimerRef.current);
+      workfileRetryTimerRef.current = null;
+      workfileRetryFailureCountRef.current = 0;
+    }
+    workfilePendingSinceRef.current ??= Date.now();
     workfileSaveTimerRef.current = window.setTimeout(
       () => flushWorkfileSaveRef.current(),
-      900,
+      salesComparisonAutosaveDelay(workfilePendingSinceRef.current, Date.now()),
     );
     return () => {
       if (workfileSaveTimerRef.current !== null) {
@@ -2235,14 +2255,27 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     contractPriceSupport,
     ctcNotes,
     workfileCanonicalName,
+    housingEditorKey,
   ]);
 
-  useEffect(() => () => {
-    if (workfileSaveTimerRef.current !== null) {
-      window.clearTimeout(workfileSaveTimerRef.current);
-      workfileSaveTimerRef.current = null;
-    }
-    flushWorkfileSaveRef.current();
+  useEffect(() => {
+    workfileUnmountedRef.current = false;
+    return () => {
+      workfileUnmountedRef.current = true;
+      if (workfileSaveTimerRef.current !== null) {
+        window.clearTimeout(workfileSaveTimerRef.current);
+        workfileSaveTimerRef.current = null;
+      }
+      if (workfileFollowupTimerRef.current !== null) {
+        window.clearTimeout(workfileFollowupTimerRef.current);
+        workfileFollowupTimerRef.current = null;
+      }
+      if (workfileRetryTimerRef.current !== null) {
+        window.clearTimeout(workfileRetryTimerRef.current);
+        workfileRetryTimerRef.current = null;
+      }
+      flushWorkfileSaveRef.current();
+    };
   }, []);
 
   // Derived room counts for subject column
@@ -2259,57 +2292,6 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
 
   const groupedStudiesFor = (dimensionKey: AppliedGroupedAdjustment['dimensionKey']) =>
     appliedGroupedAdjustmentEntries.filter((adjustment) => adjustment.dimensionKey === dimensionKey);
-
-  const signedAdjustment = (value: number) => {
-    const formatted = fmtCurrency(Math.abs(value));
-    return value > 0 ? `+${formatted}` : value < 0 ? `−${formatted}` : formatted;
-  };
-
-  const groupedBreakdownSummary = (
-    dimensionKey: AppliedGroupedAdjustment['dimensionKey'],
-    gridAdjustments: number[],
-  ) => {
-    const studies = groupedStudiesFor(dimensionKey);
-    if (!studies.length) {
-      return 'No market adjustment has been applied yet. Run a supported methodology above, enter any desired factor, and apply its result to update the grid.';
-    }
-    const study = studies[studies.length - 1];
-    const isPairedStudy = study.id.startsWith('paired:');
-    const unitLabel = dimensionKey === 'bathrooms'
-      ? 'full-bath equivalent'
-      : dimensionKey === 'garage'
-        ? 'garage space'
-      : dimensionKey === 'living_area'
-          ? 'square foot'
-          : dimensionKey === 'site_size'
-            ? 'site square foot'
-            : dimensionKey === 'age'
-              ? 'year of age'
-          : 'pool difference';
-    const hasLivingAreaFormula =
-      (dimensionKey === 'living_area' || dimensionKey === 'site_size') &&
-      study.sourcePriceDifference != null &&
-      study.sourceLivingAreaDifference != null &&
-      Number.isFinite(study.sourcePriceDifference) &&
-      Number.isFinite(study.sourceLivingAreaDifference) &&
-      study.sourceLivingAreaDifference > 0;
-    const appliedText = hasLivingAreaFormula
-      ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
-        `${signedAdjustment(study.sourcePriceDifference!)} ÷ ` +
-        `${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(study.sourceLivingAreaDifference!)} SF = ` +
-        `${signedAdjustment(study.baseAmount)} per SF; ${study.factorPercent}% factoring = ` +
-        `${signedAdjustment(study.amount)} per SF`
-      : isPairedStudy
-        ? `${study.marketLabel} — ${study.transitionLabel} ${study.optionLabel}: ` +
-          `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% factoring = ` +
-          `${signedAdjustment(study.amount)} per ${unitLabel}`
-        : `${study.marketLabel} — ${study.transitionLabel} study selected: ` +
-          `${signedAdjustment(study.baseAmount)} × ${study.factorPercent}% = ` +
-          `${signedAdjustment(study.amount)} per ${unitLabel}`;
-    const selectedCount = selectedSales.filter(Boolean).length;
-    const affectedCount = gridAdjustments.filter((amount, index) => selectedSales[index] && amount !== 0).length;
-    return `${appliedText}. This universal rate currently adjusts ${affectedCount} of ${selectedCount} selected comparable${selectedCount === 1 ? '' : 's'}.`;
-  };
 
   const previewGroupedAdjustment = (
     draftAdjustment: AppliedGroupedAdjustment,
@@ -5145,7 +5127,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
                     </span>
                   </div>
                   <p className="mt-2 text-xs leading-5 text-slate-700">
-                    {groupedBreakdownSummary(summaryItem.key, summaryItem.adjustments)}
+                    {groupedBreakdownSummary(summaryItem.key, summaryItem.adjustments, appliedGroupedAdjustmentEntries, selectedSales)}
                   </p>
                   <div className="mt-3 rounded-lg bg-white/80 px-3 py-2 text-xs font-medium text-slate-700">
                     {groupedGridImpact(summaryItem.adjustments)}

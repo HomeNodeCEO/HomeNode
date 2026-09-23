@@ -4,8 +4,23 @@ import pg from "pg";
 
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
+import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhotoCoverageAudit.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("custom signed-photo coverage audit runs against migrated PostgreSQL without writes", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await auditCustomSignedPhotoCoverage(pool);
+    assert.notEqual(result.code, "custom_signed_photo_coverage_schema_missing");
+    assert.equal(Number.isSafeInteger(result.signed_file_count), true);
+    assert.equal(Number.isSafeInteger(result.verified_photo_count), true);
+  } finally {
+    await pool.end();
+  }
+});
 
 test("custom signed-PDF byte audit verifies digest against migrated PostgreSQL without writes", {
   skip: !databaseUrl,

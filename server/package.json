@@ -45,6 +45,7 @@
         "audit:application-auth-rollout": "node scripts/auditApplicationAuthRollout.js",
         "audit:custom-signed-artifacts": "node scripts/auditCustomSignedArtifacts.js",
         "audit:custom-signed-pdf-content": "node scripts/auditCustomSignedPdfContent.js",
+        "audit:custom-signed-photo-coverage": "node scripts/auditCustomSignedPhotoCoverage.js",
         "verify:staging:application-auth": "node scripts/verifyApplicationAuthStaging.js",
         "reconcile:assignment-documents": "node scripts/reconcileLegacyAssignmentDocuments.js",
         "migrate:legacy-appraisals:organization": "node scripts/migrateLegacyAppraisalOrganization.js",

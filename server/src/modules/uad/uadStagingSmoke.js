@@ -41,12 +41,12 @@ export function normalizeUadSmokeBaseUrl(value) {
   return url.toString().replace(/\/$/, "");
 }
 
-async function getJson(fetchImpl, url, timeoutMs) {
+async function getJson(fetchImpl, url, timeoutMs, headers = {}) {
   const signal = AbortSignal.timeout(timeoutMs);
   let response;
   try {
     response = await fetchImpl(url, {
-      headers: { accept: "application/json" },
+      headers: { accept: "application/json", ...headers },
       redirect: "error",
       signal,
     });
@@ -136,21 +136,32 @@ export async function runUadStagingSmoke({
   baseUrl,
   appUrl = null,
   fixtureAccountId = DEFAULT_FIXTURE_ACCOUNT_ID,
+  fixtureBearerToken = null,
+  publicOnly = false,
   fetchImpl = globalThis.fetch,
   timeoutMs = 15_000,
   requireCompliance = false,
   checkedAt = new Date().toISOString(),
 } = {}) {
   if (typeof fetchImpl !== "function") throw new Error("uad_staging_fetch_unavailable");
+  if (fixtureBearerToken !== null
+      && (typeof fixtureBearerToken !== "string" || !/^[^\s]+$/.test(fixtureBearerToken))) {
+    throw new Error("invalid_uad_staging_bearer_token");
+  }
+  if (publicOnly && fixtureBearerToken) throw new Error("conflicting_uad_staging_smoke_modes");
   const base = normalizeUadSmokeBaseUrl(baseUrl);
   const appBase = appUrl ? normalizeUadSmokeBaseUrl(appUrl) : null;
   const timeout = Math.max(1_000, Math.min(Number(timeoutMs) || 15_000, 60_000));
   const account = encodeURIComponent(String(fixtureAccountId || DEFAULT_FIXTURE_ACCOUNT_ID));
-  const [health, capabilities, readiness, fixture, webApp] = await Promise.all([
+  const fixtureUrl = `${base}/api/uad/accounts/${account}/workfiles`;
+  const [health, capabilities, readiness, anonymousFixture, fixture, webApp] = await Promise.all([
     getJson(fetchImpl, `${base}/health`, timeout),
     getJson(fetchImpl, `${base}/api/uad/capabilities`, timeout),
     getJson(fetchImpl, `${base}/api/uad/readiness`, timeout),
-    getJson(fetchImpl, `${base}/api/uad/accounts/${account}/workfiles`, timeout),
+    getJson(fetchImpl, fixtureUrl, timeout),
+    !publicOnly && fixtureBearerToken
+      ? getJson(fetchImpl, fixtureUrl, timeout, { authorization: `Bearer ${fixtureBearerToken}` })
+      : Promise.resolve(null),
     appBase
       ? getHtml(fetchImpl, `${appBase}/uad-3.6/${account}`, timeout)
       : Promise.resolve({ ok: true, status: null, error_code: null }),
@@ -166,7 +177,8 @@ export async function runUadStagingSmoke({
     && readiness.body?.ok === true
     && readiness.body?.specification_release_key === CURRENT_UAD_RELEASE_KEY
     && readiness.body?.local_delivery_ready === true;
-  const fixtureReady = fixture.ok
+  const anonymousBoundaryReady = anonymousFixture.status === 401;
+  const fixtureReady = fixture?.ok === true
     && Array.isArray(fixture.body?.workfiles)
     && fixture.body.workfiles.length > 0;
   const providers = readiness.body?.checks?.compliance?.providers || {};
@@ -190,12 +202,22 @@ export async function runUadStagingSmoke({
       blockers: Array.isArray(readiness.body?.blockers) ? readiness.body.blockers.slice(0, 20) : [],
       error_code: readiness.error_code,
     },
+    anonymous_boundary: {
+      ready: anonymousBoundaryReady,
+      http_status: anonymousFixture.status,
+      error_code: anonymousBoundaryReady ? null : anonymousFixture.error_code || "unexpected_status",
+    },
     synthetic_fixture: {
+      required: !publicOnly,
       ready: fixtureReady,
-      http_status: fixture.status,
+      http_status: fixture?.status ?? null,
       account_id: String(fixtureAccountId || DEFAULT_FIXTURE_ACCOUNT_ID),
-      workfile_count: Array.isArray(fixture.body?.workfiles) ? fixture.body.workfiles.length : 0,
-      error_code: fixture.error_code,
+      workfile_count: Array.isArray(fixture?.body?.workfiles) ? fixture.body.workfiles.length : 0,
+      error_code: fixtureReady
+        ? null
+        : publicOnly
+          ? "not_checked"
+          : fixture?.error_code || (fixtureBearerToken ? "invalid_fixture" : "credential_required"),
     },
     web_app: {
       required: Boolean(appBase),
@@ -214,7 +236,8 @@ export async function runUadStagingSmoke({
       }])),
     },
   };
-  const ok = healthReady && capabilitiesReady && operationalReady && fixtureReady && webApp.ok
+  const ok = healthReady && capabilitiesReady && operationalReady && anonymousBoundaryReady
+    && (publicOnly || fixtureReady) && webApp.ok
     && (!requireCompliance || complianceReady);
   return {
     ok,

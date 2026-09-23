@@ -7,6 +7,7 @@ export const DCAD_PARCEL_QUERY_URL =
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
 const DCAD_FETCH_TIMEOUT_MS = 45_000;
 const MAX_DCAD_RESPONSE_BYTES = 8 * 1024 * 1024;
+const schemaReadyByPool = new WeakMap();
 
 async function fetchDcadJson(body, fetchImpl, errorPrefix) {
   let response;
@@ -55,7 +56,10 @@ async function fetchDcadJson(body, fetchImpl, errorPrefix) {
 }
 
 export async function ensureAccountLocationsTable(pool) {
-  await pool.query(`
+  const existing = schemaReadyByPool.get(pool);
+  if (existing) return existing;
+  const pending = (async () => {
+    await pool.query(`
     CREATE TABLE IF NOT EXISTS core.account_locations (
       account_id                  varchar(32) PRIMARY KEY
                                   REFERENCES core.accounts(account_id) ON DELETE CASCADE,
@@ -92,7 +96,13 @@ export async function ensureAccountLocationsTable(pool) {
       WHERE status = 'matched';
     CREATE INDEX IF NOT EXISTS account_locations_geocoded_at_idx
       ON core.account_locations(geocoded_at);
-  `);
+    `);
+  })().catch((error) => {
+    schemaReadyByPool.delete(pool);
+    throw error;
+  });
+  schemaReadyByPool.set(pool, pending);
+  return pending;
 }
 
 function normalizeAccountId(value) {

@@ -13,6 +13,7 @@ const QUEUE_STATUSES = new Set([
   "completed",
   "manual_review",
 ]);
+const schemaReadyByPool = new WeakMap();
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -46,8 +47,11 @@ export function locationBackfillRetryDelaySeconds(
 }
 
 export async function ensureLocationBackfillQueueSchema(pool) {
-  await ensureAccountLocationsTable(pool);
-  await pool.query(`
+  const existing = schemaReadyByPool.get(pool);
+  if (existing) return existing;
+  const pending = (async () => {
+    await ensureAccountLocationsTable(pool);
+    await pool.query(`
     CREATE SCHEMA IF NOT EXISTS app;
 
     CREATE TABLE IF NOT EXISTS app.location_backfill_queue (
@@ -80,7 +84,13 @@ export async function ensureLocationBackfillQueueSchema(pool) {
 
     CREATE INDEX IF NOT EXISTS location_backfill_queue_status_idx
       ON app.location_backfill_queue (status, updated_at DESC);
-  `);
+    `);
+  })().catch((error) => {
+    schemaReadyByPool.delete(pool);
+    throw error;
+  });
+  schemaReadyByPool.set(pool, pending);
+  return pending;
 }
 
 /**

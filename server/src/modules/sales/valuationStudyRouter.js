@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   buildMarketConditionsAnalyses,
   marketConditionsErrorStatus,
@@ -109,10 +110,13 @@ export function createValuationStudyRouter({
         res.set("Retry-After", "10");
         return res.status(503).json({ error: "market_analysis_busy" });
       }
-      logger.error?.("/api/sales/market-analysis failed", error);
-      return res.status(marketErrorStatus(message)).json({
-        error: message,
-        ...(error?.detail ? { detail: error.detail } : {}),
+      const status = marketErrorStatus(message);
+      logger.error?.("/api/sales/market-analysis failed", safeOperationalErrorCode(error));
+      return res.status(status).json({
+        error: status >= 500 && message !== "market_spatial_support_not_ready"
+          ? "market_analysis_failed"
+          : message,
+        ...(status < 500 && error?.detail ? { detail: error.detail } : {}),
       });
     }
   });
@@ -136,8 +140,9 @@ export function createValuationStudyRouter({
       return res.json(result);
     } catch (error) {
       const message = error?.message || "regression_analysis_failed";
-      logger.error?.("/api/sales/regression-analysis failed", error);
-      return res.status(regressionErrorStatus(message)).json({ error: message });
+      const status = regressionErrorStatus(message);
+      logger.error?.("/api/sales/regression-analysis failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status >= 500 ? "regression_analysis_failed" : message });
     }
   });
 
@@ -146,7 +151,9 @@ export function createValuationStudyRouter({
       return res.json(calculateDepreciatedCost(req.body || {}));
     } catch (error) {
       const message = error?.message || "depreciated_cost_adjustment_failed";
-      return res.status(depreciatedCostErrorStatus(message)).json({ error: message });
+      const status = depreciatedCostErrorStatus(message);
+      if (status >= 500) logger.error?.("/api/sales/depreciated-cost-adjustment failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status >= 500 ? "depreciated_cost_adjustment_failed" : message });
     }
   });
 
@@ -169,8 +176,9 @@ export function createValuationStudyRouter({
       return res.json(result);
     } catch (error) {
       const message = error?.message || "site_valuation_failed";
-      logger.error?.("/api/sales/site-valuation failed", error);
-      return res.status(siteErrorStatus(message)).json({ error: message });
+      const status = siteErrorStatus(message);
+      logger.error?.("/api/sales/site-valuation failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status >= 500 ? "site_valuation_failed" : message });
     }
   });
 
@@ -179,7 +187,9 @@ export function createValuationStudyRouter({
       return res.json(calculateQualitative(req.body || {}, req.body?.comparables || []));
     } catch (error) {
       const message = error?.message || "qualitative_analysis_failed";
-      return res.status(qualitativeErrorStatus(message)).json({ error: message });
+      const status = qualitativeErrorStatus(message);
+      if (status >= 500) logger.error?.("/api/sales/qualitative-analysis failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status >= 500 ? "qualitative_analysis_failed" : message });
     }
   });
 

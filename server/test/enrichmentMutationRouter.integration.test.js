@@ -220,7 +220,8 @@ test("verified attribute conflicts and failures roll back, release, and use boun
   });
   assert.equal(failedResponse.status, 500);
   assert.deepEqual(await failedResponse.json(), { error: "verified_attribute_update_failed" });
-  assert.deepEqual(logs, [["verified attribute update failed", diagnostic]]);
+  assert.deepEqual(logs, [["verified attribute update failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
   assert.equal(failedDatabase.clients[0].released, true);
 });
 
@@ -423,6 +424,35 @@ test("Trestle preview forwards licensed identifiers and preserves activation err
   );
   assert.equal(disabledResponse.status, 409);
   assert.deepEqual(await disabledResponse.json(), { error: "trestle_disabled" });
+});
+
+test("unexpected GIS and Trestle failures do not expose provider or database details", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), { code: "08006" });
+  const logs = [];
+  const database = createDatabase();
+  const server = await startRouter(baseOptions(database, {
+    getNonDallasAccount: async () => ({ normalized_county: "Collin" }),
+    fetchParcelSuggestion: async () => { throw failure; },
+    trestleClient: { findProperty: async () => { throw failure; } },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+
+  const gisResponse = await mutate(server.baseUrl, "/api/accounts/A-1/parcel-area-suggestion", "POST");
+  assert.equal(gisResponse.status, 500);
+  assert.deepEqual(await gisResponse.json(), { error: "parcel_area_suggestion_failed" });
+
+  const trestleResponse = await mutate(server.baseUrl, "/api/accounts/A-1/trestle-preview", "POST", {
+    listing_key: "key-1",
+  });
+  assert.equal(trestleResponse.status, 502);
+  assert.deepEqual(await trestleResponse.json(), { error: "trestle_preview_failed" });
+  assert.deepEqual(logs, [
+    ["parcel area suggestion failed", "08006"],
+    ["Trestle preview failed", "08006"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
 });
 
 test("enrichment mutation composition is explicit and inline handlers are absent", () => {

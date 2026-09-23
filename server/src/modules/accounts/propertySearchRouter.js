@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { findAccountByCountyIdentifier } from "../../services/salesReconciliation.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { normalizePropertyCity, parsePropertySearch } from "../../util/propertySearch.js";
 
 export function createPropertySearchRouter({
@@ -189,7 +190,7 @@ export function createPropertySearchRouter({
           : rows,
       );
     } catch (error) {
-      logger.error?.(error);
+      try { logger.error?.("property search failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "search_failed" });
     }
   });

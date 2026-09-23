@@ -14,6 +14,8 @@ snapshots, linked artifacts, missing artifacts, wrong snapshot links and
 snapshot/PDF checksum-link mismatches. Missing tables are reported as a stable
 schema code. Database errors are reduced to a stable code; no file IDs,
 reports, PDF bytes, connection strings or raw database diagnostics are printed.
+Counts are printed only after the pool closes cleanly. Connection, audit,
+rollback, idle-pool and shutdown failures never print partial results.
 
 A nonzero exit indicates gaps or an incomplete audit, not permission to
 regenerate or delete a signed PDF. Review legacy signed files and migration

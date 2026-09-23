@@ -4,6 +4,7 @@ import pg from "pg";
 
 import { getUadEditor } from "../src/modules/uad/editor.js";
 import { loadAccountDetailSections } from "../src/services/accountDetailSections.js";
+import { ensurePropertyContextSchema } from "../src/services/propertyContextStore.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -13,6 +14,7 @@ test("UAD staging bootstrap supports the authenticated account-detail read path"
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
   const optionalErrors = [];
   try {
+    await ensurePropertyContextSchema(pool);
     const sections = await loadAccountDetailSections(pool, "UAD-STAGING-SFR-0001", {
       fetchImpl: async () => { throw new Error("live DCAD fallback disabled in staging test"); },
       logger: {

@@ -1,18 +1,73 @@
 import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   createReportFile,
   listReportFiles,
 } from "../mobile/reportFiles.js";
 
+const REPORT_FILE_NOT_FOUND = new Set([
+  "account_not_found",
+  "previous_report_file_not_found",
+  "report_file_not_found",
+  "mobile_device_not_found",
+  "subject_account_not_found",
+  "custom_appraisal_file_not_found",
+  "uad_workfile_not_found",
+  "appraisal_report_file_not_found",
+]);
+const REPORT_FILE_ACCESS_DENIED = new Set([
+  "organization_access_denied",
+  "organization_write_access_denied",
+]);
+const REPORT_FILE_CONFLICT = new Set(["creation_request_conflict"]);
+const REPORT_FILE_BAD_REQUEST = new Set([
+  "invalid_account_id",
+  "invalid_workflow_type",
+  "invalid_organization_id",
+  "invalid_client_request_id",
+  "invalid_previous_report_file_id",
+  "invalid_effective_date",
+  "invalid_assignment_date",
+  "invalid_calendar_year",
+  "invalid_sequence_number",
+  "invalid_file_number",
+  "invalid_uad_file_number",
+  "invalid_uad_workfile_id",
+  "invalid_appraisal_workflow",
+  "organization_required",
+  "uad_account_scope_required",
+  "same_assignment_confirmation_required",
+]);
+
+function reportFileErrorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch {
+    return "";
+  }
+}
+
+function desktopReportFileErrorDetails(error) {
+  const message = reportFileErrorMessage(error);
+  if (REPORT_FILE_NOT_FOUND.has(message)) return { status: 404, message };
+  if (REPORT_FILE_ACCESS_DENIED.has(message)) return { status: 403, message };
+  if (REPORT_FILE_CONFLICT.has(message)) return { status: 409, message };
+  if (safeOperationalErrorCode(error) === "23505") {
+    return { status: 409, message: "creation_request_conflict" };
+  }
+  if (REPORT_FILE_BAD_REQUEST.has(message)) return { status: 400, message };
+  return { status: 500, message: "" };
+}
+
+function logUnexpectedReportFileFailure(logger, label, error) {
+  try { logger.error?.(label, safeOperationalErrorCode(error)); } catch { /* Preserve the fixed response. */ }
+}
+
 export function desktopReportFileErrorStatus(error) {
-  const message = String(error?.message || "");
-  if (message.endsWith("_not_found")) return 404;
-  if (message.endsWith("_access_denied")) return 403;
-  if (message.endsWith("_conflict") || error?.code === "23505") return 409;
-  if (message.startsWith("invalid_") || message.endsWith("_required")) return 400;
-  return 500;
+  return desktopReportFileErrorDetails(error).status;
 }
 
 export function createDesktopReportFilesRouter({
@@ -67,10 +122,10 @@ export function createDesktopReportFilesRouter({
         requires_creation: result.requiresCreation,
       });
     } catch (error) {
-      const status = desktopReportFileErrorStatus(error);
-      if (status === 500) logger.error?.("desktop report file list failed", error);
+      const { status, message } = desktopReportFileErrorDetails(error);
+      if (status === 500) logUnexpectedReportFileFailure(logger, "desktop report file list failed", error);
       return res.status(status).json({
-        error: status === 500 ? "report_file_list_failed" : String(error.message),
+        error: status === 500 ? "report_file_list_failed" : message,
       });
     }
   });
@@ -94,10 +149,10 @@ export function createDesktopReportFilesRouter({
         created: result.created,
       });
     } catch (error) {
-      const status = desktopReportFileErrorStatus(error);
-      if (status === 500) logger.error?.("desktop report file create failed", error);
+      const { status, message } = desktopReportFileErrorDetails(error);
+      if (status === 500) logUnexpectedReportFileFailure(logger, "desktop report file create failed", error);
       return res.status(status).json({
-        error: status === 500 ? "report_file_create_failed" : String(error.message),
+        error: status === 500 ? "report_file_create_failed" : message,
       });
     }
   });

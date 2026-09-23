@@ -210,6 +210,10 @@ test("desktop report-file error mapping preserves stable client and conflict sta
   assert.equal(desktopReportFileErrorStatus(new Error("invalid_workflow_type")), 400);
   assert.equal(desktopReportFileErrorStatus(new Error("organization_required")), 400);
   assert.equal(desktopReportFileErrorStatus(new Error("database_password=secret")), 500);
+  assert.equal(desktopReportFileErrorStatus(new Error("private_password_access_denied")), 500);
+  assert.equal(desktopReportFileErrorStatus(new Error("invalid_private_password")), 500);
+  assert.equal(desktopReportFileErrorStatus(new Error("private_password_not_found")), 500);
+  assert.equal(desktopReportFileErrorStatus({ get message() { throw new Error("private_password"); } }), 500);
 });
 
 test("desktop report-file failures remain bounded and omit diagnostics", async (context) => {
@@ -232,13 +236,97 @@ test("desktop report-file failures remain bounded and omit diagnostics", async (
   const listBody = await listResponse.json();
   assert.deepEqual(listBody, { error: "report_file_list_failed" });
   assert.doesNotMatch(JSON.stringify(listBody), /password|secret|XX000/);
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["desktop report file list failed", "XX000"]]);
 
   const createResponse = await postReportFile(failedCreate.baseUrl, "123", {
     workflow_type: "custom_appraisal",
   });
   assert.equal(createResponse.status, 409);
   assert.deepEqual(await createResponse.json(), { error: "creation_request_conflict" });
+});
+
+test("desktop report-file failures never echo misleading domain-like diagnostics", async (context) => {
+  const secret = "private_password_access_denied";
+  const logs = [];
+  const failedList = await startRouter(baseOptions({
+    listFiles: async () => { throw new Error(secret); },
+    logger: { error: (...args) => logs.push(args) },
+  }), identity);
+  const failedCreate = await startRouter(baseOptions({
+    createFile: async () => { throw Object.assign(new Error("private_password_conflict"), { code: "23505" }); },
+  }), identity);
+  context.after(async () => Promise.all([failedList.close(), failedCreate.close()]));
+
+  const listResponse = await fetch(
+    `${failedList.baseUrl}/api/accounts/123/report-files?workflow_type=custom_appraisal`,
+  );
+  assert.equal(listResponse.status, 500);
+  assert.deepEqual(await listResponse.json(), { error: "report_file_list_failed" });
+  assert.deepEqual(logs, [["desktop report file list failed", "unknown"]]);
+
+  const createResponse = await postReportFile(failedCreate.baseUrl, "123", {
+    workflow_type: "custom_appraisal",
+  });
+  assert.equal(createResponse.status, 409);
+  assert.deepEqual(await createResponse.json(), { error: "creation_request_conflict" });
+});
+
+test("throwing and changing diagnostics cannot bypass the report-file error boundary", async (context) => {
+  let reads = 0;
+  const failure = {
+    get message() {
+      reads += 1;
+      return reads === 1 ? "invalid_workflow_type" : "private_password";
+    },
+    get code() { throw new Error("private_code"); },
+  };
+  const changing = await startRouter(baseOptions({
+    listFiles: async () => { throw failure; },
+  }), identity);
+  const throwing = await startRouter(baseOptions({
+    createFile: async () => {
+      throw { get message() { throw new Error("private_password"); }, get code() { throw new Error("private_code"); } };
+    },
+  }), identity);
+  context.after(async () => Promise.all([changing.close(), throwing.close()]));
+
+  const listResponse = await fetch(
+    `${changing.baseUrl}/api/accounts/123/report-files?workflow_type=custom_appraisal`,
+  );
+  assert.equal(listResponse.status, 400);
+  assert.deepEqual(await listResponse.json(), { error: "invalid_workflow_type" });
+  assert.equal(reads, 1);
+
+  const createResponse = await postReportFile(throwing.baseUrl, "123", {
+    workflow_type: "custom_appraisal",
+  });
+  assert.equal(createResponse.status, 500);
+  assert.deepEqual(await createResponse.json(), { error: "report_file_create_failed" });
+});
+
+test("throwing report-file logger cannot replace fixed unexpected-failure responses", async (context) => {
+  const logger = { error() { throw new Error("logger_private_password"); } };
+  const failedList = await startRouter(baseOptions({
+    listFiles: async () => { throw new Error("private_password"); },
+    logger,
+  }), identity);
+  const failedCreate = await startRouter(baseOptions({
+    createFile: async () => { throw new Error("private_password"); },
+    logger,
+  }), identity);
+  context.after(async () => Promise.all([failedList.close(), failedCreate.close()]));
+
+  const listResponse = await fetch(
+    `${failedList.baseUrl}/api/accounts/123/report-files?workflow_type=custom_appraisal`,
+  );
+  assert.equal(listResponse.status, 500);
+  assert.deepEqual(await listResponse.json(), { error: "report_file_list_failed" });
+
+  const createResponse = await postReportFile(failedCreate.baseUrl, "123", {
+    workflow_type: "custom_appraisal",
+  });
+  assert.equal(createResponse.status, 500);
+  assert.deepEqual(await createResponse.json(), { error: "report_file_create_failed" });
 });
 
 test("desktop report-file composition and route position remain explicit", () => {

@@ -76,6 +76,30 @@ test('total request deadline also fires before a socket connects', async () => {
   )
 });
 
+test('closes the response after headers even if the body never ends', async () => {
+  for (const statusCode of [200, 503]) {
+    const request = new EventEmitter()
+    let destroyed = false
+    const response = {
+      statusCode,
+      headers: secureHeaders,
+      destroy() { destroyed = true },
+    }
+    const requestFactory = (_url, _options, onResponse) => {
+      queueMicrotask(() => onResponse(response))
+      return request
+    }
+    if (statusCode === 200) {
+      assert.deepEqual(await fetchStagingFrontendHeaders(100, requestFactory), secureHeaders)
+    } else {
+      await assert.rejects(fetchStagingFrontendHeaders(100, requestFactory), {
+        message: 'staging_frontend_http_error',
+      })
+    }
+    assert.equal(destroyed, true)
+  }
+});
+
 test('staging verifier has a fixed HTTPS request target', () => {
   const source = readFileSync(
     fileURLToPath(new URL('./verifyStagingFrontendSecurityHeaders.mjs', import.meta.url)),

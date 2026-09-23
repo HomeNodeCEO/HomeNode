@@ -64,7 +64,9 @@ or unverified external provider as production-ready.
    never redirects shared documents or mobile photos.
 8. Enable `UAD_WORKSPACE_ENABLED=true`, restart, and inspect
    `/api/uad/readiness`.
-9. Run the read-only smoke test:
+9. Supply a short-lived staging OIDC bearer token through the
+   `UAD_STAGING_BEARER_TOKEN` environment variable (never a CLI argument or
+   committed secret), then run the read-only full smoke test:
 
    ```sh
    cd server
@@ -79,9 +81,12 @@ or unverified external provider as production-ready.
     review the PDF, generate XML, sign through OIDC, and generate the delivery
     package. Confirm a new revision makes older artifacts non-current.
 
-The `UAD staging smoke` GitHub Actions workflow exposes the same read-only
-verification as a manual `workflow_dispatch`. It does not create workfiles,
-upload objects, sign reports, or invoke an external GSE API.
+The manual `UAD staging smoke` GitHub Actions workflow runs a public-only
+check: health, capabilities, operational readiness, web app, and anonymous
+`401` denial on the fixture route. It explicitly reports the authenticated
+fixture as not checked. Full fixture verification requires a short-lived bearer
+token and the command above. Neither mode creates workfiles, uploads objects,
+signs reports, or invokes an external GSE API.
 
 ## Production activation order
 
@@ -167,7 +172,7 @@ create application schema objects.
 | --- | --- | --- |
 | Code and schema | Server tests, frontend build, PostGIS migration CI | All required checks green |
 | Local deployment | `/api/uad/readiness` | HTTP 200 with no blockers |
-| Synthetic staging | `npm run verify:staging:uad` | Health, release, storage, readiness, and fixture pass |
+| Synthetic staging | Full `npm run verify:staging:uad` with short-lived bearer token | Health, release, storage, readiness, anonymous `401`, and authenticated fixture pass |
 | Native delivery | Manual signed fixture/package exercise | PDF, XML, images, manifest audit artifact, and ZIP inspected |
 | Fannie compliance | Provider readiness plus persisted test exchanges | Onboarding, ACPT scenarios, verification, production credentials |
 | Freddie compliance | Provider readiness plus persisted test exchanges | Onboarding, assigned test scenarios, verification, production credentials |

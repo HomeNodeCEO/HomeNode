@@ -430,7 +430,7 @@ test("the staging account-detail tables retain red-team column compatibility", (
   const addedColumns = (source, table) => {
     const statement = source.match(new RegExp(`ALTER TABLE core\\.${table}\\s+([\\s\\S]*?);`))?.[1];
     assert.ok(statement, `missing ${table} ALTER TABLE statement`);
-    return new Set([...statement.matchAll(/ADD COLUMN IF NOT EXISTS (\\w+)/g)].map((match) => match[1]));
+    return new Set([...statement.matchAll(/ADD COLUMN IF NOT EXISTS (\w+)/g)].map((match) => match[1]));
   };
 
   for (const table of ["primary_improvements", "land_detail", "secondary_improvements"]) {

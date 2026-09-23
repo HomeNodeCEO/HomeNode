@@ -4,9 +4,13 @@ Before moving signed PDF bytes out of PostgreSQL or changing the missing-PDF
 fallback, run `npm run audit:custom-signed-artifacts` from `server` against a
 staging database restore, then against each intended environment during an
 approved read-only audit window. The command uses `DATABASE_URL` from that
-environment. Use an internal database connection or a TLS connection with
-certificate verification; the audit does not disable TLS verification. It
-never writes application rows or attempts a repair.
+environment. Both audit commands require certificate-verified TLS for any
+non-loopback database URL and reject insecure or overriding URL parameters;
+literal loopback may use a local plaintext test database. Render's internal
+Postgres TLS uses self-signed certificates, so these commands do not support
+that connection mode without a separately trusted CA configuration. Use a
+verified external connection from an approved read-only audit environment.
+Neither command writes application rows or attempts a repair.
 
 The audit uses a read-only transaction, a five-second statement timeout and a
 one-second lock timeout, with bounded connection and client-side query waits.

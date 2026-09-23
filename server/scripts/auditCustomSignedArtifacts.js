@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
+import { salesRetentionAuditPoolOptions } from "./auditSalesRetention.js";
 
 export async function runCustomSignedArtifactAudit({
   databaseUrl = process.env.DATABASE_URL,
@@ -19,13 +20,7 @@ export async function runCustomSignedArtifactAudit({
   try {
     if (!databaseUrl) throw new Error("database_url_required");
     pool = await createPool({
-      connectionString: databaseUrl,
-      max: 1,
-      connectionTimeoutMillis: 5_000,
-      idleTimeoutMillis: 1_000,
-      allowExitOnIdle: true,
-      query_timeout: 6_000,
-      idle_in_transaction_session_timeout: 10_000,
+      ...salesRetentionAuditPoolOptions(databaseUrl),
       application_name: "homenode-custom-signed-artifact-audit",
     });
     pool.on("error", () => { failed = true; });

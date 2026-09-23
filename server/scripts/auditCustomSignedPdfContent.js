@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 import pg from "pg";
 
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
+import { salesRetentionAuditPoolOptions } from "./auditSalesRetention.js";
 
 export async function runCustomSignedPdfContentAudit({
   databaseUrl = process.env.DATABASE_URL,
@@ -19,11 +20,8 @@ export async function runCustomSignedPdfContentAudit({
   try {
     if (!databaseUrl) throw new Error("database_url_required");
     pool = await createPool({
-      connectionString: databaseUrl,
-      max: 1,
-      connectionTimeoutMillis: 5_000,
-      idleTimeoutMillis: 1_000,
-      allowExitOnIdle: true,
+      ...salesRetentionAuditPoolOptions(databaseUrl),
+      statement_timeout: 10_000,
       query_timeout: 12_000,
       idle_in_transaction_session_timeout: 20_000,
       application_name: "homenode-custom-signed-pdf-content-audit",

@@ -24,6 +24,9 @@ test("emits aggregate results only after pool shutdown", async () => {
   const { state, dependencies } = fixture();
   assert.equal(await runCustomSignedArtifactAudit(dependencies), 0);
   assert.equal(state.options.max, 1);
+  assert.equal(state.options.connectionTimeoutMillis, 5_000);
+  assert.equal(state.options.query_timeout, 6_000);
+  assert.equal(state.options.idle_in_transaction_session_timeout, 10_000);
   assert.equal(state.options.connectionString, DATABASE_URL);
   assert.deepEqual(state.stdout.map(JSON.parse), [{ ok: true, signed_snapshot_count: 0 }]);
   assert.deepEqual(state.stderr, []);

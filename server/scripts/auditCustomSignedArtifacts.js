@@ -21,6 +21,11 @@ export async function runCustomSignedArtifactAudit({
     pool = await createPool({
       connectionString: databaseUrl,
       max: 1,
+      connectionTimeoutMillis: 5_000,
+      idleTimeoutMillis: 1_000,
+      allowExitOnIdle: true,
+      query_timeout: 6_000,
+      idle_in_transaction_session_timeout: 10_000,
       application_name: "homenode-custom-signed-artifact-audit",
     });
     pool.on("error", () => { failed = true; });

@@ -9,7 +9,8 @@ certificate verification; the audit does not disable TLS verification. It
 never writes application rows or attempts a repair.
 
 The audit uses a read-only transaction, a five-second statement timeout and a
-one-second lock timeout. Its output contains only aggregate counts: signed
+one-second lock timeout, with bounded connection and client-side query waits.
+Its output contains only aggregate counts: signed
 snapshots, linked artifacts, missing artifacts, wrong snapshot links and
 snapshot/PDF checksum-link mismatches. Missing tables are reported as a stable
 schema code. Database errors are reduced to a stable code; no file IDs,

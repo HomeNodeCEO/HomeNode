@@ -264,7 +264,33 @@ try {
     );
 
     ALTER TABLE core.primary_improvements
-      ADD COLUMN IF NOT EXISTS construction_type text;
+      ADD COLUMN IF NOT EXISTS construction_type text,
+      ADD COLUMN IF NOT EXISTS percent_complete numeric,
+      ADD COLUMN IF NOT EXISTS effective_year_built integer,
+      ADD COLUMN IF NOT EXISTS actual_age integer,
+      ADD COLUMN IF NOT EXISTS depreciation numeric,
+      ADD COLUMN IF NOT EXISTS desirability text,
+      ADD COLUMN IF NOT EXISTS stories numeric,
+      ADD COLUMN IF NOT EXISTS total_living_area integer,
+      ADD COLUMN IF NOT EXISTS basement text,
+      ADD COLUMN IF NOT EXISTS kitchens integer,
+      ADD COLUMN IF NOT EXISTS wetbars integer,
+      ADD COLUMN IF NOT EXISTS fireplaces integer,
+      ADD COLUMN IF NOT EXISTS sprinkler text,
+      ADD COLUMN IF NOT EXISTS spa text,
+      ADD COLUMN IF NOT EXISTS pool boolean,
+      ADD COLUMN IF NOT EXISTS sauna text,
+      ADD COLUMN IF NOT EXISTS air_conditioning text,
+      ADD COLUMN IF NOT EXISTS heating text,
+      ADD COLUMN IF NOT EXISTS foundation text,
+      ADD COLUMN IF NOT EXISTS roof_material text,
+      ADD COLUMN IF NOT EXISTS roof_type text,
+      ADD COLUMN IF NOT EXISTS exterior_material text,
+      ADD COLUMN IF NOT EXISTS fence_type text,
+      ADD COLUMN IF NOT EXISTS building_class text,
+      ADD COLUMN IF NOT EXISTS total_area_sqft integer,
+      ADD COLUMN IF NOT EXISTS baths_full integer,
+      ADD COLUMN IF NOT EXISTS baths_half integer;
 
     CREATE TABLE IF NOT EXISTS core.land_detail (
       id bigserial PRIMARY KEY,
@@ -281,7 +307,13 @@ try {
     ALTER TABLE core.land_detail
       ADD COLUMN IF NOT EXISTS zoning text,
       ADD COLUMN IF NOT EXISTS frontage_ft numeric,
-      ADD COLUMN IF NOT EXISTS depth_ft numeric;
+      ADD COLUMN IF NOT EXISTS depth_ft numeric,
+      ADD COLUMN IF NOT EXISTS state_code text,
+      ADD COLUMN IF NOT EXISTS pricing_method text,
+      ADD COLUMN IF NOT EXISTS unit_price numeric,
+      ADD COLUMN IF NOT EXISTS market_adjustment_pct numeric,
+      ADD COLUMN IF NOT EXISTS adjusted_price numeric,
+      ADD COLUMN IF NOT EXISTS ag_land boolean;
 
     CREATE UNIQUE INDEX IF NOT EXISTS uad_staging_land_detail_identity_idx
       ON core.land_detail (account_id, tax_year, line_number);
@@ -296,7 +328,11 @@ try {
     );
 
     ALTER TABLE core.secondary_improvements
-      ADD COLUMN IF NOT EXISTS sec_imp_year_built integer;
+      ADD COLUMN IF NOT EXISTS sec_imp_year_built integer,
+      ADD COLUMN IF NOT EXISTS sec_imp_cons_type text,
+      ADD COLUMN IF NOT EXISTS sec_imp_floor text,
+      ADD COLUMN IF NOT EXISTS sec_imp_ext_wall text,
+      ADD COLUMN IF NOT EXISTS sec_imp_value numeric;
 
     -- The normal HomeNode search tile joins these optional enrichment sources.
     -- Empty staging-compatible relations keep that shared search path usable

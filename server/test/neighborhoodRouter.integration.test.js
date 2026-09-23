@@ -103,7 +103,10 @@ test("neighborhood readiness maps unsupported counties and hides diagnostics", a
   const failed = await fetch(`${server.baseUrl}/api/neighborhood-engine/readiness?county=Dallas`);
   assert.equal(failed.status, 500);
   assert.deepEqual(await failed.json(), { error: "neighborhood_engine_readiness_failed" });
-  assert.equal(logs.length, 2);
+  assert.deepEqual(logs, [
+    ["/api/neighborhood-engine/readiness failed", "unknown"],
+    ["/api/neighborhood-engine/readiness failed", "unknown"],
+  ]);
 });
 
 test("boundary reads preserve canonical account and assignment scope", async (context) => {
@@ -336,6 +339,44 @@ test("neighborhood routes retain stable client, not-found, and unavailable statu
     assert.deepEqual(await response.json(), { error });
   }
   assert.equal(logs.length, 2);
+});
+
+test("unexpected neighborhood failures never expose database details in responses or logs", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), { code: "08006" });
+  const logs = [];
+  const server = await startRouter(createNeighborhoodRouter(options({
+    getReadiness: async () => { throw failure; },
+    getBoundary: async () => { throw failure; },
+    generateBoundary: async () => { throw failure; },
+    reviewBoundary: async () => { throw failure; },
+    getRelevance: async () => { throw failure; },
+    generateRelevance: async () => { throw failure; },
+    logger: { error: (...args) => logs.push(args) },
+  })));
+  context.after(server.close);
+
+  for (const [method, path, error] of [
+    ["GET", "/api/neighborhood-engine/readiness", "neighborhood_engine_readiness_failed"],
+    ["GET", "/api/accounts/42/neighborhood-boundary", "neighborhood_boundary_lookup_failed"],
+    ["POST", "/api/accounts/42/neighborhood-boundary/generate", "neighborhood_boundary_generation_failed"],
+    ["PATCH", "/api/accounts/42/neighborhood-boundary/boundary-2", "neighborhood_boundary_review_failed"],
+    ["GET", "/api/accounts/42/neighborhood-relevance", "neighborhood_relevance_lookup_failed"],
+    ["POST", "/api/accounts/42/neighborhood-relevance/generate", "neighborhood_relevance_generation_failed"],
+  ]) {
+    const response = await fetch(`${server.baseUrl}${path}`, {
+      method,
+      ...(method === "GET" ? {} : {
+        headers: { "content-type": "application/json" },
+        body: "{}",
+      }),
+    });
+    assert.equal(response.status, 500, path);
+    assert.deepEqual(await response.json(), { error }, path);
+  }
+  assert.equal(logs.length, 6);
+  assert.ok(logs.every(([, code]) => code === "08006"));
+  assert.doesNotMatch(JSON.stringify(logs), /private-password/);
 });
 
 test("neighborhood router validates composition and remains between context mounts", () => {

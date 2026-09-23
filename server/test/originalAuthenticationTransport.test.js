@@ -529,6 +529,42 @@ test("normal native 401/403/503 failures never create private provenance", async
   }
 });
 
+test("mobile verifier failures never echo private outage messages or rejection diagnostics", async () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const outage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => { throw Object.assign(new Error(privateDetail), { statusCode: 503 }); },
+    },
+  }).run();
+  assert.equal(outage.res.statusCode, 503);
+  assert.deepEqual(outage.res.body, { error: "oidc_unavailable" });
+  assert.equal(outage.original(), null);
+
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...args) => { warnings.push(args); };
+  try {
+    const rejected = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw Object.assign(new Error("invalid_access_token"), {
+            diagnostic: `invalid\n${privateDetail}`,
+          });
+        },
+      },
+    }).run();
+    assert.equal(rejected.res.statusCode, 401);
+    assert.deepEqual(rejected.res.body, { error: "invalid_access_token" });
+    assert.equal(rejected.original(), null);
+  } finally {
+    console.warn = originalWarn;
+  }
+  assert.deepEqual(warnings, [["[mobile] access token rejected reason=unknown"]]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
+});
+
 test("absent browser session and lookup outage preserve ordinary clearing/failure behavior", async () => {
   const missing = await fixture("web", { poolOptions: { resultRows: [] } }).run();
   healthy(missing);

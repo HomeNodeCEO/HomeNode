@@ -517,6 +517,51 @@ test("UAD creation binds the public URL account to authenticated organization sc
   });
 });
 
+test("unexpected UAD creation failures never expose diagnostics or details", async () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const failure = Object.assign(new Error(privateDetail), {
+    code: "secret\nforged-log-line",
+    details: { connection_string: privateDetail },
+  });
+  const calls = [];
+  const originalError = console.error;
+  console.error = (...args) => { calls.push(args); };
+  try {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: "uad_request_failed" });
+    }, {}, { createWorkfile: async () => { throw failure; } });
+  } finally {
+    console.error = originalError;
+  }
+  assert.deepEqual(calls, [["[uad] request failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(calls), /private-password|forged-log-line/);
+});
+
+test("expected UAD validation details remain available to the caller", async () => {
+  await withServer(securityPool(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), {
+      error: "invalid_uad_creation_fixture",
+      details: { field: "assignee" },
+    });
+  }, {}, {
+    createWorkfile: async () => {
+      throw Object.assign(new Error("invalid_uad_creation_fixture"), { details: { field: "assignee" } });
+    },
+  });
+});
+
 test("private UAD PDF uploads pass the bounded binary parser but still require authentication", async () => {
   const pool = securityPool();
   await withServer(pool, async (baseUrl) => {

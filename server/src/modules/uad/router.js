@@ -603,7 +603,7 @@ export function createUadRouter({
             }
           }).catch((error) => {
             if (error?.message !== "document_processing_in_progress") {
-              console.warn("[uad documents] background extraction failed", error?.message || error);
+              console.warn("[uad documents] background extraction failed", safeOperationalErrorCode(error));
             }
           });
         }
@@ -635,14 +635,14 @@ export function createUadRouter({
           } catch (synchronizationError) {
             console.warn(
               "[uad documents] upgraded contract classification could not be synchronized",
-              synchronizationError?.message || synchronizationError,
+              safeOperationalErrorCode(synchronizationError),
             );
           }
         } catch (extractionError) {
           if (extractionError?.message !== "document_processing_in_progress") {
             console.warn(
               "[uad documents] legacy contract extraction upgrade failed",
-              extractionError?.message || extractionError,
+              safeOperationalErrorCode(extractionError),
             );
           }
           document = await getAssignmentDocument(pool, req.params.documentId);

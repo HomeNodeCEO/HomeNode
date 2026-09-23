@@ -1,4 +1,5 @@
 import { MARKET_SPATIAL_MIGRATION_NAME } from "../database/marketSpatialMigration.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { refreshAccountLocations } from "./accountLocations.js";
 
 export const MARKET_AREA_KEYS = Object.freeze([
@@ -372,7 +373,7 @@ export async function getMarketContext(pool, subjectAccountId, {
     } catch (error) {
       console.warn(
         "[market-conditions] subject location refresh failed",
-        error?.message || error,
+        safeOperationalErrorCode(error),
       );
     }
   }

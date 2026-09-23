@@ -22,6 +22,7 @@ const ACTIVE_DOCUMENT_PROCESSING_STATUSES = Object.freeze([
   "uploaded",
   "processing",
 ]);
+const schemaReadyByPool = new WeakMap();
 
 export function assignmentDocumentRequestedType(document = {}) {
   const recordedType = (cleanText(
@@ -516,7 +517,10 @@ function publicDocument(row, candidates = undefined) {
 }
 
 export async function ensureAssignmentDocumentsSchema(pool) {
-  await pool.query(`
+  const existing = schemaReadyByPool.get(pool);
+  if (existing) return existing;
+  const pending = (async () => {
+    await pool.query(`
     CREATE SCHEMA IF NOT EXISTS app;
 
     CREATE TABLE IF NOT EXISTS app.assignment_documents (
@@ -730,7 +734,13 @@ export async function ensureAssignmentDocumentsSchema(pool) {
     );
     CREATE INDEX IF NOT EXISTS assignment_document_candidate_reviews_idx
       ON app.assignment_document_candidate_reviews (document_id, reviewed_at DESC, id DESC);
-  `);
+    `);
+  })().catch((error) => {
+    schemaReadyByPool.delete(pool);
+    throw error;
+  });
+  schemaReadyByPool.set(pool, pending);
+  return pending;
 }
 
 export async function createAssignmentDocument(pool, {

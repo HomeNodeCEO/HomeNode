@@ -541,6 +541,25 @@ test("mobile verifier failures never echo private outage messages or rejection d
   assert.deepEqual(outage.res.body, { error: "oidc_unavailable" });
   assert.equal(outage.original(), null);
 
+  let messageReads = 0;
+  const mutableOutage = await fixture("mobile", {
+    verifier: {
+      configured: true,
+      verify: async () => {
+        throw {
+          statusCode: 503,
+          get message() {
+            messageReads += 1;
+            return messageReads === 1 ? "oidc_jwks_unavailable" : privateDetail;
+          },
+        };
+      },
+    },
+  }).run();
+  assert.equal(mutableOutage.res.statusCode, 503);
+  assert.deepEqual(mutableOutage.res.body, { error: "oidc_jwks_unavailable" });
+  assert.equal(messageReads, 1);
+
   const warnings = [];
   const originalWarn = console.warn;
   console.warn = (...args) => { warnings.push(args); };
@@ -558,10 +577,31 @@ test("mobile verifier failures never echo private outage messages or rejection d
     assert.equal(rejected.res.statusCode, 401);
     assert.deepEqual(rejected.res.body, { error: "invalid_access_token" });
     assert.equal(rejected.original(), null);
+
+    let diagnosticReads = 0;
+    const mutableRejection = await fixture("mobile", {
+      verifier: {
+        configured: true,
+        verify: async () => {
+          throw {
+            get diagnostic() {
+              diagnosticReads += 1;
+              return diagnosticReads === 1 ? "signature_invalid" : privateDetail;
+            },
+          };
+        },
+      },
+    }).run();
+    assert.equal(mutableRejection.res.statusCode, 401);
+    assert.deepEqual(mutableRejection.res.body, { error: "invalid_access_token" });
+    assert.equal(diagnosticReads, 1);
   } finally {
     console.warn = originalWarn;
   }
-  assert.deepEqual(warnings, [["[mobile] access token rejected reason=unknown"]]);
+  assert.deepEqual(warnings, [
+    ["[mobile] access token rejected reason=unknown"],
+    ["[mobile] access token rejected reason=signature_invalid"],
+  ]);
   assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
 });
 

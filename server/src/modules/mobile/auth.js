@@ -523,10 +523,14 @@ export function createMobileAuthenticator({ pool, verifier }) {
     } catch (error) {
       originalAttempt?.retire();
       if (error?.statusCode === 503) {
-        const code = PUBLIC_OIDC_OUTAGE_CODES.has(error?.message) ? error.message : "oidc_unavailable";
+        const message = error?.message;
+        const code = PUBLIC_OIDC_OUTAGE_CODES.has(message) ? message : "oidc_unavailable";
         return res.status(503).json({ error: code });
       }
-      const diagnostic = TOKEN_REJECTION_DIAGNOSTICS.has(error?.diagnostic) ? error.diagnostic : "unknown";
+      const diagnosticValue = error?.diagnostic;
+      const diagnostic = TOKEN_REJECTION_DIAGNOSTICS.has(diagnosticValue)
+        ? diagnosticValue
+        : "unknown";
       console.warn(`[mobile] access token rejected reason=${diagnostic}`);
       return res.status(401).json({ error: "invalid_access_token" });
     }

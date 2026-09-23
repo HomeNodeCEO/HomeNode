@@ -835,18 +835,34 @@ function maximumModificationTimestamp(records, fallback) {
 }
 
 async function acquireReplicationLock(pool) {
-  const { rows } = await pool.query(
-    "SELECT pg_try_advisory_lock($1, $2) AS acquired",
-    [TRESTLE_REPLICATION_LOCK_A, TRESTLE_REPLICATION_LOCK_B],
-  );
-  return Boolean(rows[0]?.acquired);
+  const client = await pool.connect();
+  let rows;
+  try {
+    ({ rows } = await client.query(
+      "SELECT pg_try_advisory_lock($1, $2) AS acquired",
+      [TRESTLE_REPLICATION_LOCK_A, TRESTLE_REPLICATION_LOCK_B],
+    ));
+  } catch (error) {
+    client.release(error);
+    throw error;
+  }
+  if (rows[0]?.acquired) return client;
+  client.release();
+  return null;
 }
 
-async function releaseReplicationLock(pool) {
-  await pool.query(
-    "SELECT pg_advisory_unlock($1, $2)",
-    [TRESTLE_REPLICATION_LOCK_A, TRESTLE_REPLICATION_LOCK_B],
-  );
+async function releaseReplicationLock(client) {
+  try {
+    const { rows } = await client.query(
+      "SELECT pg_advisory_unlock($1, $2)",
+      [TRESTLE_REPLICATION_LOCK_A, TRESTLE_REPLICATION_LOCK_B],
+    );
+    if (rows[0]?.pg_advisory_unlock !== true) throw new Error("trestle_lock_release_not_owned");
+  } catch (error) {
+    client.release(error);
+    throw error;
+  }
+  client.release();
 }
 
 export async function getTrestleReplicationStatus(pool, clientStatus = {}) {
@@ -897,9 +913,13 @@ export async function runTrestlePropertyReplication(pool, trestleClient, {
           : "trestle_replication_disabled",
     };
   }
+  const maximumConnections = Number(pool.options?.max);
+  if (Number.isFinite(maximumConnections) && maximumConnections < 2) {
+    throw new Error("trestle_pool_requires_two_connections");
+  }
   await ensureTrestleReplicationSchema(pool);
-  const acquired = await acquireReplicationLock(pool);
-  if (!acquired) return { ok: true, skipped: true, reason: "trestle_replication_already_running" };
+  const lockClient = await acquireReplicationLock(pool);
+  if (!lockClient) return { ok: true, skipped: true, reason: "trestle_replication_already_running" };
 
   const workerId = `trestle-property-${randomUUID()}`;
   let runId = null;
@@ -1034,7 +1054,9 @@ export async function runTrestlePropertyReplication(pool, trestleClient, {
     }
     throw error;
   } finally {
-    await releaseReplicationLock(pool).catch(() => {});
+    await releaseReplicationLock(lockClient).catch(() => {
+      logger.warn?.("[trestle] advisory lock release failed", "trestle_lock_release_failed");
+    });
   }
 }
 

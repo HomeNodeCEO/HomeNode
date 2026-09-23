@@ -137,12 +137,71 @@ test("replication remains inert without credentials and explicit feed activation
   assert.equal(databaseCalls, 0);
 });
 
+test("active replication requires room for its dedicated lock connection", async () => {
+  const pool = { options: { max: 1 }, async query() { throw new Error("unexpected_query"); } };
+  await assert.rejects(runTrestlePropertyReplication(pool, {
+    status: () => ({ configured: true, enabled: true, replication_ready: true }),
+  }), /trestle_pool_requires_two_connections/);
+});
+
+test("overlapping replication releases the unacquired lock client", async () => {
+  let releases = 0;
+  const pool = {
+    async query() { return { rows: [], rowCount: 0 }; },
+    async connect() {
+      return {
+        async query(sql) {
+          assert.match(sql, /pg_try_advisory_lock/);
+          return { rows: [{ acquired: false }] };
+        },
+        release() { releases += 1; },
+      };
+    },
+  };
+  const result = await runTrestlePropertyReplication(pool, {
+    status: () => ({ configured: true, enabled: true, replication_ready: true }),
+  });
+  assert.equal(result.reason, "trestle_replication_already_running");
+  assert.equal(releases, 1);
+});
+
+test("replication failure unlocks through the original connection", async () => {
+  const lockStatements = [];
+  let releases = 0;
+  const pool = {
+    async query(sql) {
+      if (/SELECT cursor_timestamp FROM app\.trestle_replication_state/.test(sql)) {
+        throw new Error("cursor_read_failed");
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          lockStatements.push(sql);
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          assert.match(sql, /pg_advisory_unlock/);
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() { releases += 1; },
+      };
+    },
+  };
+  await assert.rejects(runTrestlePropertyReplication(pool, {
+    status: () => ({ configured: true, enabled: true, replication_ready: true }),
+  }), /cursor_read_failed/);
+  assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
+  assert.equal(releases, 1);
+});
+
 test("replication follows pages, advances the durable cursor, and aggregates outcomes", async () => {
   const statements = [];
+  const lockStatements = [];
+  let lockReleased = false;
   const pool = {
     async query(sql) {
       statements.push(sql);
-      if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+      assert.doesNotMatch(sql, /pg_try_advisory_lock|pg_advisory_unlock/);
       if (/SELECT cursor_timestamp FROM app\.trestle_replication_state/.test(sql)) {
         return { rows: [{ cursor_timestamp: "2026-08-18T00:00:00Z" }] };
       }
@@ -150,6 +209,17 @@ test("replication follows pages, advances the durable cursor, and aggregates out
         return { rows: [{ id: 77 }] };
       }
       return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          lockStatements.push(sql);
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          assert.match(sql, /pg_advisory_unlock/);
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() { lockReleased = true; },
+      };
     },
   };
   const pageRequests = [];
@@ -178,6 +248,7 @@ test("replication follows pages, advances the durable cursor, and aggregates out
   const result = await runTrestlePropertyReplication(pool, trestleClient, {
     now: () => new Date("2026-08-19T00:00:00Z"),
     persistBatch: async (_pool, records) => {
+      assert.equal(lockReleased, false);
       batches.push(records);
       return {
         received: records.length,
@@ -200,6 +271,6 @@ test("replication follows pages, advances the durable cursor, and aggregates out
   assert.equal(pageRequests[0].modifiedAfter, "2026-08-17T23:50:00.000Z");
   assert.equal(pageRequests[1].nextLink.includes("$skip=1000"), true);
   assert.deepEqual(batches.map((batch) => batch[0].ListingKey), ["A", "B"]);
-  assert.equal(statements.some((sql) => /pg_advisory_unlock/.test(sql)), true);
+  assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
+  assert.equal(lockReleased, true);
 });
-

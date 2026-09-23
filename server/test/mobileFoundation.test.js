@@ -685,6 +685,10 @@ test("mobile app photo retries, removals, and previews remain deterministic", ()
     path.resolve(directory, "../../homenode-mobile/src/photos/sync.ts"),
     "utf8",
   );
+  const syncCoreSource = fs.readFileSync(
+    path.resolve(directory, "../../homenode-mobile/src/photos/syncCore.ts"),
+    "utf8",
+  );
   const panelSource = fs.readFileSync(
     path.resolve(directory, "../../homenode-mobile/src/photos/PhotoCapturePanel.tsx"),
     "utf8",
@@ -695,8 +699,10 @@ test("mobile app photo retries, removals, and previews remain deterministic", ()
   );
 
   assert.match(syncSource, /import \{ fetch as expoFetch \} from "expo\/fetch"/);
-  assert.match(syncSource, /body: file/);
-  assert.match(syncSource, /reason\.code !== "mobile_photo_not_found"/);
+  assert.match(syncSource, /uploadPhotoObject<File>\(photo, upload/);
+  assert.match(syncSource, /put: expoFetch/);
+  assert.match(syncCoreSource, /body: file/);
+  assert.match(syncCoreSource, /reason\.code !== "mobile_photo_not_found"/);
   assert.doesNotMatch(syncSource, /setInterval/);
   assert.match(panelSource, /makeFailedPhotosImmediatelyRetryable/);
   assert.match(panelSource, /isPhotoVisible\(photo\.state, photo\.removeOperationId\)/);

@@ -20,6 +20,26 @@ reports, PDF bytes, connection strings or raw database diagnostics are printed.
 Counts are printed only after the pool closes cleanly. Connection, audit,
 rollback, idle-pool and shutdown failures never print partial results.
 
+The separate `npm run audit:custom-signed-pdf-content` command checks the
+stored PDF bytes themselves. PostgreSQL computes SHA-256 on each `content`
+value and compares it with `content_sha256`, checks that the first five bytes
+are `%PDF-`, and compares the stored byte length with `byte_size`. Only four
+aggregate counts leave the database; neither the report bytes nor assignment
+identifiers are selected or logged. This is an opt-in, read-only full scan of
+the PDF artifact table and can consume database I/O and CPU. Run it off-peak
+on a staging restore first, then in each intended environment during an
+approved audit window. The statement is capped at ten seconds and returns a
+stable failure code rather than partial counts if it times out. A zero
+artifact count is not evidence that signed files have PDFs: run the parity
+audit above too. A matching digest/header does not prove that the PDF renders
+or that a future R2 copy has the same bytes. The digest and bytes currently
+reside in the same database, so this check is not independent proof against a
+database actor able to rewrite both.
+
+The Render Free staging web service does not expose Shell or one-off jobs.
+Use a separately approved read-only execution environment with an appropriate
+TLS connection; do not copy or print database credentials into this report.
+
 A nonzero exit indicates gaps or an incomplete audit, not permission to
 regenerate or delete a signed PDF. Review legacy signed files and migration
 state before changing their read path. Historical signature events and PDFs

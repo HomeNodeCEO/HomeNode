@@ -2,7 +2,23 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import pg from "pg";
 
+import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
+
 const databaseUrl = process.env.DATABASE_URL;
+
+test("custom signed-PDF parity audit runs against migrated PostgreSQL without writes", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  try {
+    const result = await auditCustomSignedArtifacts(pool);
+    assert.notEqual(result.code, "custom_signed_artifact_schema_missing");
+    assert.equal(Number.isSafeInteger(result.signed_snapshot_count), true);
+    assert.equal(Number.isSafeInteger(result.missing_artifact_count), true);
+  } finally {
+    await pool.end();
+  }
+});
 
 test("UAD foundation migration creates isolated schemas and seeded roles", {
   skip: !databaseUrl,

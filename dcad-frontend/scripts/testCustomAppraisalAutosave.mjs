@@ -50,6 +50,11 @@ test("unmount flush retains revision and pending-save processing without updatin
   assert.match(salesComparisonSource, /if \(canUpdateUi\(\)\) setWorkfileSaveStatus\(/u);
 });
 
+test("legacy editor-key entry restarts a paused workfile autosave", () => {
+  assert.match(salesComparisonSource, /const editorKey = editorCredentialForRequest\(housingEditorKey\);/u);
+  assert.match(salesComparisonSource, /workfileCanonicalName,\s*housingEditorKey,\s*\]\);/u);
+});
+
 test("sales comparison dedupes only unchanged content, not timestamps", () => {
   const first = { assignmentFileId: 42, savedAt: "first", salesNotes: "Initial" };
   assert.equal(

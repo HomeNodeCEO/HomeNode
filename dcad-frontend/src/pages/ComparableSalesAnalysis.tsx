@@ -2013,7 +2013,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     const canUpdateUi = () => selectionIsCurrent() && !workfileUnmountedRef.current;
     if (pending.draft.assignmentFileId !== saveAssignmentFile.id) return;
     if (pending.fingerprint === lastSavedWorkfileFingerprintRef.current) return;
-    const editorKey = editorCredentialForRequest();
+    const editorKey = editorCredentialForRequest(housingEditorKey);
     if (!editorKey.trim()) {
       pendingWorkfileSaveRef.current = pending;
       if (canUpdateUi()) setWorkfileSaveStatus('Database autosave is paused until you sign in or enter an editor key.');
@@ -2255,6 +2255,7 @@ const [subject, setSubject] = useState<SubjectData | null>(null);
     contractPriceSupport,
     ctcNotes,
     workfileCanonicalName,
+    housingEditorKey,
   ]);
 
   useEffect(() => {

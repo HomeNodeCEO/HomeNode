@@ -163,7 +163,7 @@ test("successful reconciliation preserves primary input and both durable queue r
 });
 
 test("location queue failure is soft and does not suppress influence queueing", async (context) => {
-  const locationError = new Error("location queue unavailable");
+  const locationError = Object.assign(new Error("location queue unavailable"), { code: "42P01" });
   const warnings = [];
   let influenceCalls = 0;
   const server = await startRouter(baseOptions({
@@ -179,12 +179,12 @@ test("location queue failure is soft and does not suppress influence queueing", 
   assert.equal(influenceCalls, 1);
   assert.deepEqual(warnings, [[
     "manual sale link saved; location queueing deferred",
-    "location queue unavailable",
+    "42P01",
   ]]);
 });
 
 test("influence queue failure is soft after the confirmed sale and location queue", async (context) => {
-  const influenceError = new Error("influence queue unavailable");
+  const influenceError = Object.assign(new Error("influence queue unavailable"), { code: "ETIMEDOUT" });
   const warnings = [];
   let locationCalls = 0;
   const server = await startRouter(baseOptions({
@@ -200,7 +200,7 @@ test("influence queue failure is soft after the confirmed sale and location queu
   assert.equal(locationCalls, 1);
   assert.deepEqual(warnings, [[
     "manual sale link saved; influence queueing deferred",
-    "influence queue unavailable",
+    "ETIMEDOUT",
   ]]);
 });
 
@@ -217,7 +217,7 @@ test("reconciliation errors retain not-found, conflict, validation, and bounded 
     { message: "source_record_not_closed_sale", status: 400 },
     { message: "account_county_mismatch", status: 400 },
     { message: "account_identifier_mismatch", status: 400 },
-    { error: diagnostic, message: diagnostic.message, status: 500 },
+    { error: diagnostic, message: "sales_reconciliation_failed", status: 500 },
   ];
   const errors = [];
   const running = [];
@@ -236,7 +236,8 @@ test("reconciliation errors retain not-found, conflict, validation, and bounded 
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), { error: item.message });
   }
-  assert.deepEqual(errors, [["sales reconciliation failed", diagnostic]]);
+  assert.deepEqual(errors, [["sales reconciliation failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /secret-token/);
 });
 
 test("queue failures and reconciliation diagnostics use stable response codes", async (context) => {
@@ -251,7 +252,8 @@ test("queue failures and reconciliation diagnostics use stable response codes", 
   const response = await fetch(`${server.baseUrl}/api/sales/reconciliation-queue`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "sales_reconciliation_queue_failed" });
-  assert.deepEqual(errors, [["sales reconciliation queue failed", diagnostic]]);
+  assert.deepEqual(errors, [["sales reconciliation queue failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /secret-token/);
 });
 
 test("sales reconciliation composition is explicit and inline handlers are absent", () => {

@@ -9,6 +9,7 @@ import {
   listSalesReconciliationQueue,
   reconcileSalesSourceRecord,
 } from "../../services/salesReconciliation.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 export function createSalesReconciliationRouter({
   pool,
@@ -59,7 +60,7 @@ export function createSalesReconciliationRouter({
       });
       return res.json(queue);
     } catch (error) {
-      logger.error?.("sales reconciliation queue failed", error);
+      logger.error?.("sales reconciliation queue failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "sales_reconciliation_queue_failed" });
     }
   });
@@ -100,7 +101,7 @@ export function createSalesReconciliationRouter({
       } catch (locationError) {
         logger.warn?.(
           "manual sale link saved; location queueing deferred",
-          locationError?.message || locationError,
+          safeOperationalErrorCode(locationError),
         );
       }
       try {
@@ -118,7 +119,7 @@ export function createSalesReconciliationRouter({
         // next maintenance seed provide two independent retry paths.
         logger.warn?.(
           "manual sale link saved; influence queueing deferred",
-          influenceError?.message || influenceError,
+          safeOperationalErrorCode(influenceError),
         );
       }
       return res.json({ ok: true, ...result });
@@ -142,8 +143,8 @@ export function createSalesReconciliationRouter({
       ) {
         status = 400;
       }
-      if (status === 500) logger.error?.("sales reconciliation failed", error);
-      return res.status(status).json({ error: message });
+      if (status === 500) logger.error?.("sales reconciliation failed", safeOperationalErrorCode(error));
+      return res.status(status).json({ error: status === 500 ? "sales_reconciliation_failed" : message });
     }
   });
 

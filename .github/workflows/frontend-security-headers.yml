@@ -24,3 +24,16 @@ jobs:
       - name: Verify exact production security headers
         working-directory: dcad-frontend
         run: node scripts/verifyFrontendSecurityHeaders.mjs
+  verify-staging:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Verify exact staging security headers
+        working-directory: dcad-frontend
+        run: node scripts/verifyStagingFrontendSecurityHeaders.mjs

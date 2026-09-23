@@ -12,6 +12,7 @@ export const CENSUS_ADDRESS_BATCH_URL =
 
 const CENSUS_BATCH_REQUEST_TIMEOUT_MS = 120_000;
 const MAX_CENSUS_BATCH_RESPONSE_BYTES = 32 * 1024 * 1024;
+const schemaReadyByPool = new WeakMap();
 
 const COUNTY_FIPS = new Map([
   ["collin", "085"],
@@ -255,7 +256,10 @@ export function validateCensusGeography(row, county) {
 }
 
 export async function ensureCensusGeographySchema(pool) {
-  await pool.query(`
+  const existing = schemaReadyByPool.get(pool);
+  if (existing) return existing;
+  const pending = (async () => {
+    await pool.query(`
     CREATE SCHEMA IF NOT EXISTS core;
 
     CREATE TABLE IF NOT EXISTS core.account_census_geographies (
@@ -325,7 +329,13 @@ export async function ensureCensusGeographySchema(pool) {
     CREATE INDEX IF NOT EXISTS account_census_geographies_tract_idx
       ON core.account_census_geographies (tract_geoid)
       WHERE status IN ('matched', 'review_required');
-  `);
+    `);
+  })().catch((error) => {
+    schemaReadyByPool.delete(pool);
+    throw error;
+  });
+  schemaReadyByPool.set(pool, pending);
+  return pending;
 }
 
 /**

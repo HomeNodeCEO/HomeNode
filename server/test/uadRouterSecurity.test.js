@@ -668,7 +668,7 @@ test("authenticated UAD document uploads ignore a spoofed uploader and retain ex
 
   assert.deepEqual(basePool.accessQueries, [[WORKFILE_ID]]);
   assert.deepEqual(scopeQueries, [[WORKFILE_ID]]);
-  assert.equal(schemaQueries.length, 2);
+  assert.equal(schemaQueries.length, 1);
   assert.equal(inserts.length, 1);
   const [insert] = inserts;
   assert.match(insert.sql, /ON CONFLICT[\s\S]+checksum_sha256[\s\S]+DO UPDATE/);

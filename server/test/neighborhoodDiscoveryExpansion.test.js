@@ -125,6 +125,8 @@ test('new spatial domain separates all radii and v1 even for exactly the same pa
     assert.equal(result.authority, 'not_established'); assert.equal(result.source_coverage, 'not_established'); deepFrozen(result);
     const query = client.calls.find(q => q.text.includes(':parcels'));
     assert.match(query.text, /\$5::double precision, true/); assert.equal(query.values[4], radius);
+    assert.match(query.text, /prepared\.row_xmin = gis\.dcad_parcels\.xmin::text/);
+    assert.match(query.text, /prepared\.source_record_hash = gis\.dcad_parcels\.source_record_hash/);
     assert.doesNotMatch(query.text, /centroid|sale_price|LIMIT 5\b|land_use_category/i);
     const expected = createHash('sha256').update('homenode-cached-spatial-membership-v2\n').update(json({
       geometry_input: geometry(), discovery: choice(radius), distance_semantics: 'postgis_geography_spheroid_v1',

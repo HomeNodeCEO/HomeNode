@@ -15,6 +15,16 @@ const LIMITS = Object.freeze({ page_size: 500, parcels: 100000, accounts: 50000,
 // 60s aggregate deadline still bounds all spatial/source/persistence stages.
 const STREAM_LIMITS = Object.freeze({ ...LIMITS, duration_ms: 30000 });
 const HASH = /^[0-9a-f]{64}$/;
+const ORIGINAL_GEOMETRY_HASH_SQL = `encode(sha256(ST_AsEWKB(geom)), 'hex')`;
+const PRECOMPUTED_GEOMETRY_ENABLED = process.env.NEIGHBORHOOD_PRECOMPUTE_READ_ENABLED !== 'false';
+const GEOMETRY_HASH_SQL = PRECOMPUTED_GEOMETRY_ENABLED
+  ? `COALESCE((SELECT prepared.geometry_sha256
+      FROM app.neighborhood_parcel_precompute prepared
+      WHERE prepared.object_id = gis.dcad_parcels.object_id
+        AND prepared.row_xmin = gis.dcad_parcels.xmin::text
+        AND prepared.source_record_hash = gis.dcad_parcels.source_record_hash),
+      encode(sha256(ST_AsEWKB(geom)), 'hex'))`
+  : ORIGINAL_GEOMETRY_HASH_SQL;
 const SNAPSHOT_SQL = `SELECT current_setting('transaction_isolation') AS isolation,
   current_setting('transaction_read_only') AS read_only,
   pg_backend_pid() AS backend_pid, pg_current_snapshot()::text AS snapshot,
@@ -46,7 +56,8 @@ SELECT CASE WHEN octet_length(payload::text) <= 2048 THEN payload ELSE NULL END 
 FROM encoded ORDER BY object_id`;
 // Keep v1's SQL literal/parameter positions exactly unchanged. v2 adds only a
 // bounded numeric distance parameter; no caller expression or alternate predicate.
-const PAGE_SQL_V2 = PAGE_SQL.replace('4828.032, true', '$5::double precision, true');
+const PAGE_SQL_V2 = PAGE_SQL.replace('4828.032, true', '$5::double precision, true')
+  .replace(ORIGINAL_GEOMETRY_HASH_SQL, GEOMETRY_HASH_SQL);
 // A non-holdable portal evaluates radius membership once, in bounded FETCHes.
 // Remove only keyset pagination/sorting; keep the exact spheroid predicate and
 // metered payload. Canonical object-id ordering is restored before hashing.
@@ -54,10 +65,12 @@ const STREAM_SQL = PAGE_SQL
   .replace('($3::bigint IS NULL OR object_id > $3::bigint)', 'true')
   .replace('ORDER BY object_id LIMIT $4', '')
   .replace('FROM encoded ORDER BY object_id', 'FROM encoded');
-const STREAM_SQL_V2 = STREAM_SQL.replace('4828.032, true', '$3::double precision, true');
+const STREAM_SQL_V2 = STREAM_SQL.replace('4828.032, true', '$3::double precision, true')
+  .replace(ORIGINAL_GEOMETRY_HASH_SQL, GEOMETRY_HASH_SQL);
 // Separate predicate/parameter domain: the envelope is an index prefilter,
 // never membership. Keep crossing/touching parcels whole, and preserve holes.
 const CITY_PAGE_SQL = PAGE_SQL
+  .replace(ORIGINAL_GEOMETRY_HASH_SQL, GEOMETRY_HASH_SQL)
   .replace('($3::bigint IS NULL OR object_id > $3::bigint)', '($2::bigint IS NULL OR object_id > $2::bigint)')
   .replace(`ST_DWithin(geom::geography,
       ST_SetSRID(ST_MakePoint($1::double precision, $2::double precision), 4326)::geography,

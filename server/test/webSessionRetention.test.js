@@ -162,7 +162,8 @@ test("the runner records retention migration only after concurrent indexing", as
   const pool = { query: client.query, connect: async () => client };
 
   const result = await applyMobileMigrations(pool, { logger: {} });
-  assert.deepEqual(result.at(-1), { migration_name: migrationName, status: "applied" });
+  assert.deepEqual(result.find(row => row.migration_name === migrationName),
+    { migration_name: migrationName, status: "applied" });
   assert.equal(ledger.get(migrationName), checksum(migration));
   const schemaIndex = calls.findIndex((text) => text === migration.trim());
   const concurrentIndex = calls.findIndex((text) => /CREATE INDEX CONCURRENTLY/.test(text));

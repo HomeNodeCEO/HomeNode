@@ -22,6 +22,8 @@ CREATE TABLE gis.dcad_parcels(object_id bigint PRIMARY KEY,account_id text,low_p
   residential_year_built integer,residential_area_sqft numeric,parcel_area_sqft numeric,current_market_value numeric,
   land_use_category text,classification_confidence text,classification_review_reason text,subdivision_name text,
   source_record_hash text,source_updated_at timestamptz,sync_run_id uuid,synced_at timestamptz,geom geometry(MultiPolygon,4326));
+CREATE TABLE app.neighborhood_parcel_precompute(object_id bigint PRIMARY KEY,row_xmin text,
+  source_record_hash text,geometry_sha256 text,stored_geometry_ewkb text,computed_at timestamptz);
 CREATE TABLE core.sales_source_records(id bigint PRIMARY KEY,source_name text,source_filename text,
   source_sha256 text,source_record_hash text,transaction_fingerprint text,listing_key text,listing_id text,
   source_system_name text,source_modified_at timestamptz,loaded_at timestamptz,updated_at timestamptz,

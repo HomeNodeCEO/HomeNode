@@ -5,6 +5,7 @@ import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL,
   verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { ensurePropertyContextSchema } from '../../src/services/propertyContextStore.js';
 import { captureNeighborhoodSpatialMembership as keyset, captureNeighborhoodSpatialMembershipStream as stream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { runNeighborhoodParcelPrecompute } from '../../src/services/neighborhoodAssessment/neighborhoodParcelPrecompute.js';
 
 async function captureNeighborhoodSpatialMembership(...args) {
   const planner = (await args[0].query('SHOW enable_indexscan')).rows[0].enable_indexscan;
@@ -58,6 +59,11 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const original = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(original.status, 'captured');
+    const prepared = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+    assert.equal(prepared.status, 'complete');
+    assert.equal(prepared.refreshed, 5);
+    assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).membership_sha256,
+      original.membership_sha256, 'a newly committed cache cannot alter an older original snapshot');
     assert.deepEqual(original.parcels.map(row => row.object_id), ['1', '2', '4', '5']);
     assert.deepEqual(original.account_ids, ['0001', '0004', '0005']);
     await reader.query('SET LOCAL enable_indexscan=off');
@@ -81,6 +87,12 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const fresh = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(fresh.status, 'captured');
+    const cachedAgain = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+    assert.equal(cachedAgain.status, 'complete');
+    assert.equal(cachedAgain.refreshed, 2);
+    assert.equal(cachedAgain.removed, 1);
+    assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).membership_sha256,
+      fresh.membership_sha256, 'refreshing cache cannot change membership in an existing snapshot');
     assert.deepEqual(fresh.parcels.map(row => row.object_id), ['4', '5', '6']);
     assert.notEqual(fresh.membership_sha256, original.membership_sha256);
     const overflow = await captureNeighborhoodSpatialMembership(reader, geometry, { parcels: 2, page_size: 2 });

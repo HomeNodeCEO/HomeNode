@@ -55,6 +55,18 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const BIGINT = /^(?:0|[1-9][0-9]{0,18})$/;
 const SCOPE = ['organization_id', 'appraisal_case_id', 'subject_snapshot_id', 'account_id'];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
+// Operational kill switch. Both alternatives are module-owned fixed SQL; no
+// request data or caller-selected projection can enter this expression.
+const PRECOMPUTED_GEOMETRY_ENABLED = process.env.NEIGHBORHOOD_PRECOMPUTE_READ_ENABLED !== 'false';
+const PARCEL_GEOMETRY_SQL = PRECOMPUTED_GEOMETRY_ENABLED
+  ? `COALESCE(prepared.stored_geometry_ewkb,encode(ST_AsEWKB(parcel.geom),'hex'))`
+  : `encode(ST_AsEWKB(parcel.geom),'hex')`;
+const PARCEL_PRECOMPUTE_JOIN_SQL = PRECOMPUTED_GEOMETRY_ENABLED
+  ? `LEFT JOIN LATERAL (SELECT cache.stored_geometry_ewkb
+      FROM app.neighborhood_parcel_precompute cache
+      WHERE cache.object_id=parcel.object_id AND cache.row_xmin=parcel.xmin::text
+        AND cache.source_record_hash=parcel.source_record_hash) prepared ON true`
+  : '';
 const TABLES = Object.freeze({
   parcels: ['gis.dcad_parcels', 'object_id account_id low_parcel_id residential_year_built residential_area_sqft parcel_area_sqft current_market_value land_use_category classification_confidence classification_review_reason subdivision_name source_record_hash source_updated_at sync_run_id synced_at geom'],
   accounts: ['core.accounts', 'account_id county subdivision neighborhood_code legal_description'],
@@ -180,6 +192,22 @@ const COMBINED_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_COMBINED_E
   mappers:Object.freeze({parcels:mapCombinedEvidenceParcelRow,accounts:mapCombinedEvidenceAccountRow,
     transactions:mapCombinedEvidenceSaleRow,sale_links:mapCombinedEvidenceSaleLinkRow}),
 });
+// Only the active combined (mapping5) producer gets the derived geometry
+// acceleration. Mapping2/3/4 SQL stays byte-for-byte frozen for old captures.
+const combinedParcelSql = COMBINED_EVIDENCE_PROFILE.parcelsSql;
+const originalGeometrySql = "encode(ST_AsEWKB(geom),'hex') AS stored_geometry_ewkb";
+const originalParcelFromSql = 'FROM gis.dcad_parcels parcel WHERE';
+if (combinedParcelSql.split(originalGeometrySql).length !== 2
+  || combinedParcelSql.split(originalParcelFromSql).length !== 2) {
+  throw new Error('neighborhood_combined_geometry_projection_anchor_changed');
+}
+const PRECOMPUTED_COMBINED_PARCEL_SQL = PRECOMPUTED_GEOMETRY_ENABLED
+  ? combinedParcelSql.replace(originalGeometrySql, `${PARCEL_GEOMETRY_SQL} AS stored_geometry_ewkb`)
+    .replace(originalParcelFromSql, `FROM gis.dcad_parcels parcel
+    ${PARCEL_PRECOMPUTE_JOIN_SQL} WHERE`)
+  : combinedParcelSql;
+const ACTIVE_COMBINED_EVIDENCE_PROFILE = Object.freeze({ ...COMBINED_EVIDENCE_PROFILE,
+  parcelsSql: PRECOMPUTED_COMBINED_PARCEL_SQL });
 
 // PostgreSQL receives only statements compiled from this closed, module-owned
 // projection registry. Request data can select a plan, but can never become SQL
@@ -187,7 +215,7 @@ const COMBINED_EVIDENCE_PROFILE=Object.freeze({ mappingVersion:CACHED_COMBINED_E
 const SMALL_SOURCE_IDS_SQL=selectCachedTransactionSourceIdsSql(0);
 const LARGE_SOURCE_IDS_SQL=selectCachedTransactionSourceIdsSql(NEIGHBORHOOD_CACHE_READER_LIMITS.selected_accounts);
 const ROW_PROJECTIONS=Object.freeze({
-  parcels:Object.freeze([SQL.parcels,CAD_EVIDENCE_PROFILE.parcelsSql]),
+  parcels:Object.freeze([SQL.parcels,CAD_EVIDENCE_PROFILE.parcelsSql,PRECOMPUTED_COMBINED_PARCEL_SQL]),
   accounts:Object.freeze([SQL.accounts]),
   'source-ids':Object.freeze([SMALL_SOURCE_IDS_SQL,LARGE_SOURCE_IDS_SQL]),
   'transaction-identities':Object.freeze([SQL.transaction_identities]),
@@ -372,11 +400,11 @@ export function createNeighborhoodDenseCadEvidenceSourceReader(pool, { limits: o
 /** Dormant mapping5 requires its own expanded-purpose capability. Existing
  * factories, coordinator defaults and successful original captures stay intact. */
 export function createNeighborhoodCombinedEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
-  return createSourceReader(pool,{limits:overrides,access},COMBINED_EVIDENCE_PROFILE);
+  return createSourceReader(pool,{limits:overrides,access},ACTIVE_COMBINED_EVIDENCE_PROFILE);
 }
 /** Same installed dense ceilings and account batching, not wider admission. */
 export function createNeighborhoodDenseCombinedEvidenceSourceReader(pool, { limits: overrides = {}, access } = {}) {
-  return createSourceReader(pool,{limits:overrides,access},{ ...COMBINED_EVIDENCE_PROFILE, dense: true });
+  return createSourceReader(pool,{limits:overrides,access},{ ...ACTIVE_COMBINED_EVIDENCE_PROFILE, dense: true });
 }
 function createSourceReader(pool, { limits: overrides, access }, profile) {
   if (typeof pool?.connect!=='function') invalid('pool');

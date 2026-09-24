@@ -59,9 +59,37 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const original = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(original.status, 'captured');
+    const radii = ['4828.032', '8046.72', '16093.44'];
+    const liveRadiusHashes = new Map();
+    for (const radius_metres of radii) {
+      const live = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
+        { profile_id: 'custom-suburban-radius-v2', radius_metres });
+      assert.equal(live.status, 'captured');
+      liveRadiusHashes.set(radius_metres, live.membership_sha256);
+    }
     const prepared = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
     assert.equal(prepared.status, 'complete');
     assert.equal(prepared.refreshed, 5);
+    const hitReader = await pool.connect();
+    try {
+      await hitReader.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await hitReader.query("SET LOCAL statement_timeout='5000ms'");
+      const cacheHits = await hitReader.query(`SELECT count(*)::integer AS count
+        FROM gis.dcad_parcels parcel JOIN app.neighborhood_parcel_precompute prepared
+          ON prepared.object_id=parcel.object_id AND prepared.row_xmin=parcel.xmin::text
+            AND prepared.source_record_hash=parcel.source_record_hash`);
+      assert.ok(cacheHits.rows[0].count > 0, 'verify the new snapshot can use the prepared rows');
+      for (const radius_metres of radii) {
+        const cached = await captureNeighborhoodSpatialMembership(hitReader, geometry, { page_size: 2 },
+          { profile_id: 'custom-suburban-radius-v2', radius_metres });
+        assert.equal(cached.status, 'captured');
+        assert.equal(cached.membership_sha256, liveRadiusHashes.get(radius_metres),
+          'cache hits must reproduce the live v2 geometry membership');
+      }
+    } finally {
+      await hitReader.query('ROLLBACK').catch(() => {});
+      hitReader.release();
+    }
     assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).membership_sha256,
       original.membership_sha256, 'a newly committed cache cannot alter an older original snapshot');
     assert.deepEqual(original.parcels.map(row => row.object_id), ['1', '2', '4', '5']);
@@ -70,7 +98,7 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).status, 'captured');
     assert.equal((await reader.query('SHOW enable_indexscan')).rows[0].enable_indexscan, 'off');
     await reader.query('SET LOCAL enable_indexscan=on');
-    for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
+    for (const radius_metres of radii) {
       assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
         { profile_id: 'custom-suburban-radius-v2', radius_metres })).status, 'captured');
     }

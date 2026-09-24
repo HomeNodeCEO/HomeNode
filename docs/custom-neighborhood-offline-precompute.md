@@ -42,6 +42,11 @@ date checks. No median is averaged from cached subgroup medians.
    `17 8 * * 0` (Sunday around 2–3 a.m. Central, depending on daylight time).
    Do not run this command inside the web process or share the routine
    maintenance job's worker slot.
+   A full CAD sync may rewrite parcel tuples and temporarily remove cache hits
+   even when their source hashes are unchanged. Trigger an additional run after
+   every completed full CAD sync and verify its completion; the weekly run is
+   only the backstop. If full syncs become frequent, increase the scheduled
+   cadence after measuring database load rather than assuming weekly warmth.
 3. Start one manual run after the migration. The session advisory lock rejects
    overlapping runs. Each statement has a 60-second query deadline, the job a
    45-minute default wall budget, and the pool has one connection. Set

@@ -367,7 +367,7 @@ function WorkspaceSession(props: Props) {
                 <button type="button" className="custom-cohort-pocket-card min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
                   style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', justifyItems: 'stretch',
                     alignItems: 'start', gap: '0.375rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}
-                  onClick={() => { if (!inspectionsPaused) setInspected(p.id); }}
+                  onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspectedPhaseId(null); setInspected(p.id); } }}
                   aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
                   <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
                   {reviewById.has(p.id) && <span className="mt-1 block text-xs">
@@ -422,7 +422,7 @@ function WorkspaceSession(props: Props) {
         onInspectPhase={id => { if (!inspectionsPaused && (id === null || fullReviewFamily.pocket_ids.includes(id))) {
           setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
         } }}
-        onClose={() => { setFullReviewFamilyId(null); setInspectedPhaseId(null); }} />}
+        onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
       {!inspectedFamily && selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
         pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
         memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}

@@ -650,6 +650,20 @@ test('mixed bare/PH Willow list review opens the complete 307-account family wit
   assert.equal(JSON.stringify(props.workspace.catalog), before, 'review never rewrites original labels, counts, account arrays or leaf IDs');
 });
 
+test('closing full review restores list inspection even when no map snapshot is available', async t => {
+  const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h);
+  h.render(props); await h.tick(); await h.complete();
+  const card = h.nodes().find(node => node.type === 'button' && text(node).startsWith('MONICA PARK 1'));
+  assert.ok(card); card.props.onClick(); await h.drain();
+  h.click('Review subdivision and phases');
+  assert.ok(h.child('CustomCohortSubdivisionDialog'));
+  h.child('CustomCohortSubdivisionDialog').onClose(); await h.drain();
+  assert.equal(h.child('CustomCohortSubdivisionDialog'), undefined);
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+  assert.equal(h.child('CustomCohortPocketInspector').pocketId, groupId(1));
+  assert.deepEqual(h.intents, []);
+});
+
 test('mixed bare/PH Willow broad activation unions all six original leaves once and preserves separate NO 5 plus unrelated selection', async t => {
   const h = harness(); t.after(() => h.unmount());
   const unrelated = [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], props = mixedWillowProps(h, unrelated);

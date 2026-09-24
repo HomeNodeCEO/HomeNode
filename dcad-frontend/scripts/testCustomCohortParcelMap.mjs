@@ -314,7 +314,12 @@ test('single similarity view leaves unsupported scores unknown and keeps inclusi
   assert.deepEqual(['A', 'B', 'C'].map(a => painted(h.maps[0], a).fillColor), ['#94a3b8', '#94a3b8', '#94a3b8']);
   assert.equal(painted(h.maps[0], 'A').selected, true);
   assert.equal(painted(h.maps[0], 'C').selected, true);
-  assert.ok(JSON.stringify(h.maps[0].getLayer('custom-cohort-parcels-outline').paint).includes('#dc2626'));
+  const outline = h.maps[0].getLayer('custom-cohort-parcels-outline').paint;
+  assert.ok(JSON.stringify(outline).includes('#dc2626'));
+  assert.equal(outline['line-color'][2], '#dc2626', 'included red stays ahead of inspection color');
+  assert.deepEqual(outline['line-width'].slice(0, 3), ['case', ['all',
+    ['coalesce', ['feature-state', 'selected'], ['get', 'selected']],
+    ['coalesce', ['feature-state', 'inspected'], ['get', 'inspected']]], 4]);
   assert.equal(h.node(n => n.type === 'select' && n.props['aria-label'] === 'Map color mode'), null);
   assert.match(h.html(), /unknown/i); assert.match(h.html(), /group/i);
   assert.equal(JSON.stringify(props), before); assert.equal(h.maps[0].fits.length, 1); assert.equal(h.loadCount, 1);

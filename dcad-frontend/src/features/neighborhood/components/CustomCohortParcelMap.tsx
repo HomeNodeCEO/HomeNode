@@ -244,7 +244,10 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           instance.addLayer({ id: `${SOURCE}-outline`, type: 'line', source: SOURCE, paint: {
             'line-color': ['case', state('selected'), COLORS.included, state('inspected'), COLORS.inspected,
               state('subject'), COLORS.subject, state('unresolved'), COLORS.unresolved, COLORS.excluded],
-            'line-width': ['case', state('selected'), 2.5, state('subject'), 2, state('inspected'), 2, 0.75],
+            // Keep the appraiser's red inclusion outline even during inspection;
+            // a thicker edge distinguishes the actively inspected included parcel.
+            'line-width': ['case', ['all', state('selected'), state('inspected')], 4,
+              state('selected'), 2.5, state('subject'), 2, state('inspected'), 2, 0.75],
           } });
           instance.addSource(LABEL_SOURCE, { type: 'geojson', data: latest.current.labels });
           instance.addLayer({ id: LABEL_LAYER, type: 'symbol', source: LABEL_SOURCE, minzoom: 9,

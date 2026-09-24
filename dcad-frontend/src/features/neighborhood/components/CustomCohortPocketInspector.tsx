@@ -8,7 +8,7 @@ import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import { selectionFromRecordedGroups } from '../customCohortPocketCatalog';
 import { CUSTOM_CAD_FIELD_LABELS } from '../customCohortCadEvidence';
 import type { CheckedCadRecordedEvidence } from '../customCohortCadEvidence';
-import CustomCohortStatistics from './CustomCohortStatistics';
+import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomCohortStatistics';
 import CustomCohortMemberBrowser from './CustomCohortMemberBrowser';
 
 interface Props { input: CustomCohortPreviewInput; catalog: CheckedPocketCatalog; pocketId: string; label: string;
@@ -18,7 +18,7 @@ interface Props { input: CustomCohortPreviewInput; catalog: CheckedPocketCatalog
   inspectionSelection?: CustomCohortPreviewInput['selection'];
   inspectedPocketId?: string; onBatchUnavailable?: () => void;
   previewTransport?: typeof requestCustomCohortObservationPreview; paused?: boolean;
-  memberTransport?: CustomCohortMemberTransport; membersPaused?: boolean }
+  memberTransport?: CustomCohortMemberTransport; membersPaused?: boolean; compact?: boolean }
 const amount = (value: number) => value.toLocaleString('en-US');
 const literalText = (value: string | boolean | null) => value === null ? 'null (missing)' : typeof value === 'string'
   ? `${JSON.stringify(value)}${value.trim() ? '' : ' (blank / missing)'}` : String(value);
@@ -120,10 +120,10 @@ function InspectorSession(props: Props) {
     return () => { active = false; clearTimeout(admission); clearTimeout(timeout); abort.abort(); };
   }, [input, retry, paused, batch]);
   const inspectedPocketId = batch ? props.inspectedPocketId : undefined;
-  return <section className="space-y-2 rounded-xl border border-violet-200 p-3 print:hidden" aria-label={`Inspect ${props.label}`}>
-    <h4 className="font-semibold">Inside {props.label}</h4>
-    <p className="text-sm">Independent statistics inspection. This request does not itself change inclusion; use the selection controls to include or exclude groups.</p>
-    {batch && <p className="text-xs text-slate-600">Subdivision and phase summaries share one checked capture. Switching phases reuses these observations; opening record pages still verifies their exact population.</p>}
+  return <section className={props.compact ? 'space-y-2 text-sm print:hidden' : 'space-y-2 rounded-xl border border-violet-200 p-3 print:hidden'} aria-label={`Inspect ${props.label}`}>
+    {!props.compact && <><h4 className="font-semibold">Inside {props.label}</h4>
+      <p className="text-sm">Independent statistics inspection. This request does not itself change inclusion; use the selection controls to include or exclude groups.</p>
+      {batch && <p className="text-xs text-slate-600">Subdivision and phase summaries share one checked capture. Switching phases reuses these observations; opening record pages still verifies their exact population.</p>}</>}
     {paused && <p role="status">Group inspection is paused while the report is being saved or finalized. Any displayed observations are retained from this context.</p>}
     {!group && !error && !paused && <p role="status">Loading this group’s observations…</p>}
     {error && <div role="alert"><p>{error === 'capacity_exceeded'
@@ -131,12 +131,13 @@ function InspectorSession(props: Props) {
       : 'This group could not be inspected. This failed inspection does not undo saved inclusion choices.'}</p>
       <button type="button" className="hn-action-secondary btn btn-sm normal-case" disabled={paused}
         onClick={() => { if (!paused) setRetry(n => n + 1); }}>Retry inspection</button></div>}
-    {group && <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly
-      pocketOnly={inspectedPocketId !== undefined} pocketId={inspectedPocketId} />}
-    {group && <CustomCohortMemberBrowser input={input} group={group} paused={paused || props.membersPaused === true}
+    {group && (props.compact ? <CustomCohortCompactStatistics group={group} freshness={paused ? 'stale' : 'current'} title="Area observations" includePrivateSales />
+      : <CustomCohortStatistics group={group} freshness={paused ? 'stale' : 'current'} selectedOnly
+        pocketOnly={inspectedPocketId !== undefined} pocketId={inspectedPocketId} />)}
+    {group && !props.compact && <CustomCohortMemberBrowser input={input} group={group} paused={paused || props.membersPaused === true}
       pocketId={inspectedPocketId}
       memberTransport={props.memberTransport ?? requestCustomCohortMembers} />}
-    {cad && sameCadContext && (!props.pocketIds || props.pocketIds.length === 1)
+    {!props.compact && cad && sameCadContext && (!props.pocketIds || props.pocketIds.length === 1)
       && <RecordedCadDetails evidence={cad} pocketId={props.pocketIds?.[0] ?? props.pocketId} />}
   </section>;
 }

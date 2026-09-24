@@ -10,9 +10,10 @@ import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CheckedRecordedProximity } from '../customCohortPocketRecommendation';
 import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
-import CustomCohortStatistics from './CustomCohortStatistics';
+import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomCohortStatistics';
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
 import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
+import CustomCohortMapSnapshot from './CustomCohortMapSnapshot';
 
 export interface CustomCohortControlledWorkspace {
   readonly catalog: CheckedPocketCatalog;
@@ -49,6 +50,19 @@ const proximityUnavailableReasons = {
   native_query_failed: 'The recorded-point distance calculation could not be completed. Distances remain unknown.',
   native_result_invalid: 'The distance calculation did not return a complete, valid result. Distances remain unknown.',
 } satisfies Record<Exclude<CheckedRecordedProximity['reason'], null>, string>;
+const unassignedReasonLabels: Record<string, string> = {
+  pocket_count_limit: 'Too many distinct recorded names for this catalog version',
+  recorded_label_variant_limit: 'Too many raw subdivision-name variants',
+  recorded_label_text_limit: 'A recorded subdivision name exceeds the text limit',
+  catalog_output_byte_limit: 'Grouped result exceeds the response-size limit',
+  county_unavailable: 'County missing',
+  conflicting_recorded_counties: 'Conflicting counties',
+  invalid_recorded_county: 'Invalid county value',
+  recorded_subdivision_label_unavailable: 'Subdivision name missing',
+  conflicting_recorded_subdivision_labels: 'Conflicting subdivision names',
+  invalid_recorded_subdivision_label: 'Invalid subdivision name',
+};
+const unassignedReasonLabel = (reason: string) => unassignedReasonLabels[reason] ?? reason.replaceAll('_', ' ');
 
 /** Independent exploration only. Controlled intent never writes accepted report data.
  * A target, context or session change unmounts all request/map ownership. */
@@ -76,6 +90,7 @@ function WorkspaceSession(props: Props) {
   const [inspected, setInspected] = useState<string | null>(null);
   const [inspectedFamilyId, setInspectedFamilyId] = useState<string | null>(null);
   const [inspectedPhaseId, setInspectedPhaseId] = useState<string | null>(null);
+  const [fullReviewFamilyId, setFullReviewFamilyId] = useState<string | null>(null);
   const [search, setSearch] = useState('');
   const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
@@ -84,6 +99,7 @@ function WorkspaceSession(props: Props) {
   const catalog = props.workspace?.catalog ?? localCatalog;
   const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
   const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
+  const fullReviewFamily = subdivisionFamilies?.families.find(family => family.id === fullReviewFamilyId) ?? null;
   const highlightedIds = useMemo(() => inspectedFamily && catalog ? inspectedPhaseId
     ? buildCustomCohortSubdivisionPhases(catalog, inspectedFamily).find(phase => phase.pocket_ids.includes(inspectedPhaseId))?.pocket_ids
     : inspectedFamily.pocket_ids : undefined, [catalog, inspectedFamily, inspectedPhaseId]);
@@ -163,15 +179,25 @@ function WorkspaceSession(props: Props) {
     setInspected(id);
     setInspectedFamilyId(family?.id ?? null);
     setInspectedPhaseId(mode === 'phase' ? id : null);
-    // Only an intentional broad-view click includes the family. Zooming,
-    // inspection and reopening never fill back in an appraiser's exclusions.
-    if (mode === 'subdivision') includeGroups(family?.pocket_ids ?? [id]);
+    // A map click is an explicit selection intent. Phase zoom never silently
+    // changes saved membership; clicking that phase includes its exact groups.
+    const phaseIds = family && mode === 'phase'
+      ? buildCustomCohortSubdivisionPhases(catalog, family).find(phase => phase.pocket_ids.includes(id))?.pocket_ids : null;
+    includeGroups(mode === 'subdivision' ? family?.pocket_ids ?? [id] : phaseIds ?? [id]);
+  };
+  const excludePocket = (id: string, mode: 'subdivision' | 'phase') => {
+    if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
+    const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
+    const phaseIds = family && mode === 'phase'
+      ? buildCustomCohortSubdivisionPhases(catalog, family).find(phase => phase.pocket_ids.includes(id))?.pocket_ids : null;
+    excludeGroups(mode === 'subdivision' ? family?.pocket_ids ?? [id] : phaseIds ?? [id]);
   };
   const recommendation = desired ? catalog?.recommendation ?? null : null;
   const reviewById = new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket]));
   const groups = catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
-    ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP, label: 'Unassigned / conflicting recorded names',
-      county: 'Needs review', count: catalog.unassigned.member_count }] : [])]
+    ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP,
+      label: catalog.status === 'incomplete' ? 'Grouping unavailable — capture limit' : 'CAD subdivision not confirmed',
+      county: catalog.status === 'incomplete' ? 'Capacity reached' : 'Needs source review', count: catalog.unassigned.member_count }] : [])]
     .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
   const selectedGroup = groups.find(p => p.id === inspected);
   const selectedFamily = subdivisionFamilies && inspected ? customCohortSubdivisionFamilyForPocket(subdivisionFamilies, inspected) : null;
@@ -218,12 +244,13 @@ function WorkspaceSession(props: Props) {
       <button type="button" className={button} onClick={() => setReload(n => n + 1)}>Retry group loading</button></div>}
     {catalog && <>
       {!desired && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
-      {catalog.status === 'incomplete' && <p role="alert">The recorded-name catalog is incomplete. All discovered accounts remain in the unresolved group;
-        no partial set of named groups has been substituted.</p>}
+      {catalog.status === 'incomplete' && <p role="alert">Subdivision grouping reached a capacity limit: {catalog.unassigned.reason_counts.map(row => unassignedReasonLabel(row.reason)).join(', ')}.
+        {' '}All captured accounts remain selectable together; their individual CAD subdivision names have not been judged missing.</p>}
       {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
         All {catalog.pockets.length.toLocaleString('en-US')} recorded groups are available for inspection and inclusion.
         Automatic ranking is unavailable for this retained study; historical applicability and complete recommendation capacity are required.
-        No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.</p>}
+        No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.
+        {catalog.catalog_version < 3 && ' This saved file uses an older grouping version; Refresh subdivision grouping above requests the expanded version while retaining the saved selection.'}</p>}
       {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h4 className="font-semibold">Recommended area for review</h4>
@@ -309,24 +336,38 @@ function WorkspaceSession(props: Props) {
       </p>
       {preview.status === 'failed' && <button type="button" className={button} disabled={selectionDisabled}
         onClick={() => { if (!selectionDisabled) setRetry(n => n + 1); }}>Retry preview</button>}
-      <div className="grid gap-4 lg:grid-cols-[minmax(0,1fr)_19rem]">
+      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]">
         {group ? <CustomCohortParcelMap group={group} catalog={catalog} freshness={freshness}
           subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
-          onActivatePocket={activatePocket}
+          onActivatePocket={activatePocket} onExcludePocket={excludePocket}
           inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
-          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
+          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }}
+          overlay={inspectedFamily && desired ? <CustomCohortMapSnapshot key={inspectedFamily.id}
+            family={inspectedFamily} phaseId={inspectedPhaseId} catalog={catalog} input={input} included={included}
+            paused={inspectionsPaused} previewTransport={transport}
+            onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} /> : null} />
           : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
-        <aside className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
+        <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3" aria-label="Live neighborhood characteristics and market observations">
+          <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
+          <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
+            <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
+            <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
+          </details>
+        </aside>
+      </div>
+      <section className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
+        <h4 className="font-semibold">Recorded subdivisions and groups</h4>
+        <p className="text-xs text-slate-600">Search or review a subdivision and its phases below. Map clicks update the selection directly.</p>
           <label className="block text-sm">Find a recorded group<input value={search} maxLength={200}
             onChange={event => { setSearch(event.target.value); setGroupPage(0); }} className="input input-bordered mt-1 w-full" /></label>
-          <div className="max-h-80 space-y-2 overflow-auto">
+          <div className="grid max-h-96 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
             {visibleGroups.map(p =>
               <div key={p.id} className="flex items-start gap-2 rounded-lg border border-violet-100 p-2">
                 <input type="checkbox" aria-label={`Include ${p.label}`} checked={included.includes(p.id)} disabled={selectionDisabled} onChange={() => toggle(p.id)} />
                 <button type="button" className="custom-cohort-pocket-card min-w-0 flex-1 text-left text-sm" disabled={inspectionsPaused}
                   style={{ display: 'grid', gridTemplateColumns: 'minmax(0, 1fr)', justifyItems: 'stretch',
                     alignItems: 'start', gap: '0.375rem', whiteSpace: 'normal', overflowWrap: 'anywhere' }}
-                  onClick={() => { if (!inspectionsPaused) setInspected(p.id); }}
+                  onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspectedPhaseId(null); setInspected(p.id); } }}
                   aria-pressed={inspected === p.id}><span className="block font-medium">{p.label}</span>
                   <span className="text-xs opacity-75">{p.count.toLocaleString('en-US')} accounts · {p.county}</span>
                   {reviewById.has(p.id) && <span className="mt-1 block text-xs">
@@ -352,11 +393,16 @@ function WorkspaceSession(props: Props) {
           </nav>}
           {selectedGroup && <div className="space-y-2 border-t border-violet-200 pt-3">
             <h4 className="font-semibold">{selectedGroup.label}</h4><p className="text-sm">{selectedGroup.count.toLocaleString('en-US')} retained accounts.
-              Recorded-name grouping requires review; builder, HOA dues, amenities and legal phases are not inferred.</p>
+              CAD recorded-name grouping does not establish builder, HOA dues, amenities or legal phase boundaries.</p>
+            {selectedGroup.id === CUSTOM_COHORT_UNASSIGNED_GROUP && <p className="text-xs text-amber-900">
+              {catalog.status === 'incomplete' ? 'Grouping stopped at a capacity limit; this does not mean the CAD names are missing. '
+                : 'The retained CAD rows could not confirm one subdivision for these accounts. '}
+              {catalog.unassigned.reason_counts.map(row => `${unassignedReasonLabel(row.reason)}: ${row.member_count.toLocaleString('en-US')}`).join(' · ')}.
+              {' '}These accounts stay visible and selectable; proximity alone cannot verify a legal subdivision.</p>}
             <button type="button" className={button} disabled={selectionDisabled} onClick={() => toggle(selectedGroup.id)}>
               {included.includes(selectedGroup.id) ? 'Exclude this group' : 'Include this group'}</button>
             {selectedFamily && selectedFamily.pocket_ids.length > 1 && <button type="button" className={button} disabled={inspectionsPaused}
-              onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(selectedFamily.id); setInspectedPhaseId(null); } }}>
+              onClick={() => { if (!inspectionsPaused) { setInspectedFamilyId(selectedFamily.id); setFullReviewFamilyId(selectedFamily.id); setInspectedPhaseId(null); } }}>
               Review subdivision and phases</button>}
             {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
               <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
@@ -368,17 +414,15 @@ function WorkspaceSession(props: Props) {
                 onClick={() => choose(included.filter(id => !countyMatches.some(p => p.id === id)))}>Exclude matching groups</button>
             </div>}
           </div>}
-        </aside>
-      </div>
-      <CustomCohortStatistics group={group} freshness={freshness} />
-      {inspectedFamily && desired && <CustomCohortSubdivisionDialog key={inspectedFamily.id}
-        family={inspectedFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
+      </section>
+      {fullReviewFamily && desired && <CustomCohortSubdivisionDialog key={fullReviewFamily.id}
+        family={fullReviewFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
         selectionDisabled={selectionDisabled} inspectionsPaused={inspectionsPaused} previewTransport={transport}
         memberTransport={props.workspace?.memberTransport} onInclude={includeGroups} onExclude={excludeGroups}
-        onInspectPhase={id => { if (!inspectionsPaused && (id === null || inspectedFamily.pocket_ids.includes(id))) {
-          setInspectedPhaseId(id); setInspected(id ?? inspectedFamily.pocket_ids[0]);
+        onInspectPhase={id => { if (!inspectionsPaused && (id === null || fullReviewFamily.pocket_ids.includes(id))) {
+          setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
         } }}
-        onClose={() => { setInspectedFamilyId(null); setInspected(null); setInspectedPhaseId(null); }} />}
+        onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
       {!inspectedFamily && selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
         pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
         memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}

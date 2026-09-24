@@ -4,11 +4,12 @@ export const MAPLIBRE_BASE_STYLE = 'https://tiles.openfreemap.org/styles/bright'
 export interface ParcelMapClick {
   readonly point?: { readonly x: number; readonly y: number };
   readonly features?: readonly { readonly properties?: Readonly<Record<string, unknown>> }[];
+  readonly originalEvent?: { preventDefault?: () => void };
 }
 export interface ParcelMapRuntimeInstance {
   on: {
     (event: 'load' | 'error' | 'idle' | 'zoom', callback: () => void): void;
-    (event: 'click', layer: string, callback: (event: ParcelMapClick) => void): void;
+    (event: 'click' | 'contextmenu', layer: string, callback: (event: ParcelMapClick) => void): void;
     (event: 'mouseenter' | 'mouseleave', layer: string, callback: () => void): void;
   };
   addSource: (id: string, source: Record<string, unknown>) => void;

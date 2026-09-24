@@ -5,6 +5,7 @@ import { checkedNeighborhoodDatabaseUrl, NEIGHBORHOOD_CI_IDENTITY_SQL,
   verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { ensurePropertyContextSchema } from '../../src/services/propertyContextStore.js';
 import { captureNeighborhoodSpatialMembership as keyset, captureNeighborhoodSpatialMembershipStream as stream } from '../../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
+import { runNeighborhoodParcelPrecompute } from '../../src/services/neighborhoodAssessment/neighborhoodParcelPrecompute.js';
 
 async function captureNeighborhoodSpatialMembership(...args) {
   const planner = (await args[0].query('SHOW enable_indexscan')).rows[0].enable_indexscan;
@@ -58,13 +59,46 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const original = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(original.status, 'captured');
+    const radii = ['4828.032', '8046.72', '16093.44'];
+    const liveRadiusHashes = new Map();
+    for (const radius_metres of radii) {
+      const live = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
+        { profile_id: 'custom-suburban-radius-v2', radius_metres });
+      assert.equal(live.status, 'captured');
+      liveRadiusHashes.set(radius_metres, live.membership_sha256);
+    }
+    const prepared = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+    assert.equal(prepared.status, 'complete');
+    assert.equal(prepared.refreshed, 5);
+    const hitReader = await pool.connect();
+    try {
+      await hitReader.query('BEGIN ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      await hitReader.query("SET LOCAL statement_timeout='5000ms'");
+      const cacheHits = await hitReader.query(`SELECT count(*)::integer AS count
+        FROM gis.dcad_parcels parcel JOIN app.neighborhood_parcel_precompute prepared
+          ON prepared.object_id=parcel.object_id AND prepared.row_xmin=parcel.xmin::text
+            AND prepared.source_record_hash=parcel.source_record_hash`);
+      assert.ok(cacheHits.rows[0].count > 0, 'verify the new snapshot can use the prepared rows');
+      for (const radius_metres of radii) {
+        const cached = await captureNeighborhoodSpatialMembership(hitReader, geometry, { page_size: 2 },
+          { profile_id: 'custom-suburban-radius-v2', radius_metres });
+        assert.equal(cached.status, 'captured');
+        assert.equal(cached.membership_sha256, liveRadiusHashes.get(radius_metres),
+          'cache hits must reproduce the live v2 geometry membership');
+      }
+    } finally {
+      await hitReader.query('ROLLBACK').catch(() => {});
+      hitReader.release();
+    }
+    assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).membership_sha256,
+      original.membership_sha256, 'a newly committed cache cannot alter an older original snapshot');
     assert.deepEqual(original.parcels.map(row => row.object_id), ['1', '2', '4', '5']);
     assert.deepEqual(original.account_ids, ['0001', '0004', '0005']);
     await reader.query('SET LOCAL enable_indexscan=off');
     assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).status, 'captured');
     assert.equal((await reader.query('SHOW enable_indexscan')).rows[0].enable_indexscan, 'off');
     await reader.query('SET LOCAL enable_indexscan=on');
-    for (const radius_metres of ['4828.032', '8046.72', '16093.44']) {
+    for (const radius_metres of radii) {
       assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },
         { profile_id: 'custom-suburban-radius-v2', radius_metres })).status, 'captured');
     }
@@ -81,6 +115,12 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const fresh = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(fresh.status, 'captured');
+    const cachedAgain = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+    assert.equal(cachedAgain.status, 'complete');
+    assert.equal(cachedAgain.refreshed, 2);
+    assert.equal(cachedAgain.removed, 1);
+    assert.equal((await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 })).membership_sha256,
+      fresh.membership_sha256, 'refreshing cache cannot change membership in an existing snapshot');
     assert.deepEqual(fresh.parcels.map(row => row.object_id), ['4', '5', '6']);
     assert.notEqual(fresh.membership_sha256, original.membership_sha256);
     const overflow = await captureNeighborhoodSpatialMembership(reader, geometry, { parcels: 2, page_size: 2 });

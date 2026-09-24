@@ -1,10 +1,13 @@
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import test from 'node:test';
-import { createNeighborhoodCachedSourceReader } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCachedSourceReader, createNeighborhoodCombinedEvidenceSourceReader }
+  from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
+import { createNeighborhoodCombinedEvidenceReadAccess } from '../src/services/neighborhoodAssessment/cachedReadAccess.js';
 import { prepareNeighborhoodCiDatabase } from './helpers/neighborhoodCiDatabase.js';
 import { createTestCachedReadAccess } from './fixtures/neighborhoodCachedReadAccessFixture.js';
 import { NEIGHBORHOOD_CACHED_SOURCE_SCHEMA as sourceSchema } from './fixtures/neighborhoodCachedSourceSchemaFixture.js';
+import { runNeighborhoodParcelPrecompute } from '../src/services/neighborhoodAssessment/neighborhoodParcelPrecompute.js';
 
 const records=(capture,role) => capture.source_capture.sources
   .filter(source => source.payload.projection.definition.role===role).flatMap(source => source.payload.records);
@@ -29,8 +32,9 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
   // of the reader. Only association identities are loaded before minting grants;
   // the reader must recheck that frozen one-hop manifest in its own read snapshot.
   const fixtureReader=(readerPool,options={}) => ({async capture(input) {
-    const {afterPrepare,...readerOptions}=options;
-    const fixture=createTestCachedReadAccess(input,{resolveTransactionClosure:async (_auth,_context,selection) => {
+    const {afterPrepare,mapping5=false,...readerOptions}=options;
+    const fixture=createTestCachedReadAccess(input,{...(mapping5 ? {accessFactory:createNeighborhoodCombinedEvidenceReadAccess} : {}),
+      resolveTransactionClosure:async (_auth,_context,selection) => {
       const base={selected_account_ids:selection.account_ids,source_revision:'native-fixture-identity-v1',transactions:[],links:[],legacy:[]};
       const available=(await pool.query("SELECT to_regclass('core.sales_source_records') IS NOT NULL AND to_regclass('core.sale_parcels') IS NOT NULL AND to_regclass('core.sales') IS NOT NULL AS ready")).rows[0].ready;
       if (!available) return base;
@@ -51,7 +55,8 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
     }});
     const prepared=await fixture.prepare();
     if (afterPrepare) await afterPrepare();
-    return createNeighborhoodCachedSourceReader(readerPool,{...readerOptions,access:fixture.access}).capture({
+    const factory=mapping5 ? createNeighborhoodCombinedEvidenceSourceReader : createNeighborhoodCachedSourceReader;
+    return factory(readerPool,{...readerOptions,access:fixture.access}).capture({
       ...prepared.request,auth:fixture.auth,selection_grant:prepared.selection_grant,market_grant:prepared.market_grant});
   }});
   const reader=fixtureReader(pool,{limits:{page_size:1}});
@@ -87,6 +92,32 @@ test('cached source reader: actual PostgreSQL selected membership, snapshot cons
       assert.deepEqual(raw(result,'transactions'),[]);
       assert.ok(result.unsupported_capabilities.includes('provider_coverage'));
       assert.equal(records(result,'parcels')[0].data.data.housing_type,null);
+    });
+    await t.test('precomputed, stale and refreshed geometry retain exact original CAD bytes',async () => {
+      const combined = fixtureReader(pool, { mapping5: true, limits: { page_size: 1 } });
+      const before = await combined.capture(request);
+      assert.equal(before.status, 'captured');
+      const original = raw(before, 'parcels').find(row => row.object_id === '9007199254740993').stored_geometry_ewkb;
+      const prepared = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+      assert.equal(prepared.status, 'complete');
+      assert.equal(prepared.refreshed, 1);
+      const hit = await combined.capture(request);
+      assert.equal(hit.status, 'captured');
+      assert.equal(raw(hit, 'parcels').find(row => row.object_id === '9007199254740993').stored_geometry_ewkb, original);
+      await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_Translate(geom,0.0001,0)
+        WHERE object_id=9007199254740993`);
+      const stale = await combined.capture(request);
+      assert.equal(stale.status, 'captured');
+      const current = raw(stale, 'parcels').find(row => row.object_id === '9007199254740993').stored_geometry_ewkb;
+      assert.notEqual(current, original);
+      assert.equal(current, (await pool.query(`SELECT encode(ST_AsEWKB(geom),'hex') AS ewkb
+        FROM gis.dcad_parcels WHERE object_id=9007199254740993`)).rows[0].ewkb);
+      const refreshed = await runNeighborhoodParcelPrecompute(pool, { batchSize: 2, logger: { info() {} } });
+      assert.equal(refreshed.refreshed, 1);
+      const again = await combined.capture(request);
+      assert.equal(raw(again, 'parcels').find(row => row.object_id === '9007199254740993').stored_geometry_ewkb, current);
+      await pool.query(`UPDATE gis.dcad_parcels SET geom=ST_GeomFromEWKB(decode($1,'hex'))
+        WHERE object_id=9007199254740993`, [original]);
     });
     await t.test('future or reversed runs, missing success and contradictory counts fail closed',async () => {
       const original=(await pool.query(`SELECT r.started_at::text,r.completed_at::text,s.last_success_at::text,s.row_count::text

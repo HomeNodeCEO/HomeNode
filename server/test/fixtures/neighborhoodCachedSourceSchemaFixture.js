@@ -11,6 +11,10 @@ export const NEIGHBORHOOD_CACHED_SOURCE_SCHEMA=`
     class_code text,class_description text,use_description text,structure_type text,built_up boolean,
     source_record_hash text,source_updated_at timestamptz,sync_run_id uuid,synced_at timestamptz,geom geometry(MultiPolygon,4326));
   CREATE INDEX cache_fixture_parcel_account_idx ON gis.dcad_parcels(account_id);
+  CREATE TABLE IF NOT EXISTS app.neighborhood_parcel_precompute(object_id bigint PRIMARY KEY,row_xmin text,
+    source_record_hash text,geometry_sha256 text,stored_geometry_ewkb text,computed_at timestamptz);
+  CREATE TABLE IF NOT EXISTS app.neighborhood_parcel_precompute_state(id boolean PRIMARY KEY,status text,started_at timestamptz,
+    completed_at timestamptz,rows_scanned bigint,rows_refreshed bigint,last_error_code text,updated_at timestamptz);
   CREATE TABLE core.sales_source_records(id bigint PRIMARY KEY,source_name text,source_filename text,
     source_sha256 text,source_record_hash text,transaction_fingerprint text,listing_key text,listing_id text,
     source_system_name text,source_modified_at timestamptz,loaded_at timestamptz,updated_at timestamptz,

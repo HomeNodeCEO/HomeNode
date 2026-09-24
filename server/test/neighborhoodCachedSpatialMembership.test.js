@@ -23,6 +23,8 @@ function clientFor(parcels, options = {}) {
     assert.equal(tag, 'parcels');
     assert.match(call.text, /ST_DWithin\(geom::geography,/);
     assert.match(call.text, /4828\.032, true/);
+    assert.doesNotMatch(call.text, /app\.neighborhood_parcel_precompute/);
+    assert.match(call.text, /encode\(sha256\(ST_AsEWKB\(geom\)\), 'hex'\)/);
     assert.doesNotMatch(call.text, /centroid|land_use_category|sale_price|residential_area_sqft/i);
     const [lon, lat, cursor, limit] = call.values;
     assert.equal(lon, '-96.63'); assert.equal(lat, '32.88');

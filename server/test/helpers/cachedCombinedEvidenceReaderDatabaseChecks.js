@@ -272,13 +272,21 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
       assert.deepEqual(keys, baselineTrace, 'combined projection preserves every authorized query tag, parameter, cursor and page boundary');
       const parcelProjection=baselineParcelSql.split('), encoded AS (');
       assert.equal(parcelProjection.length,2);
+      assert.match(parcelSql, /COALESCE\(prepared\.stored_geometry_ewkb,encode\(ST_AsEWKB\(parcel\.geom\),'hex'\)\)/);
+      assert.match(parcelSql, /cache\.row_xmin=parcel\.xmin::text/);
+      assert.match(parcelSql, /cache\.source_record_hash=parcel\.source_record_hash/);
+      const withoutCache=parcelSql
+        .replace("COALESCE(prepared.stored_geometry_ewkb,encode(ST_AsEWKB(parcel.geom),'hex'))",
+          "encode(ST_AsEWKB(geom),'hex')")
+        .replace(/FROM gis\.dcad_parcels parcel\s+LEFT JOIN LATERAL \(SELECT cache\.stored_geometry_ewkb[\s\S]*?\) prepared ON true WHERE/,
+          'FROM gis.dcad_parcels parcel WHERE');
       const denseTransport=`), encoded AS MATERIALIZED (
         SELECT to_jsonb(projected) AS payload FROM projected), measured AS MATERIALIZED (
         SELECT payload,octet_length(payload::text) AS row_bytes FROM encoded)
         SELECT CASE WHEN row_bytes<=${DENSE_CAD_CACHE_READER_LIMITS.row_bytes} AND sum(row_bytes) OVER ()<=${DENSE_CAD_SQL_PAGE_BYTES}
           THEN payload ELSE NULL END AS payload,row_bytes FROM measured ORDER BY (payload->>'object_id')::bigint`;
-      assert.equal(parcelSql, mode === 'dense5' ? parcelProjection[0]+denseTransport : baselineParcelSql,
-        'exact CAD4 projection/keysets unchanged; only dense parcel encoding/size are materialized behind the same guards');
+      assert.equal(withoutCache, mode === 'dense5' ? parcelProjection[0]+denseTransport : baselineParcelSql,
+        'removing only the guarded geometry hint restores the exact CAD4 projection and keysets');
       if (mode === 'dense5') {
         denseParcelSql = parcelSql;
         priorDenseTransport=baselineParcelSql.replace('CASE WHEN octet_length(payload::text)<=64000 THEN payload ELSE NULL END',
@@ -374,7 +382,7 @@ export async function runCachedCombinedEvidenceReaderDatabaseChecks(connectionSt
     assert.equal(state.snapshot, baseline.snapshot.snapshot); assert.equal(state.backend_pid, baseline.snapshot.backend_pid);
     assert.ok(calls.every(({ sql }) => !/\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP|TRUNCATE|BEGIN|COMMIT|ROLLBACK|SET)\b/i.test(sql)));
     assert.equal(connects, 0); assert.equal(releases, 0);
-    checks.push('standard combined reader retains exact CAD4 SQL; dense parcels materialize only encoding/size with identical projection, guards and authorized keysets in one RR/RO snapshot');
+    checks.push('combined reader adds only a version-guarded CAD geometry hint; dense parcels retain identical projection, guards and authorized keysets in one RR/RO snapshot');
     checks.push('native dense transport preserves a valid >64KB exact geometry, retains legacy refusal, and withholds oversized rows and complete oversized pages');
     checks.push('native dense old/new encoding has exact row/page byte-boundary parity and identical large-page geometry under a verified low-work_mem disk spill');
     checks.push('native dense prior/new transport has identical complete source captures, content hashes and query evidence at the same limits and fixed observation clock');

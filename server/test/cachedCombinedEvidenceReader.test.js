@@ -251,7 +251,14 @@ test('combined SQL preserves the CAD4 parcel projection, witness sale join, keys
   const runs = new Map(); for (const version of [2, 3, 4, 5]) runs.set(version, await captureFixture({ version }));
   for (const f of runs.values()) assert.equal(f.result.status, 'captured', JSON.stringify(f.result.incomplete_reasons));
   const next = runs.get(5), saleSql = next.calls.find(c => c.tag === 'transactions').text;
-  assert.equal(next.calls.find(c => c.tag === 'parcels').text, runs.get(4).calls.find(c => c.tag === 'parcels').text);
+  const parcelSql=next.calls.find(c => c.tag === 'parcels').text;
+  assert.match(parcelSql, /cache\.row_xmin=parcel\.xmin::text/);
+  assert.match(parcelSql, /cache\.source_record_hash=parcel\.source_record_hash/);
+  assert.equal(parcelSql
+    .replace("COALESCE(prepared.stored_geometry_ewkb,encode(ST_AsEWKB(parcel.geom),'hex'))",
+      "encode(ST_AsEWKB(geom),'hex')")
+    .replace(/FROM gis\.dcad_parcels parcel\s+LEFT JOIN LATERAL \(SELECT cache\.stored_geometry_ewkb[\s\S]*?\) prepared ON true WHERE/,
+      'FROM gis.dcad_parcels parcel WHERE'), runs.get(4).calls.find(c => c.tag === 'parcels').text);
   assert.ok(saleSql.includes(CACHED_SALE_WITNESS_V2_SQL));
   assert.match(saleSql, /FROM core\.sales_source_records src LEFT JOIN core\.sales sale ON sale\.source_record_id=src\.id/);
   assert.match(saleSql, /WHERE src\.id=ANY\(\$1::bigint\[\]\) ORDER BY src\.id,sale\.id LIMIT \$2/);

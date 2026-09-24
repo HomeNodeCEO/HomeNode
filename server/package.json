@@ -71,6 +71,7 @@
         "maintenance:zoning-documents": "node scripts/syncZoningEvidenceDocuments.js",
         "maintenance:documents": "node scripts/runScheduledMaintenance.js --task=documents",
         "maintenance:influences": "node scripts/runScheduledMaintenance.js --task=influences",
+        "maintenance:neighborhood-precompute": "node scripts/runNeighborhoodParcelPrecompute.js",
         "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
         "audit:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js",

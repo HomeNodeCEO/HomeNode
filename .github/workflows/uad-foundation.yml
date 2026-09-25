@@ -98,6 +98,8 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npm run test:uad-migration
+      - name: Verify prepared city and subdivision index on isolated PostgreSQL
+        run: node --test test/neighborhoodGroupIndex.integration.test.js
       - name: Verify migration is idempotent
         run: npm run migrate:uad
       - name: Verify guarded staging bootstrap and shared search contract

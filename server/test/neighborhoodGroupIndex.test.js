@@ -63,3 +63,19 @@ test('lookup normalizes exact keys and reads only the published generation',asyn
   assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary,/GROUP BY county_key,city_key,subdivision_key/);
   assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch,/count\(DISTINCT/);
 });
+
+test('nightly facts keep missing amenities unknown and aggregate only recorded areas',()=>{
+  const parcel=NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch;
+  const summary=NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary;
+  assert.match(parcel,/LEFT JOIN core\.primary_improvements/);
+  assert.match(parcel,/JOIN core\.secondary_improvements/);
+  assert.match(parcel,/primary_improvement\.bedroom_count/);
+  assert.match(parcel,/primary_improvement\.bath_count/);
+  assert.match(parcel,/sec_imp_sqft>0/);
+  assert.match(parcel,/ATTACHED GARAGE/);
+  assert.match(parcel,/OUTBUILDING/);
+  assert.match(parcel,/WHEN primary_improvement\.pool IS FALSE THEN false ELSE NULL END/);
+  assert.match(summary,/count\(pool\),count\(\*\) FILTER \(WHERE pool IS TRUE\)/);
+  assert.match(summary,/percentile_cont\(0\.5\).*garage_area_sqft/);
+  assert.match(summary,/percentile_cont\(0\.5\).*outbuilding_area_sqft/);
+});

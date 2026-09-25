@@ -153,7 +153,7 @@ WHERE generation_id=$1::uuid AND county_key IS NOT NULL AND city_key IS NOT NULL
   AND subdivision_key IS NOT NULL AND NOT label_conflict
 GROUP BY county_key,city_key,subdivision_key`;
 
-const BUILD_SALES = `WITH grouped AS (
+const BUILD_SALES = `WITH grouped AS MATERIALIZED (
   SELECT county_key,city_key,subdivision_key,count(*) AS sale_count,
     percentile_cont(0.5) WITHIN GROUP (ORDER BY sale_price::double precision) AS median_sale_price,
     min(closing_date) AS first_sale_date,max(closing_date) AS last_sale_date
@@ -278,7 +278,13 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     await client.query({text:BUILD_SUMMARY,values:[generationId],query_timeout:600_000});
     logger.info?.('[neighborhood-group-index] phase=group_summary_complete');
     phase='sales_summary';
+    logger.info?.('[neighborhood-group-index] phase=sales_summary_start');
+    // The just-inserted generation has no committed planner statistics. The
+    // grouped SELECT was fast but this UPDATE timed out in the live canary;
+    // exclude a pathological nested-loop plan for its thousands of keys.
+    await client.query('SET LOCAL enable_nestloop=off');
     await client.query({text:BUILD_SALES,values:[generationId],query_timeout:600_000});
+    await client.query('SET LOCAL enable_nestloop=on');
     logger.info?.('[neighborhood-group-index] phase=sales_summary_complete');
     phase='publish';
     const published=await client.query(PUBLISH,[generationId,parcels.copied,sales.copied]);

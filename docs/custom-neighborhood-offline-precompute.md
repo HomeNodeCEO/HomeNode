@@ -120,6 +120,11 @@ lookups after the large parcel copy. The one-pass join preserves the original
 rule: accounts with missing, conflicting, or unlabeled parcel facts keep null
 group keys, and no sale is silently assigned to a subdivision. The temporary
 table is discarded on both commit and rollback.
+The final sale-price summary materializes its grouped rows once and disables
+nested-loop planning for that update only. This avoids repeated matching
+against thousands of newly inserted, not-yet-analyzed summary rows. The
+planner setting is restored before publication. A failure in this phase still
+rolls back the entire candidate generation.
 
 These tables are **not yet read by the report or map**. They are the prepared
 lookup foundation, not a claim that a three-mile capture is now instant. The

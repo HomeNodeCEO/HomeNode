@@ -44,6 +44,9 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     assert.equal(first.parcels,5);
     assert.equal(first.sales,4);
     const summary=await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'});
+    assert.ok(summary.completed_at > summary.source_observed_at,
+      'completion must record the end of the long source transaction');
+    assert.ok(summary.published_at >= summary.completed_at);
     assert.equal(summary.parcel_count,'2');
     assert.equal(summary.account_count,'2');
     assert.equal(summary.median_living_area_sqft,1500);

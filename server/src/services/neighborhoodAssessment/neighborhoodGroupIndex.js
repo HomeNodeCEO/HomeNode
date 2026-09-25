@@ -169,7 +169,7 @@ FROM grouped WHERE summary.generation_id=$1::uuid AND summary.county_key=grouped
   AND summary.city_key=grouped.city_key AND summary.subdivision_key=grouped.subdivision_key`;
 
 const PUBLISH = `UPDATE app.neighborhood_group_generations SET status='complete',
-  completed_at=now(),parcel_count=$2::bigint,sale_count=$3::bigint,
+  completed_at=clock_timestamp(),parcel_count=$2::bigint,sale_count=$3::bigint,
   group_count=(SELECT count(*) FROM app.neighborhood_group_summary WHERE generation_id=$1::uuid)
 WHERE generation_id=$1::uuid AND status='building'`;
 
@@ -290,7 +290,7 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     const published=await client.query(PUBLISH,[generationId,parcels.copied,sales.copied]);
     if (published.rowCount!==1) throw new Error('neighborhood_group_index_publish_invalid');
     await client.query(`INSERT INTO app.neighborhood_group_active (id,generation_id,published_at)
-      VALUES (true,$1::uuid,now()) ON CONFLICT (id) DO UPDATE SET
+      VALUES (true,$1::uuid,clock_timestamp()) ON CONFLICT (id) DO UPDATE SET
       generation_id=excluded.generation_id,published_at=excluded.published_at`,[generationId]);
     await client.query('COMMIT');transaction=false;
     // Cleanup is intentionally outside the publication transaction. A crash

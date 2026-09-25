@@ -37,6 +37,8 @@ test('publishes only after parcel, sale and summary preparation in one snapshot'
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys)<sql.indexOf('SET LOCAL enable_nestloop=on'));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales)<sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active')));
+  assert.match(sql.find(value=>value.startsWith('UPDATE app.neighborhood_group_generations')),/completed_at=clock_timestamp\(\)/);
+  assert.match(sql.find(value=>value.includes('INSERT INTO app.neighborhood_group_active')),/clock_timestamp\(\)/);
   const salesSummary=sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales);
   assert.equal(sql[salesSummary-1],'SET LOCAL enable_nestloop=off');
   assert.equal(sql[salesSummary+1],'SET LOCAL enable_nestloop=on');

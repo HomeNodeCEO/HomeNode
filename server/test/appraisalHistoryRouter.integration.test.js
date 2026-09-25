@@ -340,6 +340,7 @@ test("rollout replication preserves authenticated ownership and status semantics
       replicationCalls.push({ pool, input });
       const messages = {
         missing: "appraisal_report_file_not_found",
+        assignment: "assignment_file_not_found",
         confirm: "same_assignment_confirmation_required",
         conflict: "appraisal_replication_conflict",
         failed: "database_password=secret",
@@ -365,6 +366,7 @@ test("rollout replication preserves authenticated ownership and status semantics
 
   for (const [reportFileId, status, error] of [
     ["missing", 404, "appraisal_report_file_not_found"],
+    ["assignment", 404, "assignment_file_not_found"],
     ["confirm", 400, "same_assignment_confirmation_required"],
     ["conflict", 409, "appraisal_replication_conflict"],
     ["failed", 500, "appraisal_file_replication_failed"],
@@ -410,6 +412,51 @@ test("history failure logging is bounded and cannot replace fixed responses", as
     assert.equal(response.status, 500);
     assert.equal(response.headers.get("cache-control"), "no-store");
     assert.deepEqual(await response.json(), { error: code });
+  }
+});
+
+test("history routes never reflect unexpected error names or SQL unique diagnostics", async (context) => {
+  const listing = await startRouter(baseOptions({
+    listHistory: async () => { throw new Error("invalid_database_password=secret"); },
+  }));
+  const completion = await startRouter(baseOptions({
+    loadCompletion: async () => { throw new Error("database_password_secret_not_found"); },
+  }));
+  const replication = await startRouter(baseOptions({
+    replicateFile: async (_pool, { sourceReportFileId }) => {
+      if (sourceReportFileId === "unique") {
+        throw Object.assign(new Error("duplicate key value exposes password=secret"), { code: "23505" });
+      }
+      if (sourceReportFileId === "known") {
+        throw new Error("same_assignment_effective_date_conflict");
+      }
+      const messages = {
+        invalid: "invalid_database_password=secret",
+        missing: "database_password_secret_not_found",
+        conflict: "database_password_secret_conflict",
+      };
+      throw new Error(messages[sourceReportFileId]);
+    },
+  }));
+  context.after(async () => Promise.all([
+    listing.close(), completion.close(), replication.close(),
+  ]));
+
+  for (const [request, status, code] of [
+    [() => fetch(`${listing.baseUrl}/api/accounts/123/appraisal-history`), 500, "appraisal_history_list_failed"],
+    [() => fetch(`${completion.baseUrl}/api/accounts/123/appraisal-history/file-1/completion`), 500, "shared_appraisal_completion_load_failed"],
+    [() => replicate(replication.baseUrl, "123", "invalid"), 500, "appraisal_file_replication_failed"],
+    [() => replicate(replication.baseUrl, "123", "missing"), 500, "appraisal_file_replication_failed"],
+    [() => replicate(replication.baseUrl, "123", "conflict"), 500, "appraisal_file_replication_failed"],
+    [() => replicate(replication.baseUrl, "123", "unique"), 409, "appraisal_replication_conflict"],
+    [() => replicate(replication.baseUrl, "123", "known"), 409, "same_assignment_effective_date_conflict"],
+  ]) {
+    const response = await request();
+    assert.equal(response.status, status);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: code });
+    assert.doesNotMatch(JSON.stringify(body), /database|password|secret|duplicate key/);
   }
 });
 

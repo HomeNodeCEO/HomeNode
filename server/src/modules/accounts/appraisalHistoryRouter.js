@@ -12,6 +12,56 @@ import {
 } from "../../security/appraisalHistoryAccess.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+const HISTORY_LIST_VALIDATION_CODES = new Set([
+  "invalid_account_id",
+  "invalid_appraisal_history_cursor",
+  "invalid_appraisal_history_page",
+]);
+const REPORT_FILE_VALIDATION_CODES = [
+  "invalid_account_id",
+  "invalid_appraisal_report_file_id",
+  "invalid_report_file_id",
+];
+const COMPLETION_VALIDATION_CODES = new Set([
+  ...REPORT_FILE_VALIDATION_CODES,
+  "invalid_appraisal_completion_input",
+]);
+const REPLICATION_VALIDATION_CODES = new Set([
+  ...REPORT_FILE_VALIDATION_CODES,
+  "invalid_appraisal_workflow",
+  "invalid_replication_mode",
+  "invalid_file_number",
+  "invalid_client_request_id",
+  "invalid_effective_date",
+  "invalid_inspection_date",
+  "invalid_assignment_date",
+  "invalid_calendar_year",
+  "invalid_sequence_number",
+  "invalid_organization_id",
+  "invalid_workflow_type",
+  "invalid_uad_file_number",
+  "invalid_uad_workfile_id",
+  "invalid_assignment_file_id",
+]);
+const COMPLETION_NOT_FOUND_CODES = new Set([
+  "appraisal_report_file_not_found",
+  "appraisal_subject_snapshot_not_found",
+  "shared_appraisal_completion_source_not_found",
+]);
+const REPLICATION_NOT_FOUND_CODES = new Set([
+  "appraisal_report_file_not_found",
+  "subject_account_not_found",
+  "custom_appraisal_file_not_found",
+  "assignment_file_not_found",
+  "uad_workfile_not_found",
+  "replicated_report_file_not_found",
+]);
+const REPLICATION_CONFLICT_CODES = new Set([
+  "appraisal_replication_conflict",
+  "replication_request_conflict",
+  "same_assignment_effective_date_conflict",
+  "same_assignment_inspection_date_conflict",
+]);
 
 function logOperationalFailure(logger, label, error) {
   try {
@@ -94,8 +144,9 @@ export function createAppraisalHistoryRouter({
         cursor: req.query.cursor,
       }));
     } catch (error) {
-      if (String(error?.message || "").startsWith("invalid_")) {
-        return res.status(400).json({ error: error.message });
+      const message = String(error?.message || "");
+      if (HISTORY_LIST_VALIDATION_CODES.has(message)) {
+        return res.status(400).json({ error: message });
       }
       logOperationalFailure(logger, "appraisal history list failed", error);
       return res.status(500).json({ error: "appraisal_history_list_failed" });
@@ -126,12 +177,9 @@ export function createAppraisalHistoryRouter({
       if (message === "appraisal_report_file_access_denied") {
         return res.status(403).json({ error: message });
       }
-      if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
-      if (message.startsWith("invalid_")) return res.status(400).json({ error: message });
-      if (
-        message === "appraisal_subject_snapshot_required"
-        || message === "shared_appraisal_completion_source_not_found"
-      ) {
+      if (COMPLETION_NOT_FOUND_CODES.has(message)) return res.status(404).json({ error: message });
+      if (COMPLETION_VALIDATION_CODES.has(message)) return res.status(400).json({ error: message });
+      if (message === "appraisal_subject_snapshot_required") {
         return res.status(409).json({ error: message });
       }
       logOperationalFailure(logger, "shared appraisal completion load failed", error);
@@ -175,19 +223,22 @@ export function createAppraisalHistoryRouter({
       return res.status(201).json({ ok: true, ...result });
     } catch (error) {
       const message = String(error?.message || "");
+      if (error?.code === "23505") {
+        return res.status(409).json({ error: "appraisal_replication_conflict" });
+      }
       if (message === "appraisal_report_file_access_denied") {
         return res.status(403).json({ error: message });
       }
-      if (message.endsWith("_not_found")) return res.status(404).json({ error: message });
+      if (REPLICATION_NOT_FOUND_CODES.has(message)) return res.status(404).json({ error: message });
       if (
-        message.startsWith("invalid_")
+        REPLICATION_VALIDATION_CODES.has(message)
         || message === "same_assignment_confirmation_required"
         || message === "same_assignment_requires_alternate_workflow"
       ) {
         return res.status(400).json({ error: message });
       }
-      if (message.endsWith("_conflict") || error?.code === "23505") {
-        return res.status(409).json({ error: message || "appraisal_replication_conflict" });
+      if (REPLICATION_CONFLICT_CODES.has(message)) {
+        return res.status(409).json({ error: message });
       }
       logOperationalFailure(logger, "appraisal file replication failed", error);
       return res.status(500).json({ error: "appraisal_file_replication_failed" });

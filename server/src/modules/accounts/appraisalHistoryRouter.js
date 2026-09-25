@@ -5,12 +5,21 @@ import { loadSharedAppraisalCompletion } from "../../services/appraisalCompletio
 import { listPreviousAppraisalFiles } from "../../services/appraisalHistory.js";
 import { replicateAppraisalFile } from "../../services/appraisalReplication.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   authorizeAppraisalReportFile,
   buildAppraisalHistoryAccessScope,
 } from "../../security/appraisalHistoryAccess.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+
+function logOperationalFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Keep the fixed response available even if the logging sink fails.
+  }
+}
 
 export function createAppraisalHistoryRouter({
   pool,
@@ -88,7 +97,7 @@ export function createAppraisalHistoryRouter({
       if (String(error?.message || "").startsWith("invalid_")) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("appraisal history list failed", error);
+      logOperationalFailure(logger, "appraisal history list failed", error);
       return res.status(500).json({ error: "appraisal_history_list_failed" });
     }
   });
@@ -125,7 +134,7 @@ export function createAppraisalHistoryRouter({
       ) {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("shared appraisal completion load failed", error);
+      logOperationalFailure(logger, "shared appraisal completion load failed", error);
       return res.status(500).json({ error: "shared_appraisal_completion_load_failed" });
     }
   });
@@ -180,7 +189,7 @@ export function createAppraisalHistoryRouter({
       if (message.endsWith("_conflict") || error?.code === "23505") {
         return res.status(409).json({ error: message || "appraisal_replication_conflict" });
       }
-      logger.error?.("appraisal file replication failed", error);
+      logOperationalFailure(logger, "appraisal file replication failed", error);
       return res.status(500).json({ error: "appraisal_file_replication_failed" });
     }
   });

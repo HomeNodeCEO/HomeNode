@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   createAssignmentInspectionSketch,
   getAssignmentInspectionSketch,
@@ -11,6 +12,14 @@ import { normalizeSketchReviewStatus } from "./sketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./sketchArtifacts.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+
+function logOperationalFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // A failed logger must not replace the route's bounded error response.
+  }
+}
 
 function artifactFileName(result) {
   return (result.artifact_options.fileNumber || "homenode")
@@ -115,7 +124,7 @@ export function createDesktopAssignmentSketchRouter({
       if (error?.message === "invalid_assignment_file_id") {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.(`assignment sketch ${format.toUpperCase()} failed`, error);
+      logOperationalFailure(logger, `assignment sketch ${format.toUpperCase()} failed`, error);
       return res.status(500).json({
         error: format === "svg" ? "assignment_sketch_svg_failed" : "assignment_sketch_pdf_failed",
       });
@@ -194,7 +203,7 @@ export function createDesktopAssignmentSketchRouter({
       if (error?.message === "authentication_required") {
         return res.status(401).json({ error: error.message });
       }
-      logger.error?.("assignment sketch desktop creation failed", error);
+      logOperationalFailure(logger, "assignment sketch desktop creation failed", error);
       return res.status(500).json({ error: "assignment_sketch_creation_failed" });
     }
   });
@@ -276,7 +285,7 @@ export function createDesktopAssignmentSketchRouter({
         return res.status(error?.message === "sketch_operation_conflict" ? 409 : 400)
           .json({ error: error.message });
       }
-      logger.error?.("assignment sketch desktop review failed", error);
+      logOperationalFailure(logger, "assignment sketch desktop review failed", error);
       return res.status(500).json({ error: "assignment_sketch_update_failed" });
     }
   });

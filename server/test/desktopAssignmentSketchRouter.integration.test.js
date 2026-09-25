@@ -326,7 +326,11 @@ test("artifact routes preserve not-found, validation, and diagnostic-safe failur
     assert.deepEqual(body, { error: expectedError });
     assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
   }
-  assert.equal(errors.length, 2);
+  assert.deepEqual(errors, [
+    ["assignment sketch SVG failed", "XX000"],
+    ["assignment sketch PDF failed", "XX000"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
 });
 
 test("desktop sketch saves bind canonical assignment, request body, and authenticated actor", async (context) => {
@@ -508,7 +512,42 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
     assert.deepEqual(responseBody, body);
     assert.doesNotMatch(JSON.stringify(responseBody), /password|secret/);
   }
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["assignment sketch desktop review failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
+});
+
+test("desktop sketch failures keep fixed responses when logging fails", async (context) => {
+  const diagnostic = Object.assign(new Error("database_password=secret"), { code: "XX000" });
+  const logger = { error() { throw new Error("logger_unavailable"); } };
+  const artifacts = await startRouter(baseOptions({
+    getSketch: async () => ({ sketch: {}, artifact_options: { fileNumber: "file" } }),
+    renderSvg: () => { throw diagnostic; },
+    renderPdf: async () => { throw diagnostic; },
+    logger,
+  }));
+  const creation = await startRouter(baseOptions({
+    createSketch: async () => { throw diagnostic; },
+    logger,
+  }), identity);
+  const review = await startRouter(baseOptions({
+    getSketch: async () => null,
+    saveSketch: async () => { throw diagnostic; },
+    logger,
+  }), identity);
+  context.after(async () => Promise.all([artifacts.close(), creation.close(), review.close()]));
+
+  for (const [request, code] of [
+    [() => fetch(`${artifacts.baseUrl}/api/accounts/123/assignment-files/1/mobile-sketch/preview.svg`), "assignment_sketch_svg_failed"],
+    [() => fetch(`${artifacts.baseUrl}/api/accounts/123/assignment-files/1/mobile-sketch/report.pdf`), "assignment_sketch_pdf_failed"],
+    [() => createSketch(creation.baseUrl, "123", 1, { sketch: { review_status: "draft" } }), "assignment_sketch_creation_failed"],
+    [() => patchSketch(review.baseUrl, "123", 1), "assignment_sketch_update_failed"],
+  ]) {
+    const response = await request();
+    assert.equal(response.status, 500);
+    const body = await response.json();
+    assert.deepEqual(body, { error: code });
+    assert.doesNotMatch(JSON.stringify(body), /password|secret|logger_unavailable/);
+  }
 });
 
 test("desktop assignment sketch composition and route position remain explicit", () => {

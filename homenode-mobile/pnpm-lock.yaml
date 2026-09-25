@@ -9,9 +9,10 @@ overrides:
   expo-constants: 57.0.15
   compression: 1.8.2
   brace-expansion: 5.0.12
+  image-size: 2.0.4
 
 patchedDependencies:
-  image-size@1.2.1: 636201128a1b539010a60f0e5af1a38383474a256c8855f2395fc001bc13724d
+  metro@0.84.4: 22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7
   yargs@17.7.3: 81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843
   zod@3.25.76: 783243785d58621251bd363b1130f7026fe982f55b5a349f844a7f6d44e17429
 
@@ -1508,9 +1509,9 @@ packages:
     resolution: {integrity: sha512-hsBTNUqQTDwkWtcdYI2i06Y/nUBEsNEDJKjWdigLvegy8kDuJAS8uRlpkkcQpyEXL0Z/pjDy5HBmMjRCJ2gq+g==}
     engines: {node: '>= 4'}
 
-  image-size@1.2.1:
-    resolution: {integrity: sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==}
-    engines: {node: '>=16.x'}
+  image-size@2.0.4:
+    resolution: {integrity: sha512-QRUkFFsRV/6fuESxb9Vkq+a0LkSrgKXuc2NEqfikiXxxN/G3tjWt5EVUlMaImRBZRZK/jRBEbYvpPYZL8t08Zw==}
+    engines: {node: '>=18'}
     hasBin: true
 
   inherits@2.0.4:
@@ -1939,9 +1940,6 @@ packages:
   prompts@2.4.2:
     resolution: {integrity: sha512-NxNv/kLguCA7p3jE8oL2aEBsrJWgAakBpgmgK6lpPWV+WuOmY6r2/zbAVnP+T8bQlA0nzHXSJSJW0Hq7ylaD2Q==}
     engines: {node: '>= 6'}
-
-  queue@6.0.2:
-    resolution: {integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==}
 
   range-parser@1.2.1:
     resolution: {integrity: sha512-Hrgsx+orqoygnmhFbKaHE6c296J+HTAQXoxEF6gNupROmmGJRoyzfG3ccAveqCBrwr/2yxQ5BVd/GTl5agOwSg==}
@@ -3115,7 +3113,7 @@ snapshots:
 
   '@expo/metro@56.0.0(supports-color@8.1.1)':
     dependencies:
-      metro: 0.84.4(supports-color@8.1.1)
+      metro: 0.84.4(patch_hash=22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7)(supports-color@8.1.1)
       metro-babel-transformer: 0.84.4(supports-color@8.1.1)
       metro-cache: 0.84.4(supports-color@8.1.1)
       metro-cache-key: 0.84.4
@@ -3284,7 +3282,7 @@ snapshots:
       '@react-native/dev-middleware': 0.86.3(supports-color@8.1.1)
       debug: 4.4.3(supports-color@8.1.1)
       invariant: 2.2.4
-      metro: 0.84.4(supports-color@8.1.1)
+      metro: 0.84.4(patch_hash=22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7)(supports-color@8.1.1)
       metro-config: 0.84.4(supports-color@8.1.1)
       metro-core: 0.84.4
       semver: 7.8.5
@@ -4065,9 +4063,7 @@ snapshots:
 
   ignore@5.3.2: {}
 
-  image-size@1.2.1(patch_hash=636201128a1b539010a60f0e5af1a38383474a256c8855f2395fc001bc13724d):
-    dependencies:
-      queue: 6.0.2
+  image-size@2.0.4: {}
 
   inherits@2.0.4: {}
 
@@ -4252,7 +4248,7 @@ snapshots:
       connect: 3.7.0(supports-color@8.1.1)
       flow-enums-runtime: 0.0.6
       jest-validate: 29.7.0
-      metro: 0.84.4(supports-color@8.1.1)
+      metro: 0.84.4(patch_hash=22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7)(supports-color@8.1.1)
       metro-cache: 0.84.4(supports-color@8.1.1)
       metro-core: 0.84.4
       metro-runtime: 0.84.4
@@ -4339,7 +4335,7 @@ snapshots:
       '@babel/parser': 7.29.8
       '@babel/types': 7.29.8
       flow-enums-runtime: 0.0.6
-      metro: 0.84.4(supports-color@8.1.1)
+      metro: 0.84.4(patch_hash=22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7)(supports-color@8.1.1)
       metro-babel-transformer: 0.84.4(supports-color@8.1.1)
       metro-cache: 0.84.4(supports-color@8.1.1)
       metro-cache-key: 0.84.4
@@ -4352,7 +4348,7 @@ snapshots:
       - supports-color
       - utf-8-validate
 
-  metro@0.84.4(supports-color@8.1.1):
+  metro@0.84.4(patch_hash=22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7)(supports-color@8.1.1):
     dependencies:
       '@babel/code-frame': 7.29.7
       '@babel/core': 7.29.7(supports-color@8.1.1)
@@ -4369,7 +4365,7 @@ snapshots:
       flow-enums-runtime: 0.0.6
       graceful-fs: 4.2.11
       hermes-parser: 0.35.0
-      image-size: 1.2.1(patch_hash=636201128a1b539010a60f0e5af1a38383474a256c8855f2395fc001bc13724d)
+      image-size: 2.0.4
       invariant: 2.2.4
       jest-worker: 29.7.0
       jsc-safe-url: 0.2.4
@@ -4541,10 +4537,6 @@ snapshots:
     dependencies:
       kleur: 3.0.3
       sisteransi: 1.0.5
-
-  queue@6.0.2:
-    dependencies:
-      inherits: 2.0.4
 
   range-parser@1.2.1: {}
 

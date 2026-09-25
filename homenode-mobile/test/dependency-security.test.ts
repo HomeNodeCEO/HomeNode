@@ -13,6 +13,12 @@ const expoRequire = createRequire(require.resolve('expo/package.json'));
 const expoCliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
 const metroRoot = path.dirname(expoCliRequire.resolve('metro/package.json'));
 const imageSizeModule = require.resolve('image-size', { paths: [metroRoot] });
+const metroAssets = require(path.join(metroRoot, 'src/Assets.js')) as {
+  getAssetSize: (type: string, content: Uint8Array, filePath: string) => { width: number; height: number } | null;
+  getAssetData: (
+    assetPath: string, localPath: string, plugins: string[], platform: string | null, publicPath: string,
+  ) => Promise<{ width: number; height: number; type: string }>;
+};
 
 type ZodSchema = {
   parse: (input: unknown) => Record<string, unknown>;
@@ -69,13 +75,13 @@ const malformedImages = {
   ]),
 };
 
-test('patched image-size rejects malformed boxes without blocking the build process', () => {
+test('fixed image-size rejects malformed boxes without blocking the build process', () => {
   for (const [name, payload] of Object.entries(malformedImages)) {
     const result = spawnSync(
       process.execPath,
       [
         '-e',
-        'const imageSize=require(process.argv[1]);try{imageSize(Buffer.from(process.argv[2],"base64"));}catch{}',
+        'const {imageSize}=require(process.argv[1]);try{imageSize(Buffer.from(process.argv[2],"base64"));}catch{}',
         imageSizeModule,
         Buffer.from(payload).toString('base64'),
       ],
@@ -88,6 +94,23 @@ test('patched image-size rejects malformed boxes without blocking the build proc
     );
     assert.equal(result.status, 0, `${name} probe failed: ${result.stderr}`);
   }
+});
+
+test('Expo Metro reads image-size v2 buffers and local asset files', async () => {
+  const imagePath = path.join(mobileRoot, 'assets', 'icon.png');
+  const content = readFileSync(imagePath);
+  const { imageSize } = require(imageSizeModule) as {
+    imageSize: (input: Uint8Array) => { width: number; height: number };
+  };
+  const expected = imageSize(content);
+  assert.ok(expected.width > 0 && expected.height > 0);
+  assert.deepEqual(metroAssets.getAssetSize('png', content, imagePath), {
+    width: expected.width, height: expected.height,
+  });
+  const asset = await metroAssets.getAssetData(imagePath, 'assets/icon.png', [], null, '/assets');
+  assert.equal(asset.type, 'png');
+  assert.equal(asset.width, expected.width);
+  assert.equal(asset.height, expected.height);
 });
 
 // Expo currently pins Zod 3.x, whose package also exposes an affected v4

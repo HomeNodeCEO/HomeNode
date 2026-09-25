@@ -19,17 +19,21 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     await pool.query(`INSERT INTO core.accounts(account_id,county,city,subdivision) VALUES
       ('INDEX-A','Dallas','Garland','Monica Park 4'),
       ('INDEX-B','Dallas','Garland',' MONICA  PARK 4 '),
-      ('INDEX-C','Dallas','Garland','Another Park')`);
+      ('INDEX-C','Dallas','Garland','Another Park'),
+      ('INDEX-D','Dallas','Garland',NULL)`);
     await pool.query(`INSERT INTO gis.dcad_parcels
       (object_id,account_id,subdivision_name,residential_area_sqft,residential_year_built,
        parcel_area_sqft,current_market_value,source_record_hash,source_updated_at)
       VALUES (1,'INDEX-A','Monica Park 4',1000,1960,8000,100000,'a',now()),
              (2,'INDEX-B','Monica Park 4',2000,1970,9000,200000,'b',now()),
-             (3,'INDEX-C','Wrong Park',3000,1980,10000,300000,'c',now())`);
+             (3,'INDEX-C','Wrong Park',3000,1980,10000,300000,'c',now()),
+             (4,'INDEX-D','Park West',1200,1965,7000,150000,'d',now()),
+             (5,'INDEX-D','Park East',1400,1965,7000,150000,'e',now())`);
     await pool.query(`INSERT INTO core.sales(id,account_id,closing_date,sale_price,days_on_market)
       VALUES (10,'INDEX-A','2024-01-01',100000,30),
              (11,'INDEX-B','2025-01-01',300000,45),
-             (12,'INDEX-C','2025-01-01',500000,10)`);
+             (12,'INDEX-C','2025-01-01',500000,10),
+             (13,'INDEX-D','2025-02-01',150000,20)`);
     await pool.query(`INSERT INTO core.primary_improvements(account_id,bedroom_count,bath_count,pool)
       VALUES ('INDEX-A',3,2,true),('INDEX-B',4,NULL,NULL),('INDEX-C',NULL,NULL,false)`);
     await pool.query(`INSERT INTO core.secondary_improvements(id,account_id,sec_imp_type,sec_imp_sqft)
@@ -37,8 +41,8 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
              (3,'INDEX-A','STORAGE BUILDING',100),(4,'INDEX-C','POOL',250)`);
     const first=await runNeighborhoodGroupIndex(pool,{batchSize:1,logger:{info(){}}});
     assert.equal(first.status,'complete');
-    assert.equal(first.parcels,3);
-    assert.equal(first.sales,3);
+    assert.equal(first.parcels,5);
+    assert.equal(first.sales,4);
     const summary=await getPreparedNeighborhoodGroupSummary(pool,{county:'Dallas',city:'Garland',subdivision:'Monica Park 4'});
     assert.equal(summary.parcel_count,'2');
     assert.equal(summary.account_count,'2');
@@ -57,6 +61,12 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const dates=(await pool.query(`SELECT closing_date::text FROM app.neighborhood_group_sale_facts
       WHERE generation_id=$1 AND subdivision_key='monica park 4' ORDER BY closing_date`,[first.generationId])).rows;
     assert.deepEqual(dates.map(row=>row.closing_date),['2024-01-01','2025-01-01']);
+    const conflictingSale=(await pool.query(`SELECT county_key,city_key,subdivision_key
+      FROM app.neighborhood_group_sale_facts WHERE generation_id=$1 AND sale_id=12`,[first.generationId])).rows[0];
+    assert.deepEqual(conflictingSale,{county_key:null,city_key:null,subdivision_key:null});
+    const splitSale=(await pool.query(`SELECT county_key,city_key,subdivision_key
+      FROM app.neighborhood_group_sale_facts WHERE generation_id=$1 AND sale_id=13`,[first.generationId])).rows[0];
+    assert.deepEqual(splitSale,{county_key:null,city_key:null,subdivision_key:null});
     assert.equal((await pool.query(`SELECT label_conflict,subdivision_key FROM app.neighborhood_group_parcel_facts
       WHERE generation_id=$1 AND object_id=3`,[first.generationId])).rows[0].label_conflict,true);
     const physical=(await pool.query(`SELECT object_id,pool,garage_area_sqft,outbuilding_area_sqft

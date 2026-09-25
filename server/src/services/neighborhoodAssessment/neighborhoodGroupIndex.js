@@ -73,6 +73,34 @@ SELECT coalesce((SELECT max(object_id) FROM batch),$2::bigint)::text AS cursor,
   (SELECT count(*) FROM batch)::integer AS scanned,
   (SELECT count(*) FROM copied)::integer AS copied`;
 
+// Resolve the sale-account roster once in a sequential parcel pass. The old
+// per-sale LATERAL probe repeatedly read cold index/heap pages immediately
+// after the large parcel INSERT and could time out before its first batch.
+// This table is transaction-local and vanishes on both commit and rollback.
+const CREATE_SALE_ACCOUNT_KEYS = `CREATE TEMP TABLE neighborhood_group_sale_account_keys (
+  account_id text PRIMARY KEY,county_key text,city_key text,subdivision_key text
+) ON COMMIT DROP`;
+const BUILD_SALE_ACCOUNT_KEYS = `WITH sale_accounts AS MATERIALIZED (
+  SELECT DISTINCT account_id FROM core.sales WHERE account_id IS NOT NULL
+), grouped AS (
+  SELECT fact.account_id,min(fact.county_key) AS county_key,
+    min(fact.city_key) AS city_key,min(fact.subdivision_key) AS subdivision_key,
+    count(DISTINCT (fact.county_key,fact.city_key,fact.subdivision_key)) AS distinct_labels,
+    bool_and(fact.county_key IS NOT NULL AND fact.city_key IS NOT NULL
+      AND fact.subdivision_key IS NOT NULL AND NOT fact.label_conflict) AS complete
+  FROM app.neighborhood_group_parcel_facts fact
+  JOIN sale_accounts needed ON needed.account_id=fact.account_id
+  WHERE fact.generation_id=$1::uuid
+  GROUP BY fact.account_id
+)
+INSERT INTO pg_temp.neighborhood_group_sale_account_keys
+  (account_id,county_key,city_key,subdivision_key)
+SELECT account_id,
+  CASE WHEN distinct_labels=1 AND complete THEN county_key END,
+  CASE WHEN distinct_labels=1 AND complete THEN city_key END,
+  CASE WHEN distinct_labels=1 AND complete THEN subdivision_key END
+FROM grouped`;
+
 const SALE_BATCH = `WITH batch AS MATERIALIZED (
   SELECT sale.id,sale.account_id,sale.closing_date,sale.sale_price,
     sale.days_on_market,sale.source_record_id
@@ -80,15 +108,8 @@ const SALE_BATCH = `WITH batch AS MATERIALIZED (
   ORDER BY sale.id LIMIT $3::integer
 ), grouped AS (
   SELECT batch.*, linked.county_key,linked.city_key,linked.subdivision_key
-  FROM batch LEFT JOIN LATERAL (
-    SELECT min(fact.county_key) AS county_key,min(fact.city_key) AS city_key,
-      min(fact.subdivision_key) AS subdivision_key
-    FROM app.neighborhood_group_parcel_facts fact
-    WHERE fact.generation_id=$1::uuid AND fact.account_id=batch.account_id
-    HAVING count(*)>0 AND count(DISTINCT (fact.county_key,fact.city_key,fact.subdivision_key))=1
-      AND bool_and(fact.county_key IS NOT NULL AND fact.city_key IS NOT NULL
-        AND fact.subdivision_key IS NOT NULL AND NOT fact.label_conflict)
-  ) linked ON true
+  FROM batch LEFT JOIN pg_temp.neighborhood_group_sale_account_keys linked
+    ON linked.account_id=batch.account_id
 ), copied AS (
   INSERT INTO app.neighborhood_group_sale_facts
     (generation_id,sale_id,account_id,county_key,city_key,subdivision_key,
@@ -235,6 +256,16 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     const parcels=await copyBatches(client,PARCEL_BATCH,generationId,batchSize,deadline,
       ({scanned,copied})=>logger.info?.(`[neighborhood-group-index] phase=parcels scanned=${scanned} copied=${copied}`));
     logger.info?.(`[neighborhood-group-index] parcel_rows=${parcels.copied}`);
+    phase='sale_account_map';
+    logger.info?.('[neighborhood-group-index] phase=sale_account_map_start');
+    await client.query(CREATE_SALE_ACCOUNT_KEYS);
+    // The measured hash/sequential plan avoids tens of thousands of random
+    // probes into the newly written parcel index. Reset the local planner
+    // setting before the bounded sale batches and summary queries.
+    await client.query('SET LOCAL enable_nestloop=off');
+    await client.query({text:BUILD_SALE_ACCOUNT_KEYS,values:[generationId],query_timeout:600_000});
+    await client.query('SET LOCAL enable_nestloop=on');
+    logger.info?.('[neighborhood-group-index] phase=sale_account_map_complete');
     phase='sale_batches';
     const sales=await copyBatches(client,SALE_BATCH,generationId,batchSize,deadline,
       ({scanned,copied})=>logger.info?.(`[neighborhood-group-index] phase=sales scanned=${scanned} copied=${copied}`));
@@ -281,5 +312,6 @@ export async function getPreparedNeighborhoodGroupSummary(pool,{county,city,subd
   return result.rows?.[0] ?? null;
 }
 
-export const NEIGHBORHOOD_GROUP_INDEX_SQL=Object.freeze({parcelBatch:PARCEL_BATCH,saleBatch:SALE_BATCH,
+export const NEIGHBORHOOD_GROUP_INDEX_SQL=Object.freeze({parcelBatch:PARCEL_BATCH,
+  createSaleAccountKeys:CREATE_SALE_ACCOUNT_KEYS,buildSaleAccountKeys:BUILD_SALE_ACCOUNT_KEYS,saleBatch:SALE_BATCH,
   buildSummary:BUILD_SUMMARY,buildSales:BUILD_SALES,readSummary:READ_SUMMARY});

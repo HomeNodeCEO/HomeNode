@@ -28,7 +28,7 @@ export const NEIGHBORHOOD_CACHED_SOURCE_SCHEMA=`
     mls_status text,source_row_number integer,raw_payload jsonb);
   CREATE INDEX cache_fixture_source_account_idx ON core.sales_source_records(primary_account_id);
   CREATE TABLE core.sales(id bigint PRIMARY KEY,source_record_id bigint UNIQUE,account_id text,closing_date date,
-    sale_price numeric,days_on_market integer,source text,loaded_at timestamptz);
+    sale_price numeric,source text,loaded_at timestamptz,days_on_market integer);
   CREATE INDEX cache_fixture_sale_account_idx ON core.sales(account_id);
   CREATE TABLE core.sale_parcels(id bigint PRIMARY KEY,source_record_id bigint,source_position smallint,
     parcel_sequence smallint,parcel_role text,parcel_number_raw text,parcel_number_normalized text,account_id text,

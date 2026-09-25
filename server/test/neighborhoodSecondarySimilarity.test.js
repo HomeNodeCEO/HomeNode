@@ -7,6 +7,9 @@ const property = { bedroom_count: 3, bath_count: 2, garage_area_sqft: 400,
 
 test('supporting characteristics contribute at most ten percent and preserve the core score when unknown',()=>{
   assert.equal(scoreNeighborhoodSecondarySimilarity({ baseScore: 80 }).score,80);
+  const fractional=scoreNeighborhoodSecondarySimilarity({baseScore:80.04});
+  assert.equal(fractional.score,80.04);
+  assert.equal(fractional.base_score,80.04);
   const identical=scoreNeighborhoodSecondarySimilarity({ baseScore: 80,subject:property,candidate:property });
   assert.equal(identical.available_weight_percent,10);
   assert.equal(identical.score,82);

@@ -316,6 +316,31 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
   assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
+test("unexpected invalid-prefixed failures stay private even when logging fails", async (context) => {
+  const diagnostic = new Error("invalid_internal_database secret-token");
+  const server = await startRouter(baseOptions({
+    getWorkfile: async () => { throw diagnostic; },
+    getReadiness: async () => { throw diagnostic; },
+    getDownload: async () => { throw diagnostic; },
+    logger: { error() { throw new Error("logger_unavailable"); } },
+  }));
+  context.after(server.close);
+
+  for (const [suffix, code] of [
+    ["", "custom_appraisal_workfile_load_failed"],
+    ["/readiness", "custom_appraisal_workfile_readiness_failed"],
+    ["/download", "custom_appraisal_workfile_download_failed"],
+    ["/report.pdf", "custom_appraisal_report_pdf_failed"],
+  ]) {
+    const response = await fetch(endpoint(server.baseUrl, suffix));
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: code });
+    assert.doesNotMatch(JSON.stringify(body), /secret-token|logger_unavailable/);
+  }
+});
+
 test("workfile conditional requests reauthorize after access changes and HEAD remains no-store", async (context) => {
   let accessAllowed = true;
   let authenticated = true;

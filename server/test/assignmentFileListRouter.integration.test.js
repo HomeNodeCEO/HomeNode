@@ -382,7 +382,20 @@ test("assignment-file listing returns not found and bounded database failures", 
   const body = await failedResponse.json();
   assert.deepEqual(body, { error: "assignment_file_list_failed" });
   assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["assignment file list failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
+});
+
+test("throwing assignment-file logger cannot replace the fixed failure response", async (context) => {
+  const server = await startRouter(baseOptions({
+    pool: { query: async () => { throw new Error("private_database_password"); } },
+    logger: { error() { throw new Error("logger_private_password"); } },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/123/assignment-files`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "assignment_file_list_failed" });
 });
 
 test("assignment-file list composition and route position remain explicit", () => {

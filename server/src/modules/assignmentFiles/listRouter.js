@@ -8,6 +8,7 @@ import {
   normalizeAssignmentFileId,
 } from "../../services/assignmentFiles.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 export function createAssignmentFileListRouter({
   pool,
@@ -210,7 +211,7 @@ export function createAssignmentFileListRouter({
         legacy_assignment_details: null,
       });
     } catch (error) {
-      logger.error?.("assignment file list failed", error);
+      try { logger.error?.("assignment file list failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_list_failed" });
     }
   });

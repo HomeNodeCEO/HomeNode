@@ -192,8 +192,8 @@ function positiveInteger(value, max, name) {
   return value;
 }
 
-async function copyBatches(client, sql, generationId, batchSize, deadline) {
-  let cursor='-9223372036854775808', copied=0, scanned=0;
+async function copyBatches(client, sql, generationId, batchSize, deadline, progress=()=>{}) {
+  let cursor='-9223372036854775808', copied=0, scanned=0, nextProgress=100_000;
   for (;;) {
     if (Date.now()>deadline) throw Object.assign(new Error('neighborhood_group_index_runtime_limit'),{code:'RUNTIME_LIMIT'});
     const result=await client.query({text:sql,values:[generationId,cursor,batchSize],query_timeout:120_000});
@@ -203,6 +203,10 @@ async function copyBatches(client, sql, generationId, batchSize, deadline) {
       || row.copied<0 || row.copied>row.scanned || BigInt(row.cursor)<BigInt(cursor))
       throw new Error('neighborhood_group_index_batch_invalid');
     scanned+=row.scanned; copied+=row.copied;
+    if (scanned>=nextProgress) {
+      progress({scanned,copied});
+      nextProgress=Math.floor(scanned/100_000)*100_000+100_000;
+    }
     if (row.scanned===0) break;
     if (BigInt(row.cursor)===BigInt(cursor)) throw new Error('neighborhood_group_index_cursor_stalled');
     cursor=row.cursor;
@@ -220,19 +224,32 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
   positiveInteger(maximumRuntimeMinutes,180,'maximum_runtime_minutes');
   if (!pool || typeof pool.connect!=='function') throw new TypeError('neighborhood_group_index_pool_required');
   const client=await pool.connect();
-  let locked=false,transaction=false;
+  let locked=false,transaction=false,phase='lock';
   const generationId=randomUUID(),deadline=Date.now()+maximumRuntimeMinutes*60_000;
   try {
     locked=(await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[LOCK_KEY])).rows?.[0]?.locked===true;
     if (!locked) return {status:'already_running'};
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ'); transaction=true;
     await client.query("INSERT INTO app.neighborhood_group_generations (generation_id,status) VALUES ($1::uuid,'building')",[generationId]);
-    const parcels=await copyBatches(client,PARCEL_BATCH,generationId,batchSize,deadline);
+    phase='parcel_batches';
+    const parcels=await copyBatches(client,PARCEL_BATCH,generationId,batchSize,deadline,
+      ({scanned,copied})=>logger.info?.(`[neighborhood-group-index] phase=parcels scanned=${scanned} copied=${copied}`));
     logger.info?.(`[neighborhood-group-index] parcel_rows=${parcels.copied}`);
-    const sales=await copyBatches(client,SALE_BATCH,generationId,batchSize,deadline);
+    phase='sale_batches';
+    const sales=await copyBatches(client,SALE_BATCH,generationId,batchSize,deadline,
+      ({scanned,copied})=>logger.info?.(`[neighborhood-group-index] phase=sales scanned=${scanned} copied=${copied}`));
+    logger.info?.(`[neighborhood-group-index] sale_rows=${sales.copied}`);
     if (Date.now()>deadline) throw Object.assign(new Error('neighborhood_group_index_runtime_limit'),{code:'RUNTIME_LIMIT'});
-    await client.query({text:BUILD_SUMMARY,values:[generationId],query_timeout:120_000});
-    await client.query({text:BUILD_SALES,values:[generationId],query_timeout:120_000});
+    // The grouped ordered-set medians can take longer than an individual
+    // bounded source batch. Keep the worker's overall runtime ceiling.
+    phase='group_summary';
+    logger.info?.('[neighborhood-group-index] phase=group_summary_start');
+    await client.query({text:BUILD_SUMMARY,values:[generationId],query_timeout:600_000});
+    logger.info?.('[neighborhood-group-index] phase=group_summary_complete');
+    phase='sales_summary';
+    await client.query({text:BUILD_SALES,values:[generationId],query_timeout:600_000});
+    logger.info?.('[neighborhood-group-index] phase=sales_summary_complete');
+    phase='publish';
     const published=await client.query(PUBLISH,[generationId,parcels.copied,sales.copied]);
     if (published.rowCount!==1) throw new Error('neighborhood_group_index_publish_invalid');
     await client.query(`INSERT INTO app.neighborhood_group_active (id,generation_id,published_at)
@@ -245,6 +262,8 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     catch(error) { logger.warn?.(`[neighborhood-group-index] cleanup_deferred=${error?.code??'error'}`); }
     return {status:'complete',generationId,parcels:parcels.copied,sales:sales.copied};
   } catch(error) {
+    // Static phase only: never print SQL text, source rows, or connection data.
+    try { logger.warn?.(`[neighborhood-group-index] failed_phase=${phase}`); } catch {}
     if (transaction) await client.query('ROLLBACK').catch(()=>{});
     throw error;
   } finally {

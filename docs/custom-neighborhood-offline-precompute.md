@@ -89,6 +89,16 @@ invented garage-space count. An unusually large outbuilding can later affect
 only a low-weight supporting similarity factor. None of these current CAD
 fields establishes an amenity's presence on a retrospective effective date.
 
+The separate, current-CAD supporting-similarity kernel reserves at most ten
+percentage points for five optional characteristics: bedrooms 2.5, baths 2.5,
+measured garage area 2, explicit pool status 1, and measured outbuilding area
+2. Missing observations have no effect on the established physical score; an
+unusually large outbuilding can therefore lower the combined diagnostic by no
+more than two points. The kernel is not connected to the report/map scoring
+contract yet: prepared current facts first need a source-revision and
+effective-date-safe read path. Its presence does not change existing map
+colors, recommendation ranks, or appraisal conclusions.
+
 Run `npm run maintenance:neighborhood-group-index` in a **separate** off-hours
 worker, never the web process. It uses one connection, a session advisory lock,
 and one repeatable-read source snapshot. The next generation becomes visible

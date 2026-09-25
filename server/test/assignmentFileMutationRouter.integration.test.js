@@ -535,7 +535,7 @@ test("updates reject missing, signed, and stale files without mutating history",
 });
 
 test("database diagnostics remain server-side for create and update failures", async (context) => {
-  const secret = new Error("postgres at db.internal.example leaked-token");
+  const secret = Object.assign(new Error("postgres at db.internal.example leaked-token"), { code: "XX000" });
   const createDb = createDatabase(async (sql) => {
     if (sql.includes("SELECT 1 FROM core.accounts")) return { rows: [{}], rowCount: 1 };
     throw secret;
@@ -557,8 +557,34 @@ test("database diagnostics remain server-side for create and update failures", a
   });
   assert.equal(updateResponse.status, 500);
   assert.deepEqual(await updateResponse.json(), { error: "assignment_file_update_failed" });
-  assert.equal(logs.length, 2);
-  assert.ok(logs.every(([, error]) => error === secret));
+  assert.deepEqual(logs, [
+    ["assignment file create failed", "XX000"],
+    ["assignment file update failed", "XX000"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /db\.internal|leaked-token/);
+});
+
+test("throwing assignment mutation loggers cannot replace fixed failure responses", async (context) => {
+  const createDb = createDatabase(async (sql) => {
+    if (sql.includes("SELECT 1 FROM core.accounts")) return { rows: [{}], rowCount: 1 };
+    throw new Error("private_create_password");
+  });
+  const updateDb = createDatabase(async () => { throw new Error("private_update_password"); });
+  const logger = { error() { throw new Error("logger_private_password"); } };
+  const createServer = await startRouter(baseOptions(createDb, { logger }));
+  const updateServer = await startRouter(baseOptions(updateDb, { logger }));
+  context.after(async () => Promise.all([createServer.close(), updateServer.close()]));
+
+  const createResponse = await createFile(createServer.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(createResponse.status, 500);
+  assert.deepEqual(await createResponse.json(), { error: "assignment_file_create_failed" });
+  const updateResponse = await patchFile(updateServer.baseUrl, "A-1", 41, {
+    assignment_details: {}, expected_revision: 1,
+  });
+  assert.equal(updateResponse.status, 500);
+  assert.deepEqual(await updateResponse.json(), { error: "assignment_file_update_failed" });
 });
 
 test("assignment mutation composition is explicit and inline handlers are absent", () => {

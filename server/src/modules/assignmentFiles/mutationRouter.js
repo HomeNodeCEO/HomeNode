@@ -13,6 +13,7 @@ import {
 } from "../../services/customAppraisalWorkfiles.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { validateReportManualSection } from "../../util/reportManualValues.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
@@ -321,7 +322,7 @@ export function createAssignmentFileMutationRouter({
       if (isAssignmentValidationError(error)) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("assignment file create failed", error);
+      try { logger.error?.("assignment file create failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_create_failed" });
     } finally {
       client.release();
@@ -429,7 +430,7 @@ export function createAssignmentFileMutationRouter({
       return res.json({ ok: true, assignment_file: presentAssignmentFile(rows[0]) });
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("assignment file update failed", error);
+      try { logger.error?.("assignment file update failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_update_failed" });
     } finally {
       client.release();

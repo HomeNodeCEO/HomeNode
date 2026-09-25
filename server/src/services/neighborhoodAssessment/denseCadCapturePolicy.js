@@ -3,7 +3,10 @@
 // transport stays bounded and a complete capture is required at every tier.
 export const DENSE_CAD_CACHE_READER_LIMITS = Object.freeze({
   records: 200_000, bytes: 140_000_000, row_bytes: 128_000, page_size: 500,
-  selected_accounts: 50_000, duration_ms: 60_000, statement_ms: 5000, connect_ms: 3000,
+  // A complete three-mile source read can outlast the former 60-second reader
+  // clock while remaining inside the coordinator's bounded capture. Keep the
+  // record, byte, row, SQL-statement, and selected-account guards unchanged.
+  selected_accounts: 50_000, duration_ms: 90_000, statement_ms: 5000, connect_ms: 3000,
 });
 export const DENSE_CAD_ACCOUNT_BATCH_SIZE = 1000;
 // Exact parcel geometry may need more than 64KB of hex EWKB. Only dense parcel

@@ -39,8 +39,20 @@ Non-query time includes CPU, GC and cooperative scheduling; it is not a CPU mete
 
 ## Remaining capacity work
 
-Live dense-suburban testing exposed a mismatch between a 50,000-account spatial
-roster and the source reader's 100,000-total-record / 30 MB budget. Selection,
+A later production QA capture of a dense three-mile area reached 117,251
+source records (111,968,487 counted bytes). Spatial membership took 21.1 seconds;
+the exact source read stopped at its former 60-second deadline after 226
+queries, before publishing any replacement context. This was an interrupted
+complete read, not evidence that the properties or sales were absent. The
+source-reader clock is now 90 seconds within a 150-second aggregate capture;
+the browser permits five more seconds for transport. Record, byte, selected-
+account, individual SQL and no-partial-result limits are unchanged. This is a
+bounded reliability correction, not an instant-query solution: further work
+must reduce source-read and catalog cost and prove a fresh live capture succeeds.
+
+Earlier dense-suburban testing exposed a mismatch between a 50,000-account spatial
+roster and the then-active 100,000-total-record / 30 MB source-reader budget.
+Those figures are historical, not the current dense-reader limits. Selection,
 parcels, accounts, transaction identities and sales each consume that total.
 A 1,000-row CAD sample measured about 1.94 MB of mapped parcel evidence; this is
 an estimate, not a completed three-mile source capture. Raising a timeout alone

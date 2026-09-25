@@ -1,8 +1,8 @@
 type RequestOptions = { signal: AbortSignal };
 type RunOptions = RequestOptions & { timeoutMs?: number };
 // Five seconds of transport/cleanup grace beyond the server's capture-only
-// two-minute budget. Saves, catalogs and previews keep the ordinary timeout.
-export const CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS = 125_000;
+// 150-second budget. Saves, catalogs and previews keep the ordinary timeout.
+export const CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS = 155_000;
 const validTimeout = (value: number) => Number.isSafeInteger(value) && value > 0 && value <= 180_000;
 interface Options {
   timeoutMs?: number;

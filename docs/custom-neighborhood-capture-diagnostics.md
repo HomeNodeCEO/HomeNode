@@ -50,8 +50,9 @@ account, individual SQL and no-partial-result limits are unchanged. This is a
 bounded reliability correction, not an instant-query solution: further work
 must reduce source-read and catalog cost and prove a fresh live capture succeeds.
 
-Live dense-suburban testing exposed a mismatch between a 50,000-account spatial
-roster and the source reader's 100,000-total-record / 30 MB budget. Selection,
+Earlier dense-suburban testing exposed a mismatch between a 50,000-account spatial
+roster and the then-active 100,000-total-record / 30 MB source-reader budget.
+Those figures are historical, not the current dense-reader limits. Selection,
 parcels, accounts, transaction identities and sales each consume that total.
 A 1,000-row CAD sample measured about 1.94 MB of mapped parcel evidence; this is
 an estimate, not a completed three-mile source capture. Raising a timeout alone

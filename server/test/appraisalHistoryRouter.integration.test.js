@@ -255,7 +255,8 @@ test("completion failures retain denial, conflict, and diagnostic-safe responses
     assert.deepEqual(body, { error });
     assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
   }
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["shared appraisal completion load failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
 });
 
 test("enforced replication binds source access, target permission, actor, and organization", async (context) => {
@@ -375,7 +376,41 @@ test("rollout replication preserves authenticated ownership and status semantics
     assert.deepEqual(responseBody, { error });
     assert.doesNotMatch(JSON.stringify(responseBody), /password|secret/);
   }
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["appraisal file replication failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
+});
+
+test("history failure logging is bounded and cannot replace fixed responses", async (context) => {
+  const diagnostic = Object.assign(new Error("database_password=secret"), { code: "XX000" });
+  const logs = [];
+  const safe = await startRouter(baseOptions({
+    listHistory: async () => { throw diagnostic; },
+    logger: { error(...args) { logs.push(args); } },
+  }));
+  const failedLogger = await startRouter(baseOptions({
+    listHistory: async () => { throw diagnostic; },
+    loadCompletion: async () => { throw diagnostic; },
+    replicateFile: async () => { throw diagnostic; },
+    logger: { error() { throw new Error("logger_unavailable"); } },
+  }));
+  context.after(async () => Promise.all([safe.close(), failedLogger.close()]));
+
+  const safeResponse = await fetch(`${safe.baseUrl}/api/accounts/123/appraisal-history`);
+  assert.equal(safeResponse.status, 500);
+  assert.deepEqual(await safeResponse.json(), { error: "appraisal_history_list_failed" });
+  assert.deepEqual(logs, [["appraisal history list failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /password|secret/);
+
+  for (const [request, code] of [
+    [() => fetch(`${failedLogger.baseUrl}/api/accounts/123/appraisal-history`), "appraisal_history_list_failed"],
+    [() => fetch(`${failedLogger.baseUrl}/api/accounts/123/appraisal-history/file-1/completion`), "shared_appraisal_completion_load_failed"],
+    [() => replicate(failedLogger.baseUrl, "123", "file-1"), "appraisal_file_replication_failed"],
+  ]) {
+    const response = await request();
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: code });
+  }
 });
 
 test("history conditional requests reauthorize GET and HEAD after access loss or logout", async (context) => {

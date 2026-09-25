@@ -226,6 +226,36 @@ test("street-prefix searches preserve canonical filtering and deterministic orde
   assert.ok(sql.includes("upper(a.street_name) COLLATE \"C\""));
 });
 
+test("property search never interpolates hostile search or city values into SQL", async (context) => {
+  const search = "SNOWMASS'; DROP TABLE core.accounts; --";
+  const city = "PLANO'; SELECT pg_sleep(10); --";
+  const database = createPool(async () => ({ rows: [] }));
+  const server = await startRouter(baseOptions(database, {
+    normalizeCity: (value) => String(value || "").trim(),
+    parseSearch: (value) => ({
+      isAccountId: false,
+      isAddressPrefix: false,
+      normalizedAddress: value,
+      streetName: value,
+      city,
+    }),
+  }));
+  context.after(server.close);
+
+  const response = await fetch(
+    `${server.baseUrl}/api/search?q=${encodeURIComponent(search)}&city=${encodeURIComponent(city)}`,
+  );
+  assert.equal(response.status, 200);
+  assert.deepEqual(await response.json(), []);
+  const [{ sql, params }] = database.queries;
+  assert.equal(database.queries.length, 1);
+  assert.doesNotMatch(sql, /DROP TABLE|pg_sleep|SNOWMASS';|PLANO';/);
+  assert.deepEqual(params, [search + "%", city, city + "%", 25, 0]);
+  assert.match(sql, /upper\(a\.street_name\) COLLATE "C" LIKE \$1/);
+  assert.match(sql, /upper\(a\.city\) = \$2/);
+  assert.match(sql, /LIKE \$3/);
+});
+
 test("unrecognized parsed searches return empty without database access", async (context) => {
   const database = createPool(async () => { throw new Error("unexpected_query"); });
   const server = await startRouter(baseOptions(database, {

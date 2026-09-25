@@ -318,6 +318,19 @@ test("canonicalizes and validates offline sync operations", () => {
   assert.throws(() => syncPayloadSha256({ value: "x".repeat(65 * 1024) }), /invalid_sync_payload/);
 });
 
+test("mobile sync canonicalization treats prototype-like JSON keys as inert data", () => {
+  const json = '{"__proto__":{"sentinel":"data"},"constructor":{"prototype":{"other":"value"}},"prototype":"literal"}';
+  const payload = JSON.parse(json);
+  const originalPrototype = Object.getPrototypeOf(payload);
+
+  assert.equal(canonicalJson(payload), json);
+  assert.match(syncPayloadSha256(payload), /^[a-f0-9]{64}$/);
+  assert.equal(Object.getPrototypeOf(payload), originalPrototype);
+  assert.equal(Object.prototype.sentinel, undefined);
+  assert.equal(Object.prototype.other, undefined);
+  assert.equal(Object.hasOwn(payload, "__proto__"), true);
+});
+
 test("property tax adapter exposes a bounded canonical field catalog", () => {
   const catalog = propertyTaxFieldCatalog();
   assert.equal(catalog.length, 23);

@@ -57,6 +57,9 @@ test('isolated PostgreSQL: publishes indexed city/subdivision facts and preserve
     const dates=(await pool.query(`SELECT closing_date::text FROM app.neighborhood_group_sale_facts
       WHERE generation_id=$1 AND subdivision_key='monica park 4' ORDER BY closing_date`,[first.generationId])).rows;
     assert.deepEqual(dates.map(row=>row.closing_date),['2024-01-01','2025-01-01']);
+    const conflictingSale=(await pool.query(`SELECT county_key,city_key,subdivision_key
+      FROM app.neighborhood_group_sale_facts WHERE generation_id=$1 AND sale_id=12`,[first.generationId])).rows[0];
+    assert.deepEqual(conflictingSale,{county_key:null,city_key:null,subdivision_key:null});
     assert.equal((await pool.query(`SELECT label_conflict,subdivision_key FROM app.neighborhood_group_parcel_facts
       WHERE generation_id=$1 AND object_id=3`,[first.generationId])).rows[0].label_conflict,true);
     const physical=(await pool.query(`SELECT object_id,pool,garage_area_sqft,outbuilding_area_sqft

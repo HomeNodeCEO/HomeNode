@@ -29,7 +29,10 @@ test('publishes only after parcel, sale and summary preparation in one snapshot'
   assert.equal(result.status,'complete');
   const sql=f.calls.map(call=>call.sql);
   assert.ok(sql.indexOf('BEGIN ISOLATION LEVEL REPEATABLE READ')<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch));
-  assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch));
+  assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys));
+  assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch));
+  assert.ok(sql.indexOf('SET LOCAL enable_nestloop=off')<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys));
+  assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys)<sql.indexOf('SET LOCAL enable_nestloop=on'));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales)<sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active')));
   assert.ok(sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active'))<sql.indexOf('COMMIT'));
@@ -73,7 +76,11 @@ test('lookup normalizes exact keys and reads only the published generation',asyn
   assert.deepEqual(values,['dallas','garland','monica park 4']);
   assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.readSummary,/active\.generation_id/);
   assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary,/GROUP BY county_key,city_key,subdivision_key/);
-  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch,/count\(DISTINCT/);
+  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys,/count\(DISTINCT/);
+  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys,/bool_and\(fact\.county_key IS NOT NULL/);
+  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys,/CASE WHEN distinct_labels=1 AND complete THEN subdivision_key END/);
+  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch,/pg_temp\.neighborhood_group_sale_account_keys/);
+  assert.doesNotMatch(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch,/LATERAL/);
 });
 
 test('nightly facts keep missing amenities unknown and aggregate only recorded areas',()=>{

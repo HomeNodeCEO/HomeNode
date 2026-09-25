@@ -114,6 +114,12 @@ Source batches have a 120-second query limit; the full-group median and sales
 summary statements have a separate 10-minute limit under the same overall job
 budget. Static phase/progress logs identify which bounded step needs tuning
 without printing source data or database connection details.
+The account-to-recorded-group key for sales is built once per generation in a
+transaction-local table. This avoids repeating cold, per-sale parcel-index
+lookups after the large parcel copy. The one-pass join preserves the original
+rule: accounts with missing, conflicting, or unlabeled parcel facts keep null
+group keys, and no sale is silently assigned to a subdivision. The temporary
+table is discarded on both commit and rollback.
 
 These tables are **not yet read by the report or map**. They are the prepared
 lookup foundation, not a claim that a three-mile capture is now instant. The

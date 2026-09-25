@@ -318,19 +318,30 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
 
 test("unexpected invalid-prefixed failures stay private even when logging fails", async (context) => {
   const diagnostic = new Error("invalid_internal_database secret-token");
-  const server = await startRouter(baseOptions({
+  const logger = { error() { throw new Error("logger_unavailable"); } };
+  const readServer = await startRouter(baseOptions({
     getWorkfile: async () => { throw diagnostic; },
     getReadiness: async () => { throw diagnostic; },
-    getDownload: async () => { throw diagnostic; },
-    logger: { error() { throw new Error("logger_unavailable"); } },
+    logger,
   }));
-  context.after(server.close);
+  const downloadServer = await startRouter(baseOptions({
+    getDownload: async () => { throw diagnostic; },
+    logger,
+  }));
+  const pdfServer = await startRouter(baseOptions({
+    getDownload: async () => ({ immutable: false, snapshot: {} }),
+    getReportPdf: async () => { throw diagnostic; },
+    logger,
+  }));
+  context.after(async () => Promise.all([
+    readServer.close(), downloadServer.close(), pdfServer.close(),
+  ]));
 
-  for (const [suffix, code] of [
-    ["", "custom_appraisal_workfile_load_failed"],
-    ["/readiness", "custom_appraisal_workfile_readiness_failed"],
-    ["/download", "custom_appraisal_workfile_download_failed"],
-    ["/report.pdf", "custom_appraisal_report_pdf_failed"],
+  for (const [server, suffix, code] of [
+    [readServer, "", "custom_appraisal_workfile_load_failed"],
+    [readServer, "/readiness", "custom_appraisal_workfile_readiness_failed"],
+    [downloadServer, "/download", "custom_appraisal_workfile_download_failed"],
+    [pdfServer, "/report.pdf", "custom_appraisal_report_pdf_failed"],
   ]) {
     const response = await fetch(endpoint(server.baseUrl, suffix));
     assert.equal(response.status, 500);

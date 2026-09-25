@@ -10,9 +10,9 @@ test('capture transport grace is per request and never extends subsequent saves 
   const lane = createCustomWorkspaceRequestLane({ timer: { set: (_fn, ms) => { durations.push(ms); return ms; }, clear() {} } });
   const a = lane.run(() => captured.promise, { signal: signal(), timeoutMs: CUSTOM_WORKSPACE_CAPTURE_TIMEOUT_MS });
   const b = lane.run(async () => 'saved', { signal: signal() });
-  await tick(); assert.deepEqual(durations, [125_000]);
+  await tick(); assert.deepEqual(durations, [155_000]);
   captured.resolve('captured'); assert.equal(await a, 'captured'); assert.equal(await b, 'saved');
-  await lane.flush(); assert.deepEqual(durations, [125_000, 65_000]);
+  await lane.flush(); assert.deepEqual(durations, [155_000, 65_000]);
   for (const timeoutMs of [0, -1, NaN, Infinity, 180_001, 1.5]) {
     await assert.rejects(lane.run(async () => assert.fail('invalid timeout invoked transport'), { signal: signal(), timeoutMs }), /invalid_timeout/);
   }

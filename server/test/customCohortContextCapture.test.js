@@ -3,6 +3,7 @@ import test from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { EventEmitter } from 'node:events';
 import { createCustomCohortContextCapture } from '../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { CUSTOM_COHORT_OPERATION_LIMITS } from '../src/services/neighborhoodAssessment/customCohortOperationLimits.js';
 
 const input = () => ({ auth: { userId: '80000000-0000-4000-8000-000000000001', organizations: [] },
   accountId: '00026355500170360000', assignmentFileId: '9007199254740993',
@@ -37,7 +38,7 @@ test('driver rejection at aggregate deadline reports interruption and discards o
   const releases = [], calls = [], driverError = new Error('PRIVATE driver timeout');
   const service = setup(async () => ({ async query(config) {
     calls.push(config.text);
-    if (config.text.startsWith('SET LOCAL')) { now += 120000; throw driverError; }
+    if (config.text.startsWith('SET LOCAL')) { now += CUSTOM_COHORT_OPERATION_LIMITS.capture_duration_ms; throw driverError; }
     return { rowCount: 0, rows: [] };
   }, release(error) { releases.push(error); } }));
   await assert.rejects(service.capture(input()), error => error.reason === 'deadline_exceeded'
@@ -76,14 +77,14 @@ test('Custom capture honors pre-abort and expired aggregate deadline before conn
   await assert.rejects(setup().capture(input(), { deadline: performance.now() }), /deadline_exceeded/);
 });
 
-test('large capture has a bounded two-minute aggregate but respects earlier caller deadlines', async t => {
+test('large capture has a bounded extended aggregate but respects earlier caller deadlines', async t => {
   let clock = 10_000;
   t.mock.method(performance, 'now', () => clock);
   for (const scenario of [
     { elapsed: 70_000, reason: 'target_unavailable' },
-    { elapsed: 120_001, reason: 'deadline_exceeded' },
+    { elapsed: CUSTOM_COHORT_OPERATION_LIMITS.capture_duration_ms + 1, reason: 'deadline_exceeded' },
     { elapsed: 70_000, deadline: 70_000, reason: 'deadline_exceeded' },
-    { elapsed: 120_001, deadline: 250_000, reason: 'deadline_exceeded' },
+    { elapsed: CUSTOM_COHORT_OPERATION_LIMITS.capture_duration_ms + 1, deadline: 250_000, reason: 'deadline_exceeded' },
   ]) {
     clock = 10_000; const calls = [], releases = [];
     const capture = setup(async () => ({ async query(config) {

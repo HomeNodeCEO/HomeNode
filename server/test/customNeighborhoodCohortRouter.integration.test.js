@@ -138,12 +138,12 @@ test('recommended-area opening passes a closed mode to the owner without grantin
   assert.equal(normal.calls[0].args[0].includeRecommendation, true);
 });
 
-test('only capture receives two minutes; ordinary cohort actions keep one minute', async t => {
+test('only capture receives the bounded extended budget; ordinary cohort actions keep one minute', async t => {
   const { request, calls } = await start(t);
   for (const action of ['capture', 'preview', 'catalog', 'members']) {
     const before = performance.now();
     assert.equal((await request(action)).status, 200);
-    const options = calls.at(-1).args.at(-1), expected = action === 'capture' ? 120_000 : 60_000;
+    const options = calls.at(-1).args.at(-1), expected = action === 'capture' ? 150_000 : 60_000;
     assert.ok(options.signal instanceof AbortSignal);
     assert.ok(options.deadline >= before + expected);
     assert.ok(options.deadline <= performance.now() + expected);

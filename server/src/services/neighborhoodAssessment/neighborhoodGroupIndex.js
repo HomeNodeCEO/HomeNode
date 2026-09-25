@@ -20,24 +20,53 @@ const PARCEL_BATCH = `WITH batch AS MATERIALIZED (
     ${LABEL('subdivision')} AS account_label_key,
     ${LABEL('subdivision_name')} AS parcel_label_key
   FROM batch
+), batch_accounts AS MATERIALIZED (
+  SELECT DISTINCT account_id FROM named WHERE account_id IS NOT NULL
+), secondary AS (
+  SELECT improvement.account_id,
+    sum(improvement.sec_imp_sqft) FILTER (WHERE upper(btrim(improvement.sec_imp_type))
+      IN ('ATTACHED GARAGE','DETACHED GARAGE','ENCLOSED GARAGE')
+      AND improvement.sec_imp_sqft>0) AS garage_area_sqft,
+    sum(improvement.sec_imp_sqft) FILTER (WHERE upper(btrim(improvement.sec_imp_type))
+      IN ('OUTBUILDING','STORAGE BUILDING','STORAGE SPACE','DETACHED QUARTERS',
+          'CABANA','BARN','GREENHOUSE') AND improvement.sec_imp_sqft>0) AS outbuilding_area_sqft,
+    bool_or(upper(btrim(improvement.sec_imp_type))='POOL') AS recorded_pool
+  FROM batch_accounts account
+  JOIN core.secondary_improvements improvement ON improvement.account_id=account.account_id
+  GROUP BY improvement.account_id
 ), copied AS (
   INSERT INTO app.neighborhood_group_parcel_facts
     (generation_id,object_id,account_id,county_key,city_key,subdivision_key,
      recorded_subdivision,label_conflict,living_area_sqft,year_built,
-     site_area_sqft,current_market_value,source_record_hash,source_updated_at)
-  SELECT $1::uuid,object_id,account_id,county_key,city_key,
-    CASE WHEN account_label_key IS NOT NULL AND parcel_label_key IS NOT NULL
-      AND account_label_key<>parcel_label_key THEN NULL
-      ELSE coalesce(account_label_key,parcel_label_key) END,
-    CASE WHEN account_label_key IS NOT NULL THEN subdivision ELSE subdivision_name END,
-    account_label_key IS NOT NULL AND parcel_label_key IS NOT NULL
-      AND account_label_key<>parcel_label_key,
-    CASE WHEN residential_area_sqft>0 THEN residential_area_sqft END,
-    CASE WHEN residential_year_built BETWEEN 1000 AND 2100 THEN residential_year_built END,
-    CASE WHEN parcel_area_sqft>0 THEN parcel_area_sqft END,
-    CASE WHEN current_market_value>0 THEN current_market_value END,
-    source_record_hash,source_updated_at
-  FROM named WHERE account_id IS NOT NULL
+     site_area_sqft,current_market_value,bedroom_count,bath_count,
+     garage_area_sqft,outbuilding_area_sqft,pool,source_record_hash,source_updated_at)
+  SELECT $1::uuid,named.object_id,named.account_id,named.county_key,named.city_key,
+    CASE WHEN named.account_label_key IS NOT NULL AND named.parcel_label_key IS NOT NULL
+      AND named.account_label_key<>named.parcel_label_key THEN NULL
+      ELSE coalesce(named.account_label_key,named.parcel_label_key) END,
+    CASE WHEN named.account_label_key IS NOT NULL THEN named.subdivision ELSE named.subdivision_name END,
+    named.account_label_key IS NOT NULL AND named.parcel_label_key IS NOT NULL
+      AND named.account_label_key<>named.parcel_label_key,
+    CASE WHEN named.residential_area_sqft>0 THEN named.residential_area_sqft END,
+    CASE WHEN named.residential_year_built BETWEEN 1000 AND 2100 THEN named.residential_year_built END,
+    CASE WHEN named.parcel_area_sqft>0 THEN named.parcel_area_sqft END,
+    CASE WHEN named.current_market_value>0 THEN named.current_market_value END,
+    CASE WHEN primary_improvement.bedroom_count BETWEEN 0 AND 30
+      THEN primary_improvement.bedroom_count END,
+    CASE WHEN primary_improvement.bath_count BETWEEN 0 AND 30
+      THEN primary_improvement.bath_count END,
+    CASE WHEN secondary.garage_area_sqft BETWEEN 1 AND 100000
+      THEN secondary.garage_area_sqft END,
+    CASE WHEN secondary.outbuilding_area_sqft BETWEEN 1 AND 100000
+      THEN secondary.outbuilding_area_sqft END,
+    CASE WHEN primary_improvement.pool IS TRUE OR secondary.recorded_pool IS TRUE THEN true
+      WHEN primary_improvement.pool IS FALSE THEN false ELSE NULL END,
+    named.source_record_hash,named.source_updated_at
+  FROM named
+  LEFT JOIN core.primary_improvements primary_improvement
+    ON primary_improvement.account_id=named.account_id
+  LEFT JOIN secondary ON secondary.account_id=named.account_id
+  WHERE named.account_id IS NOT NULL
   RETURNING object_id
 )
 SELECT coalesce((SELECT max(object_id) FROM batch),$2::bigint)::text AS cursor,
@@ -77,7 +106,10 @@ SELECT coalesce((SELECT max(id) FROM batch),$2::bigint)::text AS cursor,
 const BUILD_SUMMARY = `INSERT INTO app.neighborhood_group_summary
   (generation_id,county_key,city_key,subdivision_key,parcel_count,account_count,
    living_area_count,median_living_area_sqft,year_built_count,median_year_built,
-   site_area_count,median_site_area_sqft,market_value_count,median_current_market_value)
+   site_area_count,median_site_area_sqft,market_value_count,median_current_market_value,
+   bedroom_count,median_bedroom_count,bath_count,median_bath_count,
+   garage_area_count,median_garage_area_sqft,outbuilding_area_count,median_outbuilding_area_sqft,
+   pool_observed_count,pool_present_count)
 SELECT $1::uuid,county_key,city_key,subdivision_key,count(*),count(DISTINCT account_id),
   count(living_area_sqft),
   percentile_cont(0.5) WITHIN GROUP (ORDER BY living_area_sqft::double precision),
@@ -85,7 +117,16 @@ SELECT $1::uuid,county_key,city_key,subdivision_key,count(*),count(DISTINCT acco
   count(site_area_sqft),
   percentile_cont(0.5) WITHIN GROUP (ORDER BY site_area_sqft::double precision),
   count(current_market_value),
-  percentile_cont(0.5) WITHIN GROUP (ORDER BY current_market_value::double precision)
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY current_market_value::double precision),
+  count(bedroom_count),
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY bedroom_count::double precision),
+  count(bath_count),
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY bath_count::double precision),
+  count(garage_area_sqft),
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY garage_area_sqft::double precision),
+  count(outbuilding_area_sqft),
+  percentile_cont(0.5) WITHIN GROUP (ORDER BY outbuilding_area_sqft::double precision),
+  count(pool),count(*) FILTER (WHERE pool IS TRUE)
 FROM app.neighborhood_group_parcel_facts
 WHERE generation_id=$1::uuid AND county_key IS NOT NULL AND city_key IS NOT NULL
   AND subdivision_key IS NOT NULL AND NOT label_conflict

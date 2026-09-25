@@ -79,6 +79,16 @@ medians for quick browsing. The sales fact index supports exact appraisal
 period filtering; medians for arbitrary selected groups must be recomputed
 from those indexed facts, never averaged from summary medians.
 
+Migration `20261025_neighborhood_group_characteristics.sql` extends each
+prepared parcel with current CAD bedroom and bath counts, explicit pool
+status, and measured garage/outbuilding areas from separately recorded
+secondary improvements. The summary retains observation counts alongside
+medians and pool-presence counts. Missing CAD rows remain **unknown**, not
+zero bedrooms, no garage, or no pool; garage area is not converted into an
+invented garage-space count. An unusually large outbuilding can later affect
+only a low-weight supporting similarity factor. None of these current CAD
+fields establishes an amenity's presence on a retrospective effective date.
+
 Run `npm run maintenance:neighborhood-group-index` in a **separate** off-hours
 worker, never the web process. It uses one connection, a session advisory lock,
 and one repeatable-read source snapshot. The next generation becomes visible

@@ -10,7 +10,7 @@ const setting=(name,fallback)=>{
   return Number(value);
 };
 const pool=new pg.Pool({connectionString:process.env.DATABASE_URL,max:1,
-  connectionTimeoutMillis:5000,statement_timeout:125_000,
+  connectionTimeoutMillis:5000,statement_timeout:605_000,
   application_name:'homenode-neighborhood-group-index'});
 try {
   const result=await runNeighborhoodGroupIndex(pool,{

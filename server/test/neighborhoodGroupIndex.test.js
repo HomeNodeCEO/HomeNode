@@ -3,17 +3,18 @@ import test from 'node:test';
 import { getPreparedNeighborhoodGroupSummary,runNeighborhoodGroupIndex,NEIGHBORHOOD_GROUP_INDEX_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 
-function fixture({locked=true,fail=false}={}) {
+function fixture({locked=true,fail=false,failSummary=false}={}) {
   const calls=[];let released=false;
   const client={
     async query(input,values) {
       const sql=typeof input==='string'?input:input.text;
-      calls.push({sql,values:values??input.values});
+      calls.push({sql,values:values??input.values,queryTimeout:typeof input==='object'?input.query_timeout:undefined});
       if (sql.includes('pg_try_advisory_lock')) return {rows:[{locked}]};
       if (sql===NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch || sql===NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch) {
         if (fail) throw new Error('synthetic_batch_error');
         return {rows:[{cursor:'-9223372036854775808',scanned:0,copied:0}]};
       }
+      if (failSummary && sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary) throw new Error('synthetic_summary_timeout');
       if (sql.startsWith('UPDATE app.neighborhood_group_generations')) return {rowCount:1,rows:[]};
       return {rows:[]};
     },
@@ -44,6 +45,17 @@ test('failed generation rolls back and never replaces the active pointer',async(
   assert.equal(sql.some(value=>value.includes('INSERT INTO app.neighborhood_group_active')),false);
   assert.ok(sql.some(value=>value.includes('pg_advisory_unlock')));
   assert.equal(f.released,true);
+});
+
+test('large summary has a bounded longer deadline and logs a static failure phase',async()=>{
+  const f=fixture({failSummary:true}),logs=[];
+  await assert.rejects(runNeighborhoodGroupIndex(f.pool,{logger:{info(){},warn:line=>logs.push(line)}}),
+    /synthetic_summary_timeout/);
+  const summary=f.calls.find(call=>call.sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary);
+  assert.equal(summary.queryTimeout,600_000);
+  assert.deepEqual(logs,['[neighborhood-group-index] failed_phase=group_summary']);
+  assert.ok(f.calls.some(call=>call.sql==='ROLLBACK'));
+  assert.equal(f.calls.some(call=>call.sql.includes('INSERT INTO app.neighborhood_group_active')),false);
 });
 
 test('overlapping worker and invalid budgets do not read source tables',async()=>{

@@ -100,6 +100,10 @@ a nightly cadence. Defaults: 1000 source rows per batch and a 90-minute wall
 budget; configurable limits are `NEIGHBORHOOD_GROUP_BATCH_SIZE` (1–5000) and
 `NEIGHBORHOOD_GROUP_MAX_RUNTIME_MINUTES` (1–180). Run one measured canary first
 and do not schedule overlapping CAD full syncs or other bulk maintenance.
+Source batches have a 120-second query limit; the full-group median and sales
+summary statements have a separate 10-minute limit under the same overall job
+budget. Static phase/progress logs identify which bounded step needs tuning
+without printing source data or database connection details.
 
 These tables are **not yet read by the report or map**. They are the prepared
 lookup foundation, not a claim that a three-mile capture is now instant. The

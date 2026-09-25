@@ -3,7 +3,7 @@ import test from 'node:test';
 import { getPreparedNeighborhoodGroupSummary,runNeighborhoodGroupIndex,NEIGHBORHOOD_GROUP_INDEX_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 
-function fixture({locked=true,fail=false,failSummary=false}={}) {
+function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=false}={}) {
   const calls=[];let released=false;
   const client={
     async query(input,values) {
@@ -15,6 +15,8 @@ function fixture({locked=true,fail=false,failSummary=false}={}) {
         return {rows:[{cursor:'-9223372036854775808',scanned:0,copied:0}]};
       }
       if (failSummary && sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary) throw new Error('synthetic_summary_timeout');
+      if (failSalesSummary && sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales)
+        throw new Error('synthetic_sales_summary_timeout');
       if (sql.startsWith('UPDATE app.neighborhood_group_generations')) return {rowCount:1,rows:[]};
       return {rows:[]};
     },
@@ -35,6 +37,10 @@ test('publishes only after parcel, sale and summary preparation in one snapshot'
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSaleAccountKeys)<sql.indexOf('SET LOCAL enable_nestloop=on'));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch)<sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary));
   assert.ok(sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales)<sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active')));
+  const salesSummary=sql.indexOf(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales);
+  assert.equal(sql[salesSummary-1],'SET LOCAL enable_nestloop=off');
+  assert.equal(sql[salesSummary+1],'SET LOCAL enable_nestloop=on');
+  assert.match(NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales,/WITH grouped AS MATERIALIZED/);
   assert.ok(sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active'))<sql.indexOf('COMMIT'));
   assert.equal(sql.includes('ROLLBACK'),false);
   assert.equal(f.released,true);
@@ -57,6 +63,17 @@ test('large summary has a bounded longer deadline and logs a static failure phas
   const summary=f.calls.find(call=>call.sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSummary);
   assert.equal(summary.queryTimeout,600_000);
   assert.deepEqual(logs,['[neighborhood-group-index] failed_phase=group_summary']);
+  assert.ok(f.calls.some(call=>call.sql==='ROLLBACK'));
+  assert.equal(f.calls.some(call=>call.sql.includes('INSERT INTO app.neighborhood_group_active')),false);
+});
+
+test('timed-out sales summary rolls back the candidate instead of publishing it',async()=>{
+  const f=fixture({failSalesSummary:true}),logs=[];
+  await assert.rejects(runNeighborhoodGroupIndex(f.pool,{logger:{info(){},warn:line=>logs.push(line)}}),
+    /synthetic_sales_summary_timeout/);
+  const summary=f.calls.find(call=>call.sql===NEIGHBORHOOD_GROUP_INDEX_SQL.buildSales);
+  assert.equal(summary.queryTimeout,600_000);
+  assert.deepEqual(logs,['[neighborhood-group-index] failed_phase=sales_summary']);
   assert.ok(f.calls.some(call=>call.sql==='ROLLBACK'));
   assert.equal(f.calls.some(call=>call.sql.includes('INSERT INTO app.neighborhood_group_active')),false);
 });

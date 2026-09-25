@@ -170,20 +170,20 @@ recovery pass runs at startup and on a bounded interval, allowing a generation
 that was too recent to reclaim during restart to become retryable later without
 another deployment.
 
-### Temporary dependency exception
+### Mobile image parser dependency
 
 `GHSA-w3rx-r6r6-pgpr` and `GHSA-5p2g-fcmc-qvqq` affect `image-size` through
-Expo/Metro's local build toolchain. Every published package version remains
-affected and no patched npm release was available on 2026-08-24. HomeNode
-applies a lockfile-bound pnpm patch that rejects undersized ISO BMFF boxes and
-non-advancing ICNS entries. The mobile regression suite runs the published
-malformed HEIF, ICNS, and JXL patterns in child processes with hard timeouts.
-CI ignores only these two identifiers after that compensating control; every
-other Moderate/High/Critical finding still blocks the change. HomeNode does not run Metro
-or `image-size` in the deployed API, and untrusted appraisal images must never
-be processed through the mobile build toolchain. Recheck the registry and Expo
-dependency graph by 2026-09-24 and remove both the patch and exception
-immediately when a maintained fix is available.
+Expo/Metro's local build toolchain. The maintained `image-size` 2.0.4 release
+fixes both findings, so the mobile lockfile now overrides Metro's 1.x range to
+2.0.4 and removes the former advisory exceptions and 1.2.1 backport. Metro
+0.84.4 still calls the 1.x default export and passes a filename to that parser;
+a narrow Metro patch uses the 2.x named export and reads the local asset file
+before parsing. Mobile regression tests exercise malformed HEIF, ICNS, and JXL
+buffers with hard process timeouts, plus real PNG buffer and file-based Metro
+asset paths. The ordinary Moderate/High/Critical dependency audit is no longer
+suppressed for these advisories. HomeNode does not run Metro or `image-size` in
+the deployed API; untrusted appraisal images must not be processed through the
+mobile build toolchain.
 
 ## Finding lifecycle
 

@@ -22,6 +22,7 @@ minimumReleaseAgeExclude:
   - 'expo-sqlite@57.0.3'
   - 'expo-web-browser@57.0.3'
   - 'expo@57.0.15'
+  - 'image-size@2.0.4'
 allowBuilds:
   esbuild: true
 overrides:
@@ -29,11 +30,8 @@ overrides:
   expo-constants: 57.0.15
   compression: 1.8.2
   brace-expansion: 5.0.12
-auditConfig:
-  ignoreGhsas:
-    - GHSA-w3rx-r6r6-pgpr
-    - GHSA-5p2g-fcmc-qvqq
+  image-size: 2.0.4
 patchedDependencies:
-  image-size@1.2.1: patches/image-size@1.2.1.patch
+  metro@0.84.4: patches/metro@0.84.4.patch
   yargs@17.7.3: patches/yargs@17.7.3.patch
   zod@3.25.76: patches/zod@3.25.76.patch

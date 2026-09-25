@@ -13,6 +13,19 @@ import {
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const CUSTOM_APPRAISAL_WORKFLOW = "custom_appraisal";
+const WORKFILE_READ_VALIDATION_ERRORS = new Set([
+  "invalid_account_id",
+  "invalid_assignment_file_id",
+  "invalid_readiness_state",
+]);
+
+function logOperationalFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // A failed logger must not replace the route's bounded error response.
+  }
+}
 
 function requestedAccountId(req, res) {
   const value = String(req.params.id || "").trim();
@@ -134,10 +147,10 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "assignment_file_not_found") {
         return res.status(404).json({ error: error.message });
       }
-      if (String(error?.message || "").startsWith("invalid_")) {
+      if (WORKFILE_READ_VALIDATION_ERRORS.has(error?.message)) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile load failed", safeOperationalErrorCode(error));
+      logOperationalFailure(logger, "custom appraisal workfile load failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_load_failed" });
     }
   });
@@ -167,10 +180,10 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "assignment_file_not_found") {
         return res.status(404).json({ error: error.message });
       }
-      if (String(error?.message || "").startsWith("invalid_")) {
+      if (WORKFILE_READ_VALIDATION_ERRORS.has(error?.message)) {
         return res.status(400).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile readiness failed", safeOperationalErrorCode(error));
+      logOperationalFailure(logger, "custom appraisal workfile readiness failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_readiness_failed" });
     }
   });
@@ -215,7 +228,7 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "custom_appraisal_signing_secret_not_configured") {
         return res.status(503).json({ error: error.message });
       }
-      logger.error?.("custom appraisal workfile download failed", safeOperationalErrorCode(error));
+      logOperationalFailure(logger, "custom appraisal workfile download failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_download_failed" });
     }
   });
@@ -267,7 +280,7 @@ export function createAssignmentWorkfileReadRouter({
       if (error?.message === "custom_appraisal_signing_secret_not_configured") {
         return res.status(503).json({ error: error.message });
       }
-      logger.error?.("custom appraisal report PDF failed", safeOperationalErrorCode(error));
+      logOperationalFailure(logger, "custom appraisal report PDF failed", error);
       return res.status(500).json({ error: "custom_appraisal_report_pdf_failed" });
     }
   });

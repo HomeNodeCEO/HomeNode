@@ -316,6 +316,42 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
   assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
+test("unexpected invalid-prefixed failures stay private even when logging fails", async (context) => {
+  const diagnostic = new Error("invalid_internal_database secret-token");
+  const logger = { error() { throw new Error("logger_unavailable"); } };
+  const readServer = await startRouter(baseOptions({
+    getWorkfile: async () => { throw diagnostic; },
+    getReadiness: async () => { throw diagnostic; },
+    logger,
+  }));
+  const downloadServer = await startRouter(baseOptions({
+    getDownload: async () => { throw diagnostic; },
+    logger,
+  }));
+  const pdfServer = await startRouter(baseOptions({
+    getDownload: async () => ({ immutable: false, snapshot: {} }),
+    getReportPdf: async () => { throw diagnostic; },
+    logger,
+  }));
+  context.after(async () => Promise.all([
+    readServer.close(), downloadServer.close(), pdfServer.close(),
+  ]));
+
+  for (const [server, suffix, code] of [
+    [readServer, "", "custom_appraisal_workfile_load_failed"],
+    [readServer, "/readiness", "custom_appraisal_workfile_readiness_failed"],
+    [downloadServer, "/download", "custom_appraisal_workfile_download_failed"],
+    [pdfServer, "/report.pdf", "custom_appraisal_report_pdf_failed"],
+  ]) {
+    const response = await fetch(endpoint(server.baseUrl, suffix));
+    assert.equal(response.status, 500);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    const body = await response.json();
+    assert.deepEqual(body, { error: code });
+    assert.doesNotMatch(JSON.stringify(body), /secret-token|logger_unavailable/);
+  }
+});
+
 test("workfile conditional requests reauthorize after access changes and HEAD remains no-store", async (context) => {
   let accessAllowed = true;
   let authenticated = true;

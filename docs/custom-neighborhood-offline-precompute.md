@@ -65,7 +65,43 @@ This restores the original live PostGIS expressions without deleting cached
 rows or changing report/source semantics. The cron worker can stay stopped
 while the index/query plan is diagnosed.
 
-This is the first safe offline primitive, not a precomputed final neighborhood
-report. A later city-index layer could persist date-vintaged subdivision/group
-facts and map tiles, but only after measuring the remaining capture and preview
-costs and adding source revision, authorization and historical replay tests.
+## City and recorded-subdivision index (second primitive)
+
+Migration `20261024_neighborhood_group_index.sql` adds one indexed set of
+PostgreSQL tables keyed by normalized county, city, and recorded subdivision.
+It deliberately does **not** create one physical table per city or subdivision:
+that would add thousands of migrations and make cross-city searches harder.
+`app.neighborhood_group_parcel_facts` holds the current CAD GLA, year, site,
+value and recorded-label facts. `app.neighborhood_group_sale_facts` holds
+account-matched sales with their original closing dates and prices.
+`app.neighborhood_group_summary` stores citywide descriptive counts and
+medians for quick browsing. The sales fact index supports exact appraisal
+period filtering; medians for arbitrary selected groups must be recomputed
+from those indexed facts, never averaged from summary medians.
+
+Run `npm run maintenance:neighborhood-group-index` in a **separate** off-hours
+worker, never the web process. It uses one connection, a session advisory lock,
+and one repeatable-read source snapshot. The next generation becomes visible
+through `app.neighborhood_group_active` only after all CAD/sale facts and
+summaries finish; failure leaves the previous generation in place. A later run
+prunes obsolete generations in bounded batches. Inspect the active generation's
+`source_observed_at`, `completed_at`, counts and table sizes before scheduling
+a nightly cadence. Defaults: 1000 source rows per batch and a 90-minute wall
+budget; configurable limits are `NEIGHBORHOOD_GROUP_BATCH_SIZE` (1–5000) and
+`NEIGHBORHOOD_GROUP_MAX_RUNTIME_MINUTES` (1–180). Run one measured canary first
+and do not schedule overlapping CAD full syncs or other bulk maintenance.
+
+These tables are **not yet read by the report or map**. They are the prepared
+lookup foundation, not a claim that a three-mile capture is now instant. The
+live QA retry still exceeded the request window during retention after source
+read and preparation; subsequent work must use this index to reduce capture
+work or move long captures to a durable background job. Source authorization,
+date selection, report statistics, and the appraiser's saved choices remain on
+the existing exact-source path until parity tests and performance measurements
+justify switching. Current CAD observations do not establish what existed on
+a retrospective effective date. A group name is not a verified legal
+subdivision/phase identity, and unknown or conflicting names are excluded
+from group summaries but retained as raw facts for review. Sales originally
+loaded from CSV and later from Trestle use the same `core.sales` facts after
+account reconciliation; this index does not grant separate MLS redistribution
+or override assignment-level access rules.

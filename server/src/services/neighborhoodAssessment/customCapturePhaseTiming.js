@@ -4,6 +4,7 @@ const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 
   'preparation', 'retention', 'registration']);
 const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository']);
 const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
+const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening', 'fallback_opening']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {
@@ -28,6 +29,14 @@ export function createCustomPreviewPhaseTiming(report = event => {
   console.info('[neighborhood] preview-phase ' + JSON.stringify(event));
 }) {
   return createPhaseTiming(report, PREVIEW_PHASES, 'invalid_preview_phase');
+}
+
+// Subphases of catalog projection. They overlap its outer preview-phase
+// duration and must not be summed with it. No source facts or identifiers.
+export function createCustomCatalogPhaseTiming(report = event => {
+  console.info('[neighborhood] catalog-phase ' + JSON.stringify(event));
+}) {
+  return createPhaseTiming(report, CATALOG_PHASES, 'invalid_catalog_phase');
 }
 
 function createPhaseTiming(report, phases, invalidPhase) {

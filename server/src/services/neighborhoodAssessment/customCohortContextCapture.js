@@ -1,6 +1,7 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
-import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming } from './customCapturePhaseTiming.js';
+import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming,
+  createCustomCatalogPhaseTiming } from './customCapturePhaseTiming.js';
 import { prepareCustomCohortOpeningGroups, prepareCustomCohortOpeningMode, customCohortOpeningGroupIds, customCohortOpeningSelection,
   CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
@@ -808,6 +809,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
     recommendedAreaOpening = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
+    let catalogPhaseTiming = null;
     const timed = ['report_observation_catalog', 'report_observation_summary'].includes(exposure)
       ? createCustomPreviewPhaseTiming() : (_phase, work) => work();
     const loaded = await timed('load', () => transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -869,7 +871,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       return result;
     };
     const content = project ? await timed('projection', () => project(preview, expected, parcelMap, loaded.retained.retained_inputs,
-      deriveProximity, presentOpening, budget.check, deriveSecondary))
+      deriveProximity, presentOpening, budget.check, deriveSecondary, timing => { catalogPhaseTiming = timing; }))
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
@@ -904,8 +906,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if (recommendedAreaOpening && Object.hasOwn(response, 'initial_preview')) {
             // A dropped recommendation cannot leave behind its private subset
             // preview: the client would restore the complete-catalog fallback.
-            response.initial_preview = await presentOpening(customCohortOpeningSelection(response.catalog,
-              customCohortOpeningGroupIds(response.catalog), expected.selection_revision));
+            response.initial_preview = await catalogPhaseTiming('fallback_opening', () => presentOpening(customCohortOpeningSelection(response.catalog,
+              customCohortOpeningGroupIds(response.catalog), expected.selection_revision)));
           }
         }
       }
@@ -1352,39 +1354,41 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
-      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary) => {
-        const catalog = presentCustomCohortPocketCatalog({
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary, setCatalogPhaseTiming) => {
+        const timed = createCustomCatalogPhaseTiming();
+        setCatalogPhaseTiming(timed);
+        const catalog = await timed('catalog', () => presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: catalogVersion }), preview, expected,
-        });
+        }));
         const city = retained_inputs.study.profile_id === NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_CITY;
         const response = { status: 'catalog', catalog, ...(city ? { discovery: retained_inputs.study.discovery } : {}) };
         if (!include && modeRequested && value.initialPreviewMode === 'recommended_area') fail('invalid_input');
-        if (!include && opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog,
-          groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision));
+        if (!include && opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
+          groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
         if (!include) return response;
         // Do not spend native work on an unresolved catalog or pretend current
         // parcel locations establish a retrospective housing population.
         const current = customCohortCurrentStockSupport({ effective_date: retained_inputs.subject.effective_date,
           retained_capture_at: retained_inputs.acquisition.capture_result.captured_at });
         if (!catalog.catalog_complete || current.status === 'historical_stock_evidence_required') {
-          if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog,
-            groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision));
+          if (opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
+            groups ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
           return response;
         }
         // A municipal polygon has no radius-calibrated proximity scale. Keep
         // that factor unknown instead of borrowing an arbitrary ten-mile radius.
-        const recorded_proximity = city ? undefined : await deriveProximity();
+        const recorded_proximity = city ? undefined : await timed('proximity', deriveProximity);
         // No map can consume this overlay when the retained parcel geometry is
         // unavailable. This also avoids an unnecessary index checkout.
         const prepared_secondary_facts = !city && recorded_proximity?.reason === 'retained_map_unavailable'
-          ? null : await deriveSecondary().catch(() => null);
+          ? null : await timed('prepared_secondary', deriveSecondary).catch(() => null);
         checkBudget();
         const maximumBytes = Math.max(0, Math.min(CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES,
           CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
             - Buffer.byteLength(JSON.stringify({ ...response, initial_preview: undefined })) - 10_000));
-        const recommendation = await buildCustomCohortPocketRecommendationPresentationBatched({ catalog, expected,
+        const recommendation = await timed('recommendation', () => buildCustomCohortPocketRecommendationPresentationBatched({ catalog, expected,
           retained_inputs, recorded_proximity, observation_preview: preview, maximumBytes,
-          prepared_secondary_facts }, { checkBudget });
+          prepared_secondary_facts }, { checkBudget }));
         const { prepared_secondary_map, ...stableRecommendation } = recommendation ?? {};
         // The opening preview and the saved revision must use one identical
         // selection. On missing/unsupported recommendation, retain the prior
@@ -1393,8 +1397,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           && recommendation?.sales_aware_area?.status !== 'unavailable'
           && recommendation?.sales_aware_area?.selected_recorded_group_ids?.length
           ? recommendation.sales_aware_area.selected_recorded_group_ids : null;
-        if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog,
-          groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision));
+        if (opening) response.initial_preview = await timed('opening', () => presentOpening(customCohortOpeningSelection(catalog,
+          groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision)));
         return { ...response, ...(recommendation ? { recommendation: stableRecommendation } : {}),
           ...(prepared_secondary_map ? { prepared_secondary_map } : {}) };
       },

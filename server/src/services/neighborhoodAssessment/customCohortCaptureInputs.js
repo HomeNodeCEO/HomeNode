@@ -8,7 +8,8 @@ import { mapCombinedEvidenceParcelRow, mapCombinedEvidenceAccountRow, mapCombine
 import { canonicalAssessmentJson as json, assessmentEvidenceDigest } from './contract.js';
 import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
   recheckNeighborhoodCohortBlob,
-  createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
+  createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortSelectionRepository } from './customCohortSelectionRepository.js';
 import { prepareCustomCohortContextScope } from './customCohortContextContract.js';
@@ -599,9 +600,9 @@ export async function loadCustomCohortCaptureInputs(client, scopeJson, refs) {
     let offset = 0;
     while (offset < refs.length) {
       const batch = []; let bytes = 0;
-      while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) {
+      while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records) {
         const ref = reference(refs[offset + batch.length]), size = Number(ref.canonical_utf8_bytes);
-        if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) break;
+        if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.bytes) break;
         charge(ref); batch.push(ref); bytes += size;
       }
       const needed = [...new Map(batch.filter(ref => !cache.has(ref.content_sha256)).map(ref => [ref.content_sha256, ref])).values()];

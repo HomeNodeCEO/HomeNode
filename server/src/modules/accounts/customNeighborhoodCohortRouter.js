@@ -155,9 +155,19 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
             const packed = encoding === 'br'
               ? await compressCatalogBrotli(encoded, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
               : await compressCatalogGzip(encoded, { level: 1 });
+            try { logger?.info?.('[neighborhood] catalog-transport', {
+              encoding, uncompressed_bytes: encodedBytes, response_bytes: packed.length,
+            }); } catch { /* transport diagnostics cannot change the response */ }
             if (!controller.signal.aborted && !res.destroyed) return res.type('application/json')
               .set('Content-Encoding', encoding).send(packed);
-          } else if (!controller.signal.aborted && !res.destroyed) return res.type('application/json').send(encoded);
+          } else if (!controller.signal.aborted && !res.destroyed) {
+            if (encodedBytes >= CATALOG_COMPRESSION_THRESHOLD_BYTES) {
+              try { logger?.info?.('[neighborhood] catalog-transport', {
+                encoding: 'identity', uncompressed_bytes: encodedBytes, response_bytes: encodedBytes,
+              }); } catch { /* transport diagnostics cannot change the response */ }
+            }
+            return res.type('application/json').send(encoded);
+          }
         }
         if (!controller.signal.aborted && !res.destroyed) return res.json(result);
       } catch (error) {

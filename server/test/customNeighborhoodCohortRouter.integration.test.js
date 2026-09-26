@@ -99,7 +99,9 @@ test('large authorized catalogs negotiate Brotli or gzip without changing JSON o
   const payload = { catalog: { recorded_groups: Array.from({ length: 2000 }, (_, index) => ({
     id: `group-${index}`, label: 'SUBDIVISION WITH REPETITIVE PARCEL GEOMETRY', coordinates: [-96.681234, 32.912345],
   })) } };
-  const { request } = await start(t, { methods: { catalog: async () => payload } });
+  const transportLogs = [];
+  const { request } = await start(t, { logger: { info: (...args) => transportLogs.push(args) },
+    methods: { catalog: async () => payload } });
   const compressed = await request('catalog', bodies.catalog, { headers: {
     'content-type': 'application/json', 'accept-encoding': 'gzip',
   } });
@@ -143,6 +145,15 @@ test('large authorized catalogs negotiate Brotli or gzip without changing JSON o
   } });
   assert.equal(refusedBoth.headers.get('content-encoding'), null);
   assert.deepEqual(await refusedBoth.json(), payload);
+  assert.deepEqual(transportLogs.map(([label, measurement]) => [label, measurement.encoding,
+    measurement.uncompressed_bytes, measurement.response_bytes]), [
+    ['[neighborhood] catalog-transport', 'gzip', Buffer.byteLength(JSON.stringify(payload)), Number(compressed.headers.get('content-length'))],
+    ['[neighborhood] catalog-transport', 'br', Buffer.byteLength(JSON.stringify(payload)), Number(brotli.headers.get('content-length'))],
+    ['[neighborhood] catalog-transport', 'gzip', Buffer.byteLength(JSON.stringify(payload)), Number(gzipPreferred.headers.get('content-length'))],
+    ['[neighborhood] catalog-transport', 'identity', Buffer.byteLength(JSON.stringify(payload)), Buffer.byteLength(JSON.stringify(payload))],
+    ['[neighborhood] catalog-transport', 'identity', Buffer.byteLength(JSON.stringify(payload)), Buffer.byteLength(JSON.stringify(payload))],
+    ['[neighborhood] catalog-transport', 'identity', Buffer.byteLength(JSON.stringify(payload)), Buffer.byteLength(JSON.stringify(payload))],
+  ]);
 
   const refused = await start(t, { methods: { catalog: async () => ({ large: 'x'.repeat(4_000_000) }) } });
   const overLimit = await refused.request('catalog', bodies.catalog, { headers: {

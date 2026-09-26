@@ -4,7 +4,7 @@ import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreR
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
 import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
-import type { CustomCohortMapLabel, CustomCohortMapScore } from '../customCohortMapPresentation';
+import type { CustomCohortMapLabel, CustomCohortMapPresentation, CustomCohortMapScore } from '../customCohortMapPresentation';
 import { CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CustomCohortPreviewGroup, CustomCohortPreviewState } from '../customCohortPreviewController';
@@ -129,6 +129,13 @@ function parcelBounds(features: readonly Parcel[]): [[number, number], [number, 
   features.forEach(f => visit(f.geometry.coordinates));
   return Number.isFinite(west) ? [[west, south], [east, north]] : null;
 }
+function displayBounds(presentation: CustomCohortMapPresentation | null,
+  features: readonly Parcel[]): [[number, number], [number, number]] | null {
+  const bounds = presentation?.status === 'available' ? presentation.bounds : null;
+  // Presentation already visited every validated ring. Keep the original scan
+  // for the optional-presentation failure path so geometry still displays.
+  return bounds ? [[bounds[0][0], bounds[0][1]], [bounds[1][0], bounds[1][1]]] : parcelBounds(features);
+}
 function sameGeometry(previous: readonly Parcel[], next: readonly Parcel[]) {
   return previous.length === next.length && previous.every((f, i) => f.id === next[i].id
     && f.properties.account_id === next[i].properties.account_id && f.geometry === next[i].geometry);
@@ -196,9 +203,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
       };
     }),
   }), [group, matches, memberships, inspectedIds, presentation]);
-  const latest = useRef({ geojson, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
+  const latest = useRef({ geojson, presentation, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
     memberships, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount });
-  latest.current = { geojson, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
+  latest.current = { geojson, presentation, labels, labelsKey, subjectMarkers, subjectKey, subjectParcelIds,
     memberships, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount };
   const hasGeometry = matches && group.parcel_map.status === 'available' && geojson.features.length > 0;
   const ref = group.binding.contextRef;
@@ -329,7 +336,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           instance.on('contextmenu', SUBJECT_LAYER, event => interactSubject(event, true));
           instance.on('mouseenter', SUBJECT_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = 'pointer'; });
           instance.on('mouseleave', SUBJECT_LAYER, () => { if (!disposed && instance) instance.getCanvas().style.cursor = ''; });
-          const bounds = parcelBounds(data.features);
+          const bounds = displayBounds(latest.current.presentation, data.features);
           if (bounds) instance.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
           updateDisplayMode();
           painted.current = data.features; loaded = true; window.clearTimeout(timeout); setCityMap(instance);
@@ -369,7 +376,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         map.getSource(SOURCE)?.setData(geojson);
         // Reset retained feature-state because IDs can survive a source refresh.
         geojson.features.forEach(f => map.setFeatureState({ source: SOURCE, id: f.id }, paintFor(f)));
-        const bounds = parcelBounds(geojson.features);
+        const bounds = displayBounds(presentation, geojson.features);
         if (bounds && !cityViewActive.current) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
       }
       painted.current = geojson.features;
@@ -385,7 +392,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         drawTimeout.current = window.setTimeout(() => { awaitingDraw.current = false; setMapState('failed'); }, 20_000);
       }
     } catch { awaitingDraw.current = false; setMapState('failed'); }
-  }, [geojson, labels, labelsKey, subjectMarkers, subjectKey, mapState, hasGeometry]);
+  }, [geojson, presentation, labels, labelsKey, subjectMarkers, subjectKey, mapState, hasGeometry]);
 
   return <section className="hn-subtle-panel overflow-hidden rounded-xl border border-purple-200 print:hidden" aria-label="Captured parcel selection map"
     data-selection-revision={group.binding.selectionRevision} data-freshness={freshness}>

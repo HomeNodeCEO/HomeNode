@@ -57,6 +57,7 @@ test('exact group means/coverage are copied, not reranked or converted into indi
     assert.equal(status, p.id === UNKNOWN ? 'unknown' : 'available'); assert.equal(reason, p.id === UNKNOWN ? 'unassigned_recorded_group' : null);
   }
   assert.equal(result.labels.features.length, 2); assert.deepEqual(result.unlabelled_group_ids, []);
+  assert.deepEqual(result.bounds, [[-96.99, 32], [-97 + 4 / 100 + .01, 32.01]]);
   result.labels.features.forEach(label => pointOnOriginal(label, f)); frozen(result);
   assert.equal(JSON.stringify(f), before); assert.equal(Object.isFrozen(f.group), false);
 });
@@ -173,12 +174,13 @@ test('disjoint MultiPolygon and multi-parcel groups produce one representative a
   const result = build(f), a = result.labels.features.find(l => l.properties.pocket_id === ALPHA);
   assert.equal(result.labels.features.length, 2); assert.equal(a.properties.parcel_id, 'gis.dcad_parcels:1');
   assert.deepEqual(a.geometry.coordinates, [-100, 32]); pointOnOriginal(a, f);
+  assert.deepEqual(result.bounds, [[-110, 32], [-89.99, 32.01]]);
   assert.equal(JSON.stringify(result).includes('Polygon'), false);
 });
 test('same-looking native account aliases never infer recorded membership', () => {
   const f = fixture(); f.group.parcel_map.geojson.features[0].properties.account_id = 'a';
   const result = build(f); assert.equal(result.status, 'unavailable'); assert.equal(result.reason, 'catalog_geometry_mismatch');
-  assert.deepEqual(result.scoresByGroup, {}); assert.deepEqual(result.labels.features, []);
+  assert.deepEqual(result.scoresByGroup, {}); assert.deepEqual(result.labels.features, []); assert.equal(result.bounds, null);
 });
 test('foreign or missing accounts cannot produce a partial labelled catalog', () => {
   for (const mutate of [f => { f.group.parcel_map.geojson.features.pop(); }, f => { f.group.parcel_map.geojson.features[0].properties.account_id = 'FOREIGN'; }]) {

@@ -189,8 +189,26 @@ test('context-scoped immutable prepared read model survives serialization and re
   const restyledMap = selectPreparedMap(loaded.parcel_map, ['A']);
   assert.equal(restyledMap.geojson.features[0].properties.selected, true);
   assert.equal(loaded.parcel_map.geojson.features[0].properties.selected, false);
+  const hot = await repository.read({ useVerifiedPreviewCache: true });
+  const reopened = preparedRepository(client, scope, args.context_ref);
+  const hotAgain = await reopened.read({ useVerifiedPreviewCache: true });
+  assert.equal(hotAgain.preview, hot.preview, 'only the verified immutable observation index is reused');
+  assert.notEqual(hotAgain.parcel_map, hot.parcel_map, 'the full map is decoded and validated for each read');
+  const foreignScope = canonicalAssessmentJson({ organization_id: target.organization_id,
+    report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id + 1,
+    account_id: target.account_id });
+  await assert.rejects(preparedRepository(client, foreignScope, args.context_ref)
+    .read({ useVerifiedPreviewCache: true }), /storage_conflict/,
+  'a verified preview cannot be reused across assignment scope');
+  assert.notEqual((await reopened.read()).preview, hot.preview, 'ordinary repository reads bypass the optional cache');
+  const valid = stored;
+  stored = { ...valid, compressed_preview: Buffer.from(valid.compressed_preview) };
+  stored.compressed_preview[0] ^= 1;
+  await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,
+    'changed compressed bytes cannot reuse a previously verified preview');
+  stored = valid;
   stored = { ...stored, preview_sha256: '0'.repeat(64) };
-  await assert.rejects(repository.read(), /storage_conflict/);
+  await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/);
 });
 
 test('cell reuse preserves exact raw types and formatting instead of merging equal numeric values', () => {

@@ -10,6 +10,27 @@ import { isCustomCohortObservationPreview,
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
+// The prepared row is immutable for a context/format version. Keep only one
+// small, verified, deeply frozen observation index hot across requests. The
+// current row and its compressed bytes are still checked on every hit; map
+// geometry and selection-dependent results are never cached here.
+const HOT_PREVIEW_MAX_BYTES = 48_000_000;
+const HOT_PREVIEW_TTL_MS = 5 * 60_000;
+let hotPreview = null;
+let hotPreviewTimer = null;
+function clearHotPreview() {
+  if (hotPreviewTimer) clearTimeout(hotPreviewTimer);
+  hotPreview = null;
+  hotPreviewTimer = null;
+}
+function retainHotPreview(entry) {
+  clearHotPreview();
+  hotPreview = entry;
+  hotPreviewTimer = setTimeout(() => {
+    if (hotPreview === entry) clearHotPreview();
+  }, HOT_PREVIEW_TTL_MS);
+  hotPreviewTimer.unref?.();
+}
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const hash = value => createHash('sha256').update(value).digest('hex');
 function fail(reason) { throw new TypeError(`custom_cohort_prepared_preview_${reason}`); }
@@ -30,6 +51,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
   const scope = prepareCustomCohortContextScope(scopeJson);
   const context = prepareCustomCohortContextReference(canonicalAssessmentJson(contextRef));
   const key = [scope.organization_id, context.context_id, context.context_sha256];
+  const hotKey = JSON.stringify([...key, scope.report_file_id, scope.assignment_file_id, scope.account_id]);
   const matchesScope = preview => preview.target?.organization_id === scope.organization_id
     && preview.target?.report_file_id === scope.report_file_id
     && preview.target?.assignment_file_id === scope.assignment_file_id
@@ -64,8 +86,8 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       && found.rows.length === found.rowCount, 'storage_conflict');
     return found.rowCount === 1;
   };
-  const read = async ({ includeMap = true } = {}) => {
-    check(typeof includeMap === 'boolean', 'invalid_read');
+  const read = async ({ includeMap = true, useVerifiedPreviewCache = false } = {}) => {
+    check(typeof includeMap === 'boolean' && typeof useVerifiedPreviewCache === 'boolean', 'invalid_read');
     const timed = createCustomPreparedPreviewReadTiming();
     const found = await timed('query', () => query(`/* custom-cohort-prepared-preview:read */
       SELECT preview_sha256, preview_utf8_bytes, compressed_preview
@@ -75,20 +97,40 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         AND context_sha256=$3 AND format_version=1`, key));
     if (found?.rowCount === 0) return null;
     const row = one(found);
-    const parsed = await timed('preview_decode', () => decode(row, 'preview'));
-    check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
-      && matchesScope(parsed),
-    'storage_conflict');
-    const preview = await timed('preview_restore', () => {
-      const tableBytes = row.preview_utf8_bytes
-        - Buffer.byteLength(JSON.stringify({ ...parsed, member_tables: null })) + 4;
-      return restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
-    });
-    if (!includeMap) return Object.freeze({ preview, parcel_map: null });
+    const previous = useVerifiedPreviewCache && hotPreview?.key === hotKey
+      && hotPreview.expiresAt > Date.now() ? hotPreview : null;
+    const matched = previous && row.preview_sha256 === previous.digest
+      && row.preview_utf8_bytes === previous.bytes
+      && Buffer.isBuffer(row.compressed_preview)
+      && hash(row.compressed_preview) === previous.compressedDigest;
+    if (previous && !matched) clearHotPreview();
+    let preview = matched ? previous.preview : null;
+    if (!preview) {
+      const parsed = await timed('preview_decode', () => decode(row, 'preview'));
+      check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
+        && matchesScope(parsed), 'storage_conflict');
+      preview = await timed('preview_restore', () => {
+        const tableBytes = row.preview_utf8_bytes
+          - Buffer.byteLength(JSON.stringify({ ...parsed, member_tables: null })) + 4;
+        return restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
+      });
+    }
+    const retainVerifiedPreview = () => {
+      if (useVerifiedPreviewCache && !matched && row.preview_utf8_bytes <= HOT_PREVIEW_MAX_BYTES) {
+        retainHotPreview({ key: hotKey, digest: row.preview_sha256, bytes: row.preview_utf8_bytes,
+          compressedDigest: hash(row.compressed_preview), preview,
+          expiresAt: Date.now() + HOT_PREVIEW_TTL_MS });
+      }
+    };
+    if (!includeMap) {
+      retainVerifiedPreview();
+      return Object.freeze({ preview, parcel_map: null });
+    }
     const map = await timed('map_decode', () => decode(row, 'map'));
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');
+    retainVerifiedPreview();
     return Object.freeze({ preview, parcel_map: map });
   };
   return Object.freeze({

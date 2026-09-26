@@ -833,7 +833,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (licensed.privateAuthorization) return null;
       const payload = await timed('catalog_read', () => catalogRepository.read());
       const prepared = await timed('preview_read', () => createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
-        .read({ includeMap: opening }));
+        .read({ includeMap: opening, useVerifiedPreviewCache: true }));
       return payload && prepared ? { target, scopeJson, licensed, payload, prepared } : null;
     });
     if (!cached) return null;
@@ -897,7 +897,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // path. Never silently omit them from the selected preview.
         if (licensed.privateAuthorization) return null;
         const prepared = await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
-          .read({ includeMap });
+          .read({ includeMap, useVerifiedPreviewCache: true });
         return prepared ? { target, scopeJson, licensed, prepared } : null;
       });
       if (cached) {

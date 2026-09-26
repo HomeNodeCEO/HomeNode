@@ -146,7 +146,13 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
     // Negative request assertions first await any real digest already started,
     // so they cannot pass merely because a busy CI worker has not finished it.
     async settleFingerprints() { await Promise.allSettled([...fingerprints]); await this.drain(); },
-    async tick() { const list = [...timers.entries()].filter(([, t]) => t.delay === 250); list.forEach(([id, t]) => { timers.delete(id); t.fn(); }); await this.drain(); },
+    async tick() {
+      // Controlled, already-saved selections admit immediately; standalone
+      // inspection and uncontrolled edits retain the 250 ms debounce.
+      const list = [...timers.entries()].filter(([, t]) => t.delay === 0 || t.delay === 250);
+      list.forEach(([id, t]) => { timers.delete(id); t.fn(); });
+      await this.drain();
+    },
     async advance(ms) {
       const until = now + ms;
       for (;;) {
@@ -163,7 +169,9 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
 }
 
 test('controlled restored empty selection stays empty and makes no catalog read', async () => {
-  const h = harness(); h.render(h.props([])); await h.tick();
+  const h = harness(); h.render(h.props([]));
+  assert.ok(h.pendingTimers().some(timer => timer.delay === 0), 'saved controlled selection has no edit debounce');
+  await h.tick();
   assert.equal(h.catalogCalls.length, 0); assert.equal(h.calls.length, 1);
   assert.deepEqual(h.calls[0].request.selection, { revision: 7, pockets: [] }); await h.complete();
   assert.equal(h.child('CustomCohortStatistics').freshness, 'current');

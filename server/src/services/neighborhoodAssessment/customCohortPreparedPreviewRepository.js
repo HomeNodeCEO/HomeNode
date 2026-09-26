@@ -75,13 +75,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         AND context_sha256=$3 AND format_version=1`, key));
     if (found?.rowCount === 0) return null;
     const row = one(found);
-    // Both immutable blobs have independent integrity checks. Start their
-    // bounded decompression together so the map does not wait for the much
-    // larger observation preview to finish before doing its own decode.
-    const [parsed, map] = await Promise.all([
-      timed('preview_decode', () => decode(row, 'preview')),
-      includeMap ? timed('map_decode', () => decode(row, 'map')) : Promise.resolve(null),
-    ]);
+    const parsed = await timed('preview_decode', () => decode(row, 'preview'));
     check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
       && matchesScope(parsed),
     'storage_conflict');
@@ -91,6 +85,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       return restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
     });
     if (!includeMap) return Object.freeze({ preview, parcel_map: null });
+    const map = await timed('map_decode', () => decode(row, 'map'));
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');

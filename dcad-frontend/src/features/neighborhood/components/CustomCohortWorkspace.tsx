@@ -128,11 +128,14 @@ function WorkspaceSession(props: Props) {
   useEffect(() => {
     let active = true;
     const owner = createCustomCohortPreviewController({ transport: (request, options) => transportRef.current(request, options), timer,
+      // A controlled selection becomes visible only after its single owned
+      // workfile save completes. There are no unsaved edits left to debounce.
+      debounceMs: controlled ? 0 : undefined,
       initialResponse: retry === 0 ? openingPreview : null,
       onChange: next => { if (active) setPreview(next); } });
     controller.current = owner;
     return () => { active = false; owner.dispose(); controller.current = null; };
-  }, [openingPreview, retry]);
+  }, [openingPreview, retry, controlled]);
 
   useEffect(() => {
     if (controlled) return;

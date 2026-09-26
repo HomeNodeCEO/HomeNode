@@ -61,9 +61,9 @@ export async function checkCustomCohortContextDatabase(pool, identity) {
     for (const sql of [
       'UPDATE app.neighborhood_custom_cohort_contexts SET context_revision=context_revision WHERE organization_id=$1 AND context_id=$2',
       'DELETE FROM app.neighborhood_custom_cohort_contexts WHERE organization_id=$1 AND context_id=$2',
-      // Include referencing review and prepared-preview tables explicitly
+      // Include referencing review and both prepared read-model tables explicitly
       // (never CASCADE), so PostgreSQL reaches the immutability trigger.
-      'TRUNCATE app.neighborhood_custom_cohort_contexts, app.custom_neighborhood_review_commands, app.neighborhood_custom_cohort_prepared_previews',
+      'TRUNCATE app.neighborhood_custom_cohort_contexts, app.custom_neighborhood_review_commands, app.neighborhood_custom_cohort_prepared_previews, app.neighborhood_custom_cohort_prepared_catalogs',
     ]) {
       await rejectsWithinSavepoint(() => client.query(sql, sql.startsWith('TRUNCATE') ? [] : [scope.organization_id, body.context_id]),
         error => error.code === '55000' && /custom_cohort_context_immutable/.test(error.message));

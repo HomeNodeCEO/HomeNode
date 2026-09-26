@@ -222,6 +222,40 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal((await pool.query('SELECT count(*)::int AS count FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [assignment])).rows[0].count, 0);
     checks.push('catalog uses retained recorded labels and full stock independent of selection; distinct two-phase exposure; no source reread or report writes');
 
+    const preparedCatalogInput = { ...previewRequest, selection: { revision: 1, pockets: [] },
+      catalogVersion: 3, includeRecommendation: true, initialPreviewMode: 'all_catalog_groups' };
+    const preparedCatalogOriginal = await capture.catalog(preparedCatalogInput);
+    assert.equal(preparedCatalogOriginal.catalog.catalog_complete, true);
+    assert.equal(preparedCatalogOriginal.initial_preview.summary.selected.stock.member_count, 2);
+    assert.equal((await pool.query(`SELECT count(*)::int AS count
+      FROM app.neighborhood_custom_cohort_prepared_catalogs WHERE organization_id=$1 AND context_id=$2`,
+    [organization, result.context_ref.context_id])).rows[0].count, 1);
+    const preparedCatalogFrom = calls.length;
+    const sameRevisionReopen = await capture.catalog(preparedCatalogInput);
+    assert.deepEqual(sameRevisionReopen, preparedCatalogOriginal,
+      'the prepared all-group opening must preserve the complete original response');
+    const { initialPreviewMode: _preparedOpeningMode, ...reopenCatalogInput } = preparedCatalogInput;
+    const preparedCatalogReopen = await capture.catalog({ ...reopenCatalogInput,
+      selection: { revision: 9, pockets: [] },
+      initialPreviewGroups: preparedCatalogOriginal.catalog.pockets.map(pocket => pocket.id) });
+    assert.deepEqual(preparedCatalogReopen.catalog.pockets, preparedCatalogOriginal.catalog.pockets);
+    assert.deepEqual(preparedCatalogReopen.catalog.coverage, preparedCatalogOriginal.catalog.coverage);
+    assert.equal(preparedCatalogReopen.catalog.binding.selection_revision, 9);
+    assert.equal(Object.hasOwn(preparedCatalogReopen, 'recommendation'),
+      Object.hasOwn(preparedCatalogOriginal, 'recommendation'),
+      'a retrospective capture must not gain a current-market recommendation from its cache');
+    if (preparedCatalogOriginal.recommendation) assert.equal(preparedCatalogReopen.recommendation.binding.selection_revision, 9);
+    assert.notEqual(preparedCatalogReopen.catalog.binding.selection_sha256,
+      preparedCatalogOriginal.catalog.binding.selection_sha256);
+    assert.equal(preparedCatalogReopen.initial_preview.summary.selected.stock.member_count, 2);
+    assert.equal(preparedCatalogReopen.initial_preview.parcel_map.counts.selected_accounts, 2);
+    assert.ok(calls.slice(preparedCatalogFrom).some(sql => sql.includes('custom-cohort-prepared-catalog:read')));
+    assert.ok(!calls.slice(preparedCatalogFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+      'a prepared catalog rechecks original metadata and rights without reopening the dense retained graph');
+    await assert.rejects(exposureDenied.catalog({ ...preparedCatalogInput,
+      selection: { revision: 10, pockets: [] } }), /market_data_access_denied/);
+    checks.push('prepared dense catalog reopens an exact selected union under a new revision without source-page replay or widening catalog/summary permissions');
+
     // Exercise the real HTTP -> exact target -> retained DB -> presentation
     // chain, not merely a router mock. This app is synthetic and loopback-only.
     const app = express();

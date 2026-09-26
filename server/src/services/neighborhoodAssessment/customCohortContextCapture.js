@@ -1,6 +1,6 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
-import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming } from './customCapturePhaseTiming.js';
+import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming } from './customCapturePhaseTiming.js';
 import { prepareCustomCohortOpeningGroups, prepareCustomCohortOpeningMode, customCohortOpeningGroupIds, customCohortOpeningSelection,
   CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
@@ -808,13 +808,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
     recommendedAreaOpening = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
-    const loaded = await transaction(pool, 'READ COMMITTED', budget, async client => {
+    const timed = ['report_observation_catalog', 'report_observation_summary'].includes(exposure)
+      ? createCustomPreviewPhaseTiming() : (_phase, work) => work();
+    const loaded = await timed('load', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       const target = await resolveTarget(client, input, false, 'read');
       const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
       return { target, scopeJson, ...await authorizedRetainedInputs(client, {
         scopeJson, reference: input.contextRef, input, authorizeMarketData, authorizePrivateSales, budget, exposure, additionalExposures, privateSummary: true,
       }) };
-    });
+    }));
     // Pure presentation happens outside the source-read connection and before
     // the final authorization check. Only an explicitly requested recommendation
     // may run bounded native computation over retained EWKB in a separate RO
@@ -824,11 +826,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     // Public summaries/pages/catalogs consume a genuinely indexed internal
     // view. Keep the raw internal preview API's v1 shape and ceiling unchanged.
     const buildPreview = project ? buildCustomCohortIndexedObservationPreviewBatched : buildCustomCohortObservationPreview;
-    const preview = await buildPreview({ context_ref: input.contextRef,
-      retained_inputs: loaded.retained.retained_inputs, selection: input.selection }, { check: budget.check });
+    const preview = await timed('assembly', () => buildPreview({ context_ref: input.contextRef,
+      retained_inputs: loaded.retained.retained_inputs, selection: input.selection }, { check: budget.check }));
     budget.check();
-    const parcelMap = includeMap ? await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
-      selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] }, { check: budget.check })
+    const parcelMap = includeMap ? await timed('map', () => buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
+      selected_account_ids: [...new Set(input.selection.pockets.flatMap(pocket => pocket.account_ids))] }, { check: budget.check }))
       : { status: 'omitted', reason: 'geometry_not_requested' };
     const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
     const deriveProximity = () => transaction(pool, 'REPEATABLE READ READ ONLY', budget,
@@ -866,11 +868,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       return result;
     };
-    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening, budget.check, deriveSecondary)
+    const content = project ? await timed('projection', () => project(preview, expected, parcelMap, loaded.retained.retained_inputs,
+      deriveProximity, presentOpening, budget.check, deriveSecondary))
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
-    return transaction(pool, 'READ COMMITTED', budget, async client => {
+    return timed('authorization', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
         .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
@@ -917,7 +920,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
       return freeze(response);
-    });
+    }));
   }
   return Object.freeze({ async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);

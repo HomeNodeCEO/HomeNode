@@ -3,6 +3,7 @@ import { performance } from 'node:perf_hooks';
 const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 'source_read',
   'preparation', 'retention', 'registration']);
 const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository']);
+const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {
@@ -18,6 +19,15 @@ export function createCustomReportPhaseTiming(report = event => {
   console.info('[neighborhood] report-phase ' + JSON.stringify(event));
 }) {
   return createPhaseTiming(report, REPORT_PHASES, 'invalid_report_phase');
+}
+
+// Catalog and selection timing excludes identifiers and facts. These fixed
+// phases distinguish immutable evidence loading, numeric assembly, optional
+// geometry, recommendation/opening projection, and final access recheck.
+export function createCustomPreviewPhaseTiming(report = event => {
+  console.info('[neighborhood] preview-phase ' + JSON.stringify(event));
+}) {
+  return createPhaseTiming(report, PREVIEW_PHASES, 'invalid_preview_phase');
 }
 
 function createPhaseTiming(report, phases, invalidPhase) {

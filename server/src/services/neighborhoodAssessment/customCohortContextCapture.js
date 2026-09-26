@@ -35,7 +35,8 @@ import { prepareCustomCohortCaptureInputsBatched, persistCustomCohortCaptureInpu
 import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreviewBatched,
   reselectCustomCohortIndexedObservationPreview,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
-import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap } from './customCohortPreparedPreviewRepository.js';
+import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap,
+  customCohortPreparedParcelMapJsonBytes } from './customCohortPreparedPreviewRepository.js';
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
@@ -870,7 +871,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       }
       projection('transport_guard', () => {
         if (opening) {
-          openingBytes = Buffer.byteLength(JSON.stringify(response.initial_preview));
+          // The verified map byte count includes the changed selection flags.
+          // Preserve the same exact envelope limit without stringifying all
+          // retained coordinates again before the final HTTP serialization.
+          const mapBytes = customCohortPreparedParcelMapJsonBytes(response.initial_preview.parcel_map);
+          openingBytes = Buffer.byteLength(JSON.stringify({ ...response.initial_preview, parcel_map: null })) - 4 + mapBytes;
           if (openingBytes > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
         }
         const { initial_preview: _opening, ...catalogOnly } = response;

@@ -5,6 +5,7 @@ const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 
 const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository']);
 const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
 const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening', 'fallback_opening']);
+const PREPARED_CATALOG_PHASES = new Set(['target', 'authorization', 'catalog_read', 'preview_read', 'projection', 'recheck']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {
@@ -37,6 +38,15 @@ export function createCustomCatalogPhaseTiming(report = event => {
   console.info('[neighborhood] catalog-phase ' + JSON.stringify(event));
 }) {
   return createPhaseTiming(report, CATALOG_PHASES, 'invalid_catalog_phase');
+}
+
+// A saved reopen uses a different, selection-neutral read model. Keep its
+// timings separate from first-capture catalog projection; never log source
+// facts, account IDs, request bodies, or provider diagnostics.
+export function createCustomPreparedCatalogPhaseTiming(report = event => {
+  console.info('[neighborhood] prepared-catalog-phase ' + JSON.stringify(event));
+}) {
+  return createPhaseTiming(report, PREPARED_CATALOG_PHASES, 'invalid_prepared_catalog_phase');
 }
 
 function createPhaseTiming(report, phases, invalidPhase) {

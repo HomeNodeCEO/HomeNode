@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto';
-import { gzipSync, gunzipSync } from 'node:zlib';
+import { gzip, gunzip } from 'node:zlib';
+import { promisify } from 'node:util';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { isCustomCohortObservationPreview,
@@ -7,6 +8,7 @@ import { isCustomCohortObservationPreview,
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 8_000_000 } });
+const compress = promisify(gzip), decompress = promisify(gunzip);
 const hash = value => createHash('sha256').update(value).digest('hex');
 function fail(reason) { throw new TypeError(`custom_cohort_prepared_preview_${reason}`); }
 function check(value, reason) { if (!value) fail(reason); }
@@ -31,14 +33,14 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     && preview.target?.workflow_target_id === scope.assignment_file_id
     && preview.target?.account_id === scope.account_id;
   const query = client.query.bind(client);
-  const encode = (value, kind) => {
+  const encode = async (value, kind) => {
     const text = Buffer.from(JSON.stringify(value), 'utf8');
     check(text.length > 0 && text.length <= LIMITS[kind].text, 'capacity_exceeded');
-    const compressed = gzipSync(text, { level: 1 });
+    const compressed = await compress(text, { level: 1 });
     check(compressed.length > 0 && compressed.length <= LIMITS[kind].compressed, 'capacity_exceeded');
     return { digest: hash(text), bytes: text.length, compressed };
   };
-  const decode = (row, kind) => {
+  const decode = async (row, kind) => {
     const digest = row[`${kind}_sha256`], bytes = row[`${kind}_utf8_bytes`],
       compressed = row[`compressed_${kind}`];
     check(typeof digest === 'string' && /^[a-f0-9]{64}$/.test(digest)
@@ -46,7 +48,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       && Buffer.isBuffer(compressed) && compressed.length > 0
       && compressed.length <= LIMITS[kind].compressed, 'storage_conflict');
     let text;
-    try { text = gunzipSync(compressed, { maxOutputLength: LIMITS[kind].text }); }
+    try { text = await decompress(compressed, { maxOutputLength: LIMITS[kind].text }); }
     catch { fail('storage_conflict'); }
     check(text.length === bytes && hash(text) === digest, 'storage_conflict');
     try { return JSON.parse(text.toString('utf8')); } catch { fail('storage_conflict'); }
@@ -61,13 +63,13 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         AND context_sha256=$3 AND format_version=1`, key);
     if (found?.rowCount === 0) return null;
     const row = one(found);
-    const parsed = decode(row, 'preview');
+    const parsed = await decode(row, 'preview');
     check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
       && matchesScope(parsed),
     'storage_conflict');
     const preview = restoreCustomCohortIndexedObservationPreview(parsed);
     if (!includeMap) return Object.freeze({ preview, parcel_map: null });
-    const map = decode(row, 'map');
+    const map = await decode(row, 'map');
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');
@@ -82,7 +84,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       'prepared_index_required');
       check(parcelMap && ['available', 'unavailable'].includes(parcelMap.status),
         'map_required');
-      const storedPreview = encode(preview, 'preview'), storedMap = encode(parcelMap, 'map');
+      const [storedPreview, storedMap] = await Promise.all([encode(preview, 'preview'), encode(parcelMap, 'map')]);
       const stored = await query(`/* custom-cohort-prepared-preview:insert */
         INSERT INTO app.neighborhood_custom_cohort_prepared_previews
           (organization_id, context_id, context_sha256, format_version,

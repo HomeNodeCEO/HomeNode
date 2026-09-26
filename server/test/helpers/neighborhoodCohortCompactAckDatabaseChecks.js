@@ -79,7 +79,9 @@ async function legacyBatch(client, organization, entries) {
 
 async function compareTransfers(client) {
   const padding = '0123456789abcdefé🏠'.repeat(8192);
-  const entries = Array.from({ length: limits.records }, (_, index) => entry({
+  // Keep the large-payload comparison below the independent 2 MB batch cap
+  // even when the record-count ceiling increases.
+  const entries = Array.from({ length: Math.min(limits.records, 8) }, (_, index) => entry({
     index, large: 1e21, small: 1e-7, exact_decimal: '1.00', padding,
   }));
   const evidenceBytes = textBytes(entries.map(item => item.canonicalJson));

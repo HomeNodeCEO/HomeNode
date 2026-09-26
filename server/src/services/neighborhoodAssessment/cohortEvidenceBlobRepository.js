@@ -8,7 +8,10 @@ const HASH = /^[a-f0-9]{64}$/;
 // Representation-validation receipt only; never source provenance or access.
 // Weak identity keeps no encoded copy of a dense study's already checked bytes.
 const validatedReferences = new WeakSet();
-export const NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS = Object.freeze({ records: 8, bytes: 2_000_000 });
+// Dense captures contain many small immutable pages. Admit more references per
+// round trip without increasing the 2 MB statement/payload ceiling; every
+// original and acknowledgment is still checked individually below.
+export const NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS = Object.freeze({ records: 32, bytes: 2_000_000 });
 function fail(reason) {
   throw Object.assign(new Error(`neighborhood_cohort_blob_${reason}`), { code: `neighborhood_cohort_blob_${reason}` });
 }

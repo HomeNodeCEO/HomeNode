@@ -849,6 +849,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       const response = { status: 'catalog', target: { account_id: input.accountId,
         assignment_file_id: input.assignmentFileId }, ...expected, subject_freshness: 'matched',
         ...stable, apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+      let openingBytes = 0;
       if (opening) {
         const areaIds = recommendedAreaOpening && recommendation?.sales_aware_area?.status !== 'unavailable'
           && recommendation?.sales_aware_area?.selected_recorded_group_ids?.length
@@ -860,11 +861,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
           subject_freshness: 'matched', summary: presentCustomCohortPreview({ preview, expected }), parcel_map: map,
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
-        if (Buffer.byteLength(JSON.stringify(response.initial_preview)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
+        openingBytes = Buffer.byteLength(JSON.stringify(response.initial_preview));
+        if (openingBytes > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       }
       const { initial_preview: _opening, ...catalogOnly } = response;
-      if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
-        || Buffer.byteLength(JSON.stringify(response)) > (opening
+      const catalogBytes = Buffer.byteLength(JSON.stringify(catalogOnly));
+      // A JSON object with one added key grows by exactly this delimiter plus
+      // the already-measured opening. Do not serialize the full 20 MB map a
+      // second time solely for its transport guard; the HTTP layer serializes
+      // it once after the final authorization recheck.
+      const responseBytes = catalogBytes + (opening ? Buffer.byteLength(',"initial_preview":') + openingBytes : 0);
+      if (catalogBytes > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
+        || responseBytes > (opening
           ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes)) {
         fail('catalog_transport_limit');
       }

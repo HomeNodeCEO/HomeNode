@@ -234,6 +234,10 @@ test('opening catalog/map/statistics equal independent views but read the retain
     assert.deepEqual(opening.initial_preview, ordinary);
     const { initial_preview, ...catalogOnly } = opening;
     assert.deepEqual(catalogOnly, catalog);
+    assert.equal(Buffer.byteLength(JSON.stringify(opening)),
+      Buffer.byteLength(JSON.stringify(catalogOnly)) + Buffer.byteLength(',"initial_preview":')
+        + Buffer.byteLength(JSON.stringify(initial_preview)),
+    'the separately bounded opening and catalog account for every response byte');
     assert.deepEqual(state.policies.map(p => p.exposure), [CATALOG, SUMMARY, CATALOG, SUMMARY]);
     assert.equal(state.policies[1].sourceReads, 0);
     assert.equal(state.calls.filter(sql => sql === 'BEGIN ISOLATION LEVEL READ COMMITTED').length, 2);

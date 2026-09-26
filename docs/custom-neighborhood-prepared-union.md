@@ -10,7 +10,8 @@ to overlapping groups must count only once.
 For a successful, authorized report preview or catalog opening, the Custom
 owner can now retain a derived immutable numeric index and parcel display map
 in `app.neighborhood_custom_cohort_prepared_previews`. The numeric and geometry
-payloads are compressed separately. Subsequent selection previews request only
+payloads are compressed separately and stored without a selected-pocket state.
+Subsequent selection previews request only
 the numeric payload when the browser already holds the map geometry. The
 browser restyles its validated map for the new selection; the server recomputes
 Type-7 quantiles and descriptive COD from the underlying selected observations.

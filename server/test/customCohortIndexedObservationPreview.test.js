@@ -172,12 +172,18 @@ test('context-scoped immutable prepared read model survives serialization and re
     counts: { parcels: 1, accounts: 2, selected_accounts: 0, coordinates: 0, geometry_bytes: 0, geojson_bytes: 1 } };
   assert.equal((await repository.put(baseline, map)).status, 'prepared');
   assert.equal((await repository.put(baseline, map)).status, 'reused');
+  const alternate = indexed({ ...args, selection: { revision: 2, pockets: [] } });
+  const selectedMap = { ...map, geojson: { ...map.geojson, features: map.geojson.features.map(feature => ({
+    ...feature, properties: { ...feature.properties, selected: true } })) },
+  counts: { ...map.counts, selected_accounts: 1 } };
+  assert.equal((await repository.put(alternate, selectedMap)).status, 'reused',
+    'a different selection must not conflict with the same immutable context index');
   const loaded = await repository.read();
-  assert.deepEqual(loaded.preview, baseline);
+  assert.equal(loaded.preview.selected.stock.member_count, 0, 'stored index is selection-neutral');
   assert.equal((await repository.read({ includeMap: false })).parcel_map, null);
   assert.deepEqual(reselect(loaded.preview, args.selection).selected, baseline.selected);
-  const selectedMap = selectPreparedMap(loaded.parcel_map, ['A']);
-  assert.equal(selectedMap.geojson.features[0].properties.selected, true);
+  const restyledMap = selectPreparedMap(loaded.parcel_map, ['A']);
+  assert.equal(restyledMap.geojson.features[0].properties.selected, true);
   assert.equal(loaded.parcel_map.geojson.features[0].properties.selected, false);
   stored = { ...stored, preview_sha256: '0'.repeat(64) };
   await assert.rejects(repository.read(), /storage_conflict/);

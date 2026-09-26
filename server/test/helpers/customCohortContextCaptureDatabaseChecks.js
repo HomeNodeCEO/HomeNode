@@ -338,8 +338,9 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       assert.equal(unassignedAll.initial_preview.parcel_map.counts.selected_accounts, 2);
       assert.ok(!calls.slice(unassignedFrom).some(sql => /neighborhood-(cache|membership|closure):/.test(sql)),
         'the restored mutable label must not be reread while opening the retained unassigned capture');
-      assert.ok(!calls.slice(unassignedFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)),
-        'all-catalog opening must not save, apply, or replace retained evidence');
+      assert.ok(!calls.slice(unassignedFrom).some(sql => /\b(INSERT|UPDATE|DELETE)\s+(?:INTO|FROM|app\.)/i.test(sql)
+        && !sql.includes('custom-cohort-prepared-preview:insert')),
+      'all-catalog opening may prepare its derived read model but must not save, apply, or replace retained evidence');
       for (const key of ['raw_projection', 'source_record_id', 'source_ref', 'raw_label_variants', 'market_decision']) {
         assert.ok(!catalogText.includes(`"${key}":`), key);
       }

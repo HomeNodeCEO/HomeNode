@@ -4,6 +4,7 @@ import { promisify } from 'node:util';
 import { canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { isCustomCohortObservationPreview,
+  reselectCustomCohortIndexedObservationPreview,
   restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
@@ -84,7 +85,13 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       'prepared_index_required');
       check(parcelMap && ['available', 'unavailable'].includes(parcelMap.status),
         'map_required');
-      const [storedPreview, storedMap] = await Promise.all([encode(preview, 'preview'), encode(parcelMap, 'map')]);
+      // One context can be opened with different selected pockets. Store the
+      // selection-neutral observation index and geometry so every such opening
+      // resolves to the same immutable derived row.
+      const neutralPreview = reselectCustomCohortIndexedObservationPreview(preview,
+        { revision: 1, pockets: [] });
+      const neutralMap = selectCustomCohortPreparedParcelMap(parcelMap, []);
+      const [storedPreview, storedMap] = await Promise.all([encode(neutralPreview, 'preview'), encode(neutralMap, 'map')]);
       const stored = await query(`/* custom-cohort-prepared-preview:insert */
         INSERT INTO app.neighborhood_custom_cohort_prepared_previews
           (organization_id, context_id, context_sha256, format_version,

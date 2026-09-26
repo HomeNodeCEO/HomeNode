@@ -11,6 +11,7 @@ export interface CustomWorkspaceCatalogInput extends CustomCohortPreviewInput {
   readonly catalogVersion?: 1 | 2 | 3;
   readonly initialPreviewGroups?: readonly string[];
   readonly initialPreviewMode?: 'all_catalog_groups' | 'recommended_area';
+  readonly initialMapMode?: 'manifest';
 }
 type Recovery = 'reload' | 'resume_pending' | 'reopen' | null;
 export interface CustomWorkspaceLifecycleState {
@@ -134,13 +135,14 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     emit({ checkpoint: saved.checkpoint, section_revision: saved.section_revision });
   }
   async function loadCatalog(ref: CustomCohortContextRef, revision: number, io: IO, discovery?: CustomWorkspaceDiscovery,
-    opening?: Pick<CustomWorkspaceCatalogInput, 'initialPreviewGroups' | 'initialPreviewMode'>, catalogVersion?: 1 | 2 | 3) {
+    opening?: Pick<CustomWorkspaceCatalogInput, 'initialPreviewGroups' | 'initialPreviewMode' | 'initialMapMode'>, catalogVersion?: 1 | 2 | 3) {
     const input: CustomCohortPreviewInput = Object.freeze({ accountId: target.accountId, assignmentFileId: target.assignmentFileId,
       contextRef: ref, selection: Object.freeze({ revision, pockets: Object.freeze([]) }) });
     const response = object(await io(signal => options.catalog({ ...input,
       ...(catalogVersion === undefined ? {} : { catalogVersion }),
       ...(opening?.initialPreviewGroups === undefined ? {} : { initialPreviewGroups: Object.freeze([...opening.initialPreviewGroups]) }),
-      ...(opening?.initialPreviewMode === undefined ? {} : { initialPreviewMode: opening.initialPreviewMode }) }, signal)));
+      ...(opening?.initialPreviewMode === undefined ? {} : { initialPreviewMode: opening.initialPreviewMode }),
+      ...(opening?.initialMapMode === undefined ? {} : { initialMapMode: opening.initialMapMode }) }, signal)));
     const catalog = checkCustomCohortPocketCatalog(response, input);
     requireThat(catalogVersion === undefined || catalog.catalog_version === catalogVersion, 'catalog_version_mismatch');
     requireThat(same(catalog.discovery, discovery?.profile_id === 'custom-city-polygon-v1' ? discovery : undefined), 'catalog_discovery_mismatch');
@@ -175,7 +177,9 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     // A normal reopen is pinned to the saved catalog contract. Changing the
     // grouping contract is a separate explicit action with an exact-union proof.
     const { catalog, initialPreview } = await loadCatalog(active.context_ref, active.selection.revision, io, active.discovery,
-      { initialPreviewGroups: active.selection.included_recorded_group_ids }, customWorkspaceCatalogVersion(state.checkpoint!));
+      { initialPreviewGroups: active.selection.included_recorded_group_ids,
+        ...(customWorkspaceCatalogVersion(state.checkpoint!) === 3 ? { initialMapMode: 'manifest' as const } : {}) },
+      customWorkspaceCatalogVersion(state.checkpoint!));
     ready(catalog, initialPreview);
   }
   async function acquire(pending: NonNullable<CustomWorkspaceCheckpoint['pending_capture']>, savePending: boolean, io: IO, stage: Stage) {
@@ -206,7 +210,7 @@ export function createCustomWorkspaceLifecycle(options: Options) {
     if (privateInput) attemptedPrivateContext = draft.active.context_ref;
     stage('loading_captured_catalog', 'resume_pending');
     const { catalog, initialPreview, openingGroups } = await loadCatalog(draft.active.context_ref, 1, io, discovery,
-      { initialPreviewMode: 'recommended_area' }, 3);
+      { initialPreviewMode: 'recommended_area', initialMapMode: 'manifest' }, 3);
     if (privateInput) {
       requireThat(catalog.private_sales?.binding.batch.batch_id === privateInput.batch_id
         && catalog.private_sales.binding.review.revision === privateInput.expected_review_revision

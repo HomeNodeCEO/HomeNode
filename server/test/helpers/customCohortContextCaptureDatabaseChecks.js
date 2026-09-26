@@ -234,6 +234,17 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     const sameRevisionReopen = await capture.catalog(preparedCatalogInput);
     assert.deepEqual(sameRevisionReopen, preparedCatalogOriginal,
       'the prepared all-group opening must preserve the complete original response');
+    const compactFrom = calls.length;
+    const compactOpening = await capture.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' });
+    assert.deepEqual(compactOpening.initial_preview.summary, preparedCatalogOriginal.initial_preview.summary);
+    assert.deepEqual(compactOpening.initial_preview.parcel_map, { status: 'omitted', reason: 'viewport_required' });
+    assert.equal(compactOpening.initial_preview.map_manifest.status, 'available');
+    assert.deepEqual(compactOpening.initial_preview.map_manifest.context_ref, result.context_ref);
+    assert.equal(compactOpening.initial_preview.map_manifest.counts.captured_parcels,
+      preparedCatalogOriginal.initial_preview.parcel_map.counts.parcels);
+    assert.ok(Buffer.byteLength(JSON.stringify(compactOpening)) < Buffer.byteLength(JSON.stringify(preparedCatalogOriginal)));
+    assert.ok(!calls.slice(compactFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+      'the manifest opening must stay on the prepared authorized read path');
     const { initialPreviewMode: _preparedOpeningMode, ...reopenCatalogInput } = preparedCatalogInput;
     const preparedCatalogReopen = await capture.catalog({ ...reopenCatalogInput,
       selection: { revision: 9, pockets: [] },

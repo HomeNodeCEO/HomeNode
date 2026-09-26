@@ -8,7 +8,7 @@ export interface ParcelMapClick {
 }
 export interface ParcelMapRuntimeInstance {
   on: {
-    (event: 'load' | 'error' | 'idle' | 'zoom', callback: () => void): void;
+    (event: 'load' | 'error' | 'idle' | 'zoom' | 'moveend', callback: () => void): void;
     (event: 'click' | 'contextmenu', layer: string, callback: (event: ParcelMapClick) => void): void;
     (event: 'mouseenter' | 'mouseleave', layer: string, callback: () => void): void;
   };
@@ -23,6 +23,7 @@ export interface ParcelMapRuntimeInstance {
   fitBounds: (bounds: [[number, number], [number, number]], options: Record<string, unknown>) => void;
   getCenter: () => { lng: number; lat: number };
   getZoom: () => number;
+  getBounds: () => { getWest: () => number; getSouth: () => number; getEast: () => number; getNorth: () => number };
   getBearing: () => number;
   getPitch: () => number;
   jumpTo: (camera: { center: [number, number]; zoom: number; bearing: number; pitch: number }) => void;

@@ -197,6 +197,15 @@ test('fresh opening mode is exact, exclusive, and uses the existing combined env
     contextRef, selection, initialPreviewMode: 'all_catalog_groups' });
   assert.ok(normal.calls[0].args[1].deadline >= before + 60_000);
   assert.ok(normal.calls[0].args[1].deadline <= performance.now() + 60_000);
+  const manifest = await normal.request('catalog', { ...bodies.catalog, ...mode,
+    catalog_version: 3, include_recommendation: true, initial_map_mode: 'manifest' });
+  assert.equal(manifest.status, 200);
+  assert.equal(normal.calls.at(-1).args[0].initialMapMode, 'manifest');
+  for (const invalidManifest of [
+    { ...bodies.catalog, ...mode, initial_map_mode: 'manifest' },
+    { ...bodies.catalog, ...mode, catalog_version: 3, include_recommendation: true, initial_map_mode: 'full' },
+    { ...bodies.catalog, catalog_version: 3, include_recommendation: true, initial_map_mode: 'manifest' },
+  ]) assert.equal((await normal.request('catalog', invalidManifest)).status, 400);
   for (const initial_preview_mode of [null, false, true, 1, '', 'all', 'ALL_CATALOG_GROUPS', [], {}]) {
     const response = await normal.request('catalog', { ...bodies.catalog, initial_preview_mode });
     assert.equal(response.status, 400); assert.equal(response.headers.get('cache-control'), 'no-store');
@@ -207,7 +216,7 @@ test('fresh opening mode is exact, exclusive, and uses the existing combined env
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), { error: 'invalid_neighborhood_request' });
   }
-  assert.equal(normal.calls.length, 1, 'invalid or ambiguous opening intent never reaches the owner');
+  assert.equal(normal.calls.length, 2, 'invalid or ambiguous opening intent never reaches the owner');
   const sized = await start(t, { methods: { catalog: async () => ({ initial_preview: { synthetic: 'é'.repeat(2_050_000) } }) } });
   assert.equal((await sized.request('catalog')).status, 422);
   const response = await sized.request('catalog', { ...bodies.catalog, ...mode });

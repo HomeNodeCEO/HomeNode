@@ -8,9 +8,11 @@ import { buildCustomCohortPocketCatalog as catalog, presentCustomCohortPocketCat
 import { buildCustomCohortPocketRecommendation as recommend } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation as presentRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { buildCustomCohortParcelMap as parcelMap } from '../../server/src/services/neighborhoodAssessment/customCohortParcelMap.js';
+import { buildCustomCohortMapManifest } from '../../server/src/services/neighborhoodAssessment/customCohortMapManifest.js';
 import { presentCustomCohortPreview as summary } from '../../server/src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { checkCustomCohortPocketCatalog, selectionFromRecordedGroups } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { createCustomCohortPreviewController } from '../src/features/neighborhood/customCohortPreviewController.ts';
+import { checkCustomCohortMapManifest } from '../src/features/neighborhood/customCohortMapManifest.ts';
 import { createCustomCohortPreviewTransport } from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import { buildCustomCohortMapPresentation as present, CUSTOM_COHORT_MAP_PRESENTATION_LIMITS as LEGACY,
   CUSTOM_COHORT_MAP_PRESENTATION_V3_LIMITS as V3 } from '../src/features/neighborhood/customCohortMapPresentation.ts';
@@ -98,6 +100,11 @@ test('2048 real catalog3 recommendations and decoded map pass browser admission 
   const { f, input, envelope } = fixture();
   const checked = checkCustomCohortPocketCatalog(envelope, input), group = await admittedMap(f, input, checked);
   const before = sha(JSON.stringify({ checked, group })), result = present({ catalog: checked, group });
+  const compact = checkCustomCohortMapManifest(buildCustomCohortMapManifest(checked, group.parcel_map),
+    group.binding.contextRef, group.binding.accountId);
+  assert.deepEqual(present({ catalog: checked, group: { ...group,
+    parcel_map: { status: 'deferred', reason: 'viewport_required' }, map_manifest: compact } }), result,
+  'the compact opening keeps every captured group score, label anchor, and map extent');
   assert.equal(checked.pockets.length, V3.groups); assert.equal(checked.recommendation.pockets.length, V3.groups);
   assert.equal(checked.recommendation.stock_composition_v1.reason, 'group_limit');
   assert.equal(result.status, 'available'); assert.equal(result.labels.features.length, V3.groups);

@@ -147,6 +147,31 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
     && count(field(coverage, 'unassigned_account_count')) === count(field(unassigned, 'member_count'))
     && count(field(coverage, 'assigned_account_count')) === accounts.size - count(field(unassigned, 'member_count')));
   const scoreMap = scores(catalog, known, groupLimit), map = field(group, 'parcel_map');
+  if (field(map, 'status') === 'deferred') {
+    check(field(map, 'reason') === 'viewport_required');
+    const manifest = field(group, 'map_manifest');
+    if (field(manifest, 'status') === 'unavailable') return result('unavailable', 'parcel_geometry_unavailable', scoreMap, [], pocketIds, limits.outputBytes);
+    check(field(manifest, 'status') === 'available'
+      && context(field(manifest, 'context_ref')) === context(field(catalogBinding, 'context_ref')));
+    const captured = field(manifest, 'counts');
+    check(count(field(captured, 'captured_accounts')) === accounts.size
+      && count(field(captured, 'captured_parcels'), L.parcels) >= accounts.size);
+    const sourceLabels = array(field(field(manifest, 'labels'), 'features'), groupLimit);
+    const labels = sourceLabels.map(raw => {
+      const label = raw as CustomCohortMapLabel, id = text(field(field(label, 'properties'), 'pocket_id'), 200);
+      const name = named.get(id), props = field(label, 'properties');
+      check(name && accounts.get(text(field(props, 'account_id'), 100)) === id
+        && field(props, 'label') === name.label && field(props, 'county') === name.county
+        && field(label, 'id') === `custom-cohort-label:${id}`);
+      return label;
+    });
+    const unlabelled = array(field(manifest, 'unlabelled_group_ids'), groupLimit).map(raw => text(raw, 200));
+    check(new Set(labels.map(label => label.properties.pocket_id)).size === labels.length
+      && new Set(unlabelled).size === unlabelled.length
+      && [...labels.map(label => label.properties.pocket_id), ...unlabelled].sort(compare).join('\n') === pocketIds.join('\n'));
+    const bounds = field(manifest, 'bounds') as CustomCohortMapPresentation['bounds'];
+    return result('available', null, scoreMap, labels, unlabelled, limits.outputBytes, bounds);
+  }
   if (field(map, 'status') === 'unavailable') return result('unavailable', 'parcel_geometry_unavailable', scoreMap, [], pocketIds, limits.outputBytes);
   check(field(map, 'status') === 'available');
   const geojson = field(map, 'geojson'); check(field(geojson, 'type') === 'FeatureCollection');

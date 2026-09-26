@@ -219,12 +219,16 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
     const modeRequested = Object.hasOwn(body, 'initial_preview_mode');
     if (modeRequested && Object.hasOwn(body, 'initial_preview_groups')) invalid();
     if (modeRequested) prepareCustomCohortOpeningMode(body.initial_preview_mode);
+    const manifestOpening = Object.hasOwn(body, 'initial_map_mode');
+    if (manifestOpening && (body.initial_map_mode !== 'manifest' || body.catalog_version !== 3
+      || body.include_recommendation !== true || !(modeRequested || Object.hasOwn(body, 'initial_preview_groups')))) invalid();
     return cohortService.catalog({ ...identity, contextRef: body.context_ref, selection: body.selection,
       ...(versioned ? { catalogVersion: body.catalog_version } : {}),
       ...(Object.hasOwn(body, 'initial_preview_groups') ? { initialPreviewGroups: body.initial_preview_groups } : {}),
       ...(modeRequested ? { initialPreviewMode: body.initial_preview_mode } : {}),
+      ...(manifestOpening ? { initialMapMode: body.initial_map_mode } : {}),
       ...(requested ? { includeRecommendation: body.include_recommendation } : {}) }, options);
-  }, ['catalog_version', 'include_recommendation', 'initial_preview_groups', 'initial_preview_mode']);
+  }, ['catalog_version', 'include_recommendation', 'initial_preview_groups', 'initial_preview_mode', 'initial_map_mode']);
   // Optional owner methods keep older/default-disabled composition unchanged.
   // Browser input identifies saved intent only; no assessment/member/source JSON.
   if (typeof cohortService.prepareReportedObservations === 'function') route('reported-proposal',

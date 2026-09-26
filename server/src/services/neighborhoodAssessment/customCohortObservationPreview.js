@@ -312,7 +312,7 @@ export function reselectCustomCohortIndexedObservationPreview(prepared, selectio
       ? { ...selected, id: pocket.id } : population(pocket.id, pocket.account_ids) }));
   const result = { ...prepared, selection_revision: selection.revision, selected, pockets: pocketResults,
     work: { ...prepared.work, member_work: memberWork, measurement_values: measurementWork } };
-  const bytes = Buffer.byteLength(JSON.stringify(result));
+  const bytes = Buffer.byteLength(JSON.stringify(result)) + 16;
   check(bytes <= (prepared.work.source_records > L.source_records ? 64_000_000 : L.output_utf8_bytes), 'output_bytes_limit');
   result.work.output_utf8_bytes_bound = bytes;
   freeze(result);

@@ -132,6 +132,7 @@ test('prepared selection recomputes exact union distributions from individual me
     assert.deepEqual(actual.pockets, expected.pockets);
     assert.deepEqual(actual.all, expected.all);
     assert.deepEqual(actual.member_tables, expected.member_tables);
+    assert.ok(Buffer.byteLength(JSON.stringify(actual)) <= actual.work.output_utf8_bytes_bound);
     assert.equal(actual.selected.stock.metrics.gla_sqft.median,
       pockets.length === 2 ? 2000 : pockets.length ? 1000 : null);
     for (const population of populations(actual)) for (const kind of kinds) {

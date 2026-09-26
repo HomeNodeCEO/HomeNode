@@ -9,6 +9,7 @@ import {
   customAppraisalReportReadiness,
   customAppraisalReportReadinessErrors,
   loadCustomAppraisalPropertySnapshot,
+  loadCustomAppraisalReportImages,
   renderCustomAppraisalReportPdf,
 } from "../src/services/customAppraisalReportPdf.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
@@ -67,6 +68,43 @@ test("verified subject photos are retained in labeled appendix pages", async () 
   });
   const pageObjects = content.toString("latin1").match(/\/Type \/Page\b/g) || [];
   assert.equal(pageObjects.length, CUSTOM_APPRAISAL_REPORT_PAGE_COUNT + 2);
+});
+
+test("report comparable images retain order with bounded download concurrency", async () => {
+  const accountIds = ["subject", ...Array.from({ length: 6 }, (_, index) => `comp-${index + 1}`)];
+  const mediaRows = accountIds.map((account_id) => ({ account_id, media_url: `https://images.example/${account_id}` }));
+  const client = {
+    async query(sql, params) {
+      if (String(sql).includes("to_regclass")) return { rows: [{ name: "core.sales_source_media" }] };
+      assert.deepEqual(params, [accountIds]);
+      return { rows: mediaRows };
+    },
+  };
+  const snapshot = {
+    sections: {
+      sales_comparison: {
+        value: { comparables: accountIds.slice(1).map((id) => ({ sale: { primary_account_id: id } })) },
+      },
+    },
+  };
+  const property = { account: { account_id: accountIds[0] } };
+  let active = 0;
+  let peak = 0;
+  const images = await loadCustomAppraisalReportImages(client, snapshot, property, {
+    async loadImage(url, options) {
+      assert.equal(options.maxBytes, 8 * 1024 * 1024);
+      active += 1;
+      peak = Math.max(peak, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active -= 1;
+      return Buffer.from(url);
+    },
+  });
+  assert.equal(peak, 3);
+  assert.deepEqual(Object.keys(images), accountIds);
+  for (const accountId of accountIds) {
+    assert.equal(images[accountId].toString(), `https://images.example/${accountId}`);
+  }
 });
 
 test("report builder downloads verified assignment photos from private storage", async () => {

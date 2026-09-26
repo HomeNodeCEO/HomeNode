@@ -99,31 +99,39 @@ function freeze<T>(value: T): T {
   }
   return value;
 }
-/** Parser-owned JSON only. Bound the walk before copying; reject accessors,
- * cycles, non-finite values and oversized extensions, not just known fields. */
+/** Parser-owned JSON only. Bound and copy in one walk; reject accessors,
+ * cycles, non-finite values and oversized extensions, not just known fields.
+ * A stringify/parse copy would traverse a dense parcel map twice more. */
 function copyJson(value: unknown, maxBytes: number, maxNodes: number): Json {
   const seen = new WeakSet<object>(); let nodes = 0, bytes = 0;
-  const walk = (item: unknown, depth: number): void => {
+  const walk = (item: unknown, depth: number): Json => {
     ensure(++nodes <= maxNodes && depth <= 24);
     if (item === null || typeof item === 'boolean' || typeof item === 'number') {
       ensure(typeof item !== 'number' || Number.isFinite(item)); bytes += JSON.stringify(item).length;
+      ensure(bytes <= maxBytes); return typeof item === 'number' && Object.is(item, -0) ? 0 : item;
     } else if (typeof item === 'string') {
       ensure(item.length <= maxBytes); bytes += utf8.encode(JSON.stringify(item)).length;
+      ensure(bytes <= maxBytes); return item;
     } else {
       ensure(typeof item === 'object' && item !== null && !seen.has(item)); seen.add(item);
       const array = Array.isArray(item); if (!array) object(item);
       const keys = Object.keys(item); ensure(nodes + keys.length <= maxNodes);
       bytes += 2 + Math.max(0, keys.length - 1);
+      ensure(bytes <= maxBytes);
+      if (array) ensure(keys.length === (item as unknown[]).length && keys.every((key, i) => key === String(i)));
+      const result: Json[] | Record<string, Json> = array ? [] : {};
       for (const key of keys) {
         const descriptor = Object.getOwnPropertyDescriptor(item, key)!; ensure(Object.hasOwn(descriptor, 'value'));
         if (!array) bytes += utf8.encode(JSON.stringify(key)).length + 1;
-        ensure(bytes <= maxBytes); walk(descriptor.value, depth + 1);
+        ensure(bytes <= maxBytes);
+        const copied = walk(descriptor.value, depth + 1);
+        if (array) (result as Json[]).push(copied);
+        else Object.defineProperty(result, key, { value: copied, enumerable: true, writable: true, configurable: true });
       }
-      if (array) ensure(keys.length === item.length && keys.every((key, i) => key === String(i)));
+      return result;
     }
-    ensure(bytes <= maxBytes);
   };
-  walk(value, 0); return JSON.parse(JSON.stringify(value)) as Json;
+  return walk(value, 0);
 }
 function prepare(value: unknown): { input: CustomCohortPreviewInput; selectionJson: string; key: string; target: string } {
   const r = exact(value, ['accountId', 'assignmentFileId', 'contextRef', 'selection']);

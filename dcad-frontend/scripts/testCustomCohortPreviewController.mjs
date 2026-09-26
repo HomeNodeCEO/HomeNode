@@ -348,6 +348,28 @@ test('response extensions are bounded and cyclic or accessor-bearing summary obj
     assert.equal(h.controller.getState().error, 'invalid_response');
   }
 });
+test('bounded summary copy preserves JSON semantics without mutating parser-owned input', () => {
+  const request = input(), original = response(request);
+  const extension = JSON.parse('{"__proto__":{"unsafe":true},"signed_zero":-0,"nested":[{"label":"saved"}]}');
+  original.summary.extension = extension;
+  const accepted = checkCustomCohortSummaryResponse(original, request, selectionHash(request));
+  assert.notEqual(accepted.summary, original.summary);
+  assert.notEqual(accepted.summary.extension, extension);
+  assert.deepEqual(accepted.summary.extension, JSON.parse(JSON.stringify(extension)));
+  assert.equal(Object.getPrototypeOf(accepted.summary.extension), Object.prototype);
+  assert.equal(Object.hasOwn(accepted.summary.extension, '__proto__'), true);
+  assert.equal({}.unsafe, undefined);
+  assert.equal(Object.is(accepted.summary.extension.signed_zero, -0), false);
+});
+test('map copy still refuses accessors and shared object references', async () => {
+  for (const alter of [r => { Object.defineProperty(r.parcel_map.geojson.features[0].properties, 'evil',
+    { enumerable: true, get() { throw new Error('must not read'); } }); },
+  r => { r.parcel_map.geojson.features[1].geometry = r.parcel_map.geojson.features[0].geometry; }]) {
+    const h = harness(); h.controller.setSelection(input()); await h.tick();
+    const r = response(h.calls[0].request); alter(r); await h.complete(0, r);
+    assert.equal(h.controller.getState().error, 'invalid_response');
+  }
+});
 test('invalid/new inputs cancel old work and clear old data instead of retaining another file', async () => {
   const invalid = [
     { ...input(), assignmentFileId: 2 }, { ...input(), assignmentFileId: '092' },

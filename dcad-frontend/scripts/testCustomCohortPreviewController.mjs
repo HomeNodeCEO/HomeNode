@@ -164,6 +164,32 @@ test('opening response validates and publishes map/statistics together without a
   h.controller.dispose();
 });
 
+test('compact opening admits a bound manifest and subsequent selection summaries do not resend the full map', async () => {
+  const request = input(), value = response({ ...request, include_map: true });
+  value.parcel_map = { status: 'omitted', reason: 'viewport_required' };
+  value.map_manifest = { status: 'available', context_ref: clone(context), geometry_semantics: semantics,
+    bounds: [[-97, 32], [-96.89, 32.01]], labels: { type: 'FeatureCollection', features: [] },
+    unlabelled_group_ids: [], subject_parcels: [], counts: { captured_parcels: 2, captured_accounts: 2 } };
+  const h = harness({ initialResponse: { input: request, value } });
+  h.controller.setSelection(request); await h.tick();
+  assert.equal(h.controller.getState().status, 'ready');
+  assert.equal(h.controller.getState().group.parcel_map.status, 'deferred');
+  assert.equal(h.controller.getState().group.map_manifest.counts.captured_parcels, 2);
+  assert.equal(h.calls.length, 0);
+  h.controller.setSelection(input(2, [])); await h.tick();
+  assert.equal(h.calls[0].request.include_map, false);
+  await h.complete(0);
+  assert.equal(h.controller.getState().group.parcel_map.status, 'deferred');
+  assert.deepEqual(h.controller.getState().group.map_manifest, h.states.find(s => s.status === 'ready').group.map_manifest);
+  h.controller.dispose();
+  const invalid = clone(value); invalid.map_manifest.context_ref.context_sha256 = 'b'.repeat(64);
+  const refused = harness({ initialResponse: { input: request, value: invalid } });
+  refused.controller.setSelection(request); await refused.tick();
+  assert.equal(refused.controller.getState().status, 'failed');
+  assert.equal(refused.controller.getState().error, 'invalid_response');
+  refused.controller.dispose();
+});
+
 for (const [label, mutate] of [
   ['fingerprint', v => { v.summary.binding.selection_sha256 = 'b'.repeat(64); }],
   ['target', v => { v.target.assignment_file_id = '5'; }],

@@ -226,11 +226,14 @@ export function createCustomWorkspaceApi(options: Options) {
         const mode = Object.hasOwn(input, 'initialPreviewMode');
         requireThat(!mode || (['all_catalog_groups', 'recommended_area'].includes(input.initialPreviewMode || '')
           && !Object.hasOwn(input, 'initialPreviewGroups')), 'invalid_input');
+        requireThat(input.initialMapMode === undefined || (input.initialMapMode === 'manifest'
+          && input.catalogVersion === 3 && (mode || Object.hasOwn(input, 'initialPreviewGroups'))), 'invalid_input');
         return knownFailure(CATALOG_FAILURES, () => cohort(bound.accountId, 'catalog', { assignment_file_id: bound.assignmentFileId,
           context_ref: input.contextRef, selection: input.selection, include_recommendation: true,
           ...(input.catalogVersion === undefined ? {} : { catalog_version: input.catalogVersion }),
           ...(input.initialPreviewGroups === undefined ? {} : { initial_preview_groups: input.initialPreviewGroups }),
-          ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}) }, io));
+          ...(mode ? { initial_preview_mode: input.initialPreviewMode } : {}),
+          ...(input.initialMapMode === undefined ? {} : { initial_map_mode: input.initialMapMode }) }, io));
       });
     },
     preview(input: CustomCohortPreviewRequest, io: { signal: AbortSignal }) {

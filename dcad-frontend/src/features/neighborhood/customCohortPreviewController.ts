@@ -1,6 +1,8 @@
 import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
 import { isCustomCohortPreviewCapacityError } from './customCohortPreviewTransport.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
+import { checkCustomCohortMapManifest } from './customCohortMapManifest.ts';
+import type { CustomCohortMapManifest } from './customCohortMapManifest';
 
 /** Request lifecycle only: this never writes a workfile or authorizes report Apply.
  * The transport owner supplies the existing authenticated API boundary. */
@@ -32,16 +34,18 @@ interface AvailableMap {
     readonly coordinates: number; readonly geometry_bytes: number; readonly geojson_bytes: number };
 }
 type ParcelMap = AvailableMap | { readonly status: 'unavailable'; readonly reason: string;
-  readonly geojson: null; readonly geometry_semantics: string };
+  readonly geojson: null; readonly geometry_semantics: string } | { readonly status: 'deferred'; readonly reason: 'viewport_required' };
 export interface CustomCohortPreviewBinding {
   readonly accountId: string; readonly assignmentFileId: string; readonly contextRef: CustomCohortContextRef;
   readonly selectionRevision: number; readonly selectionFingerprint: string;
 }
 export interface CustomCohortPreviewGroup {
   readonly binding: CustomCohortPreviewBinding;
+  readonly request: CustomCohortPreviewInput;
   readonly summary: Readonly<Record<string, Json>>;
   readonly private_sales?: CheckedPrivateSalesObservations;
   readonly parcel_map: ParcelMap;
+  readonly map_manifest?: CustomCohortMapManifest;
   readonly apply: { readonly status: 'blocked'; readonly reasons: readonly string[] };
 }
 export interface CustomCohortPreviewState {
@@ -223,7 +227,7 @@ function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
  * a second parcel geometry download. This never admits geometry or report Apply. */
 export function checkCustomCohortSummaryResponse(value: unknown, input: CustomCohortPreviewInput, hash: string) {
   prepare(input); ensure(HASH.test(hash));
-  const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply'], ['private_sales']);
+  const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply'], ['private_sales', 'map_manifest']);
   const target = exact(r.target, ['account_id', 'assignment_file_id']);
   ensure(r.status === 'preview' && r.subject_freshness === 'matched' && target.account_id === input.accountId
     && target.assignment_file_id === input.assignmentFileId && sameContext(context(r.context_ref), input.contextRef)
@@ -256,14 +260,25 @@ export async function fingerprintCustomCohortSelection(input: CustomCohortPrevie
 }
 
 function accept(value: unknown, input: CustomCohortPreviewInput, hash: string, cached: AvailableMap | null,
+  cachedManifest: CustomCohortMapManifest | null,
   includeMap: boolean): CustomCohortPreviewGroup {
   const accepted = checkCustomCohortSummaryResponse(value, input, hash), r = object(value);
   const rawMap = object(r.parcel_map), selected = selectedAccounts(input); let parcelMap: ParcelMap;
+  let manifest: CustomCohortMapManifest | null = null;
   if (rawMap.status === 'omitted') {
-    exact(rawMap, ['status', 'reason']); ensure(rawMap.reason === 'geometry_not_requested' && !includeMap && cached !== null);
-    parcelMap = restyle(cached, selected);
+    exact(rawMap, ['status', 'reason']);
+    if (rawMap.reason === 'viewport_required') {
+      ensure(includeMap && Object.hasOwn(r, 'map_manifest'));
+      manifest = checkCustomCohortMapManifest(r.map_manifest, input.contextRef, input.accountId);
+      parcelMap = { status: 'deferred', reason: 'viewport_required' };
+    } else {
+      ensure(rawMap.reason === 'geometry_not_requested' && !includeMap && (cached !== null || cachedManifest !== null));
+      parcelMap = cached ? restyle(cached, selected) : { status: 'deferred', reason: 'viewport_required' };
+      manifest = cachedManifest;
+    }
   } else parcelMap = mapOf(rawMap, selected);
-  return freeze({ ...accepted, parcel_map: parcelMap });
+  ensure(!Object.hasOwn(r, 'map_manifest') || manifest !== null);
+  return freeze({ ...accepted, request: input, parcel_map: parcelMap, ...(manifest ? { map_manifest: manifest } : {}) });
 }
 
 export function createCustomCohortPreviewController(options: Options) {
@@ -275,6 +290,7 @@ export function createCustomCohortPreviewController(options: Options) {
   let generation = 0, timer: { handle: unknown } | null = null, abort: AbortController | null = null;
   let deadline: { handle: unknown } | null = null;
   let current: ReturnType<typeof prepare> | null = null, cached: AvailableMap | null = null;
+  let cachedManifest: CustomCohortMapManifest | null = null;
   let initialResponse = options.initialResponse ?? null;
   const publish = (next: CustomCohortPreviewState) => {
     state = freeze(next);
@@ -302,15 +318,16 @@ export function createCustomCohortPreviewController(options: Options) {
       }, timeout) };
       const hash = await (options.fingerprint ?? fingerprint)(prepared.selectionJson);
       if (!isCurrent()) return; ensure(HASH.test(hash));
-      const includeMap = cached === null;
+      const includeMap = cached === null && cachedManifest === null;
       const opening = initialResponse; initialResponse = null;
       const response = opening && prepare(opening.input).key === prepared.key
         ? opening.value
         : await options.transport(freeze({ ...prepared.input, include_map: includeMap }), { signal: controller.signal });
       if (!isCurrent()) return;
       phase = 'invalid_response';
-      const group = accept(response, prepared.input, hash, cached, includeMap);
+      const group = accept(response, prepared.input, hash, cached, cachedManifest, includeMap);
       cached = group.parcel_map.status === 'available' ? group.parcel_map : null;
+      cachedManifest = group.map_manifest ?? null;
       if (deadline !== null) { options.timer.clear(deadline.handle); deadline = null; }
       abort = null; publish({ status: 'ready', freshness: 'current', requested: prepared.input, group, error: null });
     } catch (error) {
@@ -325,20 +342,20 @@ export function createCustomCohortPreviewController(options: Options) {
     setSelection(value: CustomCohortPreviewInput | null): void {
       if (state.status === 'disposed') return;
       if (value === null) {
-        cancel(); current = null; cached = null; initialResponse = null;
+        cancel(); current = null; cached = null; cachedManifest = null; initialResponse = null;
         publish({ status: 'idle', freshness: 'none', requested: null, group: null, error: null }); return;
       }
       let prepared: ReturnType<typeof prepare>;
       try { prepared = prepare(value); }
       catch {
-        cancel(); current = null; cached = null; initialResponse = null;
+        cancel(); current = null; cached = null; cachedManifest = null; initialResponse = null;
         publish({ status: 'failed', freshness: 'none', requested: null, group: null, error: 'invalid_input' }); return;
       }
       // Identical renders, including after failure, never start implicit retries.
       if (current?.key === prepared.key) return;
       cancel(); const token = generation, sameTarget = current?.target === prepared.target;
       const previous = sameTarget ? state.group : null;
-      if (!sameTarget) cached = null;
+      if (!sameTarget) { cached = null; cachedManifest = null; }
       current = prepared;
       let savedOpeningMatches = false;
       if (initialResponse) {
@@ -352,7 +369,7 @@ export function createCustomCohortPreviewController(options: Options) {
     },
     dispose(): void {
       if (state.status === 'disposed') return;
-      cancel(); current = null; cached = null; initialResponse = null;
+      cancel(); current = null; cached = null; cachedManifest = null; initialResponse = null;
       publish({ status: 'disposed', freshness: 'none', requested: null, group: null, error: null });
     },
   });

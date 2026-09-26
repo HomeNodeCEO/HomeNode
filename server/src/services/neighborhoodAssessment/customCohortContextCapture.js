@@ -39,6 +39,7 @@ import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPrepared
   customCohortPreparedParcelMapJsonBytes } from './customCohortPreparedPreviewRepository.js';
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
+import { buildCustomCohortMapManifest } from './customCohortMapManifest.js';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
@@ -814,7 +815,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (Buffer.byteLength(JSON.stringify(response)) > 524288) fail('report_response_limit');
     return freeze(response);
   }
-  async function readPreparedCatalog(value, options, { catalogVersion, include, opening, groups, recommendedAreaOpening }) {
+  async function readPreparedCatalog(value, options, { catalogVersion, include, opening, groups, recommendedAreaOpening, manifestOpening }) {
     if (catalogVersion !== 3 || !include) return null;
     const input = previewInputOf(value), budget = operationBudget(options);
     // Catalog bindings describe an empty selection; a chosen group changes
@@ -865,9 +866,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
             groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision);
         });
         const preview = projection('observation_reselect', () => reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, selected));
-        const map = projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
+        const map = manifestOpening ? { status: 'omitted', reason: 'viewport_required' }
+          : projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
           subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected })), parcel_map: map,
+          ...(manifestOpening ? { map_manifest: projection('map_manifest', () => buildCustomCohortMapManifest(catalog, cached.prepared.parcel_map)) } : {}),
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
       }
       projection('transport_guard', () => {
@@ -1544,13 +1547,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (typeof include !== 'boolean') fail('invalid_input');
     const explicitGroups = value && Object.hasOwn(value, 'initialPreviewGroups');
     const modeRequested = value && Object.hasOwn(value, 'initialPreviewMode');
+    const manifestOpening = value && Object.hasOwn(value, 'initialMapMode');
     if (explicitGroups && modeRequested) fail('invalid_input');
     if (modeRequested) prepareCustomCohortOpeningMode(value.initialPreviewMode);
     const opening = explicitGroups || modeRequested;
+    if (manifestOpening && (value.initialMapMode !== 'manifest' || !opening || catalogVersion !== 3 || !include)) fail('invalid_input');
     const groups = explicitGroups ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups, catalogVersion) : null;
-    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['catalogVersion', 'includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode'].includes(key)));
+    const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['catalogVersion', 'includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode', 'initialMapMode'].includes(key)));
     const cached = await readPreparedCatalog(input, options, { catalogVersion, include, opening, groups,
-      recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area' });
+      recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area', manifestOpening });
     if (cached) return cached;
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],

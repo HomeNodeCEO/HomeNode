@@ -157,6 +157,12 @@ export function createCustomCohortJsonTransport(options: Options) {
       && Object.hasOwn(payload, 'initial_preview_mode');
     if (openingMode && (!['all_catalog_groups', 'recommended_area'].includes(String((payload as Record<string, unknown>).initial_preview_mode))
       || Object.hasOwn(payload, 'initial_preview_groups'))) throw new Error('Invalid neighborhood opening request');
+    const manifestMode = operation === 'catalog' && payload !== null && typeof payload === 'object'
+      && Object.hasOwn(payload, 'initial_map_mode');
+    if (manifestMode && ((payload as Record<string, unknown>).initial_map_mode !== 'manifest'
+      || (payload as Record<string, unknown>).catalog_version !== 3
+      || (payload as Record<string, unknown>).include_recommendation !== true
+      || !(openingMode || Object.hasOwn(payload, 'initial_preview_groups')))) throw new Error('Invalid neighborhood map opening request');
     const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');

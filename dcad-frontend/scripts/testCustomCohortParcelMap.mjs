@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
+import { checkCustomCohortViewportResponse } from '../src/features/neighborhood/customCohortViewportClient.ts';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
@@ -52,10 +53,11 @@ function familyFixture({ largerSecondChild = false } = {}) {
   return props;
 }
 const same = (a, b) => a && b && a.length === b.length && a.every((v, i) => Object.is(v, b[i]));
-function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, throwQuery = false } = {}) {
+function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, throwQuery = false, viewportResult = null } = {}) {
   const cells = [], effects = [], layouts = [], maps = [], timers = new Map(), inspections = [];
   let cursor = 0, dirty = false, props, tree, nextTimer = 0, loadCount = 0, presentationCount = 0, resolveLoad;
   let phasePreparationCount = 0, phaseReadCount = 0, standalonePhaseReadCount = 0;
+  const viewportCalls = [];
   const runtimePromise = new Promise(resolve => { resolveLoad = resolve; });
   const hook = (fn, deps, queue) => {
     const i = cursor++, old = cells[i];
@@ -87,6 +89,8 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     getLayer(id) { return this.layers.find(layer => layer.id === id); }
     queryRenderedFeatures(point, options) { this.queries.push({ point, options });
       assert.ok(JSON.stringify(options) === JSON.stringify({ layers: ['custom-cohort-subject-parcels-text', 'custom-cohort-group-labels-text'] })
+        || JSON.stringify(options) === JSON.stringify({ layers: ['custom-cohort-subject-parcels-text', 'custom-cohort-group-labels-text', 'custom-cohort-group-labels-dot'] })
+        || JSON.stringify(options) === JSON.stringify({ layers: ['custom-cohort-group-labels-text'] })
         || JSON.stringify(options) === JSON.stringify({ layers: ['custom-cohort-subject-parcels-text'] }));
       if (throwQuery) throw new Error('synthetic renderer query failure'); return this.renderedLabelHits; }
     setFeatureState(feature, state) {
@@ -103,6 +107,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     fitBounds(bounds, options) { this.fits.push({ bounds, options }); }
     getCenter() { return { lng: this.camera.center[0], lat: this.camera.center[1] }; }
     getZoom() { return this.camera.zoom; }
+    getBounds() { return { getWest: () => -97, getSouth: () => 32, getEast: () => -96.9, getNorth: () => 32.1 }; }
     getBearing() { return this.camera.bearing; }
     getPitch() { return this.camera.pitch; }
     jumpTo(options) { this.jumps.push(options); this.camera = { ...this.camera, ...options }; }
@@ -124,6 +129,10 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     if (/\/customCohortMapPresentation(?:\.ts)?$/.test(name)) return { ...presentationModule,
       buildCustomCohortMapPresentation(...args) { presentationCount++; return buildCustomCohortMapPresentation(...args); } };
     if (name.endsWith('/NeighborhoodCityReferenceControl')) return { default: CityReferenceStub };
+    if (name.endsWith('/customCohortPreviewApi')) return { requestCustomCohortOperation(...args) {
+      viewportCalls.push(args); if (!viewportResult) throw new Error('full-map fixture must not request viewport detail');
+      return Promise.resolve(viewportResult); } };
+    if (name.endsWith('/customCohortViewportClient')) return { checkCustomCohortViewportResponse };
     if (name.endsWith('/customCohortPocketCatalog')) return { CUSTOM_COHORT_UNASSIGNED_GROUP: 'discovery:unassigned' };
     if (name.endsWith('/customCohortSubdivisionFamilies')) return { ...familiesModule,
       createCustomCohortSubdivisionPhaseReader(...args) {
@@ -157,7 +166,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     for (const child of [current.props?.children].flat(Infinity)) { const found = node(predicate, child ?? null); if (found) return found; }
     return null;
   }
-  return { maps, timers, inspections, observers, get loadCount() { return loadCount; },
+  return { maps, timers, inspections, observers, viewportCalls, get loadCount() { return loadCount; },
     get presentationCount() { return presentationCount; },
     get phasePreparationCount() { return phasePreparationCount; }, get phaseReadCount() { return phaseReadCount; },
     get standalonePhaseReadCount() { return standalonePhaseReadCount; },
@@ -170,6 +179,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     async ready(value = fixture()) { this.render(value); await this.drain(); maps.at(-1)?.emit('load'); flush(); maps.at(-1)?.emit('idle'); flush(); },
     emit(name, event, layer = '') { maps.at(-1).emit(name, event, layer); flush(); },
     unmount() { cells.forEach(c => c?.cleanup?.()); }, resolve() { resolveLoad(runtime); },
+    fireTimers(maxDelay) { for (const [id, item] of [...timers]) if (item.delay <= maxDelay) { timers.delete(id); item.fn(); } flush(); },
     timeout() { [...timers.values()].forEach(t => t.fn()); flush(); },
   };
 }
@@ -186,6 +196,44 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.match(h.html(), /Included · red outline/);
   assert.doesNotMatch(h.html(), /Color parcels by/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
+});
+test('compact overview paints scored subdivision markers before bounded detail and keeps label clicks singular', async () => {
+  const props = fixture(), all = props.group.parcel_map.geojson.features;
+  const presented = buildCustomCohortMapPresentation(props);
+  const calls = [];
+  props.onActivatePocket = (...args) => calls.push(args);
+  props.group = { ...props.group, request: { accountId: 'A', assignmentFileId: '9007199254740993', contextRef,
+    selection: { revision: 1, pockets: [{ id: 'recorded-cad:alpha', label: 'Alpha', account_ids: ['A'] },
+      { id: 'discovery:unassigned', label: 'Unassigned', account_ids: ['C'] }] } },
+  parcel_map: { status: 'deferred', reason: 'viewport_required' },
+  map_manifest: { status: 'available', context_ref: contextRef, bounds: presented.bounds, labels: presented.labels,
+    unlabelled_group_ids: presented.unlabelled_group_ids,
+    subject_parcels: [{ parcel_id: all[0].id, account_id: 'A', coordinates: [-97, 32], anchor_basis: 'retained_exterior_ring_vertex' }],
+    counts: { captured_parcels: 3, captured_accounts: 3 } } };
+  const viewport = { west: -97, south: 32, east: -96.9, north: 32.1 };
+  const result = { status: 'available', display_only: true,
+    target: { account_id: 'A', assignment_file_id: '9007199254740993' }, context_ref: contextRef,
+    selection_revision: 1, selection_sha256: 'b'.repeat(64), viewport,
+    geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
+    geojson: { type: 'FeatureCollection', features: [all[0]] }, counts: { visible_parcels: 1, captured_parcels: 3 } };
+  const h = harness({ viewportResult: result }); await h.ready(props);
+  const map = h.maps[0];
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0);
+  assert.ok(map.getLayer('custom-cohort-group-labels-dot'));
+  assert.equal(map.getSource('custom-cohort-group-labels').data.features.length, 2);
+  assert.equal(h.viewportCalls.length, 0, 'broad overview does not download every parcel');
+  map.renderedLabelHits = [{ properties: { pocket_id: 'recorded-cad:alpha' } }];
+  const click = { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }], point: { x: 1, y: 2 } };
+  h.emit('click', click, 'custom-cohort-group-labels-dot');
+  h.emit('click', click, 'custom-cohort-group-labels-text');
+  assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
+  map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1);
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
+  assert.deepEqual(map.getSource('custom-cohort-parcels').data.features[0].geometry, all[0].geometry);
+  assert.equal(map.fits.length, 1, 'viewport detail must not refit the broad capture');
+  assert.equal(map.getZoom(), 14, 'the close-up camera remains in place');
+  h.unmount();
 });
 test('optional presentation refusal retains the original geometry bounds and map', async () => {
   const props = fixture(), h = harness();

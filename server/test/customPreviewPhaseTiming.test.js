@@ -66,7 +66,7 @@ test('saved catalog timings distinguish authorized reads from projection and fin
 test('saved catalog projection subphases are synchronous, bounded, and redact request evidence', t => {
   let now = 100; t.mock.method(performance, 'now', () => now);
   const events = [], phase = createCustomPreparedCatalogProjectionTiming(event => events.push(event));
-  const names = ['binding', 'membership', 'opening_selection', 'observation_reselect', 'map_select',
+  const names = ['binding', 'membership', 'opening_selection', 'observation_reselect', 'map_select', 'map_manifest',
     'summary_projection', 'transport_guard'];
   for (const name of names) assert.equal(phase(name, () => { now += 2; return 'PRIVATE'; }), 'PRIVATE');
   assert.deepEqual(events, names.map((name, index) => ({ phase: name, outcome: 'completed',

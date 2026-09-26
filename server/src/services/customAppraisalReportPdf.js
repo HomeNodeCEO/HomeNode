@@ -581,7 +581,10 @@ export async function loadCustomAppraisalPropertySnapshot(client, { accountId, a
   };
 }
 
-async function reportImages(client, snapshot, property) {
+/** Load the selected subject/comparable images with a bounded memory and request fan-out. */
+export async function loadCustomAppraisalReportImages(client, snapshot, property, {
+  loadImage = loadRemoteImage,
+} = {}) {
   const sales = sectionValue(snapshot, "sales_comparison");
   const comparableIds = (sales.comparables || [])
     .map((item) => item?.sale?.primary_account_id)
@@ -602,7 +605,11 @@ async function reportImages(client, snapshot, property) {
                media.order_number NULLS LAST, media.id`,
     [accountIds],
   );
-  const buffers = await Promise.all(mediaRows.map((row) => loadRemoteImage(row.media_url, { maxBytes: MAX_MEDIA_BYTES })));
+  const buffers = await mapWithConcurrency(
+    mediaRows,
+    3,
+    (row) => loadImage(row.media_url, { maxBytes: MAX_MEDIA_BYTES }),
+  );
   return Object.fromEntries(mediaRows.map((row, index) => [row.account_id, buffers[index]]).filter(([, buffer]) => buffer));
 }
 
@@ -1424,7 +1431,7 @@ export async function buildCustomAppraisalReportPdf(client, {
     throw Object.assign(new Error("custom_neighborhood_report_unavailable"), { code: "custom_neighborhood_report_unavailable" });
   }
   const [images, assignmentPhotos] = await Promise.all([
-    includeExternalImages ? reportImages(client, snapshot, property).catch(() => ({})) : {},
+    includeExternalImages ? loadCustomAppraisalReportImages(client, snapshot, property).catch(() => ({})) : {},
     assignmentReportPhotos(client, objectStorage, { accountId, assignmentFileId }),
   ]);
   const { content, page_count } = await renderCustomAppraisalReportPdfResult({

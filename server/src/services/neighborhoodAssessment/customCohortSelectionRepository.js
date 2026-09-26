@@ -2,7 +2,8 @@ import { canonicalAssessmentJson } from './contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from './cohortEvidenceContract.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createNeighborhoodCohortBlobRepository, prepareNeighborhoodCohortBlob,
-  prepareNeighborhoodCohortBlobReference, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
+  prepareNeighborhoodCohortBlobReference, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from './cohortEvidenceBlobRepository.js';
 
 // This is a retained-input link, NOT the c74 issuer context, a selected current
 // head, original acquisition completion, or evidence of source/license coverage.
@@ -133,9 +134,9 @@ export function createCustomCohortSelectionRepository(client, scopeJson) {
       let offset = 0;
       while (offset < refs.length) {
         const batch = []; let bytes = 0;
-        while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) {
+        while (offset + batch.length < refs.length && batch.length < NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records) {
           const ref = refs[offset + batch.length], size = Number(ref.canonical_utf8_bytes);
-          if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes) break;
+          if (batch.length && bytes + size > NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.bytes) break;
           batch.push(ref); bytes += size;
         }
         const originals = await blobs.getPreparedBatch(batch);

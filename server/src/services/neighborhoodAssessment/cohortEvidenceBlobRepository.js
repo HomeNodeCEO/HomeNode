@@ -12,6 +12,10 @@ const validatedReferences = new WeakSet();
 // round trip without increasing the 2 MB statement/payload ceiling; every
 // original and acknowledgment is still checked individually below.
 export const NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS = Object.freeze({ records: 32, bytes: 2_000_000 });
+// Keep independent reads at their previously verified width. Larger writes
+// reduce capture round trips, but broad saved-study reloads must not inherit
+// a larger per-query row set without a measured read-side improvement.
+export const NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS = Object.freeze({ records: 8, bytes: 2_000_000 });
 function fail(reason) {
   throw Object.assign(new Error(`neighborhood_cohort_blob_${reason}`), { code: `neighborhood_cohort_blob_${reason}` });
 }
@@ -188,13 +192,13 @@ export function createNeighborhoodCohortBlobRepository(client, organizationId) {
      * missing entries; every returned original gets the same full validation. */
     async getPreparedBatch(references) {
       if (!Array.isArray(references) || !references.length
-        || references.length > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records) fail('invalid_read_batch');
+        || references.length > NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records) fail('invalid_read_batch');
       const captured = [], expected = new Map(); let bytes = 0;
       for (let i = 0; i < references.length; i++) {
         if (!Object.hasOwn(references, i)) fail('invalid_read_batch');
         const ref = prepareNeighborhoodCohortBlobReference(references[i]?.content_sha256, references[i]?.canonical_utf8_bytes);
         bytes += Number(ref.canonical_utf8_bytes);
-        if (bytes > NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes || expected.has(ref.content_sha256)) fail('invalid_read_batch');
+        if (bytes > NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.bytes || expected.has(ref.content_sha256)) fail('invalid_read_batch');
         captured.push(ref); expected.set(ref.content_sha256, ref);
       }
       // Bound transferred bytes by the validated request even if stored metadata

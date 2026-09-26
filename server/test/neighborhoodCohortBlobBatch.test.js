@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { prepareNeighborhoodCohortBlob as prepare, createNeighborhoodCohortBlobRepository as repository,
   recheckNeighborhoodCohortBlob as recheck,
-  NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS as limits } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+  NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS as limits,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS as readLimits } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 
 const ORG = '10000000-0000-4000-8000-000000000001', OTHER = '10000000-0000-4000-8000-000000000002';
 const entry = (canonicalJson = '{"id":"00001","price":"1.00"}') => ({ canonicalJson, reference: prepare(canonicalJson) });
@@ -56,7 +57,8 @@ test('read batches preserve order, explicit missing values and organization isol
 
 test('read batches reject sparse, duplicate, oversized or malformed references before SQL', async () => {
   const h = fixture(), ref = entry().reference;
-  for (const refs of [[], null, {}, Array(1), [ref, , ref], [ref, ref], Array(9).fill(ref), [ref, null],
+  for (const refs of [[], null, {}, Array(1), [ref, , ref], [ref, ref],
+    Array.from({ length: readLimits.records + 1 }, (_, i) => entry(`{"id":"${i}"}`).reference), [ref, null],
     [{ ...ref, canonical_utf8_bytes: '1500001' }], [{ ...ref, canonical_utf8_bytes: '01' }],
     [prepare('"' + 'x'.repeat(1_100_000) + '"'), prepare('"' + 'y'.repeat(1_100_000) + '"')]]) {
     await assert.rejects(h.repo.getPreparedBatch(refs), /invalid_(read_batch|reference)/);

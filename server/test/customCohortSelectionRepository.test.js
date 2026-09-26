@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomCohortSelectionRepository } from '../src/services/neighborhoodAssessment/customCohortSelectionRepository.js';
-import { createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { canonicalAssessmentJson as canonical } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareCohortLocalQueryEvidenceV1 } from '../src/services/neighborhoodAssessment/cohortEvidenceContract.js';
 import { customCohortRepositoryFixture, customCohortScopeOf, customCohortQueryFixture } from './fixtures/customCohortRepositoryFixture.js';
@@ -229,7 +230,7 @@ async function loadSequential(f, selectionRef) {
     subject_inputs: header.subject_inputs, subject, query });
 }
 
-for (const [count, expectedBlobs, expectedBatches] of [[3, 4, 1], [38106, 42, 2], [50000, 53, 2]]) {
+for (const [count, expectedBlobs, expectedBatches] of [[3, 4, 1], [38106, 42, 6], [50000, 53, 7]]) {
   test(`${count}-account read batching preserves every original byte/order and exact sequential result`, async t => {
     const accountIds = ['0000123456789', ...Array.from({ length: count - 1 }, (_, i) => `R-${String(i).padStart(6, '0')}`)];
     const f = await fixture({ accountIds }), ref = await f.repo.retain(f.subjectRef, f.query.inputJson);
@@ -253,8 +254,8 @@ for (const [count, expectedBlobs, expectedBatches] of [[3, 4, 1], [38106, 42, 2]
       assert.deepEqual(reads.flatMap(c => c.params[2]), f.query.bundle.blobs.map(b => Number(b.ref.canonical_utf8_bytes)));
       for (const read of reads) {
         assert.equal(read.params[0], f.scope.organization_id); assert.equal(read.params.length, 3);
-        assert.ok(read.params[1].length > 0 && read.params[1].length <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records);
-        assert.ok(read.params[2].reduce((sum, n) => sum + n, 0) <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes);
+        assert.ok(read.params[1].length > 0 && read.params[1].length <= NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records);
+        assert.ok(read.params[2].reduce((sum, n) => sum + n, 0) <= NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.bytes);
       }
     }
     t.diagnostic(`${expectedBlobs} sequential query reads -> ${expectedBatches} bounded batches; total load statements ${expectedBlobs + 7} -> ${expectedBatches + 7}; independent rereads retain exact evidence`);

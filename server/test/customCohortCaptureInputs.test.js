@@ -5,7 +5,8 @@ import { createHash } from 'node:crypto';
 import { canonicalAssessmentJson as json } from '../src/services/neighborhoodAssessment/contract.js';
 import { prepareCustomCohortCaptureInputs as prepare, persistCustomCohortCaptureInputs as persist,
   loadCustomCohortCaptureInputs as load, prepareCustomCohortCaptureInputsBatched as prepareBatched } from '../src/services/neighborhoodAssessment/customCohortCaptureInputs.js';
-import { createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
+import { createNeighborhoodCohortBlobRepository, NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS } from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { captureNeighborhoodSpatialMembership } from '../src/services/neighborhoodAssessment/cachedSpatialMembership.js';
 import { createNeighborhoodCachedSourceReader, createNeighborhoodSaleWitnessSourceReader, createNeighborhoodDenseCadEvidenceSourceReader,
   createNeighborhoodDenseCombinedEvidenceSourceReader, consumeNeighborhoodCachedAcquisition } from '../src/services/neighborhoodAssessment/cachedSourceReader.js';
@@ -387,7 +388,8 @@ for (const parcelCount of [2, 1001]) test(`retains/reopens complete original gra
     && c.params[2].reduce((sum, n) => sum + n, 0) <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes));
   const readBatches = f.state.calls.filter(c => c.tag === 'read-batch' && c.params.length === 3);
   assert.ok(readBatches.length > 0);
-  assert.ok(readBatches.every(c => c.params[1].length <= 8 && c.params[2].reduce((sum, n) => sum + n, 0) <= 2_000_000));
+  assert.ok(readBatches.every(c => c.params[1].length <= NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.records
+    && c.params[2].reduce((sum, n) => sum + n, 0) <= NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS.bytes));
 });
 
 test('retention writes every prepared original once per call, including query originals, with fresh replay ACKs', async () => {

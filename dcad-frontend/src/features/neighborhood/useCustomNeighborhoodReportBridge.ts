@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ComponentProps } from 'react';
 import type { Session } from '../auth/applicationAuthData';
 import { fetchWithApplicationAuthentication, makeUrl } from '@/lib/api';
+import { loadMapLibreRuntime } from '@/lib/mapLibreRuntime';
 import { editorCredentialForRequest } from '@/lib/editorCredential';
 import { createCustomWorkspaceApi } from './customWorkspaceApi';
 import type { CustomWorkspaceApiRead } from './customWorkspaceApi';
@@ -127,6 +128,10 @@ export function useCustomNeighborhoodReportBridge(input: CustomNeighborhoodRepor
     void runtime.api.read(runtime.target, { signal: abort.signal, deadline: performance.now() + DEADLINE_MS }).then(result => {
       if (!current() || abort.signal.aborted) return;
       runtime.result = result;
+      // Start the same-origin map bundle while the saved catalog is loading.
+      // This changes no API request or map ownership; the map component still
+      // handles a failed import and can retry through the runtime loader.
+      if (result.section?.value.active && !result.section.value.pending_capture) void loadMapLibreRuntime().catch(() => {});
       setBootstrap({ runtime, status: result.status === 'draft' && fileStatus !== 'signed' && fileStatus !== 'archived' ? 'ready' : 'read_only', message: null });
     }).catch(() => {
       if (current() && (!abort.signal.aborted || timedOut)) setBootstrap({ runtime, status: 'unavailable', message: unavailable });

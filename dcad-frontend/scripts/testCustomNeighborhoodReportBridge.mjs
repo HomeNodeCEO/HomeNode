@@ -36,7 +36,7 @@ const same = (a, b) => a && b && a.length === b.length && a.every((value, index)
 function harness(t, options = {}) {
   const { initialProps = props(), request, credential = '__homenode_authenticated_session__' } = options;
   const section = Object.hasOwn(options, 'section') ? options.section : active();
-  const cells = [], effects = [], timers = new Map(), calls = [], credentials = [];
+  const cells = [], effects = [], timers = new Map(), calls = [], credentials = [], mapPreloads = [];
   let cursor = 0, dirty = false, output, currentProps = initialProps, live = true, serial = 0, uuidSerial = 0;
   const react = {
     useState(initial) { const i = cursor++; cells[i] ??= { value: typeof initial === 'function' ? initial() : initial };
@@ -59,6 +59,7 @@ function harness(t, options = {}) {
   };
   const exports = compile('useCustomNeighborhoodReportBridge.ts', { react, './customWorkspaceApi': api,
     './customWorkspaceDefaultPeriod': defaultPeriod,
+    '@/lib/mapLibreRuntime': { loadMapLibreRuntime: () => { mapPreloads.push(true); return Promise.resolve({}); } },
     '@/lib/api': { makeUrl: value => value, fetchWithApplicationAuthentication: (url, init) => {
       const call = { url, init }; calls.push(call); return Promise.resolve(request ? request(call, respond) : respond(call));
     } },
@@ -72,7 +73,7 @@ function harness(t, options = {}) {
   function flush() { let count = 0; while (dirty) { assert.ok(++count < 30, 'Bridge render loop'); render(); } }
   function unmount() { if (!live) return; cells.forEach(cell => cell?.cleanup?.()); live = false; }
   render(); flush(); t.after(unmount);
-  return { calls, credentials, timers, get view() { return output; }, get props() { return currentProps; }, get uuidCount() { return uuidSerial; },
+  return { calls, credentials, timers, mapPreloads, get view() { return output; }, get props() { return currentProps; }, get uuidCount() { return uuidSerial; },
     render(value, beforeEffects) { render(value, beforeEffects); flush(); },
     async settle() { for (let i = 0; i < 40; i++) { await Promise.resolve(); flush(); } },
     async expire() { const pendingTimers = [...timers.entries()]; pendingTimers.forEach(([id, item]) => { timers.delete(id); item.fn(); }); await this.settle(); },
@@ -89,6 +90,7 @@ function harness(t, options = {}) {
 
 test('fresh current-session workfile read preserves exact empty checkpoint and pins opaque local generation', async t => {
   const h = harness(t); assert.equal(h.view.beginSaveBarrier(), null); await h.settle();
+  assert.equal(h.mapPreloads.length, 1, 'a saved active study starts the map bundle alongside catalog loading');
   assert.equal(h.view.status, 'ready'); assert.equal(h.calls.length, 1); assert.equal(h.calls[0].init.cache, 'no-store');
   assert.equal(h.calls[0].init.method, 'GET'); assert.ok(h.calls[0].init.signal instanceof AbortSignal);
   assert.deepEqual(h.view.hostProps.initialSection, { revision: 5, value: active().value });
@@ -97,6 +99,7 @@ test('fresh current-session workfile read preserves exact empty checkpoint and p
   next.auth.session.organizations[0].roles.reverse();
   h.render(next); await h.settle();
   assert.equal(h.calls.length, 1); assert.equal(h.view.hostProps.api, original.api);
+  assert.equal(h.mapPreloads.length, 1, 'an equivalent render does not restart the preload');
   assert.equal(h.view.hostProps.target, original.target); assert.ok(original.target.sessionKey.length <= 200);
   assert.doesNotMatch(original.target.sessionKey, /synthetic-user|synthetic-org/);
   assert.equal(h.view.beginSaveBarrier(), null, 'loaded data is not mounted controls');
@@ -108,6 +111,7 @@ for (const variant of ['active-empty', 'active-members', 'pending', 'intentional
       : variant === 'intentionally-empty' ? { revision: 1, value: { workspace_version: 1, active: null, pending_capture: null } } : undefined;
     const h = harness(t, { section }); await h.settle();
     assert.equal(h.calls.length, 1); assert.equal(h.view.status, 'ready');
+    assert.equal(h.mapPreloads.length, Number(variant.startsWith('active')));
     assert.deepEqual(h.view.hostProps.initialPeriod, ['absent', 'intentionally-empty'].includes(variant) ? null : period);
     assert.equal(h.view.hostProps.initialSection?.value.active?.selection.included_recorded_group_ids.length,
       variant.startsWith('active') ? variant === 'active-members' ? 1 : 0 : undefined);
@@ -132,6 +136,7 @@ for (const [variant, change] of [
 ]) test(`${variant} cannot read, capture or acknowledge saving for an enabled bridge`, async t => {
   const initialProps = props(); change(initialProps); const h = harness(t, { initialProps }); await h.settle();
   assert.equal(h.calls.length, 0); assert.equal(h.view.hostProps, null); assert.equal(h.view.beginSaveBarrier(), null);
+  assert.equal(h.mapPreloads.length, 0);
   assert.doesNotMatch(h.view.message ?? '', /private auth detail/);
 });
 
@@ -143,6 +148,7 @@ for (const [variant, response] of [
 ]) test(`${variant} stays unavailable without an implicit retry/default selection`, async t => {
   const h = harness(t, { request: response }); await h.settle();
   assert.equal(h.view.status, 'unavailable'); assert.equal(h.view.hostProps, null); assert.equal(h.view.beginSaveBarrier(), null);
+  assert.equal(h.mapPreloads.length, 0);
   assert.equal(h.calls.length, 1); h.render(copy(h.props)); await h.settle(); assert.equal(h.calls.length, 1);
   assert.doesNotMatch(h.view.message, /private server body/);
 });

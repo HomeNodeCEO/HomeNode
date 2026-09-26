@@ -11,10 +11,11 @@ import { isCustomCohortObservationPreview,
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
 // The prepared row is immutable for a context/format version. Keep only one
-// small, verified, deeply frozen observation index hot across requests. The
+// bounded, verified, deeply frozen observation index hot across requests. The
 // current row and its compressed bytes are still checked on every hit; map
 // geometry and selection-dependent results are never cached here.
-const HOT_PREVIEW_MAX_BYTES = 48_000_000;
+const HOT_PREVIEW_MAX_BYTES = 60_000_000;
+const HOT_PREVIEW_MAX_PROCESS_RSS_BYTES = 1_000_000_000;
 const HOT_PREVIEW_TTL_MS = 5 * 60_000;
 let hotPreview = null;
 let hotPreviewTimer = null;
@@ -116,7 +117,8 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       });
     }
     const retainVerifiedPreview = () => {
-      if (useVerifiedPreviewCache && !matched && row.preview_utf8_bytes <= HOT_PREVIEW_MAX_BYTES) {
+      if (useVerifiedPreviewCache && !matched && row.preview_utf8_bytes <= HOT_PREVIEW_MAX_BYTES
+        && process.memoryUsage().rss <= HOT_PREVIEW_MAX_PROCESS_RSS_BYTES) {
         retainHotPreview({ key: hotKey, digest: row.preview_sha256, bytes: row.preview_utf8_bytes,
           compressedDigest: hash(row.compressed_preview), preview,
           expiresAt: Date.now() + HOT_PREVIEW_TTL_MS });

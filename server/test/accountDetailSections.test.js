@@ -295,6 +295,39 @@ test("DCAD account fallback sanitizes transport and provider diagnostics", async
   ]]);
   assert.equal(JSON.stringify(providerWarnings).includes(providerDetail), false);
 });
+
+test("a failed optional CAD fallback does not delay repeated account-detail loads", async () => {
+  assert.equal(accountDetailSectionInternals.DCAD_DETAIL_FALLBACK_TIMEOUT_MS, 2_000);
+  const warnings = [];
+  let attempts = 0;
+  const options = { logger: { warn: (...args) => warnings.push(args) },
+    fetchImpl: async () => { attempts += 1; throw new Error("provider temporarily down"); } };
+  const first = await loadAccountDetailSections(emptySectionPool(), "55555555555555555", options);
+  const second = await loadAccountDetailSections(emptySectionPool(), "55555555555555555", options);
+  assert.equal(first.owner, null);
+  assert.equal(second.owner, null);
+  assert.equal(attempts, 1, "the same failed account does not retry on every refresh");
+  assert.deepEqual(warnings, [["DCAD account fallback lookup failed", "dcad_account_fallback_unavailable"]]);
+  await loadAccountDetailSections(emptySectionPool(), "66666666666666666", options);
+  assert.equal(attempts, 2, "one account's failure does not prevent another official lookup");
+});
+
+test("simultaneous requests share one optional CAD lookup and retain its owner fields", async () => {
+  const response = deferred();
+  let attempts = 0;
+  const options = { fetchImpl: () => { attempts += 1; return response.promise; } };
+  const first = loadAccountDetailSections(emptySectionPool(), "77777777777777777", options);
+  const second = loadAccountDetailSections(emptySectionPool(), "77777777777777777", options);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(attempts, 1);
+  response.resolve(jsonResponse({ features: [{ attributes: { STRCLASS: "14", OWNERNME1: "TEST OWNER" } }] }));
+  const [a, b] = await Promise.all([first, second]);
+  assert.equal(a.owner.owner_name, "TEST OWNER");
+  assert.equal(b.primaryImprovement.building_class, "14");
+  const again = await loadAccountDetailSections(emptySectionPool(), "77777777777777777", options);
+  assert.equal(again.owner.owner_name, "TEST OWNER");
+  assert.equal(attempts, 1, "successful attributes retain the existing positive cache");
+});
 test("optional land and secondary-improvement failures preserve the account response", async () => {
   const errors = [];
   const fetchCalls = [];

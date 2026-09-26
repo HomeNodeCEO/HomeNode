@@ -128,7 +128,9 @@ const RAW_DETAIL_SQL = `
 
 const DCAD_PARCEL_QUERY_URL =
   "https://maps.dcad.org/prdwa/rest/services/Property/ParcelQuery/MapServer/4/query";
-const DCAD_DETAIL_FALLBACK_TIMEOUT_MS = 5_000;
+// Live CAD is optional enrichment, not a reason to hold the entire report page
+// for a provider outage. The indexed database remains the primary source.
+const DCAD_DETAIL_FALLBACK_TIMEOUT_MS = 2_000;
 const MAX_DCAD_DETAIL_RESPONSE_BYTES = 1024 * 1024;
 const DCAD_DETAIL_FALLBACK_FIELDS = [
   "PARCELID", "LOWPARCELID", "STRCLASS", "RESYRBLT", "RESFLRAREA", "BLDGAREA",
@@ -138,6 +140,9 @@ const DCAD_DETAIL_FALLBACK_FIELDS = [
 const dcadAttributeCache = new Map();
 const DCAD_ATTRIBUTE_CACHE_TTL_MS = 30 * 60 * 1000;
 const DCAD_ATTRIBUTE_CACHE_MAX = 500;
+const dcadAttributeFailures = new Map();
+const DCAD_FAILURE_TTL_MS = 60 * 1000;
+const dcadAttributeInflight = new Map();
 
 function rowsFrom(result) {
   return Array.isArray(result?.rows) ? result.rows : [];
@@ -313,10 +318,7 @@ function rememberDcadAttributes(accountId, attributes) {
   });
 }
 
-async function fetchDcadAttributes(accountId, fetchImpl) {
-  if (!/^[0-9A-Za-z]{17}$/.test(accountId)) return {};
-  const cached = cachedDcadAttributes(accountId);
-  if (cached) return cached;
+async function requestDcadAttributes(accountId, fetchImpl) {
   const escaped = accountId.replaceAll("'", "''");
   const body = new URLSearchParams({
     where: `PARCELID = '${escaped}' OR LOWPARCELID = '${escaped}'`,
@@ -367,8 +369,37 @@ async function fetchDcadAttributes(accountId, fetchImpl) {
     throw new Error(`dcad_account_fallback_${providerCode}`);
   }
   const attributes = payload?.features?.[0]?.attributes || {};
-  rememberDcadAttributes(accountId, attributes);
   return attributes;
+}
+
+async function fetchDcadAttributes(accountId, fetchImpl) {
+  if (!/^[0-9A-Za-z]{17}$/.test(accountId)) return {};
+  const cached = cachedDcadAttributes(accountId);
+  if (cached) return cached;
+  const failureExpiresAt = dcadAttributeFailures.get(accountId);
+  if (failureExpiresAt && failureExpiresAt > Date.now()) return {};
+  dcadAttributeFailures.delete(accountId);
+  // Concurrent report loads of one parcel share the same bounded official
+  // lookup; a failed provider call is briefly skipped on later page reloads.
+  let pending = dcadAttributeInflight.get(accountId);
+  if (!pending) {
+    pending = requestDcadAttributes(accountId, fetchImpl);
+    dcadAttributeInflight.set(accountId, pending);
+  }
+  try {
+    const attributes = await pending;
+    rememberDcadAttributes(accountId, attributes);
+    dcadAttributeFailures.delete(accountId);
+    return attributes;
+  } catch (error) {
+    if (dcadAttributeFailures.size >= DCAD_ATTRIBUTE_CACHE_MAX) {
+      dcadAttributeFailures.delete(dcadAttributeFailures.keys().next().value);
+    }
+    dcadAttributeFailures.set(accountId, Date.now() + DCAD_FAILURE_TTL_MS);
+    throw error;
+  } finally {
+    if (dcadAttributeInflight.get(accountId) === pending) dcadAttributeInflight.delete(accountId);
+  }
 }
 
 function mergeLandRows(preferredRows, rawRows) {

@@ -7,7 +7,7 @@ import { isCustomCohortObservationPreview,
   restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
-  map: { text: 32_000_000, compressed: 8_000_000 } });
+  map: { text: 32_000_000, compressed: 16_000_000 } });
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const hash = value => createHash('sha256').update(value).digest('hex');
 function fail(reason) { throw new TypeError(`custom_cohort_prepared_preview_${reason}`); }

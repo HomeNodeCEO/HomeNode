@@ -11,7 +11,7 @@ CREATE TABLE app.neighborhood_custom_cohort_prepared_previews (
   compressed_preview bytea NOT NULL CHECK (octet_length(compressed_preview) BETWEEN 1 AND 12000000),
   map_sha256 text NOT NULL CHECK (map_sha256 ~ '^[a-f0-9]{64}$'),
   map_utf8_bytes integer NOT NULL CHECK (map_utf8_bytes BETWEEN 1 AND 32000000),
-  compressed_map bytea NOT NULL CHECK (octet_length(compressed_map) BETWEEN 1 AND 8000000),
+  compressed_map bytea NOT NULL CHECK (octet_length(compressed_map) BETWEEN 1 AND 16000000),
   prepared_at timestamptz NOT NULL DEFAULT clock_timestamp(),
   PRIMARY KEY (organization_id, context_id, format_version),
   FOREIGN KEY (organization_id, context_id)

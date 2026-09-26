@@ -1,3 +1,5 @@
+const MAX_PDF_PHOTO_BYTES = 8 * 1024 * 1024;
+
 const PHOTO_COVERAGE_AUDIT_SQL = `
   WITH signed_file_photos AS (
     SELECT snapshot.assignment_file_id,
@@ -6,6 +8,12 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
            COUNT(photo.id) FILTER (
              WHERE renderable.id IS NULL
            ) AS missing_pdf_compatible_object_count,
+           COUNT(photo.id) FILTER (
+             WHERE renderable.id IS NOT NULL
+               AND (renderable.byte_size IS NULL
+                 OR renderable.byte_size < 1
+                 OR renderable.byte_size > ${MAX_PDF_PHOTO_BYTES})
+           ) AS pdf_object_size_out_of_range_count,
            COUNT(photo.id) FILTER (
              WHERE photo.organization_id IS DISTINCT FROM report.organization_id
            ) AS cross_organization_photo_count,
@@ -20,11 +28,13 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
         ON photo.report_file_id = report.id
        AND photo.status = 'verified'
       LEFT JOIN LATERAL (
-        SELECT object.id
+        SELECT object.id, object.byte_size
           FROM app.inspection_photo_objects object
          WHERE object.photo_id = photo.id
            AND object.status = 'verified'
            AND object.content_type IN ('image/jpeg', 'image/png')
+         ORDER BY CASE object.variant WHEN 'display' THEN 0 ELSE 1 END,
+                  object.id
          LIMIT 1
       ) renderable ON true
      GROUP BY snapshot.assignment_file_id, report.id
@@ -41,6 +51,8 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
            AS verified_photos_beyond_cap_count,
          COALESCE(SUM(missing_pdf_compatible_object_count), 0)
            AS missing_pdf_compatible_object_count,
+         COALESCE(SUM(pdf_object_size_out_of_range_count), 0)
+           AS pdf_object_size_out_of_range_count,
          COALESCE(SUM(cross_organization_photo_count), 0)
            AS cross_organization_photo_count,
          COALESCE(SUM(wrong_workflow_photo_count), 0)
@@ -88,6 +100,7 @@ export async function auditCustomSignedPhotoCoverage(pool) {
       photo_overflow_file_count: safeCount(row.photo_overflow_file_count),
       verified_photos_beyond_cap_count: safeCount(row.verified_photos_beyond_cap_count),
       missing_pdf_compatible_object_count: safeCount(row.missing_pdf_compatible_object_count),
+      pdf_object_size_out_of_range_count: safeCount(row.pdf_object_size_out_of_range_count),
       cross_organization_photo_count: safeCount(row.cross_organization_photo_count),
       wrong_workflow_photo_count: safeCount(row.wrong_workflow_photo_count),
     };
@@ -95,6 +108,7 @@ export async function auditCustomSignedPhotoCoverage(pool) {
       ok: counts.missing_report_file_count === 0
         && counts.photo_overflow_file_count === 0
         && counts.missing_pdf_compatible_object_count === 0
+        && counts.pdf_object_size_out_of_range_count === 0
         && counts.cross_organization_photo_count === 0
         && counts.wrong_workflow_photo_count === 0,
       ...counts,
@@ -115,4 +129,7 @@ export async function auditCustomSignedPhotoCoverage(pool) {
   }
 }
 
-export const customSignedPhotoCoverageAuditInternals = Object.freeze({ PHOTO_COVERAGE_AUDIT_SQL });
+export const customSignedPhotoCoverageAuditInternals = Object.freeze({
+  MAX_PDF_PHOTO_BYTES,
+  PHOTO_COVERAGE_AUDIT_SQL,
+});

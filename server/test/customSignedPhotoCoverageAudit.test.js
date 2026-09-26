@@ -37,6 +37,7 @@ function fakePool({ schema = SCHEMA, counts = {}, fail = false, failRollback = f
               photo_overflow_file_count: "0",
               verified_photos_beyond_cap_count: "0",
               missing_pdf_compatible_object_count: "0",
+              pdf_object_size_out_of_range_count: "0",
               cross_organization_photo_count: "0",
               wrong_workflow_photo_count: "0",
               ...counts,
@@ -60,6 +61,7 @@ test("audits current signed-photo coverage without returning file or photo ident
     photo_overflow_file_count: 0,
     verified_photos_beyond_cap_count: 0,
     missing_pdf_compatible_object_count: 0,
+    pdf_object_size_out_of_range_count: 0,
     cross_organization_photo_count: 0,
     wrong_workflow_photo_count: 0,
   });
@@ -70,6 +72,8 @@ test("audits current signed-photo coverage without returning file or photo ident
   const sql = customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL;
   assert.match(sql, /photo\.status = 'verified'/);
   assert.match(sql, /object\.content_type IN \('image\/jpeg', 'image\/png'\)/);
+  assert.match(sql, /ORDER BY CASE object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*object\.id/);
+  assert.match(sql, /renderable\.byte_size > 8388608/);
   assert.match(sql, /verified_photo_count > 100/);
   assert.doesNotMatch(sql, /SELECT\s+(?:photo\.id|snapshot\.assignment_file_id)\s+FROM/i);
 });
@@ -77,6 +81,9 @@ test("audits current signed-photo coverage without returning file or photo ident
 test("audit threshold stays aligned with the signed-PDF photo cap", async () => {
   const reportSource = await readFile(new URL("../src/services/customAppraisalReportPdf.js", import.meta.url), "utf8");
   assert.match(reportSource, /const MAX_REPORT_PHOTOS = 100;/);
+  assert.match(reportSource, /const MAX_MEDIA_BYTES = 8 \* 1024 \* 1024;/);
+  assert.match(reportSource, /ORDER BY CASE photo_object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*photo_object\.id\s+LIMIT 1/);
+  assert.equal(customSignedPhotoCoverageAuditInternals.MAX_PDF_PHOTO_BYTES, 8 * 1024 * 1024);
   assert.match(customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL, /verified_photo_count > 100/);
 });
 
@@ -86,6 +93,7 @@ test("reports current overflow, missing object metadata, and ownership mismatch"
     photo_overflow_file_count: "1",
     verified_photos_beyond_cap_count: "4",
     missing_pdf_compatible_object_count: "2",
+    pdf_object_size_out_of_range_count: "3",
     cross_organization_photo_count: "1",
     wrong_workflow_photo_count: "1",
   } });
@@ -93,8 +101,19 @@ test("reports current overflow, missing object metadata, and ownership mismatch"
   assert.equal(result.ok, false);
   assert.equal(result.verified_photos_beyond_cap_count, 4);
   assert.equal(result.missing_pdf_compatible_object_count, 2);
+  assert.equal(result.pdf_object_size_out_of_range_count, 3);
   assert.equal(result.wrong_workflow_photo_count, 1);
   assert.equal(JSON.stringify(result).includes("assignment_file_id"), false);
+});
+
+test("oversized selected display objects fail photo coverage even when an original exists", async () => {
+  const pool = fakePool({ counts: { pdf_object_size_out_of_range_count: "1" } });
+  const result = await auditCustomSignedPhotoCoverage(pool);
+  assert.equal(result.ok, false);
+  assert.equal(result.pdf_object_size_out_of_range_count, 1);
+  const sql = customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL;
+  assert.match(sql, /ORDER BY CASE object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*object\.id\s+LIMIT 1/);
+  assert.doesNotMatch(JSON.stringify(result), /photo_id|object_key|assignment_file_id/);
 });
 
 test("missing schema and query/rollback failures return stable codes", async () => {

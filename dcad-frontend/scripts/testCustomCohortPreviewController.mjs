@@ -149,7 +149,9 @@ function harness(options = {}) {
 test('opening response validates and publishes map/statistics together without a second request', async () => {
   const request = input(), value = response({ ...request, include_map: true });
   const h = harness({ initialResponse: { input: request, value } });
-  h.controller.setSelection(request); await h.tick();
+  h.controller.setSelection(request);
+  assert.equal([...h.timers.values()][0].delay, 0, 'an exact saved opening never waits for edit debounce');
+  await h.tick();
   assert.equal(h.calls.length, 0); assert.equal(h.controller.getState().status, 'ready');
   const group = h.controller.getState().group;
   assert.equal(group.summary.selected.stock.member_count, 1);
@@ -180,7 +182,9 @@ test('a changed target or selection cannot reuse the opening response', async ()
   for (const change of [v => { v.accountId = 'OTHER'; }, v => { v.selection.revision++; }, v => { v.selection.pockets = []; }]) {
     const original = input(), current = input(); change(current);
     const h = harness({ initialResponse: { input: original, value: response({ ...original, include_map: true }) } });
-    h.controller.setSelection(current); await h.tick(); assert.equal(h.calls.length, 1);
+    h.controller.setSelection(current);
+    assert.equal([...h.timers.values()][0].delay, 250, 'a different selection keeps normal debounce');
+    await h.tick(); assert.equal(h.calls.length, 1);
     assert.deepEqual(h.calls[0].request.selection, current.selection); h.controller.dispose();
   }
 });

@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { customCohortTexasCivilDay } from '../../src/services/neighborhoodAssessment/customCohortTemporalSupport.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
 import { createCustomCohortContextRepository } from '../../src/services/neighborhoodAssessment/customCohortContextRepository.js';
@@ -465,7 +466,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     // Choose the current UTC effective day BEFORE original subject/source
     // capture. The positive fixture must not claim current mirrors describe
     // the former fixed 2024 valuation date. Never relabel retained captures.
-    const reviewedEffectiveDate = (await pool.query("SELECT to_char(clock_timestamp() AT TIME ZONE 'UTC','YYYY-MM-DD') AS value")).rows[0].value;
+    const reviewedEffectiveDate = (await pool.query("SELECT (clock_timestamp() AT TIME ZONE 'America/Chicago')::date::text AS value")).rows[0].value;
     await pool.query("INSERT INTO app_auth.organizations(id,legal_name,display_name) VALUES($1,'Synthetic reviewed inputs','Synthetic reviewed inputs')", [reviewedOrganization]);
     await pool.query("INSERT INTO app_auth.users(id,email,display_name) VALUES($1,$2,'Synthetic reviewed inputs actor')",
       [reviewedActor, `${reviewedActor}@example.test`]);
@@ -525,7 +526,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     };
     const preparedBefore = await protectedReviewedState(), preparedFrom = calls.length, preparedExposures = reviewedExposures.length;
     const prepared = await reviewedOwner.prepareReviewedInputs(reviewedRequest);
-    assert.ok(prepared.supported_inputs, 'positive fixture must be captured on its preselected UTC effective day; a midnight rollover requires a fresh run, not date relabeling');
+    assert.ok(prepared.supported_inputs, 'positive fixture must be captured on its preselected Texas effective day; a local-midnight rollover requires a fresh run, not date relabeling');
     assert.equal(prepared.status, 'prepared_reviewed_inputs'); assert.equal(prepared.workspace_section_revision, 1);
     assert.equal(prepared.authority, 'not_established'); assert.equal(prepared.subject_freshness, 'matched');
     assert.match(prepared.owner_clock_at, /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{6}Z$/);
@@ -964,7 +965,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
 // no original evidence/context/history bytes are rewritten to change dates.
 async function checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot, observationPeriod }) {
   const org = randomUUID(), actor = randomUUID(), caseId = randomUUID(), snapshot = randomUUID(), report = randomUUID();
-  const effectiveDate = (await pool.query("SELECT ((clock_timestamp() AT TIME ZONE 'UTC')::date - 1)::text AS value")).rows[0].value;
+  const effectiveDate = (await pool.query("SELECT ((clock_timestamp() AT TIME ZONE 'America/Chicago')::date - 1)::text AS value")).rows[0].value;
   const geometry = { type: 'Polygon', coordinates: [
     [[-96.71, 32.79], [-96.68, 32.79], [-96.68, 32.82], [-96.71, 32.82], [-96.71, 32.79]],
   ] };
@@ -1017,7 +1018,8 @@ async function checkHistoricalStockGuard(pool, checks, { account, sourceSnapshot
       Object.fromEntries(['snapshot_evidence', 'subject_dependencies', 'selection_input', 'study_input'].map(key => [key, header.body[key]])));
     assert.equal(loaded.retained_inputs.subject.effective_date, effectiveDate);
     retainedCaptureAt = loaded.retained_inputs.acquisition.capture_result.captured_at;
-    assert.ok(effectiveDate < retainedCaptureAt.slice(0, 10), 'actual retained capture must postdate the preselected valuation date');
+    assert.ok(effectiveDate < customCohortTexasCivilDay(retainedCaptureAt),
+      'actual retained capture must postdate the preselected Texas valuation date');
     const resolver = createCustomCohortDecisionEvidenceResolver({ context_header_json: header.header_blob.canonical_json,
       expected: { context_ref: captured.context_ref, target: JSON.parse(scopeJson), observation_period: observationPeriod },
       retained_inputs: loaded.retained_inputs, selection: checkpoint.active.selection });

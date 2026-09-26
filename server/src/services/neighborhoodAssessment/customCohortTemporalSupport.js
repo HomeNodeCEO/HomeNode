@@ -1,5 +1,18 @@
 import { assessmentDate } from './contract.js';
 
+// The current Custom neighborhood pilot is confined to North Texas. An
+// appraisal effective date is a Texas civil date, not a UTC date: a capture at
+// 01:00Z can still have happened on the same Texas appraisal day. Keep this
+// conversion explicit and deterministic rather than using the server's zone.
+const texasDate = new Intl.DateTimeFormat('en-US', {
+  timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+});
+export function customCohortTexasCivilDay(instant) {
+  const parts = Object.fromEntries(texasDate.formatToParts(new Date(instant))
+    .filter(part => ['year', 'month', 'day'].includes(part.type)).map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
+}
+
 /** Internal exclusion for the currently installed current-mirror stock profiles.
  * The retained acquisition clock is not a field-validity date. A later capture
  * cannot establish the past neighborhood, while an earlier/same-day capture
@@ -18,7 +31,7 @@ export function customCohortCurrentStockSupport({ effective_date, retained_captu
     });
   }
   return Object.freeze({
-    status: effective_date < retained_capture_at.slice(0, 10)
+    status: effective_date < customCohortTexasCivilDay(retained_capture_at)
       ? 'historical_stock_evidence_required' : 'not_established',
     effective_date, retained_capture_at, stock_basis: 'current_mirror', historical_coverage: 'not_established',
   });

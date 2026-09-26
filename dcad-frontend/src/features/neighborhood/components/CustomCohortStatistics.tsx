@@ -13,11 +13,18 @@ type Row = Record<string, unknown>;
 const object = (value: unknown): Row => value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Row : {};
 const text = (value: unknown, fallback = 'Unavailable') => typeof value === 'string' && value.length > 0 ? value : fallback;
 const count = (value: unknown) => typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value.toLocaleString('en-US') : 'Unavailable';
-// Compare only valid retained UTC dates, never the browser's current clock.
-const utcDay = (value: unknown, dateOnly = false): string | null => {
+// The North Texas appraisal date is a Texas civil day. Render the retained
+// UTC instant in that zone; never compare it with the browser's local clock.
+const texasDay = (value: unknown, dateOnly = false): string | null => {
   if (typeof value !== 'string' || !(dateOnly ? /^\d{4}-\d{2}-\d{2}$/ : /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/).test(value)) return null;
   const iso = dateOnly ? `${value}T00:00:00.000Z` : value, date = new Date(iso);
-  return Number.isFinite(date.getTime()) && date.toISOString() === iso ? iso.slice(0, 10) : null;
+  if (!Number.isFinite(date.getTime()) || date.toISOString() !== iso) return null;
+  if (dateOnly) return value;
+  const parts = Object.fromEntries(new Intl.DateTimeFormat('en-US', {
+    timeZone: 'America/Chicago', year: 'numeric', month: '2-digit', day: '2-digit',
+  }).formatToParts(date).filter(part => ['year', 'month', 'day'].includes(part.type))
+    .map(part => [part.type, part.value]));
+  return `${parts.year}-${parts.month}-${parts.day}`;
 };
 const CAD_METRICS = ['year_built', 'gla_sqft', 'site_area_sqft', 'assessed_value'];
 const REPORTED_METRICS = ['living_area', 'lot_size_area', 'year_built', 'bedrooms_total', 'bathrooms_total_integer',
@@ -72,7 +79,7 @@ export function CustomCohortCompactStatistics({ group, freshness, title = 'Live 
   if (!group) return <p role="status" className="text-sm text-slate-600">Preparing selected-area observations…</p>;
   const summary = object(group.summary), selected = object(summary.selected);
   const stock = object(selected.stock), transactions = object(selected.transactions), reported = object(selected.source_reported);
-  const effectiveDay = utcDay(summary.effective_date, true), captureDay = utcDay(summary.captured_at);
+  const effectiveDay = texasDay(summary.effective_date, true), captureDay = texasDay(summary.captured_at);
   const rows = [
     { key: 'gla_sqft', label: 'Living area', population: stock },
     { key: 'year_built', label: 'Year built', population: stock },
@@ -112,7 +119,7 @@ export default function CustomCohortStatistics({ group, freshness, pocketId, sel
   const pockets = Array.isArray(summary.pockets) ? summary.pockets.map(object) : [];
   const pocket = pocketId ? pockets.find(p => p.id === pocketId) : null;
   const period = object(summary.observation_period);
-  const effectiveDay = utcDay(summary.effective_date, true), captureDay = utcDay(summary.captured_at);
+  const effectiveDay = texasDay(summary.effective_date, true), captureDay = texasDay(summary.captured_at);
   return <section className="space-y-3 print:hidden" aria-label="Captured observation statistics" data-selection-revision={group.binding.selectionRevision} data-freshness={freshness}>
     <div>
       <h3 className="font-semibold">Live neighborhood characteristics and market observations</h3>

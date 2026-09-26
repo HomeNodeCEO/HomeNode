@@ -9,12 +9,15 @@ test('later current stock cannot establish the retrospective neighborhood', () =
   });
 });
 
-test('capture-day comparison uses explicit UTC, including midnight and leap day', () => {
+test('capture-day comparison uses the Texas civil date, including midnight and leap day', () => {
   for (const [effective_date, retained_capture_at, status] of [
     ['2024-02-29', '2024-02-29T23:59:59.999Z', 'not_established'],
-    ['2024-02-29', '2024-03-01T00:00:00.000Z', 'historical_stock_evidence_required'],
-    ['2026-09-05', '2026-09-06T00:00:00.000Z', 'historical_stock_evidence_required'],
-    ['2026-09-06', '2026-09-06T00:00:00.000Z', 'not_established'],
+    ['2024-02-29', '2024-03-01T00:00:00.000Z', 'not_established'],
+    ['2024-02-29', '2024-03-01T06:00:00.000Z', 'historical_stock_evidence_required'],
+    ['2026-09-25', '2026-09-26T01:00:00.000Z', 'not_established'],
+    ['2026-09-25', '2026-09-26T05:00:00.000Z', 'historical_stock_evidence_required'],
+    ['2026-11-30', '2026-12-01T05:30:00.000Z', 'not_established'],
+    ['2026-11-30', '2026-12-01T06:00:00.000Z', 'historical_stock_evidence_required'],
   ]) assert.equal(support({ effective_date, retained_capture_at }).status, status);
 });
 
@@ -38,7 +41,7 @@ test('reopen uses the retained instant, not wall clock or import/review dates', 
   } finally { Date.now = originalNow; }
 });
 
-test('invalid or ambiguous dates fail closed, without local-time coercion', () => {
+test('invalid or ambiguous instants fail closed, without server-local-time coercion', () => {
   for (const retained_capture_at of [null, '', '2026-09-06', '2026-09-06T08:00:00.123',
     '2026-09-06T08:00:00.123-05:00', '2026-02-30T08:00:00.123Z', '2026-09-06T24:00:00.000Z']) {
     assert.throws(() => support({ effective_date: '2024-06-30', retained_capture_at }), /invalid_capture_time/);

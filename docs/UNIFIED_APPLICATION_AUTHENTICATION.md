@@ -201,11 +201,13 @@ Custom assignment numeric ID, UAD workfile UUID, and Property Tax file UUID.
 The matrix confirms the two session memberships are distinct, requires the
 server readiness audit to return `activation_ready: true`, exercises positive
 read access, demands anonymous `401` and cross-organization `403` responses for
-read/write/upload/sign boundaries, and proves mobile discovery includes all
+read/write/upload/sign boundaries (including Custom snapshot download and
+report-PDF denial before rendering), and proves mobile discovery includes all
 three organization-A targets for A and none for B. Denial probes use only B or
 anonymous credentials plus payloads that are deliberately invalid negative
 controls, so even a failed authorization assertion cannot alter fixture data.
 They must still be rejected by authentication before validation runs. The
+PDF probe checks denial status only and never requests a positive PDF render. The
 tool emits status codes and stable error codes only; it never emits tokens,
 fixture identifiers, response bodies, or raw network diagnostics.
 

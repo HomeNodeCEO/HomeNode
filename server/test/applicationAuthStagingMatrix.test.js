@@ -139,6 +139,8 @@ test("public preflight proves enforcement without credentials or fixture disclos
   assert.equal(result.mode, "public_preflight");
   assert.deepEqual(result.blockers, []);
   assert.equal(result.checks.anonymous_custom_workfile.http_status, 401);
+  assert.equal(result.checks.anonymous_probe_custom_download.http_status, 401);
+  assert.equal(result.checks.anonymous_probe_custom_report_pdf.http_status, 401);
   assert.equal(result.checks.anonymous_mobile_identity.http_status, 401);
   assert.equal(result.checks.legacy_editor_key_inert.http_status, 401);
   assert.ok(calls.every((call) => call.redirect === "manual"));
@@ -181,6 +183,11 @@ test("two-organization matrix covers positive access, write denials, and mobile 
   assert.deepEqual(result.blockers, []);
   assert.equal(result.checks.activation_readiness.passed, true);
   assert.equal(result.checks.organization_b_custom_sign_denied.http_status, 403);
+  assert.equal(result.checks.anonymous_custom_download.http_status, 401);
+  assert.equal(result.checks.anonymous_custom_report_pdf.http_status, 401);
+  assert.equal(result.checks.organization_a_custom_download.http_status, 200);
+  assert.equal(result.checks.organization_b_custom_download_denied.http_status, 403);
+  assert.equal(result.checks.organization_b_custom_report_pdf_denied.http_status, 403);
   assert.equal(result.checks.organization_b_uad_document_upload_denied.http_status, 403);
   assert.equal(result.checks.organization_b_property_tax_sketch_write_denied.http_status, 403);
   assert.equal(result.checks.organization_a_mobile_fixture_discovery.passed, true);
@@ -213,6 +220,28 @@ test("two-organization matrix rejects a cross-tenant read that reaches data", as
   assert.equal(result.ok, false);
   assert.ok(result.blockers.includes("organization_b_custom_workfile_denied"));
   assert.equal(result.checks.organization_b_custom_workfile_denied.http_status, 200);
+});
+
+test("two-organization matrix fails if a cross-tenant PDF response reaches the renderer", async () => {
+  const fetchImpl = successfulFetch();
+  const result = await runApplicationAuthStagingMatrix({
+    ...configuration(),
+    async fetchImpl(url, options) {
+      const parsed = new URL(url);
+      if (options?.headers?.authorization === "Bearer token-b"
+          && parsed.pathname.endsWith("/workfile/report.pdf")) {
+        return new Response("%PDF-1.7", {
+          status: 200,
+          headers: { "content-type": "application/pdf" },
+        });
+      }
+      return fetchImpl(url, options);
+    },
+  });
+  assert.equal(result.ok, false);
+  assert.ok(result.blockers.includes("organization_b_custom_report_pdf_denied"));
+  assert.equal(result.checks.organization_b_custom_report_pdf_denied.http_status, 200);
+  assert.doesNotMatch(JSON.stringify(result), /%PDF/);
 });
 
 test("network diagnostics remain bounded and never include request details", async () => {

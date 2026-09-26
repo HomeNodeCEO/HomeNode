@@ -17,6 +17,7 @@ import { createCustomCohortSubjectRepository } from './customCohortSubjectReposi
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
+import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
 import { resolveNeighborhoodCachedTransactionClosure } from './cachedTransactionClosureReader.js';
 import { createNeighborhoodCadEvidenceReadAccess, describeNeighborhoodCachedMarketDataPurpose,
   describeNeighborhoodSaleWitnessMarketDataPurpose, createNeighborhoodCombinedEvidenceReadAccess,
@@ -834,6 +835,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       client => deriveCustomCohortRecordedProximity((sql, parameters) => client.query(sql, parameters),
         { context_ref: input.contextRef, retained_inputs: loaded.retained.retained_inputs },
         { deadline: budget.deadline, signal: budget.signal }));
+    // A failed optional prepared lookup must not poison the existing
+    // proximity transaction or the complete retained recommendation.
+    const deriveSecondary = () => transaction(pool, 'REPEATABLE READ READ ONLY', budget,
+      client => readCustomCohortPreparedSecondaryFacts(client.query.bind(client), loaded.retained.retained_inputs));
     const privateCapture = loaded.retained.retained_inputs.private_sales?.capture;
     const privateFor = (selection, view) => {
       const observations = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
@@ -861,7 +866,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       return result;
     };
-    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening, budget.check)
+    const content = project ? await project(preview, expected, parcelMap, loaded.retained.retained_inputs, deriveProximity, presentOpening, budget.check, deriveSecondary)
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
@@ -878,12 +883,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       await recheckPrivatePolicy(client, input, loaded, budget, [...new Set([exposure, ...additionalExposures, 'report_observation_summary'])]);
       let response = envelope({ ...content, ...(privatePresentation ? { private_sales: privatePresentation } : {}) });
       if ([2, 3].includes(content.recommendation?.presentation_version)) {
+        // The prepared-CAD overlay is disposable display support. Never drop
+        // the established recommendation or exact opening just to carry it.
+        const { initial_preview: _openingForOverlay, ...catalogWithOverlay } = response;
+        if (Object.hasOwn(response, 'prepared_secondary_map')
+          && Buffer.byteLength(JSON.stringify(catalogWithOverlay)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
+          const { prepared_secondary_map: _overlay, ...withoutOverlay } = response;
+          response = withoutOverlay;
+        }
         const { initial_preview: _opening, ...catalogWithPrivateSales } = response;
         if (Buffer.byteLength(JSON.stringify(catalogWithPrivateSales)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) {
           // Final envelope accounting includes private-source summaries and owner
           // metadata. Keep the exact catalog/opening; omit only the whole optional
           // recommendation, never a subset of its groups or a private observation.
-          const { recommendation: _recommendation, ...withoutRecommendation } = response;
+          const { recommendation: _recommendation, prepared_secondary_map: _overlay, ...withoutRecommendation } = response;
           response = withoutRecommendation;
           if (recommendedAreaOpening && Object.hasOwn(response, 'initial_preview')) {
             // A dropped recommendation cannot leave behind its private subset
@@ -896,6 +909,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (Object.hasOwn(content, 'initial_preview')) {
         const { initial_preview: _opening, ...catalogOnly } = response;
         if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes) fail('catalog_transport_limit');
+      }
+      if (outputLimit !== null && Object.hasOwn(response, 'prepared_secondary_map')
+        && Buffer.byteLength(JSON.stringify(response)) > outputLimit) {
+        const { prepared_secondary_map: _overlay, ...withoutOverlay } = response;
+        response = withoutOverlay;
       }
       if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
       return freeze(response);
@@ -1331,7 +1349,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
-      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget) => {
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary) => {
         const catalog = presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: catalogVersion }), preview, expected,
         });
@@ -1353,11 +1371,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // A municipal polygon has no radius-calibrated proximity scale. Keep
         // that factor unknown instead of borrowing an arbitrary ten-mile radius.
         const recorded_proximity = city ? undefined : await deriveProximity();
+        // No map can consume this overlay when the retained parcel geometry is
+        // unavailable. This also avoids an unnecessary index checkout.
+        const prepared_secondary_facts = !city && recorded_proximity?.reason === 'retained_map_unavailable'
+          ? null : await deriveSecondary().catch(() => null);
+        checkBudget();
         const maximumBytes = Math.max(0, Math.min(CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES,
           CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
             - Buffer.byteLength(JSON.stringify({ ...response, initial_preview: undefined })) - 10_000));
         const recommendation = await buildCustomCohortPocketRecommendationPresentationBatched({ catalog, expected,
-          retained_inputs, recorded_proximity, observation_preview: preview, maximumBytes }, { checkBudget });
+          retained_inputs, recorded_proximity, observation_preview: preview, maximumBytes,
+          prepared_secondary_facts }, { checkBudget });
+        const { prepared_secondary_map, ...stableRecommendation } = recommendation ?? {};
         // The opening preview and the saved revision must use one identical
         // selection. On missing/unsupported recommendation, retain the prior
         // complete-catalog opening instead of presenting an invented subset.
@@ -1367,7 +1392,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ? recommendation.sales_aware_area.selected_recorded_group_ids : null;
         if (opening) response.initial_preview = await presentOpening(customCohortOpeningSelection(catalog,
           groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision));
-        return { ...response, ...(recommendation ? { recommendation } : {}) };
+        return { ...response, ...(recommendation ? { recommendation: stableRecommendation } : {}),
+          ...(prepared_secondary_map ? { prepared_secondary_map } : {}) };
       },
     });
   }, present(value, presentation = { includeMap: true }, options = {}) {

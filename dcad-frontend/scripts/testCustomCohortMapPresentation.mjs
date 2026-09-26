@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { buildCustomCohortMapPresentation as build, CUSTOM_COHORT_MAP_PRESENTATION_LIMITS as LIMITS } from '../src/features/neighborhood/customCohortMapPresentation.ts';
+import { checkCustomCohortPreparedSecondaryMap } from '../src/features/neighborhood/customCohortPreparedSecondaryMap.ts';
 import { checkCustomCohortPocketCatalog, selectionFromRecordedGroups } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { createCustomCohortPreviewController } from '../src/features/neighborhood/customCohortPreviewController.ts';
 import { decisionEvidenceFixture } from '../../server/test/fixtures/customCohortDecisionEvidenceFixture.js';
@@ -58,6 +59,35 @@ test('exact group means/coverage are copied, not reranked or converted into indi
   assert.equal(result.labels.features.length, 2); assert.deepEqual(result.unlabelled_group_ids, []);
   result.labels.features.forEach(label => pointOnOriginal(label, f)); frozen(result);
   assert.equal(JSON.stringify(f), before); assert.equal(Object.isFrozen(f.group), false);
+});
+
+test('source-bound prepared CAD support changes only the live map color score', () => {
+  const f = fixture(), original = build(f);
+  f.catalog.prepared_secondary_map = { version: 1, basis: 'prepared_current_cad_snapshot_diagnostic_only',
+    source_observed_at: '2026-09-25T21:03:19.000Z', retained_capture_at: '2026-09-25T23:00:00.000Z',
+    groups: [{ id: ALPHA, member_count: 2, supported_member_count: 2, lower: 75, upper: 90 },
+      { id: BETA, member_count: 1, supported_member_count: 0, lower: 30, upper: 70 },
+      { id: UNKNOWN, member_count: 1, supported_member_count: 0, lower: 20, upper: 100 }] };
+  const result = build(f);
+  assert.equal(result.scoresByGroup[ALPHA].lower, 75);
+  assert.equal(result.scoresByGroup[ALPHA].known_weight_percent, 85);
+  assert.deepEqual(result.scoresByGroup[BETA], original.scoresByGroup[BETA]);
+  assert.deepEqual(result.labels, original.labels);
+  assert.equal(f.catalog.recommendation.pockets[0].similarity.lower, 65.1234);
+});
+
+test('prepared score admission rejects future or mismatched source/group claims', () => {
+  const f = fixture(), groups = [...f.catalog.pockets,
+    { id: UNKNOWN, member_count: 1 }];
+  const raw = { version: 1, basis: 'prepared_current_cad_snapshot_diagnostic_only', authority: 'not_established',
+    generation_id: '6d971f59-90a1-4410-bd63-a16bfdbc774e', source_observed_at: '2026-09-25T21:03:19.000Z',
+    retained_capture_at: '2026-09-25T23:00:00.000Z', groups: [
+      { id: ALPHA, member_count: 2, supported_member_count: 1, lower: 70, upper: 85 },
+      { id: BETA, member_count: 1, supported_member_count: 0, lower: 30, upper: 70 },
+      { id: UNKNOWN, member_count: 1, supported_member_count: 0, lower: 20, upper: 100 }] };
+  assert.equal(checkCustomCohortPreparedSecondaryMap(raw, groups).groups[0].lower, 70);
+  assert.throws(() => checkCustomCohortPreparedSecondaryMap({ ...raw, source_observed_at: '2026-09-26T00:00:00.000Z' }, groups));
+  assert.throws(() => checkCustomCohortPreparedSecondaryMap({ ...raw, groups: [{ ...raw.groups[0], member_count: 1 }, ...raw.groups.slice(1)] }, groups));
 });
 
 test('v3 presents all 1475 exact group anchors without extending the v2 group contract', () => {

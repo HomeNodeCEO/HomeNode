@@ -10,6 +10,7 @@ import { customCohortCurrentStockSupport } from './customCohortTemporalSupport.j
 import { customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
 import { readCustomCohortStockComposition } from './customCohortStockComposition.js';
 import { buildCustomCohortSalesAwareArea } from './customCohortSalesAwareArea.js';
+import { buildCustomCohortPreparedSecondaryMap } from './customCohortPreparedSecondaryMap.js';
 
 export const CUSTOM_COHORT_POCKET_RECOMMENDATION_PRESENTATION_LIMITS = Object.freeze({ pockets: 129,
   output_utf8_bytes: 512_000, text_utf8_bytes: 1024 });
@@ -241,7 +242,15 @@ function kernelArgs({ catalog, expected, retained_inputs, recorded_proximity, ob
     ...(recorded_proximity === undefined ? {} : { recorded_proximity }) };
 }
 function compose(args, recommendation) {
-  try { return presentCustomCohortPocketRecommendation({ ...args, recommendation }); }
+  try {
+    const presentation = presentCustomCohortPocketRecommendation({ ...args, recommendation });
+    const secondary = buildCustomCohortPreparedSecondaryMap(recommendation, args.prepared_secondary_facts);
+    if (!secondary) return presentation;
+    const extended = { ...presentation, prepared_secondary_map: secondary };
+    const limit = args.maximumBytes ?? (recommendation.recommendation_version >= 2
+      ? CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES : L.output_utf8_bytes);
+    return Buffer.byteLength(JSON.stringify(extended)) <= limit ? freeze(extended) : presentation;
+  }
   catch (error) {
     // The entire optional recommendation is omitted, never a ranked prefix.
     // Invalid bindings/denominators still fail; only explicit byte exhaustion is optional.

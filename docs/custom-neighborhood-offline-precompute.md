@@ -94,10 +94,16 @@ percentage points for five optional characteristics: bedrooms 2.5, baths 2.5,
 measured garage area 2, explicit pool status 1, and measured outbuilding area
 2. Missing observations have no effect on the established physical score; an
 unusually large outbuilding can therefore lower the combined diagnostic by no
-more than two points. The kernel is not connected to the report/map scoring
-contract yet: prepared current facts first need a source-revision and
-effective-date-safe read path. Its presence does not change existing map
-colors, recommendation ranks, or appraisal conclusions.
+more than two points. The optional live map-color overlay reads only the active
+prepared generation, and only when its source-observation clock is no later
+than the retained capture and its parcel object/account/source hash matches
+that capture. A retrospective effective date excludes the current-CAD overlay.
+If the prepared index is missing, stale, inconsistent, or too large for the
+response, the established map color remains. The overlay changes no six-factor
+recommendation rank, suggested area, selected statistics, report Apply payload,
+or appraisal conclusion. The map labels its prepared-source timestamp and
+current-recorded diagnostic status; current improvements are not proof of
+historical condition or sale-time amenities.
 
 Run `npm run maintenance:neighborhood-group-index` in a **separate** off-hours
 worker, never the web process. It uses one connection, a session advisory lock,
@@ -128,8 +134,10 @@ against thousands of newly inserted, not-yet-analyzed summary rows. The
 planner setting is restored before publication. A failure in this phase still
 rolls back the entire candidate generation.
 
-These tables are **not yet read by the report or map**. They are the prepared
-lookup foundation, not a claim that a three-mile capture is now instant. The
+The report still does **not** read these tables as evidence. The map may read
+the exact-revision parcel facts for its optional diagnostic color overlay; it
+does not use group medians or the prepared sales facts to replace its selected
+statistics. This is not a claim that a three-mile capture is now instant. The
 live QA retry still exceeded the request window during retention after source
 read and preparation; subsequent work must use this index to reduce capture
 work or move long captures to a durable background job. Source authorization,

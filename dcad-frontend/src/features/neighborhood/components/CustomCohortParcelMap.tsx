@@ -411,6 +411,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ borderColor: COLORS.subject }} />Subject pointer</li>
       </ul>
       <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+      {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">Map colors include up to 10% supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed {new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleString()}. This is current-recorded review support, not historical condition or a change to the report statistics.</p>}
       {matches && hasGeometry && !subjectMarkers.features.length && <p className="text-xs text-slate-600">Subject pointer unavailable because captured subject geometry is missing.</p>}
       {matches && hasGeometry && presentation?.status !== 'available' && <p role="status" className="text-xs text-amber-800">Recorded labels and similarity colors are unavailable for this checked preview. The parcel selection is unchanged.</p>}
       {presentation?.unlabelled_group_ids.length ? <p className="text-xs text-slate-600">{presentation.unlabelled_group_ids.length} recorded groups have no retained parcel anchor for a label.</p> : null}

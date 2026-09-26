@@ -995,7 +995,15 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           await createCustomCohortPreparedPreviewRepository(client, loaded.scopeJson, input.contextRef)
             .put(preparedCandidate.preview, preparedCandidate.map);
         });
-      } catch { /* Optimization unavailable; the original-source path remains authoritative. */ }
+      } catch (error) {
+        // The optional cache must never change an authorized response, but a
+        // silent failure would make every later click repeat the expensive
+        // original replay. Emit only a bounded reason, never evidence/identity.
+        const reason = /^custom_cohort_prepared_preview_[a-z_]+$/.test(error?.message)
+          ? error.message : typeof error?.code === 'string' && /^[A-Z0-9_]{1,20}$/.test(error.code)
+            ? error.code : 'unavailable';
+        console.warn('[neighborhood] prepared-preview-write', { outcome: 'skipped', reason });
+      }
     }
     return response;
   }

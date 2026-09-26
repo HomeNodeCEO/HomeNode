@@ -418,9 +418,9 @@ test("disconnect during draft rendering releases its slot after rendering settle
     },
     getDownload: async () => ({ immutable: false, snapshot: {} }),
     getReportPdf: async () => {
-      renders += 1;
-      if (renders === 1) { markAbortedStarted(); await abortedRender; }
-      if (renders === 2) { markFreshStarted(); await freshRender; }
+      const currentRender = ++renders;
+      if (currentRender === 1) { markAbortedStarted(); await abortedRender; }
+      if (currentRender === 2) { markFreshStarted(); await freshRender; }
       return pdf;
     },
   }));
@@ -431,11 +431,13 @@ test("disconnect during draft rendering releases its slot after rendering settle
   controller.abort();
   await assert.rejects(cancelled, { name: "AbortError" });
   await responseClosed;
-  releaseAborted();
-  await new Promise((resolve) => setImmediate(resolve));
-
   const firstFresh = fetch(endpoint(server.baseUrl, "/report.pdf"));
   await freshStarted;
+  const busy = await fetch(endpoint(server.baseUrl, "/report.pdf"));
+  assert.equal(busy.status, 503);
+  assert.deepEqual(await busy.json(), { error: "custom_appraisal_report_busy" });
+  releaseAborted();
+  await new Promise((resolve) => setImmediate(resolve));
   assert.equal((await fetch(endpoint(server.baseUrl, "/report.pdf"))).status, 200);
   releaseFresh();
   assert.equal((await firstFresh).status, 200);

@@ -257,7 +257,7 @@ export function createAssignmentWorkfileReadRouter({
         assignmentFileId,
         signingSecret: getSigningSecret(),
       });
-      if (res.destroyed) return undefined;
+      if (res.destroyed || res.closed) return undefined;
       const draft = !download.immutable;
       if (draft && activeDraftPdfRenders >= MAX_CONCURRENT_DRAFT_PDF_RENDERS) {
         res.set("Retry-After", "2");
@@ -288,7 +288,7 @@ export function createAssignmentWorkfileReadRouter({
         renderSettled = true;
         releaseSlotIfSettled();
       }
-      if (res.destroyed) return undefined;
+      if (res.destroyed || res.closed) return undefined;
       const fileName = String(report.canonical_file_name).replace(/[\r\n"]/g, "_");
       res.set({
         "Content-Type": "application/pdf",

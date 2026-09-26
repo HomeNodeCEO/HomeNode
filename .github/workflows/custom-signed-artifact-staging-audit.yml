@@ -1,0 +1,42 @@
+name: Custom signed artifact staging audit
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: custom-signed-artifact-staging-audit
+  cancel-in-progress: false
+
+jobs:
+  read-only-audit:
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    environment: custom-signed-artifact-staging-audit
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: server
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22
+      - name: Install locked production dependencies without lifecycle scripts
+        run: npm ci --omit=dev --ignore-scripts --no-audit --no-fund
+      - name: Audit signed snapshot and artifact links
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_SIGNED_ARTIFACT_AUDIT_DATABASE_URL }}
+        run: npm run audit:custom-signed-artifacts
+      - name: Audit stored signed PDF bytes
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_SIGNED_ARTIFACT_AUDIT_DATABASE_URL }}
+        run: npm run audit:custom-signed-pdf-content
+      - name: Audit current verified photo coverage
+        env:
+          DATABASE_URL: ${{ secrets.STAGING_SIGNED_ARTIFACT_AUDIT_DATABASE_URL }}
+        run: npm run audit:custom-signed-photo-coverage

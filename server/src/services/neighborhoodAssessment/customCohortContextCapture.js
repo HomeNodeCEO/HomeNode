@@ -809,6 +809,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
     recommendedAreaOpening = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
+    let catalogPhaseTiming = null;
     const timed = ['report_observation_catalog', 'report_observation_summary'].includes(exposure)
       ? createCustomPreviewPhaseTiming() : (_phase, work) => work();
     const loaded = await timed('load', () => transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -870,7 +871,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       return result;
     };
     const content = project ? await timed('projection', () => project(preview, expected, parcelMap, loaded.retained.retained_inputs,
-      deriveProximity, presentOpening, budget.check, deriveSecondary))
+      deriveProximity, presentOpening, budget.check, deriveSecondary, timing => { catalogPhaseTiming = timing; }))
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
@@ -905,7 +906,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if (recommendedAreaOpening && Object.hasOwn(response, 'initial_preview')) {
             // A dropped recommendation cannot leave behind its private subset
             // preview: the client would restore the complete-catalog fallback.
-            response.initial_preview = await createCustomCatalogPhaseTiming()('fallback_opening', () => presentOpening(customCohortOpeningSelection(response.catalog,
+            response.initial_preview = await catalogPhaseTiming('fallback_opening', () => presentOpening(customCohortOpeningSelection(response.catalog,
               customCohortOpeningGroupIds(response.catalog), expected.selection_revision)));
           }
         }
@@ -1353,8 +1354,9 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
-      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary) => {
+      project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary, setCatalogPhaseTiming) => {
         const timed = createCustomCatalogPhaseTiming();
+        setCatalogPhaseTiming(timed);
         const catalog = await timed('catalog', () => presentCustomCohortPocketCatalog({
           catalog: buildCustomCohortPocketCatalog({ retained_inputs, preview, catalog_version: catalogVersion }), preview, expected,
         }));

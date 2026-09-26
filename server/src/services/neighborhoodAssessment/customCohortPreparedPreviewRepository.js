@@ -11,10 +11,11 @@ import { isCustomCohortObservationPreview,
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
 // The prepared row is immutable for a context/format version. Keep only one
-// bounded, verified, deeply frozen observation index hot across requests. The
-// current row and its compressed bytes are still checked on every hit; map
-// geometry and selection-dependent results are never cached here.
+// bounded, verified, deeply frozen read model hot across requests. The
+// current row and its compressed bytes are still checked on every hit;
+// selection-dependent results are never cached here.
 const HOT_PREVIEW_MAX_BYTES = 60_000_000;
+const HOT_MAP_MAX_BYTES = 24_000_000;
 const HOT_PREVIEW_MAX_PROCESS_RSS_BYTES = 1_000_000_000;
 const HOT_PREVIEW_TTL_MS = 5 * 60_000;
 let hotPreview = null;
@@ -31,6 +32,13 @@ function retainHotPreview(entry) {
     if (hotPreview === entry) clearHotPreview();
   }, HOT_PREVIEW_TTL_MS);
   hotPreviewTimer.unref?.();
+}
+function freezeMap(value) {
+  if (value && typeof value === 'object' && !Object.isFrozen(value)) {
+    for (const child of Object.values(value)) freezeMap(child);
+    Object.freeze(value);
+  }
+  return value;
 }
 const compress = promisify(gzip), decompress = promisify(gunzip);
 const hash = value => createHash('sha256').update(value).digest('hex');
@@ -116,23 +124,35 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         return restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
       });
     }
-    const retainVerifiedPreview = () => {
-      if (useVerifiedPreviewCache && !matched && row.preview_utf8_bytes <= HOT_PREVIEW_MAX_BYTES
-        && process.memoryUsage().rss <= HOT_PREVIEW_MAX_PROCESS_RSS_BYTES) {
-        retainHotPreview({ key: hotKey, digest: row.preview_sha256, bytes: row.preview_utf8_bytes,
-          compressedDigest: hash(row.compressed_preview), preview,
-          expiresAt: Date.now() + HOT_PREVIEW_TTL_MS });
+    const retainVerifiedReadModel = (map = null, mapMatched = false) => {
+      if (!useVerifiedPreviewCache || (matched && (!map || mapMatched))
+        || row.preview_utf8_bytes > HOT_PREVIEW_MAX_BYTES
+        || process.memoryUsage().rss > HOT_PREVIEW_MAX_PROCESS_RSS_BYTES) return;
+      const entry = { key: hotKey, digest: row.preview_sha256, bytes: row.preview_utf8_bytes,
+        compressedDigest: hash(row.compressed_preview), preview,
+        expiresAt: Date.now() + HOT_PREVIEW_TTL_MS };
+      if (map && row.map_utf8_bytes <= HOT_MAP_MAX_BYTES) {
+        entry.map = freezeMap(map);
+        entry.mapDigest = row.map_sha256;
+        entry.mapBytes = row.map_utf8_bytes;
+        entry.compressedMapDigest = hash(row.compressed_map);
       }
+      retainHotPreview(entry);
     };
     if (!includeMap) {
-      retainVerifiedPreview();
+      retainVerifiedReadModel();
       return Object.freeze({ preview, parcel_map: null });
     }
-    const map = await timed('map_decode', () => decode(row, 'map'));
+    const mapMatched = matched && previous.map && row.map_sha256 === previous.mapDigest
+      && row.map_utf8_bytes === previous.mapBytes
+      && Buffer.isBuffer(row.compressed_map)
+      && hash(row.compressed_map) === previous.compressedMapDigest;
+    if (matched && previous.map && !mapMatched) clearHotPreview();
+    const map = mapMatched ? previous.map : await timed('map_decode', () => decode(row, 'map'));
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');
-    retainVerifiedPreview();
+    retainVerifiedReadModel(map, mapMatched);
     return Object.freeze({ preview, parcel_map: map });
   };
   return Object.freeze({

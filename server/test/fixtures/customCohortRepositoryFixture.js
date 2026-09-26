@@ -37,6 +37,11 @@ export function customCohortRepositoryFixture({ assignmentFileId, effectiveDate 
   const state = { input, caseDate: date, status: 'draft', signedAt: null, signed: false,
     calls: [], missing: null, db: new Map(), transforms: {}, error: null };
   const client = { release() { throw new Error('repository must not release'); }, async query(sql, params) {
+    // The synthetic original-evidence fixture intentionally has no persisted
+    // derived read model. Owner tests therefore exercise the original path;
+    // the prepared repository has separate digest/selection parity tests.
+    if (sql.includes('custom-cohort-prepared-preview:read')) return absent();
+    if (sql.includes('custom-cohort-prepared-preview:insert')) return row({ preview_sha256: params[3], map_sha256: params[6] });
     const tag = sql.match(/\/\* (?:custom-cohort-subject|custom-cohort-selection|neighborhood-cohort-blob):([a-z-]+) \*\//)?.[1];
     assert.ok(tag, sql); state.calls.push({ tag, sql, params });
     if (state.error?.tag === tag) throw state.error.value;

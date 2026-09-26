@@ -32,7 +32,9 @@ import { loadInstalledCustomCityDiscovery } from './customCityDiscovery.js';
 import { prepareCustomCohortCaptureInputsBatched, persistCustomCohortCaptureInputs,
   loadCustomCohortCaptureInputs } from './customCohortCaptureInputs.js';
 import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservationPreviewBatched,
+  reselectCustomCohortIndexedObservationPreview,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
+import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap } from './customCohortPreparedPreviewRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
@@ -609,7 +611,9 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   // A checkpoint is editor intent, not authority to relabel a retained study.
   // Check the discovery binding as well as its dates before report preparation.
   if (study && retained && !same(study.discovery ?? null, retained.study.discovery ?? null)) fail('operation_conflict');
-  return { ...metadata, retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
+  return { ...metadata, subjectReference: directory.subject_inputs,
+    observationPeriod: requestMetadata.observation_period,
+    retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
 
 /** Executable, Custom-only acquisition owner. No HTTP route, current-head
@@ -807,8 +811,52 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     return freeze(response);
   }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
-    recommendedAreaOpening = false, project } = {}) {
+    recommendedAreaOpening = false, preparedFast = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
+    if (preparedFast) {
+      const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, false, 'read');
+        const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+        const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+          authorizeMarketData, authorizePrivateSales, budget, exposure, additionalExposures,
+          privateSummary: true, loadInputs: false });
+        // Private supplemental sales still follow their exact retained-source
+        // path. Never silently omit them from the selected preview.
+        if (licensed.privateAuthorization) return null;
+        const prepared = await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
+          .read({ includeMap });
+        return prepared ? { target, scopeJson, licensed, prepared } : null;
+      });
+      if (cached) {
+        budget.check();
+        if (!same(cached.prepared.preview.observation_period, cached.licensed.observationPeriod)
+          || cached.prepared.preview.effective_date !== cached.licensed.context.effective_date) fail('operation_conflict');
+        const preview = reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, input.selection);
+        const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
+        const selectedMap = includeMap
+          ? selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)
+          : { status: 'omitted', reason: 'geometry_not_requested' };
+        const content = { summary: presentCustomCohortPreview({ preview, expected }), parcel_map: selectedMap };
+        return transaction(pool, 'READ COMMITTED', budget, async client => {
+          assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
+          if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
+            .compareCurrent(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+          const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
+            cached.licensed.context, cached.licensed.purpose, budget, exposure);
+          if (!same(decision, cached.licensed.decision)) fail('market_policy_changed');
+          for (const additional of additionalExposures) {
+            const permitted = await boundedPolicy(authorizeMarketData, client, input.auth,
+              cached.licensed.context, cached.licensed.purpose, budget, additional);
+            if (!same(permitted, cached.licensed.decision)) fail('market_policy_changed');
+          }
+          budget.check();
+          return freeze({ status: 'preview', target: { account_id: input.accountId,
+            assignment_file_id: input.assignmentFileId }, ...expected,
+            subject_freshness: 'matched', ...content,
+            apply: { status: 'blocked', reasons: ['observation_preview_only'] } });
+        });
+      }
+    }
     let catalogPhaseTiming = null;
     const timed = ['report_observation_catalog', 'report_observation_summary'].includes(exposure)
       ? createCustomPreviewPhaseTiming() : (_phase, work) => work();
@@ -844,6 +892,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const deriveSecondary = () => transaction(pool, 'REPEATABLE READ READ ONLY', budget,
       client => readCustomCohortPreparedSecondaryFacts(client.query.bind(client), loaded.retained.retained_inputs));
     const privateCapture = loaded.retained.retained_inputs.private_sales?.capture;
+    let preparedOpening = null;
     const privateFor = (selection, view) => {
       const observations = privateCapture ? buildCustomCohortPrivateSalesObservations({ supplement: privateCapture,
       context_ref: input.contextRef, effective_date: loaded.context.effective_date,
@@ -864,6 +913,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         retained_inputs: loaded.retained.retained_inputs, selection: checked }, { check: budget.check });
       const map = await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
         selected_account_ids: [...new Set(checked.pockets.flatMap(p => p.account_ids))] }, { check: budget.check });
+      if (map.status === 'available') preparedOpening = { preview: selected, map };
       const privateSales = privateFor(checked, selected);
       const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected }), parcel_map: map,
         ...(privateSales ? { private_sales: privateSales } : {}) });
@@ -875,7 +925,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       : { preview, parcel_map: parcelMap };
     const privatePresentation = privateFor(input.selection, preview);
     budget.check();
-    return timed('authorization', () => transaction(pool, 'READ COMMITTED', budget, async client => {
+    const response = await timed('authorization', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       assertTarget(await resolveTarget(client, input, true, 'read'), loaded.target);
       if ((await createCustomCohortSubjectRepository(client, loaded.scopeJson)
         .compareCurrent(loaded.retained.subject_reference)).status !== 'matched') fail('subject_changed');
@@ -923,6 +973,19 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
       return freeze(response);
     }));
+    const preparedCandidate = preparedOpening ?? (preparedFast && includeMap
+      && content.parcel_map?.status === 'available' ? { preview, map: content.parcel_map } : null);
+    if (preparedCandidate && !loaded.privateAuthorization && budget.deadline - performance.now() > 3000) {
+      // Optional write-through after a fully authorized original replay. Failure
+      // leaves the exact response intact; later requests still use originals.
+      try {
+        await transaction(pool, 'READ COMMITTED', budget, async client => {
+          await createCustomCohortPreparedPreviewRepository(client, loaded.scopeJson, input.contextRef)
+            .put(preparedCandidate.preview, preparedCandidate.map);
+        });
+      } catch { /* Optimization unavailable; the original-source path remains authoritative. */ }
+    }
+    return response;
   }
   return Object.freeze({ async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);
@@ -1406,7 +1469,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }, present(value, presentation = { includeMap: true }, options = {}) {
     exactKeys(presentation, ['includeMap']);
     if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');
-    return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary',
+    return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary', preparedFast: true,
       project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected }), parcel_map: parcelMap }) });
   }, inspect(value, inspection, options = {}) {
     exactKeys(inspection, ['population', 'page']);

@@ -172,10 +172,18 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal(display.summary.all.account_ids, undefined);
     assert.equal(display.preview, undefined, 'internal full member data must not accompany compact display');
     assert.equal(display.parcel_map.status, 'available');
+    assert.equal((await pool.query(`SELECT count(*)::int AS count
+      FROM app.neighborhood_custom_cohort_prepared_previews WHERE organization_id=$1 AND context_id=$2`,
+    [organization, result.context_ref.context_id])).rows[0].count, 1,
+    'a checked original preview prepares one immutable context-scoped read model');
+    const fastFrom = calls.length;
     const toggled = await capture.present({ ...previewRequest, selection: { revision: 2, pockets: [] } }, { includeMap: false });
     assert.equal(toggled.summary.selected.stock.member_count, 0);
     assert.deepEqual(toggled.parcel_map, { status: 'omitted', reason: 'geometry_not_requested' });
     assert.notEqual(toggled.summary.binding.selection_sha256, display.summary.binding.selection_sha256);
+    assert.ok(calls.slice(fastFrom).some(sql => sql.includes('custom-cohort-prepared-preview:read')));
+    assert.ok(!calls.slice(fastFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+      'a prepared selection rechecks metadata and policy without reopening the complete row graph');
     const exposureDenied = createCustomCohortContextCapture({ pool: observed,
       authorizeMarketData: async (_client, _auth, _context, _purpose, { exposure }) => exposure === 'none' ? grant : { allowed: false } });
     await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);
@@ -243,24 +251,26 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       const initial_preview_groups = [...catalog.catalog.pockets.map(p => p.id),
         ...(catalog.catalog.unassigned.member_count ? ['discovery:unassigned'] : [])];
       const { customCohortOpeningSelection } = await import('../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js');
-      const evidenceReadsSince = from => calls.slice(from).filter(sql => /neighborhood-cohort-blob:read(?:-batch)? \*/.test(sql)).length;
+      const evidenceReadsSince = from => calls.slice(from).filter(sql => /neighborhood-cohort-blob:read-batch \*/.test(sql)).length;
       const ordinaryFrom = calls.length;
       const expectedOpening = await capture.present({ ...previewRequest,
         selection: customCohortOpeningSelection(catalog.catalog, initial_preview_groups, body.selection.revision) });
       const ordinaryReads = evidenceReadsSince(ordinaryFrom);
-      assert.ok(ordinaryReads > 0, 'the independent preview must load real retained evidence');
+      assert.equal(ordinaryReads, 0, 'the independent selection uses the immutable prepared read model');
       const explicitFrom = calls.length;
       const openingResponse = await post('catalog', { ...body, initial_preview_groups });
       assert.equal(openingResponse.status, 200); assert.equal(openingResponse.headers.get('cache-control'), 'no-store');
       const explicitOpening = await openingResponse.json();
       assert.deepEqual(explicitOpening.initial_preview, expectedOpening);
-      assert.equal(evidenceReadsSince(explicitFrom), ordinaryReads, 'explicit opening loads one retained graph');
+      const explicitReads = evidenceReadsSince(explicitFrom);
+      assert.ok(explicitReads > 0, 'explicit catalog opening still validates one retained graph');
       const allFrom = calls.length, allExposureFrom = exposures.length;
       const allResponse = await post('catalog', { ...body, initial_preview_mode: 'all_catalog_groups' });
       assert.equal(allResponse.status, 200); assert.equal(allResponse.headers.get('cache-control'), 'no-store');
       const allText = await allResponse.text(); assert.ok(Buffer.byteLength(allText) <= 39_000_000);
       assert.deepEqual(JSON.parse(allText), explicitOpening, 'native all-catalog mode is the exact explicit-all opening');
-      assert.equal(evidenceReadsSince(allFrom), ordinaryReads, 'all-catalog opening must not reload the retained graph for its preview');
+      assert.equal(evidenceReadsSince(allFrom), explicitReads,
+        'all-catalog opening must not reload the retained graph a second time for its preview');
       assert.deepEqual(exposures.slice(allExposureFrom), ['report_observation_catalog', 'report_observation_summary',
         'report_observation_catalog', 'report_observation_summary']);
       assert.equal(explicitOpening.initial_preview.summary.selected.stock.member_count, 2);
@@ -341,7 +351,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     checks.push('native all-catalog opening equals explicit recorded groups plus nonempty unassigned and independent preview; one retained load, unchanged empty/omitted modes, exact revision and two-phase exposures');
     checks.push('native owner and HTTP reject malformed or conflicting opening modes before queries; distinct unassigned fixture capture restores its exact owned live label before read-only reopening');
 
-    for (const method of ['preview', 'catalog']) for (const deny of [true, false]) {
+    for (const method of ['preview', 'catalog', 'present']) for (const deny of [true, false]) {
       let checksDone = 0;
       const revoked = createCustomCohortContextCapture({ pool: observed, authorizeMarketData: async () => {
         if (++checksDone === 1) return grant;
@@ -350,7 +360,7 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       await assert.rejects(revoked[method](previewRequest), deny ? /market_data_access_denied/ : /market_policy_changed/);
       assert.equal(checksDone, 2, 'the final fresh policy must decide whether the response may leave');
     }
-    for (const method of ['preview', 'catalog']) for (const kind of ['material', 'assignment']) {
+    for (const method of ['preview', 'catalog', 'present']) for (const kind of ['material', 'assignment']) {
       let commitCount = 0;
       const afterLoadPool = { async connect() {
         const client = await pool.connect();

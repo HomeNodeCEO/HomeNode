@@ -59,6 +59,7 @@ const MIGRATIONS = Object.freeze([
   "20261024_neighborhood_group_index.sql",
   "20261025_neighborhood_group_characteristics.sql",
   "20261026_custom_cohort_prepared_preview.sql",
+  "20261027_custom_cohort_prepared_catalog.sql",
 ]);
 const ADVISORY_LOCK_KEY = 3_603_600_821;
 

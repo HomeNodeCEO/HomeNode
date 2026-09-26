@@ -42,6 +42,8 @@ export function customCohortRepositoryFixture({ assignmentFileId, effectiveDate 
     // the prepared repository has separate digest/selection parity tests.
     if (sql.includes('custom-cohort-prepared-preview:read')) return absent();
     if (sql.includes('custom-cohort-prepared-preview:insert')) return row({ preview_sha256: params[3], map_sha256: params[6] });
+    if (sql.includes('custom-cohort-prepared-catalog:exists')) return absent();
+    if (sql.includes('custom-cohort-prepared-catalog:insert')) return row({ payload_sha256: params[3] });
     const tag = sql.match(/\/\* (?:custom-cohort-subject|custom-cohort-selection|neighborhood-cohort-blob):([a-z-]+) \*\//)?.[1];
     assert.ok(tag, sql); state.calls.push({ tag, sql, params });
     if (state.error?.tag === tag) throw state.error.value;

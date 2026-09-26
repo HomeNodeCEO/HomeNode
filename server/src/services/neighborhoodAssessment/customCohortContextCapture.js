@@ -35,6 +35,7 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
   reselectCustomCohortIndexedObservationPreview,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap } from './customCohortPreparedPreviewRepository.js';
+import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
@@ -810,8 +811,72 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (Buffer.byteLength(JSON.stringify(response)) > 524288) fail('report_response_limit');
     return freeze(response);
   }
+  async function readPreparedCatalog(value, options, { catalogVersion, include, opening, groups, recommendedAreaOpening }) {
+    if (catalogVersion !== 3 || !include) return null;
+    const input = previewInputOf(value), budget = operationBudget(options);
+    // Catalog bindings describe an empty selection; a chosen group changes
+    // only the opening summary and map, never the captured catalog itself.
+    if (input.selection.pockets.length) return null;
+    const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
+      const target = await resolveTarget(client, input, false, 'read');
+      const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
+      const catalogRepository = createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef);
+      if (!await catalogRepository.exists()) return null;
+      const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
+        authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
+        additionalExposures: ['report_observation_summary'], privateSummary: true, loadInputs: false });
+      if (licensed.privateAuthorization) return null;
+      const payload = await catalogRepository.read();
+      const prepared = await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
+        .read({ includeMap: opening });
+      return payload && prepared ? { target, scopeJson, licensed, payload, prepared } : null;
+    });
+    if (!cached) return null;
+    budget.check();
+    if (!same(cached.prepared.preview.observation_period, cached.licensed.observationPeriod)
+      || cached.prepared.preview.effective_date !== cached.licensed.context.effective_date) fail('operation_conflict');
+    const stable = rebindCustomCohortPreparedCatalog(cached.payload, input.selection.revision);
+    const catalog = stable.catalog, recommendation = stable.recommendation;
+    const accounts = [...catalog.pockets.flatMap(pocket => pocket.account_ids), ...catalog.unassigned.account_ids].sort();
+    if (!same(accounts, [...cached.prepared.preview.all.account_ids].sort())) fail('operation_conflict');
+    const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
+    const response = { status: 'catalog', target: { account_id: input.accountId,
+      assignment_file_id: input.assignmentFileId }, ...expected, subject_freshness: 'matched',
+      ...stable, apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+    if (opening) {
+      const areaIds = recommendedAreaOpening && recommendation?.sales_aware_area?.status !== 'unavailable'
+        && recommendation?.sales_aware_area?.selected_recorded_group_ids?.length
+        ? recommendation.sales_aware_area.selected_recorded_group_ids : null;
+      const selected = customCohortOpeningSelection(catalog,
+        groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision);
+      const preview = reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, selected);
+      const map = selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids);
+      response.initial_preview = { status: 'preview', target: response.target, ...expected,
+        subject_freshness: 'matched', summary: presentCustomCohortPreview({ preview, expected }), parcel_map: map,
+        apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
+      if (Buffer.byteLength(JSON.stringify(response.initial_preview)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
+    }
+    const { initial_preview: _opening, ...catalogOnly } = response;
+    if (Buffer.byteLength(JSON.stringify(catalogOnly)) > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
+      || Buffer.byteLength(JSON.stringify(response)) > (opening
+        ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes)) {
+      fail('catalog_transport_limit');
+    }
+    return transaction(pool, 'READ COMMITTED', budget, async client => {
+      assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
+      if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
+        .compareCurrent(cached.licensed.subjectReference)).status !== 'matched') fail('subject_changed');
+      for (const exposure of ['report_observation_catalog', 'report_observation_summary']) {
+        const decision = await boundedPolicy(authorizeMarketData, client, input.auth,
+          cached.licensed.context, cached.licensed.purpose, budget, exposure);
+        if (!same(decision, cached.licensed.decision)) fail('market_policy_changed');
+      }
+      budget.check();
+      return freeze(response);
+    });
+  }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
-    recommendedAreaOpening = false, preparedFast = false, project } = {}) {
+    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     if (preparedFast) {
       const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -1003,6 +1068,26 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           ? error.message : typeof error?.code === 'string' && /^[A-Z0-9_]{1,20}$/.test(error.code)
             ? error.code : 'unavailable';
         console.warn('[neighborhood] prepared-preview-write', { outcome: 'skipped', reason });
+      }
+    }
+    if (preparedCatalog && !loaded.privateAuthorization && input.selection.pockets.length === 0
+      && response.catalog?.catalog_complete === true && budget.deadline - performance.now() > 3000) {
+      // Store no initial selection, private observations or authority. A later
+      // opening derives its own exact union from the numeric/map read model.
+      const publicCatalog = { catalog: response.catalog,
+        ...(response.discovery ? { discovery: response.discovery } : {}),
+        ...(response.recommendation ? { recommendation: response.recommendation } : {}),
+        ...(response.prepared_secondary_map ? { prepared_secondary_map: response.prepared_secondary_map } : {}) };
+      try {
+        await transaction(pool, 'READ COMMITTED', budget, async client => {
+          const repository = createCustomCohortPreparedCatalogRepository(client, loaded.scopeJson, input.contextRef);
+          if (!await repository.exists()) await repository.put(publicCatalog);
+        });
+      } catch (error) {
+        const reason = /^custom_cohort_prepared_catalog_[a-z_]+$/.test(error?.message)
+          ? error.message : typeof error?.code === 'string' && /^[A-Z0-9_]{1,20}$/.test(error.code)
+            ? error.code : 'unavailable';
+        console.warn('[neighborhood] prepared-catalog-write', { outcome: 'skipped', reason });
       }
     }
     return response;
@@ -1433,8 +1518,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const opening = explicitGroups || modeRequested;
     const groups = explicitGroups ? prepareCustomCohortOpeningGroups(value.initialPreviewGroups, catalogVersion) : null;
     const input = Object.fromEntries(Object.entries(value).filter(([key]) => !['catalogVersion', 'includeRecommendation', 'initialPreviewGroups', 'initialPreviewMode'].includes(key)));
+    const cached = await readPreparedCatalog(input, options, { catalogVersion, include, opening, groups,
+      recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area' });
+    if (cached) return cached;
     return runPreview(input, options, { includeMap: false, exposure: 'report_observation_catalog',
       additionalExposures: include || opening ? ['report_observation_summary'] : [],
+      preparedCatalog: include && catalogVersion === 3,
       outputLimit: opening ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : include ? CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes : null,
       recommendedAreaOpening: modeRequested && value.initialPreviewMode === 'recommended_area',
       project: async (preview, expected, _parcelMap, retained_inputs, deriveProximity, presentOpening, checkBudget, deriveSecondary, setCatalogPhaseTiming) => {

@@ -1,7 +1,8 @@
 import { performance } from 'node:perf_hooks';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from './customCohortOperationLimits.js';
 import { createCustomCapturePhaseTiming, createCustomReportPhaseTiming, createCustomPreviewPhaseTiming,
-  createCustomCatalogPhaseTiming, createCustomPreparedCatalogPhaseTiming } from './customCapturePhaseTiming.js';
+  createCustomCatalogPhaseTiming, createCustomPreparedCatalogPhaseTiming,
+  createCustomPreparedCatalogProjectionTiming } from './customCapturePhaseTiming.js';
 import { prepareCustomCohortOpeningGroups, prepareCustomCohortOpeningMode, customCohortOpeningGroupIds, customCohortOpeningSelection,
   CUSTOM_COHORT_OPENING_RESPONSE_BYTES, CUSTOM_COHORT_OPENING_PREVIEW_BYTES } from './customCohortOpeningPreview.js';
 import { randomUUID } from 'node:crypto';
@@ -838,44 +839,52 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     });
     if (!cached) return null;
     const response = await timed('projection', () => {
+      const projection = createCustomPreparedCatalogProjectionTiming();
       budget.check();
       if (!same(cached.prepared.preview.observation_period, cached.licensed.observationPeriod)
         || cached.prepared.preview.effective_date !== cached.licensed.context.effective_date) fail('operation_conflict');
-      const stable = rebindCustomCohortPreparedCatalog(cached.payload, input.selection.revision);
+      const stable = projection('binding', () => rebindCustomCohortPreparedCatalog(cached.payload, input.selection.revision));
       const catalog = stable.catalog, recommendation = stable.recommendation;
-      const accounts = [...catalog.pockets.flatMap(pocket => pocket.account_ids), ...catalog.unassigned.account_ids].sort();
-      if (!same(accounts, [...cached.prepared.preview.all.account_ids].sort())) fail('operation_conflict');
+      projection('membership', () => {
+        const accounts = [...catalog.pockets.flatMap(pocket => pocket.account_ids), ...catalog.unassigned.account_ids].sort();
+        if (!same(accounts, [...cached.prepared.preview.all.account_ids].sort())) fail('operation_conflict');
+      });
       const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
       const response = { status: 'catalog', target: { account_id: input.accountId,
         assignment_file_id: input.assignmentFileId }, ...expected, subject_freshness: 'matched',
         ...stable, apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
       let openingBytes = 0;
       if (opening) {
-        const areaIds = recommendedAreaOpening && recommendation?.sales_aware_area?.status !== 'unavailable'
-          && recommendation?.sales_aware_area?.selected_recorded_group_ids?.length
-          ? recommendation.sales_aware_area.selected_recorded_group_ids : null;
-        const selected = customCohortOpeningSelection(catalog,
-          groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision);
-        const preview = reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, selected);
-        const map = selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids);
+        const selected = projection('opening_selection', () => {
+          const areaIds = recommendedAreaOpening && recommendation?.sales_aware_area?.status !== 'unavailable'
+            && recommendation?.sales_aware_area?.selected_recorded_group_ids?.length
+            ? recommendation.sales_aware_area.selected_recorded_group_ids : null;
+          return customCohortOpeningSelection(catalog,
+            groups ?? areaIds ?? customCohortOpeningGroupIds(catalog), expected.selection_revision);
+        });
+        const preview = projection('observation_reselect', () => reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, selected));
+        const map = projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
-          subject_freshness: 'matched', summary: presentCustomCohortPreview({ preview, expected }), parcel_map: map,
+          subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected })), parcel_map: map,
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
-        openingBytes = Buffer.byteLength(JSON.stringify(response.initial_preview));
-        if (openingBytes > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       }
-      const { initial_preview: _opening, ...catalogOnly } = response;
-      const catalogBytes = Buffer.byteLength(JSON.stringify(catalogOnly));
-      // A JSON object with one added key grows by exactly this delimiter plus
-      // the already-measured opening. Do not serialize the full 20 MB map a
-      // second time solely for its transport guard; the HTTP layer serializes
-      // it once after the final authorization recheck.
-      const responseBytes = catalogBytes + (opening ? Buffer.byteLength(',"initial_preview":') + openingBytes : 0);
-      if (catalogBytes > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
-        || responseBytes > (opening
-          ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes)) {
-        fail('catalog_transport_limit');
-      }
+      projection('transport_guard', () => {
+        if (opening) {
+          openingBytes = Buffer.byteLength(JSON.stringify(response.initial_preview));
+          if (openingBytes > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
+        }
+        const { initial_preview: _opening, ...catalogOnly } = response;
+        const catalogBytes = Buffer.byteLength(JSON.stringify(catalogOnly));
+        // A JSON object with one added key grows by exactly this delimiter plus
+        // the already-measured opening. Do not serialize the full map a second
+        // time solely for its guard; the HTTP layer serializes after recheck.
+        const responseBytes = catalogBytes + (opening ? Buffer.byteLength(',"initial_preview":') + openingBytes : 0);
+        if (catalogBytes > CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes
+          || responseBytes > (opening
+            ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes)) {
+          fail('catalog_transport_limit');
+        }
+      });
       return response;
     });
     return timed('recheck', () => transaction(pool, 'READ COMMITTED', budget, async client => {

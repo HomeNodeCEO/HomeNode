@@ -6,6 +6,8 @@ const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository'])
 const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
 const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening', 'fallback_opening']);
 const PREPARED_CATALOG_PHASES = new Set(['target', 'authorization', 'catalog_read', 'preview_read', 'projection', 'recheck']);
+const PREPARED_CATALOG_PROJECTION_PHASES = new Set(['binding', 'membership', 'opening_selection', 'observation_reselect',
+  'map_select', 'summary_projection', 'transport_guard']);
 const PREPARED_PREVIEW_READ_PHASES = new Set(['query', 'preview_decode', 'preview_restore', 'map_decode']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
@@ -50,6 +52,14 @@ export function createCustomPreparedCatalogPhaseTiming(report = event => {
   return createPhaseTiming(report, PREPARED_CATALOG_PHASES, 'invalid_prepared_catalog_phase');
 }
 
+// These synchronous stages subdivide projection without yielding between
+// immutable read-model operations. Log only fixed phase names and durations.
+export function createCustomPreparedCatalogProjectionTiming(report = event => {
+  console.info('[neighborhood] prepared-catalog-projection-phase ' + JSON.stringify(event));
+}) {
+  return createSyncPhaseTiming(report, PREPARED_CATALOG_PROJECTION_PHASES, 'invalid_prepared_catalog_projection_phase');
+}
+
 // Subphases of prepared-catalog preview_read. The stored row is immutable;
 // timings separate PostgreSQL transfer from bounded integrity/decode work.
 // No source facts, identifiers, SQL, geometry, or payload lengths are logged.
@@ -73,6 +83,22 @@ function createPhaseTiming(report, phases, invalidPhase) {
         // Do not await a logger, but own any asynchronous rejection too.
         Promise.resolve(report(Object.freeze({ phase, outcome, duration_ms: elapsed(began), elapsed_ms: elapsed(started) }))).catch(() => {});
       } catch { /* Observability must not change transaction recovery. */ }
+    }
+  };
+}
+
+function createSyncPhaseTiming(report, phases, invalidPhase) {
+  const started = performance.now(), seen = new Set();
+  const elapsed = from => Math.max(0, Math.round(performance.now() - from));
+  return (phase, work) => {
+    if (!phases.has(phase) || seen.has(phase) || typeof work !== 'function') throw new TypeError(invalidPhase);
+    seen.add(phase);
+    const began = performance.now();
+    let outcome = 'failed';
+    try { const value = work(); outcome = 'completed'; return value; }
+    finally {
+      try { Promise.resolve(report(Object.freeze({ phase, outcome, duration_ms: elapsed(began), elapsed_ms: elapsed(started) }))).catch(() => {}); }
+      catch { /* Observability must not change transaction recovery. */ }
     }
   };
 }

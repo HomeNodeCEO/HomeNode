@@ -36,10 +36,68 @@ function boundsOf(geometry) {
   return bounds;
 }
 
+function inViewport([x, y], box) {
+  return x >= box.west && x <= box.east && y >= box.south && y <= box.north;
+}
+
+// Liang–Barsky clipping decides whether one retained ring segment touches the
+// viewport. A bounding-box overlap alone is insufficient for concave parcels.
+function segmentTouchesViewport([x, y], [endX, endY], box) {
+  const dx = endX - x, dy = endY - y;
+  const edges = [[-dx, x - box.west], [dx, box.east - x], [-dy, y - box.south], [dy, box.north - y]];
+  let enter = 0, leave = 1;
+  for (const [p, q] of edges) {
+    if (p === 0) { if (q < 0) return false; continue; }
+    const t = q / p;
+    if (p < 0) enter = Math.max(enter, t);
+    else leave = Math.min(leave, t);
+    if (enter > leave) return false;
+  }
+  return true;
+}
+
+function ringContains([x, y], ring) {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const [ax, ay] = ring[j], [bx, by] = ring[i];
+    const cross = (x - ax) * (by - ay) - (y - ay) * (bx - ax);
+    if (Math.abs(cross) < 1e-12 && x >= Math.min(ax, bx) && x <= Math.max(ax, bx)
+      && y >= Math.min(ay, by) && y <= Math.max(ay, by)) return 'boundary';
+    if ((ay > y) !== (by > y) && x < (bx - ax) * (y - ay) / (by - ay) + ax) inside = !inside;
+  }
+  return inside ? 'inside' : 'outside';
+}
+
+function polygonTouchesViewport(polygon, box) {
+  for (const ring of polygon) {
+    for (let i = 1; i < ring.length; i++) {
+      if (inViewport(ring[i], box) && ring === polygon[0]) return true;
+      if (segmentTouchesViewport(ring[i - 1], ring[i], box)) return true;
+    }
+  }
+  // No edge crosses the viewport. The remaining possible intersection is a
+  // viewport wholly inside filled polygon area (but not inside a hole).
+  for (const corner of [[box.west, box.south], [box.west, box.north],
+    [box.east, box.south], [box.east, box.north]]) {
+    const outer = ringContains(corner, polygon[0]);
+    if (outer === 'outside') continue;
+    if (outer === 'boundary') return true;
+    let inHole = false;
+    for (let i = 1; i < polygon.length; i++) {
+      const position = ringContains(corner, polygon[i]);
+      if (position === 'boundary') return true;
+      if (position === 'inside') { inHole = true; break; }
+    }
+    if (!inHole) return true;
+  }
+  return false;
+}
+
 function intersects(geometry, viewport) {
   const { west, south, east, north } = boundsOf(geometry);
-  return west <= viewport.east && east >= viewport.west
-    && south <= viewport.north && north >= viewport.south;
+  if (west > viewport.east || east < viewport.west || south > viewport.north || north < viewport.south) return false;
+  const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
+  return polygons.some(polygon => polygonTouchesViewport(polygon, viewport));
 }
 
 export function projectCustomCohortViewportMap(preview, requestedViewport) {

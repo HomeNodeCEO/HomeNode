@@ -43,6 +43,38 @@ test('mutable fallback geometry is not trusted as a cached spatial index', () =>
   assert.equal(projectCustomCohortViewportMap(changed, bounds).counts.visible_parcels, 2);
 });
 
+test('a polygon bounding box cannot count an invisible parcel', () => {
+  const triangle = structuredClone(preview);
+  triangle.parcel_map.geojson.features = [{ ...square(3, 'triangle', 0),
+    geometry: { type: 'Polygon', coordinates: [[[0, 0], [1, 0], [0, 1], [0, 0]]] } }];
+  triangle.parcel_map.counts.parcels = 1;
+  const result = projectCustomCohortViewportMap(triangle, { west: .8, south: .8, east: .9, north: .9 });
+  assert.equal(result.counts.visible_parcels, 0);
+  assert.equal(projectCustomCohortViewportMap(triangle, { west: .1, south: .1, east: .2, north: .2 }).counts.visible_parcels, 1);
+});
+
+test('holes do not count as parcel area; a viewport touching the retained boundary does', () => {
+  const withHole = structuredClone(preview);
+  withHole.parcel_map.geojson.features = [{ ...square(4, 'donut', 0), geometry: { type: 'Polygon', coordinates: [
+    [[0, 0], [10, 0], [10, 10], [0, 10], [0, 0]],
+    [[2, 2], [8, 2], [8, 8], [2, 8], [2, 2]],
+  ] } }];
+  withHole.parcel_map.counts.parcels = 1;
+  assert.equal(projectCustomCohortViewportMap(withHole, { west: 4, south: 4, east: 5, north: 5 }).counts.visible_parcels, 0);
+  assert.equal(projectCustomCohortViewportMap(withHole, { west: 7.5, south: 4, east: 8.5, north: 5 }).counts.visible_parcels, 1);
+});
+
+test('multipart parcels intersect when any actual polygon touches the viewport', () => {
+  const multipart = structuredClone(preview);
+  multipart.parcel_map.geojson.features = [{ ...square(5, 'multipart', 0), geometry: { type: 'MultiPolygon', coordinates: [
+    [[[0, 0], [1, 0], [0, 1], [0, 0]]],
+    [[[2, 2], [3, 2], [3, 3], [2, 3], [2, 2]]],
+  ] } }];
+  multipart.parcel_map.counts.parcels = 1;
+  assert.equal(projectCustomCohortViewportMap(multipart, { west: .8, south: .8, east: .9, north: .9 }).counts.visible_parcels, 0);
+  assert.equal(projectCustomCohortViewportMap(multipart, { west: 2.4, south: 2.4, east: 2.5, north: 2.5 }).counts.visible_parcels, 1);
+});
+
 test('viewport rejects broad, malformed, and non-finite bounds', () => {
   for (const value of [null, {}, { west: -97, south: 32, east: -95, north: 33 },
     { west: -97, south: 32, east: -96, north: 32 },

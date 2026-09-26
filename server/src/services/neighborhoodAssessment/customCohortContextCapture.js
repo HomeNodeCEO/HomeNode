@@ -973,8 +973,20 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       if (outputLimit !== null && Buffer.byteLength(JSON.stringify(response)) > outputLimit) fail('catalog_transport_limit');
       return freeze(response);
     }));
-    const preparedCandidate = preparedOpening ?? (preparedFast && includeMap
+    let preparedCandidate = preparedOpening ?? (preparedFast && includeMap
       && content.parcel_map?.status === 'available' ? { preview, map: content.parcel_map } : null);
+    if (!preparedCandidate && preparedFast && !includeMap && !loaded.privateAuthorization
+      && budget.deadline - performance.now() > 7000) {
+      // A saved opening may have used nearly its entire budget and missed its
+      // write-through. Subsequent clicks request statistics only because the
+      // browser already holds geometry. Prepare that geometry once from the
+      // same authorized original graph so later clicks can use the fast path.
+      try {
+        const map = await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
+          selected_account_ids: preview.selected.account_ids }, { check: budget.check });
+        if (map.status === 'available') preparedCandidate = { preview, map };
+      } catch { /* The exact response remains valid; no partial cache is stored. */ }
+    }
     if (preparedCandidate && !loaded.privateAuthorization && budget.deadline - performance.now() > 3000) {
       // Optional write-through after a fully authorized original replay. Failure
       // leaves the exact response intact; later requests still use originals.

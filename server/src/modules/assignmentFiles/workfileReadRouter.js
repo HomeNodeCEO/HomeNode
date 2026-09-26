@@ -13,6 +13,7 @@ import {
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const CUSTOM_APPRAISAL_WORKFLOW = "custom_appraisal";
+const MAX_CONCURRENT_DRAFT_PDF_RENDERS = 2;
 const WORKFILE_READ_VALIDATION_ERRORS = new Set([
   "invalid_account_id",
   "invalid_assignment_file_id",
@@ -78,6 +79,7 @@ export function createAssignmentWorkfileReadRouter({
   }
 
   const router = express.Router();
+  let activeDraftPdfRenders = 0;
 
   // Signed bytes are immutable, but permission to retrieve them is revocable.
   // Scope this policy to workfiles so unrelated public routes retain their cache policy.
@@ -254,12 +256,38 @@ export function createAssignmentWorkfileReadRouter({
         assignmentFileId,
         signingSecret: getSigningSecret(),
       });
-      const report = await getReportPdf(pool, {
-        accountId: canonicalId,
-        assignmentFileId,
-        download,
-        objectStorage,
-      });
+      const draft = !download.immutable;
+      if (draft && activeDraftPdfRenders >= MAX_CONCURRENT_DRAFT_PDF_RENDERS) {
+        res.set("Retry-After", "2");
+        return res.status(503).json({ error: "custom_appraisal_report_busy" });
+      }
+      let renderSettled = false;
+      let responseSettled = false;
+      let slotReleased = false;
+      const releaseSlotIfSettled = () => {
+        if (draft && renderSettled && responseSettled && !slotReleased) {
+          activeDraftPdfRenders -= 1;
+          slotReleased = true;
+        }
+      };
+      if (draft) {
+        activeDraftPdfRenders += 1;
+        const settleResponse = () => { responseSettled = true; releaseSlotIfSettled(); };
+        res.once("finish", settleResponse);
+        res.once("close", settleResponse);
+      }
+      let report;
+      try {
+        report = await getReportPdf(pool, {
+          accountId: canonicalId,
+          assignmentFileId,
+          download,
+          objectStorage,
+        });
+      } finally {
+        renderSettled = true;
+        releaseSlotIfSettled();
+      }
       const fileName = String(report.canonical_file_name).replace(/[\r\n"]/g, "_");
       res.set({
         "Content-Type": "application/pdf",

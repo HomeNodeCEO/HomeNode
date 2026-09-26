@@ -81,7 +81,7 @@ test("SQLCipher legacy cleanup includes stored and canonical plaintext candidate
 
 test("offline store wrappers share external-activity connection lifecycle state", () => {
   const source = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
-  const prepareForExternalActivity = source.match(/async prepareForExternalActivity\(\)[\s\S]*?\n  }\n\n  async ensureReady\(\)/)?.[0] || "";
+  const prepareForExternalActivity = source.match(/async prepareForExternalActivity\(\)[\s\S]*?\r?\n  }\r?\n\r?\n  async ensureReady\(\)/)?.[0] || "";
   assert.match(source, /type OfflineDatabaseConnection = \{[\s\S]*closedForExternalActivity: boolean;[\s\S]*database: SQLite\.SQLiteDatabase;[\s\S]*pendingClose: Promise<void> \| null;[\s\S]*repair: Promise<void> \| null;/);
   assert.match(source, /private constructor\(private readonly connection: OfflineDatabaseConnection\)/);
   assert.match(prepareForExternalActivity, /const pendingClose = previous\.closeAsync\(\)\.finally\([\s\S]*this\.connection\.pendingClose = pendingClose;[\s\S]*return pendingClose;/);

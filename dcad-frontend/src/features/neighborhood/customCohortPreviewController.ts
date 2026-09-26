@@ -340,7 +340,14 @@ export function createCustomCohortPreviewController(options: Options) {
       const previous = sameTarget ? state.group : null;
       if (!sameTarget) cached = null;
       current = prepared;
-      timer = { handle: options.timer.set(() => { void load(prepared, token); }, delay) };
+      let savedOpeningMatches = false;
+      if (initialResponse) {
+        try { savedOpeningMatches = prepare(initialResponse.input).key === prepared.key; }
+        catch { /* The existing response check still rejects an invalid opening. */ }
+      }
+      // The catalog already brought this exact opening response. Debounce only
+      // user edits; waiting here cannot coalesce another network request.
+      timer = { handle: options.timer.set(() => { void load(prepared, token); }, savedOpeningMatches ? 0 : delay) };
       publish({ status: 'debouncing', freshness: previous === null ? 'none' : 'stale', requested: prepared.input, group: previous, error: null });
     },
     dispose(): void {

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { createCustomPreviewPhaseTiming, createCustomCatalogPhaseTiming,
-  createCustomPreparedCatalogPhaseTiming,
+  createCustomPreparedCatalogPhaseTiming, createCustomPreparedCatalogProjectionTiming,
   createCustomPreparedPreviewReadTiming } from '../src/services/neighborhoodAssessment/customCapturePhaseTiming.js';
 
 test('preview timings expose fixed phases and durations but no request evidence', async t => {
@@ -61,6 +61,25 @@ test('saved catalog timings distinguish authorized reads from projection and fin
   assert.doesNotMatch(JSON.stringify(events), /PRIVATE|account|geometry|source/);
   await assert.rejects(phase('load', () => null), /invalid_prepared_catalog_phase/);
   await assert.rejects(phase('target', () => null), /invalid_prepared_catalog_phase/);
+});
+
+test('saved catalog projection subphases are synchronous, bounded, and redact request evidence', t => {
+  let now = 100; t.mock.method(performance, 'now', () => now);
+  const events = [], phase = createCustomPreparedCatalogProjectionTiming(event => events.push(event));
+  const names = ['binding', 'membership', 'opening_selection', 'observation_reselect', 'map_select',
+    'summary_projection', 'transport_guard'];
+  for (const name of names) assert.equal(phase(name, () => { now += 2; return 'PRIVATE'; }), 'PRIVATE');
+  assert.deepEqual(events, names.map((name, index) => ({ phase: name, outcome: 'completed',
+    duration_ms: 2, elapsed_ms: (index + 1) * 2 })));
+  assert.ok(events.every(Object.isFrozen));
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE|account|geometry|source/);
+  assert.throws(() => phase('binding', () => null), /invalid_prepared_catalog_projection_phase/);
+  assert.throws(() => phase('query', () => null), /invalid_prepared_catalog_projection_phase/);
+  const error = new Error('PRIVATE SQL');
+  const failing = createCustomPreparedCatalogProjectionTiming(event => events.push(event));
+  assert.throws(() => failing('map_select', () => { throw error; }), thrown => thrown === error);
+  assert.equal(events.at(-1).outcome, 'failed');
+  assert.equal(createCustomPreparedCatalogProjectionTiming(() => { throw error; })('binding', () => 42), 42);
 });
 
 test('prepared preview read timings distinguish transfer, decode, and restore without evidence', async t => {

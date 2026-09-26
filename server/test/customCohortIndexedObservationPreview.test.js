@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import { createHash } from 'node:crypto';
+import { gunzipSync, gzipSync } from 'node:zlib';
 import { buildCustomCohortObservationPreview as expanded,
   buildCustomCohortIndexedObservationPreview as indexed, buildCustomCohortIndexedObservationPreviewBatched as batched,
   reselectCustomCohortIndexedObservationPreview as reselect,
@@ -10,7 +12,8 @@ import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow, mapCachedSal
 import { contextFixture } from './fixtures/customCohortContextFixture.js';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { createCustomCohortPreparedPreviewRepository as preparedRepository,
-  selectCustomCohortPreparedParcelMap as selectPreparedMap } from '../src/services/neighborhoodAssessment/customCohortPreparedPreviewRepository.js';
+  selectCustomCohortPreparedParcelMap as selectPreparedMap,
+  customCohortPreparedParcelMapJsonBytes as preparedMapJsonBytes } from '../src/services/neighborhoodAssessment/customCohortPreparedPreviewRepository.js';
 
 const NOW = '2026-09-06T08:00:00.123Z';
 const context_ref = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'e'.repeat(64) };
@@ -171,8 +174,11 @@ test('context-scoped immutable prepared read model survives serialization and re
   assert.equal(await repository.read(), null);
   const map = { status: 'available', geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
     geojson: { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'parcel:1',
-      properties: { account_id: 'A', selected: false }, geometry: { type: 'Polygon', coordinates: [] } }] },
-    counts: { parcels: 1, accounts: 2, selected_accounts: 0, coordinates: 0, geometry_bytes: 0, geojson_bytes: 1 } };
+      properties: { account_id: 'A', selected: false, label: 'Café' }, geometry: { type: 'Polygon', coordinates: [] } },
+    { type: 'Feature', id: 'parcel:2', properties: { account_id: 'A', selected: false }, geometry: { type: 'Polygon', coordinates: [] } },
+    { type: 'Feature', id: 'parcel:3', properties: { account_id: 'B', selected: false }, geometry: { type: 'Polygon', coordinates: [] } }] },
+    counts: { parcels: 3, accounts: 2, selected_accounts: 0, coordinates: 0, geometry_bytes: 0, geojson_bytes: 1 } };
+  assert.equal(preparedMapJsonBytes(map), Buffer.byteLength(JSON.stringify(map)), 'unverified map uses the full guard');
   assert.equal((await repository.put(baseline, map)).status, 'prepared');
   assert.equal(await repository.exists(), true);
   assert.equal((await repository.put(baseline, map)).status, 'reused');
@@ -187,7 +193,26 @@ test('context-scoped immutable prepared read model survives serialization and re
   assert.equal((await repository.read({ includeMap: false })).parcel_map, null);
   assert.deepEqual(reselect(loaded.preview, args.selection).selected, baseline.selected);
   const restyledMap = selectPreparedMap(loaded.parcel_map, ['A']);
+  const originalStringify = JSON.stringify;
+  let fullGeometryWalks = 0;
+  try {
+    JSON.stringify = (value, ...args) => {
+      if (value?.type === 'FeatureCollection' || value?.geojson?.type === 'FeatureCollection') fullGeometryWalks++;
+      return originalStringify(value, ...args);
+    };
+    selectPreparedMap(loaded.parcel_map, ['A']);
+    preparedMapJsonBytes(restyledMap);
+  } finally { JSON.stringify = originalStringify; }
+  assert.equal(fullGeometryWalks, 0, 'certified restyling does not serialize all coordinates');
   assert.equal(restyledMap.geojson.features[0].properties.selected, true);
+  assert.deepEqual(restyledMap.geojson.features.map(feature => feature.properties.selected), [true, true, false]);
+  assert.equal(restyledMap.counts.geojson_bytes, Buffer.byteLength(JSON.stringify(restyledMap.geojson)));
+  assert.equal(preparedMapJsonBytes(restyledMap), Buffer.byteLength(JSON.stringify(restyledMap)));
+  const opening = { status: 'preview', summary: { label: 'Café' }, parcel_map: restyledMap };
+  assert.equal(Buffer.byteLength(JSON.stringify({ ...opening, parcel_map: null })) - 4 + preparedMapJsonBytes(restyledMap),
+    Buffer.byteLength(JSON.stringify(opening)));
+  assert.equal(selectPreparedMap(restyledMap, []).counts.geojson_bytes,
+    Buffer.byteLength(JSON.stringify(selectPreparedMap(restyledMap, []).geojson)));
   assert.equal(loaded.parcel_map.geojson.features[0].properties.selected, false);
   const hot = await repository.read({ useVerifiedPreviewCache: true });
   const reopened = preparedRepository(client, scope, args.context_ref);
@@ -204,6 +229,17 @@ test('context-scoped immutable prepared read model survives serialization and re
   'a verified preview cannot be reused across assignment scope');
   assert.notEqual((await reopened.read()).preview, hot.preview, 'ordinary repository reads bypass the optional cache');
   const valid = stored;
+  const incorrect = JSON.parse(gunzipSync(valid.compressed_map));
+  incorrect.counts.geojson_bytes++;
+  const incorrectText = Buffer.from(JSON.stringify(incorrect));
+  stored = { ...valid, map_sha256: createHash('sha256').update(incorrectText).digest('hex'),
+    map_utf8_bytes: incorrectText.length, compressed_map: gzipSync(incorrectText) };
+  const unverified = (await reopened.read()).parcel_map;
+  assert.equal(preparedMapJsonBytes(unverified), Buffer.byteLength(JSON.stringify(unverified)));
+  assert.equal(selectPreparedMap(unverified, ['A']).counts.geojson_bytes,
+    Buffer.byteLength(JSON.stringify(selectPreparedMap(unverified, ['A']).geojson)),
+    'a persisted but uncertified count cannot bypass the full byte guard');
+  stored = valid;
   stored = { ...valid, compressed_map: Buffer.from(valid.compressed_map) };
   stored.compressed_map[0] ^= 1;
   await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,

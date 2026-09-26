@@ -20,6 +20,10 @@ const HOT_PREVIEW_MAX_PROCESS_RSS_BYTES = 1_000_000_000;
 const HOT_PREVIEW_TTL_MS = 5 * 60_000;
 let hotPreview = null;
 let hotPreviewTimer = null;
+// The stored JSON length and digest certify the neutral map's recorded GeoJSON
+// byte count. Only maps derived from that certified object may use byte deltas;
+// synthetic/legacy inputs retain the full serialization guard.
+const verifiedMapBytes = new WeakSet();
 function clearHotPreview() {
   if (hotPreviewTimer) clearTimeout(hotPreviewTimer);
   hotPreview = null;
@@ -152,6 +156,11 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');
+    if (map.status === 'available' && Number.isSafeInteger(map.counts?.geojson_bytes)
+      && map.counts.geojson_bytes > 0 && map.counts.geojson_bytes <= LIMITS.map.text) {
+      const envelopeBytes = Buffer.byteLength(JSON.stringify({ ...map, geojson: null }));
+      if (envelopeBytes - 4 + map.counts.geojson_bytes === row.map_utf8_bytes) verifiedMapBytes.add(map);
+    }
     retainVerifiedReadModel(map, mapMatched);
     return Object.freeze({ preview, parcel_map: map });
   };
@@ -205,13 +214,28 @@ export function selectCustomCohortPreparedParcelMap(map, accountIds) {
   check(map.status === 'available' && Array.isArray(map.geojson?.features), 'map_required');
   const selected = new Set(accountIds);
   const represented = new Set();
-  const features = map.geojson.features.map(feature => ({ ...feature,
-    properties: { ...feature.properties, selected: selected.has(feature.properties.account_id) } }));
+  let exactDelta = 0, useVerifiedBytes = verifiedMapBytes.has(map);
+  const features = map.geojson.features.map(feature => {
+    const before = feature.properties.selected, after = selected.has(feature.properties.account_id);
+    if (typeof before !== 'boolean') useVerifiedBytes = false;
+    else exactDelta += Number(before) - Number(after); // JSON true is one byte shorter than false.
+    return { ...feature, properties: { ...feature.properties, selected: after } };
+  });
   for (const feature of features) represented.add(feature.properties.account_id);
   check([...selected].every(account => represented.has(account)), 'map_membership_mismatch');
   const geojson = { ...map.geojson, features };
-  const geojsonBytes = Buffer.byteLength(JSON.stringify(geojson));
+  const geojsonBytes = useVerifiedBytes ? map.counts.geojson_bytes + exactDelta
+    : Buffer.byteLength(JSON.stringify(geojson));
   check(geojsonBytes <= 32_000_000, 'map_capacity_exceeded');
-  return { ...map, geojson,
+  const output = { ...map, geojson,
     counts: { ...map.counts, selected_accounts: selected.size, geojson_bytes: geojsonBytes } };
+  if (useVerifiedBytes) verifiedMapBytes.add(output);
+  return output;
+}
+
+/** Exact JSON length without revisiting every certified parcel coordinate.
+ * Uncertified or unavailable maps still use the original full-size guard. */
+export function customCohortPreparedParcelMapJsonBytes(map) {
+  if (map?.status !== 'available' || !verifiedMapBytes.has(map)) return Buffer.byteLength(JSON.stringify(map));
+  return Buffer.byteLength(JSON.stringify({ ...map, geojson: null })) - 4 + map.counts.geojson_bytes;
 }

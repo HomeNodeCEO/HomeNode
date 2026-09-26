@@ -54,6 +54,15 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     check(text.length === bytes && hash(text) === digest, 'storage_conflict');
     try { return JSON.parse(text.toString('utf8')); } catch { fail('storage_conflict'); }
   };
+  const exists = async () => {
+    const found = await query(`/* custom-cohort-prepared-preview:exists */
+      SELECT 1 FROM app.neighborhood_custom_cohort_prepared_previews
+      WHERE organization_id=$1::uuid AND context_id=$2::uuid
+        AND context_sha256=$3 AND format_version=1`, key);
+    check(found && [0, 1].includes(found.rowCount) && Array.isArray(found.rows)
+      && found.rows.length === found.rowCount, 'storage_conflict');
+    return found.rowCount === 1;
+  };
   const read = async ({ includeMap = true } = {}) => {
     check(typeof includeMap === 'boolean', 'invalid_read');
     const found = await query(`/* custom-cohort-prepared-preview:read */
@@ -68,7 +77,9 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
       && matchesScope(parsed),
     'storage_conflict');
-    const preview = restoreCustomCohortIndexedObservationPreview(parsed);
+    const tableBytes = row.preview_utf8_bytes
+      - Buffer.byteLength(JSON.stringify({ ...parsed, member_tables: null })) + 4;
+    const preview = restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
     if (!includeMap) return Object.freeze({ preview, parcel_map: null });
     const map = await decode(row, 'map');
     check(map && ['available', 'unavailable'].includes(map.status)
@@ -77,6 +88,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     return Object.freeze({ preview, parcel_map: map });
   };
   return Object.freeze({
+    exists,
     read,
     async put(preview, parcelMap) {
       check(isCustomCohortObservationPreview(preview) && preview.preview_version === 2

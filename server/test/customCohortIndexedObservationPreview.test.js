@@ -152,6 +152,8 @@ test('context-scoped immutable prepared read model survives serialization and re
     account_id: target.account_id });
   let stored = null;
   const client = { async query(sql, params) {
+    if (sql.includes('prepared-preview:exists')) return stored
+      ? { rowCount: 1, rows: [{ '?column?': 1 }] } : { rowCount: 0, rows: [] };
     if (sql.includes('prepared-preview:insert')) {
       if (stored) return { rowCount: 0, rows: [] };
       stored = { preview_sha256: params[3], preview_utf8_bytes: params[4], compressed_preview: params[5],
@@ -165,12 +167,14 @@ test('context-scoped immutable prepared read model survives serialization and re
     throw new Error('unexpected query');
   } };
   const repository = preparedRepository(client, scope, args.context_ref);
+  assert.equal(await repository.exists(), false);
   assert.equal(await repository.read(), null);
   const map = { status: 'available', geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
     geojson: { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'parcel:1',
       properties: { account_id: 'A', selected: false }, geometry: { type: 'Polygon', coordinates: [] } }] },
     counts: { parcels: 1, accounts: 2, selected_accounts: 0, coordinates: 0, geometry_bytes: 0, geojson_bytes: 1 } };
   assert.equal((await repository.put(baseline, map)).status, 'prepared');
+  assert.equal(await repository.exists(), true);
   assert.equal((await repository.put(baseline, map)).status, 'reused');
   const alternate = indexed({ ...args, selection: { revision: 2, pockets: [] } });
   const selectedMap = { ...map, geojson: { ...map.geojson, features: map.geojson.features.map(feature => ({

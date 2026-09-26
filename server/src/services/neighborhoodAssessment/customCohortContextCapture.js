@@ -992,8 +992,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       // leaves the exact response intact; later requests still use originals.
       try {
         await transaction(pool, 'READ COMMITTED', budget, async client => {
-          await createCustomCohortPreparedPreviewRepository(client, loaded.scopeJson, input.contextRef)
-            .put(preparedCandidate.preview, preparedCandidate.map);
+          const repository = createCustomCohortPreparedPreviewRepository(client, loaded.scopeJson, input.contextRef);
+          if (!await repository.exists()) await repository.put(preparedCandidate.preview, preparedCandidate.map);
         });
       } catch (error) {
         // The optional cache must never change an authorized response, but a

@@ -15,6 +15,10 @@ Subsequent selection previews request only
 the numeric payload when the browser already holds the map geometry. The
 browser restyles its validated map for the new selection; the server recomputes
 Type-7 quantiles and descriptive COD from the underlying selected observations.
+An existing prepared row is checked by key before optional write-through; its
+large payload is not recompressed on each catalog opening. The repository also
+supplies the verified member-table byte length so a pocket click need only
+measure its changed response envelope, not serialize all immutable members.
 
 Every read still checks exact assignment access, the immutable context header
 and study/profile originals, market-source permission, effective date, and live

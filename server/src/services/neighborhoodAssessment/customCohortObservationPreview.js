@@ -13,6 +13,7 @@ export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
 const L = CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS;
 const indexedPreviews = new WeakMap();
 const preparedMembership = new WeakMap();
+const preparedTableBytes = new WeakMap();
 const MEMBER_KINDS = ['stock', 'transactions', 'omitted_transactions', 'source_reported'];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
@@ -220,7 +221,8 @@ export function reselectCustomCohortIndexedObservationPreview(prepared, selectio
         }
       }
     }
-    membership = { stock, transaction, source };
+    membership = { stock, transaction, source,
+      tableBytes: preparedTableBytes.get(prepared) ?? Buffer.byteLength(JSON.stringify(prepared.member_tables)) };
     preparedMembership.set(prepared, membership);
   }
   const pockets = bounded(selection.pockets, L.pockets, 'pockets');
@@ -312,11 +314,15 @@ export function reselectCustomCohortIndexedObservationPreview(prepared, selectio
       ? { ...selected, id: pocket.id } : population(pocket.id, pocket.account_ids) }));
   const result = { ...prepared, selection_revision: selection.revision, selected, pockets: pocketResults,
     work: { ...prepared.work, member_work: memberWork, measurement_values: measurementWork } };
-  const bytes = Buffer.byteLength(JSON.stringify(result)) + 16;
+  // The immutable member table can be tens of MB. Its verified exact encoded
+  // length is reused while only the selection-dependent envelope is encoded.
+  const bytes = Buffer.byteLength(JSON.stringify({ ...result, member_tables: null })) - 4
+    + membership.tableBytes + 16;
   check(bytes <= (prepared.work.source_records > L.source_records ? 64_000_000 : L.output_utf8_bytes), 'output_bytes_limit');
   result.work.output_utf8_bytes_bound = bytes;
   freeze(result);
   indexedPreviews.set(result, new Set([result.all, selected, ...pocketResults.map(pocket => pocket.result)]));
+  preparedTableBytes.set(result, membership.tableBytes);
   return result;
 }
 
@@ -324,7 +330,7 @@ export function reselectCustomCohortIndexedObservationPreview(prepared, selectio
  * must bind it to the current authorized context and verify its exact digest;
  * this routine checks the indexed grammar but does not grant access itself.
  */
-export function restoreCustomCohortIndexedObservationPreview(value) {
+export function restoreCustomCohortIndexedObservationPreview(value, memberTableUtf8Bytes = null) {
   check(value && Object.getPrototypeOf(value) === Object.prototype
     && value.preview_version === 2 && value.representation === 'indexed_members_v1'
     && value.status === 'observations_only' && value.authority === 'not_established'
@@ -338,7 +344,11 @@ export function restoreCustomCohortIndexedObservationPreview(value) {
     && value.member_tables.stock.length === value.all.stock.member_count
     && value.member_tables.source_reported.length === value.all.source_reported.member_count,
   'prepared_index_required');
+  if (memberTableUtf8Bytes !== null) check(Number.isSafeInteger(memberTableUtf8Bytes)
+    && memberTableUtf8Bytes > 0 && memberTableUtf8Bytes <= 64_000_000, 'member_table_bytes');
   const issued = freeze(value);
+  preparedTableBytes.set(issued, memberTableUtf8Bytes
+    ?? Buffer.byteLength(JSON.stringify(issued.member_tables)));
   const populations = new Set([issued.all, issued.selected,
     ...bounded(issued.pockets, L.pockets, 'pockets').map(pocket => pocket.result)]);
   indexedPreviews.set(issued, populations);
@@ -662,6 +672,7 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
     result.work.output_utf8_bytes_bound = Math.max(outputBytes, exactBytes + 16);
     check(result.work.output_utf8_bytes_bound <= outputByteLimit, 'output_bytes_limit');
     freeze(result);
+    preparedTableBytes.set(result, tableBytes);
     indexedPreviews.set(result, new Set([all, selected, ...pocketResults.map(pocket => pocket.result)]));
     // Validate the emitted index grammar without constructing an expanded view.
     for (const population of indexedPreviews.get(result)) for (const kind of MEMBER_KINDS) {

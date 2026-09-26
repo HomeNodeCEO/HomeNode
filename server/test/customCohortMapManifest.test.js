@@ -58,3 +58,17 @@ test('a subject outside the captured roster has no invented subject marker', () 
   assert.deepEqual(result.subject_parcels, []);
   assert.equal(result.counts.captured_accounts, 4);
 });
+
+test('a dense captured map has a substantially smaller display manifest', () => {
+  const accounts = Array.from({ length: 1024 }, (_, index) => `A${index}`);
+  const denseCatalog = { ...catalog, subject_membership: { account_id: accounts[0] },
+    pockets: [{ id: 'recorded-cad:one', label: 'One', county: 'Dallas', account_ids: accounts }],
+    unassigned: { account_ids: [] } };
+  const denseMap = { ...map, geojson: { type: 'FeatureCollection',
+    features: accounts.map((account, index) => feature(index + 1, account, -97 + (index % 32) * .001)) },
+  counts: { parcels: accounts.length, accounts: accounts.length } };
+  const manifest = buildCustomCohortMapManifest(denseCatalog, denseMap);
+  assert.equal(manifest.status, 'available');
+  assert.equal(manifest.counts.captured_parcels, accounts.length);
+  assert.ok(Buffer.byteLength(JSON.stringify(manifest)) * 10 < Buffer.byteLength(JSON.stringify(denseMap)));
+});

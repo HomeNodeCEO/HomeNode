@@ -21,6 +21,7 @@ export interface CustomCohortMapPresentation {
   readonly scoresByGroup: Readonly<Record<string, CustomCohortMapScore>>;
   readonly labels: { readonly type: 'FeatureCollection'; readonly features: readonly CustomCohortMapLabel[] };
   readonly unlabelled_group_ids: readonly string[];
+  readonly bounds: readonly [readonly [number, number], readonly [number, number]] | null;
 }
 export const CUSTOM_COHORT_MAP_PRESENTATION_LIMITS = Object.freeze({ groups: 1024, accounts: 50000, parcels: 100000,
   coordinates: 1000000, outputBytes: 2_000_000 });
@@ -60,8 +61,9 @@ function freeze<T>(value: T): T {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); } return value;
 }
 function result(status: CustomCohortMapPresentation['status'], reason: CustomCohortMapPresentation['reason'],
-  scoresByGroup: Record<string, CustomCohortMapScore>, features: CustomCohortMapLabel[], unlabelled: readonly string[], outputBytes: number): CustomCohortMapPresentation {
-  const output = { status, reason, scoresByGroup, labels: { type: 'FeatureCollection' as const, features }, unlabelled_group_ids: [...unlabelled] };
+  scoresByGroup: Record<string, CustomCohortMapScore>, features: CustomCohortMapLabel[], unlabelled: readonly string[], outputBytes: number,
+  bounds: CustomCohortMapPresentation['bounds'] = null): CustomCohortMapPresentation {
+  const output = { status, reason, scoresByGroup, labels: { type: 'FeatureCollection' as const, features }, unlabelled_group_ids: [...unlabelled], bounds };
   check(encoder.encode(JSON.stringify(output)).length <= outputBytes); return freeze(output);
 }
 function scores(catalog: CheckedPocketCatalog, groups: ReadonlyMap<string, { count: number }>, groupLimit: number): Record<string, CustomCohortMapScore> {
@@ -150,6 +152,7 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
   const geojson = field(map, 'geojson'); check(field(geojson, 'type') === 'FeatureCollection');
   const features = array(field(geojson, 'features'), L.parcels), candidates = new Map<string, Candidate>();
   const represented = new Set<string>(), parcelIds = new Set<string>(); let coordinates = 0;
+  let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
   function polygon(raw: unknown): readonly [number, number] {
     const rings = array(raw, Math.floor(L.coordinates / 4)); check(rings.length > 0); let anchor: readonly [number, number] | null = null;
     for (const [index, r] of rings.entries()) {
@@ -160,6 +163,8 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
         check(point.length === 2 && typeof point[0] === 'number' && typeof point[1] === 'number'
           && Number.isFinite(point[0]) && Number.isFinite(point[1]) && Math.abs(point[0]) <= 180 && Math.abs(point[1]) <= 90);
         const pair: readonly [number, number] = [point[0], point[1]]; first ??= pair; last = pair;
+        west = Math.min(west, pair[0]); east = Math.max(east, pair[0]);
+        south = Math.min(south, pair[1]); north = Math.max(north, pair[1]);
         if (index === 0 && (anchor === null || coordinateBefore(pair, anchor))) anchor = pair;
       }
       check(first && last && first[0] === last[0] && first[1] === last[1]);
@@ -194,5 +199,6 @@ export function buildCustomCohortMapPresentation({ catalog, group }: {
       properties: { pocket_id: id, label: name.label, county: name.county, account_id: c.account, parcel_id: c.parcel,
         anchor_basis: 'retained_exterior_ring_vertex' } });
   }
-  return result('available', null, scoreMap, labels, unlabelled, limits.outputBytes);
+  return result('available', null, scoreMap, labels, unlabelled, limits.outputBytes,
+    Number.isFinite(west) ? [[west, south], [east, north]] : null);
 }

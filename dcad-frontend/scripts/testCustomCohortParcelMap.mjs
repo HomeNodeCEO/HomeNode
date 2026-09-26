@@ -182,9 +182,18 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.equal(data.features[0].geometry.coordinates.length, 2);
   assert.equal(data.features[2].geometry.coordinates.length, 2);
   assert.equal(map.fits.length, 1); assert.equal(map.options.attributionControl, true);
+  assert.deepEqual(map.fits[0].bounds, [[-97, 32], [-96.78, 32.01]]);
   assert.match(h.html(), /Included · red outline/);
   assert.doesNotMatch(h.html(), /Color parcels by/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
+});
+test('optional presentation refusal retains the original geometry bounds and map', async () => {
+  const props = fixture(), h = harness();
+  props.group.parcel_map.geojson.features[0].properties.account_id = 'UNMATCHED';
+  await h.ready(props);
+  assert.equal(h.maps.length, 1);
+  assert.deepEqual(h.maps[0].fits[0].bounds, [[-97, 32], [-96.78, 32.01]]);
+  assert.match(h.html(), /Recorded labels and similarity colors are unavailable/);
 });
 test('recorded labels explicitly use the OpenFreeMap font across toggles and remounts', async () => {
   const props = fixture(), h = harness(); await h.ready(props);

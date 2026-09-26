@@ -95,6 +95,44 @@ test('opening catalog passes recorded IDs only and expands only its explicitly r
   assert.equal((await oversized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] })).status, 422);
 });
 
+test('large authorized catalogs negotiate gzip without changing JSON or the uncompressed byte ceiling', async t => {
+  const payload = { catalog: { recorded_groups: Array.from({ length: 2000 }, (_, index) => ({
+    id: `group-${index}`, label: 'SUBDIVISION WITH REPETITIVE PARCEL GEOMETRY', coordinates: [-96.681234, 32.912345],
+  })) } };
+  const { request } = await start(t, { methods: { catalog: async () => payload } });
+  const compressed = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'gzip',
+  } });
+  assert.equal(compressed.status, 200);
+  assert.equal(compressed.headers.get('content-encoding'), 'gzip');
+  assert.match(compressed.headers.get('vary') ?? '', /Accept-Encoding/i);
+  assert.equal(compressed.headers.get('cache-control'), 'no-store');
+  assert.ok(Number(compressed.headers.get('content-length')) < Buffer.byteLength(JSON.stringify(payload), 'utf8') / 2);
+  assert.deepEqual(await compressed.json(), payload);
+
+  const identity = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'identity',
+  } });
+  assert.equal(identity.status, 200);
+  assert.equal(identity.headers.get('content-encoding'), null);
+  assert.match(identity.headers.get('vary') ?? '', /Accept-Encoding/i);
+  assert.deepEqual(await identity.json(), payload);
+  const refusedEncoding = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'gzip;q=0, identity',
+  } });
+  assert.equal(refusedEncoding.headers.get('content-encoding'), null);
+  assert.deepEqual(await refusedEncoding.json(), payload);
+
+  const refused = await start(t, { methods: { catalog: async () => ({ large: 'x'.repeat(4_000_000) }) } });
+  const overLimit = await refused.request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'gzip',
+  } });
+  assert.equal(overLimit.status, 422, 'compressibility cannot bypass the complete-response byte ceiling');
+  assert.equal(overLimit.headers.get('content-encoding'), null);
+  assert.deepEqual(await overLimit.json(), { error: 'neighborhood_catalog_incomplete',
+    reason: 'catalog_response_byte_limit', membership_returned: false });
+});
+
 test('fresh opening mode is exact, exclusive, and uses the existing combined envelope', async t => {
   const normal = await start(t);
   const mode = { initial_preview_mode: 'all_catalog_groups' };

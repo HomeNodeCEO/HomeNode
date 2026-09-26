@@ -14,13 +14,15 @@ const bodies = {
   capture: { assignment_file_id: assignment, operation_id: contextRef.context_id,
     observation_period: { start_date: '2024-01-01', end_date: '2024-06-30' } },
   preview: { assignment_file_id: assignment, context_ref: contextRef, selection, include_map: false },
+  viewport: { assignment_file_id: assignment, context_ref: contextRef, selection,
+    viewport: { west: -96.9, south: 32.8, east: -96.8, north: 32.9 } },
   catalog: { assignment_file_id: assignment, context_ref: contextRef, selection },
   members: { assignment_file_id: assignment, context_ref: contextRef, selection,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } },
 };
 async function start(t, { principal = auth, methods = {}, parsed = false, logger } = {}) {
   const calls = [], fallthroughErrors = [];
-  const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog'].map(name => [name, methods[name] ?? (async (...args) => {
+  const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog', 'viewport'].map(name => [name, methods[name] ?? (async (...args) => {
     calls.push({ name, args }); return { status: name, marker: 'compact-only' };
   })]));
   service.preview = () => assert.fail('raw preview must never reach HTTP');
@@ -46,6 +48,26 @@ async function start(t, { principal = auth, methods = {}, parsed = false, logger
 test('cohort router requires actual display/inspection owner methods', () => {
   assert.throws(() => createCustomNeighborhoodCohortRouter({
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
+});
+
+test('viewport is authenticated, assignment-bound, and refuses oversized display results', async t => {
+  const { request, calls } = await start(t);
+  const response = await request('viewport');
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get('cache-control'), 'no-store');
+  assert.equal(calls[0].name, 'viewport');
+  assert.equal(calls[0].args[0].assignmentFileId, assignment);
+  assert.equal(calls[0].args[0].auth, auth);
+  assert.deepEqual(calls[0].args[1], bodies.viewport.viewport);
+  assert.equal((await request('viewport', { ...bodies.viewport, extra: true })).status, 400);
+  assert.equal(calls.length, 1);
+  const anonymous = await start(t, { principal: null });
+  assert.equal((await anonymous.request('viewport')).status, 401);
+  assert.equal(anonymous.calls.length, 0);
+  const large = await start(t, { methods: { viewport: async () => ({ geometry: 'x'.repeat(4_000_001) }) } });
+  const denied = await large.request('viewport');
+  assert.equal(denied.status, 422);
+  assert.deepEqual(await denied.json(), { error: 'neighborhood_viewport_too_dense' });
 });
 
 test('catalog version is optional, explicitly pinned, and rejects unsupported versions before owner work', async t => {

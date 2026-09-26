@@ -39,6 +39,7 @@ import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPrepared
   customCohortPreparedParcelMapJsonBytes } from './customCohortPreparedPreviewRepository.js';
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
+import { prepareCustomCohortViewport, projectCustomCohortViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
 import { buildCustomCohortPocketCatalog, presentCustomCohortPocketCatalog, CUSTOM_COHORT_POCKET_CATALOG_LIMITS,
   CUSTOM_COHORT_DENSE_CATALOG_VERSION, customCohortCatalogGroupLimit } from './customCohortPocketCatalog.js';
@@ -1610,6 +1611,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');
     return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary', preparedFast: true,
       project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected }), parcel_map: parcelMap }) });
+  }, async viewport(value, viewport, options = {}) {
+    const checked = prepareCustomCohortViewport(viewport);
+    const preview = await runPreview(value, options, { includeMap: true, exposure: 'report_observation_summary', preparedFast: true,
+      project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected }), parcel_map: parcelMap }) });
+    return projectCustomCohortViewportMap(preview, checked);
   }, inspect(value, inspection, options = {}) {
     exactKeys(inspection, ['population', 'page']);
     const owned = freeze(JSON.parse(canonicalAssessmentJson(inspection)));

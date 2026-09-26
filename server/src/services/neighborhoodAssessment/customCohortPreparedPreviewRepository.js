@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { gzip, gunzip } from 'node:zlib';
 import { promisify } from 'node:util';
 import { canonicalAssessmentJson } from './contract.js';
+import { createCustomPreparedPreviewReadTiming } from './customCapturePhaseTiming.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextScope } from './customCohortContextContract.js';
 import { isCustomCohortObservationPreview,
   reselectCustomCohortIndexedObservationPreview,
@@ -65,23 +66,26 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
   };
   const read = async ({ includeMap = true } = {}) => {
     check(typeof includeMap === 'boolean', 'invalid_read');
-    const found = await query(`/* custom-cohort-prepared-preview:read */
+    const timed = createCustomPreparedPreviewReadTiming();
+    const found = await timed('query', () => query(`/* custom-cohort-prepared-preview:read */
       SELECT preview_sha256, preview_utf8_bytes, compressed_preview
         ${includeMap ? ', map_sha256, map_utf8_bytes, compressed_map' : ''}
       FROM app.neighborhood_custom_cohort_prepared_previews
       WHERE organization_id=$1::uuid AND context_id=$2::uuid
-        AND context_sha256=$3 AND format_version=1`, key);
+        AND context_sha256=$3 AND format_version=1`, key));
     if (found?.rowCount === 0) return null;
     const row = one(found);
-    const parsed = await decode(row, 'preview');
+    const parsed = await timed('preview_decode', () => decode(row, 'preview'));
     check(parsed && canonicalAssessmentJson(parsed.context_ref) === canonicalAssessmentJson(context)
       && matchesScope(parsed),
     'storage_conflict');
-    const tableBytes = row.preview_utf8_bytes
-      - Buffer.byteLength(JSON.stringify({ ...parsed, member_tables: null })) + 4;
-    const preview = restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
+    const preview = await timed('preview_restore', () => {
+      const tableBytes = row.preview_utf8_bytes
+        - Buffer.byteLength(JSON.stringify({ ...parsed, member_tables: null })) + 4;
+      return restoreCustomCohortIndexedObservationPreview(parsed, tableBytes);
+    });
     if (!includeMap) return Object.freeze({ preview, parcel_map: null });
-    const map = await decode(row, 'map');
+    const map = await timed('map_decode', () => decode(row, 'map'));
     check(map && ['available', 'unavailable'].includes(map.status)
       && (map.status === 'available' ? map.geojson?.type === 'FeatureCollection'
         && Array.isArray(map.geojson.features) : map.geojson === null), 'storage_conflict');

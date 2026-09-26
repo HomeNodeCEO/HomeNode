@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { performance } from 'node:perf_hooks';
 import { createCustomPreviewPhaseTiming, createCustomCatalogPhaseTiming,
-  createCustomPreparedCatalogPhaseTiming } from '../src/services/neighborhoodAssessment/customCapturePhaseTiming.js';
+  createCustomPreparedCatalogPhaseTiming,
+  createCustomPreparedPreviewReadTiming } from '../src/services/neighborhoodAssessment/customCapturePhaseTiming.js';
 
 test('preview timings expose fixed phases and durations but no request evidence', async t => {
   let now = 100; t.mock.method(performance, 'now', () => now);
@@ -60,4 +61,16 @@ test('saved catalog timings distinguish authorized reads from projection and fin
   assert.doesNotMatch(JSON.stringify(events), /PRIVATE|account|geometry|source/);
   await assert.rejects(phase('load', () => null), /invalid_prepared_catalog_phase/);
   await assert.rejects(phase('target', () => null), /invalid_prepared_catalog_phase/);
+});
+
+test('prepared preview read timings distinguish transfer, decode, and restore without evidence', async t => {
+  let now = 100; t.mock.method(performance, 'now', () => now);
+  const events = [], phase = createCustomPreparedPreviewReadTiming(event => events.push(event));
+  const names = ['query', 'preview_decode', 'preview_restore', 'map_decode'];
+  for (const name of names) assert.equal(await phase(name, () => { now += 4; return 'PRIVATE'; }), 'PRIVATE');
+  assert.deepEqual(events, names.map((name, index) => ({ phase: name, outcome: 'completed',
+    duration_ms: 4, elapsed_ms: (index + 1) * 4 })));
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE|account|geometry|source|sql/);
+  await assert.rejects(phase('read', () => null), /invalid_prepared_preview_read_phase/);
+  await assert.rejects(phase('query', () => null), /invalid_prepared_preview_read_phase/);
 });

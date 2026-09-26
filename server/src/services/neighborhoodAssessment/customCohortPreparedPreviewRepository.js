@@ -97,12 +97,12 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         storedMap.digest, storedMap.bytes, storedMap.compressed]);
       check(stored?.rowCount === 0 || (stored?.rowCount === 1
         && one(stored).preview_sha256 === storedPreview.digest
-        && one(stored).map_sha256 === storedMap.digest), 'storage_conflict');
+        && one(stored).map_sha256 === storedMap.digest), 'insert_result_conflict');
       if (stored.rowCount === 0) {
         const existing = await read();
         check(existing && hash(Buffer.from(JSON.stringify(existing.preview))) === storedPreview.digest
           && hash(Buffer.from(JSON.stringify(existing.parcel_map))) === storedMap.digest,
-          'storage_conflict');
+          'existing_conflict');
       }
       return Object.freeze({ status: stored.rowCount === 1 ? 'prepared' : 'reused',
         preview_sha256: storedPreview.digest, map_sha256: storedMap.digest });

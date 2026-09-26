@@ -148,7 +148,7 @@ test('context-scoped immutable prepared read model survives serialization and re
   const args = fixture(), baseline = indexed(args);
   const target = args.retained_inputs.subject.target;
   const scope = canonicalAssessmentJson({ organization_id: target.organization_id,
-    report_file_id: target.report_file_id, assignment_file_id: target.workflow_target_id,
+    report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id,
     account_id: target.account_id });
   let stored = null;
   const client = { async query(sql, params) {

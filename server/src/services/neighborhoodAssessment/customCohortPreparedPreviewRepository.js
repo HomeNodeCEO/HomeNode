@@ -30,7 +30,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
   const key = [scope.organization_id, context.context_id, context.context_sha256];
   const matchesScope = preview => preview.target?.organization_id === scope.organization_id
     && preview.target?.report_file_id === scope.report_file_id
-    && preview.target?.workflow_target_id === scope.assignment_file_id
+    && preview.target?.assignment_file_id === scope.assignment_file_id
     && preview.target?.account_id === scope.account_id;
   const query = client.query.bind(client);
   const encode = async (value, kind) => {

@@ -82,6 +82,7 @@ test("audit threshold stays aligned with the signed-PDF photo cap", async () => 
   const reportSource = await readFile(new URL("../src/services/customAppraisalReportPdf.js", import.meta.url), "utf8");
   assert.match(reportSource, /const MAX_REPORT_PHOTOS = 100;/);
   assert.match(reportSource, /const MAX_MEDIA_BYTES = 8 \* 1024 \* 1024;/);
+  assert.match(reportSource, /ORDER BY CASE photo_object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*photo_object\.id\s+LIMIT 1/);
   assert.equal(customSignedPhotoCoverageAuditInternals.MAX_PDF_PHOTO_BYTES, 8 * 1024 * 1024);
   assert.match(customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL, /verified_photo_count > 100/);
 });

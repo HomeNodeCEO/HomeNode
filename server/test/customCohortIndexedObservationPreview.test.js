@@ -192,8 +192,10 @@ test('context-scoped immutable prepared read model survives serialization and re
   const hot = await repository.read({ useVerifiedPreviewCache: true });
   const reopened = preparedRepository(client, scope, args.context_ref);
   const hotAgain = await reopened.read({ useVerifiedPreviewCache: true });
-  assert.equal(hotAgain.preview, hot.preview, 'only the verified immutable observation index is reused');
-  assert.notEqual(hotAgain.parcel_map, hot.parcel_map, 'the full map is decoded and validated for each read');
+  assert.equal(hotAgain.preview, hot.preview, 'the verified immutable observation index is reused');
+  assert.equal(hotAgain.parcel_map, hot.parcel_map, 'verified immutable geometry is reused');
+  assert.throws(() => { hotAgain.parcel_map.geojson.features[0].properties.selected = true; }, TypeError);
+  assert.equal(selectPreparedMap(hotAgain.parcel_map, ['A']).geojson.features[0].properties.selected, true);
   const foreignScope = canonicalAssessmentJson({ organization_id: target.organization_id,
     report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id + 1,
     account_id: target.account_id });
@@ -202,6 +204,11 @@ test('context-scoped immutable prepared read model survives serialization and re
   'a verified preview cannot be reused across assignment scope');
   assert.notEqual((await reopened.read()).preview, hot.preview, 'ordinary repository reads bypass the optional cache');
   const valid = stored;
+  stored = { ...valid, compressed_map: Buffer.from(valid.compressed_map) };
+  stored.compressed_map[0] ^= 1;
+  await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,
+    'changed map bytes cannot reuse previously verified geometry');
+  stored = valid;
   stored = { ...valid, compressed_preview: Buffer.from(valid.compressed_preview) };
   stored.compressed_preview[0] ^= 1;
   await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,

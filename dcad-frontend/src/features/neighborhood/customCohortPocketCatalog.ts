@@ -1,6 +1,8 @@
 import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
 import { checkCustomCohortPocketRecommendation } from './customCohortPocketRecommendation.ts';
 import type { CheckedPocketRecommendation } from './customCohortPocketRecommendation';
+import { checkCustomCohortPreparedSecondaryMap } from './customCohortPreparedSecondaryMap.ts';
+import type { CheckedPreparedSecondaryMap } from './customCohortPreparedSecondaryMap';
 import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
 import { prepareCustomWorkspaceDiscovery } from './customWorkspaceDiscovery.ts';
@@ -23,6 +25,7 @@ export interface CheckedPocketCatalog {
     readonly status: string; readonly recorded_label_match_only: true };
   readonly limitations: readonly string[];
   readonly recommendation?: CheckedPocketRecommendation | null;
+  readonly prepared_secondary_map?: CheckedPreparedSecondaryMap;
   readonly private_sales?: CheckedPrivateSalesObservations;
   readonly discovery?: CustomWorkspaceCityDiscovery;
 }
@@ -99,13 +102,18 @@ export function checkCustomCohortPocketCatalog(value: unknown, expected: CustomC
     limitations: catalog.limitations.map(v => text(v, 200)) };
   const recommendation = Object.hasOwn(response, 'recommendation')
     ? checkCustomCohortPocketRecommendation(response.recommendation, checked, binding.selection_sha256) : null;
+  const preparedSecondary = recommendation && Object.hasOwn(response, 'prepared_secondary_map')
+    ? checkCustomCohortPreparedSecondaryMap(response.prepared_secondary_map,
+      [...pockets, ...(unassignedAccounts.length ? [{ id: UNASSIGNED, member_count: unassignedAccounts.length }] : [])]) : null;
+  ensure(!Object.hasOwn(response, 'prepared_secondary_map') || preparedSecondary !== null);
   const privateSales = Object.hasOwn(response, 'private_sales')
     ? checkCustomCohortPrivateSales(response.private_sales, expected, text(binding.selection_sha256, 64)) : null;
   const discovery = Object.hasOwn(response, 'discovery') ? prepareCustomWorkspaceDiscovery(response.discovery) : undefined;
   ensure(!discovery || discovery.profile_id === 'custom-city-polygon-v1');
   if (discovery && recommendation) ensure(recommendation.policy.revision === 3
     && recommendation.evidence_mode === 'recorded_housing_only' && !recommendation.recorded_proximity);
-  return frozen({ ...checked, recommendation, ...(privateSales ? { private_sales: privateSales } : {}),
+  return frozen({ ...checked, recommendation, ...(preparedSecondary ? { prepared_secondary_map: preparedSecondary } : {}),
+    ...(privateSales ? { private_sales: privateSales } : {}),
     ...(discovery?.profile_id === 'custom-city-polygon-v1' ? { discovery } : {}) });
 }
 

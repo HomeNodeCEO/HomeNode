@@ -86,6 +86,14 @@ function scores(catalog: CheckedPocketCatalog, groups: ReadonlyMap<string, { cou
     }
     check(byId.size === groups.size);
   }
+  // Only map colors use the source-revision-checked prepared snapshot. The
+  // established recommendation, ranks and report population remain unchanged.
+  if (catalog.prepared_secondary_map) for (const group of catalog.prepared_secondary_map.groups) {
+    if (!group.supported_member_count || group.lower === null || group.upper === null) continue;
+    check(groups.get(group.id)?.count === group.member_count && byId.has(group.id));
+    byId.set(group.id, { lower: group.lower, upper: group.upper,
+      known_weight_percent: Math.max(0, Math.min(100, 100 - group.upper + group.lower)) });
+  }
   for (const [id, group] of groups) {
     const values = byId.get(id) ?? { lower: null, upper: null, known_weight_percent: null };
     const reason = id === CUSTOM_COHORT_UNASSIGNED_GROUP ? 'unassigned_recorded_group' : !recommendation ? 'recommendation_unavailable'

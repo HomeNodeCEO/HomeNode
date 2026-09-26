@@ -190,6 +190,8 @@ function privatePaths(fixtures) {
   const propertyTax = encodeURIComponent(fixtures.propertyTaxFileId);
   return Object.freeze({
     customWorkfile: `/api/accounts/${account}/assignment-files/${custom}/workfile`,
+    customDownload: `/api/accounts/${account}/assignment-files/${custom}/workfile/download`,
+    customReportPdf: `/api/accounts/${account}/assignment-files/${custom}/workfile/report.pdf`,
     customDocuments: `/api/accounts/${account}/documents?assignment_file_id=${custom}`,
     customPhotos: `/api/accounts/${account}/assignment-files/${custom}/photos`,
     customSection: `/api/accounts/${account}/assignment-files/${custom}/workfile/sections/subject`,
@@ -243,6 +245,8 @@ export async function runApplicationAuthPublicPreflight({
     { name: "mobile_capabilities", path: "/api/mobile/capabilities", expected: [200] },
     { name: "anonymous_browser_session", path: "/api/auth/me", expected: [401] },
     { name: "anonymous_custom_workfile", path: fixtures.customWorkfile, expected: [401] },
+    { name: "anonymous_probe_custom_download", path: fixtures.customDownload, expected: [401] },
+    { name: "anonymous_probe_custom_report_pdf", path: fixtures.customReportPdf, expected: [401] },
     { name: "anonymous_uad_workfile", path: fixtures.uadWorkfile, expected: [401] },
     { name: "anonymous_property_tax_workfile", path: fixtures.propertyTaxWorkfile, expected: [401] },
     { name: "anonymous_mobile_identity", path: "/api/mobile/me", expected: [401] },
@@ -346,6 +350,8 @@ export async function runApplicationAuthStagingMatrix(input = {}) {
   }
 
   const anonymousProbes = await runProbes(fetchImpl, configuration, [
+    ["anonymous_custom_download", paths.customDownload, {}],
+    ["anonymous_custom_report_pdf", paths.customReportPdf, {}],
     ["anonymous_custom_documents", paths.customDocuments, {}],
     ["anonymous_custom_photos", paths.customPhotos, {}],
     ["anonymous_custom_section_write", paths.customSection, { method: "PUT", headers: JSON_HEADERS, body: EMPTY_JSON }],
@@ -364,6 +370,7 @@ export async function runApplicationAuthStagingMatrix(input = {}) {
 
   const positiveProbes = await runProbes(fetchImpl, configuration, [
     ["organization_a_custom_workfile", paths.customWorkfile],
+    ["organization_a_custom_download", paths.customDownload],
     ["organization_a_custom_documents", paths.customDocuments],
     ["organization_a_custom_photos", paths.customPhotos],
     ["organization_a_uad_workfile", paths.uadWorkfile],
@@ -376,6 +383,8 @@ export async function runApplicationAuthStagingMatrix(input = {}) {
 
   const deniedProbes = await runProbes(fetchImpl, configuration, [
     ["organization_b_custom_workfile_denied", paths.customWorkfile, {}],
+    ["organization_b_custom_download_denied", paths.customDownload, {}],
+    ["organization_b_custom_report_pdf_denied", paths.customReportPdf, {}],
     ["organization_b_custom_documents_denied", paths.customDocuments, {}],
     ["organization_b_custom_photos_denied", paths.customPhotos, {}],
     ["organization_b_custom_section_write_denied", paths.customSection, { method: "PUT", headers: JSON_HEADERS, body: EMPTY_JSON }],

@@ -905,8 +905,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           if (recommendedAreaOpening && Object.hasOwn(response, 'initial_preview')) {
             // A dropped recommendation cannot leave behind its private subset
             // preview: the client would restore the complete-catalog fallback.
-            response.initial_preview = await presentOpening(customCohortOpeningSelection(response.catalog,
-              customCohortOpeningGroupIds(response.catalog), expected.selection_revision));
+            response.initial_preview = await createCustomCatalogPhaseTiming()('fallback_opening', () => presentOpening(customCohortOpeningSelection(response.catalog,
+              customCohortOpeningGroupIds(response.catalog), expected.selection_revision)));
           }
         }
       }
@@ -1379,7 +1379,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // No map can consume this overlay when the retained parcel geometry is
         // unavailable. This also avoids an unnecessary index checkout.
         const prepared_secondary_facts = !city && recorded_proximity?.reason === 'retained_map_unavailable'
-          ? null : await timed('prepared_secondary', () => deriveSecondary().catch(() => null));
+          ? null : await timed('prepared_secondary', deriveSecondary).catch(() => null);
         checkBudget();
         const maximumBytes = Math.max(0, Math.min(CUSTOM_COHORT_DENSE_RECOMMENDATION_PRESENTATION_BYTES,
           CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes

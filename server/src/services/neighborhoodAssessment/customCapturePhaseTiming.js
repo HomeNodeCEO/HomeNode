@@ -4,7 +4,7 @@ const PHASES = new Set(['subject', 'spatial', 'source', 'source_authorization', 
   'preparation', 'retention', 'registration']);
 const REPORT_PHASES = new Set(['load', 'assembly', 'publication', 'repository']);
 const PREVIEW_PHASES = new Set(['load', 'assembly', 'map', 'projection', 'authorization']);
-const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening']);
+const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'recommendation', 'opening', 'fallback_opening']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {

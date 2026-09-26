@@ -231,6 +231,8 @@ test('compact overview paints scored subdivision markers before bounded detail a
   assert.equal(h.viewportCalls.length, 1);
   assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
   assert.deepEqual(map.getSource('custom-cohort-parcels').data.features[0].geometry, all[0].geometry);
+  assert.equal(map.fits.length, 1, 'viewport detail must not refit the broad capture');
+  assert.equal(map.getZoom(), 14, 'the close-up camera remains in place');
   h.unmount();
 });
 test('optional presentation refusal retains the original geometry bounds and map', async () => {

@@ -472,7 +472,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         // Reset retained feature-state because IDs can survive a source refresh.
         geojson.features.forEach(f => map.setFeatureState({ source: SOURCE, id: f.id }, paintFor(f)));
         const bounds = displayBounds(presentation, geojson.features);
-        if (bounds && !cityViewActive.current) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
+        // A viewport response only replaces visible detail. Refitting to the
+        // capture here would zoom back out and immediately discard that detail.
+        if (bounds && !cityViewActive.current && !deferredMode) map.fitBounds(bounds, { padding: 28, maxZoom: 16, duration: 0 });
       }
       painted.current = geojson.features;
       if (paintedLabels.current !== labelsKey) {

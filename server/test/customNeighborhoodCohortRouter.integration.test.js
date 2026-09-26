@@ -95,7 +95,7 @@ test('opening catalog passes recorded IDs only and expands only its explicitly r
   assert.equal((await oversized.request('catalog', { ...bodies.catalog, initial_preview_groups: [] })).status, 422);
 });
 
-test('large authorized catalogs negotiate gzip without changing JSON or the uncompressed byte ceiling', async t => {
+test('large authorized catalogs negotiate Brotli or gzip without changing JSON or the uncompressed byte ceiling', async t => {
   const payload = { catalog: { recorded_groups: Array.from({ length: 2000 }, (_, index) => ({
     id: `group-${index}`, label: 'SUBDIVISION WITH REPETITIVE PARCEL GEOMETRY', coordinates: [-96.681234, 32.912345],
   })) } };
@@ -110,6 +110,22 @@ test('large authorized catalogs negotiate gzip without changing JSON or the unco
   assert.ok(Number(compressed.headers.get('content-length')) < Buffer.byteLength(JSON.stringify(payload), 'utf8') / 2);
   assert.deepEqual(await compressed.json(), payload);
 
+  const brotli = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'br, gzip',
+  } });
+  assert.equal(brotli.status, 200);
+  assert.equal(brotli.headers.get('content-encoding'), 'br');
+  assert.match(brotli.headers.get('vary') ?? '', /Accept-Encoding/i);
+  assert.equal(brotli.headers.get('cache-control'), 'no-store');
+  assert.ok(Number(brotli.headers.get('content-length')) < Number(compressed.headers.get('content-length')));
+  assert.deepEqual(await brotli.json(), payload);
+
+  const gzipPreferred = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'br;q=0.2, gzip;q=1',
+  } });
+  assert.equal(gzipPreferred.headers.get('content-encoding'), 'gzip');
+  assert.deepEqual(await gzipPreferred.json(), payload);
+
   const identity = await request('catalog', bodies.catalog, { headers: {
     'content-type': 'application/json', 'accept-encoding': 'identity',
   } });
@@ -122,6 +138,11 @@ test('large authorized catalogs negotiate gzip without changing JSON or the unco
   } });
   assert.equal(refusedEncoding.headers.get('content-encoding'), null);
   assert.deepEqual(await refusedEncoding.json(), payload);
+  const refusedBoth = await request('catalog', bodies.catalog, { headers: {
+    'content-type': 'application/json', 'accept-encoding': 'br;q=0, gzip;q=0, identity',
+  } });
+  assert.equal(refusedBoth.headers.get('content-encoding'), null);
+  assert.deepEqual(await refusedBoth.json(), payload);
 
   const refused = await start(t, { methods: { catalog: async () => ({ large: 'x'.repeat(4_000_000) }) } });
   const overLimit = await refused.request('catalog', bodies.catalog, { headers: {

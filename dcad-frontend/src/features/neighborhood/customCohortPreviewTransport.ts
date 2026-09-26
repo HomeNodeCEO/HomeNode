@@ -145,14 +145,14 @@ export function createCustomCohortMemberTransport(options: Options) {
 }
 export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMemberTransport>;
 
-/** Shared bounded transport for the three read-only views and idempotent context
+/** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply'].includes(operation)) throw new Error('Invalid neighborhood request');
     const openingMode = operation === 'catalog' && payload !== null && typeof payload === 'object'
       && Object.hasOwn(payload, 'initial_preview_mode');
     if (openingMode && (!['all_catalog_groups', 'recommended_area'].includes(String((payload as Record<string, unknown>).initial_preview_mode))
@@ -163,6 +163,7 @@ export function createCustomCohortJsonTransport(options: Options) {
     if (encoder.encode(body).length > REQUEST_BYTES) throw new Error('Neighborhood preview selection is too large');
     return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
       operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
+        : operation === 'viewport' ? REQUEST_BYTES
         : operation === 'catalog' && payload !== null && typeof payload === 'object'
           && (openingMode || Object.hasOwn(payload, 'initial_preview_groups'))
           ? OPENING_RESPONSE_BYTES : REQUEST_BYTES, signal);

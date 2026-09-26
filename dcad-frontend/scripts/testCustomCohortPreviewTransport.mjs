@@ -34,6 +34,21 @@ test('catalog/member/capture operations share cancellation and smaller response 
   }
 });
 
+test('viewport uses the authenticated closed operation and its own 4MB response bound', async () => {
+  const signal = new AbortController().signal;
+  let path, sent;
+  const transport = createCustomCohortJsonTransport({ urlFor: value => { path = value; return value; },
+    request: async (_url, init) => { sent = JSON.parse(init.body); return json({ display_only: true }); } });
+  const payload = { assignment_file_id: '4', context_ref: input().contextRef, selection: input().selection,
+    viewport: { west: -97, south: 32, east: -96, north: 33 } };
+  assert.deepEqual(await transport('R-1', 'viewport', payload, { signal }), { display_only: true });
+  assert.equal(path, '/api/accounts/R-1/neighborhood-cohort/viewport');
+  assert.deepEqual(sent, payload);
+  const oversized = createCustomCohortJsonTransport({ urlFor: value => value,
+    request: async () => responseStream(stream([encoded(`"${'x'.repeat(4_000_000)}"`)])) });
+  await assert.rejects(oversized('R-1', 'viewport', payload, { signal }), /too large/);
+});
+
 for (const payload of [{ initial_preview_groups: [] }, { initial_preview_mode: 'all_catalog_groups' }])
 test(`only explicit catalog opening ${Object.keys(payload)[0]} accepts the bounded combined 39MB envelope`, async () => {
   const signal = new AbortController().signal;

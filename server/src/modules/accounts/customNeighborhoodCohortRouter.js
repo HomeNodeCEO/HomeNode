@@ -58,6 +58,7 @@ function publicFailure(error) {
   if (error?.code === 'custom_neighborhood_acceptance_not_current_section') return [409, { error: 'neighborhood_report_editor_changed' }];
   if (error?.reason === 'catalog_transport_limit') return [422, { error: 'neighborhood_catalog_incomplete',
     reason: 'catalog_response_byte_limit', membership_returned: false }];
+  if (error?.reason === 'viewport_capacity_exceeded') return [422, { error: 'neighborhood_viewport_too_dense' }];
   if (error?.type === 'entity.too.large' || error?.status === 413) return [413, { error: 'neighborhood_request_too_large' }];
   if (error?.type === 'entity.parse.failed') return [400, { error: 'invalid_neighborhood_request' }];
   const reason = error?.reason;
@@ -135,13 +136,15 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         const identity = { auth: req.mobileAuth, accountId, assignmentFileId: body.assignment_file_id };
         releaseExecution = await customCohortExecutionGate.acquire({ signal: controller.signal, deadline });
         const result = await execute(identity, body, { signal: controller.signal, deadline });
-        if (action === 'catalog') {
+        if (action === 'catalog' || action === 'viewport') {
           const encoded = JSON.stringify(result);
           const encodedBytes = Buffer.byteLength(encoded, 'utf8');
-          const maximum = Object.hasOwn(body, 'initial_preview_groups') || Object.hasOwn(body, 'initial_preview_mode')
-            ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes;
+          const maximum = action === 'viewport' ? 4_000_000
+            : Object.hasOwn(body, 'initial_preview_groups') || Object.hasOwn(body, 'initial_preview_mode')
+              ? CUSTOM_COHORT_OPENING_RESPONSE_BYTES : CUSTOM_COHORT_POCKET_CATALOG_LIMITS.transport_output_utf8_bytes;
           if (encodedBytes > maximum) {
-            throw Object.assign(new Error('catalog_transport_limit'), { reason: 'catalog_transport_limit' });
+            throw Object.assign(new Error(action === 'viewport' ? 'viewport_capacity_exceeded' : 'catalog_transport_limit'),
+              { reason: action === 'viewport' ? 'viewport_capacity_exceeded' : 'catalog_transport_limit' });
           }
           // Send the exact checked bytes: application-wide JSON indentation or
           // replacers must not expand an otherwise bounded catalog response.
@@ -155,14 +158,14 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
             const packed = encoding === 'br'
               ? await compressCatalogBrotli(encoded, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
               : await compressCatalogGzip(encoded, { level: 1 });
-            try { logger?.info?.('[neighborhood] catalog-transport', {
+            try { logger?.info?.(`[neighborhood] ${action}-transport`, {
               encoding, uncompressed_bytes: encodedBytes, response_bytes: packed.length,
             }); } catch { /* transport diagnostics cannot change the response */ }
             if (!controller.signal.aborted && !res.destroyed) return res.type('application/json')
               .set('Content-Encoding', encoding).send(packed);
           } else if (!controller.signal.aborted && !res.destroyed) {
             if (encodedBytes >= CATALOG_COMPRESSION_THRESHOLD_BYTES) {
-              try { logger?.info?.('[neighborhood] catalog-transport', {
+              try { logger?.info?.(`[neighborhood] ${action}-transport`, {
                 encoding: 'identity', uncompressed_bytes: encodedBytes, response_bytes: encodedBytes,
               }); } catch { /* transport diagnostics cannot change the response */ }
             }
@@ -201,6 +204,10 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
     return cohortService.present({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { includeMap: body.include_map }, options);
   });
+  if (typeof cohortService.viewport === 'function') {
+    route('viewport', ['assignment_file_id', 'context_ref', 'selection', 'viewport'], (identity, body, options) =>
+      cohortService.viewport({ ...identity, contextRef: body.context_ref, selection: body.selection }, body.viewport, options));
+  }
   route('members', ['assignment_file_id', 'context_ref', 'selection', 'population', 'page'], (identity, body, options) =>
     cohortService.inspect({ ...identity, contextRef: body.context_ref, selection: body.selection },
       { population: body.population, page: body.page }, options));

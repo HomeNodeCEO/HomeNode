@@ -104,6 +104,25 @@ test('unknown catalog versions fail before retained checkout', async () => {
   assert.equal(state.connects, 0);
 });
 
+test('viewport is a bounded display projection of the authorized preview, never a new population', async () => {
+  const { service, input, state } = await setup();
+  const full = await service.present(input);
+  const viewport = await service.viewport(input, { west: -97, south: 32, east: -96, north: 33 });
+  assert.equal(viewport.display_only, true);
+  assert.deepEqual(viewport.context_ref, full.context_ref);
+  assert.equal(viewport.selection_revision, full.selection_revision);
+  assert.equal(viewport.status, full.parcel_map.status);
+  if (viewport.status === 'available') {
+    assert.equal(viewport.counts.captured_parcels, full.parcel_map.counts.parcels);
+    assert.ok(viewport.counts.visible_parcels <= viewport.counts.captured_parcels);
+    assert.ok(viewport.geojson.features.every(feature => full.parcel_map.geojson.features.some(original => original.id === feature.id)));
+  }
+  const calls = state.calls.length;
+  await assert.rejects(service.viewport(input, { west: -97, south: 32, east: -95, north: 33 }), error => error.reason === 'invalid_input');
+  assert.equal(state.calls.length, calls);
+  assert.ok(state.policies.every(policy => policy.exposure === SUMMARY));
+});
+
 test('optional baseline uses both existing exposures before retained rows and after current-material check', async () => {
   const { service, input, state } = await setup();
   const result = await service.catalog({ ...input, includeRecommendation: true });

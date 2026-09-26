@@ -35,6 +35,14 @@ test('viewport treats edge overlap as visible and never invents a parcel', () =>
   assert.equal(empty.counts.captured_parcels, 2);
 });
 
+test('mutable fallback geometry is not trusted as a cached spatial index', () => {
+  const changed = structuredClone(preview);
+  const bounds = { west: -96.805, south: 31.99, east: -96.79, north: 32.01 };
+  assert.equal(projectCustomCohortViewportMap(changed, bounds).counts.visible_parcels, 1);
+  changed.parcel_map.geojson.features[1].geometry.coordinates = square(2, 'other', -96.8).geometry.coordinates;
+  assert.equal(projectCustomCohortViewportMap(changed, bounds).counts.visible_parcels, 2);
+});
+
 test('viewport rejects broad, malformed, and non-finite bounds', () => {
   for (const value of [null, {}, { west: -97, south: 32, east: -95, north: 33 },
     { west: -97, south: 32, east: -96, north: 32 },

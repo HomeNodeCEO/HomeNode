@@ -3,6 +3,10 @@
 // statistics bound to that selection.
 const MAX_VIEWPORT_SPAN = 1;
 const MAX_RESPONSE_BYTES = 4_000_000;
+// Prepared maps are deeply frozen and retained briefly by the verified preview
+// cache. Keep their parcel bounds for repeated pans without retaining a second
+// copy of coordinates or trusting mutable fallback geometry.
+const frozenBounds = new WeakMap();
 
 function invalid() { throw Object.assign(new TypeError('invalid_input'), { reason: 'invalid_input' }); }
 
@@ -18,13 +22,22 @@ export function prepareCustomCohortViewport(value) {
   return Object.freeze({ west, south, east, north });
 }
 
-function intersects(geometry, viewport) {
+function boundsOf(geometry) {
+  const cached = Object.isFrozen(geometry) ? frozenBounds.get(geometry) : null;
+  if (cached) return cached;
   let west = Infinity, south = Infinity, east = -Infinity, north = -Infinity;
   const polygons = geometry.type === 'Polygon' ? [geometry.coordinates] : geometry.coordinates;
   for (const polygon of polygons) for (const ring of polygon) for (const point of ring) {
     west = Math.min(west, point[0]); south = Math.min(south, point[1]);
     east = Math.max(east, point[0]); north = Math.max(north, point[1]);
   }
+  const bounds = { west, south, east, north };
+  if (Object.isFrozen(geometry)) frozenBounds.set(geometry, bounds);
+  return bounds;
+}
+
+function intersects(geometry, viewport) {
+  const { west, south, east, north } = boundsOf(geometry);
   return west <= viewport.east && east >= viewport.west
     && south <= viewport.north && north >= viewport.south;
 }

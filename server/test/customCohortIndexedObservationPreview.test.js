@@ -2,11 +2,15 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildCustomCohortObservationPreview as expanded,
   buildCustomCohortIndexedObservationPreview as indexed, buildCustomCohortIndexedObservationPreviewBatched as batched,
+  reselectCustomCohortIndexedObservationPreview as reselect,
   customCohortObservationMembers as members, isCustomCohortObservationPreview as supported,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS as L } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow, mapCachedSaleLinkRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from './fixtures/customCohortContextFixture.js';
+import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
+import { createCustomCohortPreparedPreviewRepository as preparedRepository,
+  selectCustomCohortPreparedParcelMap as selectPreparedMap } from '../src/services/neighborhoodAssessment/customCohortPreparedPreviewRepository.js';
 
 const NOW = '2026-09-06T08:00:00.123Z';
 const context_ref = { context_id: contextFixture().context_id, context_revision: '1', context_sha256: 'e'.repeat(64) };
@@ -105,6 +109,88 @@ test('both representations share exact observations, metrics and provenance with
   assert.equal(JSON.stringify(args), before);
   assert.deepEqual(Object.keys(next.member_tables), ['stock', 'transactions', 'source_reported']);
   assert.ok(supported(next)); assert.ok(supported(expanded(args)));
+});
+
+test('prepared selection recomputes exact union distributions from individual members, not pocket medians', () => {
+  const source = fixture({ accounts: ['A', 'B', 'C'], parcels: [
+    parcel(1, 'A', { residential_area_sqft: '1000' }),
+    parcel(2, 'B', { residential_area_sqft: '2000' }),
+    parcel(3, 'C', { residential_area_sqft: '9000' }),
+  ], sales: [sale(1, 'A', { sale_price: '100000' }),
+    sale(2, 'B', { sale_price: '200000' }), sale(3, 'C', { sale_price: '900000' })], pockets: [] });
+  const base = indexed(source);
+  for (const pockets of [
+    [],
+    [{ id: 'a', label: 'A', account_ids: ['A'] }],
+    [{ id: 'small', label: 'Small', account_ids: ['A', 'B'] },
+      { id: 'overlap', label: 'Overlap', account_ids: ['B', 'C'] }],
+  ]) {
+    const selection = { revision: 2, pockets };
+    const actual = reselect(base, selection);
+    const expected = indexed({ ...source, selection });
+    assert.deepEqual(actual.selected, expected.selected);
+    assert.deepEqual(actual.pockets, expected.pockets);
+    assert.deepEqual(actual.all, expected.all);
+    assert.deepEqual(actual.member_tables, expected.member_tables);
+    assert.ok(Buffer.byteLength(JSON.stringify(actual)) <= actual.work.output_utf8_bytes_bound);
+    assert.equal(actual.selected.stock.metrics.gla_sqft.median,
+      pockets.length === 2 ? 2000 : pockets.length ? 1000 : null);
+    for (const population of populations(actual)) for (const kind of kinds) {
+      assert.deepEqual(members(actual, population, kind), members(expected,
+        populations(expected)[populations(actual).indexOf(population)], kind));
+    }
+  }
+  assert.equal(base.selection_revision, 1);
+  assert.deepEqual(base.pockets, []);
+});
+
+test('context-scoped immutable prepared read model survives serialization and rejects corrupted bytes', async () => {
+  const args = fixture(), baseline = indexed(args);
+  const target = args.retained_inputs.subject.target;
+  const scope = canonicalAssessmentJson({ organization_id: target.organization_id,
+    report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id,
+    account_id: target.account_id });
+  let stored = null;
+  const client = { async query(sql, params) {
+    if (sql.includes('prepared-preview:exists')) return stored
+      ? { rowCount: 1, rows: [{ '?column?': 1 }] } : { rowCount: 0, rows: [] };
+    if (sql.includes('prepared-preview:insert')) {
+      if (stored) return { rowCount: 0, rows: [] };
+      stored = { preview_sha256: params[3], preview_utf8_bytes: params[4], compressed_preview: params[5],
+        map_sha256: params[6], map_utf8_bytes: params[7], compressed_map: params[8] };
+      return { rowCount: 1, rows: [{ preview_sha256: params[3], map_sha256: params[6] }] };
+    }
+    if (sql.includes('prepared-preview:read')) return stored
+      ? { rowCount: 1, rows: [{ ...stored, ...(sql.includes('map_sha256') ? {} : {
+        map_sha256: undefined, map_utf8_bytes: undefined, compressed_map: undefined }) }] }
+      : { rowCount: 0, rows: [] };
+    throw new Error('unexpected query');
+  } };
+  const repository = preparedRepository(client, scope, args.context_ref);
+  assert.equal(await repository.exists(), false);
+  assert.equal(await repository.read(), null);
+  const map = { status: 'available', geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
+    geojson: { type: 'FeatureCollection', features: [{ type: 'Feature', id: 'parcel:1',
+      properties: { account_id: 'A', selected: false }, geometry: { type: 'Polygon', coordinates: [] } }] },
+    counts: { parcels: 1, accounts: 2, selected_accounts: 0, coordinates: 0, geometry_bytes: 0, geojson_bytes: 1 } };
+  assert.equal((await repository.put(baseline, map)).status, 'prepared');
+  assert.equal(await repository.exists(), true);
+  assert.equal((await repository.put(baseline, map)).status, 'reused');
+  const alternate = indexed({ ...args, selection: { revision: 2, pockets: [] } });
+  const selectedMap = { ...map, geojson: { ...map.geojson, features: map.geojson.features.map(feature => ({
+    ...feature, properties: { ...feature.properties, selected: true } })) },
+  counts: { ...map.counts, selected_accounts: 1 } };
+  assert.equal((await repository.put(alternate, selectedMap)).status, 'reused',
+    'a different selection must not conflict with the same immutable context index');
+  const loaded = await repository.read();
+  assert.equal(loaded.preview.selected.stock.member_count, 0, 'stored index is selection-neutral');
+  assert.equal((await repository.read({ includeMap: false })).parcel_map, null);
+  assert.deepEqual(reselect(loaded.preview, args.selection).selected, baseline.selected);
+  const restyledMap = selectPreparedMap(loaded.parcel_map, ['A']);
+  assert.equal(restyledMap.geojson.features[0].properties.selected, true);
+  assert.equal(loaded.parcel_map.geojson.features[0].properties.selected, false);
+  stored = { ...stored, preview_sha256: '0'.repeat(64) };
+  await assert.rejects(repository.read(), /storage_conflict/);
 });
 
 test('cell reuse preserves exact raw types and formatting instead of merging equal numeric values', () => {

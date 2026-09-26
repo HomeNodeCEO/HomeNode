@@ -12,6 +12,8 @@ export const CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS = Object.freeze({
 });
 const L = CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS;
 const indexedPreviews = new WeakMap();
+const preparedMembership = new WeakMap();
+const preparedTableBytes = new WeakMap();
 const MEMBER_KINDS = ['stock', 'transactions', 'omitted_transactions', 'source_reported'];
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const sorted = values => [...new Set(values)].sort(compare);
@@ -190,6 +192,178 @@ export async function buildCustomCohortIndexedObservationPreviewBatched(args, { 
   try {
     while (true) { check(); const step = iterator.next(); check(); if (step.done) return step.value; await yieldToRequests(); }
   } finally { iterator.return(); }
+}
+
+/** Re-evaluate a new selection against an already verified, immutable indexed
+ * observation table. This is only a numeric read model: the caller must still
+ * authorize the exact context and source purpose for every request. It does not
+ * establish historical applicability or market eligibility. The original
+ * retained-source builder remains the parity oracle and inspection source.
+ */
+export function reselectCustomCohortIndexedObservationPreview(prepared, selection) {
+  check(isCustomCohortObservationPreview(prepared) && prepared.preview_version === 2,
+    'prepared_index_required');
+  check(selection && Number.isSafeInteger(selection.revision) && selection.revision > 0,
+    'selection_revision');
+  let membership = preparedMembership.get(prepared);
+  if (!membership) {
+    const stock = new Map();
+    for (const [index, row] of prepared.member_tables.stock.entries()) {
+      check(!stock.has(row.account_id), 'duplicate_account');
+      stock.set(row.account_id, index);
+    }
+    const transaction = new Map(), source = new Map();
+    for (const [kind, destination] of [['transactions', transaction], ['source_reported', source]]) {
+      for (const [index, row] of prepared.member_tables[kind].entries()) {
+        for (const account of row.associated_account_ids) {
+          if (!destination.has(account)) destination.set(account, []);
+          destination.get(account).push(index);
+        }
+      }
+    }
+    membership = { stock, transaction, source,
+      tableBytes: preparedTableBytes.get(prepared) ?? Buffer.byteLength(JSON.stringify(prepared.member_tables)) };
+    preparedMembership.set(prepared, membership);
+  }
+  const pockets = bounded(selection.pockets, L.pockets, 'pockets');
+  const pocketIds = new Set(); let membershipCount = 0;
+  const chosenPockets = pockets.map(pocket => {
+    const id = text(pocket.id, 'pocket_id'), label = text(pocket.label, 'pocket_label');
+    check(!pocketIds.has(id), 'duplicate_pocket'); pocketIds.add(id);
+    const ids = bounded(pocket.account_ids, L.accounts, 'pocket_accounts')
+      .map(account => text(account, 'account_id', 100));
+    check(new Set(ids).size === ids.length && ids.every(account => membership.stock.has(account)),
+      'pocket_membership');
+    membershipCount += ids.length;
+    check(membershipCount <= L.pocket_memberships, 'pocket_membership_limit');
+    return { id, label, account_ids: sorted(ids) };
+  }).sort((a, b) => compare(a.id, b.id));
+  const sourceFields = Object.keys(prepared.all.source_reported.metrics);
+  let memberWork = 0, measurementWork = 0;
+  const meter = (kind, amount = 1) => {
+    if (kind === 'member') {
+      memberWork += amount; check(memberWork <= L.member_work, 'member_work_limit');
+    } else {
+      measurementWork += amount; check(measurementWork <= L.measurement_work, 'measurement_work_limit');
+    }
+  };
+  const metric = (rows, getCell, original) => {
+    meter('measurement', rows.length);
+    const cells = rows.map(getCell), result = exactDistribution(cells.map(cell => cell.value));
+    return { label: original.label, unit: original.unit, currency: null,
+      interpretation: 'captured_observations_only', denominator_basis: 'population_members', ...result,
+      conflicting_count: cells.filter(cell => cell.state === 'conflicting').length,
+      invalid_count: cells.filter(cell => cell.state === 'invalid').length,
+      absent_count: cells.filter(cell => cell.state === 'missing').length,
+      partially_observed_count: cells.filter(cell => cell.state === 'observed' && cell.missing_record_count > 0).length,
+      cod_interpretation: 'descriptive_dispersion_not_reliability' };
+  };
+  const indicesFor = (accounts, table) => {
+    const found = new Set();
+    for (const account of accounts) {
+      meter('member');
+      for (const index of table.get(account) ?? []) { meter('member'); found.add(index); }
+    }
+    return [...found].sort((a, b) => a - b);
+  };
+  const population = (id, account_ids) => {
+    const selected = new Set(account_ids);
+    meter('member', account_ids.length);
+    const stockIndices = account_ids.map(account => membership.stock.get(account)).sort((a, b) => a - b);
+    const transactionIndices = indicesFor(account_ids, membership.transaction);
+    const sourceIndices = indicesFor(account_ids, membership.source);
+    const stock = stockIndices.map(index => prepared.member_tables.stock[index]);
+    const considered = transactionIndices.map(index => prepared.member_tables.transactions[index]);
+    const transactions = considered.filter(row => row.disposition === 'in_period');
+    const transactionMembers = transactionIndices.filter(index => prepared.member_tables.transactions[index].disposition === 'in_period');
+    const source = sourceIndices.map(index => prepared.member_tables.source_reported[index]);
+    const associated = (rows, within) => {
+      const accounts = new Set();
+      for (const row of rows) for (const account of row.associated_account_ids) {
+        meter('member'); if (!within || selected.has(account)) accounts.add(account);
+      }
+      return accounts.size;
+    };
+    const stockBase = prepared.all.stock, transactionBase = prepared.all.transactions, sourceBase = prepared.all.source_reported;
+    return { id, account_ids,
+      stock: { ...stockBase, member_count: stock.length, unique_account_count: stock.length,
+        parcel_object_count: stock.reduce((n, row) => n + row.parcel_object_ids.length, 0), member_indices: stockIndices,
+        metrics: Object.fromEntries(Object.keys(stockBase.metrics).map(key => [key,
+          metric(stock, row => row.observations[key], stockBase.metrics[key])])) },
+      transactions: { ...transactionBase, member_count: transactions.length,
+        unique_associated_account_count: associated(transactions, false),
+        unique_selected_associated_account_count: associated(transactions, true),
+        package_evidence_transaction_count: transactions.filter(row => row.multiple_parcel_evidence).length,
+        member_indices: transactionMembers,
+        omitted_indices: transactionIndices.filter(index => prepared.member_tables.transactions[index].disposition !== 'in_period'),
+        metrics: { recorded_total_price: metric(transactions, row => row.recorded_total_price,
+          transactionBase.metrics.recorded_total_price) } },
+      source_reported: { ...sourceBase, member_count: source.length,
+        without_canonical_transaction_count: source.filter(row => row.canonical_transaction_ids.length === 0).length,
+        member_indices: sourceIndices,
+        metrics: Object.fromEntries(sourceFields.map(key => [key,
+          metric(source, row => row.observations[key], sourceBase.metrics[key])])) } };
+  };
+  const union = sorted(chosenPockets.flatMap(pocket => pocket.account_ids));
+  const selected = population('selected_pocket_union', union);
+  const counts = new Map();
+  for (const pocket of chosenPockets) for (const account of pocket.account_ids) counts.set(account, (counts.get(account) ?? 0) + 1);
+  const pocketResults = chosenPockets.map(pocket => ({ ...pocket, disposition: 'needs_review',
+    overlap_account_count: pocket.account_ids.filter(account => counts.get(account) > 1).length,
+    result: pocket.account_ids.length === union.length && pocket.account_ids.every((account, index) => account === union[index])
+      ? { ...selected, id: pocket.id } : population(pocket.id, pocket.account_ids) }));
+  const result = { ...prepared, selection_revision: selection.revision, selected, pockets: pocketResults,
+    work: { ...prepared.work, member_work: memberWork, measurement_values: measurementWork } };
+  // The immutable member table can be tens of MB. Its verified exact encoded
+  // length is reused while only the selection-dependent envelope is encoded.
+  const bytes = Buffer.byteLength(JSON.stringify({ ...result, member_tables: null })) - 4
+    + membership.tableBytes + 16;
+  check(bytes <= (prepared.work.source_records > L.source_records ? 64_000_000 : L.output_utf8_bytes), 'output_bytes_limit');
+  result.work.output_utf8_bytes_bound = bytes;
+  freeze(result);
+  indexedPreviews.set(result, new Set([result.all, selected, ...pocketResults.map(pocket => pocket.result)]));
+  preparedTableBytes.set(result, membership.tableBytes);
+  return result;
+}
+
+/** Hydrate only a repository-verified immutable serialization. The repository
+ * must bind it to the current authorized context and verify its exact digest;
+ * this routine checks the indexed grammar but does not grant access itself.
+ */
+export function restoreCustomCohortIndexedObservationPreview(value, memberTableUtf8Bytes = null) {
+  check(value && Object.getPrototypeOf(value) === Object.prototype
+    && value.preview_version === 2 && value.representation === 'indexed_members_v1'
+    && value.status === 'observations_only' && value.authority === 'not_established'
+    && value.apply?.status === 'blocked', 'prepared_index_required');
+  check(value.member_tables && Object.getPrototypeOf(value.member_tables) === Object.prototype,
+    'member_table');
+  for (const kind of ['stock', 'transactions', 'source_reported']) {
+    bounded(value.member_tables[kind], L.source_records * 2, 'member_table');
+  }
+  check(value.all && value.selected && Array.isArray(value.pockets)
+    && value.member_tables.stock.length === value.all.stock.member_count
+    && value.member_tables.source_reported.length === value.all.source_reported.member_count,
+  'prepared_index_required');
+  if (memberTableUtf8Bytes !== null) check(Number.isSafeInteger(memberTableUtf8Bytes)
+    && memberTableUtf8Bytes > 0 && memberTableUtf8Bytes <= 64_000_000, 'member_table_bytes');
+  const issued = freeze(value);
+  preparedTableBytes.set(issued, memberTableUtf8Bytes
+    ?? Buffer.byteLength(JSON.stringify(issued.member_tables)));
+  const populations = new Set([issued.all, issued.selected,
+    ...bounded(issued.pockets, L.pockets, 'pockets').map(pocket => pocket.result)]);
+  indexedPreviews.set(issued, populations);
+  try {
+    for (const population of populations) for (const kind of MEMBER_KINDS) {
+      customCohortObservationMembers(issued, population, kind);
+    }
+    check(issued.all.stock.member_indices.length === issued.member_tables.stock.length
+      && issued.all.source_reported.member_indices.length === issued.member_tables.source_reported.length,
+    'prepared_index_required');
+    return issued;
+  } catch (error) {
+    indexedPreviews.delete(issued);
+    throw error;
+  }
 }
 
 function* observationBatches({ context_ref, retained_inputs: input, selection }, indexed) {
@@ -498,6 +672,7 @@ function* observationBatches({ context_ref, retained_inputs: input, selection },
     result.work.output_utf8_bytes_bound = Math.max(outputBytes, exactBytes + 16);
     check(result.work.output_utf8_bytes_bound <= outputByteLimit, 'output_bytes_limit');
     freeze(result);
+    preparedTableBytes.set(result, tableBytes);
     indexedPreviews.set(result, new Set([all, selected, ...pocketResults.map(pocket => pocket.result)]));
     // Validate the emitted index grammar without constructing an expanded view.
     for (const population of indexedPreviews.get(result)) for (const kind of MEMBER_KINDS) {

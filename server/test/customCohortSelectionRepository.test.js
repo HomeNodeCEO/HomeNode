@@ -148,13 +148,13 @@ test('38,106-account retention preserves sequential bytes while reducing fresh/r
     assert.equal(legacy.state.calls.filter(c => c.tag === 'insert').length, 43);
     assert.equal(legacy.state.calls.filter(c => c.tag === 'read').length, replay ? 43 : 0);
     const batches = batched.state.calls.filter(c => c.tag === 'insert-batch');
-    assert.equal(batches.length, 6);
-    assert.equal(batched.state.calls.filter(c => c.tag === 'read-batch').length, replay ? 6 : 0);
+    assert.equal(batches.length, 2);
+    assert.equal(batched.state.calls.filter(c => c.tag === 'read-batch').length, replay ? 2 : 0);
     assert.equal(batched.state.calls.filter(c => c.tag === 'read').length, 5);
     assert.equal(batched.state.calls.filter(c => c.tag === 'transaction').length, 2);
     assert.equal(batched.state.calls.filter(c => c.tag === 'history-target').length, 1);
     assert.equal(batched.state.calls.filter(c => c.tag === 'insert').length, 0);
-    assert.equal(batched.state.calls.length, replay ? 20 : 14);
+    assert.equal(batched.state.calls.length, replay ? 12 : 10);
     for (const batch of batches) {
       assert.ok(batch.params[1].length > 0 && batch.params[1].length <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.records);
       assert.ok(batch.params[2].reduce((sum, bytes) => sum + bytes, 0) <= NEIGHBORHOOD_COHORT_BLOB_BATCH_LIMITS.bytes);
@@ -199,7 +199,7 @@ test('missing replay acknowledgement refuses the complete selection instead of r
 });
 
 test('a later batch timeout stops retention without retries or a header receipt; rollback stays caller-owned', async () => {
-  const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 16000 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
+  const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 38105 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
   const query = f.client.query.bind(f.client), error = Object.assign(new Error('synthetic timeout'), { code: '57014' });
   let inserts = 0;
   f.client.query = async (sql, params) => {
@@ -229,7 +229,7 @@ async function loadSequential(f, selectionRef) {
     subject_inputs: header.subject_inputs, subject, query });
 }
 
-for (const [count, expectedBlobs, expectedBatches] of [[3, 4, 1], [38106, 42, 6], [50000, 53, 7]]) {
+for (const [count, expectedBlobs, expectedBatches] of [[3, 4, 1], [38106, 42, 2], [50000, 53, 2]]) {
   test(`${count}-account read batching preserves every original byte/order and exact sequential result`, async t => {
     const accountIds = ['0000123456789', ...Array.from({ length: count - 1 }, (_, i) => `R-${String(i).padStart(6, '0')}`)];
     const f = await fixture({ accountIds }), ref = await f.repo.retain(f.subjectRef, f.query.inputJson);
@@ -282,7 +282,7 @@ for (const [name, change, pattern] of [
 
 test('a missing later batch and a driver timeout stop independent reads without retry or partial result', async () => {
   for (const missing of [true, false]) {
-    const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 16000 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
+    const f = await fixture({ accountIds: ['0000123456789', ...Array.from({ length: 38105 }, (_, i) => `R-${String(i).padStart(6, '0')}`)] });
     const ref = await f.repo.retain(f.subjectRef, f.query.inputJson), driverError = Object.assign(new Error('synthetic read timeout'), { code: '57014' });
     let batches = 0; f.state.calls.length = 0;
     interceptQueries(f, (result, sql) => {

@@ -118,15 +118,15 @@ test('batch receipts cannot be forged, copied or used for different/noncanonical
 
 test('all batch admission is bounded and validated before SQL, including the last entry', async () => {
   const h = fixture(), original = entry();
-  for (const values of [null, [], Array(1), [original, , original], Array(9).fill(original), [original, original],
+  for (const values of [null, [], Array(1), [original, , original], Array(limits.records + 1).fill(original), [original, original],
     [original, { canonicalJson: '{}', reference: {} }]]) {
     await assert.rejects(h.repo.putPreparedBatch(values), /invalid_prepared_batch/);
   }
   const big = entry('"' + 'x'.repeat(1_100_000) + '"');
   await assert.rejects(h.repo.putPreparedBatch([big, entry('"' + 'y'.repeat(1_100_000) + '"')]), /invalid_prepared_batch/);
   assert.equal(h.calls.length, 0);
-  const eight = Array.from({ length: limits.records }, (_, i) => entry(`{"id":"${i}"}`));
-  await h.repo.putPreparedBatch(eight); assert.equal(h.calls.length, 1);
+  const bounded = Array.from({ length: limits.records }, (_, i) => entry(`{"id":"${i}"}`));
+  await h.repo.putPreparedBatch(bounded); assert.equal(h.calls.length, 1);
 });
 
 test('prepared batches reject incomplete, duplicate, unknown and corrupted acknowledgments', async () => {

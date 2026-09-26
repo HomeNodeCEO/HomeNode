@@ -192,6 +192,9 @@ test('context-scoped immutable prepared read model survives serialization and re
   assert.equal(loaded.preview.selected.stock.member_count, 0, 'stored index is selection-neutral');
   assert.equal((await repository.read({ includeMap: false })).parcel_map, null);
   assert.deepEqual(reselect(loaded.preview, args.selection).selected, baseline.selected);
+  assert.equal(Object.isFrozen(loaded.parcel_map.geojson.features[0].properties), true,
+    'a certified map cannot change after its stored byte count is checked');
+  assert.throws(() => { loaded.parcel_map.geojson.features[0].properties.label = 'A much longer label'; }, TypeError);
   const restyledMap = selectPreparedMap(loaded.parcel_map, ['A']);
   const originalStringify = JSON.stringify;
   let fullGeometryWalks = 0;
@@ -208,6 +211,9 @@ test('context-scoped immutable prepared read model survives serialization and re
   assert.deepEqual(restyledMap.geojson.features.map(feature => feature.properties.selected), [true, true, false]);
   assert.equal(restyledMap.counts.geojson_bytes, Buffer.byteLength(JSON.stringify(restyledMap.geojson)));
   assert.equal(preparedMapJsonBytes(restyledMap), Buffer.byteLength(JSON.stringify(restyledMap)));
+  assert.equal(Object.isFrozen(restyledMap.geojson.features[0].properties), true,
+    'a derived certified map cannot change before transport sizing');
+  assert.throws(() => { restyledMap.geojson.features[0].properties.label = 'A much longer label'; }, TypeError);
   const opening = { status: 'preview', summary: { label: 'Café' }, parcel_map: restyledMap };
   assert.equal(Buffer.byteLength(JSON.stringify({ ...opening, parcel_map: null })) - 4 + preparedMapJsonBytes(restyledMap),
     Buffer.byteLength(JSON.stringify(opening)));

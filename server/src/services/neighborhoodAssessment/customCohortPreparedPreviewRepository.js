@@ -159,7 +159,10 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     if (map.status === 'available' && Number.isSafeInteger(map.counts?.geojson_bytes)
       && map.counts.geojson_bytes > 0 && map.counts.geojson_bytes <= LIMITS.map.text) {
       const envelopeBytes = Buffer.byteLength(JSON.stringify({ ...map, geojson: null }));
-      if (envelopeBytes - 4 + map.counts.geojson_bytes === row.map_utf8_bytes) verifiedMapBytes.add(map);
+      if (envelopeBytes - 4 + map.counts.geojson_bytes === row.map_utf8_bytes) {
+        freezeMap(map);
+        verifiedMapBytes.add(map);
+      }
     }
     retainVerifiedReadModel(map, mapMatched);
     return Object.freeze({ preview, parcel_map: map });
@@ -229,7 +232,10 @@ export function selectCustomCohortPreparedParcelMap(map, accountIds) {
   check(geojsonBytes <= 32_000_000, 'map_capacity_exceeded');
   const output = { ...map, geojson,
     counts: { ...map.counts, selected_accounts: selected.size, geojson_bytes: geojsonBytes } };
-  if (useVerifiedBytes) verifiedMapBytes.add(output);
+  if (useVerifiedBytes) {
+    freezeMap(output);
+    verifiedMapBytes.add(output);
+  }
   return output;
 }
 

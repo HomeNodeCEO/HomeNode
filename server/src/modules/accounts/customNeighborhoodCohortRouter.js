@@ -1,6 +1,6 @@
 import express from 'express';
 import { promisify } from 'node:util';
-import { gzip } from 'node:zlib';
+import { brotliCompress, constants as zlibConstants, gzip } from 'node:zlib';
 import { CUSTOM_COHORT_POCKET_CATALOG_LIMITS } from '../../services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { prepareCustomCohortOpeningMode, CUSTOM_COHORT_OPENING_RESPONSE_BYTES } from '../../services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { customCaptureDiagnostic } from '../../services/neighborhoodAssessment/customCaptureDiagnostics.js';
@@ -11,7 +11,8 @@ import { CUSTOM_COHORT_OPERATION_LIMITS } from '../../services/neighborhoodAsses
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
 const CATALOG_COMPRESSION_THRESHOLD_BYTES = 64_000;
-const compressCatalog = promisify(gzip);
+const compressCatalogGzip = promisify(gzip);
+const compressCatalogBrotli = promisify(brotliCompress);
 const FILE_ID = /^[1-9]\d{0,18}$/;
 const INPUT_ERRORS = new Set(['invalid_input', 'invalid_account', 'invalid_assignment',
   'invalid_operation', 'invalid_period', 'invalid_selection', 'period_after_effective_date', 'invalid_private_sales_import', 'invalid_reported_input', 'invalid_discovery']);
@@ -145,13 +146,17 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
           // Send the exact checked bytes: application-wide JSON indentation or
           // replacers must not expand an otherwise bounded catalog response.
           // Opening maps are often many megabytes of repeated GeoJSON keys and
-          // coordinates. Compress only this authorized, complete response and
-          // never use compressed size to bypass the original output ceiling.
+          // coordinates. Prefer accepted Brotli for that map, retain gzip for
+          // older clients, and never use compressed size to bypass the original
+          // output ceiling.
           res.vary('Accept-Encoding');
-          if (encodedBytes >= CATALOG_COMPRESSION_THRESHOLD_BYTES && req.acceptsEncodings('gzip')) {
-            const packed = await compressCatalog(encoded, { level: 1 });
+          const encoding = req.acceptsEncodings('br', 'gzip');
+          if (encodedBytes >= CATALOG_COMPRESSION_THRESHOLD_BYTES && encoding) {
+            const packed = encoding === 'br'
+              ? await compressCatalogBrotli(encoded, { params: { [zlibConstants.BROTLI_PARAM_QUALITY]: 4 } })
+              : await compressCatalogGzip(encoded, { level: 1 });
             if (!controller.signal.aborted && !res.destroyed) return res.type('application/json')
-              .set('Content-Encoding', 'gzip').send(packed);
+              .set('Content-Encoding', encoding).send(packed);
           } else if (!controller.signal.aborted && !res.destroyed) return res.type('application/json').send(encoded);
         }
         if (!controller.signal.aborted && !res.destroyed) return res.json(result);

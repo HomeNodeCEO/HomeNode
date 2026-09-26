@@ -1,4 +1,5 @@
 import express from "express";
+import { finished } from "node:stream";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
@@ -256,6 +257,7 @@ export function createAssignmentWorkfileReadRouter({
         assignmentFileId,
         signingSecret: getSigningSecret(),
       });
+      if (res.destroyed) return undefined;
       const draft = !download.immutable;
       if (draft && activeDraftPdfRenders >= MAX_CONCURRENT_DRAFT_PDF_RENDERS) {
         res.set("Retry-After", "2");
@@ -272,9 +274,7 @@ export function createAssignmentWorkfileReadRouter({
       };
       if (draft) {
         activeDraftPdfRenders += 1;
-        const settleResponse = () => { responseSettled = true; releaseSlotIfSettled(); };
-        res.once("finish", settleResponse);
-        res.once("close", settleResponse);
+        finished(res, () => { responseSettled = true; releaseSlotIfSettled(); });
       }
       let report;
       try {
@@ -288,6 +288,7 @@ export function createAssignmentWorkfileReadRouter({
         renderSettled = true;
         releaseSlotIfSettled();
       }
+      if (res.destroyed) return undefined;
       const fileName = String(report.canonical_file_name).replace(/[\r\n"]/g, "_");
       res.set({
         "Content-Type": "application/pdf",

@@ -337,6 +337,111 @@ test("failed draft PDF renders release overload slots", async (context) => {
   assert.equal(calls, 3);
 });
 
+test("disconnect before draft admission does not render or occupy a slot", { timeout: 5_000 }, async (context) => {
+  let releaseLookup;
+  const pendingLookup = new Promise((resolve) => { releaseLookup = resolve; });
+  let markLookupStarted;
+  const lookupStarted = new Promise((resolve) => { markLookupStarted = resolve; });
+  let markResponseClosed;
+  const responseClosed = new Promise((resolve) => { markResponseClosed = resolve; });
+  let firstAccess = true;
+  let firstLookup = true;
+  let renders = 0;
+  const server = await startRouter(baseOptions({
+    requireAssignmentAccess: async (_req, res) => {
+      if (firstAccess) {
+        firstAccess = false;
+        res.once("close", markResponseClosed);
+      }
+      return true;
+    },
+    getDownload: async () => {
+      if (firstLookup) {
+        firstLookup = false;
+        markLookupStarted();
+        await pendingLookup;
+      }
+      return { immutable: false, snapshot: {} };
+    },
+    getReportPdf: async () => {
+      renders += 1;
+      return {
+        canonical_file_name: "report.pdf",
+        immutable: false,
+        content: Buffer.from("pdf-test"),
+        page_count: 1,
+        content_sha256: "test-sha",
+      };
+    },
+  }));
+  context.after(async () => { releaseLookup(); await server.close(); });
+  const controller = new AbortController();
+  const cancelled = fetch(endpoint(server.baseUrl, "/report.pdf"), { signal: controller.signal });
+  await lookupStarted;
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+  await responseClosed;
+  releaseLookup();
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(renders, 0);
+  assert.equal((await fetch(endpoint(server.baseUrl, "/report.pdf"))).status, 200);
+  assert.equal(renders, 1);
+});
+
+test("disconnect during draft rendering releases its slot after rendering settles", { timeout: 5_000 }, async (context) => {
+  let releaseAborted;
+  const abortedRender = new Promise((resolve) => { releaseAborted = resolve; });
+  let releaseFresh;
+  const freshRender = new Promise((resolve) => { releaseFresh = resolve; });
+  let markAbortedStarted;
+  const abortedStarted = new Promise((resolve) => { markAbortedStarted = resolve; });
+  let markFreshStarted;
+  const freshStarted = new Promise((resolve) => { markFreshStarted = resolve; });
+  let markResponseClosed;
+  const responseClosed = new Promise((resolve) => { markResponseClosed = resolve; });
+  let firstAccess = true;
+  let renders = 0;
+  const pdf = {
+    canonical_file_name: "report.pdf",
+    immutable: false,
+    content: Buffer.from("pdf-test"),
+    page_count: 1,
+    content_sha256: "test-sha",
+  };
+  const server = await startRouter(baseOptions({
+    requireAssignmentAccess: async (_req, res) => {
+      if (firstAccess) {
+        firstAccess = false;
+        res.once("close", markResponseClosed);
+      }
+      return true;
+    },
+    getDownload: async () => ({ immutable: false, snapshot: {} }),
+    getReportPdf: async () => {
+      renders += 1;
+      if (renders === 1) { markAbortedStarted(); await abortedRender; }
+      if (renders === 2) { markFreshStarted(); await freshRender; }
+      return pdf;
+    },
+  }));
+  context.after(async () => { releaseAborted(); releaseFresh(); await server.close(); });
+  const controller = new AbortController();
+  const cancelled = fetch(endpoint(server.baseUrl, "/report.pdf"), { signal: controller.signal });
+  await abortedStarted;
+  controller.abort();
+  await assert.rejects(cancelled, { name: "AbortError" });
+  await responseClosed;
+  releaseAborted();
+  await new Promise((resolve) => setImmediate(resolve));
+
+  const firstFresh = fetch(endpoint(server.baseUrl, "/report.pdf"));
+  await freshStarted;
+  assert.equal((await fetch(endpoint(server.baseUrl, "/report.pdf"))).status, 200);
+  releaseFresh();
+  assert.equal((await firstFresh).status, 200);
+  assert.equal(renders, 3);
+});
+
 test("workfile read error contracts remain bounded and diagnostic-safe", async (context) => {
   const diagnostic = new Error("database db.internal secret-token");
   const logs = [];

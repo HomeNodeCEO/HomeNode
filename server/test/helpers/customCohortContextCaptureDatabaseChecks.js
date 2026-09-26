@@ -241,7 +241,10 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.deepEqual(preparedCatalogReopen.catalog.pockets, preparedCatalogOriginal.catalog.pockets);
     assert.deepEqual(preparedCatalogReopen.catalog.coverage, preparedCatalogOriginal.catalog.coverage);
     assert.equal(preparedCatalogReopen.catalog.binding.selection_revision, 9);
-    assert.equal(preparedCatalogReopen.recommendation?.binding.selection_revision, 9);
+    assert.equal(Object.hasOwn(preparedCatalogReopen, 'recommendation'),
+      Object.hasOwn(preparedCatalogOriginal, 'recommendation'),
+      'a retrospective capture must not gain a current-market recommendation from its cache');
+    if (preparedCatalogOriginal.recommendation) assert.equal(preparedCatalogReopen.recommendation.binding.selection_revision, 9);
     assert.notEqual(preparedCatalogReopen.catalog.binding.selection_sha256,
       preparedCatalogOriginal.catalog.binding.selection_sha256);
     assert.equal(preparedCatalogReopen.initial_preview.summary.selected.stock.member_count, 2);

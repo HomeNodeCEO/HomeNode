@@ -875,11 +875,24 @@ export async function getPropertyContextStatus(pool) {
   };
 }
 
+const PROPERTY_CONTEXT_GEOMETRY_CLIENT_ERRORS = new Set([
+  "custom_area_must_be_polygon",
+  "custom_area_coordinates_required",
+  "custom_area_requires_three_points",
+  "custom_area_too_many_vertices",
+  "custom_area_ring_invalid",
+  "custom_area_ring_not_closed",
+  "custom_area_coordinate_invalid",
+  "custom_area_outside_dfw_bounds",
+  "custom_area_geometry_invalid",
+  "custom_area_size_invalid",
+]);
+
 export function propertyContextErrorStatus(message) {
   if (["invalid_account_id", "invalid_property_complexity"].includes(message)) return 400;
   if (message === "account_not_found") return 404;
   if (message === "property_complexity_assessment_required") return 409;
-  if (String(message).startsWith("custom_area_")) return 400;
+  if (PROPERTY_CONTEXT_GEOMETRY_CLIENT_ERRORS.has(message)) return 400;
   return 500;
 }
 

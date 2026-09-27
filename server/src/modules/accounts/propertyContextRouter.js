@@ -9,11 +9,41 @@ import {
   propertyContextErrorStatus,
   savePropertyContextReview,
 } from "../../services/propertyContext.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 function requirePool(pool) {
   if (!pool || typeof pool.query !== "function") {
     throw new TypeError("property_context_pool_required");
   }
+}
+
+function logPropertyContextFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Diagnostics must never replace the stable API response.
+  }
+}
+
+function respondToPropertyContextFailure(res, error, {
+  fallbackCode,
+  errorStatus,
+  logger,
+  logLabel,
+}) {
+  let message = fallbackCode;
+  try {
+    const candidate = error?.message;
+    if (typeof candidate === "string") message = candidate;
+  } catch {
+    // A hostile Error getter must not escape the response boundary.
+  }
+  const status = errorStatus(message);
+  if ([400, 404, 409].includes(status)) {
+    return res.status(status).json({ error: message });
+  }
+  logPropertyContextFailure(logger, logLabel, error);
+  return res.status(500).json({ error: fallbackCode });
 }
 
 export function createPropertyContextStatusRouter({
@@ -41,7 +71,7 @@ export function createPropertyContextStatusRouter({
       await ensureAvailable();
       return res.json(await getStatus(pool));
     } catch (error) {
-      logger.error?.("/api/property-context/status failed", error);
+      logPropertyContextFailure(logger, "/api/property-context/status failed", error);
       return res.status(500).json({ error: "property_context_status_failed" });
     }
   });
@@ -104,8 +134,12 @@ export function createAccountPropertyContextRouter({
       });
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "property_context_lookup_failed";
-      return res.status(errorStatus(message)).json({ error: message });
+      return respondToPropertyContextFailure(res, error, {
+        fallbackCode: "property_context_lookup_failed",
+        errorStatus,
+        logger,
+        logLabel: "/api/accounts/:id/property-context lookup failed",
+      });
     }
   });
 
@@ -131,9 +165,12 @@ export function createAccountPropertyContextRouter({
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "property_context_analysis_failed";
-      logger.error?.("/api/accounts/:id/property-context/analyze failed", error);
-      return res.status(errorStatus(message)).json({ error: message });
+      return respondToPropertyContextFailure(res, error, {
+        fallbackCode: "property_context_analysis_failed",
+        errorStatus,
+        logger,
+        logLabel: "/api/accounts/:id/property-context/analyze failed",
+      });
     }
   });
 
@@ -164,9 +201,12 @@ export function createAccountPropertyContextRouter({
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "property_context_review_failed";
-      logger.error?.("/api/accounts/:id/property-context review failed", error);
-      return res.status(errorStatus(message)).json({ error: message });
+      return respondToPropertyContextFailure(res, error, {
+        fallbackCode: "property_context_review_failed",
+        errorStatus,
+        logger,
+        logLabel: "/api/accounts/:id/property-context review failed",
+      });
     }
   });
 

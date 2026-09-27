@@ -4,9 +4,12 @@ import test from "node:test";
 import pg from "pg";
 
 import {
+  confirmAssignmentDocumentCandidates,
+  confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   deleteAssignmentDocument,
   ensureAssignmentDocumentsSchema,
+  reviewAssignmentDocumentCandidate,
 } from "../src/services/assignmentDocuments.js";
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
@@ -14,7 +17,7 @@ import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhot
 
 const databaseUrl = process.env.DATABASE_URL;
 
-test("signed Custom document deletion and upload are denied before R2 work against migrated PostgreSQL", {
+test("signed Custom document deletion, upload, and candidate review are denied against migrated PostgreSQL", {
   skip: !databaseUrl,
 }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
@@ -91,6 +94,36 @@ test("signed Custom document deletion and upload are denied before R2 work again
       [assignmentFileId],
     );
     assert.equal(documentCount.rows[0].total, 1);
+    const candidate = await client.query(
+      `INSERT INTO app.assignment_document_field_candidates
+         (document_id, field_key, raw_value)
+       VALUES ($1, 'lender_client_name', 'Fixture lender') RETURNING id`,
+      [document.rows[0].id],
+    );
+    const documentId = document.rows[0].id;
+    const candidateId = candidate.rows[0].id;
+    for (const review of [
+      () => reviewAssignmentDocumentCandidate(transactionScopedPool, {
+        documentId, candidateId, reviewStatus: "rejected", reviewer: "Fixture appraiser",
+      }),
+      () => confirmAssignmentDocumentCandidates(transactionScopedPool, {
+        documentId, reviewer: "Fixture appraiser",
+      }),
+      () => confirmAssignmentDocumentDespiteSubjectMismatch(transactionScopedPool, {
+        documentId, reviewer: "Fixture appraiser", actorUserId: "fixture-appraiser",
+      }),
+    ]) {
+      await assert.rejects(review(), /custom_appraisal_workfile_signed/);
+    }
+    const reviewState = await client.query(
+      `SELECT candidate.review_status,
+              (SELECT count(*)::integer FROM app.assignment_document_candidate_reviews
+                WHERE document_id = $1) AS review_count
+         FROM app.assignment_document_field_candidates candidate WHERE candidate.id = $2`,
+      [documentId, candidateId],
+    );
+    assert.equal(reviewState.rows[0].review_status, "suggested");
+    assert.equal(reviewState.rows[0].review_count, 0);
   } finally {
     if (client) {
       await client.query("ROLLBACK");

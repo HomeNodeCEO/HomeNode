@@ -351,6 +351,9 @@ export function createAssignmentDocumentRouter({
       });
     } catch (error) {
       const message = error?.message || "document_subject_address_override_failed";
+      if (message === "custom_appraisal_workfile_signed") {
+        return res.set("cache-control", "no-store").status(409).json({ error: message });
+      }
       const clientErrors = new Set([
         "invalid_document_id",
         "document_reviewer_required",
@@ -384,6 +387,9 @@ export function createAssignmentDocumentRouter({
       });
     } catch (error) {
       const message = error?.message || "document_candidates_confirm_all_failed";
+      if (message === "custom_appraisal_workfile_signed") {
+        return res.set("cache-control", "no-store").status(409).json({ error: message });
+      }
       const clientErrors = new Set([
         "invalid_document_id",
         "document_reviewer_required",
@@ -414,6 +420,9 @@ export function createAssignmentDocumentRouter({
       return res.json({ ok: true, candidate });
     } catch (error) {
       const message = error?.message || "document_candidate_review_failed";
+      if (message === "custom_appraisal_workfile_signed") {
+        return res.set("cache-control", "no-store").status(409).json({ error: message });
+      }
       const clientErrors = new Set([
         "invalid_document_candidate",
         "invalid_document_review_status",

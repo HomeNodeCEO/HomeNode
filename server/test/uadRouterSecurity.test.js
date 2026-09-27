@@ -688,6 +688,47 @@ for (const [databaseCode, status, publicCode] of [
   });
 }
 
+for (const [label, privateMessage] of [
+  ["prose and path", "uad_package_generation_failed /private/customer-file.pdf"],
+  ["oversized code", `invalid_${"private_token_".repeat(12)}`],
+]) {
+  test(`prefix-shaped ${label} exception cannot expose its message`, async () => {
+    const originalError = console.error;
+    console.error = () => {};
+    try {
+      await withServer(securityPool(), async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+          method: "POST",
+          headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+          body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+        });
+        assert.equal(response.status, 500);
+        assert.deepEqual(await response.json(), { error: "uad_request_failed" });
+      }, {}, { createWorkfile: async () => { throw new Error(privateMessage); } });
+    } finally {
+      console.error = originalError;
+    }
+  });
+}
+
+for (const [message, status, publicCode] of [
+  ["uad_section_stale_revision", 409, "uad_section_stale_revision"],
+  ["uad_xml_mapping_missing:1500.0012", 422, "uad_xml_mapping_missing"],
+  ["uad_object_download_failed:502", 502, "uad_object_download_failed"],
+]) {
+  test(`bounded UAD code ${publicCode} preserves its response contract`, async () => {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), { error: publicCode });
+    }, {}, { createWorkfile: async () => { throw new Error(message); } });
+  });
+}
+
 test("hostile UAD error metadata cannot replace the fixed server response", async () => {
   const failure = {
     get message() { throw new Error("private_message_getter"); },

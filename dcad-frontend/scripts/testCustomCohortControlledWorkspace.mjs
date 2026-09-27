@@ -130,8 +130,7 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
         previewTransport, onSelectionIntent: value => intents.push(value) } }; },
     render(value) { render(value); flush(); }, get propsNow() { return props; }, get tree() { return tree; },
     nodes: () => walk(tree), text: () => text(tree),
-    child(key) { if (key === 'CustomCohortMapSnapshot') return walk(tree).find(node => node.type === stubs.CustomCohortParcelMap)?.props.overlay?.props;
-      return walk(tree).find(node => node.type === stubs[key])?.props; },
+    child(key) { return walk(tree).find(node => node.type === stubs[key])?.props; },
     click(label) { const node = walk(tree).find(node => node.type === 'button' && text(node) === label); assert.ok(node, label); node.props.onClick(); flush(); },
     check(label) { const node = walk(tree).find(node => node.type === 'input' && node.props['aria-label'] === label); assert.ok(node, label); node.props.onChange(); flush(); },
     async drain() { for (let i = 0; i < 16; i++) await Promise.resolve(); flush(); },
@@ -708,6 +707,34 @@ test('broad click includes entire subdivision in one saved intent, preserves unr
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'subdivision'); await h.drain();
   assert.equal(h.intents.length, 1, 'already included does not write again');
 });
+test('subdivision snapshot is a regular sibling below the map/statistics row and above Recorded groups, never a map overlay', async t => {
+  const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h, [groupId(1), groupId(2)]);
+  h.render(props); await h.tick(); await h.complete();
+  const mapProps = h.child('CustomCohortParcelMap');
+  assert.equal(Object.hasOwn(mapProps, 'overlay'), false); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+  mapProps.onActivatePocket(groupId(2), 'phase'); await h.drain();
+  const snapshotProps = h.child('CustomCohortMapSnapshot'), nodes = h.nodes();
+  assert.ok(snapshotProps); assert.equal(snapshotProps.phaseId, groupId(2));
+  const mapNode = nodes.find(node => node.props === h.child('CustomCohortParcelMap'));
+  const snapshotNode = nodes.find(node => node.props === snapshotProps);
+  const groupsNode = nodes.find(node => node.props['aria-label'] === 'Recorded groups');
+  const row = nodes.find(node => children(node).includes(mapNode));
+  assert.ok(row); assert.ok(children(row).some(node => node?.type === 'aside'
+    && node.props['aria-label'] === 'Live neighborhood characteristics and market observations'));
+  assert.equal(walk(mapNode).includes(snapshotNode), false);
+  assert.equal(Object.hasOwn(mapNode.props, 'overlay'), false);
+  const siblings = children(nodes.find(node => children(node).includes(row)));
+  assert.ok(siblings.indexOf(snapshotNode) > siblings.indexOf(row), 'snapshot follows the complete map/statistics row');
+  assert.ok(siblings.indexOf(groupsNode) > siblings.indexOf(snapshotNode), 'snapshot precedes the remaining recorded-groups section');
+  assert.equal(snapshotProps.catalog, props.workspace.catalog); assert.equal(snapshotProps.input.accountId, props.accountId);
+  assert.equal(snapshotProps.input.assignmentFileId, props.assignmentFileId);
+  assert.equal(snapshotProps.previewTransport, h.previewTransport);
+  assert.deepEqual(snapshotProps.included, props.workspace.selection.included_recorded_group_ids);
+  assert.equal(h.calls.length, 1); assert.deepEqual(h.intents, [], 'opening an already-included phase is inspection-only');
+  snapshotProps.onClose(); await h.drain();
+  assert.equal(h.child('CustomCohortMapSnapshot'), undefined); assert.equal(h.calls.length, 1); assert.deepEqual(h.intents, []);
+});
+
 test('near click includes a phase, right-click excludes it, and reopening never fills it silently', async t => {
   const h = harness(); t.after(() => h.unmount()); h.render(phasedProps(h, [groupId(1), groupId(2)])); await h.tick(); await h.complete();
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'phase'); await h.drain();

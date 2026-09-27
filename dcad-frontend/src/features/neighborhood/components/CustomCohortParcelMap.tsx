@@ -1,5 +1,4 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
 import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreRuntime';
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
 import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
@@ -25,7 +24,6 @@ interface Props {
   onExcludePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
   onInspectPocket?: (pocketId: string) => void;
   onInspectAccount?: (accountId: string) => void;
-  overlay?: ReactNode;
 }
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`, LABEL_DOT = `${LABEL_SOURCE}-dot`;
@@ -181,7 +179,7 @@ const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get',
 /** Exact cached parcel outlines with optional existing group-level similarity.
  * View controls never change the accepted controller selection or statistics. */
 export default function CustomCohortParcelMap({ group, catalog, freshness, inspectedPocketId, inspectedPocketIds,
-  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount, overlay }: Props) {
+  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount }: Props) {
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
   const paintedLabels = useRef(''), cityViewActive = useRef(false);
@@ -605,7 +603,6 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
               : 'Parcel detail could not load; the subdivision labels and statistics remain available.'}
             {detailState === 'partial' && <button type="button" className="ml-2 underline" onClick={() => setCameraRevision(n => n + 1)}>Retry parcel detail</button>}
           </p>}
-        {mapState !== 'failed' && overlay}
       </div>}
     <div className="px-4 pb-3"><NeighborhoodCityReferenceControl map={mapState === 'failed' ? null : cityMap}
       onViewChange={active => { if (cityMap && mapRef.current === cityMap && mapState !== 'failed') cityViewActive.current = active; }} /></div>

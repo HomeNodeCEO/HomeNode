@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 
@@ -161,12 +161,14 @@ test("Custom document review waits on the workfile before locking the document r
        VALUES ($1, $2, 'draft')`,
       [assignmentFileId, `${accountId}.homenode-appraisal.json`],
     );
+    const content = Buffer.from("%PDF-fixture");
+    const checksum = createHash("sha256").update(content).digest("hex");
     const document = await pool.query(
       `INSERT INTO app.assignment_documents
-         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes)
-       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', repeat('b', 64), 12)
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', $3, $4, $5)
        RETURNING id`,
-      [accountId, assignmentFileId],
+      [accountId, assignmentFileId, checksum, content.length, content],
     );
     documentId = document.rows[0].id;
     const candidate = await pool.query(

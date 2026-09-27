@@ -405,6 +405,22 @@ test("private upload fallback retains only a stable storage diagnostic", async (
   ]]);
 });
 
+test("private upload cleanup and logging failures still persist PostgreSQL fallback", async () => {
+  const { pool, insertedValues } = customDocumentUploadPool();
+  const document = await createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "fallback.pdf", content: Buffer.from("%PDF-fallback"),
+    storage: {
+      configured: true,
+      async putObject() { throw new Error("synthetic_r2_failure"); },
+      async deleteObject() { throw new Error("synthetic_cleanup_failure"); },
+    },
+    logger: { warn() { throw new Error("synthetic_logger_failure"); } },
+  });
+  assert.equal(document.storage_provider, "postgres");
+  assert.equal(insertedValues[0][19], "assignment_document_storage_upload_failed");
+});
+
 test("document reads redact historical extraction and storage exception text", async () => {
   const secret = "private-url=https://private.example/secret-token";
   const pool = {

@@ -1015,7 +1015,9 @@ export async function createAssignmentDocument(pool, {
               } : {}),
             });
           } catch {
-            logger.warn?.("[documents] failed to clean up an unverified private document upload");
+            try {
+              logger.warn?.("[documents] failed to clean up an unverified private document upload");
+            } catch { /* A diagnostic failure must not interrupt the PostgreSQL fallback. */ }
           }
         }
         storageStatus = "migration_failed";

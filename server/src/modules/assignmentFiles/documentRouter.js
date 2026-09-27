@@ -342,9 +342,6 @@ export function createAssignmentDocumentRouter({
         "document_not_processable",
       ]);
       if (message === "document_not_found") return res.status(404).json({ error: message });
-      if (message === "custom_appraisal_workfile_signed") {
-        return res.set("cache-control", "no-store").status(409).json({ error: message });
-      }
       if (clientErrors.has(message)) return res.status(409).json({ error: message });
       logDocumentFailure(logger, "assignment document reprocess failed", error);
       return res.status(500).json({ error: "assignment_document_reprocess_failed" });

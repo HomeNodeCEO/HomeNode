@@ -199,7 +199,7 @@ test("Custom document review waits on the workfile before locking the document r
     await holder.query("BEGIN");
     await holder.query("SET LOCAL lock_timeout = '750ms'");
     await holder.query(
-      "SELECT id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
+      "SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
       [assignmentFileId],
     );
     reviewPromise = reviewAssignmentDocumentCandidate(observedPool, {

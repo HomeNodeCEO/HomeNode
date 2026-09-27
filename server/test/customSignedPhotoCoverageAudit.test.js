@@ -42,6 +42,8 @@ function fakePool({ schema = SCHEMA, counts = {}, fail = false, failRollback = f
               verified_photos_beyond_cap_count: "0",
               missing_pdf_compatible_object_count: "0",
               pdf_object_size_out_of_range_count: "0",
+              max_pdf_eligible_photo_metadata_bytes_per_file: "0",
+              signed_files_over_64mib_pdf_eligible_photo_metadata_count: "0",
               cross_organization_photo_count: "0",
               wrong_workflow_photo_count: "0",
               ...counts,
@@ -70,6 +72,8 @@ test("audits current signed-photo coverage without returning file or photo ident
     verified_photos_beyond_cap_count: 0,
     missing_pdf_compatible_object_count: 0,
     pdf_object_size_out_of_range_count: 0,
+    max_pdf_eligible_photo_metadata_bytes_per_file: 0,
+    signed_files_over_64mib_pdf_eligible_photo_metadata_count: 0,
     cross_organization_photo_count: 0,
     wrong_workflow_photo_count: 0,
   });
@@ -86,6 +90,8 @@ test("audits current signed-photo coverage without returning file or photo ident
   assert.match(sql, /object\.content_type IN \('image\/jpeg', 'image\/png'\)/);
   assert.match(sql, /ORDER BY CASE object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*object\.id/);
   assert.match(sql, /renderable\.byte_size > 8388608/);
+  assert.match(sql, /SUM\(renderable\.byte_size\) FILTER \(\s*WHERE renderable\.byte_size BETWEEN 1 AND 8388608/);
+  assert.match(sql, /coverage\.pdf_eligible_photo_metadata_bytes > 67108864/);
   assert.match(sql, /verified_photo_count > 100/);
   assert.doesNotMatch(sql, /SELECT\s+(?:photo\.id|snapshot\.assignment_file_id)\s+FROM/i);
 });
@@ -96,6 +102,7 @@ test("audit threshold stays aligned with the signed-PDF photo cap", async () => 
   assert.match(reportSource, /const MAX_MEDIA_BYTES = 8 \* 1024 \* 1024;/);
   assert.match(reportSource, /ORDER BY CASE photo_object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*photo_object\.id\s+LIMIT 1/);
   assert.equal(customSignedPhotoCoverageAuditInternals.MAX_PDF_PHOTO_BYTES, 8 * 1024 * 1024);
+  assert.equal(customSignedPhotoCoverageAuditInternals.PHOTO_METADATA_REVIEW_BYTES, 64 * 1024 * 1024);
   assert.match(customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL, /verified_photo_count > 100/);
 });
 
@@ -150,6 +157,17 @@ test("oversized selected display objects fail photo coverage even when an origin
   assert.equal(result.pdf_object_size_out_of_range_count, 1);
   const sql = customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL;
   assert.match(sql, /ORDER BY CASE object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*object\.id\s+LIMIT 1/);
+  assert.doesNotMatch(JSON.stringify(result), /photo_id|object_key|assignment_file_id/);
+});
+
+test("reports metadata-only photo byte pressure without changing the audit pass/fail gate", async () => {
+  const result = await auditCustomSignedPhotoCoverage(fakePool({ counts: {
+    max_pdf_eligible_photo_metadata_bytes_per_file: String(72 * 1024 * 1024),
+    signed_files_over_64mib_pdf_eligible_photo_metadata_count: "1",
+  } }));
+  assert.equal(result.ok, true);
+  assert.equal(result.max_pdf_eligible_photo_metadata_bytes_per_file, 72 * 1024 * 1024);
+  assert.equal(result.signed_files_over_64mib_pdf_eligible_photo_metadata_count, 1);
   assert.doesNotMatch(JSON.stringify(result), /photo_id|object_key|assignment_file_id/);
 });
 

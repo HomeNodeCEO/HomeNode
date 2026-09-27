@@ -1,4 +1,5 @@
 const MAX_PDF_PHOTO_BYTES = 8 * 1024 * 1024;
+const PHOTO_METADATA_REVIEW_BYTES = 64 * 1024 * 1024;
 
 const PHOTO_COVERAGE_AUDIT_SQL = `
   WITH signed_snapshot_photo_states AS (
@@ -32,6 +33,9 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
                  OR renderable.byte_size < 1
                  OR renderable.byte_size > ${MAX_PDF_PHOTO_BYTES})
            ) AS pdf_object_size_out_of_range_count,
+           COALESCE(SUM(renderable.byte_size) FILTER (
+             WHERE renderable.byte_size BETWEEN 1 AND ${MAX_PDF_PHOTO_BYTES}
+           ), 0) AS pdf_eligible_photo_metadata_bytes,
            COUNT(photo.id) FILTER (
              WHERE photo.organization_id IS DISTINCT FROM report.organization_id
            ) AS cross_organization_photo_count,
@@ -81,6 +85,11 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
            AS missing_pdf_compatible_object_count,
          COALESCE(SUM(coverage.pdf_object_size_out_of_range_count), 0)
            AS pdf_object_size_out_of_range_count,
+         COALESCE(MAX(coverage.pdf_eligible_photo_metadata_bytes), 0)
+           AS max_pdf_eligible_photo_metadata_bytes_per_file,
+         COUNT(*) FILTER (
+           WHERE coverage.pdf_eligible_photo_metadata_bytes > ${PHOTO_METADATA_REVIEW_BYTES}
+         ) AS signed_files_over_64mib_pdf_eligible_photo_metadata_count,
          COALESCE(SUM(coverage.cross_organization_photo_count), 0)
            AS cross_organization_photo_count,
          COALESCE(SUM(coverage.wrong_workflow_photo_count), 0)
@@ -97,7 +106,11 @@ function safeCount(value) {
   return count;
 }
 
-/** Aggregate-only current coverage and signing-time photo-state preflight; never returns identifiers. */
+/**
+ * Aggregate-only current coverage and signing-time photo-state preflight; never returns identifiers.
+ * Photo byte totals use object metadata for all verified photos, including any beyond the PDF's
+ * 100-photo selection cap. They are a conservative sizing diagnostic, not R2 or PDF-byte proof.
+ */
 export async function auditCustomSignedPhotoCoverage(pool) {
   if (!pool || typeof pool.connect !== "function") {
     throw new Error("custom_signed_photo_coverage_audit_pool_required");
@@ -135,6 +148,10 @@ export async function auditCustomSignedPhotoCoverage(pool) {
       verified_photos_beyond_cap_count: safeCount(row.verified_photos_beyond_cap_count),
       missing_pdf_compatible_object_count: safeCount(row.missing_pdf_compatible_object_count),
       pdf_object_size_out_of_range_count: safeCount(row.pdf_object_size_out_of_range_count),
+      max_pdf_eligible_photo_metadata_bytes_per_file:
+        safeCount(row.max_pdf_eligible_photo_metadata_bytes_per_file),
+      signed_files_over_64mib_pdf_eligible_photo_metadata_count:
+        safeCount(row.signed_files_over_64mib_pdf_eligible_photo_metadata_count),
       cross_organization_photo_count: safeCount(row.cross_organization_photo_count),
       wrong_workflow_photo_count: safeCount(row.wrong_workflow_photo_count),
     };
@@ -167,5 +184,6 @@ export async function auditCustomSignedPhotoCoverage(pool) {
 
 export const customSignedPhotoCoverageAuditInternals = Object.freeze({
   MAX_PDF_PHOTO_BYTES,
+  PHOTO_METADATA_REVIEW_BYTES,
   PHOTO_COVERAGE_AUDIT_SQL,
 });

@@ -1,6 +1,32 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { normalizeHousingProfileUpdate } from "../../util/housingProfileEdit.js";
+
+const HOUSING_PROFILE_VALIDATION_CODES = new Set([
+  "invalid_housing_profile",
+  "missing_housing_type",
+  "invalid_housing_type",
+  "invalid_attachment_type",
+  "invalid_source_url",
+  "invalid_architectural_style",
+  "invalid_source_record_reference",
+  "invalid_notes",
+]);
+
+function housingProfileValidationCode(error) {
+  try {
+    const message = error?.message;
+    return HOUSING_PROFILE_VALIDATION_CODES.has(message) ? message : null;
+  } catch {
+    return null;
+  }
+}
+
+function logHousingProfileFailure(logger, label, error) {
+  try { logger.error?.(label, safeOperationalErrorCode(error)); }
+  catch { /* Logging must not replace the fixed response. */ }
+}
 
 export function createHousingProfileRouter({
   pool,
@@ -30,16 +56,23 @@ export function createHousingProfileRouter({
       return res.status(400).json({ error: "invalid_account_id" });
     }
     if (!requireWorkflowAccess(req, res, "custom_appraisal", "write")) return undefined;
+    if (!req.body || typeof req.body !== "object" || Array.isArray(req.body)) {
+      return res.status(400).json({ error: "invalid_housing_profile" });
+    }
 
     let update;
     try {
       update = normalizeUpdate(req.body);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_housing_profile" });
+      const validationCode = housingProfileValidationCode(error);
+      if (validationCode) return res.status(400).json({ error: validationCode });
+      logHousingProfileFailure(logger, "housing profile validation failed", error);
+      return res.status(500).json({ error: "housing_profile_update_failed" });
     }
 
-    const client = await pool.connect();
+    let client;
     try {
+      client = await pool.connect();
       await client.query("BEGIN");
       const accountResult = await client.query(
         "SELECT 1 FROM core.accounts WHERE account_id = $1",
@@ -115,11 +148,17 @@ export function createHousingProfileRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, housing_profile: rows[0] });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("/api/accounts/:id/housing-profile failed", error);
+      if (client) {
+        try { await client.query("ROLLBACK"); }
+        catch { /* The fixed response still wins if rollback also fails. */ }
+      }
+      logHousingProfileFailure(logger, "/api/accounts/:id/housing-profile failed", error);
       return res.status(500).json({ error: "housing_profile_update_failed" });
     } finally {
-      client.release();
+      try { await client?.release(); }
+      catch (error) {
+        logHousingProfileFailure(logger, "housing profile client release failed", error);
+      }
     }
   });
 

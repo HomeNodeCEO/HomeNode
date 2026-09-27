@@ -122,6 +122,14 @@ function publicDocumentStorageError(value) {
   return "assignment_document_storage_failed";
 }
 
+function processingDocumentScopeMatches(claimed, current) {
+  return claimed.account_id === current.account_id
+    && positiveInteger(claimed.assignment_file_id) === positiveInteger(current.assignment_file_id)
+    && (claimed.uad_workfile_id || null) === (current.uad_workfile_id || null)
+    && (claimed.tax_protest_file_id || null) === (current.tax_protest_file_id || null)
+    && (claimed.report_file_id || null) === (current.report_file_id || null);
+}
+
 async function lockMutableCustomDocumentWorkfile(client, document) {
   const assignmentFileId = positiveInteger(document?.assignment_file_id);
   if (!assignmentFileId) return;
@@ -1366,6 +1374,9 @@ export async function processAssignmentDocument(pool, documentId, {
     try {
       await client.query("BEGIN");
       const current = await lockMutableAssignmentDocument(client, id);
+      if (!processingDocumentScopeMatches(document, current)) {
+        throw new Error("document_scope_changed");
+      }
       if (current.processing_status !== "processing"
         || Number(current.processing_attempts) !== Number(document.processing_attempts)) {
         throw new Error("document_processing_attempt_stale");
@@ -1481,6 +1492,9 @@ export async function processAssignmentDocument(pool, documentId, {
       failureClient = await pool.connect();
       await failureClient.query("BEGIN");
       const current = await lockMutableAssignmentDocument(failureClient, id);
+      if (!processingDocumentScopeMatches(document, current)) {
+        throw new Error("document_scope_changed");
+      }
       if (current.processing_status === "processing"
         && Number(current.processing_attempts) === attempts) {
         await failureClient.query(

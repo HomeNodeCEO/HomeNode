@@ -2705,18 +2705,6 @@ export interface AssignmentDocumentCandidateReview {
   reviewed_at: string;
 }
 
-export interface UadDocumentDiscrepancy {
-  field_key: string;
-  field_label: string;
-  document_value: string;
-  document_page: number | null;
-  other_document_id: number | null;
-  other_document_title: string;
-  other_value: string;
-  other_page: number | null;
-  source: 'uploaded_document' | 'saved_subject_record';
-}
-
 export interface AssignmentDocument {
   id: number;
   account_id: string;
@@ -2763,8 +2751,6 @@ export interface AssignmentDocument {
   content_url: string;
   candidate_count?: number;
   suggested_candidate_count?: number;
-  uad_discrepancies?: UadDocumentDiscrepancy[];
-  uad_comparison_incomplete?: boolean;
   candidates?: AssignmentDocumentCandidate[];
   review_history?: AssignmentDocumentCandidateReview[];
 }

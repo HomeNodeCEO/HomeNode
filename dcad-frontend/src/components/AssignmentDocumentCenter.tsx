@@ -33,8 +33,11 @@ import {
   reviewUadDocumentCandidate,
   synchronizeUadPurchaseContract,
   uploadUadDocument,
+  type UadEvidenceDocument,
   type UadDocumentApplicationResult,
 } from '@/features/uad/api';
+
+type EvidenceDocument = AssignmentDocument & Partial<UadEvidenceDocument>;
 
 const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
   ['zoning_map', 'Zoning Map'],
@@ -154,8 +157,8 @@ export default function AssignmentDocumentCenter({
   const isUad = Boolean(uadWorkfileId);
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
   const [open, setOpen] = useState(defaultOpen);
-  const [documents, setDocuments] = useState<AssignmentDocument[]>([]);
-  const [selectedDocument, setSelectedDocument] = useState<AssignmentDocument | null>(null);
+  const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
+  const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
   const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
   const [documentTitle, setDocumentTitle] = useState('');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
@@ -260,7 +263,7 @@ export default function AssignmentDocumentCenter({
     try {
       const editorKey = getEditorKey();
       if (!isUad && !editorKey) return;
-      const loaded = isUad && uadWorkfileId
+      const loaded: EvidenceDocument[] = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
       if (currentScopeKeyRef.current !== requestedScopeKey) return;
@@ -304,7 +307,7 @@ export default function AssignmentDocumentCenter({
       ]);
       if (documentResult.status === 'rejected') throw documentResult.reason;
       if (!requestIsCurrent()) return;
-      const document = documentResult.value;
+      const document: EvidenceDocument = documentResult.value;
       setSelectedDocument(document);
       if (isUad) setDocuments((current) => current.map((item) => item.id === document.id
         ? { ...item, uad_discrepancies: document.uad_discrepancies,

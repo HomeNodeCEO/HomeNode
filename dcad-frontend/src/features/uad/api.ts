@@ -351,8 +351,25 @@ export async function saveUadSection(
   return result;
 }
 
-export async function listUadDocuments(workfileId: string): Promise<AssignmentDocument[]> {
-  const response = await uadFetchJSON<{ documents: AssignmentDocument[] }>(
+export interface UadDocumentDiscrepancy {
+  field_key: string;
+  field_label: string;
+  document_value: string;
+  document_page: number | null;
+  other_document_id: number | null;
+  other_document_title: string;
+  other_value: string;
+  other_page: number | null;
+  source: 'uploaded_document' | 'saved_subject_record';
+}
+
+export type UadEvidenceDocument = AssignmentDocument & {
+  uad_discrepancies?: UadDocumentDiscrepancy[];
+  uad_comparison_incomplete?: boolean;
+};
+
+export async function listUadDocuments(workfileId: string): Promise<UadEvidenceDocument[]> {
+  const response = await uadFetchJSON<{ documents: UadEvidenceDocument[] }>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents`),
   );
   return response.documents;
@@ -361,8 +378,8 @@ export async function listUadDocuments(workfileId: string): Promise<AssignmentDo
 export async function getUadDocument(
   workfileId: string,
   documentId: number,
-): Promise<AssignmentDocument> {
-  const response = await uadFetchJSON<{ document: AssignmentDocument }>(
+): Promise<UadEvidenceDocument> {
+  const response = await uadFetchJSON<{ document: UadEvidenceDocument }>(
     makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/documents/${documentId}`),
   );
   return response.document;

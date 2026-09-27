@@ -20,6 +20,7 @@ import {
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { prefillUadSubject } from "./subjectPrefill.js";
+import { loadUadEvidenceDiscrepancies } from "./evidenceDiscrepancies.js";
 import {
   applyConfirmedUadDocumentCandidate,
   synchronizeUadPurchaseContract,
@@ -83,6 +84,15 @@ function authenticatedReviewer(req) {
   return String(
     req.mobileAuth?.displayName || req.mobileAuth?.email || userId,
   ).trim() || userId;
+}
+
+export async function safeUadEvidenceComparison(loader, pool, workfileId, logger = console) {
+  try {
+    return await loader(pool, workfileId);
+  } catch (error) {
+    logger.warn("[uad documents] evidence comparison failed", safeOperationalErrorCode(error));
+    return { discrepancies: {}, incomplete: true };
+  }
 }
 
 function errorStatus(error) {
@@ -205,6 +215,7 @@ export function createUadRouter({
   applyCompletionSuggestions = applyUadCompletionSuggestions,
   createWorkfile = createPublicCatalogUadWorkfile,
   prefillSubject = prefillUadSubject,
+  loadEvidenceDiscrepancies = loadUadEvidenceDiscrepancies,
   getCertificationReadiness = getUadCertificationReadiness,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
@@ -565,7 +576,16 @@ export function createUadRouter({
         uadWorkfileId: scope.uad_workfile_id,
         includePropertyEvidence: false,
       });
-      return res.json({ documents });
+      const comparison = await safeUadEvidenceComparison(
+        loadEvidenceDiscrepancies, pool, scope.uad_workfile_id,
+      );
+      return res.json({
+        documents: documents.map((document) => ({
+          ...document,
+          uad_discrepancies: comparison.discrepancies[document.id] || [],
+          uad_comparison_incomplete: comparison.incomplete,
+        })),
+      });
     } catch (error) {
       return sendError(res, error);
     }
@@ -659,7 +679,14 @@ export function createUadRouter({
           document = await getAssignmentDocument(pool, req.params.documentId);
         }
       }
-      return res.json({ document });
+      const comparison = ["uploaded", "processing"].includes(document.processing_status)
+        ? { discrepancies: {}, incomplete: true }
+        : await safeUadEvidenceComparison(loadEvidenceDiscrepancies, pool, req.params.workfileId);
+      return res.json({ document: {
+        ...document,
+        uad_discrepancies: comparison.discrepancies[document.id] || [],
+        uad_comparison_incomplete: comparison.incomplete,
+      } });
     } catch (error) {
       return sendError(res, error);
     }

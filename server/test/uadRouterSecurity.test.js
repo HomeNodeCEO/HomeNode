@@ -5,7 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { UAD_ASSET_UPLOAD_RESERVATION_LIMITS } from "../src/modules/uad/assets.js";
-import { createUadRouter, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
+import { createUadRouter, safeUadEvidenceComparison, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
 const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
@@ -42,6 +42,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
       : {}),
     ...(routerOverrides.prefillSubject
       ? { prefillSubject: routerOverrides.prefillSubject }
+      : {}),
+    ...(routerOverrides.loadEvidenceDiscrepancies
+      ? { loadEvidenceDiscrepancies: routerOverrides.loadEvidenceDiscrepancies }
       : {}),
     ...(routerOverrides.getCertificationReadiness
       ? { getCertificationReadiness: routerOverrides.getCertificationReadiness }
@@ -309,6 +312,35 @@ test("certification readiness preserves caller credentials and peer diagnostics 
     });
     assert.deepEqual(readiness, original, "HTTP projection must not mutate internal signer snapshots");
   }
+});
+
+test("document comparison cannot run before workfile authentication and authorization", async () => {
+  for (const scenario of [
+    { authenticated: false, expected: 401 },
+    { membershipOrganizationId: OTHER_ORGANIZATION_ID, expected: 403 },
+  ]) {
+    let compared = false;
+    await withServer(securityPool(scenario), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+        headers: scenario.authenticated === false ? {} : { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, scenario.expected);
+      assert.equal(compared, false);
+    }, {}, { loadEvidenceDiscrepancies: async () => { compared = true; return { discrepancies: {}, incomplete: false }; } });
+  }
+});
+
+test("document comparison failure keeps PDFs reviewable and signals incomplete coverage", async () => {
+  const warnings = [];
+  const logger = { warn(...args) { warnings.push(args); } };
+  const failed = await safeUadEvidenceComparison(
+    async () => { throw new Error("private database detail"); }, {}, WORKFILE_ID, logger,
+  );
+  assert.deepEqual(failed, { discrepancies: {}, incomplete: true });
+  assert.equal(warnings.length, 1);
+  assert.ok(!JSON.stringify(warnings).includes("private database detail"));
+  const expected = { discrepancies: { 1: [{ field_key: "county" }] }, incomplete: false };
+  assert.equal(await safeUadEvidenceComparison(async () => expected, {}, WORKFILE_ID, logger), expected);
 });
 
 test("certification readiness denies anonymous and cross-organization callers before loading credentials", async () => {

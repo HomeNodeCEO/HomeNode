@@ -403,6 +403,51 @@ test("Custom persistence failure releases the workfile lock before bounded R2 cl
   assert.ok(cleanupSignal instanceof AbortSignal);
 });
 
+test("failed Custom upload cleanup cannot remove a later identical committed object", async () => {
+  const first = customDocumentUploadPool({ insertError: new Error("synthetic_insert_failure") });
+  const second = customDocumentUploadPool();
+  const content = Buffer.from("%PDF-concurrent-custom-upload");
+  const objects = new Set();
+  const uploadedKeys = [];
+  let cleanupStartedResolve;
+  const cleanupStarted = new Promise((resolve) => { cleanupStartedResolve = resolve; });
+  let finishCleanup;
+  const cleanupGate = new Promise((resolve) => { finishCleanup = resolve; });
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject({ objectKey }) {
+      uploadedKeys.push(objectKey);
+      objects.add(objectKey);
+    },
+    async inspectObject() {
+      return { byte_size: content.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+    async deleteObject({ objectKey }) {
+      cleanupStartedResolve();
+      await cleanupGate;
+      objects.delete(objectKey);
+    },
+  };
+  const input = {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "same.pdf", content, storage,
+  };
+  const failedUpload = createAssignmentDocument(first.pool, input);
+  await cleanupStarted;
+  try {
+    const committed = await createAssignmentDocument(second.pool, input);
+    assert.equal(committed.storage_provider, "r2");
+  } finally {
+    finishCleanup();
+  }
+  await assert.rejects(failedUpload, { message: "synthetic_insert_failure" });
+  assert.equal(uploadedKeys.length, 2);
+  assert.notEqual(uploadedKeys[0], uploadedKeys[1]);
+  assert.equal(objects.has(uploadedKeys[0]), false);
+  assert.equal(objects.has(uploadedKeys[1]), true);
+});
+
 function propertyTaxQuotaPool(usage = {}) {
   const events = [];
   const client = {

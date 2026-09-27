@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   DOCUMENT_EXTRACTION_SCHEMA_VERSION,
@@ -902,7 +902,7 @@ export async function createAssignmentDocument(pool, {
         ? AbortSignal.timeout(CUSTOM_DOCUMENT_STORAGE_BUDGET_MS)
         : null;
       try {
-        objectKey = buildAssignmentDocumentObjectKey({
+        const baseObjectKey = buildAssignmentDocumentObjectKey({
           organizationId,
           accountId,
           assignmentFileId,
@@ -911,6 +911,12 @@ export async function createAssignmentDocument(pool, {
           checksumSha256: checksum,
           fileName: safeFileName,
         });
+        // A failed transaction can roll back before private-object cleanup.
+        // Give each Custom attempt its own key so a waiting identical upload
+        // cannot commit an object that the earlier cleanup may delete.
+        objectKey = customAssignmentFileId
+          ? `${baseObjectKey}.upload-${randomUUID()}`
+          : baseObjectKey;
         stagedObjectKey = objectKey;
         await storage.putObject({
           objectKey,

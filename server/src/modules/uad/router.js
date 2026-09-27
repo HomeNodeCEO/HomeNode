@@ -20,6 +20,7 @@ import {
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
 import { prefillUadSubject } from "./subjectPrefill.js";
+import { loadUadEvidenceDiscrepancies } from "./evidenceDiscrepancies.js";
 import {
   applyConfirmedUadDocumentCandidate,
   synchronizeUadPurchaseContract,
@@ -205,6 +206,7 @@ export function createUadRouter({
   applyCompletionSuggestions = applyUadCompletionSuggestions,
   createWorkfile = createPublicCatalogUadWorkfile,
   prefillSubject = prefillUadSubject,
+  loadEvidenceDiscrepancies = loadUadEvidenceDiscrepancies,
   getCertificationReadiness = getUadCertificationReadiness,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
@@ -565,7 +567,14 @@ export function createUadRouter({
         uadWorkfileId: scope.uad_workfile_id,
         includePropertyEvidence: false,
       });
-      return res.json({ documents });
+      const comparison = await loadEvidenceDiscrepancies(pool, scope.uad_workfile_id);
+      return res.json({
+        documents: documents.map((document) => ({
+          ...document,
+          uad_discrepancies: comparison.discrepancies[document.id] || [],
+          uad_comparison_incomplete: comparison.incomplete,
+        })),
+      });
     } catch (error) {
       return sendError(res, error);
     }
@@ -659,7 +668,12 @@ export function createUadRouter({
           document = await getAssignmentDocument(pool, req.params.documentId);
         }
       }
-      return res.json({ document });
+      const comparison = await loadEvidenceDiscrepancies(pool, req.params.workfileId);
+      return res.json({ document: {
+        ...document,
+        uad_discrepancies: comparison.discrepancies[document.id] || [],
+        uad_comparison_incomplete: comparison.incomplete,
+      } });
     } catch (error) {
       return sendError(res, error);
     }

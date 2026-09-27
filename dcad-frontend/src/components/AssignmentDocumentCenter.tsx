@@ -170,6 +170,9 @@ export default function AssignmentDocumentCenter({
   const [viewerUrl, setViewerUrl] = useState('');
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
+  const discrepancyDocumentCount = isUad
+    ? documents.filter((document) => (document.uad_discrepancies?.length || 0) > 0).length
+    : 0;
   const scopeKey = isUad
     ? `uad:${uadWorkfileId || ''}`
     : `custom:${accountId}:${assignmentFileId ?? ''}`;
@@ -265,6 +268,10 @@ export default function AssignmentDocumentCenter({
       if (selectedDocument?.id) {
         const matching = loaded.find((document) => document.id === selectedDocument.id);
         if (!matching) setSelectedDocument(null);
+        else if (isUad) setSelectedDocument((current) => current?.id === matching.id
+          ? { ...current, uad_discrepancies: matching.uad_discrepancies,
+              uad_comparison_incomplete: matching.uad_comparison_incomplete }
+          : current);
       }
     } catch (error) {
       if (currentScopeKeyRef.current !== requestedScopeKey) return;
@@ -299,6 +306,10 @@ export default function AssignmentDocumentCenter({
       if (!requestIsCurrent()) return;
       const document = documentResult.value;
       setSelectedDocument(document);
+      if (isUad) setDocuments((current) => current.map((item) => item.id === document.id
+        ? { ...item, uad_discrepancies: document.uad_discrepancies,
+            uad_comparison_incomplete: document.uad_comparison_incomplete }
+        : item));
       setCandidateValues(Object.fromEntries(
         (document.candidates || [])
           .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
@@ -322,8 +333,8 @@ export default function AssignmentDocumentCenter({
   }, [getEditorKey, isUad, scopeKey, uadWorkfileId]);
 
   useEffect(() => {
-    if (embedded || open) void loadDocuments();
-  }, [embedded, open, loadDocuments]);
+    if (isUad || embedded || open) void loadDocuments();
+  }, [embedded, isUad, open, loadDocuments]);
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;
@@ -453,6 +464,7 @@ export default function AssignmentDocumentCenter({
         : await reprocessAssignmentDocument(selectedDocument.id, editorKey);
       setSelectedDocument(document);
       await loadDocuments();
+      if (isUad) await loadDocument(document.id);
       setMessage('Extraction completed with the current document rules.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The document could not be reprocessed.');
@@ -702,6 +714,7 @@ export default function AssignmentDocumentCenter({
         </span>
         <span className={open ? 'hn-action-gold rounded-lg px-3 py-2 text-xs font-semibold' : 'hn-action-secondary rounded-lg px-3 py-2 text-xs font-semibold'}>
           {open ? 'Close Documents' : `Review Documents${documents.length ? ` (${documents.length})` : ''}`}
+          {discrepancyDocumentCount > 0 ? ` · ${discrepancyDocumentCount} with discrepancies` : ''}
         </span>
       </button> : null}
 
@@ -745,6 +758,11 @@ export default function AssignmentDocumentCenter({
                   <span className={`mt-2 inline-flex rounded-full px-2 py-0.5 text-[10px] font-semibold ${statusStyle(document.processing_status)}`}>
                     {statusLabel(document.processing_status)}
                   </span>
+                  {isUad && document.uad_discrepancies?.length ? (
+                    <span className="ml-1 mt-2 inline-flex rounded-full bg-rose-100 px-2 py-0.5 text-[10px] font-semibold text-rose-900">
+                      {document.uad_discrepancies.length} discrepanc{document.uad_discrepancies.length === 1 ? 'y' : 'ies'}
+                    </span>
+                  ) : null}
                 </button>
               )) : (
                 <p className="rounded-lg border border-dashed border-slate-300 bg-slate-50 p-4 text-xs leading-5 text-slate-600">No PDFs have been attached to this appraisal file yet.</p>
@@ -777,6 +795,30 @@ export default function AssignmentDocumentCenter({
               </div>
               {selectedDocument ? (
                 <>
+                  {isUad && selectedDocument.uad_discrepancies?.length ? (
+                    <div role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs leading-5 text-rose-950">
+                      <strong>Document facts need appraiser review</strong>
+                      <p>These extracted values differ from another uploaded document or the saved HomeNode subject record. Check the cited PDF pages before confirming or using them.</p>
+                      <ul className="mt-2 space-y-2">
+                        {selectedDocument.uad_discrepancies.map((item, index) => (
+                          <li key={`${item.field_key}-${item.other_document_id}-${index}`} className="rounded border border-rose-200 bg-white p-2">
+                            <strong>{item.field_label}:</strong> this document says “{item.document_value}”{item.document_page ? ` (page ${item.document_page})` : ''};{' '}
+                            {item.source === 'saved_subject_record' ? 'saved HomeNode subject record' : item.other_document_title} says “{item.other_value}”{item.other_page ? ` (page ${item.other_page})` : ''}.
+                            {item.other_document_id ? (
+                              <button type="button" className="ml-1 font-semibold underline" onClick={() => void loadDocument(item.other_document_id as number)}>
+                                View other document
+                              </button>
+                            ) : null}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  ) : null}
+                  {isUad && selectedDocument.uad_comparison_incomplete ? (
+                    <p className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
+                      Document comparison is incomplete while extraction is pending, text is unavailable, or a large evidence set exceeds the review scan. Review the source PDFs directly.
+                    </p>
+                  ) : null}
                   <div className={`rounded-lg p-3 text-xs leading-5 ${statusStyle(selectedDocument.processing_status)}`}>
                     <strong>{statusLabel(selectedDocument.processing_status)}</strong>
                     <p>{selectedDocument.extraction_summary?.review_reason || 'Every machine suggestion remains separate from appraiser-confirmed data.'}</p>

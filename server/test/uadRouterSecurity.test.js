@@ -43,6 +43,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
     ...(routerOverrides.prefillSubject
       ? { prefillSubject: routerOverrides.prefillSubject }
       : {}),
+    ...(routerOverrides.loadEvidenceDiscrepancies
+      ? { loadEvidenceDiscrepancies: routerOverrides.loadEvidenceDiscrepancies }
+      : {}),
     ...(routerOverrides.getCertificationReadiness
       ? { getCertificationReadiness: routerOverrides.getCertificationReadiness }
       : {}),
@@ -308,6 +311,22 @@ test("certification readiness preserves caller credentials and peer diagnostics 
       },
     });
     assert.deepEqual(readiness, original, "HTTP projection must not mutate internal signer snapshots");
+  }
+});
+
+test("document comparison cannot run before workfile authentication and authorization", async () => {
+  for (const scenario of [
+    { authenticated: false, expected: 401 },
+    { membershipOrganizationId: OTHER_ORGANIZATION_ID, expected: 403 },
+  ]) {
+    let compared = false;
+    await withServer(securityPool(scenario), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/documents`, {
+        headers: scenario.authenticated === false ? {} : { authorization: "Bearer synthetic-token" },
+      });
+      assert.equal(response.status, scenario.expected);
+      assert.equal(compared, false);
+    }, {}, { loadEvidenceDiscrepancies: async () => { compared = true; return { discrepancies: {}, incomplete: false }; } });
   }
 });
 

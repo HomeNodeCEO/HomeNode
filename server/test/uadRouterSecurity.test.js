@@ -40,6 +40,9 @@ async function withServer(pool, callback, securityOverrides = {}, routerOverride
     ...(routerOverrides.createWorkfile
       ? { createWorkfile: routerOverrides.createWorkfile }
       : {}),
+    ...(routerOverrides.prefillSubject
+      ? { prefillSubject: routerOverrides.prefillSubject }
+      : {}),
     ...(routerOverrides.getCertificationReadiness
       ? { getCertificationReadiness: routerOverrides.getCertificationReadiness }
       : {}),
@@ -149,6 +152,50 @@ function securityPool({
     },
   };
 }
+
+test("subject prefill requires assignment-scoped write access before source initialization", async () => {
+  for (const scenario of [
+    { authenticated: false, expected: 401 },
+    { membershipOrganizationId: OTHER_ORGANIZATION_ID, expected: 403 },
+    { assignedAppraiserUserId: null, expected: 403 },
+    { roleCode: "read_only", expected: 403 },
+    { roleCode: "reviewer", expected: 403 },
+  ]) {
+    let invoked = false;
+    await withServer(securityPool(scenario), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/subject-prefill`, {
+        method: "POST", headers: {
+          "content-type": "application/json",
+          ...(scenario.authenticated === false ? {} : { authorization: "Bearer synthetic-token" }),
+        }, body: "{}",
+      });
+      assert.equal(response.status, scenario.expected);
+      assert.equal(invoked, false);
+    }, {}, { prefillSubject: async () => { invoked = true; throw new Error("must_not_run"); } });
+  }
+});
+
+test("subject prefill uses the authenticated actor, ignores request values, and maps locked files to 409", async () => {
+  const pool = securityPool();
+  let locked = false;
+  await withServer(pool, async (baseUrl) => {
+    const request = () => fetch(`${baseUrl}/api/uad/workfiles/${WORKFILE_ID}/subject-prefill`, {
+      method: "POST", headers: { "content-type": "application/json", authorization: "Bearer synthetic-token" },
+      body: JSON.stringify({ actor_user_id: "forged", values: [{ value: "forged" }], subject_snapshot: { account: {} } }),
+    });
+    const response = await request();
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { changed_field_count: 4, current_revision: 8 });
+    locked = true;
+    const refused = await request();
+    assert.equal(refused.status, 409);
+    assert.deepEqual(await refused.json(), { error: "uad_workfile_status_locked" });
+  }, {}, { prefillSubject: async (...args) => {
+    assert.deepEqual(args, [pool, WORKFILE_ID, USER_ID]);
+    if (locked) throw new Error("uad_workfile_status_locked");
+    return { changed_field_count: 4, current_revision: 8 };
+  } });
+});
 
 test("strict UAD routes reject a missing bearer token before database access", async () => {
   const pool = securityPool();

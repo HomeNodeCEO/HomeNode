@@ -98,6 +98,8 @@ jobs:
           cache-dependency-path: server/package-lock.json
       - run: npm ci
       - run: npm run test:uad-migration
+      - name: Verify subject prefill persistence and concurrent appraiser ownership
+        run: node --test test/uadSubjectPrefill.integration.test.js
       - name: Verify prepared city and subdivision index on isolated PostgreSQL
         run: node --test test/neighborhoodGroupIndex.integration.test.js
       - name: Verify migration is idempotent

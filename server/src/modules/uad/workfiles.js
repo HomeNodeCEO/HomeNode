@@ -5,7 +5,8 @@ import {
   INITIAL_UAD_INSPECTION_METHOD,
   INITIAL_UAD_PROPERTY_TYPE,
 } from "./constants.js";
-import { buildUadPrefillValues, getUadField } from "./fieldCatalog.js";
+import { getUadField } from "./fieldCatalog.js";
+import { buildUadSubjectPrefillValues } from "./subjectPrefillValues.js";
 import { buildUadPublicRecordOwners } from "./publicRecordOwners.js";
 import { registerOriginalAppraisalReport } from "../../services/appraisalHistory.js";
 
@@ -158,6 +159,23 @@ async function loadSubjectSnapshot(client, accountId) {
     [accountId],
   );
   if (!rows.length) throw new Error("subject_account_not_found");
+  // Same normalized public-record sources as Custom Appraisal. Older isolated
+  // installations may not have these optional source relations yet.
+  const sources = await client.query(`SELECT
+    to_regclass('core.legal_description_current') AS legal,
+    to_regclass('core.v_account_housing_profiles') AS housing`);
+  if (sources.rows[0]?.legal) {
+    const legal = await client.query(
+      "SELECT to_jsonb(l) AS data FROM core.legal_description_current l WHERE account_id = $1 LIMIT 1", [accountId],
+    );
+    rows[0].legal_description = legal.rows[0]?.data || null;
+  }
+  if (sources.rows[0]?.housing) {
+    const housing = await client.query(
+      "SELECT to_jsonb(h) AS data FROM core.v_account_housing_profiles h WHERE account_id = $1 LIMIT 1", [accountId],
+    );
+    rows[0].housing_profile = housing.rows[0]?.data || null;
+  }
   return rows[0];
 }
 
@@ -182,12 +200,6 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
     ...owner,
     entityId: randomUUID(),
   }));
-  const reportedLivingUnits = Number(subjectData?.primary_improvements?.number_units);
-  const dwellingLivingUnits = Number.isInteger(reportedLivingUnits) && reportedLivingUnits > 0 ? reportedLivingUnits : 1;
-  const reportedYearBuilt = Number(subjectData?.primary_improvements?.year_built);
-  const dwellingYearBuilt = Number.isInteger(reportedYearBuilt) && reportedYearBuilt >= 1000 && reportedYearBuilt <= 9999
-    ? String(reportedYearBuilt)
-    : null;
 
     const inserted = await client.query(
       `INSERT INTO appraisal.uad_workfiles (
@@ -233,6 +245,8 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
             "core.owner_parties",
             "core.land_detail",
             "core.secondary_improvements",
+            ...(subjectData.legal_description ? ["core.legal_description_current"] : []),
+            ...(subjectData.housing_profile ? ["core.v_account_housing_profiles"] : []),
           ],
         }),
         actorUserId,
@@ -301,13 +315,18 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
       ],
     );
 
-    for (const { field, value, sourceReference } of buildUadPrefillValues(subjectData)) {
-      const sourceType = sourceReference?.startsWith("subject_snapshot.") ? "homenode" : "calculated";
+    const subjectEntities = [
+      { id: propertyEntityId, entity_type: "property", entity_identifier: "subject", parent_entity_id: null },
+      { id: dwellingEntityId, entity_type: "dwelling", entity_identifier: "dwelling-1", parent_entity_id: propertyEntityId },
+      { id: unitEntityId, entity_type: "unit", entity_identifier: "unit-1", parent_entity_id: dwellingEntityId },
+      { id: siteParcelEntityId, entity_type: "site_parcel", entity_identifier: "site-parcel-1", parent_entity_id: propertyEntityId },
+    ];
+    for (const { field, value, sourceReference, sourceType, entityId } of buildUadSubjectPrefillValues(subjectData, subjectEntities, [], { includeDefaults: true })) {
       await client.query(
         `INSERT INTO appraisal.uad_field_values (
-           id, workfile_id, field_context, uad_uid, report_field_id, value,
+           id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
            source_type, source_reference, source_observed_at, is_appraiser_confirmed
-         ) VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, now(), false)`,
+         ) VALUES ($1, $2, $9, $3, $4, $5, $6::jsonb, $7, $8, now(), false)`,
         [
           randomUUID(),
           workfileId,
@@ -317,6 +336,7 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
           JSON.stringify(value),
           sourceType,
           sourceReference,
+          entityId,
         ],
       );
     }
@@ -326,35 +346,10 @@ export async function createUadWorkfileWithClient(client, accountIdValue, input 
          id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
          source_type, source_reference, source_observed_at, is_appraiser_confirmed
        ) VALUES
-         ($1, $3, NULL, 'site', '1500.0094', '4.002', '1'::jsonb,
-          'calculated', 'uad_workfile.initial_site_parcel_count', now(), false),
-         ($2, $3, $4, 'site_parcel', '1500.0027', '4.005', to_jsonb($5::text),
-          'public_record', 'subject_snapshot.account.account_id', now(), false)`,
-      [randomUUID(), randomUUID(), workfileId, siteParcelEntityId, accountId],
+         ($1, $2, NULL, 'site', '1500.0094', '4.002', '1'::jsonb,
+          'calculated', 'uad_workfile.initial_site_parcel_count', now(), false)`,
+      [randomUUID(), workfileId],
     );
-
-    await client.query(
-      `INSERT INTO appraisal.uad_field_values (
-         id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
-         source_type, source_reference, source_observed_at, is_appraiser_confirmed
-       ) VALUES (
-         $1, $2, $3, 'dwelling', '0300.0063', '8.001', $4::jsonb,
-         'public_record', 'subject_snapshot.primary_improvements.number_units', now(), false
-       )`,
-      [randomUUID(), workfileId, dwellingEntityId, JSON.stringify(dwellingLivingUnits)],
-    );
-    if (dwellingYearBuilt) {
-      await client.query(
-        `INSERT INTO appraisal.uad_field_values (
-           id, workfile_id, entity_id, field_context, uad_uid, report_field_id, value,
-           source_type, source_reference, source_observed_at, is_appraiser_confirmed
-         ) VALUES (
-           $1, $2, $3, 'dwelling', '0300.0011', '8.010', $4::jsonb,
-           'public_record', 'subject_snapshot.primary_improvements.year_built', now(), false
-         )`,
-        [randomUUID(), workfileId, dwellingEntityId, JSON.stringify(dwellingYearBuilt)],
-      );
-    }
 
     await client.query(
       `INSERT INTO appraisal.uad_revisions (

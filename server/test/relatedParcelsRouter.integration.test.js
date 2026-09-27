@@ -247,7 +247,9 @@ test("DCAD outages degrade to a reviewable response instead of failing the route
           : { rows: [] };
       },
     },
-    findParcelsByAddress: async () => { throw new Error("dcad_temporarily_unavailable"); },
+    findParcelsByAddress: async () => {
+      throw new Error("dcad_temporarily_unavailable: secret=https://private.example/token");
+    },
   })));
   context.after(server.close);
 
@@ -256,7 +258,8 @@ test("DCAD outages degrade to a reviewable response instead of failing the route
   const body = await response.json();
   assert.equal(body.query_address, "9 OAK ST");
   assert.equal(body.live_query_status, "unavailable");
-  assert.equal(body.live_query_error, "dcad_temporarily_unavailable");
+  assert.equal(body.live_query_error, "dcad_address_query_failed");
+  assert.equal(JSON.stringify(body).includes("private.example"), false);
   assert.deepEqual(body.parcels, []);
 });
 
@@ -301,8 +304,12 @@ test("shared outage results never expose another account address suffix", async 
   const second = await fetch(`${server.baseUrl}/api/accounts/B-2/related-parcels`);
   assert.equal(first.status, 200);
   assert.equal(second.status, 200);
-  assert.equal((await first.json()).query_address, "9 OAK ST");
-  assert.equal((await second.json()).query_address, "9 OAK ST");
+  const firstBody = await first.json();
+  const secondBody = await second.json();
+  assert.equal(firstBody.query_address, "9 OAK ST");
+  assert.equal(secondBody.query_address, "9 OAK ST");
+  assert.equal(firstBody.live_query_error, "dcad_address_query_failed");
+  assert.equal(secondBody.live_query_error, "dcad_address_query_failed");
   assert.equal(lookupCount, 1);
 });
 
@@ -340,7 +347,22 @@ test("unexpected related parcel failures retain stable diagnostics and error cod
   const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "related_parcel_lookup_failed" });
-  assert.deepEqual(logs, [["related parcel lookup failed", failure]]);
+  assert.deepEqual(logs, [["related parcel lookup failed", "unknown"]]);
+});
+
+test("unexpected lookup failures cannot leak hostile exception text or break the response", async (context) => {
+  const failure = Object.defineProperty(new Error(), "message", {
+    get() { throw new Error("secret=private-db-url"); },
+  });
+  const server = await startRouter(createRelatedParcelsRouter(options({
+    pool: { query: async () => { throw failure; } },
+    logger: { error() { throw new Error("secret=logger-failure"); } },
+  })));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1/related-parcels`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "related_parcel_lookup_failed" });
 });
 
 test("related parcel router validates collaborators and is mounted at the original boundary", () => {

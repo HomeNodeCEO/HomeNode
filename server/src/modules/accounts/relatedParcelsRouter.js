@@ -1,4 +1,5 @@
 import express from "express";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 import { findDcadParcelsByAddress } from "../../services/accountLocations.js";
 import {
@@ -93,18 +94,20 @@ export function createRelatedParcelsRouter({
                 result: await findParcelsByAddress(requestedAddress),
                 error: null,
               };
-            } catch (error) {
+            } catch {
               return {
                 status: "unavailable",
                 result: { query_address: liveLookupKey, parcels: [] },
-                error: String(error?.message || "dcad_address_query_failed"),
+                error: "dcad_address_query_failed",
               };
             }
           },
         );
         liveResult = lookup.result;
         liveQueryStatus = lookup.status;
-        liveQueryError = lookup.error;
+        // A shared lookup may carry third-party exception text. Keep the
+        // response diagnostic stable and independent of the cached payload.
+        liveQueryError = lookup.status === "unavailable" ? "dcad_address_query_failed" : null;
       }
       const remoteIds = liveResult.parcels.map((parcel) => parcel.account_id);
       const { rows: localRows } = await pool.query(
@@ -210,11 +213,17 @@ export function createRelatedParcelsRouter({
         parcels,
       });
     } catch (error) {
-      if (isLookupBusyError(error?.message)) {
+      let message = "";
+      try { message = error?.message || ""; } catch { /* Preserve the fixed response boundary. */ }
+      let busy = false;
+      try { busy = isLookupBusyError(message); } catch { /* Treat classification failure as unknown. */ }
+      if (busy) {
         res.set("Retry-After", "5");
         return res.status(503).json({ error: "related_parcel_lookup_busy" });
       }
-      logger.error?.("related parcel lookup failed", error);
+      try {
+        logger.error?.("related parcel lookup failed", safeOperationalErrorCode(error));
+      } catch { /* Logging must not replace the fixed response boundary. */ }
       return res.status(500).json({ error: "related_parcel_lookup_failed" });
     }
   });

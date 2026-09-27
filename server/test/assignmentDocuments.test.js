@@ -16,6 +16,7 @@ import {
   loadAssignmentDocumentContent,
   PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
   retainedAssignmentDocumentReview,
+  reviewAssignmentDocumentCandidate,
 } from "../src/services/assignmentDocuments.js";
 
 test("UAD purchase contracts omit the synthetic assignment-type review candidate", () => {
@@ -969,6 +970,55 @@ test("a private document remains in the database when object deletion fails", as
   assert.equal(events.some((event) => /DELETE FROM app\.assignment_documents/.test(event)), false);
 });
 
+for (const [name, review] of [
+  ["single candidate", (pool) => reviewAssignmentDocumentCandidate(pool, {
+    documentId: 44, candidateId: 501, reviewStatus: "rejected", reviewer: "Appraiser",
+  })],
+  ["confirm all", (pool) => confirmAssignmentDocumentCandidates(pool, {
+    documentId: 44, reviewer: "Appraiser",
+  })],
+  ["subject override", (pool) => confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
+    documentId: 44, reviewer: "Appraiser", actorUserId: "appraiser-1",
+  })],
+]) {
+  for (const [status, hasSignedSnapshot] of [["signed", false], ["draft", true]]) {
+    test(`${name} cannot change Custom document review after signed state=${status}, snapshot=${hasSignedSnapshot}`, async () => {
+      const events = [];
+      const client = {
+        async query(sql) {
+          events.push(sql);
+          if (["BEGIN", "ROLLBACK"].includes(sql)) return { rows: [] };
+          if (/SELECT \* FROM app\.assignment_documents WHERE id =/.test(sql)) {
+            return { rows: [{ id: 44, account_id: "account-44", assignment_file_id: 91,
+              document_type: "engagement_letter" }] };
+          }
+          if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+            return { rows: [{ id: 91, file_number: "2026-44" }] };
+          }
+          if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+          if (/FOR UPDATE OF workfile/.test(sql)) {
+            return { rows: [{ status, has_signed_snapshot: hasSignedSnapshot }] };
+          }
+          throw new Error(`unexpected query after signed-workfile check: ${sql}`);
+        },
+        release() { events.push("RELEASE"); },
+      };
+      const pool = {
+        async query(sql) {
+          if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+          throw new Error(`unexpected schema query: ${sql}`);
+        },
+        async connect() { return client; },
+      };
+      await assert.rejects(review(pool), /custom_appraisal_workfile_signed/);
+      assert.ok(events.some((sql) => /FOR UPDATE OF workfile/.test(sql)));
+      assert.ok(events.includes("ROLLBACK"));
+      assert.equal(events.some((sql) => /(?:UPDATE|INSERT INTO) app\.assignment_document_(?:field_candidates|candidate_reviews)/.test(sql)), false);
+      assert.equal(events.includes("COMMIT"), false);
+    });
+  }
+}
+
 test("document extraction retries use bounded exponential backoff", () => {
   assert.equal(assignmentDocumentRetryDelayMs(1), 30_000);
   assert.equal(assignmentDocumentRetryDelayMs(2), 60_000);
@@ -1260,6 +1310,13 @@ test("approving assignment-scoped engagement evidence updates the exact file and
           extraction_summary: {},
         }] };
       }
+      if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+        return { rows: [{ id: 91, file_number: "2026-239-01" }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+      if (/FOR UPDATE OF workfile/.test(sql)) {
+        return { rows: [{ status: "draft", has_signed_snapshot: false }] };
+      }
       if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) return { rows: [candidate] };
       if (/UPDATE app\.assignment_document_field_candidates/.test(sql)) {
         return { rows: [{ ...candidate, review_status: "confirmed", confirmed_value: values[2] }] };
@@ -1295,6 +1352,8 @@ test("approving assignment-scoped engagement evidence updates the exact file and
   });
   assert.equal(result.assignment_application.applied, true);
   assert.equal(result.assignment_application.revision, 5);
+  assert.ok(queries.findIndex(({ sql }) => /FOR UPDATE OF workfile/.test(sql))
+    < queries.findIndex(({ sql }) => /UPDATE app\.assignment_document_field_candidates/.test(sql)));
   const update = queries.find(({ sql }) => /UPDATE app\.assignment_files/.test(sql));
   assert.equal(JSON.parse(update.values[0]).lender_client_name, "Bank of America");
   assert.equal(update.values[2], 5);

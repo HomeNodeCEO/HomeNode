@@ -412,6 +412,26 @@ test("signed Custom document deletion returns a stable non-cacheable conflict", 
   assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
 });
 
+for (const [name, path, method, serviceName] of [
+  ["candidate review", "/api/documents/5/candidates/501", "PATCH", "reviewCandidate"],
+  ["confirm all", "/api/documents/5/confirm-all", "POST", "confirmCandidates"],
+  ["subject override", "/api/documents/5/subject-address-override", "POST", "confirmDespiteMismatch"],
+]) {
+  test(`signed Custom ${name} returns a stable non-cacheable conflict`, async (context) => {
+    const server = await startRouter(createAssignmentDocumentRouter(options({
+      pool: accessibleDocumentPool(),
+      [serviceName]: async () => { throw new Error("custom_appraisal_workfile_signed"); },
+    })));
+    context.after(server.close);
+    const response = await fetch(`${server.baseUrl}${path}`, jsonRequest(method, {
+      review_status: "confirmed",
+    }));
+    assert.equal(response.status, 409);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+  });
+}
+
 test("document review routes preserve exact appraiser decisions", async (context) => {
   const calls = [];
   const pool = accessibleDocumentPool();

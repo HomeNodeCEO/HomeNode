@@ -1665,6 +1665,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
     );
     const sourceDocument = documentRows[0];
     if (!sourceDocument) throw new Error("document_not_found");
+    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
     const { rows } = await client.query(
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
@@ -1803,6 +1804,7 @@ export async function confirmAssignmentDocumentCandidates(pool, {
     );
     const sourceDocument = documentRows[0];
     if (!sourceDocument) throw new Error("document_not_found");
+    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
     const { rows: candidateRows } = await client.query(
       `SELECT * FROM app.assignment_document_field_candidates
        WHERE document_id = $1
@@ -1907,6 +1909,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
     );
     const sourceDocument = documentRows[0];
     if (!sourceDocument) throw new Error("document_not_found");
+    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
     if (sourceDocument.document_type !== "engagement_letter") {
       throw new Error("engagement_letter_required");
     }

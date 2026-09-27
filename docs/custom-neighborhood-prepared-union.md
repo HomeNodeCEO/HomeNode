@@ -20,6 +20,16 @@ large payload is not recompressed on each catalog opening. The repository also
 supplies the verified member-table byte length so a pocket click need only
 measure its changed response envelope, not serialize all immutable members.
 
+Verified process-cache hits recheck the stored digest/length and PostgreSQL's
+current SHA-256 of the compressed bytes, returning only this small metadata
+instead of retransmitting the blobs. This preserves detection of damaged bytes
+even when their saved text digest has not changed. It removes network copies
+and application-side rehashing on hits, not database-side hashing. A mismatch
+clears the hot entry and runs the original bounded decode and verification;
+a missing row is never replaced by a process-cache value. Numeric-only hits do
+not read or hash map bytes. The one-context, five-minute cache, 60 MB numeric /
+24 MB map budgets, and 1 GB process-RSS admission guard remain unchanged.
+
 Every read still checks exact assignment access, the immutable context header
 and study/profile originals, market-source permission, effective date, and live
 subject material. Private supplemental-sale captures currently use the original

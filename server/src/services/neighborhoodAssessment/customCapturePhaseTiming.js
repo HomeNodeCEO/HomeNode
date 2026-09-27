@@ -8,7 +8,7 @@ const CATALOG_PHASES = new Set(['catalog', 'proximity', 'prepared_secondary', 'r
 const PREPARED_CATALOG_PHASES = new Set(['target', 'authorization', 'catalog_read', 'preview_read', 'projection', 'recheck']);
 const PREPARED_CATALOG_PROJECTION_PHASES = new Set(['binding', 'membership', 'opening_selection', 'observation_reselect',
   'map_select', 'map_manifest', 'summary_projection', 'transport_guard']);
-const PREPARED_PREVIEW_READ_PHASES = new Set(['query', 'preview_decode', 'preview_restore', 'map_decode']);
+const PREPARED_PREVIEW_READ_PHASES = new Set(['cache_verify', 'query', 'preview_decode', 'preview_restore', 'map_decode']);
 // Operational timings only: no IDs, errors, query text, payloads or source data.
 // Fixed phases and source subphases; logger failures cannot change the outcome.
 export function createCustomCapturePhaseTiming(report = event => {

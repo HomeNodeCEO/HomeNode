@@ -255,7 +255,8 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   assert.equal(inspectionSignal, uploadSignal);
 });
 
-function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false, existing = null } = {}) {
+function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false,
+  existing = null, insertError = null } = {}) {
   const events = [];
   const client = {
     async query(sql, values = []) {
@@ -277,6 +278,7 @@ function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false,
         return { rows: [{ ...existing, title: values[1], file_name: values[2] }] };
       }
       if (/INSERT INTO app\.assignment_documents/.test(sql)) {
+        if (insertError) throw insertError;
         return { rows: [{ id: 92, account_id: values[0], assignment_file_id: values[1],
           document_type: values[5], title: values[6], file_name: values[7],
           content_type: "application/pdf", checksum_sha256: values[9],
@@ -374,6 +376,31 @@ test("failed Custom R2 upload bounds private-object cleanup before PostgreSQL fa
   assert.ok(cleanupSignal instanceof AbortSignal);
   assert.ok(events.includes("SET LOCAL idle_in_transaction_session_timeout = '90s'"));
   assert.ok(events.includes("COMMIT"));
+});
+
+test("Custom persistence failure releases the workfile lock before bounded R2 cleanup", async () => {
+  const { pool, events } = customDocumentUploadPool({ insertError: new Error("synthetic_insert_failure") });
+  let cleanupSignal;
+  const content = Buffer.from("%PDF-rejected-custom-object");
+  const storage = {
+    configured: true,
+    bucket: "private-evidence",
+    async putObject() { events.push("PUT_OBJECT"); },
+    async inspectObject() {
+      return { byte_size: content.length, etag: '"verified"', content_type: "application/pdf" };
+    },
+    async deleteObject({ signal }) {
+      events.push("DELETE_OBJECT");
+      cleanupSignal = signal;
+    },
+  };
+  await assert.rejects(createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "rejected.pdf", content, storage,
+  }), { message: "synthetic_insert_failure" });
+  assert.ok(events.includes("ROLLBACK"));
+  assert.ok(events.indexOf("RELEASE") < events.indexOf("DELETE_OBJECT"));
+  assert.ok(cleanupSignal instanceof AbortSignal);
 });
 
 function propertyTaxQuotaPool(usage = {}) {

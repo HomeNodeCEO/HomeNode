@@ -1052,6 +1052,9 @@ export async function createAssignmentDocument(pool, {
     if (outcomeAmbiguous) {
       transactionClient?.release?.(error);
       transactionClient = null;
+    } else if (transactionClient) {
+      transactionClient.release();
+      transactionClient = null;
     }
     if (cleanupAllowed && outcomeAmbiguous) {
       try {
@@ -1063,7 +1066,12 @@ export async function createAssignmentDocument(pool, {
     }
     if (cleanupAllowed) {
       try {
-        await storage.deleteObject({ objectKey: uploadedObjectKey });
+        await storage.deleteObject({
+          objectKey: uploadedObjectKey,
+          ...(customAssignmentFileId ? {
+            signal: AbortSignal.timeout(CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS),
+          } : {}),
+        });
       } catch {
         logger.warn?.("[documents] failed to clean up rejected private document upload");
       }

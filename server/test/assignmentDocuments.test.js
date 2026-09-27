@@ -170,6 +170,8 @@ test("assignment document object keys are assignment-scoped and content-addresse
 test("a verified private upload stores metadata without duplicating PDF bytes in PostgreSQL", async () => {
   const pdf = Buffer.from("%PDF-test-private-storage");
   let insertValues;
+  let uploadSignal;
+  let inspectionSignal;
   const events = [];
   const client = {
     async query(sql, values) {
@@ -228,8 +230,9 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   const storage = {
     configured: true,
     bucket: "private-evidence",
-    async putObject() { events.push("PUT_OBJECT"); },
-    async inspectObject() {
+    async putObject({ signal }) { events.push("PUT_OBJECT"); uploadSignal = signal; },
+    async inspectObject({ signal }) {
+      inspectionSignal = signal;
       return { byte_size: pdf.length, etag: '"verified"', content_type: "application/pdf" };
     },
   };
@@ -247,6 +250,9 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   const workfileLockIndex = events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql));
   assert.notEqual(workfileLockIndex, -1);
   assert.ok(workfileLockIndex < events.indexOf("PUT_OBJECT"));
+  assert.ok(events.includes("SET LOCAL idle_in_transaction_session_timeout = '90s'"));
+  assert.ok(uploadSignal instanceof AbortSignal);
+  assert.equal(inspectionSignal, uploadSignal);
 });
 
 function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false, existing = null } = {}) {
@@ -349,6 +355,25 @@ test("signed Custom uploads without R2 cannot write PostgreSQL evidence", async 
   }), /custom_appraisal_workfile_signed/);
   assert.ok(events.includes("ROLLBACK"));
   assert.equal(events.some((sql) => /INSERT INTO app\.assignment_documents/.test(sql)), false);
+});
+
+test("failed Custom R2 upload bounds private-object cleanup before PostgreSQL fallback", async () => {
+  const { pool, events } = customDocumentUploadPool();
+  let cleanupSignal;
+  const storage = {
+    configured: true,
+    async putObject() { throw new Error("synthetic_r2_failure"); },
+    async deleteObject({ signal }) { cleanupSignal = signal; },
+  };
+  const document = await createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "fallback.pdf", content: Buffer.from("%PDF-fallback"), storage,
+    logger: { warn() {} },
+  });
+  assert.equal(document.storage_provider, "postgres");
+  assert.ok(cleanupSignal instanceof AbortSignal);
+  assert.ok(events.includes("SET LOCAL idle_in_transaction_session_timeout = '90s'"));
+  assert.ok(events.includes("COMMIT"));
 });
 
 function propertyTaxQuotaPool(usage = {}) {

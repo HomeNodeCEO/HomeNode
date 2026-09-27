@@ -19,6 +19,8 @@ export const PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA = Object.freeze({
   maximumActiveExtractions: 8,
 });
 const STALE_PROCESSING_MINUTES = 15;
+const CUSTOM_DOCUMENT_STORAGE_BUDGET_MS = 60_000;
+const CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS = 10_000;
 const ACTIVE_DOCUMENT_PROCESSING_STATUSES = Object.freeze([
   "uploaded",
   "processing",
@@ -832,7 +834,9 @@ export async function createAssignmentDocument(pool, {
       transactionClient = await pool.connect();
       await transactionClient.query("BEGIN");
       await transactionClient.query("SET LOCAL statement_timeout = '30s'");
-      await transactionClient.query("SET LOCAL idle_in_transaction_session_timeout = '30s'");
+      await transactionClient.query(customAssignmentFileId
+        ? "SET LOCAL idle_in_transaction_session_timeout = '90s'"
+        : "SET LOCAL idle_in_transaction_session_timeout = '30s'");
       transactionStarted = true;
       const lockKey = normalizedUploadQuota
         ? `assignment-document-upload:${taxProtestFileId}`
@@ -891,6 +895,12 @@ export async function createAssignmentDocument(pool, {
     let storageLastError = null;
     if (storage?.configured) {
       let stagedObjectKey = null;
+      // One deadline covers R2 PUT, verification, and their internal retries
+      // while the Custom signing lock is held. Cleanup has a separate short
+      // deadline, leaving margin under the 90-second transaction idle limit.
+      const storageSignal = customAssignmentFileId
+        ? AbortSignal.timeout(CUSTOM_DOCUMENT_STORAGE_BUDGET_MS)
+        : null;
       try {
         objectKey = buildAssignmentDocumentObjectKey({
           organizationId,
@@ -906,8 +916,12 @@ export async function createAssignmentDocument(pool, {
           objectKey,
           contentType: "application/pdf",
           body: pdfContent,
+          ...(storageSignal ? { signal: storageSignal } : {}),
         });
-        const inspected = await storage.inspectObject({ objectKey });
+        const inspected = await storage.inspectObject({
+          objectKey,
+          ...(storageSignal ? { signal: storageSignal } : {}),
+        });
         const verified = verifiedR2Object(inspected, {
           content: pdfContent,
           checksumSha256: checksum,
@@ -923,7 +937,12 @@ export async function createAssignmentDocument(pool, {
       } catch (error) {
         if (stagedObjectKey && typeof storage.deleteObject === "function") {
           try {
-            await storage.deleteObject({ objectKey: stagedObjectKey });
+            await storage.deleteObject({
+              objectKey: stagedObjectKey,
+              ...(customAssignmentFileId ? {
+                signal: AbortSignal.timeout(CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS),
+              } : {}),
+            });
           } catch {
             logger.warn?.("[documents] failed to clean up an unverified private document upload");
           }

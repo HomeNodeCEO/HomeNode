@@ -490,30 +490,32 @@ export function createUadObjectStorage(env = process.env, {
         await fileHandle.close();
       }
     },
-    async inspectObject({ objectKey }) {
+    async inspectObject({ objectKey, signal = null }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      throwIfAborted(signal);
       const url = createR2PresignedUrl({
         ...config,
         objectKey,
         method: "HEAD",
         expiresInSeconds: 60,
       });
-      const response = await request("verification", url, { method: "HEAD" });
+      const response = await request("verification", url, { method: "HEAD" }, { signal });
       return {
         byte_size: Number(response.headers.get("content-length") || 0),
         etag: response.headers.get("etag"),
         content_type: response.headers.get("content-type"),
       };
     },
-    async deleteObject({ objectKey }) {
+    async deleteObject({ objectKey, signal = null }) {
       if (!configured) throw new Error("uad_object_storage_not_configured");
+      throwIfAborted(signal);
       const url = createR2PresignedUrl({
         ...config,
         objectKey,
         method: "DELETE",
         expiresInSeconds: 60,
       });
-      await request("delete", url, { method: "DELETE" });
+      await request("delete", url, { method: "DELETE" }, { signal });
       return { deleted: true };
     },
     async getObject({ objectKey, maxBytes, signal = null }) {

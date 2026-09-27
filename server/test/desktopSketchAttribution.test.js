@@ -200,5 +200,6 @@ test("Property Tax desktop sketch revisions remain independent of Custom signing
     harness.pool, "ACCOUNT-1", 19, sketchInput(), { userId: "appraiser-1" }, false,
   );
   assert.equal(result.sketch.revision, 2);
+  assert.equal(harness.calls.some(({ statement }) => statement.includes("account.state")), false);
   assert.equal(harness.calls.some(({ statement }) => statement.includes("FROM app.custom_appraisal_workfiles")), false);
 });

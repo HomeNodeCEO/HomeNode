@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { createInspectionSession, normalizeUuid } from "./reportFiles.js";
+import { assertCustomAppraisalInspectionWritable } from "./signedCustomWorkfile.js";
 import {
   activeRooms,
   normalizeManualSketchDocument,
@@ -184,6 +185,14 @@ async function saveDesktopInspectionSketch(
       await client.query("COMMIT");
       return priorOperation.rows[0].result;
     }
+
+    // Desktop and mobile sketches share the signed Custom evidence boundary.
+    // Exact committed replays above are read-only, but a new revision must
+    // serialize with signing before changing the sketch or linked photos.
+    await assertCustomAppraisalInspectionWritable(client, {
+      workflow_type: requestScope.workflow,
+      custom_assignment_file_id: requestScope.assignmentFileId,
+    });
 
     if (Number(row.revision) !== expectedRevision) {
       const conflict = new Error("sketch_revision_conflict");

@@ -195,9 +195,11 @@ export function createDesktopAssignmentSketchRouter({
         || error?.message === "sketch_revision_conflict"
         || error?.message === "sketch_identity_conflict"
         || error?.message === "inspection_session_completed_conflict"
+        || error?.message === "custom_appraisal_workfile_signed"
       ) {
         return res.status(
-          String(error?.message || "").includes("conflict") ? 409 : 400,
+          String(error?.message || "").includes("conflict")
+            || error?.message === "custom_appraisal_workfile_signed" ? 409 : 400,
         ).json({ error: error.message });
       }
       if (error?.message === "authentication_required") {
@@ -269,6 +271,9 @@ export function createDesktopAssignmentSketchRouter({
           error: error.message,
           current_revision: error.currentRevision,
         });
+      }
+      if (error?.message === "custom_appraisal_workfile_signed") {
+        return res.status(409).json({ error: error.message });
       }
       if (error?.message === "inspection_sketch_confirmation_access_denied") {
         return res.status(403).json({ error: error.message });

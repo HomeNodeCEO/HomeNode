@@ -709,10 +709,14 @@ test("draft Custom document deletion locks the workfile before removing private 
   assert.deepEqual(await deleteAssignmentDocument(pool, storage, 45), {
     document_id: 45, deleted: true, storage_deleted: true,
   });
-  assert.ok(events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql))
-    < events.indexOf("DELETE_OBJECT documents/45.pdf"));
-  assert.ok(events.indexOf("DELETE_OBJECT documents/45.pdf")
-    < events.findIndex((sql) => /DELETE FROM app\.assignment_documents/.test(sql)));
+  const workfileLockIndex = events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql));
+  const storageDeleteIndex = events.indexOf("DELETE_OBJECT documents/45.pdf");
+  const documentDeleteIndex = events.findIndex((sql) => /DELETE FROM app\.assignment_documents/.test(sql));
+  assert.notEqual(workfileLockIndex, -1);
+  assert.notEqual(storageDeleteIndex, -1);
+  assert.notEqual(documentDeleteIndex, -1);
+  assert.ok(workfileLockIndex < storageDeleteIndex);
+  assert.ok(storageDeleteIndex < documentDeleteIndex);
   assert.ok(events.includes("COMMIT"));
 });
 

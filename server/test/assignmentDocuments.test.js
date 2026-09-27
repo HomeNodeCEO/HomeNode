@@ -13,6 +13,7 @@ import {
   confirmAssignmentDocumentDespiteSubjectMismatch,
   createAssignmentDocument,
   deleteAssignmentDocument,
+  getAssignmentDocument,
   loadAssignmentDocumentContent,
   PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA,
   retainedAssignmentDocumentReview,
@@ -259,6 +260,7 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
 function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false,
   existing = null, insertError = null } = {}) {
   const events = [];
+  const insertedValues = [];
   const client = {
     async query(sql, values = []) {
       events.push(sql);
@@ -280,6 +282,7 @@ function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false,
       }
       if (/INSERT INTO app\.assignment_documents/.test(sql)) {
         if (insertError) throw insertError;
+        insertedValues.push(values);
         return { rows: [{ id: 92, account_id: values[0], assignment_file_id: values[1],
           document_type: values[5], title: values[6], file_name: values[7],
           content_type: "application/pdf", checksum_sha256: values[9],
@@ -292,6 +295,7 @@ function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false,
   };
   return {
     events,
+    insertedValues,
     pool: {
       async query(sql) {
         if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
@@ -377,6 +381,58 @@ test("failed Custom R2 upload bounds private-object cleanup before PostgreSQL fa
   assert.ok(cleanupSignal instanceof AbortSignal);
   assert.ok(events.includes("SET LOCAL idle_in_transaction_session_timeout = '90s'"));
   assert.ok(events.includes("COMMIT"));
+});
+
+test("private upload fallback retains only a stable storage diagnostic", async () => {
+  const { pool, insertedValues } = customDocumentUploadPool();
+  const logs = [];
+  const failure = new Error("private-url=https://private.example/secret-token");
+  failure.code = "ECONNRESET";
+  await createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "fallback.pdf", content: Buffer.from("%PDF-fallback"),
+    storage: {
+      configured: true,
+      async putObject() { throw failure; },
+      async deleteObject() {},
+    },
+    logger: { warn: (...args) => logs.push(args) },
+  });
+  assert.equal(insertedValues[0][19], "assignment_document_storage_upload_failed");
+  assert.deepEqual(logs, [[
+    "[documents] private object upload failed; retaining PostgreSQL fallback",
+    "ECONNRESET",
+  ]]);
+});
+
+test("document reads redact historical extraction and storage exception text", async () => {
+  const secret = "private-url=https://private.example/secret-token";
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (/SELECT \* FROM app\.assignment_documents WHERE id/.test(sql)) {
+        return { rows: [{
+          id: 7,
+          account_id: "fixture",
+          processing_status: "extraction_failed",
+          last_processing_error: secret,
+          extraction_summary: { error: secret, processing_attempts: 2 },
+          storage_last_error: secret,
+        }] };
+      }
+      if (/FROM app\.assignment_document_field_candidates/.test(sql)
+        || /FROM app\.assignment_document_candidate_reviews/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+  };
+  const document = await getAssignmentDocument(pool, 7);
+  assert.equal(document.last_processing_error, "assignment_document_extraction_failed");
+  assert.deepEqual(document.extraction_summary, {
+    error: "assignment_document_extraction_failed",
+    processing_attempts: 2,
+  });
+  assert.equal(document.storage_last_error, "assignment_document_storage_failed");
+  assert.equal(JSON.stringify(document).includes("private.example"), false);
 });
 
 test("Custom persistence failure releases the workfile lock before bounded R2 cleanup", async () => {

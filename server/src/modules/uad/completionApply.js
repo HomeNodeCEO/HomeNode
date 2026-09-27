@@ -8,6 +8,7 @@ import {
   uadFieldAppliesToEntity,
 } from "./fieldCatalog.js";
 import { loadUadReviewSuggestions } from "./sharedData.js";
+import { attachUadPublicErrorDetails } from "./publicErrorDetails.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
 
@@ -63,7 +64,7 @@ function validateFieldSuggestion(suggestion, entity = null) {
   const validation = normalizeAndValidateUadValue(field, suggestion.value);
   if (validation.error) {
     const error = new Error("invalid_uad_completion_suggestion_value");
-    error.details = [validation.error];
+    attachUadPublicErrorDetails(error, [validation.error]);
     throw error;
   }
   return {

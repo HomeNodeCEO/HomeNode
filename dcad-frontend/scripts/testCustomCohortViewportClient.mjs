@@ -42,3 +42,56 @@ test('unavailable detail does not invent outlines', () => {
   assert.deepEqual(checkCustomCohortViewportResponse(value, group, catalog, viewport),
     { status: 'unavailable', features: [], reason: 'geometry_missing' });
 });
+
+test('transport-owned parsed geometry is checked without reserializing the payload', () => {
+  const value = response();
+  Object.defineProperty(value, 'toJSON', { value() { assert.fail('viewport validation must not stringify parsed geometry'); } });
+  assert.equal(checkCustomCohortViewportResponse(value, group, catalog, viewport).features.length, 1);
+});
+
+function freeze(value) {
+  if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
+  return value;
+}
+function countedAccounts(values, onRead) {
+  const accounts = [...values];
+  Object.defineProperty(accounts, Symbol.iterator, { value: function* () { onRead(); yield* values; } });
+  return accounts;
+}
+test('immutable catalog and request lookup sets are prepared once across viewport checks, independently replaced', () => {
+  let memberReads = 0, selectedReads = 0;
+  const nextCatalog = structuredClone(catalog), nextGroup = structuredClone(group);
+  nextCatalog.pockets[0].account_ids = countedAccounts(['A'], () => memberReads++);
+  nextGroup.request.selection.pockets[0].account_ids = countedAccounts(['A'], () => selectedReads++);
+  freeze(nextCatalog); freeze(nextGroup);
+  for (let i = 0; i < 3; i++) checkCustomCohortViewportResponse(response(), nextGroup, nextCatalog, viewport);
+  assert.equal(memberReads, 1); assert.equal(selectedReads, 1);
+  const unselectedGroup = freeze({ ...nextGroup, request: { ...nextGroup.request,
+    selection: { ...nextGroup.request.selection, pockets: [] } } });
+  assert.throws(() => checkCustomCohortViewportResponse(response(), unselectedGroup, nextCatalog, viewport), /invalid_custom_cohort_viewport/);
+  const unselected = response(); unselected.geojson.features[0].properties.selected = false;
+  checkCustomCohortViewportResponse(unselected, unselectedGroup, nextCatalog, viewport);
+  assert.equal(memberReads, 1, 'a changed selection reuses only the unchanged catalog index');
+  const replacedCatalog = freeze({ ...nextCatalog, pockets: [], unassigned: { account_ids: ['B'] } });
+  assert.throws(() => checkCustomCohortViewportResponse(response(), nextGroup, replacedCatalog, viewport), /invalid_custom_cohort_viewport/);
+});
+
+test('mutable fallback inputs do not retain stale membership or selection lookup sets', () => {
+  const nextCatalog = structuredClone(catalog), nextGroup = structuredClone(group);
+  checkCustomCohortViewportResponse(response(), nextGroup, nextCatalog, viewport);
+  nextGroup.request.selection.pockets.length = 0;
+  assert.throws(() => checkCustomCohortViewportResponse(response(), nextGroup, nextCatalog, viewport), /invalid_custom_cohort_viewport/);
+  nextGroup.request.selection.pockets = structuredClone(group.request.selection.pockets);
+  nextCatalog.pockets.length = 0;
+  assert.throws(() => checkCustomCohortViewportResponse(response(), nextGroup, nextCatalog, viewport), /invalid_custom_cohort_viewport/);
+});
+
+test('partial, count-mismatched and manifest-unavailable detail is never admitted as complete', () => {
+  for (const change of [value => { value.status = 'partial'; }, value => { value.partial = true; },
+    value => { value.counts.visible_parcels++; }, value => { value.counts.captured_parcels = null; }]) {
+    const value = response(); change(value);
+    assert.throws(() => checkCustomCohortViewportResponse(value, group, catalog, viewport), /invalid_custom_cohort_viewport/);
+  }
+  assert.throws(() => checkCustomCohortViewportResponse(response(), { ...group, map_manifest: { status: 'unavailable' } }, catalog, viewport),
+    /invalid_custom_cohort_viewport/);
+});

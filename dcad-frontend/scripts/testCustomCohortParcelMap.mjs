@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import test from 'node:test';
 import { createRequire } from 'node:module';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
-import { checkCustomCohortViewportResponse } from '../src/features/neighborhood/customCohortViewportClient.ts';
+import { loadCustomCohortViewportMap } from '../src/features/neighborhood/customCohortViewportLoader.ts';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const { renderToStaticMarkup } = requireRuntime('react-dom/server');
@@ -37,6 +37,30 @@ function fixture() {
     coverage: { discovery_member_count: 3, assigned_account_count: 2, unassigned_account_count: 1 },
     subject_membership: { account_id: 'A', assigned_pocket_id: 'recorded-cad:alpha' } };
   return { group, catalog, freshness: 'current' };
+}
+const initialViewport = { west: -97, south: 32, east: -96.9, north: 32.1 };
+const containedViewport = { west: -96.99, south: 32.01, east: -96.95, north: 32.05 };
+function freeze(value) {
+  if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
+  return value;
+}
+function deferredFixture() {
+  const props = fixture(), all = props.group.parcel_map.geojson.features;
+  const presented = buildCustomCohortMapPresentation(props);
+  props.group = { ...props.group, request: { accountId: 'A', assignmentFileId: '9007199254740993', contextRef,
+    selection: { revision: 1, pockets: [{ id: 'recorded-cad:alpha', label: 'Alpha', account_ids: ['A'] },
+      { id: 'discovery:unassigned', label: 'Unassigned', account_ids: ['C'] }] } },
+  parcel_map: { status: 'deferred', reason: 'viewport_required' },
+  map_manifest: { status: 'available', context_ref: contextRef, bounds: presented.bounds, labels: presented.labels,
+    unlabelled_group_ids: presented.unlabelled_group_ids,
+    subject_parcels: [{ parcel_id: all[0].id, account_id: 'A', coordinates: [-97, 32], anchor_basis: 'retained_exterior_ring_vertex' }],
+    counts: { captured_parcels: 3, captured_accounts: 3 } } };
+  const result = (group = props.group, viewport = initialViewport) => ({ status: 'available', display_only: true,
+    target: { account_id: group.request.accountId, assignment_file_id: group.request.assignmentFileId }, context_ref: group.binding.contextRef,
+    selection_revision: group.binding.selectionRevision, selection_sha256: group.binding.selectionFingerprint, viewport,
+    geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
+    geojson: { type: 'FeatureCollection', features: [all[0]] }, counts: { visible_parcels: 1, captured_parcels: 3 } });
+  return { props, all, result };
 }
 function familyFixture({ largerSecondChild = false } = {}) {
   const props = fixture(), [first, second] = props.catalog.pockets;
@@ -79,6 +103,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     constructor(options) { this.options = options; this.events = new Map(); this.sources = new Map(); this.layers = [];
       this.states = []; this.renderedStates = []; this.fits = []; this.jumps = []; this.queries = []; this.renderedLabelHits = [];
       this.camera = { center: [0, 0], zoom: 1, bearing: 0, pitch: 0 };
+      this.bounds = { ...initialViewport };
       this.canvas = { style: {} }; this.removed = false; this.resizeCount = 0; maps.push(this); }
     on(name, layer, fn) { this.events.set(`${name}:${typeof layer === 'string' ? layer : ''}`, fn ?? layer); }
     emit(name, event, layer = '') { this.events.get(`${name}:${layer}`)?.(event); }
@@ -107,7 +132,8 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     fitBounds(bounds, options) { this.fits.push({ bounds, options }); }
     getCenter() { return { lng: this.camera.center[0], lat: this.camera.center[1] }; }
     getZoom() { return this.camera.zoom; }
-    getBounds() { return { getWest: () => -97, getSouth: () => 32, getEast: () => -96.9, getNorth: () => 32.1 }; }
+    getBounds() { return { getWest: () => this.bounds.west, getSouth: () => this.bounds.south,
+      getEast: () => this.bounds.east, getNorth: () => this.bounds.north }; }
     getBearing() { return this.camera.bearing; }
     getPitch() { return this.camera.pitch; }
     jumpTo(options) { this.jumps.push(options); this.camera = { ...this.camera, ...options }; }
@@ -131,8 +157,8 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
     if (name.endsWith('/NeighborhoodCityReferenceControl')) return { default: CityReferenceStub };
     if (name.endsWith('/customCohortPreviewApi')) return { requestCustomCohortOperation(...args) {
       viewportCalls.push(args); if (!viewportResult) throw new Error('full-map fixture must not request viewport detail');
-      return Promise.resolve(viewportResult); } };
-    if (name.endsWith('/customCohortViewportClient')) return { checkCustomCohortViewportResponse };
+      return Promise.resolve(typeof viewportResult === 'function' ? viewportResult(...args) : viewportResult); } };
+    if (name.endsWith('/customCohortViewportLoader')) return { loadCustomCohortViewportMap };
     if (name.endsWith('/customCohortPocketCatalog')) return { CUSTOM_COHORT_UNASSIGNED_GROUP: 'discovery:unassigned' };
     if (name.endsWith('/customCohortSubdivisionFamilies')) return { ...familiesModule,
       createCustomCohortSubdivisionPhaseReader(...args) {
@@ -175,7 +201,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
       assert.ok(input, 'actual recorded label checkbox'); input.props.onChange({ target: { checked }, currentTarget: { checked } }); flush(); },
     cityView(active) { const props = this.cityProps(); assert.ok(props, 'actual city reference child'); props.onViewChange(active); flush(); },
     render(value) { render(value); flush(); }, html: () => renderToStaticMarkup(tree),
-    async drain() { for (let i = 0; i < 8; i++) await Promise.resolve(); flush(); },
+    async drain() { for (let i = 0; i < 32; i++) await Promise.resolve(); flush(); },
     async ready(value = fixture()) { this.render(value); await this.drain(); maps.at(-1)?.emit('load'); flush(); maps.at(-1)?.emit('idle'); flush(); },
     emit(name, event, layer = '') { maps.at(-1).emit(name, event, layer); flush(); },
     unmount() { cells.forEach(c => c?.cleanup?.()); }, resolve() { resolveLoad(runtime); },
@@ -197,43 +223,204 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.doesNotMatch(h.html(), /Color parcels by/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
 });
-test('compact overview paints scored subdivision markers before bounded detail and keeps label clicks singular', async () => {
-  const props = fixture(), all = props.group.parcel_map.geojson.features;
-  const presented = buildCustomCohortMapPresentation(props);
+test('opening loads exact green parcel fills and red inclusion outlines beneath the existing clickable dots at normal zoom', async () => {
+  const { props, all, result } = deferredFixture();
+  props.catalog.recommendation = { status: 'recommendation_for_review', pockets: [
+    { id: 'recorded-cad:alpha', member_count: 1, similarity: { lower: 75, upper: 75, known_weight_percent: 100 } },
+    { id: 'recorded-cad:beta', member_count: 1, similarity: { lower: 50, upper: 50, known_weight_percent: 100 } },
+    { id: 'discovery:unassigned', member_count: 1, similarity: { lower: 0, upper: 100, known_weight_percent: 0 } },
+  ] };
   const calls = [];
   props.onActivatePocket = (...args) => calls.push(args);
-  props.group = { ...props.group, request: { accountId: 'A', assignmentFileId: '9007199254740993', contextRef,
-    selection: { revision: 1, pockets: [{ id: 'recorded-cad:alpha', label: 'Alpha', account_ids: ['A'] },
-      { id: 'discovery:unassigned', label: 'Unassigned', account_ids: ['C'] }] } },
-  parcel_map: { status: 'deferred', reason: 'viewport_required' },
-  map_manifest: { status: 'available', context_ref: contextRef, bounds: presented.bounds, labels: presented.labels,
-    unlabelled_group_ids: presented.unlabelled_group_ids,
-    subject_parcels: [{ parcel_id: all[0].id, account_id: 'A', coordinates: [-97, 32], anchor_basis: 'retained_exterior_ring_vertex' }],
-    counts: { captured_parcels: 3, captured_accounts: 3 } } };
-  const viewport = { west: -97, south: 32, east: -96.9, north: 32.1 };
-  const result = { status: 'available', display_only: true,
-    target: { account_id: 'A', assignment_file_id: '9007199254740993' }, context_ref: contextRef,
-    selection_revision: 1, selection_sha256: 'b'.repeat(64), viewport,
-    geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
-    geojson: { type: 'FeatureCollection', features: [all[0]] }, counts: { visible_parcels: 1, captured_parcels: 3 } };
-  const h = harness({ viewportResult: result }); await h.ready(props);
+  const h = harness({ viewportResult: () => result() }); await h.ready(props);
   const map = h.maps[0];
   assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0);
   assert.ok(map.getLayer('custom-cohort-group-labels-dot'));
+  assert.equal(map.layers.filter(layer => layer.type === 'circle').length, 1);
   assert.equal(map.getSource('custom-cohort-group-labels').data.features.length, 2);
-  assert.equal(h.viewportCalls.length, 0, 'broad overview does not download every parcel');
+  assert.equal(h.viewportCalls.length, 0, 'initial camera debounce has not fired yet');
   map.renderedLabelHits = [{ properties: { pocket_id: 'recorded-cad:alpha' } }];
   const click = { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }], point: { x: 1, y: 2 } };
+  h.emit('click', { ...click, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
   h.emit('click', click, 'custom-cohort-group-labels-dot');
   h.emit('click', click, 'custom-cohort-group-labels-text');
   assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
-  map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  map.camera.zoom = 12; h.fireTimers(200); await h.drain();
   assert.equal(h.viewportCalls.length, 1);
   assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
   assert.deepEqual(map.getSource('custom-cohort-parcels').data.features[0].geometry, all[0].geometry);
+  assert.equal(painted(map, 'A').fillColor, '#15803d'); assert.equal(painted(map, 'A').selected, true);
+  const label = map.getSource('custom-cohort-group-labels').data.features.find(item => item.properties.pocket_id === 'recorded-cad:alpha');
+  assert.equal(label.properties.fillColor, '#15803d'); assert.equal(label.properties.selected, true);
+  assert.equal(map.getLayer('custom-cohort-parcels-outline').paint['line-color'][2], '#dc2626');
   assert.equal(map.fits.length, 1, 'viewport detail must not refit the broad capture');
-  assert.equal(map.getZoom(), 14, 'the close-up camera remains in place');
+  assert.equal(map.getZoom(), 12, 'the normal opening camera remains in place');
+  assert.doesNotMatch(h.html(), /Zoom in for exact parcel outlines/);
   h.unmount();
+});
+
+test('zoom and pans contained in complete loaded bounds reuse exact geometry without another request or source replacement', async t => {
+  const { props, result } = deferredFixture(), before = JSON.stringify(props);
+  const h = harness({ viewportResult: (_account, _operation, payload) => result(props.group, payload.viewport) });
+  t.after(() => h.unmount()); await h.ready(props);
+  const map = h.maps[0]; map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  const source = map.getSource('custom-cohort-parcels'), data = source.data, replacements = source.replacements.length;
+  map.camera.zoom = 16; map.bounds = containedViewport; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1, 'contained zoom uses the complete prior response');
+  assert.equal(source.data, data); assert.equal(source.replacements.length, replacements);
+  map.bounds = { ...initialViewport, west: -96.999 }; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1, 'containment is measured against loaded bounds, not the last smaller camera');
+  map.camera.zoom = 11; map.bounds = { ...initialViewport, east: -96.89 }; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 2, 'crossing even one edge fetches the uncovered extent');
+  assert.equal(source.data.features.length, 1, 'zooming out keeps exact polygons beneath subdivision dots');
+  assert.equal(map.fits.length, 1); assert.equal(JSON.stringify(props), before, 'camera detail never changes map/statistics selection');
+});
+
+test('dense broad camera loads bounded tiles and paints exact polygons only when coverage is complete', async t => {
+  const { props, result } = deferredFixture(); let resolveLast;
+  const h = harness({ viewportResult: (_account, _operation, payload) => {
+    if (JSON.stringify(payload.viewport) === JSON.stringify(initialViewport)) {
+      return Promise.reject(Object.assign(new Error('dense'), { status: 422, errorCode: 'neighborhood_viewport_too_dense' }));
+    }
+    if (h.viewportCalls.length === 2) return result(props.group, payload.viewport);
+    return new Promise(resolve => { resolveLast = () => resolve(result(props.group, payload.viewport)); });
+  } });
+  t.after(() => h.unmount()); await h.ready(props);
+  const map = h.maps[0]; map.camera.zoom = 12; h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 3, 'density refusal is followed by two bounded child extents');
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0, 'no partial child geometry is published');
+  assert.match(h.html(), /Loading visible parcel outlines/);
+  resolveLast(); await h.drain();
+  const source = map.getSource('custom-cohort-parcels'), data = source.data;
+  assert.equal(data.features.length, 1, 'a parcel touching both tiles is retained once');
+  assert.deepEqual(data.features[0].geometry, result().geojson.features[0].geometry);
+  assert.equal(data.features[0].properties.selected, true);
+  assert.equal(map.layers.length, 5); assert.equal(map.fits.length, 1);
+  map.bounds = containedViewport; map.camera.zoom = 16; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 3); assert.equal(source.data, data, 'complete tiled coverage participates in contained-zoom reuse');
+});
+
+test('pending selection retains old flags; accepted selection restyles complete immutable coverage with no request, coordinate rebuild or source replacement', async t => {
+  const { props, result } = deferredFixture(); freeze(props.catalog); freeze(props.group);
+  const before = JSON.stringify(props), h = harness({ viewportResult: () => result() });
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+  const map = h.maps[0], source = map.getSource('custom-cohort-parcels'), data = source.data;
+  const replacements = source.replacements.length, geometry = data.features[0].geometry;
+  h.render({ ...props, freshness: 'stale' });
+  assert.equal(painted(map, 'A').selected, true, 'unsaved/pending intent never changes accepted parcel flags');
+  assert.match(h.html(), /previous map and statistics together/); assert.equal(h.viewportCalls.length, 1);
+  const accepted = { ...props, group: freeze({ ...props.group, binding: { ...props.group.binding,
+    selectionRevision: 2, selectionFingerprint: 'c'.repeat(64) }, request: { ...props.group.request,
+      selection: { revision: 2, pockets: [] } } }) };
+  map.bounds = containedViewport; map.camera.zoom = 16; h.render(accepted); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1, 'the accepted controller selection changes paint, not immutable geometric coverage');
+  assert.equal(painted(map, 'A').selected, false);
+  assert.equal(map.getSource('custom-cohort-group-labels').data.features[0].properties.selected, false, 'dot inclusion updates with parcel inclusion');
+  assert.equal(source.data, data); assert.equal(source.replacements.length, replacements);
+  assert.equal(source.data.features[0].geometry, geometry); assert.equal(map.fits.length, 1);
+  assert.match(h.html(), /data-selection-revision="2"/); assert.doesNotMatch(h.html(), /Loading visible parcel outlines/);
+  h.render({ ...props, group: freeze({ ...props.group, binding: { ...props.group.binding,
+    selectionRevision: 3, selectionFingerprint: 'd'.repeat(64) }, request: { ...props.group.request,
+      selection: { ...props.group.request.selection, revision: 3 } } }) });
+  h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1); assert.equal(painted(map, 'A').selected, true);
+  assert.equal(source.replacements.length, replacements); assert.equal(JSON.stringify(props), before);
+});
+
+test('accepted restyling cancels an old outside-pan request and cannot be overwritten by its late selected flags', async t => {
+  const { props, result } = deferredFixture(); freeze(props.catalog); freeze(props.group);
+  let resolveOutside;
+  const h = harness({ viewportResult: (_account, _operation, payload) => h.viewportCalls.length === 1
+    ? result() : new Promise(resolve => { resolveOutside = () => resolve(result(props.group, payload.viewport)); }) });
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+  const map = h.maps[0], source = map.getSource('custom-cohort-parcels'), data = source.data;
+  map.bounds = { ...initialViewport, east: -96.88 }; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 2);
+  map.bounds = containedViewport;
+  h.render({ ...props, group: freeze({ ...props.group, binding: { ...props.group.binding,
+    selectionRevision: 2, selectionFingerprint: 'c'.repeat(64) }, request: { ...props.group.request,
+      selection: { revision: 2, pockets: [] } } }) });
+  assert.equal(h.viewportCalls[1][3].signal.aborted, true);
+  assert.equal(painted(map, 'A').selected, false); assert.equal(source.data, data);
+  resolveOutside(); await h.drain(); h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 2); assert.equal(painted(map, 'A').selected, false); assert.equal(source.data, data);
+});
+
+for (const changed of ['revision', 'fingerprint', 'catalog', 'manifest']) {
+  test(`contained geometry is not reused for an unfrozen or replaced ${changed} projection`, async t => {
+    const { props, result } = deferredFixture(); let active = props;
+    const h = harness({ viewportResult: (_account, _operation, payload) => result(active.group, payload.viewport) });
+    t.after(() => h.unmount()); await h.ready(props);
+    const map = h.maps[0]; map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    map.bounds = containedViewport;
+    if (changed === 'catalog') active = { ...props, catalog: structuredClone(props.catalog) };
+    else if (changed === 'manifest') active = { ...props, group: { ...props.group, map_manifest: structuredClone(props.group.map_manifest) } };
+    else active = { ...props, group: { ...props.group, binding: { ...props.group.binding,
+      ...(changed === 'revision' ? { selectionRevision: 2 } : { selectionFingerprint: 'c'.repeat(64) }) },
+      request: { ...props.group.request, selection: { ...props.group.request.selection, revision: changed === 'revision' ? 2 : 1 } } } };
+    h.render(active);
+    assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0, 'the prior binding cannot paint while replacement loads');
+    h.fireTimers(200); await h.drain();
+    assert.equal(h.viewportCalls.length, 2); assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
+  });
+}
+
+for (const changed of ['assignment', 'context']) {
+  test(`same selection fingerprint cannot carry loaded geometry into another ${changed}`, async t => {
+    const { props, result } = deferredFixture(); let active = props;
+    const h = harness({ viewportResult: (_account, _operation, payload) => result(active.group, payload.viewport) });
+    t.after(() => h.unmount()); await h.ready(props);
+    h.maps[0].camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    const nextContext = changed === 'context' ? { ...contextRef, context_sha256: 'd'.repeat(64) } : contextRef;
+    const assignment = changed === 'assignment' ? '18' : props.group.binding.assignmentFileId;
+    active = { ...props, catalog: changed === 'context' ? { ...props.catalog, binding: { ...props.catalog.binding, context_ref: nextContext } } : props.catalog,
+      group: { ...props.group, binding: { ...props.group.binding, contextRef: nextContext, assignmentFileId: assignment },
+        request: { ...props.group.request, contextRef: nextContext, assignmentFileId: assignment },
+        map_manifest: { ...props.group.map_manifest, context_ref: nextContext } } };
+    h.render(active); await h.drain(); h.emit('load'); h.emit('idle');
+    const map = h.maps.at(-1);
+    assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0);
+    map.bounds = containedViewport; map.camera.zoom = 15; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    assert.equal(h.viewportCalls.length, 2); assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
+  });
+}
+
+for (const status of ['unavailable', 'partial']) {
+  test(`${status} viewport results are not cached as complete coverage`, async t => {
+    const { props, result } = deferredFixture(); let failed = true;
+    const h = harness({ viewportResult: (_account, _operation, payload) => {
+      const response = result(props.group, payload.viewport);
+      if (failed && status === 'partial') response.counts.visible_parcels++;
+      if (failed && status === 'unavailable') { response.status = 'unavailable'; response.geojson = null;
+        response.reason = 'geometry_missing'; delete response.counts; }
+      return response;
+    } });
+    t.after(() => h.unmount()); await h.ready(props);
+    const map = h.maps[0]; map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0);
+    failed = false; map.bounds = containedViewport; map.camera.zoom = 16; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    assert.equal(h.viewportCalls.length, 2); assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 1);
+  });
+}
+
+test('late aborted viewport response cannot overwrite or become coverage for a newer accepted selection', async t => {
+  const { props, result } = deferredFixture(), pending = [];
+  const h = harness({ viewportResult: (...args) => new Promise(resolve => pending.push({ args, resolve })) });
+  t.after(() => h.unmount()); await h.ready(props);
+  const map = h.maps[0]; map.camera.zoom = 14; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  const next = { ...props, group: { ...props.group, binding: { ...props.group.binding,
+    selectionRevision: 2, selectionFingerprint: 'c'.repeat(64) }, request: { ...props.group.request,
+      selection: { revision: 2, pockets: [] } } } };
+  map.bounds = containedViewport; h.render(next); h.fireTimers(200); await h.drain();
+  assert.equal(pending.length, 2); assert.equal(pending[0].args[3].signal.aborted, true);
+  const nextResult = result(next.group, containedViewport);
+  nextResult.geojson.features = nextResult.geojson.features.map(feature => ({ ...feature, properties: { ...feature.properties, selected: false } }));
+  pending[1].resolve(nextResult); await h.drain();
+  const source = map.getSource('custom-cohort-parcels'), data = source.data;
+  assert.equal(data.features[0].properties.selected, false);
+  pending[0].resolve(result()); await h.drain();
+  assert.equal(source.data, data); assert.equal(source.data.features[0].properties.selected, false);
+  h.emit('moveend'); h.fireTimers(200); await h.drain(); assert.equal(pending.length, 2);
 });
 test('optional presentation refusal retains the original geometry bounds and map', async () => {
   const props = fixture(), h = harness();

@@ -6,7 +6,7 @@ import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCi
 import { buildCustomCohortMapPresentation } from '../customCohortMapPresentation';
 import type { CustomCohortMapLabel, CustomCohortMapPresentation, CustomCohortMapScore } from '../customCohortMapPresentation';
 import { requestCustomCohortOperation } from '../customCohortPreviewApi';
-import { checkCustomCohortViewportResponse } from '../customCohortViewportClient';
+import { loadCustomCohortViewportMap } from '../customCohortViewportLoader';
 import type { CustomCohortViewportBounds, CheckedViewportMap } from '../customCohortViewportClient';
 import { CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
@@ -151,8 +151,12 @@ function sameGeometry(previous: readonly Parcel[], next: readonly Parcel[]) {
   return previous.length === next.length && previous.every((f, i) => f.id === next[i].id
     && f.properties.account_id === next[i].properties.account_id && f.geometry === next[i].geometry);
 }
-const VIEWPORT_DETAIL_ZOOM = 13.5;
-type ViewportState = { readonly fingerprint: string; readonly map: CheckedViewportMap } | null;
+type LoadedViewport = { readonly contextKey: string; readonly bindingKey: string; readonly catalog: CheckedPocketCatalog;
+  readonly manifest: CustomCohortPreviewGroup['map_manifest']; readonly bounds: CustomCohortViewportBounds;
+  readonly map: CheckedViewportMap };
+function containsViewport(loaded: CustomCohortViewportBounds, next: CustomCohortViewportBounds) {
+  return next.west >= loaded.west && next.south >= loaded.south && next.east <= loaded.east && next.north <= loaded.north;
+}
 const paintFor = (f: PaintedParcel): Paint => ({ selected: f.properties.selected, inspected: f.properties.inspected,
   unresolved: f.properties.unresolved, subject: f.properties.subject, fillColor: f.properties.fillColor });
 const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get', key]];
@@ -170,11 +174,16 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
   const [displayMode, setDisplayMode] = useState<ActivationMode | null>(null);
   const [mapState, setMapState] = useState<'loading' | 'drawing' | 'ready' | 'failed'>('loading');
   const [cameraRevision, setCameraRevision] = useState(0);
-  const [viewportState, setViewportState] = useState<ViewportState>(null);
-  const [detailState, setDetailState] = useState<'overview' | 'loading' | 'ready' | 'zoom_more' | 'failed'>('overview');
+  const [viewportState, setViewportState] = useState<LoadedViewport | null>(null);
+  const loadedViewport = useRef<LoadedViewport | null>(null);
+  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'limited' | 'failed'>('loading');
   const awaitingDraw = useRef(false), drawTimeout = useRef<number | null>(null);
   const [tileError, setTileError] = useState(false);
   const matches = contextMatches(group, catalog);
+  const ref = group.binding.contextRef;
+  const contextKey = JSON.stringify([group.binding.accountId, group.binding.assignmentFileId,
+    ref.context_id, ref.context_revision, ref.context_sha256]);
+  const viewportBindingKey = JSON.stringify([contextKey, group.binding.selectionRevision, group.binding.selectionFingerprint]);
   const presentationCache = useRef<{ group: CustomCohortPreviewGroup; catalog: CheckedPocketCatalog;
     value: ReturnType<typeof buildCustomCohortMapPresentation> | null } | null>(null);
   const presentation = useMemo(() => {
@@ -194,6 +203,27 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     presentationCache.current = { group, catalog, value }; return value;
   }, [group, catalog, matches]);
   const deferredMode = group.parcel_map.status === 'deferred';
+  const selectedAccounts = useMemo(() => new Set(deferredMode
+    ? group.request.selection.pockets.flatMap(pocket => pocket.account_ids) : []), [deferredMode, group.request]);
+  const currentViewport = useMemo(() => {
+    if (!deferredMode || viewportState?.contextKey !== contextKey || viewportState.catalog !== catalog
+      || viewportState.manifest !== group.map_manifest) return null;
+    if (viewportState.bindingKey === viewportBindingKey) return viewportState;
+    // Only an accepted controller group supplies these flags, never pending
+    // editor intent. Coverage contains all parcels regardless of inclusion, so
+    // a new accepted selection can restyle it just like the full-map controller.
+    // Keep identity fences on both immutable capture projections; a new capture,
+    // catalog, manifest or target must still load and validate its own geometry.
+    if (viewportState.map.status !== 'available' || !Object.isFrozen(catalog)
+      || !Object.isFrozen(group.map_manifest) || !Object.isFrozen(group.request)) return null;
+    const features = viewportState.map.features.map(feature => {
+      const selected = selectedAccounts.has(feature.properties.account_id);
+      return selected === feature.properties.selected ? feature
+        : Object.freeze({ ...feature, properties: Object.freeze({ ...feature.properties, selected }) });
+    });
+    return { ...viewportState, bindingKey: viewportBindingKey,
+      map: Object.freeze({ status: 'available' as const, features: Object.freeze(features) }) };
+  }, [deferredMode, viewportState, contextKey, viewportBindingKey, catalog, group.map_manifest, group.request, selectedAccounts]);
   const selectedGroups = useMemo(() => new Set(deferredMode ? group.request.selection.pockets.map(p => p.id) : []),
     [deferredMode, group.request]);
   const labels = useMemo(() => showLabels && presentation?.status === 'available'
@@ -219,9 +249,9 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
   const inspectedIds = useMemo(() => new Set(inspectedPocketIds ?? (inspectedPocketId ? [inspectedPocketId] : [])),
     [inspectedPocketIds, inspectedPocketId]);
   const visibleParcels = useMemo(() => group.parcel_map.status === 'available' ? group.parcel_map.geojson.features
-    : group.parcel_map.status === 'deferred' && viewportState?.fingerprint === group.binding.selectionFingerprint
-      && viewportState.map.status === 'available' ? viewportState.map.features as readonly Parcel[] : [],
-  [group, viewportState]);
+    : group.parcel_map.status === 'deferred' && currentViewport?.map.status === 'available'
+      ? currentViewport.map.features as readonly Parcel[] : [],
+  [group, currentViewport]);
   const geojson = useMemo(() => ({ type: 'FeatureCollection' as const,
     features: !matches ? [] : visibleParcels.map(f => {
       const pocket = memberships.get(f.properties.account_id);
@@ -239,47 +269,57 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     memberships, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount };
   const hasMap = matches && (group.parcel_map.status === 'available' && geojson.features.length > 0
     || group.parcel_map.status === 'deferred' && presentation?.status === 'available');
-  const ref = group.binding.contextRef;
-  const contextKey = JSON.stringify([group.binding.accountId, group.binding.assignmentFileId,
-    ref.context_id, ref.context_revision, ref.context_sha256]);
-
+  const currentViewportRef = useRef(currentViewport);
+  currentViewportRef.current = currentViewport;
   useEffect(() => {
-    if (!hasMap || group.parcel_map.status !== 'deferred') return;
+    const acceptedViewport = currentViewportRef.current;
+    if (acceptedViewport?.map.status === 'available') loadedViewport.current = acceptedViewport;
+    const prior = loadedViewport.current;
+    if (!hasMap || group.parcel_map.status !== 'deferred') { loadedViewport.current = null; return; }
+    if (prior && (prior.bindingKey !== viewportBindingKey || prior.catalog !== catalog || prior.manifest !== group.map_manifest)) {
+      loadedViewport.current = null;
+    }
     const map = mapRef.current;
     if (!map?.getSource(SOURCE)) return;
-    if (map.getZoom() < VIEWPORT_DETAIL_ZOOM) {
-      setViewportState(null); setDetailState('overview'); return;
-    }
     const extent = map.getBounds();
     const bounds: CustomCohortViewportBounds = { west: extent.getWest(), south: extent.getSouth(),
       east: extent.getEast(), north: extent.getNorth() };
     if (!Object.values(bounds).every(Number.isFinite) || bounds.east <= bounds.west || bounds.north <= bounds.south
-      || bounds.east - bounds.west > 1 || bounds.north - bounds.south > 1) {
-      setViewportState(null); setDetailState('zoom_more'); return;
+      || bounds.west < -180 || bounds.east > 180 || bounds.south < -90 || bounds.north > 90) {
+      setViewportState(null); setDetailState('limited'); return;
+    }
+    // An available response contains every intersecting parcel (never a
+    // truncated subset). Its complete, exact geometries also cover any smaller
+    // camera extent; the renderer clips them without another fetch or setData.
+    const loaded = loadedViewport.current;
+    if (loaded?.map.status === 'available' && containsViewport(loaded.bounds, bounds)) {
+      setViewportState(loaded); setDetailState('ready'); return;
     }
     const controller = new AbortController();
     const deadline = window.setTimeout(() => {
-      controller.abort(); setViewportState(null); setDetailState('failed');
-    }, 15_000);
+      controller.abort(); loadedViewport.current = null; setViewportState(null); setDetailState('failed');
+    }, 30_000);
     setDetailState('loading');
     const timer = window.setTimeout(() => {
       const request = group.request;
-      void requestCustomCohortOperation(request.accountId, 'viewport', {
-        assignment_file_id: request.assignmentFileId, context_ref: request.contextRef,
-        selection: request.selection, viewport: bounds }, { signal: controller.signal })
-        .then(value => {
+      void loadCustomCohortViewportMap(group, catalog, bounds, { signal: controller.signal,
+        request: (viewport, signal) => requestCustomCohortOperation(request.accountId, 'viewport', {
+          assignment_file_id: request.assignmentFileId, context_ref: request.contextRef,
+          selection: request.selection, viewport }, { signal }) })
+        .then(checked => {
           if (controller.signal.aborted) return;
-          const checked = checkCustomCohortViewportResponse(value, group, catalog, bounds);
-          setViewportState({ fingerprint: group.binding.selectionFingerprint, map: checked });
+          const next = { contextKey, bindingKey: viewportBindingKey, catalog, manifest: group.map_manifest, bounds, map: checked };
+          loadedViewport.current = checked.status === 'available' ? next : null;
+          setViewportState(next);
           setDetailState(checked.status === 'available' ? 'ready' : 'failed');
         }).catch(error => {
           if (controller.signal.aborted) return;
-          setViewportState(null);
-          setDetailState(error instanceof Error && 'status' in error && error.status === 422 ? 'zoom_more' : 'failed');
+          loadedViewport.current = null; setViewportState(null);
+          setDetailState(error instanceof Error && 'code' in error && error.code === 'viewport_detail_capacity_exceeded' ? 'limited' : 'failed');
         }).finally(() => window.clearTimeout(deadline));
     }, 200);
     return () => { window.clearTimeout(timer); window.clearTimeout(deadline); controller.abort(); };
-  }, [cameraRevision, group, catalog, hasMap]);
+  }, [cameraRevision, group, catalog, hasMap, contextKey, viewportBindingKey]);
 
   useEffect(() => {
     if (!hasMap || !container.current) return;
@@ -532,9 +572,8 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         {group.parcel_map.status === 'deferred' && mapState === 'ready' && detailState !== 'ready' &&
           <p role="status" className="absolute bottom-3 right-3 max-w-xs rounded bg-white/95 p-2 text-xs shadow">
             {detailState === 'loading' ? 'Loading visible parcel outlines…'
-              : detailState === 'zoom_more' ? 'Zoom in to inspect exact parcel outlines.'
-              : detailState === 'failed' ? 'Parcel detail could not load; the subdivision labels and statistics remain available.'
-              : 'Subdivision labels are ready. Zoom in for exact parcel outlines.'}
+              : detailState === 'limited' ? 'This view exceeds the parcel-detail limit. Zoom in to load exact outlines; your selection is unchanged.'
+              : 'Parcel detail could not load; the subdivision labels and statistics remain available.'}
           </p>}
         {mapState !== 'failed' && overlay}
       </div>}

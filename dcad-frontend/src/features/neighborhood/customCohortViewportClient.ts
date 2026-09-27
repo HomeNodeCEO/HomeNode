@@ -11,6 +11,27 @@ export interface CheckedViewportMap {
   readonly reason?: string;
 }
 const SEMANTICS = 'current_observed_cached_parcels_not_legal_subdivision_boundary';
+// Checked catalogs and accepted controller requests are immutable. Weak keys
+// reuse membership admission on pans without retaining a departed capture.
+const catalogMembers = new WeakMap<CheckedPocketCatalog, ReadonlySet<string>>();
+const requestMembers = new WeakMap<CustomCohortPreviewGroup['request'], ReadonlySet<string>>();
+function memberLookups(catalog: CheckedPocketCatalog, request: CustomCohortPreviewGroup['request']) {
+  const cacheCatalog = Object.isFrozen(catalog), cacheRequest = Object.isFrozen(request);
+  let members = cacheCatalog ? catalogMembers.get(catalog) : undefined;
+  let selected = cacheRequest ? requestMembers.get(request) : undefined;
+  if (!members) {
+    const index = new Set<string>();
+    for (const pocket of catalog.pockets) for (const account of pocket.account_ids) index.add(account);
+    for (const account of catalog.unassigned.account_ids) index.add(account);
+    members = index; if (cacheCatalog) catalogMembers.set(catalog, members);
+  }
+  if (!selected) {
+    const index = new Set<string>();
+    for (const pocket of request.selection.pockets) for (const account of pocket.account_ids) index.add(account);
+    selected = index; if (cacheRequest) requestMembers.set(request, selected);
+  }
+  return { members, selected };
+}
 const fail = () => { throw new TypeError('invalid_custom_cohort_viewport'); };
 const check: (ok: unknown) => asserts ok = ok => { if (!ok) fail(); };
 function record(value: unknown): Record<string, unknown> {
@@ -44,7 +65,8 @@ function polygon(value: unknown, remaining: { count: number }): asserts value is
 export function checkCustomCohortViewportResponse(value: unknown, group: CustomCohortPreviewGroup,
   catalog: CheckedPocketCatalog, viewport: CustomCohortViewportBounds): CheckedViewportMap {
   const body = record(value);
-  check(JSON.stringify(body).length <= 4_000_000);
+  // The authenticated viewport transport enforces 4 MB on the decoded byte
+  // stream before JSON.parse. Do not serialize the entire geometry again here.
   const required = ['status', 'display_only', 'target', 'context_ref', 'selection_revision', 'selection_sha256',
     'viewport', 'geometry_semantics', 'geojson', body.status === 'available' ? 'counts' : 'reason'];
   exact(body, required);
@@ -69,9 +91,8 @@ export function checkCustomCohortViewportResponse(value: unknown, group: CustomC
   const counts = record(body.counts); exact(counts, ['visible_parcels', 'captured_parcels']);
   check(counts.visible_parcels === geo.features.length);
   const captured = group.map_manifest?.status === 'available' ? group.map_manifest.counts.captured_parcels : null;
-  check(counts.captured_parcels === captured);
-  const members = new Set([...catalog.pockets.flatMap(p => p.account_ids), ...catalog.unassigned.account_ids]);
-  const selected = new Set(request.selection.pockets.flatMap(p => p.account_ids));
+  check(captured !== null && counts.captured_parcels === captured && geo.features.length <= captured);
+  const { members, selected } = memberLookups(catalog, request);
   const ids = new Set<string>(), remaining = { count: 0 };
   const features = geo.features.map(raw => {
     const f = record(raw); exact(f, ['type', 'id', 'properties', 'geometry']);

@@ -154,6 +154,44 @@ test("manual-value size and section validation remain bounded before connecting"
   assert.equal(connectCalls, 0);
 });
 
+test("unexpected early manual-value failures never reflect exception text or call the database", async (context) => {
+  let connectCalls = 0;
+  const logs = [];
+  const pool = { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } };
+  const logger = { error: (...args) => logs.push(args) };
+  const invalidFile = await startRouter(baseOptions({
+    pool, logger,
+    normalizeFileId() { throw new Error("invalid_assignment_file_id_private_password"); },
+  }));
+  const invalidSection = await startRouter(baseOptions({
+    pool, logger,
+    validateSection() { throw new Error("invalid_subject_value_private_password"); },
+  }));
+  const hostileSection = await startRouter(baseOptions({
+    pool, logger,
+    validateSection() {
+      throw { get message() { throw new Error("private_message_getter"); } };
+    },
+  }));
+  context.after(async () => Promise.all([
+    invalidFile.close(), invalidSection.close(), hostileSection.close(),
+  ]));
+  const payload = {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  };
+  for (const server of [invalidFile, invalidSection, hostileSection]) {
+    const response = await patchManualValues(server.baseUrl, "123", payload);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "report_manual_values_update_failed" });
+  }
+  assert.equal(connectCalls, 0);
+  assert.equal(logs.length, 3);
+  assert.ok(logs.every(([, code]) => code === "unknown"));
+  assert.doesNotMatch(JSON.stringify(logs), /private_password|private_message_getter/);
+});
+
 test("rollout manual-value saves use assignment-scoped revisions and authenticated identity", async (context) => {
   const calls = [];
   const validated = [];
@@ -604,7 +642,30 @@ test("manual-value failures roll back, release, and return no diagnostics", asyn
   assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
   assert.equal(calls.at(-1), "ROLLBACK");
   assert.equal(releases, 1);
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["/api/accounts/:id/report-manual-values failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /database_password|secret/);
+});
+
+test("throwing manual-value logger cannot replace a fixed write-failure response", async (context) => {
+  let releases = 0;
+  const client = {
+    async query() { throw new Error("private_database_password"); },
+    release() { releases += 1; },
+  };
+  const server = await startRouter(baseOptions({
+    pool: { connect: async () => client },
+    logger: { error() { throw new Error("private_logger_failure"); } },
+  }));
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "123", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "report_manual_values_update_failed" });
+  assert.equal(releases, 1);
 });
 
 test("manual-value composition and route position remain explicit", () => {

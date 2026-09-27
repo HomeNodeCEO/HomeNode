@@ -2,18 +2,24 @@ import express from "express";
 import nodemailer from "nodemailer";
 
 import { authorizePropertyTaxProtestFile } from "../../security/assignmentAccess.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   normalizeSignupPayload,
+  SignupValidationError,
   signupAuthorizationSha256,
   signupDeliveryStatus,
   signupRequestMetadata,
   verifySignupSignaturePng,
 } from "../../security/signupSecurity.js";
 
-function safeErrorCode(error) {
-  return /^[A-Z0-9_]{1,32}$/i.test(String(error?.code || ""))
-    ? String(error.code)
-    : "unknown";
+function logSignupFailure(logger, label, error) {
+  try { logger.error?.(label, { code: safeOperationalErrorCode(error) }); }
+  catch { /* Logging must not replace the fixed response. */ }
+}
+
+function logSignupWarning(logger, label) {
+  try { logger.warn?.(label); }
+  catch { /* Delivery-state handling must not depend on logging. */ }
 }
 
 export function createSignupRouter({
@@ -22,6 +28,7 @@ export function createSignupRouter({
   environment = process.env,
   mailer = nodemailer,
   logger = console,
+  normalizePayload = normalizeSignupPayload,
   authorizePropertyTaxFile = authorizePropertyTaxProtestFile,
   verifySignature = verifySignupSignaturePng,
 } = {}) {
@@ -34,6 +41,9 @@ export function createSignupRouter({
   }
   if (typeof authorizePropertyTaxFile !== "function") {
     throw new TypeError("signup_property_tax_authorizer_required");
+  }
+  if (typeof normalizePayload !== "function") {
+    throw new TypeError("signup_payload_normalizer_required");
   }
   if (typeof verifySignature !== "function") {
     throw new TypeError("signup_signature_verifier_required");
@@ -50,12 +60,13 @@ export function createSignupRouter({
       }
       let payload;
       try {
-        payload = normalizeSignupPayload(req.body);
+        payload = normalizePayload(req.body);
       } catch (error) {
+        if (!(error instanceof SignupValidationError)) throw error;
         return res
           .status(400)
           .set("cache-control", "no-store")
-          .json({ error: error?.message || "invalid_signup_payload" });
+          .json({ error: error.message });
       }
       let propertyTaxAccess;
       try {
@@ -168,7 +179,7 @@ export function createSignupRouter({
           });
         }
       } catch (error) {
-        logger.error?.("[signup] DB insert failed", { code: safeErrorCode(error) });
+        logSignupFailure(logger, "[signup] DB insert failed", error);
         return res.status(503).set("cache-control", "no-store").json({
           error: "signup_persistence_unavailable",
         });
@@ -190,7 +201,7 @@ export function createSignupRouter({
           });
         }
       } catch {
-        logger.warn?.("[signup] SMTP transport unavailable");
+        logSignupWarning(logger, "[signup] SMTP transport unavailable");
       }
 
       let emailSent = false;
@@ -204,7 +215,7 @@ export function createSignupRouter({
           });
           emailSent = true;
         } catch {
-          logger.warn?.("[signup] SMTP delivery failed");
+          logSignupWarning(logger, "[signup] SMTP delivery failed");
         }
       }
 
@@ -219,7 +230,7 @@ export function createSignupRouter({
           : "not_repeated",
       });
     } catch (error) {
-      logger.error?.("/api/signup/email failed", { code: safeErrorCode(error) });
+      logSignupFailure(logger, "/api/signup/email failed", error);
       return res
         .status(500)
         .set("cache-control", "no-store")

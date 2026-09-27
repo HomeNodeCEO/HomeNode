@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { createInspectionSession, normalizeUuid } from "./reportFiles.js";
+import { assertCustomAppraisalInspectionWritable } from "./signedCustomWorkfile.js";
 import {
   activeRooms,
   normalizeManualSketchDocument,
@@ -36,7 +37,7 @@ async function assignmentSketchRow(client, accountId, assignmentFileId, { lock =
     "       report_file.file_number AS report_file_number,",
     "       report_file.registry_revision,",
     "       assignment_file.file_number AS assignment_file_number,",
-    "       account.address, account.city, account.state, account.postal_code,",
+    "       account.address, account.city, account.postal_code,",
     "       session.revision AS session_revision",
     "  FROM app.assignment_files assignment_file",
     "  JOIN core.accounts account ON account.account_id = assignment_file.account_id",
@@ -59,7 +60,7 @@ async function propertyTaxSketchRow(client, accountId, fileId, { lock = false } 
     "       report_file.file_number AS report_file_number,",
     "       report_file.registry_revision,",
     "       protest.file_number AS assignment_file_number,",
-    "       account.address, account.city, account.state, account.postal_code,",
+    "       account.address, account.city, account.postal_code,",
     "       session.revision AS session_revision",
     "  FROM app.tax_protest_files protest",
     "  JOIN core.accounts account ON account.account_id = protest.account_id",
@@ -184,6 +185,14 @@ async function saveDesktopInspectionSketch(
       await client.query("COMMIT");
       return priorOperation.rows[0].result;
     }
+
+    // Desktop and mobile sketches share the signed Custom evidence boundary.
+    // Exact committed replays above are read-only, but a new revision must
+    // serialize with signing before changing the sketch or linked photos.
+    await assertCustomAppraisalInspectionWritable(client, {
+      workflow_type: requestScope.workflow,
+      custom_assignment_file_id: requestScope.assignmentFileId,
+    });
 
     if (Number(row.revision) !== expectedRevision) {
       const conflict = new Error("sketch_revision_conflict");

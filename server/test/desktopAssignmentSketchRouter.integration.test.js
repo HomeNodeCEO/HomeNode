@@ -288,6 +288,16 @@ test("desktop sketch creation rejects anonymous, duplicate, and missing report-f
   assert.equal(createCalls, 1);
 });
 
+test("desktop sketch creation reports a signed Custom workfile as a stable conflict", async (context) => {
+  const server = await startRouter(baseOptions({
+    createSketch: async () => { throw new Error("custom_appraisal_workfile_signed"); },
+  }), identity);
+  context.after(server.close);
+  const response = await createSketch(server.baseUrl, "123", 1, { sketch: { review_status: "draft" } });
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+});
+
 test("artifact routes preserve not-found, validation, and diagnostic-safe failures", async (context) => {
   const errors = [];
   const missing = await startRouter(baseOptions({ getSketch: async () => null }));
@@ -488,6 +498,7 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
         5: "sketch_not_ready_for_confirmation",
         6: "sketch_operation_conflict",
         7: "database_password=secret",
+        8: "custom_appraisal_workfile_signed",
       };
       const error = new Error(messages[fileId]);
       if (fileId === 2) error.currentRevision = 11;
@@ -505,6 +516,7 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
     [5, 400, { error: "sketch_not_ready_for_confirmation" }],
     [6, 409, { error: "sketch_operation_conflict" }],
     [7, 500, { error: "assignment_sketch_update_failed" }],
+    [8, 409, { error: "custom_appraisal_workfile_signed" }],
   ]) {
     const response = await patchSketch(server.baseUrl, "123", fileId);
     assert.equal(response.status, status);

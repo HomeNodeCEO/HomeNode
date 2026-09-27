@@ -36,6 +36,7 @@ import {
   verifyInspectionPhoto,
 } from "../src/modules/mobile/photos.js";
 import { getInspectionSketch, saveInspectionSketch } from "../src/modules/mobile/sketches.js";
+import { saveAssignmentInspectionSketch } from "../src/modules/mobile/desktopSketches.js";
 import { saveDesktopPropertyTaxFile } from "../src/modules/mobile/desktopPropertyTax.js";
 import {
   getInspectionSnapshot,
@@ -834,6 +835,14 @@ test("mobile report files preserve prior versions and allocate one daily assignm
         client_operation_id: randomUUID(),
         base_revision: savedSketch.sketch.revision,
       }),
+      /custom_appraisal_workfile_signed/,
+    );
+    await assert.rejects(
+      () => saveAssignmentInspectionSketch(pool, accountId, secondCustom.reportFile.target_id, {
+        expected_revision: savedSketch.sketch.revision,
+        client_operation_id: randomUUID(),
+        sketch: sketchRequest.sketch,
+      }, auth),
       /custom_appraisal_workfile_signed/,
     );
     await assert.rejects(

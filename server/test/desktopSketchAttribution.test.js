@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { saveAssignmentInspectionSketch } from "../src/modules/mobile/desktopSketches.js";
+import {
+  saveAssignmentInspectionSketch,
+  savePropertyTaxInspectionSketch,
+} from "../src/modules/mobile/desktopSketches.js";
 
 const AREA_ID = "10000000-0000-4000-8000-000000000021";
 const OPERATION_ID = "10000000-0000-4000-8000-000000000031";
@@ -30,7 +33,7 @@ function sketchInput() {
   };
 }
 
-function databaseHarness() {
+function databaseHarness({ workfileStatus = "draft", priorOperation = null, workflow = "custom_appraisal" } = {}) {
   const calls = [];
   const row = {
     id: "sketch-1",
@@ -62,11 +65,16 @@ function databaseHarness() {
     async query(sql, parameters = []) {
       const statement = String(sql);
       calls.push({ statement, parameters });
-      if (statement.includes("FROM app.assignment_files assignment_file")) {
+      if (statement.includes(workflow === "custom_appraisal"
+        ? "FROM app.assignment_files assignment_file"
+        : "FROM app.tax_protest_files protest")) {
         return { rows: [row] };
       }
       if (statement.includes("FROM app.inspection_sketch_operations")) {
-        return { rows: [] };
+        return { rows: priorOperation ? [priorOperation] : [] };
+      }
+      if (statement.includes("FROM app.custom_appraisal_workfiles")) {
+        return { rows: [{ status: workfileStatus }] };
       }
       if (statement.startsWith("UPDATE app.inspection_sketches")) {
         return {
@@ -151,4 +159,47 @@ test("desktop sketch storage fails before database access without an authenticat
     /authentication_required/,
   );
   assert.equal(connectCalls, 0);
+});
+
+test("signed Custom workfiles reject new desktop sketch revisions before evidence writes", async () => {
+  const harness = databaseHarness({ workfileStatus: "signed" });
+  await assert.rejects(
+    saveAssignmentInspectionSketch(
+      harness.pool, "ACCOUNT-1", 19, sketchInput(), { userId: "appraiser-1" }, false,
+    ),
+    /custom_appraisal_workfile_signed/,
+  );
+  const workfileLock = callContaining(harness.calls, "FROM app.custom_appraisal_workfiles");
+  assert.match(workfileLock.statement, /FOR UPDATE/);
+  assert.deepEqual(workfileLock.parameters, [19]);
+  assert.equal(harness.calls.some(({ statement }) => statement.startsWith("UPDATE app.inspection_sketches")), false);
+  assert.equal(harness.calls.some(({ statement }) => statement.startsWith("UPDATE app.inspection_photos")), false);
+});
+
+test("exact desktop sketch operation replays remain read-only after signing", async () => {
+  const auth = { userId: "appraiser-1" };
+  const input = sketchInput();
+  const draft = databaseHarness();
+  await saveAssignmentInspectionSketch(draft.pool, "ACCOUNT-1", 19, input, auth, false);
+  const requestHash = callContaining(draft.calls, "INSERT INTO app.inspection_sketch_operations").parameters[2];
+  const replayHarness = databaseHarness({
+    workfileStatus: "signed",
+    priorOperation: { request_sha256: requestHash, result: { sketch: { revision: 2 }, report_registry_revision: 8 } },
+  });
+  const replay = await saveAssignmentInspectionSketch(
+    replayHarness.pool, "ACCOUNT-1", 19, input, auth, false,
+  );
+  assert.deepEqual(replay, { sketch: { revision: 2 }, report_registry_revision: 8 });
+  assert.equal(replayHarness.calls.some(({ statement }) => statement.includes("FROM app.custom_appraisal_workfiles")), false);
+  assert.equal(replayHarness.calls.some(({ statement }) => statement.startsWith("UPDATE ")), false);
+});
+
+test("Property Tax desktop sketch revisions remain independent of Custom signing", async () => {
+  const harness = databaseHarness({ workflow: "property_tax_protest", workfileStatus: "signed" });
+  const result = await savePropertyTaxInspectionSketch(
+    harness.pool, "ACCOUNT-1", 19, sketchInput(), { userId: "appraiser-1" }, false,
+  );
+  assert.equal(result.sketch.revision, 2);
+  assert.equal(harness.calls.some(({ statement }) => statement.includes("account.state")), false);
+  assert.equal(harness.calls.some(({ statement }) => statement.includes("FROM app.custom_appraisal_workfiles")), false);
 });

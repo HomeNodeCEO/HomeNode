@@ -110,6 +110,14 @@ function uadErrorCode(error) {
   catch { return null; }
 }
 
+function boundedUadMessageCode(message) {
+  const code = message.split(":", 1)[0];
+  // UAD domain errors use compact machine codes, sometimes followed by
+  // colon-delimited validation context. Never reflect prose, paths, or
+  // unbounded provider diagnostics just because they match a status prefix.
+  return /^[a-z][a-z0-9_]{0,95}$/.test(code) ? code : null;
+}
+
 function errorStatus(message, databaseCode) {
   // Database diagnostics can include constraint names, values, and SQL text.
   // Keep their historical HTTP statuses, but never classify by or return the message.
@@ -190,8 +198,9 @@ function errorStatus(message, databaseCode) {
 function sendError(res, error) {
   const databaseCode = uadErrorCode(error);
   const message = uadErrorMessage(error);
-  const status = errorStatus(message, databaseCode);
-  let code = status === 500 ? "uad_request_failed" : message.split(":")[0];
+  const messageCode = boundedUadMessageCode(message);
+  const status = errorStatus(messageCode ? message : "", databaseCode);
+  let code = status === 500 ? "uad_request_failed" : messageCode;
   if (databaseCode === "23505") code = "uad_request_conflict";
   if (databaseCode === "23503") code = "invalid_uad_reference";
   if (status === 500) {

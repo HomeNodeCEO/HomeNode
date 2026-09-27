@@ -1,14 +1,27 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import express from "express";
 
 import { UAD_ASSET_UPLOAD_RESERVATION_LIMITS } from "../src/modules/uad/assets.js";
 import { attachUadPublicErrorDetails } from "../src/modules/uad/publicErrorDetails.js";
+import { PUBLIC_UAD_ERROR_CODES } from "../src/modules/uad/publicErrorCodes.generated.js";
 import { createUadRouter, safeUadEvidenceComparison, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
+import { renderUadPublicErrorCodes } from "../scripts/generateUadPublicErrorCodes.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
+
+test("public UAD error-code catalog matches current source producers", () => {
+  const generated = readFileSync(new URL("../src/modules/uad/publicErrorCodes.generated.js", import.meta.url), "utf8");
+  assert.equal(generated.replace(/\r\n/g, "\n"), renderUadPublicErrorCodes());
+  for (const code of [
+    "invalid_uad_file_number", "uad_section_stale_revision", "uad_xml_mapping_missing",
+    "uad_object_download_failed", "uad_compliance_fannie_not_configured",
+    "uad_package_pdf_checksum_mismatch", "invalid_uad_asset_pdf_structure",
+  ]) assert.equal(PUBLIC_UAD_ERROR_CODES.has(code), true, code);
+});
 const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
 const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
 const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
@@ -632,12 +645,12 @@ test("explicitly trusted UAD validation details remain available to the caller",
     });
     assert.equal(response.status, 400);
     assert.deepEqual(await response.json(), {
-      error: "invalid_uad_creation_fixture",
+      error: "invalid_uad_file_number",
       details: { field: "assignee" },
     });
   }, {}, {
     createWorkfile: async () => {
-      throw attachUadPublicErrorDetails(new Error("invalid_uad_creation_fixture"), { field: "assignee" });
+      throw attachUadPublicErrorDetails(new Error("invalid_uad_file_number"), { field: "assignee" });
     },
   });
 });
@@ -651,14 +664,36 @@ test("untrusted UAD exception details stay private even when its message looks l
       body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
     });
     assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: "invalid_uad_creation_fixture" });
+    assert.deepEqual(await response.json(), { error: "invalid_uad_file_number" });
   }, {}, {
     createWorkfile: async () => {
-      throw Object.assign(new Error("invalid_uad_creation_fixture"), {
+      throw Object.assign(new Error("invalid_uad_file_number"), {
         details: { connection_string: secret },
       });
     },
   });
+});
+
+test("unknown code-like UAD provider exceptions fail closed", async () => {
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: "uad_request_failed" });
+    }, {}, { createWorkfile: async () => {
+      throw attachUadPublicErrorDetails(new Error("uad_package_private_token"), {
+        connection_string: "private-provider-token",
+      });
+    } });
+  } finally {
+    console.error = originalError;
+  }
 });
 
 for (const [databaseCode, status, publicCode] of [

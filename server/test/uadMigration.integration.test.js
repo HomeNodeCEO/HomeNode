@@ -133,6 +133,120 @@ test("signed Custom document deletion, upload, and candidate review are denied a
   }
 });
 
+test("Custom document review waits on the workfile before locking the document row", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 3, statement_timeout: 10_000 });
+  let holder;
+  let assignmentFileId;
+  let documentId;
+  let accountId;
+  let reviewPromise;
+  try {
+    const identity = await pool.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    await ensureAssignmentDocumentsSchema(pool);
+    const suffix = randomUUID();
+    accountId = `document-lock-order-${suffix}`;
+    await pool.query("INSERT INTO core.accounts (account_id) VALUES ($1)", [accountId]);
+    const assignment = await pool.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $2) RETURNING id`,
+      [accountId, accountId],
+    );
+    assignmentFileId = assignment.rows[0].id;
+    await pool.query(
+      `INSERT INTO app.custom_appraisal_workfiles
+         (assignment_file_id, canonical_file_name, status)
+       VALUES ($1, $2, 'draft')`,
+      [assignmentFileId, `${accountId}.homenode-appraisal.json`],
+    );
+    const document = await pool.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes)
+       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', repeat('b', 64), 12)
+       RETURNING id`,
+      [accountId, assignmentFileId],
+    );
+    documentId = document.rows[0].id;
+    const candidate = await pool.query(
+      `INSERT INTO app.assignment_document_field_candidates
+         (document_id, field_key, raw_value)
+       VALUES ($1, 'lender_client_name', 'Fixture lender') RETURNING id`,
+      [documentId],
+    );
+
+    holder = await pool.connect();
+    await holder.query("BEGIN");
+    await holder.query("SET LOCAL lock_timeout = '750ms'");
+    await holder.query(
+      "SELECT id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
+      [assignmentFileId],
+    );
+    let preliminaryRead;
+    const readStarted = new Promise((resolve) => { preliminaryRead = resolve; });
+    const observedPool = {
+      query: (...args) => pool.query(...args),
+      connect: async () => {
+        const client = await pool.connect();
+        return {
+          query: async (sql, ...args) => {
+            const result = await client.query(sql, ...args);
+            if (/SELECT account_id, assignment_file_id/.test(String(sql))) preliminaryRead();
+            return result;
+          },
+          release: () => client.release(),
+        };
+      },
+    };
+    reviewPromise = reviewAssignmentDocumentCandidate(observedPool, {
+      documentId,
+      candidateId: candidate.rows[0].id,
+      reviewStatus: "rejected",
+      reviewer: "Fixture appraiser",
+    });
+    let waitTimer;
+    try {
+      await Promise.race([
+        readStarted,
+        reviewPromise.then(
+          () => { throw new Error("document_review_finished_before_scope_read"); },
+          (error) => { throw error; },
+        ),
+        new Promise((_, reject) => {
+          waitTimer = setTimeout(() => reject(new Error("document_scope_read_timeout")), 5_000);
+        }),
+      ]);
+    } finally {
+      clearTimeout(waitTimer);
+    }
+    // If review locked the document first, this opposing workfile/document
+    // transaction would hit lock_timeout instead of acquiring the row.
+    await holder.query(
+      "SELECT id FROM app.assignment_documents WHERE id = $1 FOR UPDATE",
+      [documentId],
+    );
+    await holder.query("COMMIT");
+    holder.release();
+    holder = null;
+    const reviewed = await reviewPromise;
+    assert.equal(reviewed.review_status, "rejected");
+  } finally {
+    if (holder) {
+      await holder.query("ROLLBACK").catch(() => {});
+      holder.release();
+    }
+    if (reviewPromise) await reviewPromise.catch(() => {});
+    if (documentId) await pool.query("DELETE FROM app.assignment_documents WHERE id = $1", [documentId]);
+    if (assignmentFileId) {
+      await pool.query("DELETE FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1", [assignmentFileId]);
+      await pool.query("DELETE FROM app.assignment_files WHERE id = $1", [assignmentFileId]);
+    }
+    if (accountId) await pool.query("DELETE FROM core.accounts WHERE account_id = $1", [accountId]);
+    await pool.end();
+  }
+});
+
 test("custom signed-photo coverage audit runs against migrated PostgreSQL without writes", {
   skip: !databaseUrl,
 }, async () => {

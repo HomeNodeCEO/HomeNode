@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 
@@ -20,6 +21,109 @@ test("custom signed-photo coverage audit runs against migrated PostgreSQL withou
     assert.equal(Number.isSafeInteger(result.nonfinalized_photo_count_at_signing), true);
     assert.equal(Number.isSafeInteger(result.verified_photo_count), true);
   } finally {
+    await pool.end();
+  }
+});
+
+test("signed-photo byte diagnostics aggregate separate files against migrated PostgreSQL", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    const identity = await client.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    const baseline = await auditCustomSignedPhotoCoverage({
+      connect: async () => ({
+        query: (...args) => client.query(...args),
+        release() {},
+      }),
+    });
+    await client.query("BEGIN");
+    const organizationId = randomUUID();
+    await client.query(
+      `INSERT INTO app_auth.organizations (id, legal_name, display_name)
+       VALUES ($1, 'Audit fixture organization', 'Audit fixture organization')`,
+      [organizationId],
+    );
+    for (const [photoCount, byteSize] of [[9, 8 * 1024 * 1024], [2, 1024 * 1024]]) {
+      const suffix = randomUUID();
+      const accountId = `audit-photo-${suffix}`;
+      const fileNumber = `audit-${suffix}`;
+      const reportId = randomUUID();
+      await client.query("INSERT INTO core.accounts (account_id) VALUES ($1)", [accountId]);
+      const assignment = await client.query(
+        `INSERT INTO app.assignment_files (account_id, file_number, organization_id)
+         VALUES ($1, $2, $3) RETURNING id`,
+        [accountId, fileNumber, organizationId],
+      );
+      const assignmentFileId = assignment.rows[0].id;
+      await client.query(
+        `INSERT INTO app.custom_appraisal_workfiles
+           (assignment_file_id, canonical_file_name, status, signed_at, signed_by)
+         VALUES ($1, $2, 'signed', now(), 'Audit fixture appraiser')`,
+        [assignmentFileId, `${fileNumber}.homenode-appraisal.json`],
+      );
+      await client.query(
+        `INSERT INTO app.report_files
+           (id, organization_id, account_id, workflow_type, file_number, custom_assignment_file_id)
+         VALUES ($1, $2, $3, 'custom_appraisal', $4, $5)`,
+        [reportId, organizationId, accountId, fileNumber, assignmentFileId],
+      );
+      await client.query(
+        `INSERT INTO app.custom_appraisal_signed_snapshots
+           (assignment_file_id, canonical_file_name, schema_version, snapshot,
+            checksum_sha256, signed_by, organization_id)
+         VALUES ($1, $2, 1, $3::jsonb, repeat('a', 64), 'Audit fixture appraiser', $4)`,
+        [assignmentFileId, `${fileNumber}.pdf`, JSON.stringify({ evidence: { inspection_photos: [] } }), organizationId],
+      );
+      await client.query(
+        `INSERT INTO app.inspection_photos
+           (id, report_file_id, organization_id, client_photo_id, request_sha256,
+            workflow_type, category, category_source, caption_source, source,
+            position, status, origin_channel, verified_at, retention_starts_at, retention_until)
+         SELECT gen_random_uuid(), $1, $2, gen_random_uuid(), repeat('b', 64),
+                'custom_appraisal', 'Front', 'manual', 'category', 'camera',
+                position, 'verified', 'desktop', now(), now(), now() + interval '6 years'
+           FROM generate_series(1, $3::integer) AS series(position)`,
+        [reportId, organizationId, photoCount],
+      );
+      await client.query(
+        `INSERT INTO app.inspection_photo_objects
+           (id, photo_id, client_object_id, variant, storage_bucket, object_key,
+            original_file_name, content_type, expected_byte_size, byte_size,
+            status, verified_at)
+         SELECT gen_random_uuid(), photo.id, gen_random_uuid(), 'display',
+                'ci-audit', 'audit/' || photo.id || '/display', 'display.jpg',
+                'image/jpeg', $2, $2, 'verified', now()
+           FROM app.inspection_photos photo WHERE photo.report_file_id = $1`,
+        [reportId, byteSize],
+      );
+    }
+    // Run the production aggregate SQL on this same transaction so the fixture
+    // remains invisible to other tests and is removed by the final rollback.
+    const transactionScopedPool = {
+      connect: async () => ({
+        query: (sql, ...args) => {
+          if (sql === "BEGIN READ ONLY") return client.query("SAVEPOINT audit_fixture_read");
+          if (sql === "ROLLBACK") return client.query("ROLLBACK TO SAVEPOINT audit_fixture_read");
+          return client.query(sql, ...args);
+        },
+        release() {},
+      }),
+    };
+    const result = await auditCustomSignedPhotoCoverage(transactionScopedPool);
+    assert.equal(result.signed_file_count, baseline.signed_file_count + 2);
+    assert.equal(result.signed_files_over_64mib_pdf_eligible_photo_metadata_count,
+      baseline.signed_files_over_64mib_pdf_eligible_photo_metadata_count + 1);
+    assert.equal(result.max_pdf_eligible_photo_metadata_bytes_per_file,
+      Math.max(baseline.max_pdf_eligible_photo_metadata_bytes_per_file, 72 * 1024 * 1024));
+  } finally {
+    if (client) {
+      await client.query("ROLLBACK");
+      client.release();
+    }
     await pool.end();
   }
 });

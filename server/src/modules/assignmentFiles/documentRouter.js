@@ -85,6 +85,9 @@ export function createAssignmentDocumentRouter({
 
   function sendDocumentUploadError(res, error) {
     const message = error?.message || "assignment_document_upload_failed";
+    if (message === "custom_appraisal_workfile_signed") {
+      return res.set("cache-control", "no-store").status(409).json({ error: message });
+    }
     const clientErrors = new Set([
       "document_content_required",
       "document_too_large",

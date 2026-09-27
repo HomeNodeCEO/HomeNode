@@ -170,12 +170,24 @@ test("assignment document object keys are assignment-scoped and content-addresse
 test("a verified private upload stores metadata without duplicating PDF bytes in PostgreSQL", async () => {
   const pdf = Buffer.from("%PDF-test-private-storage");
   let insertValues;
+  const events = [];
   const client = {
     async query(sql, values) {
+      events.push(sql);
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
       if (/^SET LOCAL /.test(sql)) return { rows: [] };
       if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
       if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+        return { rows: [{ id: 91, file_number: "2026-91" }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+      if (/FOR UPDATE OF workfile/.test(sql)) {
+        return { rows: [{ status: "draft", has_signed_snapshot: false }] };
+      }
+      if (!/INSERT INTO app\.assignment_documents/.test(sql)) {
+        throw new Error(`unexpected query: ${sql}`);
+      }
       insertValues = values;
       return {
         rows: [{
@@ -216,7 +228,7 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   const storage = {
     configured: true,
     bucket: "private-evidence",
-    async putObject() {},
+    async putObject() { events.push("PUT_OBJECT"); },
     async inspectObject() {
       return { byte_size: pdf.length, etag: '"verified"', content_type: "application/pdf" };
     },
@@ -232,6 +244,111 @@ test("a verified private upload stores metadata without duplicating PDF bytes in
   assert.equal(insertValues[12], "r2");
   assert.equal(result.storage_provider, "r2");
   assert.ok(result.storage_verified_at instanceof Date);
+  const workfileLockIndex = events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql));
+  assert.notEqual(workfileLockIndex, -1);
+  assert.ok(workfileLockIndex < events.indexOf("PUT_OBJECT"));
+});
+
+function customDocumentUploadPool({ status = "draft", hasSignedSnapshot = false, existing = null } = {}) {
+  const events = [];
+  const client = {
+    async query(sql, values = []) {
+      events.push(sql);
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/^SET LOCAL /.test(sql)) return { rows: [] };
+      if (/pg_advisory_xact_lock/.test(sql)) return { rows: [{}] };
+      if (/SELECT \*\s+FROM app\.assignment_documents/.test(sql)) {
+        return { rows: existing ? [existing] : [] };
+      }
+      if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+        return { rows: [{ id: 91, file_number: "2026-91" }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+      if (/FOR UPDATE OF workfile/.test(sql)) {
+        return { rows: [{ status, has_signed_snapshot: hasSignedSnapshot }] };
+      }
+      if (/UPDATE app\.assignment_documents\s+SET title/.test(sql)) {
+        return { rows: [{ ...existing, title: values[1], file_name: values[2] }] };
+      }
+      if (/INSERT INTO app\.assignment_documents/.test(sql)) {
+        return { rows: [{ id: 92, account_id: values[0], assignment_file_id: values[1],
+          document_type: values[5], title: values[6], file_name: values[7],
+          content_type: "application/pdf", checksum_sha256: values[9],
+          file_size_bytes: values[10], storage_provider: values[12],
+          processing_status: "uploaded", extraction_summary: {} }] };
+      }
+      throw new Error(`unexpected client query: ${sql}`);
+    },
+    release() { events.push("RELEASE"); },
+  };
+  return {
+    events,
+    pool: {
+      async query(sql) {
+        if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+        throw new Error(`unexpected pool query: ${sql}`);
+      },
+      async connect() { return client; },
+    },
+  };
+}
+
+for (const [status, hasSignedSnapshot] of [["signed", false], ["draft", true]]) {
+  test(`${status} Custom upload with historical snapshot=${hasSignedSnapshot} rejects before R2 work`, async () => {
+    const { pool, events } = customDocumentUploadPool({ status, hasSignedSnapshot });
+    const storage = {
+      configured: true,
+      async putObject() { events.push("PUT_OBJECT"); },
+      async inspectObject() { events.push("INSPECT_OBJECT"); },
+    };
+    await assert.rejects(createAssignmentDocument(pool, {
+      accountId: "account-91", assignmentFileId: 91,
+      fileName: "evidence.pdf", content: Buffer.from("%PDF-signed-upload"), storage,
+    }), /custom_appraisal_workfile_signed/);
+    assert.ok(events.includes("ROLLBACK"));
+    assert.equal(events.includes("PUT_OBJECT"), false);
+    assert.equal(events.includes("INSPECT_OBJECT"), false);
+    assert.equal(events.some((sql) => /INSERT INTO app\.assignment_documents/.test(sql)), false);
+  });
+}
+
+test("signed Custom duplicate upload cannot change existing document metadata", async () => {
+  const { pool, events } = customDocumentUploadPool({
+    status: "signed",
+    existing: { id: 90, storage_provider: "r2", object_key: "documents/original.pdf" },
+  });
+  await assert.rejects(createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "renamed.pdf", content: Buffer.from("%PDF-existing"),
+    storage: { configured: true, async putObject() { events.push("PUT_OBJECT"); } },
+  }), /custom_appraisal_workfile_signed/);
+  assert.equal(events.some((sql) => /UPDATE app\.assignment_documents\s+SET title/.test(sql)), false);
+  assert.equal(events.includes("PUT_OBJECT"), false);
+});
+
+test("Custom uploads without R2 still lock the workfile before PostgreSQL persistence", async () => {
+  const { pool, events } = customDocumentUploadPool();
+  const document = await createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "draft.pdf", content: Buffer.from("%PDF-draft-postgres"),
+  });
+  assert.equal(document.storage_provider, "postgres");
+  const lockIndex = events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql));
+  const insertIndex = events.findIndex((sql) => /INSERT INTO app\.assignment_documents/.test(sql));
+  assert.notEqual(lockIndex, -1);
+  assert.notEqual(insertIndex, -1);
+  assert.ok(lockIndex < insertIndex);
+  assert.ok(events.includes("COMMIT"));
+});
+
+test("signed Custom uploads without R2 cannot write PostgreSQL evidence", async () => {
+  const { pool, events } = customDocumentUploadPool({ status: "signed" });
+  await assert.rejects(createAssignmentDocument(pool, {
+    accountId: "account-91", assignmentFileId: 91,
+    fileName: "signed.pdf", content: Buffer.from("%PDF-signed-postgres"),
+  }), /custom_appraisal_workfile_signed/);
+  assert.ok(events.includes("ROLLBACK"));
+  assert.equal(events.some((sql) => /INSERT INTO app\.assignment_documents/.test(sql)), false);
 });
 
 function propertyTaxQuotaPool(usage = {}) {

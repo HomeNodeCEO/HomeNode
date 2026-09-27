@@ -815,7 +815,10 @@ export async function createAssignmentDocument(pool, {
     taxProtestFileId,
     checksum,
   });
-  const needsTransaction = Boolean(normalizedUploadQuota || storage?.configured);
+  const customAssignmentFileId = identity[1];
+  const needsTransaction = Boolean(
+    normalizedUploadQuota || storage?.configured || customAssignmentFileId,
+  );
   let transactionClient = null;
   let transactionStarted = false;
   let commitAttempted = false;
@@ -842,6 +845,14 @@ export async function createAssignmentDocument(pool, {
         transactionClient,
         identity,
       );
+      if (customAssignmentFileId) {
+        // The same workfile lock is held by signing until its snapshot and PDF
+        // commit, so neither new bytes nor duplicate metadata can drift after it.
+        await lockMutableCustomDocumentWorkfile(transactionClient, {
+          assignment_file_id: customAssignmentFileId,
+          account_id: accountId,
+        });
+      }
       if (existing?.storage_provider === "r2" && existing.object_key) {
         const { rows } = await transactionClient.query(
           `UPDATE app.assignment_documents

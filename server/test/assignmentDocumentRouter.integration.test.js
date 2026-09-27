@@ -226,6 +226,24 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
   assert.equal(calls[3][2].uploadedBy, "user-1");
 });
 
+test("signed Custom document upload returns a non-cacheable 409 without scheduling extraction", async (context) => {
+  let scheduled = false;
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    createDocument: async () => { throw new Error("custom_appraisal_workfile_signed"); },
+    processDocument: async () => { scheduled = true; },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/accounts/42/documents`, {
+    method: "POST",
+    headers: { "content-type": "application/pdf", "x-assignment-file-id": "7" },
+    body: Buffer.from("%PDF-signed-upload"),
+  });
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+  assert.equal(scheduled, false);
+});
+
 test("document uploads authorize before buffering and reject compressed bodies", async (context) => {
   let deniedCreates = 0;
   const deniedServer = await startRouter(createAssignmentDocumentRouter(options({

@@ -382,6 +382,18 @@ test("delete and reprocess preserve storage, OCR, and no-store contracts", async
   ]);
 });
 
+test("signed Custom document deletion returns a stable non-cacheable conflict", async (context) => {
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    pool: accessibleDocumentPool(),
+    deleteDocument: async () => { throw new Error("custom_appraisal_workfile_signed"); },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/documents/4`, { method: "DELETE" });
+  assert.equal(response.status, 409);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+});
+
 test("document review routes preserve exact appraiser decisions", async (context) => {
   const calls = [];
   const pool = accessibleDocumentPool();

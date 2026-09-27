@@ -627,6 +627,57 @@ test("document routes retain stable client, conflict, unavailable, and bounded e
   assert.deepEqual(logs, [["assignment document lookup failed", "unknown"]]);
 });
 
+test("Custom document routes never return unexpected provider diagnostics", async (context) => {
+  const failure = new Error("private-url=https://private.example/secret-token");
+  failure.code = "ECONNRESET";
+  const fail = async () => { throw failure; };
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    listDocuments: fail,
+    createDocument: fail,
+    getDocument: fail,
+    deleteDocument: fail,
+    processDocument: fail,
+    confirmDespiteMismatch: fail,
+    confirmCandidates: fail,
+    reviewCandidate: fail,
+    logger: { error() { throw new Error("logger-secret"); }, warn() {} },
+  })));
+  context.after(server.close);
+  const cases = [
+    ["/api/accounts/42/documents?assignment_file_id=7", undefined, "assignment_documents_lookup_failed"],
+    ["/api/accounts/42/documents", {
+      method: "POST",
+      headers: { "content-type": "application/pdf", "x-assignment-file-id": "7" },
+      body: Buffer.from("%PDF-private"),
+    }, "assignment_document_upload_failed"],
+    ["/api/documents/5", undefined, "assignment_document_lookup_failed"],
+    ["/api/documents/5/content", undefined, "assignment_document_stream_failed"],
+    ["/api/documents/5", { method: "DELETE" }, "assignment_document_delete_failed"],
+    ["/api/documents/5/reprocess", jsonRequest("POST"), "assignment_document_reprocess_failed"],
+    ["/api/documents/5/subject-address-override", jsonRequest("POST"), "document_subject_address_override_failed"],
+    ["/api/documents/5/confirm-all", jsonRequest("POST"), "document_candidates_confirm_all_failed"],
+    ["/api/documents/5/candidates/50", jsonRequest("PATCH"), "document_candidate_review_failed"],
+  ];
+  for (const [path, init, code] of cases) {
+    const response = await fetch(`${server.baseUrl}${path}`, init);
+    assert.equal(response.status, 500, path);
+    assert.deepEqual(await response.json(), { error: code }, path);
+  }
+});
+
+test("Custom reprocess contains a hostile exception message getter", async (context) => {
+  const failure = Object.defineProperty(new Error(), "message", {
+    get() { throw new Error("getter-secret"); },
+  });
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    processDocument: async () => { throw failure; },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/documents/5/reprocess`, jsonRequest("POST"));
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "assignment_document_reprocess_failed" });
+});
+
 test("document router validates composition and replaces every inline route", () => {
   assert.throws(
     () => createAssignmentDocumentRouter(),

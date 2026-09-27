@@ -416,7 +416,7 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
     [assignmentFileId],
   );
   const reportFileIds = reportFiles.map((record) => record.id).filter(Boolean);
-  const documents = await queryJsonRowsIfAvailable(
+  const documents = (await queryJsonRowsIfAvailable(
     client,
     "app.assignment_documents",
     `SELECT to_jsonb(document) - 'content' AS record
@@ -425,7 +425,19 @@ async function signedEvidenceManifest(client, { accountId, assignmentFileId }) {
         AND document.assignment_file_id = $2
       ORDER BY document.uploaded_at, document.id`,
     [accountId, assignmentFileId],
-  );
+  )).map((record) => {
+    // Operational exception text is not appraisal evidence. Older document rows
+    // can still contain raw provider errors; never embed those in a new immutable
+    // signed snapshot or its content-addressed PDF manifest.
+    const evidence = { ...record };
+    delete evidence.last_processing_error;
+    delete evidence.storage_last_error;
+    if (!evidence.extraction_summary || typeof evidence.extraction_summary !== "object"
+      || Array.isArray(evidence.extraction_summary)) return evidence;
+    const summary = { ...evidence.extraction_summary };
+    delete summary.error;
+    return { ...evidence, extraction_summary: summary };
+  });
   const photos = reportFileIds.length ? await queryJsonRowsIfAvailable(
     client,
     "app.inspection_photos",

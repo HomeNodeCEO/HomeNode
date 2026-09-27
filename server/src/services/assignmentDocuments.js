@@ -84,6 +84,42 @@ function positiveInteger(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+const DOCUMENT_EXTRACTION_PUBLIC_ERRORS = new Set([
+  "document_not_pdf",
+  "document_page_limit_exceeded",
+  "assignment_document_content_unavailable",
+  "assignment_document_storage_not_configured",
+  "assignment_document_storage_size_mismatch",
+  "assignment_document_storage_checksum_mismatch",
+  "document_not_found",
+  "document_processing_in_progress",
+  "document_retry_not_due",
+  "document_not_processable",
+]);
+
+function documentExtractionFailureCode(error) {
+  try {
+    const message = error?.message;
+    if (DOCUMENT_EXTRACTION_PUBLIC_ERRORS.has(message)) return message;
+  } catch { /* Unknown exceptions cannot contribute to public diagnostics. */ }
+  return "assignment_document_extraction_failed";
+}
+
+function publicExtractionSummary(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const summary = { ...value };
+  if (summary.error != null) {
+    summary.error = documentExtractionFailureCode({ message: summary.error });
+  }
+  return summary;
+}
+
+function publicDocumentStorageError(value) {
+  if (value === "assignment_document_storage_upload_failed"
+    || value === "assignment_document_storage_migration_failed") return value;
+  return "assignment_document_storage_failed";
+}
+
 async function lockMutableCustomDocumentWorkfile(client, document) {
   const assignmentFileId = positiveInteger(document?.assignment_file_id);
   if (!assignmentFileId) return;
@@ -558,15 +594,17 @@ function publicDocument(row, candidates = undefined) {
     processing_attempts: Number(row.processing_attempts || 0),
     processing_started_at: row.processing_started_at,
     next_processing_at: row.next_processing_at,
-    last_processing_error: row.last_processing_error,
+    last_processing_error: row.last_processing_error == null
+      ? null : documentExtractionFailureCode({ message: row.last_processing_error }),
     extraction_method: row.extraction_method,
-    extraction_summary: row.extraction_summary || {},
+    extraction_summary: publicExtractionSummary(row.extraction_summary),
     source_kind: row.source_kind,
     source_url: row.source_url,
     storage_provider: row.storage_provider || "postgres",
     storage_status: row.storage_status || "stored",
     storage_verified_at: row.storage_verified_at,
-    storage_last_error: row.storage_last_error,
+    storage_last_error: row.storage_last_error == null
+      ? null : publicDocumentStorageError(row.storage_last_error),
     uploaded_by: row.uploaded_by,
     uploaded_at: row.uploaded_at,
     processed_at: row.processed_at,
@@ -977,15 +1015,19 @@ export async function createAssignmentDocument(pool, {
               } : {}),
             });
           } catch {
-            logger.warn?.("[documents] failed to clean up an unverified private document upload");
+            try {
+              logger.warn?.("[documents] failed to clean up an unverified private document upload");
+            } catch { /* A diagnostic failure must not interrupt the PostgreSQL fallback. */ }
           }
         }
         storageStatus = "migration_failed";
-        storageLastError = cleanText(error?.message || error, 2_000);
-        logger.warn?.(
-          "[documents] private object upload failed; retaining PostgreSQL fallback",
-          storageLastError,
-        );
+        storageLastError = "assignment_document_storage_upload_failed";
+        try {
+          logger.warn?.(
+            "[documents] private object upload failed; retaining PostgreSQL fallback",
+            safeOperationalErrorCode(error),
+          );
+        } catch { /* Preserve the PostgreSQL fallback after diagnostic failure. */ }
       }
     }
     const { rows } = await (transactionClient || pool).query(
@@ -1408,12 +1450,15 @@ export async function processAssignmentDocument(pool, documentId, {
       client.release();
     }
   } catch (error) {
-    const message = String(error?.message || error).slice(0, 2_000);
+    const message = documentExtractionFailureCode(error);
     const attempts = Number(document.processing_attempts || 1);
     const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
       ? null
       : new Date(Date.now() + assignmentDocumentRetryDelayMs(attempts));
-    logger.warn?.(`[documents] extraction failed for document ${id}`, message);
+    try {
+      logger.warn?.(`[documents] extraction failed for document ${id}`,
+        safeOperationalErrorCode(error));
+    } catch { /* Logging must not prevent a bounded failure result. */ }
     await pool.query(
       `UPDATE app.assignment_documents
        SET processing_status = 'extraction_failed',
@@ -1510,7 +1555,7 @@ export async function processPendingAssignmentDocuments(pool, {
       });
       results.push({ id: Number(row.id), ok: true, status: document.processing_status });
     } catch (error) {
-      results.push({ id: Number(row.id), ok: false, error: String(error?.message || error) });
+      results.push({ id: Number(row.id), ok: false, error: documentExtractionFailureCode(error) });
     }
   }
   return { attempted: rows.length, results };

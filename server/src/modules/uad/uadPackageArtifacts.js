@@ -18,6 +18,7 @@ import { inspectUadAssetPayload, inspectUadPdfSafety } from "./uadFileSecurity.j
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 import { assertUadAssetsApplicable } from "./assetApplicability.js";
+import { publicUadArtifactMetadata, uadUploadFailureMetadata } from "./operationalMetadata.js";
 
 const MANIFEST_CONTENT_TYPE = "application/json";
 const PACKAGE_CONTENT_TYPE = "application/zip";
@@ -80,7 +81,7 @@ function artifactResponse(row, workfile, storage) {
     checksum_sha256: row.checksum_sha256 || null,
     generation_status: row.generation_status,
     generated_at: row.generated_at || null,
-    metadata: row.metadata || {},
+    metadata: publicUadArtifactMetadata(row.metadata),
     created_at: row.created_at,
     is_current_revision: revisionNumber === currentRevision,
     ready_for_download: row.generation_status === "ready" && current,
@@ -526,7 +527,7 @@ async function generateUadSubmissionPackageOperation(pool, storage, workfileIdVa
           packageRow.id,
           generationAttemptId,
           JSON.stringify({
-            upload_error: String(error.message).split(":")[0],
+            ...uadUploadFailureMetadata(),
             ...(error.cleanup_pending_object_keys?.length
               ? { cleanup_pending_object_keys: error.cleanup_pending_object_keys }
               : {}),

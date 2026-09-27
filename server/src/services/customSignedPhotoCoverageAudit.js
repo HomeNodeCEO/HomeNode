@@ -1,9 +1,27 @@
 const MAX_PDF_PHOTO_BYTES = 8 * 1024 * 1024;
 
 const PHOTO_COVERAGE_AUDIT_SQL = `
-  WITH signed_file_photos AS (
+  WITH signed_snapshot_photo_states AS (
     SELECT snapshot.assignment_file_id,
-           report.id AS report_file_id,
+           BOOL_OR(jsonb_typeof(snapshot.snapshot #> '{evidence,inspection_photos}')
+             IS DISTINCT FROM 'array') AS invalid_photo_manifest,
+           COUNT(signed_photo.record) FILTER (
+             WHERE signed_photo.record->>'status' = 'verified'
+           ) AS verified_photo_count_at_signing,
+           COUNT(signed_photo.record) FILTER (
+             WHERE COALESCE(signed_photo.record->>'status', '')
+               NOT IN ('verified', 'excluded', 'deleted')
+           ) AS nonfinalized_photo_count_at_signing
+      FROM app.custom_appraisal_signed_snapshots snapshot
+      LEFT JOIN LATERAL jsonb_array_elements(
+        CASE WHEN jsonb_typeof(snapshot.snapshot #> '{evidence,inspection_photos}') = 'array'
+          THEN snapshot.snapshot #> '{evidence,inspection_photos}'
+          ELSE '[]'::jsonb END
+      ) AS signed_photo(record) ON true
+     GROUP BY snapshot.assignment_file_id
+  ), signed_file_photos AS (
+    SELECT snapshot.assignment_file_id,
+           COUNT(DISTINCT report.id) AS report_file_count,
            COUNT(photo.id) AS verified_photo_count,
            COUNT(photo.id) FILTER (
              WHERE renderable.id IS NULL
@@ -37,27 +55,39 @@ const PHOTO_COVERAGE_AUDIT_SQL = `
                   object.id
          LIMIT 1
       ) renderable ON true
-     GROUP BY snapshot.assignment_file_id, report.id
+     GROUP BY snapshot.assignment_file_id
   )
   SELECT COUNT(*) AS signed_file_count,
          COUNT(*) FILTER (
-           WHERE report_file_id IS NULL
+           WHERE coverage.report_file_count = 0
          ) AS missing_report_file_count,
-         COALESCE(SUM(verified_photo_count), 0) AS verified_photo_count,
          COUNT(*) FILTER (
-           WHERE verified_photo_count > 100
+           WHERE signing.invalid_photo_manifest
+         ) AS invalid_photo_manifest_file_count,
+         COUNT(*) FILTER (
+           WHERE signing.nonfinalized_photo_count_at_signing > 0
+         ) AS signed_files_with_nonfinalized_photos_count,
+         COALESCE(SUM(signing.verified_photo_count_at_signing), 0)
+           AS verified_photo_count_at_signing,
+         COALESCE(SUM(signing.nonfinalized_photo_count_at_signing), 0)
+           AS nonfinalized_photo_count_at_signing,
+         COALESCE(SUM(coverage.verified_photo_count), 0) AS verified_photo_count,
+         COUNT(*) FILTER (
+           WHERE coverage.verified_photo_count > 100
          ) AS photo_overflow_file_count,
-         COALESCE(SUM(GREATEST(verified_photo_count - 100, 0)), 0)
+         COALESCE(SUM(GREATEST(coverage.verified_photo_count - 100, 0)), 0)
            AS verified_photos_beyond_cap_count,
-         COALESCE(SUM(missing_pdf_compatible_object_count), 0)
+         COALESCE(SUM(coverage.missing_pdf_compatible_object_count), 0)
            AS missing_pdf_compatible_object_count,
-         COALESCE(SUM(pdf_object_size_out_of_range_count), 0)
+         COALESCE(SUM(coverage.pdf_object_size_out_of_range_count), 0)
            AS pdf_object_size_out_of_range_count,
-         COALESCE(SUM(cross_organization_photo_count), 0)
+         COALESCE(SUM(coverage.cross_organization_photo_count), 0)
            AS cross_organization_photo_count,
-         COALESCE(SUM(wrong_workflow_photo_count), 0)
+         COALESCE(SUM(coverage.wrong_workflow_photo_count), 0)
            AS wrong_workflow_photo_count
-    FROM signed_file_photos`;
+    FROM signed_file_photos coverage
+    JOIN signed_snapshot_photo_states signing
+      ON signing.assignment_file_id = coverage.assignment_file_id`;
 
 function safeCount(value) {
   const countText = String(value ?? "");
@@ -67,7 +97,7 @@ function safeCount(value) {
   return count;
 }
 
-/** Current-state, aggregate-only photo coverage preflight; never returns photo/file identifiers. */
+/** Aggregate-only current coverage and signing-time photo-state preflight; never returns identifiers. */
 export async function auditCustomSignedPhotoCoverage(pool) {
   if (!pool || typeof pool.connect !== "function") {
     throw new Error("custom_signed_photo_coverage_audit_pool_required");
@@ -96,6 +126,10 @@ export async function auditCustomSignedPhotoCoverage(pool) {
     const counts = {
       signed_file_count: safeCount(row.signed_file_count),
       missing_report_file_count: safeCount(row.missing_report_file_count),
+      invalid_photo_manifest_file_count: safeCount(row.invalid_photo_manifest_file_count),
+      signed_files_with_nonfinalized_photos_count: safeCount(row.signed_files_with_nonfinalized_photos_count),
+      verified_photo_count_at_signing: safeCount(row.verified_photo_count_at_signing),
+      nonfinalized_photo_count_at_signing: safeCount(row.nonfinalized_photo_count_at_signing),
       verified_photo_count: safeCount(row.verified_photo_count),
       photo_overflow_file_count: safeCount(row.photo_overflow_file_count),
       verified_photos_beyond_cap_count: safeCount(row.verified_photos_beyond_cap_count),
@@ -106,6 +140,8 @@ export async function auditCustomSignedPhotoCoverage(pool) {
     };
     return {
       ok: counts.missing_report_file_count === 0
+        && counts.invalid_photo_manifest_file_count === 0
+        && counts.signed_files_with_nonfinalized_photos_count === 0
         && counts.photo_overflow_file_count === 0
         && counts.missing_pdf_compatible_object_count === 0
         && counts.pdf_object_size_out_of_range_count === 0

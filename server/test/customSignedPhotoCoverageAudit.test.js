@@ -27,12 +27,16 @@ function fakePool({ schema = SCHEMA, counts = {}, fail = false, failRollback = f
         async query(sql) {
           calls.push(sql);
           if (failRollback && sql === "ROLLBACK") throw new Error("private rollback detail");
-          if (fail && sql.includes("WITH signed_file_photos")) throw new Error("private database detail");
+          if (fail && sql.includes("WITH signed_snapshot_photo_states")) throw new Error("private database detail");
           if (sql.includes("to_regclass")) return { rows: [schema] };
-          if (sql.includes("WITH signed_file_photos")) {
+          if (sql.includes("WITH signed_snapshot_photo_states")) {
             return { rows: [{
               signed_file_count: "3",
               missing_report_file_count: "0",
+              invalid_photo_manifest_file_count: "0",
+              signed_files_with_nonfinalized_photos_count: "0",
+              verified_photo_count_at_signing: "30",
+              nonfinalized_photo_count_at_signing: "0",
               verified_photo_count: "30",
               photo_overflow_file_count: "0",
               verified_photos_beyond_cap_count: "0",
@@ -57,6 +61,10 @@ test("audits current signed-photo coverage without returning file or photo ident
     ok: true,
     signed_file_count: 3,
     missing_report_file_count: 0,
+    invalid_photo_manifest_file_count: 0,
+    signed_files_with_nonfinalized_photos_count: 0,
+    verified_photo_count_at_signing: 30,
+    nonfinalized_photo_count_at_signing: 0,
     verified_photo_count: 30,
     photo_overflow_file_count: 0,
     verified_photos_beyond_cap_count: 0,
@@ -71,6 +79,10 @@ test("audits current signed-photo coverage without returning file or photo ident
   assert.doesNotMatch(pool.calls.join("\n"), /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER|DROP)\b/i);
   const sql = customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL;
   assert.match(sql, /photo\.status = 'verified'/);
+  assert.match(sql, /jsonb_typeof\(snapshot\.snapshot #> '\{evidence,inspection_photos\}'\) = 'array'/);
+  assert.match(sql, /nonfinalized_photo_count_at_signing/);
+  assert.match(sql, /COUNT\(DISTINCT report\.id\) AS report_file_count/);
+  assert.match(sql, /GROUP BY snapshot\.assignment_file_id\s+\)\s+SELECT COUNT\(\*\) AS signed_file_count/);
   assert.match(sql, /object\.content_type IN \('image\/jpeg', 'image\/png'\)/);
   assert.match(sql, /ORDER BY CASE object\.variant WHEN 'display' THEN 0 ELSE 1 END,\s*object\.id/);
   assert.match(sql, /renderable\.byte_size > 8388608/);
@@ -104,6 +116,31 @@ test("reports current overflow, missing object metadata, and ownership mismatch"
   assert.equal(result.pdf_object_size_out_of_range_count, 3);
   assert.equal(result.wrong_workflow_photo_count, 1);
   assert.equal(JSON.stringify(result).includes("assignment_file_id"), false);
+});
+
+test("reports photos that were unfinalized when the immutable snapshot was signed", async () => {
+  const pool = fakePool({ counts: {
+    signed_files_with_nonfinalized_photos_count: "2",
+    nonfinalized_photo_count_at_signing: "3",
+    verified_photo_count_at_signing: "27",
+  } });
+  const result = await auditCustomSignedPhotoCoverage(pool);
+  assert.equal(result.ok, false);
+  assert.equal(result.signed_files_with_nonfinalized_photos_count, 2);
+  assert.equal(result.nonfinalized_photo_count_at_signing, 3);
+  assert.equal(result.verified_photo_count_at_signing, 27);
+  assert.doesNotMatch(JSON.stringify(result), /photo_id|object_key|assignment_file_id/);
+  assert.match(customSignedPhotoCoverageAuditInternals.PHOTO_COVERAGE_AUDIT_SQL,
+    /NOT IN \('verified', 'excluded', 'deleted'\)/);
+});
+
+test("malformed signed photo manifests fail closed without exposing snapshot content", async () => {
+  const result = await auditCustomSignedPhotoCoverage(fakePool({ counts: {
+    invalid_photo_manifest_file_count: "1",
+  } }));
+  assert.equal(result.ok, false);
+  assert.equal(result.invalid_photo_manifest_file_count, 1);
+  assert.doesNotMatch(JSON.stringify(result), /inspection_photos|assignment_file_id/);
 });
 
 test("oversized selected display objects fail photo coverage even when an original exists", async () => {

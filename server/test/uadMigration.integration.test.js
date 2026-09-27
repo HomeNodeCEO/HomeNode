@@ -4,6 +4,7 @@ import test from "node:test";
 import pg from "pg";
 
 import {
+  createAssignmentDocument,
   deleteAssignmentDocument,
   ensureAssignmentDocumentsSchema,
 } from "../src/services/assignmentDocuments.js";
@@ -13,7 +14,7 @@ import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhot
 
 const databaseUrl = process.env.DATABASE_URL;
 
-test("signed Custom document deletion is denied before R2 deletion against migrated PostgreSQL", {
+test("signed Custom document deletion and upload are denied before R2 work against migrated PostgreSQL", {
   skip: !databaseUrl,
 }, async () => {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
@@ -61,9 +62,11 @@ test("signed Custom document deletion is denied before R2 deletion against migra
       [accountId, assignmentFileId, `fixtures/${suffix}.pdf`],
     );
     let deletedFromStorage = false;
+    let uploadedToStorage = false;
     const storage = {
       configured: true,
       async deleteObject() { deletedFromStorage = true; },
+      async putObject() { uploadedToStorage = true; },
     };
     await assert.rejects(
       deleteAssignmentDocument(transactionScopedPool, storage, document.rows[0].id),
@@ -75,6 +78,19 @@ test("signed Custom document deletion is denied before R2 deletion against migra
       [document.rows[0].id],
     );
     assert.equal(remaining.rows.length, 1);
+    await assert.rejects(
+      createAssignmentDocument(transactionScopedPool, {
+        accountId, assignmentFileId, fileName: "new-evidence.pdf",
+        content: Buffer.from("%PDF-new-evidence"), storage,
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    assert.equal(uploadedToStorage, false);
+    const documentCount = await client.query(
+      "SELECT count(*)::integer AS total FROM app.assignment_documents WHERE assignment_file_id = $1",
+      [assignmentFileId],
+    );
+    assert.equal(documentCount.rows[0].total, 1);
   } finally {
     if (client) {
       await client.query("ROLLBACK");

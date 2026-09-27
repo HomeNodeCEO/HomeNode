@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 
 import {
   DOCUMENT_EXTRACTION_SCHEMA_VERSION,
@@ -19,6 +19,8 @@ export const PROPERTY_TAX_DOCUMENT_UPLOAD_QUOTA = Object.freeze({
   maximumActiveExtractions: 8,
 });
 const STALE_PROCESSING_MINUTES = 15;
+const CUSTOM_DOCUMENT_STORAGE_BUDGET_MS = 60_000;
+const CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS = 10_000;
 const ACTIVE_DOCUMENT_PROCESSING_STATUSES = Object.freeze([
   "uploaded",
   "processing",
@@ -815,7 +817,10 @@ export async function createAssignmentDocument(pool, {
     taxProtestFileId,
     checksum,
   });
-  const needsTransaction = Boolean(normalizedUploadQuota || storage?.configured);
+  const customAssignmentFileId = identity[1];
+  const needsTransaction = Boolean(
+    normalizedUploadQuota || storage?.configured || customAssignmentFileId,
+  );
   let transactionClient = null;
   let transactionStarted = false;
   let commitAttempted = false;
@@ -829,7 +834,9 @@ export async function createAssignmentDocument(pool, {
       transactionClient = await pool.connect();
       await transactionClient.query("BEGIN");
       await transactionClient.query("SET LOCAL statement_timeout = '30s'");
-      await transactionClient.query("SET LOCAL idle_in_transaction_session_timeout = '30s'");
+      await transactionClient.query(customAssignmentFileId
+        ? "SET LOCAL idle_in_transaction_session_timeout = '90s'"
+        : "SET LOCAL idle_in_transaction_session_timeout = '30s'");
       transactionStarted = true;
       const lockKey = normalizedUploadQuota
         ? `assignment-document-upload:${taxProtestFileId}`
@@ -842,6 +849,14 @@ export async function createAssignmentDocument(pool, {
         transactionClient,
         identity,
       );
+      if (customAssignmentFileId) {
+        // The same workfile lock is held by signing until its snapshot and PDF
+        // commit, so neither new bytes nor duplicate metadata can drift after it.
+        await lockMutableCustomDocumentWorkfile(transactionClient, {
+          assignment_file_id: customAssignmentFileId,
+          account_id: accountId,
+        });
+      }
       if (existing?.storage_provider === "r2" && existing.object_key) {
         const { rows } = await transactionClient.query(
           `UPDATE app.assignment_documents
@@ -880,8 +895,14 @@ export async function createAssignmentDocument(pool, {
     let storageLastError = null;
     if (storage?.configured) {
       let stagedObjectKey = null;
+      // One deadline covers R2 PUT, verification, and their internal retries
+      // while the Custom signing lock is held. Cleanup has a separate short
+      // deadline, leaving margin under the 90-second transaction idle limit.
+      const storageSignal = customAssignmentFileId
+        ? AbortSignal.timeout(CUSTOM_DOCUMENT_STORAGE_BUDGET_MS)
+        : null;
       try {
-        objectKey = buildAssignmentDocumentObjectKey({
+        const baseObjectKey = buildAssignmentDocumentObjectKey({
           organizationId,
           accountId,
           assignmentFileId,
@@ -890,13 +911,23 @@ export async function createAssignmentDocument(pool, {
           checksumSha256: checksum,
           fileName: safeFileName,
         });
+        // A failed transaction can roll back before private-object cleanup.
+        // Give each Custom attempt its own key so a waiting identical upload
+        // cannot commit an object that the earlier cleanup may delete.
+        objectKey = customAssignmentFileId
+          ? `${baseObjectKey}.upload-${randomUUID()}`
+          : baseObjectKey;
         stagedObjectKey = objectKey;
         await storage.putObject({
           objectKey,
           contentType: "application/pdf",
           body: pdfContent,
+          ...(storageSignal ? { signal: storageSignal } : {}),
         });
-        const inspected = await storage.inspectObject({ objectKey });
+        const inspected = await storage.inspectObject({
+          objectKey,
+          ...(storageSignal ? { signal: storageSignal } : {}),
+        });
         const verified = verifiedR2Object(inspected, {
           content: pdfContent,
           checksumSha256: checksum,
@@ -912,7 +943,12 @@ export async function createAssignmentDocument(pool, {
       } catch (error) {
         if (stagedObjectKey && typeof storage.deleteObject === "function") {
           try {
-            await storage.deleteObject({ objectKey: stagedObjectKey });
+            await storage.deleteObject({
+              objectKey: stagedObjectKey,
+              ...(customAssignmentFileId ? {
+                signal: AbortSignal.timeout(CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS),
+              } : {}),
+            });
           } catch {
             logger.warn?.("[documents] failed to clean up an unverified private document upload");
           }
@@ -1022,6 +1058,9 @@ export async function createAssignmentDocument(pool, {
     if (outcomeAmbiguous) {
       transactionClient?.release?.(error);
       transactionClient = null;
+    } else if (transactionClient) {
+      transactionClient.release();
+      transactionClient = null;
     }
     if (cleanupAllowed && outcomeAmbiguous) {
       try {
@@ -1033,7 +1072,12 @@ export async function createAssignmentDocument(pool, {
     }
     if (cleanupAllowed) {
       try {
-        await storage.deleteObject({ objectKey: uploadedObjectKey });
+        await storage.deleteObject({
+          objectKey: uploadedObjectKey,
+          ...(customAssignmentFileId ? {
+            signal: AbortSignal.timeout(CUSTOM_DOCUMENT_CLEANUP_BUDGET_MS),
+          } : {}),
+        });
       } catch {
         logger.warn?.("[documents] failed to clean up rejected private document upload");
       }

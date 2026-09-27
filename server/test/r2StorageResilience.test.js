@@ -169,6 +169,32 @@ test("R2 requests stop immediately when artifact generation is abandoned", async
   assert.equal(calls, 1);
 });
 
+test("R2 verification and deletion honor a shared transaction deadline without retries", async () => {
+  for (const [method, invoke] of [
+    ["HEAD", (storage, signal) => storage.inspectObject({ objectKey: "private/evidence", signal })],
+    ["DELETE", (storage, signal) => storage.deleteObject({ objectKey: "private/evidence", signal })],
+  ]) {
+    const started = Promise.withResolvers();
+    const controller = new AbortController();
+    let calls = 0;
+    const storage = createUadObjectStorage(ENVIRONMENT, {
+      fetchImpl: async (_url, init) => {
+        calls += 1;
+        assert.equal(init.method, method);
+        started.resolve();
+        return new Promise((_resolve, reject) => {
+          init.signal.addEventListener("abort", () => reject(init.signal.reason), { once: true });
+        });
+      },
+    });
+    const request = invoke(storage, controller.signal);
+    await started.promise;
+    controller.abort();
+    await assert.rejects(request, /uad_artifact_request_aborted/);
+    assert.equal(calls, 1);
+  }
+});
+
 test("R2 retry backoff is interruptible by artifact cancellation", async () => {
   const sleeping = Promise.withResolvers();
   const controller = new AbortController();

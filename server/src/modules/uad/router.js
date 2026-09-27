@@ -19,6 +19,7 @@ import {
 } from "./certifications.js";
 import { getUadComplianceStatus, runUadCompliance } from "./uadComplianceService.js";
 import { getUadEditor, saveUadSection } from "./editor.js";
+import { prefillUadSubject } from "./subjectPrefill.js";
 import {
   applyConfirmedUadDocumentCandidate,
   synchronizeUadPurchaseContract,
@@ -203,6 +204,7 @@ export function createUadRouter({
   documentOcrProvider = null,
   applyCompletionSuggestions = applyUadCompletionSuggestions,
   createWorkfile = createPublicCatalogUadWorkfile,
+  prefillSubject = prefillUadSubject,
   getCertificationReadiness = getUadCertificationReadiness,
   getSigningSecret = () => process.env.APP_SIGNING_SECRET,
   enabled = false,
@@ -421,6 +423,15 @@ export function createUadRouter({
       } });
     } catch (error) {
       return sendError(res, error);
+    }
+  });
+
+  router.post("/workfiles/:workfileId/subject-prefill", async (req, res) => {
+    try {
+      // No caller-supplied field values or source references are accepted.
+      res.json(await prefillSubject(pool, req.params.workfileId, req.mobileAuth.userId));
+    } catch (error) {
+      sendError(res, error);
     }
   });
 

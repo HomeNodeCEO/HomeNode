@@ -308,6 +308,20 @@ export async function getUadEditor(workfileId: string): Promise<UadEditorRespons
   );
 }
 
+export async function prefillUadSubject(workfileId: string): Promise<void> {
+  try {
+    const result = await uadFetchJSON<{ changed_field_count: number }>(
+      makeUrl(`/api/uad/workfiles/${encodeURIComponent(workfileId)}/subject-prefill`),
+      { method: "POST", headers: { "content-type": "application/json" }, body: "{}" },
+    );
+    if (result.changed_field_count > 0) announceUadWorkfileMutation(workfileId);
+  } catch (error) {
+    // A viewer or signed file still loads normally, without any initialization writes.
+    if (error instanceof Error && ["uad_workfile_access_denied", "uad_workfile_status_locked"].includes(error.message)) return;
+    throw error;
+  }
+}
+
 export interface UadSectionSaveResult {
   current_revision: number;
   save_reason: "manual_save" | "autosave";

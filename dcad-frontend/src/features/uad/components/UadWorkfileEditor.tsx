@@ -5,6 +5,7 @@ import {
   deleteUadEntity,
   getUadEditor,
   saveUadSection,
+  prefillUadSubject,
   type UadCondition,
   type UadEditorResponse,
   type UadEntity,
@@ -159,12 +160,15 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
+  const [subjectPrefillWarning, setSubjectPrefillWarning] = useState<string | null>(null);
   const editorRef = useRef<UadEditorResponse | null>(null);
   const draftRef = useRef<Record<string, UadFieldValue>>({});
   const dirtyKeysRef = useRef<Set<string>>(new Set());
   const saveInFlightRef = useRef<Promise<boolean> | null>(null);
   const firstDirtyAtRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  const loadGenerationRef = useRef(0);
+  const subjectPrefillRef = useRef<{ workfileId: string; request: Promise<void> } | null>(null);
   const dirty = dirtyKeys.size > 0;
 
   const replaceDirtyKeys = useCallback((keys: Set<string>) => {
@@ -177,11 +181,26 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
     preservedDraft?: Record<string, UadFieldValue>,
     preservedDirtyKeys: Set<string> = new Set(),
   ) => {
+    const generation = ++loadGenerationRef.current;
     setLoading(true);
     setError(null);
+    setSubjectPrefillWarning(null);
     try {
+      // One initialization per opened file, shared by StrictMode/reload calls.
+      // The server only inserts absent fields under the same lock as saves/signing.
+      if (subjectPrefillRef.current?.workfileId !== workfileId) {
+        subjectPrefillRef.current = { workfileId, request: prefillUadSubject(workfileId) };
+      }
+      try {
+        await subjectPrefillRef.current.request;
+      } catch {
+        if (mountedRef.current && generation === loadGenerationRef.current) {
+          subjectPrefillRef.current = null;
+          setSubjectPrefillWarning("Automatic subject prefill is unavailable. Your saved fields are still available; reopen the report to retry.");
+        }
+      }
       const response = await getUadEditor(workfileId);
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || generation !== loadGenerationRef.current) return;
       editorRef.current = response;
       setEditor(response);
       const responseDraft = editorDraft(response);
@@ -190,16 +209,19 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
       setDraft(nextDraft);
       replaceDirtyKeys(preservedDirtyKeys);
     } catch (reason) {
-      if (mountedRef.current) setError(reason instanceof Error ? reason.message : "The UAD editor could not be loaded.");
+      if (mountedRef.current && generation === loadGenerationRef.current) {
+        subjectPrefillRef.current = null;
+        setError(reason instanceof Error ? reason.message : "The UAD editor could not be loaded.");
+      }
     } finally {
-      if (mountedRef.current) setLoading(false);
+      if (mountedRef.current && generation === loadGenerationRef.current) setLoading(false);
     }
   }, [replaceDirtyKeys, workfileId]);
 
   useEffect(() => {
     mountedRef.current = true;
     void loadEditor();
-    return () => { mountedRef.current = false; };
+    return () => { mountedRef.current = false; loadGenerationRef.current += 1; };
   }, [loadEditor]);
 
   const section = editor?.sections.find((item) => item.key === activeSection);
@@ -1212,6 +1234,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
             <p className="mt-2 text-xs leading-5 text-emerald-800">Appraiser and supervisory credentials are captured in an immutable snapshot at signing so later profile or license changes cannot alter a completed report. The signing action remains behind the authenticated OIDC session boundary.</p>
           </section>
         )}
+        {subjectPrefillWarning && <div role="status" className="mb-5 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-950">{subjectPrefillWarning}</div>}
         {error && <div className="mb-5 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-900">{error}</div>}
         {autosaveState === "conflict" && (
           <div className="mb-5 rounded-xl border border-amber-300 bg-amber-50 px-4 py-3 text-sm text-amber-950">

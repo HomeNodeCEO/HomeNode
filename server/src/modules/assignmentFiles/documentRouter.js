@@ -25,6 +25,18 @@ function decodedDocumentHeader(req, name, fallback = "") {
   }
 }
 
+function safeDocumentErrorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch { return ""; }
+}
+
+function logDocumentFailure(logger, label, error) {
+  try { logger.error?.(label, safeOperationalErrorCode(error)); }
+  catch { /* Diagnostics must not replace the fixed API response. */ }
+}
+
 export function createAssignmentDocumentRouter({
   pool,
   objectStorage,
@@ -84,7 +96,7 @@ export function createAssignmentDocumentRouter({
   const router = express.Router();
 
   function sendDocumentUploadError(res, error) {
-    const message = error?.message || "assignment_document_upload_failed";
+    const message = safeDocumentErrorMessage(error);
     if (message === "custom_appraisal_workfile_signed") {
       return res.set("cache-control", "no-store").status(409).json({ error: message });
     }
@@ -94,7 +106,9 @@ export function createAssignmentDocumentRouter({
       "document_not_pdf",
       "invalid_document_type",
     ]);
-    return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+    if (clientErrors.has(message)) return res.status(400).json({ error: message });
+    logDocumentFailure(logger, "assignment document upload failed", error);
+    return res.status(500).json({ error: "assignment_document_upload_failed" });
   }
 
   async function authorizeDocumentUpload(req, res, next) {
@@ -187,8 +201,10 @@ export function createAssignmentDocumentRouter({
       });
       return res.json({ ok: true, account_id: accountId, documents });
     } catch (error) {
-      const message = error?.message || "assignment_documents_lookup_failed";
-      return res.status(message === "account_not_found" ? 404 : 500).json({ error: message });
+      const message = safeDocumentErrorMessage(error);
+      if (message === "account_not_found") return res.status(404).json({ error: message });
+      logDocumentFailure(logger, "assignment documents lookup failed", error);
+      return res.status(500).json({ error: "assignment_documents_lookup_failed" });
     }
   });
 
@@ -223,8 +239,10 @@ export function createAssignmentDocumentRouter({
         });
         if (document.processing_status === "uploaded") {
           void processDocument(pool, document.id, { storage: objectStorage }).catch((error) => {
-            if (error?.message !== "document_processing_in_progress") {
-              logger.warn?.("[documents] background extraction failed", safeOperationalErrorCode(error));
+            if (safeDocumentErrorMessage(error) !== "document_processing_in_progress") {
+              try {
+                logger.warn?.("[documents] background extraction failed", safeOperationalErrorCode(error));
+              } catch { /* Background diagnostics must not create an unhandled rejection. */ }
             }
           });
         }
@@ -245,7 +263,7 @@ export function createAssignmentDocumentRouter({
       if (!document) return res.status(404).json({ error: "document_not_found" });
       return res.json({ ok: true, document });
     } catch (error) {
-      logger.error?.("assignment document lookup failed", safeOperationalErrorCode(error));
+      logDocumentFailure(logger, "assignment document lookup failed", error);
       return res.status(500).json({ error: "assignment_document_lookup_failed" });
     }
   });
@@ -272,7 +290,7 @@ export function createAssignmentDocumentRouter({
       });
       return res.send(document.content);
     } catch (error) {
-      logger.error?.("assignment document stream failed", safeOperationalErrorCode(error));
+      logDocumentFailure(logger, "assignment document stream failed", error);
       return res.status(500).json({ error: "assignment_document_stream_failed" });
     }
   });
@@ -288,7 +306,7 @@ export function createAssignmentDocumentRouter({
       res.set("cache-control", "no-store");
       return res.json({ ok: true, ...result });
     } catch (error) {
-      const message = error?.message || "assignment_document_delete_failed";
+      const message = safeDocumentErrorMessage(error);
       if (message === "document_not_found") return res.status(404).json({ error: message });
       if (message === "invalid_document_id") return res.status(400).json({ error: message });
       if (message === "assignment_document_storage_not_configured") {
@@ -297,7 +315,7 @@ export function createAssignmentDocumentRouter({
       if (message === "custom_appraisal_workfile_signed") {
         return res.set("cache-control", "no-store").status(409).json({ error: message });
       }
-      logger.error?.("assignment document delete failed", safeOperationalErrorCode(error));
+      logDocumentFailure(logger, "assignment document delete failed", error);
       return res.status(500).json({ error: "assignment_document_delete_failed" });
     }
   });
@@ -316,16 +334,20 @@ export function createAssignmentDocumentRouter({
       });
       return res.json({ ok: true, document });
     } catch (error) {
-      const message = error?.message || "assignment_document_reprocess_failed";
+      const message = safeDocumentErrorMessage(error);
       const clientErrors = new Set([
         "invalid_document_id",
         "document_processing_in_progress",
         "document_retry_not_due",
         "document_not_processable",
       ]);
-      return res.status(
-        message === "document_not_found" ? 404 : clientErrors.has(message) ? 409 : 500,
-      ).json({ error: message });
+      if (message === "document_not_found") return res.status(404).json({ error: message });
+      if (message === "custom_appraisal_workfile_signed") {
+        return res.set("cache-control", "no-store").status(409).json({ error: message });
+      }
+      if (clientErrors.has(message)) return res.status(409).json({ error: message });
+      logDocumentFailure(logger, "assignment document reprocess failed", error);
+      return res.status(500).json({ error: "assignment_document_reprocess_failed" });
     }
   });
 
@@ -350,7 +372,7 @@ export function createAssignmentDocumentRouter({
         assignment_application: result.assignment_application,
       });
     } catch (error) {
-      const message = error?.message || "document_subject_address_override_failed";
+      const message = safeDocumentErrorMessage(error);
       if (message === "custom_appraisal_workfile_signed") {
         return res.set("cache-control", "no-store").status(409).json({ error: message });
       }
@@ -361,9 +383,10 @@ export function createAssignmentDocumentRouter({
         "engagement_letter_required",
         "document_subject_address_candidate_required",
       ]);
-      return res.status(
-        message === "document_not_found" ? 404 : clientErrors.has(message) ? 400 : 500,
-      ).json({ error: message });
+      if (message === "document_not_found") return res.status(404).json({ error: message });
+      if (clientErrors.has(message)) return res.status(400).json({ error: message });
+      logDocumentFailure(logger, "document subject-address override failed", error);
+      return res.status(500).json({ error: "document_subject_address_override_failed" });
     }
   });
 
@@ -386,7 +409,7 @@ export function createAssignmentDocumentRouter({
         assignment_application: result.assignment_application,
       });
     } catch (error) {
-      const message = error?.message || "document_candidates_confirm_all_failed";
+      const message = safeDocumentErrorMessage(error);
       if (message === "custom_appraisal_workfile_signed") {
         return res.set("cache-control", "no-store").status(409).json({ error: message });
       }
@@ -399,7 +422,9 @@ export function createAssignmentDocumentRouter({
       if (message === "document_subject_address_mismatch") {
         return res.status(409).json({ error: message });
       }
-      return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+      if (clientErrors.has(message)) return res.status(400).json({ error: message });
+      logDocumentFailure(logger, "document candidates confirm-all failed", error);
+      return res.status(500).json({ error: "document_candidates_confirm_all_failed" });
     }
   });
 
@@ -419,7 +444,7 @@ export function createAssignmentDocumentRouter({
       });
       return res.json({ ok: true, candidate });
     } catch (error) {
-      const message = error?.message || "document_candidate_review_failed";
+      const message = safeDocumentErrorMessage(error);
       if (message === "custom_appraisal_workfile_signed") {
         return res.set("cache-control", "no-store").status(409).json({ error: message });
       }
@@ -429,7 +454,9 @@ export function createAssignmentDocumentRouter({
         "document_reviewer_required",
         "document_candidate_not_found",
       ]);
-      return res.status(clientErrors.has(message) ? 400 : 500).json({ error: message });
+      if (clientErrors.has(message)) return res.status(400).json({ error: message });
+      logDocumentFailure(logger, "document candidate review failed", error);
+      return res.status(500).json({ error: "document_candidate_review_failed" });
     }
   });
 

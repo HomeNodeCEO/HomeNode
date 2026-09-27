@@ -84,6 +84,27 @@ function positiveInteger(value) {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
 }
 
+const DOCUMENT_EXTRACTION_PUBLIC_ERRORS = new Set([
+  "document_not_pdf",
+  "document_page_limit_exceeded",
+  "assignment_document_content_unavailable",
+  "assignment_document_storage_not_configured",
+  "assignment_document_storage_size_mismatch",
+  "assignment_document_storage_checksum_mismatch",
+  "document_not_found",
+  "document_processing_in_progress",
+  "document_retry_not_due",
+  "document_not_processable",
+]);
+
+function documentExtractionFailureCode(error) {
+  try {
+    const message = error?.message;
+    if (DOCUMENT_EXTRACTION_PUBLIC_ERRORS.has(message)) return message;
+  } catch { /* Unknown exceptions cannot contribute to public diagnostics. */ }
+  return "assignment_document_extraction_failed";
+}
+
 async function lockMutableCustomDocumentWorkfile(client, document) {
   const assignmentFileId = positiveInteger(document?.assignment_file_id);
   if (!assignmentFileId) return;
@@ -1408,12 +1429,15 @@ export async function processAssignmentDocument(pool, documentId, {
       client.release();
     }
   } catch (error) {
-    const message = String(error?.message || error).slice(0, 2_000);
+    const message = documentExtractionFailureCode(error);
     const attempts = Number(document.processing_attempts || 1);
     const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
       ? null
       : new Date(Date.now() + assignmentDocumentRetryDelayMs(attempts));
-    logger.warn?.(`[documents] extraction failed for document ${id}`, message);
+    try {
+      logger.warn?.(`[documents] extraction failed for document ${id}`,
+        safeOperationalErrorCode(error));
+    } catch { /* Logging must not prevent a bounded failure result. */ }
     await pool.query(
       `UPDATE app.assignment_documents
        SET processing_status = 'extraction_failed',
@@ -1510,7 +1534,7 @@ export async function processPendingAssignmentDocuments(pool, {
       });
       results.push({ id: Number(row.id), ok: true, status: document.processing_status });
     } catch (error) {
-      results.push({ id: Number(row.id), ok: false, error: String(error?.message || error) });
+      results.push({ id: Number(row.id), ok: false, error: documentExtractionFailureCode(error) });
     }
   }
   return { attempted: rows.length, results };

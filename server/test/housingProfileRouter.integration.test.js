@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createHousingProfileRouter } from "../src/modules/accounts/housingProfileRouter.js";
+import { normalizeHousingProfileUpdate } from "../src/util/housingProfileEdit.js";
 
 const normalizedUpdate = Object.freeze({
   structuralStyle: "One Story",
@@ -90,6 +91,53 @@ test("housing profile rejects invalid identifiers, authorization denial, and inv
   assert.deepEqual(await invalidBodyResponse.json(), { error: "invalid_housing_type" });
   assert.equal(connectCalls, 0);
   assert.equal(authorizationCalls, 2);
+});
+
+test("housing profile keeps real input codes while bounding unexpected validator failures", async (context) => {
+  let connectCalls = 0;
+  const logs = [];
+  const pool = { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } };
+  const real = await startRouter(baseOptions({ pool, normalizeUpdate: normalizeHousingProfileUpdate }));
+  const unexpected = await startRouter(baseOptions({
+    pool,
+    normalizeUpdate() { throw new Error("invalid_housing_type_private_password"); },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  const hostile = await startRouter(baseOptions({
+    pool,
+    normalizeUpdate() { throw { get message() { throw new Error("private_getter"); } }; },
+    logger: { error() { throw new Error("private_logger"); } },
+  }));
+  context.after(async () => Promise.all([real.close(), unexpected.close(), hostile.close()]));
+
+  for (const input of [
+    {},
+    { housing_type: "x".repeat(121) },
+    { housing_type: "SFD", attachment_type: "other" },
+    { housing_type: "SFD", source_url: "file:///private" },
+    { housing_type: "SFD", architectural_style: "x".repeat(121) },
+    { housing_type: "SFD", source_record_reference: "x".repeat(201) },
+    { housing_type: "SFD", notes: "x".repeat(2001) },
+  ]) {
+    let expectedCode;
+    try { normalizeHousingProfileUpdate(input); }
+    catch (error) { expectedCode = error.message; }
+    assert.ok(expectedCode);
+    const response = await patchProfile(real.baseUrl, "123", input);
+    assert.equal(response.status, 400, expectedCode);
+    assert.deepEqual(await response.json(), { error: expectedCode });
+  }
+  const arrayResponse = await patchProfile(real.baseUrl, "123", []);
+  assert.equal(arrayResponse.status, 400);
+  assert.deepEqual(await arrayResponse.json(), { error: "invalid_housing_profile" });
+  for (const server of [unexpected, hostile]) {
+    const response = await patchProfile(server.baseUrl);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
+  }
+  assert.equal(connectCalls, 0);
+  assert.deepEqual(logs, [["housing profile validation failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /private_password|private_getter|private_logger/);
 });
 
 test("housing profile preserves transaction order, upsert values, canonical view, and response", async (context) => {
@@ -193,7 +241,62 @@ test("housing profile transaction failures roll back, release, and stay bounded"
   assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
   assert.equal(calls.at(-1), "ROLLBACK");
   assert.equal(releases, 1);
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["/api/accounts/:id/housing-profile failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /database_password|secret/);
+});
+
+test("throwing housing-profile logger cannot replace fixed write-failure response", async (context) => {
+  let releases = 0;
+  const client = {
+    async query() { throw new Error("private_database_password"); },
+    release() { releases += 1; },
+  };
+  const server = await startRouter(baseOptions({
+    pool: { connect: async () => client },
+    logger: { error() { throw new Error("private_logger_password"); } },
+  }));
+  context.after(server.close);
+  const response = await patchProfile(server.baseUrl);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
+  assert.equal(releases, 1);
+});
+
+test("housing-profile connection failure returns a fixed response and bounded diagnostic", async (context) => {
+  const logs = [];
+  const server = await startRouter(baseOptions({
+    pool: { connect: async () => { throw new Error("private_connection_password"); } },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+  const response = await patchProfile(server.baseUrl);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
+  assert.deepEqual(logs, [["/api/accounts/:id/housing-profile failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /private_connection_password/);
+});
+
+test("synchronous rollback and release failures cannot replace the fixed response", async (context) => {
+  const logs = [];
+  const client = {
+    query(sql) {
+      throw new Error(sql === "ROLLBACK" ? "private_rollback_password" : "private_query_password");
+    },
+    release() { throw new Error("private_release_password"); },
+  };
+  const server = await startRouter(baseOptions({
+    pool: { connect: async () => client },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+  const response = await patchProfile(server.baseUrl);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
+  assert.deepEqual(logs, [
+    ["/api/accounts/:id/housing-profile failed", "unknown"],
+    ["housing profile client release failed", "unknown"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /private_.*password/);
 });
 
 test("housing profile composition and legacy route position remain explicit", () => {

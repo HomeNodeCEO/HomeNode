@@ -112,3 +112,17 @@ test("the database loader only reads documents scoped to one workfile and report
   assert.ok(calls.slice(1, 3).every((call) => call.params[0].length === 1 && call.params[0][0] === 11));
   assert.equal(calls[3].params[0], "workfile-1");
 });
+
+test("processing polls defer the page scan until extraction has finished", async () => {
+  const calls = [];
+  const pool = { async query(sql, params) {
+    calls.push({ sql, params });
+    if (sql.includes("FROM app.assignment_documents")) return { rows: [
+      { ...documents[0], processing_status: "processing" },
+    ] };
+    throw new Error("processing_poll_must_not_read_pages_or_candidates");
+  } };
+  const result = await loadUadEvidenceDiscrepancies(pool, "workfile-1");
+  assert.deepEqual(result, { discrepancies: {}, incomplete: true });
+  assert.equal(calls.length, 1);
+});

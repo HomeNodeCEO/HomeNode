@@ -270,6 +270,12 @@ export async function loadUadEvidenceDiscrepancies(pool, workfileId) {
   const overflow = documentsResult.rows.length > MAX_DOCUMENTS;
   const documents = documentsResult.rows.slice(0, MAX_DOCUMENTS);
   if (!documents.length) return { discrepancies: {}, incomplete: false };
+  // The document-detail endpoint is polled during extraction. Wait until all
+  // visible documents finish before reading their pages and candidates; the
+  // next completed response performs the full comparison.
+  if (documents.some((document) => ["uploaded", "processing"].includes(document.processing_status))) {
+    return { discrepancies: {}, incomplete: true };
+  }
   const ids = documents.map((document) => document.id);
   const [candidateResult, pageResult, snapshotResult] = await Promise.all([
     pool.query(

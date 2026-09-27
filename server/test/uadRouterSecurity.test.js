@@ -5,7 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { UAD_ASSET_UPLOAD_RESERVATION_LIMITS } from "../src/modules/uad/assets.js";
-import { createUadRouter, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
+import { createUadRouter, safeUadEvidenceComparison, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
 const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
@@ -328,6 +328,19 @@ test("document comparison cannot run before workfile authentication and authoriz
       assert.equal(compared, false);
     }, {}, { loadEvidenceDiscrepancies: async () => { compared = true; return { discrepancies: {}, incomplete: false }; } });
   }
+});
+
+test("document comparison failure keeps PDFs reviewable and signals incomplete coverage", async () => {
+  const warnings = [];
+  const logger = { warn(...args) { warnings.push(args); } };
+  const failed = await safeUadEvidenceComparison(
+    async () => { throw new Error("private database detail"); }, {}, WORKFILE_ID, logger,
+  );
+  assert.deepEqual(failed, { discrepancies: {}, incomplete: true });
+  assert.equal(warnings.length, 1);
+  assert.ok(!JSON.stringify(warnings).includes("private database detail"));
+  const expected = { discrepancies: { 1: [{ field_key: "county" }] }, incomplete: false };
+  assert.equal(await safeUadEvidenceComparison(async () => expected, {}, WORKFILE_ID, logger), expected);
 });
 
 test("certification readiness denies anonymous and cross-organization callers before loading credentials", async () => {

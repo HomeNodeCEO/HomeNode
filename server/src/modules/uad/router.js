@@ -86,6 +86,15 @@ function authenticatedReviewer(req) {
   ).trim() || userId;
 }
 
+export async function safeUadEvidenceComparison(loader, pool, workfileId, logger = console) {
+  try {
+    return await loader(pool, workfileId);
+  } catch (error) {
+    logger.warn("[uad documents] evidence comparison failed", safeOperationalErrorCode(error));
+    return { discrepancies: {}, incomplete: true };
+  }
+}
+
 function errorStatus(error) {
   const message = String(error?.message || "");
   if (message === "delivery_attempt_not_found_or_completed") return 409;
@@ -567,7 +576,9 @@ export function createUadRouter({
         uadWorkfileId: scope.uad_workfile_id,
         includePropertyEvidence: false,
       });
-      const comparison = await loadEvidenceDiscrepancies(pool, scope.uad_workfile_id);
+      const comparison = await safeUadEvidenceComparison(
+        loadEvidenceDiscrepancies, pool, scope.uad_workfile_id,
+      );
       return res.json({
         documents: documents.map((document) => ({
           ...document,
@@ -668,7 +679,9 @@ export function createUadRouter({
           document = await getAssignmentDocument(pool, req.params.documentId);
         }
       }
-      const comparison = await loadEvidenceDiscrepancies(pool, req.params.workfileId);
+      const comparison = ["uploaded", "processing"].includes(document.processing_status)
+        ? { discrepancies: {}, incomplete: true }
+        : await safeUadEvidenceComparison(loadEvidenceDiscrepancies, pool, req.params.workfileId);
       return res.json({ document: {
         ...document,
         uad_discrepancies: comparison.discrepancies[document.id] || [],

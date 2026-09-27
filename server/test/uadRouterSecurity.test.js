@@ -632,7 +632,7 @@ test("unexpected UAD creation failures never expose diagnostics or details", asy
   } finally {
     console.error = originalError;
   }
-  assert.deepEqual(calls, [["[uad] request failed", "unknown"]]);
+  assert.deepEqual(calls, [["[uad] request failed", "unrecognized_public_code"]]);
   assert.doesNotMatch(JSON.stringify(calls), /private-password|forged-log-line/);
 });
 
@@ -676,7 +676,8 @@ test("untrusted UAD exception details stay private even when its message looks l
 
 test("unknown code-like UAD provider exceptions fail closed", async () => {
   const originalError = console.error;
-  console.error = () => {};
+  const calls = [];
+  console.error = (...args) => { calls.push(args); };
   try {
     await withServer(securityPool(), async (baseUrl) => {
       const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
@@ -694,6 +695,8 @@ test("unknown code-like UAD provider exceptions fail closed", async () => {
   } finally {
     console.error = originalError;
   }
+  assert.deepEqual(calls, [["[uad] request failed", "unrecognized_public_code"]]);
+  assert.doesNotMatch(JSON.stringify(calls), /private-provider-token/);
 });
 
 for (const [databaseCode, status, publicCode] of [

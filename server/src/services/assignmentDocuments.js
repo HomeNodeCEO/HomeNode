@@ -10,6 +10,7 @@ import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
 import { validateAssignmentDetails } from "../util/reportManualValues.js";
 import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
 import { canonicalCustomAppraisalFileName } from "./customAppraisalWorkfiles.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -1153,6 +1154,7 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
     `SELECT id
      FROM app.assignment_documents
      WHERE storage_provider = 'postgres' AND content IS NOT NULL
+       AND assignment_file_id IS NULL
      ORDER BY CASE WHEN storage_status = 'migration_failed' THEN 0 ELSE 1 END,
               uploaded_at
      LIMIT $1`,
@@ -1168,11 +1170,14 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
            LEFT JOIN app.assignment_files assignment ON assignment.id = document.assignment_file_id
            LEFT JOIN app.report_files report_file ON report_file.id = document.report_file_id
           WHERE document.id = $1
-            AND document.storage_provider = 'postgres' AND document.content IS NOT NULL`,
+            AND document.storage_provider = 'postgres' AND document.content IS NOT NULL
+            AND document.assignment_file_id IS NULL`,
         [id],
       );
       const document = current.rows[0];
-      if (!document) continue;
+      // A Custom assignment may have been linked after the candidate read.
+      // Defer its legacy move until signed-manifest consistency is audited.
+      if (!document || document.assignment_file_id != null) continue;
       const objectKey = buildAssignmentDocumentObjectKey({
         organizationId: document.organization_id,
         accountId: document.account_id,
@@ -1200,7 +1205,8 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
              storage_bucket = $2, object_key = $3, storage_etag = $4,
              storage_content_type = $5, storage_verified_at = now(),
              storage_last_error = NULL, updated_at = now()
-         WHERE id = $1 AND storage_provider = 'postgres' AND content IS NOT NULL`,
+         WHERE id = $1 AND storage_provider = 'postgres' AND content IS NOT NULL
+           AND assignment_file_id IS NULL`,
         [
           id,
           storage.bucket,
@@ -1211,12 +1217,18 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
       );
       results.push({ id, ok: Boolean(rowCount), object_key: objectKey });
     } catch (error) {
-      const message = cleanText(error?.message || error, 2_000);
-      logger.warn?.(`[documents] storage migration failed for document ${id}`, message);
+      const message = "assignment_document_storage_migration_failed";
+      try {
+        logger.warn?.(
+          `[documents] storage migration failed for document ${id}`,
+          safeOperationalErrorCode(error),
+        );
+      } catch { /* Diagnostics must not interrupt the bounded migration result. */ }
       await pool.query(
         `UPDATE app.assignment_documents
          SET storage_status = 'migration_failed', storage_last_error = $2, updated_at = now()
-         WHERE id = $1 AND storage_provider = 'postgres'`,
+         WHERE id = $1 AND storage_provider = 'postgres'
+           AND assignment_file_id IS NULL`,
         [id, message],
       ).catch(() => {});
       results.push({ id, ok: false, error: message });

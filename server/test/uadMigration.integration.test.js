@@ -9,6 +9,7 @@ import {
   createAssignmentDocument,
   deleteAssignmentDocument,
   ensureAssignmentDocumentsSchema,
+  migrateAssignmentDocumentStorageBatch,
   reviewAssignmentDocumentCandidate,
 } from "../src/services/assignmentDocuments.js";
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
@@ -16,6 +17,82 @@ import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfCont
 import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhotoCoverageAudit.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("scheduled legacy migration leaves signed Custom document bytes and metadata untouched", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    const identity = await client.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    await client.query("BEGIN");
+    let targetDocumentId = null;
+    const transactionPool = {
+      query: (sql, values) => {
+        if (targetDocumentId && /SELECT id\s+FROM app\.assignment_documents/.test(String(sql))) {
+          assert.match(sql, /assignment_file_id IS NULL/);
+          // Restrict the real selector to this rollback-only fixture so other
+          // migration tests cannot contribute eligible rows to the batch.
+          return client.query(sql.replace("ORDER BY CASE", "AND id = $2 ORDER BY CASE"),
+            [values[0], targetDocumentId]);
+        }
+        return client.query(sql, values);
+      },
+    };
+    await ensureAssignmentDocumentsSchema(transactionPool);
+    const suffix = randomUUID();
+    const accountId = `held-migration-${suffix}`;
+    await client.query("INSERT INTO core.accounts (account_id) VALUES ($1)", [accountId]);
+    const assignment = await client.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $2) RETURNING id`,
+      [accountId, accountId],
+    );
+    const assignmentFileId = assignment.rows[0].id;
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles
+         (assignment_file_id, canonical_file_name, status, signed_at, signed_by)
+       VALUES ($1, $2, 'signed', now(), 'Fixture appraiser')`,
+      [assignmentFileId, `${accountId}.homenode-appraisal.json`],
+    );
+    const content = Buffer.from("%PDF-signed-legacy");
+    const checksum = createHash("sha256").update(content).digest("hex");
+    const document = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name,
+          checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'Signed legacy evidence', 'evidence.pdf', $3, $4, $5)
+       RETURNING id`,
+      [accountId, assignmentFileId, checksum, content.length, content],
+    );
+    targetDocumentId = document.rows[0].id;
+    let uploaded = false;
+    const result = await migrateAssignmentDocumentStorageBatch(transactionPool, {
+      configured: true,
+      bucket: "fixture-private-bucket",
+      async putObject() { uploaded = true; },
+    });
+    assert.equal(result.attempted, 0);
+    assert.equal(uploaded, false);
+    const unchanged = await client.query(
+      `SELECT content, storage_provider, object_key, storage_last_error
+         FROM app.assignment_documents WHERE id = $1`,
+      [document.rows[0].id],
+    );
+    assert.deepEqual(unchanged.rows[0].content, content);
+    assert.equal(unchanged.rows[0].storage_provider, "postgres");
+    assert.equal(unchanged.rows[0].object_key, null);
+    assert.equal(unchanged.rows[0].storage_last_error, null);
+  } finally {
+    if (client) {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
+    await pool.end();
+  }
+});
 
 test("signed Custom document deletion, upload, and candidate review are denied against migrated PostgreSQL", {
   skip: !databaseUrl,

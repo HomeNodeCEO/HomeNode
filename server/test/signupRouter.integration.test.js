@@ -240,6 +240,31 @@ test("invalid signup input is bounded before persistence or delivery", async (co
   assert.equal(transportCalls, 0);
 });
 
+test("unexpected signup parser failures never reflect exception text or persist", async (context) => {
+  let queryCalls = 0;
+  const logs = [];
+  const server = await startRouter({
+    auth: AUTH,
+    pool: { async query() { queryCalls += 1; return { rows: [] }; } },
+    signupRateLimiter(_req, _res, next) { next(); },
+    normalizePayload() { throw new Error("private_parser_password"); },
+    mailer: { createTransport() { throw new Error("mailer_must_not_run"); } },
+    logger: { error: (...args) => logs.push(args) },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/signup/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(validBody()),
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "email_failed" });
+  assert.equal(queryCalls, 0);
+  assert.deepEqual(logs, [["/api/signup/email failed", { code: "unknown" }]]);
+  assert.doesNotMatch(JSON.stringify(logs), /private_parser_password/);
+});
+
 test("anonymous signup submissions fail before payload processing or persistence", async (context) => {
   let queryCalls = 0;
   let authorizationCalls = 0;
@@ -386,4 +411,61 @@ test("persistence failure is fail-closed before staff notification", async (cont
   assert.equal(response.status, 503);
   assert.deepEqual(await response.json(), { error: "signup_persistence_unavailable" });
   assert.equal(transportCalls, 0);
+});
+
+test("hostile persistence error code and throwing logger preserve the fixed retry response", async (context) => {
+  let transportCalls = 0;
+  const server = await startRouter({
+    auth: AUTH,
+    pool: { query: async () => {
+      throw { get code() { throw new Error("private_code_password"); } };
+    } },
+    signupRateLimiter(_req, _res, next) { next(); },
+    authorizePropertyTaxFile,
+    verifySignature: async () => signatureResult(),
+    environment: { SMTP_URL: "smtp://fixture.invalid" },
+    mailer: { createTransport() { transportCalls += 1; return {}; } },
+    logger: { error() { throw new Error("private_logger_password"); } },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/signup/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(validBody()),
+  });
+  assert.equal(response.status, 503);
+  assert.deepEqual(await response.json(), { error: "signup_persistence_unavailable" });
+  assert.equal(transportCalls, 0);
+});
+
+test("throwing SMTP warning logger does not make a committed signup appear failed", async (context) => {
+  const server = await startRouter({
+    auth: AUTH,
+    pool: { query: async () => ({
+      rows: [{ id: 42, created: true, verification_status: "pending_manual_verification" }],
+    }) },
+    signupRateLimiter(_req, _res, next) { next(); },
+    authorizePropertyTaxFile,
+    verifySignature: async () => signatureResult(),
+    environment: { SMTP_URL: "smtp://fixture.invalid" },
+    mailer: { createTransport() { throw new Error("private_smtp_password"); } },
+    logger: { warn() { throw new Error("private_logger_password"); } },
+  });
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/signup/email`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(validBody()),
+  });
+  assert.equal(response.status, 202);
+  assert.deepEqual(await response.json(), {
+    ok: true,
+    id: 42,
+    idempotent: false,
+    verification_status: "pending_manual_verification",
+    email_sent: false,
+    email_status: "not_configured",
+  });
 });

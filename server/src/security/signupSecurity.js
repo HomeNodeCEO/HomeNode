@@ -2,6 +2,13 @@ import { createHash } from "node:crypto";
 import { isIP } from "node:net";
 import sharp from "sharp";
 
+export class SignupValidationError extends Error {
+  constructor(code) {
+    super(code);
+    this.name = "SignupValidationError";
+  }
+}
+
 const FIELD_LIMITS = Object.freeze({
   accountId: 128,
   additionalSheets: 4_000,
@@ -71,28 +78,28 @@ function normalizeText(value, {
   maximumLength,
 } = {}) {
   if (value == null || value === "") {
-    if (required) throw new Error(`missing_${field}`);
+    if (required) throw new SignupValidationError(`missing_${field}`);
     return null;
   }
-  if (typeof value !== "string") throw new Error(`invalid_${field}`);
+  if (typeof value !== "string") throw new SignupValidationError(`invalid_${field}`);
   const normalized = value.trim();
   if (!normalized) {
-    if (required) throw new Error(`missing_${field}`);
+    if (required) throw new SignupValidationError(`missing_${field}`);
     return null;
   }
   if (normalized.length > maximumLength || CONTROL_CHARACTER_PATTERN.test(normalized)) {
-    throw new Error(`invalid_${field}`);
+    throw new SignupValidationError(`invalid_${field}`);
   }
   return normalized;
 }
 
 function exactKeys(value, allowed, code) {
-  if (!value || typeof value !== "object" || Array.isArray(value)) throw new Error(code);
-  if (Object.keys(value).some((key) => !allowed.has(key))) throw new Error(code);
+  if (!value || typeof value !== "object" || Array.isArray(value)) throw new SignupValidationError(code);
+  if (Object.keys(value).some((key) => !allowed.has(key))) throw new SignupValidationError(code);
 }
 
 function requiredBoolean(value, field) {
-  if (typeof value !== "boolean") throw new Error(`invalid_${field}`);
+  if (typeof value !== "boolean") throw new SignupValidationError(`invalid_${field}`);
   return value;
 }
 
@@ -102,7 +109,7 @@ function normalizeUuid(value, field) {
     required: true,
     maximumLength: 36,
   });
-  if (!UUID_PATTERN.test(normalized)) throw new Error(`invalid_${field}`);
+  if (!UUID_PATTERN.test(normalized)) throw new SignupValidationError(`invalid_${field}`);
   return normalized.toLowerCase();
 }
 
@@ -112,16 +119,16 @@ function optionalText(value, field, maximumLength) {
 
 function normalizeIsoDate(value, field) {
   const normalized = normalizeText(value, { field, required: true, maximumLength: 10 });
-  if (!ISO_DATE_PATTERN.test(normalized)) throw new Error(`invalid_${field}`);
+  if (!ISO_DATE_PATTERN.test(normalized)) throw new SignupValidationError(`invalid_${field}`);
   const parsed = new Date(`${normalized}T00:00:00.000Z`);
   if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== normalized) {
-    throw new Error(`invalid_${field}`);
+    throw new SignupValidationError(`invalid_${field}`);
   }
   return normalized;
 }
 
 function normalizeListedProperties(value) {
-  if (!Array.isArray(value) || value.length > 20) throw new Error("invalid_listed_properties");
+  if (!Array.isArray(value) || value.length > 20) throw new SignupValidationError("invalid_listed_properties");
   return Object.freeze(value.map((entry) => {
     exactKeys(entry, new Set(["accountNumber", "legalDescription", "situsAddress"]), "invalid_listed_property");
     return Object.freeze({
@@ -151,7 +158,7 @@ function normalizeAuthorization(value) {
     required: true,
     maximumLength: 32,
   });
-  if (!SIGNATURE_ROLES.has(signerRole)) throw new Error("invalid_signer_role");
+  if (!SIGNATURE_ROLES.has(signerRole)) throw new SignupValidationError("invalid_signer_role");
   return Object.freeze({
     appraisalDistrictName: optionalText(value.appraisalDistrictName, "appraisal_district_name", FIELD_LIMITS.districtName),
     ownerName: normalizeText(value.ownerName, { field: "owner_name", required: true, maximumLength: FIELD_LIMITS.ownerName }),
@@ -192,20 +199,20 @@ export function normalizeSignupPayload(value) {
   });
   const propertyTaxFileId = normalizeUuid(value.propertyTaxFileId, "property_tax_file_id");
   const clientSubmissionId = normalizeUuid(value.clientSubmissionId, "client_submission_id");
-  if (value.signatureAttestation !== true) throw new Error("signature_attestation_required");
+  if (value.signatureAttestation !== true) throw new SignupValidationError("signature_attestation_required");
   const signatureDataUrl = normalizeText(value.signatureDataUrl, {
     field: "signature_data",
     required: true,
     maximumLength: SIGNATURE_DATA_URL_LIMIT,
   });
   const match = SIGNATURE_DATA_URL_PATTERN.exec(signatureDataUrl);
-  if (!match || match[1].length % 4 !== 0) throw new Error("invalid_signature_data");
+  if (!match || match[1].length % 4 !== 0) throw new SignupValidationError("invalid_signature_data");
   const signaturePng = Buffer.from(match[1], "base64");
   if (
     signaturePng.length < 64
     || signaturePng.length > SIGNATURE_BYTE_LIMIT
     || signaturePng.toString("base64") !== match[1]
-  ) throw new Error("invalid_signature_data");
+  ) throw new SignupValidationError("invalid_signature_data");
   const authorization = normalizeAuthorization(value.authorization);
   return Object.freeze({
     accountId,
@@ -217,7 +224,7 @@ export function normalizeSignupPayload(value) {
 }
 
 export async function verifySignupSignaturePng(signaturePng, imageProcessor = sharp) {
-  if (!Buffer.isBuffer(signaturePng)) throw new Error("invalid_signature_data");
+  if (!Buffer.isBuffer(signaturePng)) throw new SignupValidationError("invalid_signature_data");
   try {
     const decoder = imageProcessor(signaturePng, {
       failOn: "error",
@@ -233,7 +240,7 @@ export async function verifySignupSignaturePng(signaturePng, imageProcessor = sh
       || metadata.height < 20
       || metadata.width > 1_600
       || metadata.height > 600
-    ) throw new Error("invalid_signature_image");
+    ) throw new SignupValidationError("invalid_signature_image");
     const { data, info } = await decoder.clone().ensureAlpha().raw().toBuffer({
       resolveWithObject: true,
     });
@@ -243,9 +250,9 @@ export async function verifySignupSignaturePng(signaturePng, imageProcessor = sh
       const brightness = (data[index] + data[index + 1] + data[index + 2]) / 3;
       if (opacity >= 32 && brightness <= 235) inkPixels += 1;
     }
-    if (inkPixels < 16) throw new Error("signature_image_blank");
+    if (inkPixels < 16) throw new SignupValidationError("signature_image_blank");
     const content = await decoder.clone().png({ compressionLevel: 9 }).toBuffer();
-    if (content.length > SIGNATURE_BYTE_LIMIT) throw new Error("invalid_signature_image");
+    if (content.length > SIGNATURE_BYTE_LIMIT) throw new SignupValidationError("invalid_signature_image");
     return Object.freeze({
       content,
       height: metadata.height,
@@ -253,14 +260,14 @@ export async function verifySignupSignaturePng(signaturePng, imageProcessor = sh
       width: metadata.width,
     });
   } catch (error) {
-    if (error?.message === "signature_image_blank") throw error;
-    throw new Error("invalid_signature_image");
+    if (error instanceof SignupValidationError && error.message === "signature_image_blank") throw error;
+    throw new SignupValidationError("invalid_signature_image");
   }
 }
 
 export function signupAuthorizationSha256(payload, signatureSha256) {
   if (!payload?.authorization || !/^[a-f0-9]{64}$/u.test(String(signatureSha256 || ""))) {
-    throw new Error("invalid_signup_authorization_digest");
+    throw new SignupValidationError("invalid_signup_authorization_digest");
   }
   return createHash("sha256").update(JSON.stringify({
     accountId: payload.accountId,

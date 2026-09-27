@@ -34,8 +34,8 @@ test("signed Custom document deletion is denied before R2 deletion against migra
         release() {},
       }),
     };
-    await ensureAssignmentDocumentsSchema(transactionScopedPool);
     await client.query("BEGIN");
+    await ensureAssignmentDocumentsSchema(transactionScopedPool);
     const suffix = randomUUID();
     const accountId = `signed-document-${suffix}`;
     const fileNumber = `signed-document-${suffix}`;

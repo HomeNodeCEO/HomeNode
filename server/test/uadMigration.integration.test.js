@@ -16,6 +16,8 @@ test("custom signed-photo coverage audit runs against migrated PostgreSQL withou
     const result = await auditCustomSignedPhotoCoverage(pool);
     assert.notEqual(result.code, "custom_signed_photo_coverage_schema_missing");
     assert.equal(Number.isSafeInteger(result.signed_file_count), true);
+    assert.equal(Number.isSafeInteger(result.invalid_photo_manifest_file_count), true);
+    assert.equal(Number.isSafeInteger(result.nonfinalized_photo_count_at_signing), true);
     assert.equal(Number.isSafeInteger(result.verified_photo_count), true);
   } finally {
     await pool.end();

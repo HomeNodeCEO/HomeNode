@@ -8,6 +8,7 @@ import {
   createAccountPropertyContextRouter,
   createPropertyContextStatusRouter,
 } from "../src/modules/accounts/propertyContextRouter.js";
+import { propertyContextErrorStatus } from "../src/services/propertyContext.js";
 
 const pool = { query: async () => ({ rows: [] }) };
 
@@ -89,7 +90,7 @@ test("property-context status keeps failures bounded and server-side", async (co
   const response = await fetch(`${server.baseUrl}/api/property-context/status`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "property_context_status_failed" });
-  assert.deepEqual(logs, [["/api/property-context/status failed", failure]]);
+  assert.deepEqual(logs, [["/api/property-context/status failed", "unknown"]]);
 });
 
 test("property-context status is administrator-only before readiness work", async (context) => {
@@ -386,10 +387,62 @@ test("account property-context routes preserve error mapping and logging", async
   });
   assert.equal(review.status, 404);
   assert.deepEqual(await review.json(), { error: "account_not_found" });
-  assert.deepEqual(logs, [
-    ["/api/accounts/:id/property-context/analyze failed", failure],
-    ["/api/accounts/:id/property-context review failed", failure],
-  ]);
+  assert.deepEqual(logs, []);
+});
+
+test("property-context error mapping admits only known geometry validation codes", () => {
+  assert.equal(propertyContextErrorStatus("custom_area_ring_not_closed"), 400);
+  assert.equal(propertyContextErrorStatus("custom_area_geometry_invalid"), 400);
+  assert.equal(propertyContextErrorStatus("custom_area_size_invalid"), 400);
+  assert.equal(propertyContextErrorStatus("custom_area_internal_database_url"), 500);
+  assert.equal(propertyContextErrorStatus("account_not_found"), 404);
+  assert.equal(propertyContextErrorStatus("property_complexity_assessment_required"), 409);
+});
+
+test("unexpected property-context errors are bounded in all responses and logs", async (context) => {
+  const failure = new Error("postgres://private-password@example.test/internal");
+  const logs = [];
+  const server = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    errorStatus: propertyContextErrorStatus,
+    getStoredContext: async () => { throw failure; },
+    analyzeContext: async () => { throw failure; },
+    saveContextReview: async () => { throw failure; },
+    logger: { error: (...args) => logs.push(args) },
+  })));
+  context.after(server.close);
+  const requests = [
+    ["GET", "/api/accounts/42/property-context?assignment_file_id=7", null,
+      "property_context_lookup_failed"],
+    ["POST", "/api/accounts/42/property-context/analyze", { assignment_file_id: 7 },
+      "property_context_analysis_failed"],
+    ["PATCH", "/api/accounts/42/property-context", { assignment_file_id: 7 },
+      "property_context_review_failed"],
+  ];
+  for (const [method, path, body, expectedCode] of requests) {
+    const response = await fetch(`${server.baseUrl}${path}`, {
+      method,
+      ...(body ? { headers: { "content-type": "application/json" }, body: JSON.stringify(body) } : {}),
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: expectedCode });
+  }
+  assert.equal(logs.length, 3);
+  assert.ok(logs.every(([, code]) => code === "unknown"));
+  assert.equal(JSON.stringify(logs).includes("private-password"), false);
+});
+
+test("hostile error getters and throwing loggers do not replace property-context 500s", async (context) => {
+  const server = await startRouter(createAccountPropertyContextRouter(accountOptions({
+    errorStatus: propertyContextErrorStatus,
+    getStoredContext: async () => { throw { get message() { throw new Error("getter_secret"); } }; },
+    logger: { error() { throw new Error("logger_secret"); } },
+  })));
+  context.after(server.close);
+  const response = await fetch(
+    `${server.baseUrl}/api/accounts/42/property-context?assignment_file_id=7`,
+  );
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "property_context_lookup_failed" });
 });
 
 test("property-context routers validate composition and retain both mount positions", () => {

@@ -77,6 +77,22 @@ test("documents listing overlapping owners are not treated as different ownershi
   assert.ok(!result.discrepancies[12].some((item) => item.field_key === "owner_name"));
 });
 
+test("a corrected or rejected zoning candidate is not reintroduced from its PDF text", () => {
+  const result = buildUadEvidenceDiscrepancies({
+    documents: [documents[0], documents[1]],
+    candidates: [
+      { document_id: 11, field_key: "zoning_code", raw_value: "R-99", confirmed_value: "R-1", review_status: "confirmed", page_number: 1 },
+      { document_id: 12, field_key: "zoning_code", raw_value: "R-99", review_status: "rejected", page_number: 1 },
+    ],
+    pages: [
+      { document_id: 11, page_number: 1, extracted_text: "Zoning Code: R-99" },
+      { document_id: 12, page_number: 1, extracted_text: "Zoning Code: R-99" },
+    ],
+  });
+  assert.ok(!result.discrepancies[11].length);
+  assert.ok(!result.discrepancies[12].length);
+});
+
 test("the database loader only reads documents scoped to one workfile and reports partial coverage", async () => {
   const calls = [];
   const pool = { async query(sql, params) {

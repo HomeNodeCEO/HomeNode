@@ -100,7 +100,7 @@ function addressParts(value) {
   return match ? { city: clean(match[1]), postal_code: match[2] } : null;
 }
 
-function pageClaims(claims, document, page, coverage) {
+function pageClaims(claims, document, page, coverage, candidateFields) {
   if (["zoning_map", "zoning_ordinance", "map"].includes(document.document_type)) return;
   const lines = String(page.extracted_text || "").split(/\r?\n/).slice(0, 2_000);
   const definitions = [
@@ -140,13 +140,14 @@ function pageClaims(claims, document, page, coverage) {
         continuation.join(" "), page.page_number, "labeled_text", coverage);
     }
     for (const [field, pattern] of definitions) {
+      if (field === "zoning_code" && candidateFields.has("zoning_code")) continue;
       const match = line.match(pattern);
       if (match) addClaim(claims, document, field,
         field === "site_area_sqft" ? `${match[1]} ${match[2]}` : match[1],
         page.page_number, "labeled_text", coverage);
     }
     const address = line.match(/^(?:subject|property|situs)\s+address[\s:#-]+(.+)$/i);
-    const parts = address && addressParts(address[1]);
+    const parts = address && !candidateFields.has("subject_property_address") && addressParts(address[1]);
     if (parts) {
       addClaim(claims, document, "city", parts.city, page.page_number, "subject_address", coverage);
       addClaim(claims, document, "postal_code", parts.postal_code, page.page_number, "subject_address", coverage);
@@ -184,9 +185,13 @@ export function buildUadEvidenceDiscrepancies({ documents = [], candidates = [],
   const byId = new Map(documents.map((document) => [Number(document.id), document]));
   const claims = [];
   const coverage = { incomplete: Boolean(incomplete) };
+  const candidateFieldsByDocument = new Map();
   for (const candidate of candidates) {
     const document = byId.get(Number(candidate.document_id));
-    if (!document || candidate.review_status === "rejected") continue;
+    if (!document) continue;
+    if (!candidateFieldsByDocument.has(document.id)) candidateFieldsByDocument.set(document.id, new Set());
+    candidateFieldsByDocument.get(document.id).add(candidate.field_key);
+    if (candidate.review_status === "rejected") continue;
     const value = candidate.review_status === "confirmed"
       ? candidate.confirmed_value || candidate.normalized_value || candidate.raw_value
       : candidate.normalized_value || candidate.raw_value;
@@ -202,7 +207,8 @@ export function buildUadEvidenceDiscrepancies({ documents = [], candidates = [],
   }
   for (const page of pages) {
     const document = byId.get(Number(page.document_id));
-    if (document) pageClaims(claims, document, page, coverage);
+    if (document) pageClaims(claims, document, page, coverage,
+      candidateFieldsByDocument.get(document.id) || new Set());
   }
   const reference = snapshotClaims(snapshot, coverage);
   const discrepancies = Object.fromEntries(documents.map((document) => [document.id, []]));
@@ -272,7 +278,6 @@ export async function loadUadEvidenceDiscrepancies(pool, workfileId) {
          FROM app.assignment_document_field_candidates
         WHERE document_id = ANY($1::bigint[])
           AND field_key IN ('zoning_code', 'subject_property_address')
-          AND review_status <> 'rejected'
         ORDER BY document_id, id LIMIT $2`, [ids, MAX_CANDIDATES + 1],
     ),
     pool.query(

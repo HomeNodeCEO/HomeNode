@@ -14,7 +14,7 @@ const SECRET = "signing-guard-test-secret-32-characters";
 // binding helper, report projection/readiness and HMAC use production functions.
 // No database, remote image requests or generated artifact is needed here.
 function signingHarness({ accepted = false, hasAcceptance = false, hasSection = false,
-  bindingRows, mutateSection, signerAssigned = true } = {}) {
+  bindingRows, mutateSection, signerAssigned = true, documents = [] } = {}) {
   const fixture = accepted ? customNeighborhoodReportPdfFixture() : customAppraisalReportFixture();
   const { snapshot, property } = fixture;
   property.assignment.organization_id ||= ORGANIZATION_ID;
@@ -66,10 +66,12 @@ function signingHarness({ accepted = false, hasAcceptance = false, hasSection = 
       }
       if (statement.startsWith("SELECT jsonb_build_object(")) return result([{ record: property.assignment }]);
       if (statement === "SELECT to_regclass($1) AS table_name") {
-        return result([{ table_name: params[0] === "app.report_files" ? params[0] : null }]);
+        return result([{ table_name: params[0] === "app.report_files"
+          || (documents.length && params[0] === "app.assignment_documents") ? params[0] : null }]);
       }
       if (statement === "SELECT to_regclass($1) AS name") return result([{ name: null }]);
       if (statement.startsWith("SELECT to_jsonb(report_file)")) return result(reportFiles.map(record => ({ record })));
+      if (statement.startsWith("SELECT to_jsonb(document)")) return result(documents.map(record => ({ record })));
       if (statement.startsWith("WITH candidate_source_records AS MATERIALIZED")) return result([]);
       if (statement.includes("FROM core.accounts a")) return result([property.account]);
       if (statement.includes("FROM core.primary_improvements")) return result([property.improvement]);
@@ -152,6 +154,30 @@ test("verified legacy absence preserves ordinary signing, snapshot shape and HMA
   assert.equal(verifyCustomAppraisalSignedSnapshot(harness.state.signedRow, SECRET), true);
   assert.equal(harness.calls.at(-1).sql, "COMMIT");
   assert.equal(harness.state.released, 1);
+});
+
+test("new signed manifest excludes legacy operational document errors without changing evidence", async () => {
+  const secret = "private-url=https://private.example/secret-token";
+  const document = {
+    id: 7,
+    assignment_file_id: 41,
+    processing_status: "extraction_failed",
+    checksum_sha256: "a".repeat(64),
+    last_processing_error: secret,
+    storage_last_error: secret,
+    extraction_summary: { error: secret, processing_attempts: 2, candidate_count: 3 },
+  };
+  const harness = signingHarness({ documents: [document] });
+  const signed = await signCustomAppraisalWorkfile(harness.pool, harness.input);
+  assert.deepEqual(signed.evidence.documents, [{
+    id: 7,
+    assignment_file_id: 41,
+    processing_status: "extraction_failed",
+    checksum_sha256: "a".repeat(64),
+    extraction_summary: { processing_attempts: 2, candidate_count: 3 },
+  }]);
+  assert.equal(JSON.stringify(signed).includes("private.example"), false);
+  assert.equal(verifyCustomAppraisalSignedSnapshot(harness.state.signedRow, SECRET), true);
 });
 
 test("present accepted section must match the locked exact group before signing", async () => {

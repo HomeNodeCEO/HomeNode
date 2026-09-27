@@ -157,6 +157,23 @@ type LoadedViewport = { readonly contextKey: string; readonly bindingKey: string
 function containsViewport(loaded: CustomCohortViewportBounds, next: CustomCohortViewportBounds) {
   return next.west >= loaded.west && next.south >= loaded.south && next.east <= loaded.east && next.north <= loaded.north;
 }
+function capturedViewport(camera: CustomCohortViewportBounds, manifest: CustomCohortPreviewGroup['map_manifest']) {
+  if (manifest?.status !== 'available') return camera;
+  // These checked extrema cover every retained coordinate, not label anchors.
+  // Empty camera padding cannot add parcels and need not trigger another load.
+  const [[west, south], [east, north]] = manifest.bounds;
+  const bounds = { west: Math.max(camera.west, west), south: Math.max(camera.south, south),
+    east: Math.min(camera.east, east), north: Math.min(camera.north, north) };
+  if (bounds.west > bounds.east || bounds.south > bounds.north) return null;
+  // Preserve boundary-touching parcels without sending a zero-area request.
+  return bounds.west === bounds.east || bounds.south === bounds.north ? camera : bounds;
+}
+function transientViewportFailure(error: unknown) {
+  // Generic transport errors can include authentication-provider failures;
+  // generic 500s can hide storage integrity failures. Neither is safe to retain.
+  return error instanceof Error && 'status' in error && error.status === 503 && 'errorCode' in error
+    && (error.errorCode === 'neighborhood_service_busy' || error.errorCode === 'neighborhood_request_interrupted');
+}
 const paintFor = (f: PaintedParcel): Paint => ({ selected: f.properties.selected, inspected: f.properties.inspected,
   unresolved: f.properties.unresolved, subject: f.properties.subject, fillColor: f.properties.fillColor });
 const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get', key]];
@@ -176,7 +193,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
   const [cameraRevision, setCameraRevision] = useState(0);
   const [viewportState, setViewportState] = useState<LoadedViewport | null>(null);
   const loadedViewport = useRef<LoadedViewport | null>(null);
-  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'limited' | 'failed'>('loading');
+  const [detailState, setDetailState] = useState<'loading' | 'ready' | 'partial' | 'empty' | 'limited' | 'failed'>('loading');
   const awaitingDraw = useRef(false), drawTimeout = useRef<number | null>(null);
   const [tileError, setTileError] = useState(false);
   const matches = contextMatches(group, catalog);
@@ -282,12 +299,14 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     const map = mapRef.current;
     if (!map?.getSource(SOURCE)) return;
     const extent = map.getBounds();
-    const bounds: CustomCohortViewportBounds = { west: extent.getWest(), south: extent.getSouth(),
+    const camera: CustomCohortViewportBounds = { west: extent.getWest(), south: extent.getSouth(),
       east: extent.getEast(), north: extent.getNorth() };
-    if (!Object.values(bounds).every(Number.isFinite) || bounds.east <= bounds.west || bounds.north <= bounds.south
-      || bounds.west < -180 || bounds.east > 180 || bounds.south < -90 || bounds.north > 90) {
+    if (!Object.values(camera).every(Number.isFinite) || camera.east <= camera.west || camera.north <= camera.south
+      || camera.west < -180 || camera.east > 180 || camera.south < -90 || camera.north > 90) {
       setViewportState(null); setDetailState('limited'); return;
     }
+    const bounds = capturedViewport(camera, group.map_manifest);
+    if (!bounds) { setViewportState(null); setDetailState('empty'); return; }
     // An available response contains every intersecting parcel (never a
     // truncated subset). Its complete, exact geometries also cover any smaller
     // camera extent; the renderer clips them without another fetch or setData.
@@ -296,8 +315,15 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
       setViewportState(loaded); setDetailState('ready'); return;
     }
     const controller = new AbortController();
+    const retainIncomplete = () => {
+      if (loaded?.map.status !== 'available') return false;
+      // Retain only this effect's fully checked binding and ORIGINAL coverage.
+      // No failed/tiled prefix can extend it or claim the new view is complete.
+      loadedViewport.current = loaded; setViewportState(loaded); setDetailState('partial'); return true;
+    };
     const deadline = window.setTimeout(() => {
-      controller.abort(); loadedViewport.current = null; setViewportState(null); setDetailState('failed');
+      controller.abort();
+      if (!retainIncomplete()) { loadedViewport.current = null; setViewportState(null); setDetailState('failed'); }
     }, 30_000);
     setDetailState('loading');
     const timer = window.setTimeout(() => {
@@ -314,6 +340,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           setDetailState(checked.status === 'available' ? 'ready' : 'failed');
         }).catch(error => {
           if (controller.signal.aborted) return;
+          if (transientViewportFailure(error) && retainIncomplete()) return;
           loadedViewport.current = null; setViewportState(null);
           setDetailState(error instanceof Error && 'code' in error && error.code === 'viewport_detail_capacity_exceeded' ? 'limited' : 'failed');
         }).finally(() => window.clearTimeout(deadline));
@@ -571,9 +598,12 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         {tileError && mapState === 'ready' && <p role="status" className="absolute bottom-3 left-3 rounded bg-white/95 p-2 text-xs">Some basemap resources could not load. Parcel selection and statistics are unchanged.</p>}
         {group.parcel_map.status === 'deferred' && mapState === 'ready' && detailState !== 'ready' &&
           <p role="status" className="absolute bottom-3 right-3 max-w-xs rounded bg-white/95 p-2 text-xs shadow">
-            {detailState === 'loading' ? 'Loading visible parcel outlines…'
+            {detailState === 'loading' ? `${currentViewport?.map.status === 'available' ? 'Showing previously loaded parcels; this view is incomplete. ' : ''}Loading visible parcel outlines…`
+              : detailState === 'partial' ? 'Showing previously loaded parcels; this view is incomplete.'
+              : detailState === 'empty' ? 'No captured parcels in this view.'
               : detailState === 'limited' ? 'This view exceeds the parcel-detail limit. Zoom in to load exact outlines; your selection is unchanged.'
               : 'Parcel detail could not load; the subdivision labels and statistics remain available.'}
+            {detailState === 'partial' && <button type="button" className="ml-2 underline" onClick={() => setCameraRevision(n => n + 1)}>Retry parcel detail</button>}
           </p>}
         {mapState !== 'failed' && overlay}
       </div>}

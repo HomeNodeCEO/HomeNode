@@ -61,3 +61,26 @@ still be decoded on later requests. The numeric hot cache and bounded viewport
 transport do not establish instant end-to-end opening. Measure cold opening,
 warm opening, dense overview completion and selection clicks separately. Do not
 claim a production speedup from synthetic tests alone.
+
+## Live overview recovery follow-up
+
+The first live overview rendered parcels after #989, but a browser-layout resize
+expanded its camera rectangle and started another dense tiled read. Failure of
+that read erased the already-validated parcel display. MapLibre resize emits a
+camera event; the application was not intentionally refitting on every render.
+
+- Intersect requested detail bounds with the checked manifest's exact retained
+  coordinate extrema. Empty padding outside the capture cannot add parcels.
+  Overview resizes that still contain the capture reuse the same coverage.
+- Preserve previously complete, same-binding coverage only on the local detail
+  deadline or the explicit service-busy/request-interrupted responses. Show that
+  the expanded view is incomplete and allow a manual bounded retry. A failed
+  tiled prefix never becomes complete coverage or expands the retained bounds.
+- Authentication, context/policy, malformed responses, and generic transport or
+  server errors still clear detail. Generic failures can hide identity or stored
+  data-integrity errors and must not be treated as harmless network interruption.
+- A camera outside the captured extent requests no new geometry. Boundary-only
+  contact preserves positive-area querying so touching parcels are not dropped.
+
+This follow-up does not change statistics, selection, authority checks, data
+limits, or the coordinated production API release hold.

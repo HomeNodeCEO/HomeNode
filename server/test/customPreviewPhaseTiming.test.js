@@ -85,7 +85,7 @@ test('saved catalog projection subphases are synchronous, bounded, and redact re
 test('prepared preview read timings distinguish transfer, decode, and restore without evidence', async t => {
   let now = 100; t.mock.method(performance, 'now', () => now);
   const events = [], phase = createCustomPreparedPreviewReadTiming(event => events.push(event));
-  const names = ['query', 'preview_decode', 'preview_restore', 'map_decode'];
+  const names = ['cache_verify', 'query', 'preview_decode', 'preview_restore', 'map_decode'];
   for (const name of names) assert.equal(await phase(name, () => { now += 4; return 'PRIVATE'; }), 'PRIVATE');
   assert.deepEqual(events, names.map((name, index) => ({ phase: name, outcome: 'completed',
     duration_ms: 4, elapsed_ms: (index + 1) * 4 })));

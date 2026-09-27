@@ -181,9 +181,16 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.equal(toggled.summary.selected.stock.member_count, 0);
     assert.deepEqual(toggled.parcel_map, { status: 'omitted', reason: 'geometry_not_requested' });
     assert.notEqual(toggled.summary.binding.selection_sha256, display.summary.binding.selection_sha256);
-    assert.ok(calls.slice(fastFrom).some(sql => sql.includes('custom-cohort-prepared-preview:read')));
+    assert.ok(calls.slice(fastFrom).some(sql => /custom-cohort-prepared-preview:(read|verify-hot)/.test(sql)));
     assert.ok(!calls.slice(fastFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
       'a prepared selection rechecks metadata and policy without reopening the complete row graph');
+    const hotFrom = calls.length;
+    const hotToggled = await capture.present({ ...previewRequest, selection: { revision: 2, pockets: [] } }, { includeMap: false });
+    assert.deepEqual(hotToggled.summary, toggled.summary);
+    assert.ok(calls.slice(hotFrom).some(sql => sql.includes('custom-cohort-prepared-preview:verify-hot')),
+      'PostgreSQL verifies compressed-byte digests on a process-cache hit');
+    assert.ok(!calls.slice(hotFrom).some(sql => sql.includes('custom-cohort-prepared-preview:read')),
+      'a hot numeric preview must not return the compressed payload to the application');
     const exposureDenied = createCustomCohortContextCapture({ pool: observed,
       authorizeMarketData: async (_client, _auth, _context, _purpose, { exposure }) => exposure === 'none' ? grant : { allowed: false } });
     await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);

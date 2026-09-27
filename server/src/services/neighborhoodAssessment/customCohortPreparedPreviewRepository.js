@@ -12,7 +12,8 @@ const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_0
   map: { text: 32_000_000, compressed: 16_000_000 } });
 // The prepared row is immutable for a context/format version. Keep only one
 // bounded, verified, deeply frozen read model hot across requests. The
-// current row and its compressed bytes are still checked on every hit;
+// current row and its compressed bytes are still checked on every hit, but
+// PostgreSQL returns digests instead of retransmitting the blobs on hot hits;
 // selection-dependent results are never cached here.
 const HOT_PREVIEW_MAX_BYTES = 60_000_000;
 const HOT_MAP_MAX_BYTES = 24_000_000;
@@ -102,6 +103,33 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
   const read = async ({ includeMap = true, useVerifiedPreviewCache = false } = {}) => {
     check(typeof includeMap === 'boolean' && typeof useVerifiedPreviewCache === 'boolean', 'invalid_read');
     const timed = createCustomPreparedPreviewReadTiming();
+    let previous = useVerifiedPreviewCache && hotPreview?.key === hotKey
+      && hotPreview.expiresAt > Date.now() ? hotPreview : null;
+    if (previous && (!includeMap || previous.map)) {
+      // The stored text digest alone would miss damaged compressed bytes with
+      // unchanged metadata. Hash those bytes in PostgreSQL, without sending up
+      // to 28 MB back to Node just to verify an already-decoded immutable value.
+      // This saves network/copy work, not database hashing or authorization.
+      const verified = await timed('cache_verify', () => query(`/* custom-cohort-prepared-preview:verify-hot */
+        SELECT preview_sha256, preview_utf8_bytes,
+          pg_catalog.encode(pg_catalog.sha256(compressed_preview), 'hex') AS compressed_preview_sha256
+          ${includeMap ? `, map_sha256, map_utf8_bytes,
+            pg_catalog.encode(pg_catalog.sha256(compressed_map), 'hex') AS compressed_map_sha256` : ''}
+        FROM app.neighborhood_custom_cohort_prepared_previews
+        WHERE organization_id=$1::uuid AND context_id=$2::uuid
+          AND context_sha256=$3 AND format_version=1`, key));
+      if (verified?.rowCount === 0) { clearHotPreview(); return null; }
+      const metadata = one(verified);
+      if (metadata.preview_sha256 === previous.digest && metadata.preview_utf8_bytes === previous.bytes
+        && metadata.compressed_preview_sha256 === previous.compressedDigest
+        && (!includeMap || (metadata.map_sha256 === previous.mapDigest
+          && metadata.map_utf8_bytes === previous.mapBytes
+          && metadata.compressed_map_sha256 === previous.compressedMapDigest))) {
+        return Object.freeze({ preview: previous.preview, parcel_map: includeMap ? previous.map : null });
+      }
+      clearHotPreview();
+      previous = null;
+    }
     const found = await timed('query', () => query(`/* custom-cohort-prepared-preview:read */
       SELECT preview_sha256, preview_utf8_bytes, compressed_preview
         ${includeMap ? ', map_sha256, map_utf8_bytes, compressed_map' : ''}
@@ -110,12 +138,14 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         AND context_sha256=$3 AND format_version=1`, key));
     if (found?.rowCount === 0) return null;
     const row = one(found);
-    const previous = useVerifiedPreviewCache && hotPreview?.key === hotKey
-      && hotPreview.expiresAt > Date.now() ? hotPreview : null;
+    const compressedDigest = useVerifiedPreviewCache && Buffer.isBuffer(row.compressed_preview)
+      ? hash(row.compressed_preview) : null;
+    const compressedMapDigest = useVerifiedPreviewCache && includeMap && Buffer.isBuffer(row.compressed_map)
+      ? hash(row.compressed_map) : null;
     const matched = previous && row.preview_sha256 === previous.digest
       && row.preview_utf8_bytes === previous.bytes
       && Buffer.isBuffer(row.compressed_preview)
-      && hash(row.compressed_preview) === previous.compressedDigest;
+      && compressedDigest === previous.compressedDigest;
     if (previous && !matched) clearHotPreview();
     let preview = matched ? previous.preview : null;
     if (!preview) {
@@ -133,13 +163,13 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         || row.preview_utf8_bytes > HOT_PREVIEW_MAX_BYTES
         || process.memoryUsage().rss > HOT_PREVIEW_MAX_PROCESS_RSS_BYTES) return;
       const entry = { key: hotKey, digest: row.preview_sha256, bytes: row.preview_utf8_bytes,
-        compressedDigest: hash(row.compressed_preview), preview,
+        compressedDigest, preview,
         expiresAt: Date.now() + HOT_PREVIEW_TTL_MS };
       if (map && row.map_utf8_bytes <= HOT_MAP_MAX_BYTES) {
         entry.map = freezeMap(map);
         entry.mapDigest = row.map_sha256;
         entry.mapBytes = row.map_utf8_bytes;
-        entry.compressedMapDigest = hash(row.compressed_map);
+        entry.compressedMapDigest = compressedMapDigest;
       }
       retainHotPreview(entry);
     };
@@ -150,7 +180,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
     const mapMatched = matched && previous.map && row.map_sha256 === previous.mapDigest
       && row.map_utf8_bytes === previous.mapBytes
       && Buffer.isBuffer(row.compressed_map)
-      && hash(row.compressed_map) === previous.compressedMapDigest;
+      && compressedMapDigest === previous.compressedMapDigest;
     if (matched && previous.map && !mapMatched) clearHotPreview();
     const map = mapMatched ? previous.map : await timed('map_decode', () => decode(row, 'map'));
     check(map && ['available', 'unavailable'].includes(map.status)

@@ -154,7 +154,9 @@ test('context-scoped immutable prepared read model survives serialization and re
     report_file_id: target.report_file_id, assignment_file_id: target.assignment_file_id,
     account_id: target.account_id });
   let stored = null;
+  const reads = [];
   const client = { async query(sql, params) {
+    reads.push(sql);
     if (sql.includes('prepared-preview:exists')) return stored
       ? { rowCount: 1, rows: [{ '?column?': 1 }] } : { rowCount: 0, rows: [] };
     if (sql.includes('prepared-preview:insert')) {
@@ -163,6 +165,12 @@ test('context-scoped immutable prepared read model survives serialization and re
         map_sha256: params[6], map_utf8_bytes: params[7], compressed_map: params[8] };
       return { rowCount: 1, rows: [{ preview_sha256: params[3], map_sha256: params[6] }] };
     }
+    if (sql.includes('prepared-preview:verify-hot')) return stored
+      ? { rowCount: 1, rows: [{ preview_sha256: stored.preview_sha256, preview_utf8_bytes: stored.preview_utf8_bytes,
+        compressed_preview_sha256: createHash('sha256').update(stored.compressed_preview).digest('hex'),
+        ...(sql.includes('map_sha256') ? { map_sha256: stored.map_sha256, map_utf8_bytes: stored.map_utf8_bytes,
+          compressed_map_sha256: createHash('sha256').update(stored.compressed_map).digest('hex') } : {}) }] }
+      : { rowCount: 0, rows: [] };
     if (sql.includes('prepared-preview:read')) return stored
       ? { rowCount: 1, rows: [{ ...stored, ...(sql.includes('map_sha256') ? {} : {
         map_sha256: undefined, map_utf8_bytes: undefined, compressed_map: undefined }) }] }
@@ -222,7 +230,18 @@ test('context-scoped immutable prepared read model survives serialization and re
   assert.equal(loaded.parcel_map.geojson.features[0].properties.selected, false);
   const hot = await repository.read({ useVerifiedPreviewCache: true });
   const reopened = preparedRepository(client, scope, args.context_ref);
+  const warmFrom = reads.length;
   const hotAgain = await reopened.read({ useVerifiedPreviewCache: true });
+  assert.equal(reads.length - warmFrom, 1, 'a verified hot read requires one metadata-only query');
+  assert.match(reads[warmFrom], /prepared-preview:verify-hot/);
+  assert.doesNotMatch(reads[warmFrom], /SELECT\s+preview_sha256,\s*preview_utf8_bytes,\s*compressed_preview/);
+  assert.match(reads[warmFrom], /pg_catalog\.sha256\(compressed_preview\)/);
+  assert.match(reads[warmFrom], /pg_catalog\.sha256\(compressed_map\)/);
+  const numericHot = await reopened.read({ includeMap: false, useVerifiedPreviewCache: true });
+  assert.equal(numericHot.preview, hot.preview);
+  assert.equal(numericHot.parcel_map, null);
+  assert.doesNotMatch(reads.at(-1), /compressed_map|map_sha256|map_utf8_bytes/,
+    'numeric-only requests neither transfer nor hash geometry');
   assert.equal(hotAgain.preview, hot.preview, 'the verified immutable observation index is reused');
   assert.equal(hotAgain.parcel_map, hot.parcel_map, 'verified immutable geometry is reused');
   assert.throws(() => { hotAgain.parcel_map.geojson.features[0].properties.selected = true; }, TypeError);
@@ -246,18 +265,56 @@ test('context-scoped immutable prepared read model survives serialization and re
     Buffer.byteLength(JSON.stringify(selectPreparedMap(unverified, ['A']).geojson)),
     'a persisted but uncertified count cannot bypass the full byte guard');
   stored = valid;
+  await reopened.read({ useVerifiedPreviewCache: true });
+  const corruptMapFrom = reads.length;
   stored = { ...valid, compressed_map: Buffer.from(valid.compressed_map) };
   stored.compressed_map[0] ^= 1;
   await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,
     'changed map bytes cannot reuse previously verified geometry');
+  assert.match(reads[corruptMapFrom], /prepared-preview:verify-hot/);
+  assert.match(reads[corruptMapFrom + 1], /prepared-preview:read/);
   stored = valid;
+  await reopened.read({ useVerifiedPreviewCache: true });
+  const corruptPreviewFrom = reads.length;
   stored = { ...valid, compressed_preview: Buffer.from(valid.compressed_preview) };
   stored.compressed_preview[0] ^= 1;
   await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/,
     'changed compressed bytes cannot reuse a previously verified preview');
+  assert.match(reads[corruptPreviewFrom], /prepared-preview:verify-hot/);
+  assert.match(reads[corruptPreviewFrom + 1], /prepared-preview:read/);
   stored = valid;
+  await reopened.read({ useVerifiedPreviewCache: true });
+  const changedDigestFrom = reads.length;
   stored = { ...stored, preview_sha256: '0'.repeat(64) };
   await assert.rejects(reopened.read({ useVerifiedPreviewCache: true }), /storage_conflict/);
+  assert.match(reads[changedDigestFrom], /prepared-preview:verify-hot/);
+  assert.match(reads[changedDigestFrom + 1], /prepared-preview:read/);
+  stored = valid;
+  const realNow = Date.now;
+  let now = realNow();
+  try {
+    Date.now = () => now;
+    const numeric = await reopened.read({ includeMap: false, useVerifiedPreviewCache: true });
+    const addMapFrom = reads.length;
+    const withMap = await reopened.read({ useVerifiedPreviewCache: true });
+    assert.match(reads[addMapFrom], /prepared-preview:read/,
+      'a numeric-only entry cannot pretend to contain verified geometry');
+    assert.equal(withMap.preview, numeric.preview);
+    assert.ok(withMap.parcel_map);
+    now += 5 * 60_000 - 1;
+    assert.equal((await reopened.read({ useVerifiedPreviewCache: true })).preview, numeric.preview);
+    now++;
+    const expiredFrom = reads.length;
+    assert.notEqual((await reopened.read({ useVerifiedPreviewCache: true })).preview, numeric.preview);
+    assert.match(reads[expiredFrom], /prepared-preview:read/,
+      'verification hits do not extend the five-minute lifetime');
+  } finally { Date.now = realNow; }
+  const missingFrom = reads.length;
+  stored = null;
+  assert.equal(await reopened.read({ useVerifiedPreviewCache: true }), null,
+    'a missing persisted row cannot be served from process memory');
+  assert.equal(reads.length - missingFrom, 1);
+  assert.match(reads[missingFrom], /prepared-preview:verify-hot/);
 });
 
 test('cell reuse preserves exact raw types and formatting instead of merging equal numeric values', () => {

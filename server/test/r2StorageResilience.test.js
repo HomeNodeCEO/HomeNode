@@ -139,6 +139,47 @@ test("R2 timeouts fail with a bounded public-safe error after the configured att
   assert.equal(calls, 3);
 });
 
+test("R2 fetch exceptions cannot smuggle public-looking messages or details", async () => {
+  const secret = "private-token-value";
+  const prefixed = Object.assign(new Error(`uad_object_verification_failed:${secret}`), {
+    details: { token: secret },
+  });
+  const hostile = {};
+  Object.defineProperty(hostile, "name", { get() { throw new Error(secret); } });
+  Object.defineProperty(hostile, "message", { get() { throw new Error(secret); } });
+  for (const failure of [prefixed, hostile]) {
+    const storage = createUadObjectStorage({ ...ENVIRONMENT, R2_MAX_ATTEMPTS: "1" }, {
+      fetchImpl: async () => { throw failure; },
+    });
+    await assert.rejects(
+      () => storage.inspectObject({ objectKey: "private/probe" }),
+      (error) => {
+        assert.equal(error.message, "uad_object_verification_network_error");
+        assert.equal(error.details, undefined);
+        assert.equal(JSON.stringify(error).includes(secret), false);
+        return true;
+      },
+    );
+  }
+});
+
+test("R2 response-body failures retain bounded download errors", async () => {
+  const secret = "private-body-token";
+  const storage = createUadObjectStorage({ ...ENVIRONMENT, R2_MAX_ATTEMPTS: "1" }, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) { controller.error(new Error(`uad_object_download_failed:${secret}`)); },
+    }), { status: 200 }),
+  });
+  await assert.rejects(
+    () => storage.getObject({ objectKey: "private/probe", maxBytes: 1024 }),
+    (error) => {
+      assert.equal(error.message, "uad_object_download_network_error");
+      assert.equal(JSON.stringify(error).includes(secret), false);
+      return true;
+    },
+  );
+});
+
 test("R2 requests stop immediately when artifact generation is abandoned", async () => {
   let calls = 0;
   const started = Promise.withResolvers();

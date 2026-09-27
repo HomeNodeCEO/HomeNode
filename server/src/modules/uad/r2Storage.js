@@ -85,12 +85,25 @@ function retryDelayMs(response, attempt, baseMs) {
 }
 
 function normalizedStorageError(operation, error) {
-  const name = String(error?.name || "");
+  let name = "";
+  try { name = error?.name; } catch { /* Treat hostile exception metadata as unknown. */ }
   if (["AbortError", "TimeoutError"].includes(name)) {
     return new Error(`uad_object_${operation}_timeout`);
   }
-  const message = String(error?.message || "");
-  if (message.startsWith("uad_object_")) return error;
+  // A streamed download can throw our own size/HTTP codes into its outer catch.
+  // Preserve only those exact, bounded identities, never the original Error
+  // object (which may carry provider-supplied details or a hostile message).
+  let message = "";
+  try { message = error?.message; } catch { /* Treat hostile exception metadata as unknown. */ }
+  if (operation === "download" && (
+    [
+      "uad_object_download_too_large",
+      "uad_object_download_size_mismatch",
+      "uad_object_download_network_error",
+      "uad_object_download_redirect_forbidden",
+    ].includes(message)
+    || /^uad_object_download_failed:[1-5][0-9]{2}$/.test(message)
+  )) return new Error(message);
   return new Error(`uad_object_${operation}_network_error`);
 }
 
@@ -532,7 +545,7 @@ export function createUadObjectStorage(env = process.env, {
         body = await readBoundedResponse(response, maxBytes, signal);
       } catch (error) {
         if (signal?.aborted) throw artifactRequestAborted();
-        throw error;
+        throw normalizedStorageError("download", error);
       }
       return {
         body,

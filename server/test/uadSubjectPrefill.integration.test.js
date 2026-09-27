@@ -59,8 +59,10 @@ test("native subject prefill: creation, retained sources, concurrent idempotency
       await writer.query(`UPDATE appraisal.uad_field_values SET value = 'null'::jsonb,
         source_type = 'appraiser', is_appraiser_confirmed = true WHERE id = $1`, [bedrooms.id]);
       await writer.query("COMMIT");
+    } catch (error) {
+      await writer.query("ROLLBACK").catch(() => {});
+      throw error;
     } finally {
-      await writer.query("ROLLBACK");
       writer.release();
     }
     assert.equal((await pending).changed_field_count, 0);

@@ -344,11 +344,7 @@ function WorkspaceSession(props: Props) {
           subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
           onActivatePocket={activatePocket} onExcludePocket={excludePocket}
           inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
-          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }}
-          overlay={inspectedFamily && desired ? <CustomCohortMapSnapshot key={inspectedFamily.id}
-            family={inspectedFamily} phaseId={inspectedPhaseId} catalog={catalog} input={input} included={included}
-            paused={inspectionsPaused} previewTransport={transport}
-            onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} /> : null} />
+          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
           : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
         <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3" aria-label="Live neighborhood characteristics and market observations">
           <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
@@ -358,6 +354,10 @@ function WorkspaceSession(props: Props) {
           </details>
         </aside>
       </div>
+      {group && inspectedFamily && desired && <CustomCohortMapSnapshot key={inspectedFamily.id}
+        family={inspectedFamily} phaseId={inspectedPhaseId} catalog={catalog} input={input} included={included}
+        paused={inspectionsPaused} previewTransport={transport}
+        onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
       <section className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
         <h4 className="font-semibold">Recorded subdivisions and groups</h4>
         <p className="text-xs text-slate-600">Search or review a subdivision and its phases below. Map clicks update the selection directly.</p>

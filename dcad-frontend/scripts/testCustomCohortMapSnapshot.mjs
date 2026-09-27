@@ -6,6 +6,10 @@ import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const family = { id: 'family', label: 'MONICA PARK', pocket_ids: ['phase-1', 'phase-2'] };
 const catalog = { pockets: [{ id: 'phase-1', label: 'MONICA PARK 1' }, { id: 'phase-2', label: 'MONICA PARK 2' }] };
+const children = node => [node?.props?.children].flat(Infinity);
+const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
+const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
+  : node && typeof node === 'object' ? children(node).map(text).join('') : '';
 function harness() {
   const cells = []; let cursor = 0, closes = 0;
   const react = {
@@ -13,6 +17,7 @@ function harness() {
     useState(initial) { const index = cursor++; cells[index] ??= { value: initial };
       return [cells[index].value, value => { cells[index].value = typeof value === 'function' ? value(cells[index].value) : value; }]; },
   };
+  function InspectorStub() { return null; }
   const loaded = loadTrustedRepositoryCommonJs(new URL('../src/features/neighborhood/components/CustomCohortMapSnapshot.tsx', import.meta.url), key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
@@ -20,32 +25,58 @@ function harness() {
       { id: 'phase-one', label: 'MONICA PARK 1', pocket_ids: ['phase-1'] },
       { id: 'phase-two', label: 'MONICA PARK 2', pocket_ids: ['phase-2'] },
     ] };
-    if (key === './CustomCohortPocketInspector') return { __esModule: true, default: () => null };
+    if (key === './CustomCohortPocketInspector') return { __esModule: true, default: InspectorStub };
     assert.fail(`Unexpected dependency ${key}`);
   });
   const props = { family, catalog, input: { accountId: 'A', assignmentFileId: '4', contextRef: {} },
     included: ['phase-1'], paused: false, previewTransport() {}, onClose() { closes++; } };
-  return { render(phaseId = null) { cursor = 0; return loaded.default({ ...props, phaseId }); }, get closes() { return closes; } };
+  return { props, inspector: tree => walk(tree).find(node => node.type === InspectorStub)?.props,
+    render(phaseId = null, overrides = {}) { cursor = 0; return loaded.default({ ...props, phaseId, ...overrides }); },
+    get closes() { return closes; } };
 }
 
-test('small nonmodal area snapshot keeps an exact family or phase comparison inside the map', () => {
+test('area snapshot keeps exact family and phase comparison inputs in a compact regular-flow panel', () => {
   const h = harness(), parent = h.render(), phase = h.render('phase-2');
-  assert.equal(parent.props['aria-modal'], 'false'); assert.equal(parent.props.style.maxHeight, 'calc(100% - 1rem)');
-  assert.match(parent.props.children[0].props.children[0].props.children[1].props.children.join(''), /Partly included/);
-  assert.deepEqual(parent.props.children[1].props.children.props.pocketIds, family.pocket_ids);
-  assert.deepEqual(phase.props.children[1].props.children.props.pocketIds, ['phase-2']);
-  assert.equal(phase.props.children[1].props.children.props.compact, true);
+  assert.equal(parent.props['aria-label'], 'MONICA PARK area snapshot');
+  assert.notEqual(parent.props.role, 'dialog'); assert.notEqual(parent.props['aria-modal'], true);
+  assert.match(text(parent), /Partly included/);
+  assert.equal(h.inspector(parent).pocketIds, family.pocket_ids);
+  assert.deepEqual(h.inspector(phase).pocketIds, ['phase-2']);
+  assert.equal(h.inspector(phase).pocketId, 'phase-2'); assert.equal(h.inspector(phase).label, 'MONICA PARK 2');
+  for (const tree of [parent, phase]) {
+    const inspector = h.inspector(tree);
+    assert.equal(inspector.input, h.props.input); assert.equal(inspector.catalog, h.props.catalog);
+    assert.equal(inspector.previewTransport, h.props.previewTransport);
+    assert.equal(inspector.paused, false); assert.equal(inspector.compact, true);
+  }
+  assert.equal(h.inspector(h.render('phase-2', { paused: true })).paused, true);
+  assert.equal(h.closes, 0);
 });
 
-test('snapshot drag clamps within map dimensions and Escape closes without changing inclusion', () => {
-  const h = harness(), card = h.render(), handle = card.props.children[0];
-  card.props.ref.current = { parentElement: { clientWidth: 500, clientHeight: 440 }, offsetWidth: 300, offsetHeight: 320 };
-  const target = { setPointerCapture() {}, hasPointerCapture() { return true; }, releasePointerCapture() {} };
-  let stopped = 0;
-  handle.props.onPointerDown({ button: 0, pointerId: 1, clientX: 30, clientY: 30,
-    currentTarget: target, preventDefault() {}, stopPropagation() { stopped++; } });
-  handle.props.onPointerMove({ clientX: 900, clientY: 900 });
-  const moved = h.render(); assert.equal(moved.props.style.left, 200); assert.equal(moved.props.style.top, 120);
-  assert.equal(stopped, 1); assert.equal(h.closes, 0);
-  moved.props.onKeyDown({ key: 'Escape' }); assert.equal(h.closes, 1);
+test('snapshot fills normal document flow with a static header and no map coordinates or dragging', () => {
+  const card = harness().render(), nodes = walk(card), header = nodes.find(node => node.type === 'header');
+  assert.equal(card.type, 'section', 'a normal block section spans the available workspace width');
+  assert.equal(card.props.style?.width, undefined);
+  assert.doesNotMatch(card.props.className, /(?:^|\s)(?:w-\[|w-\d|max-w-)/, 'no former fixed-width map-card cap');
+  for (const node of nodes) {
+    assert.doesNotMatch(node.props.className ?? '', /\b(?:absolute|fixed|cursor-move|touch-none)\b/);
+    assert.equal(node.props.onPointerMove, undefined); assert.equal(node.props.onPointerUp, undefined);
+    assert.equal(node.props.onPointerCancel, undefined);
+    for (const key of ['left', 'top', 'right', 'bottom', 'transform']) assert.equal(node.props.style?.[key], undefined);
+    assert.notEqual(node.props.style?.position, 'absolute'); assert.notEqual(node.props.style?.position, 'fixed');
+  }
+  assert.ok(header); assert.equal(header.props.onPointerDown, undefined);
+  assert.match(nodes.map(node => node.props.className ?? '').join(' '), /amber/);
+  assert.match(nodes.map(node => node.props.className ?? '').join(' '), /violet/);
+  assert.ok(nodes.some(node => /overflow-y-auto/.test(node.props.className ?? '')), 'inspector content can scroll without covering the map');
+});
+
+test('Close and Escape still dismiss the panel without mutating accepted inclusion or inspector inputs', () => {
+  const h = harness(), before = JSON.stringify(h.props), card = h.render('phase-2');
+  const close = walk(card).find(node => node.type === 'button' && node.props['aria-label'] === 'Close area snapshot');
+  assert.ok(close); assert.equal(close.props.type, 'button');
+  card.props.onKeyDown({ key: 'Enter' }); assert.equal(h.closes, 0);
+  card.props.onKeyDown({ key: 'Escape' }); assert.equal(h.closes, 1);
+  close.props.onClick(); assert.equal(h.closes, 2);
+  assert.equal(JSON.stringify(h.props), before);
 });

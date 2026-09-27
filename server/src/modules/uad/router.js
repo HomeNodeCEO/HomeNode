@@ -110,7 +110,11 @@ function uadErrorCode(error) {
   catch { return null; }
 }
 
-function errorStatus(message, error) {
+function errorStatus(message, databaseCode) {
+  // Database diagnostics can include constraint names, values, and SQL text.
+  // Keep their historical HTTP statuses, but never classify by or return the message.
+  if (databaseCode === "23505") return 409;
+  if (databaseCode === "23503") return 400;
   if (message === "delivery_attempt_not_found_or_completed") return 409;
   if (message.includes("not_found")) return 404;
   if (message === "uad_authentication_required") return 401;
@@ -180,15 +184,16 @@ function errorStatus(message, error) {
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
   if (["uad_parent_entity_required", "uad_entity_minimum_required"].includes(message)) return 400;
-  if (uadErrorCode(error) === "23505") return 409;
-  if (uadErrorCode(error) === "23503") return 400;
   return 500;
 }
 
 function sendError(res, error) {
+  const databaseCode = uadErrorCode(error);
   const message = uadErrorMessage(error);
-  const status = errorStatus(message, error);
-  const code = status === 500 ? "uad_request_failed" : message.split(":")[0];
+  const status = errorStatus(message, databaseCode);
+  let code = status === 500 ? "uad_request_failed" : message.split(":")[0];
+  if (databaseCode === "23505") code = "uad_request_conflict";
+  if (databaseCode === "23503") code = "invalid_uad_reference";
   if (status === 500) {
     try { console.error("[uad] request failed", safeOperationalErrorCode(error)); }
     catch { /* Keep the fixed response even if logging fails. */ }

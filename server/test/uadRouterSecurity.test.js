@@ -661,6 +661,33 @@ test("untrusted UAD exception details stay private even when its message looks l
   });
 });
 
+for (const [databaseCode, status, publicCode] of [
+  ["23505", 409, "uad_request_conflict"],
+  ["23503", 400, "invalid_uad_reference"],
+]) {
+  test(`UAD SQLSTATE ${databaseCode} keeps its status without exposing database diagnostics`, async () => {
+    const privateMessage = "uad_workfile_not_found: duplicate key contains private-account-id";
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, status);
+      const body = await response.json();
+      assert.deepEqual(body, { error: publicCode });
+      assert.doesNotMatch(JSON.stringify(body), /private-account-id|private-constraint/);
+    }, {}, {
+      createWorkfile: async () => {
+        throw Object.assign(new Error(privateMessage), {
+          code: databaseCode,
+          details: { constraint: "private-constraint" },
+        });
+      },
+    });
+  });
+}
+
 test("hostile UAD error metadata cannot replace the fixed server response", async () => {
   const failure = {
     get message() { throw new Error("private_message_getter"); },

@@ -176,13 +176,6 @@ test("Custom document review waits on the workfile before locking the document r
       [documentId],
     );
 
-    holder = await pool.connect();
-    await holder.query("BEGIN");
-    await holder.query("SET LOCAL lock_timeout = '750ms'");
-    await holder.query(
-      "SELECT id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
-      [assignmentFileId],
-    );
     let preliminaryRead;
     const readStarted = new Promise((resolve) => { preliminaryRead = resolve; });
     const observedPool = {
@@ -199,6 +192,14 @@ test("Custom document review waits on the workfile before locking the document r
         };
       },
     };
+    await ensureAssignmentDocumentsSchema(observedPool);
+    holder = await pool.connect();
+    await holder.query("BEGIN");
+    await holder.query("SET LOCAL lock_timeout = '750ms'");
+    await holder.query(
+      "SELECT id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
+      [assignmentFileId],
+    );
     reviewPromise = reviewAssignmentDocumentCandidate(observedPool, {
       documentId,
       candidateId: candidate.rows[0].id,

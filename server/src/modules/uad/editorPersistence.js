@@ -4,6 +4,7 @@ import { listUadAssets } from "./assets.js";
 import { UAD_CERTIFICATION_FIELD_KEYS } from "./certificationsCatalog.js";
 import { listUadEntities } from "./entities.js";
 import { validateUadSectionValues } from "./fieldCatalog.js";
+import { attachUadPublicErrorDetails } from "./publicErrorDetails.js";
 import { UAD_RECONCILIATION_FIELD_KEYS } from "./reconciliationCatalog.js";
 import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
 
@@ -50,7 +51,7 @@ export function createUadSectionPersistence({
     const currentRevision = Number(locked.rows[0].current_revision);
     if (expectedRevision !== currentRevision) {
       const error = new Error("uad_section_stale_revision");
-      error.details = { current_revision: currentRevision };
+      attachUadPublicErrorDetails(error, { current_revision: currentRevision });
       throw error;
     }
 
@@ -93,7 +94,7 @@ export function createUadSectionPersistence({
     });
     if (validation.errors.length) {
       const error = new Error("invalid_uad_field_values");
-      error.details = validation.errors;
+      attachUadPublicErrorDetails(error, validation.errors);
       throw error;
     }
     const normalized = section === "sales_comparison"
@@ -117,7 +118,7 @@ export function createUadSectionPersistence({
       : validateCompleteSection(section, existingRows, normalized, entities, assets);
     if (completeSectionErrors.length) {
       const error = new Error("invalid_uad_field_values");
-      error.details = completeSectionErrors;
+      attachUadPublicErrorDetails(error, completeSectionErrors);
       throw error;
     }
 

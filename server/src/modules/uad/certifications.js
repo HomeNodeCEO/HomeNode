@@ -2,6 +2,7 @@ import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto
 
 import { listUadAssets } from "./assets.js";
 import { getUadEditor } from "./editor.js";
+import { attachUadPublicErrorDetails } from "./publicErrorDetails.js";
 import { listUadSketches } from "./sketches.js";
 import { evaluateUadSignatureQuorum } from "./signatureQuorum.js";
 import { buildUadValidationInputDigest } from "./validation.js";
@@ -535,7 +536,7 @@ export async function signUadWorkfile(pool, workfileIdValue, authentication, inp
     const missing = missingCredentialFields(signerRow);
     if (missing.length) {
       const error = new Error("uad_signature_credentials_incomplete");
-      error.details = { missing };
+      attachUadPublicErrorDetails(error, { missing });
       throw error;
     }
     const policyError = signaturePolicyError(signerRow.signature_policy);

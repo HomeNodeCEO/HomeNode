@@ -3,6 +3,7 @@ import { isIP } from "node:net";
 import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { publicUadErrorDetails } from "./publicErrorDetails.js";
 
 import {
   createUadAssetUpload,
@@ -95,8 +96,21 @@ export async function safeUadEvidenceComparison(loader, pool, workfileId, logger
   }
 }
 
-function errorStatus(error) {
-  const message = String(error?.message || "");
+function uadErrorMessage(error) {
+  try {
+    const candidate = error?.message;
+    return typeof candidate === "string" ? candidate : "";
+  } catch {
+    return "";
+  }
+}
+
+function uadErrorCode(error) {
+  try { return error?.code; }
+  catch { return null; }
+}
+
+function errorStatus(message, error) {
   if (message === "delivery_attempt_not_found_or_completed") return 409;
   if (message.includes("not_found")) return 404;
   if (message === "uad_authentication_required") return 401;
@@ -166,16 +180,21 @@ function errorStatus(error) {
   if (message.includes("not_configured")) return 503;
   if (message.startsWith("invalid_")) return 400;
   if (["uad_parent_entity_required", "uad_entity_minimum_required"].includes(message)) return 400;
-  if (error?.code === "23505") return 409;
-  if (error?.code === "23503") return 400;
+  if (uadErrorCode(error) === "23505") return 409;
+  if (uadErrorCode(error) === "23503") return 400;
   return 500;
 }
 
 function sendError(res, error) {
-  const status = errorStatus(error);
-  const code = status === 500 ? "uad_request_failed" : String(error?.message || "uad_request_failed").split(":")[0];
-  if (status === 500) console.error("[uad] request failed", safeOperationalErrorCode(error));
-  res.status(status).json({ error: code, ...(status !== 500 && error?.details ? { details: error.details } : {}) });
+  const message = uadErrorMessage(error);
+  const status = errorStatus(message, error);
+  const code = status === 500 ? "uad_request_failed" : message.split(":")[0];
+  if (status === 500) {
+    try { console.error("[uad] request failed", safeOperationalErrorCode(error)); }
+    catch { /* Keep the fixed response even if logging fails. */ }
+  }
+  const details = status !== 500 ? publicUadErrorDetails(error) : null;
+  res.status(status).json({ error: code, ...(details ? { details } : {}) });
 }
 
 export function uadBodyParserErrorHandler(error, _req, res, next) {

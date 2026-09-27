@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { UAD_ASSET_UPLOAD_RESERVATION_LIMITS } from "../src/modules/uad/assets.js";
+import { attachUadPublicErrorDetails } from "../src/modules/uad/publicErrorDetails.js";
 import { createUadRouter, safeUadEvidenceComparison, uadBodyParserErrorHandler } from "../src/modules/uad/router.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
@@ -622,7 +623,7 @@ test("unexpected UAD creation failures never expose diagnostics or details", asy
   assert.doesNotMatch(JSON.stringify(calls), /private-password|forged-log-line/);
 });
 
-test("expected UAD validation details remain available to the caller", async () => {
+test("explicitly trusted UAD validation details remain available to the caller", async () => {
   await withServer(securityPool(), async (baseUrl) => {
     const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
       method: "POST",
@@ -636,9 +637,51 @@ test("expected UAD validation details remain available to the caller", async () 
     });
   }, {}, {
     createWorkfile: async () => {
-      throw Object.assign(new Error("invalid_uad_creation_fixture"), { details: { field: "assignee" } });
+      throw attachUadPublicErrorDetails(new Error("invalid_uad_creation_fixture"), { field: "assignee" });
     },
   });
+});
+
+test("untrusted UAD exception details stay private even when its message looks like validation", async () => {
+  const secret = "private-provider-token";
+  await withServer(securityPool(), async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+      method: "POST",
+      headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+      body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+    });
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_uad_creation_fixture" });
+  }, {}, {
+    createWorkfile: async () => {
+      throw Object.assign(new Error("invalid_uad_creation_fixture"), {
+        details: { connection_string: secret },
+      });
+    },
+  });
+});
+
+test("hostile UAD error metadata cannot replace the fixed server response", async () => {
+  const failure = {
+    get message() { throw new Error("private_message_getter"); },
+    get code() { throw new Error("private_code_getter"); },
+    get details() { throw new Error("private_details_getter"); },
+  };
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: "uad_request_failed" });
+    }, {}, { createWorkfile: async () => { throw failure; } });
+  } finally {
+    console.error = originalError;
+  }
 });
 
 test("private UAD PDF uploads pass the bounded binary parser but still require authentication", async () => {

@@ -262,8 +262,9 @@ function completeNormalizedCoowners(owner, year) {
 
 function normalizedOwnerFrom(owner) {
   const year = ownerYear(owner?.tax_year);
-  const completeGroup = completeNormalizedCoowners(owner, year);
-  const name = ownerName(owner?.owner_name) || completeGroup?.name;
+  const summaryName = ownerName(owner?.owner_name);
+  const completeGroup = summaryName ? null : completeNormalizedCoowners(owner, year);
+  const name = summaryName || completeGroup?.name;
   if (!name) return null;
   const parties = completeGroup?.parties || ownerParties(owner.owner_parties, year);
   if (!parties) return null;

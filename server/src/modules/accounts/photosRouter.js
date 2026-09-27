@@ -1,5 +1,7 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+
 export function createAccountPhotosRouter({
   pool,
   accountIdAllowed,
@@ -81,7 +83,8 @@ export function createAccountPhotosRouter({
         photos,
       });
     } catch (error) {
-      logger.error?.("/api/accounts/:id/photos failed", error);
+      try { logger.error?.("/api/accounts/:id/photos failed", safeOperationalErrorCode(error)); }
+      catch { /* Logging must not replace the fixed response. */ }
       return res.status(500).json({ error: "account_photos_failed" });
     }
   });

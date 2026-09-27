@@ -128,7 +128,22 @@ test("account photo failures stay bounded and do not expose diagnostics", async 
   const body = await response.json();
   assert.deepEqual(body, { error: "account_photos_failed" });
   assert.doesNotMatch(JSON.stringify(body), /password|secret|XX000/);
-  assert.equal(errors.length, 1);
+  assert.deepEqual(errors, [["/api/accounts/:id/photos failed", "XX000"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /database_password|secret/);
+});
+
+test("hostile photo-query errors and a throwing logger cannot replace the fixed response", async (context) => {
+  const server = await startRouter(baseOptions({
+    pool: { query: async () => {
+      throw { get code() { throw new Error("private_code_password"); } };
+    } },
+    logger: { error() { throw new Error("private_logger_password"); } },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/123/photos`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "account_photos_failed" });
 });
 
 test("account photo composition and entrypoint position remain explicit", () => {

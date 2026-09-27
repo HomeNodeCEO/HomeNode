@@ -224,10 +224,49 @@ function ownerParties(value, year) {
   return value;
 }
 
+// Some DCAD two-owner headings stop after the first owner's trailing "&",
+// while the same dated owner group has both separately recorded parties. Use
+// that group only when its names and shares prove a complete 100% ownership
+// set; a lone/truncated party must remain unresolved for a verified repair.
+function completeNormalizedCoowners(owner, year) {
+  const summary = typeof owner?.owner_name === "string" ? owner.owner_name.trim() : "";
+  const recorded = owner?.owner_parties;
+  if (!year || !summary.endsWith("&") || !Array.isArray(recorded)
+    || recorded.length < 2 || recorded.length > 8) return null;
+  const normalize = value => value.replace(/\s+/g, " ").toUpperCase();
+  if (typeof recorded[0]?.owner_name !== "string"
+    || normalize(recorded[0].owner_name.trim()) !== normalize(summary)) return null;
+  let totalShare = 0;
+  const parties = [];
+  for (const [index, party] of recorded.entries()) {
+    if (!party || typeof party !== "object" || Array.isArray(party)
+      || ownerYear(party.tax_year) !== year || typeof party.owner_name !== "string") return null;
+    const rawName = party.owner_name.trim();
+    const hasSeparator = rawName.endsWith("&");
+    if (hasSeparator !== (index < recorded.length - 1)) return null;
+    const name = ownerName(hasSeparator ? rawName.slice(0, -1).trim() : rawName);
+    const rawShare = party.ownership_pct;
+    const shareText = typeof rawShare === "number" || typeof rawShare === "string"
+      ? String(rawShare).trim() : "";
+    if (!name || !/^\d{1,3}(?:\.\d{1,4})?%?$/.test(shareText)) return null;
+    const share = Number(shareText.replace(/%$/, ""));
+    if (!Number.isFinite(share) || share <= 0 || share > 100) return null;
+    totalShare += share;
+    parties.push({ ...party, owner_name: name });
+  }
+  if (Math.abs(totalShare - 100) > 0.01
+    || new Set(parties.map(party => normalize(party.owner_name))).size !== parties.length) return null;
+  const name = parties.map(party => party.owner_name).join(" & ");
+  return ownerName(name) ? { name, parties } : null;
+}
+
 function normalizedOwnerFrom(owner) {
-  const name = ownerName(owner?.owner_name);
+  const year = ownerYear(owner?.tax_year);
+  const summaryName = ownerName(owner?.owner_name);
+  const completeGroup = summaryName ? null : completeNormalizedCoowners(owner, year);
+  const name = summaryName || completeGroup?.name;
   if (!name) return null;
-  const year = ownerYear(owner.tax_year), parties = ownerParties(owner.owner_parties, year);
+  const parties = completeGroup?.parties || ownerParties(owner.owner_parties, year);
   if (!parties) return null;
   return { owner_name: name, mailing_address: typeof owner.mailing_address === "string"
     && hasSourceValue(owner.mailing_address) ? owner.mailing_address : null,

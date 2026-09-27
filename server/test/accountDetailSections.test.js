@@ -420,6 +420,45 @@ test("normalized owner parties are bound to the selected summary year, not an in
   assert.equal(queries.length, 9, "no additional owner query is needed");
 });
 
+test("two dated 50% owner parties complete a CAD heading ending in a separator without live lookup", async () => {
+  const normalized = { owner_name: "LOREDO LORENZO JR &", mailing_address: "513 HARDY DR", tax_year: 2026,
+    owner_parties: [
+      { owner_name: "LOREDO LORENZO JR &", ownership_pct: 50, tax_year: 2026 },
+      { owner_name: "THOMPSON ANDI", ownership_pct: 50, tax_year: 2026 },
+    ] };
+  const before = structuredClone(normalized);
+  const { result, fetches } = await ownerSections({ normalized, accountId: "26355500170360000" });
+  assert.equal(fetches.length, 0);
+  assert.deepEqual(result.owner, { owner_name: "LOREDO LORENZO JR & THOMPSON ANDI",
+    mailing_address: "513 HARDY DR", tax_year: 2026, source_year: 2026,
+    owner_parties: [
+      { owner_name: "LOREDO LORENZO JR", ownership_pct: 50, tax_year: 2026 },
+      { owner_name: "THOMPSON ANDI", ownership_pct: 50, tax_year: 2026 },
+    ] });
+  assert.deepEqual(normalized, before, "recorded source rows are not mutated");
+});
+
+test("a partial, mismatched, or cross-year co-owner group remains unresolved", async () => {
+  const valid = { owner_name: "FIRST OWNER &", mailing_address: "100 MAIN ST", tax_year: 2026,
+    owner_parties: [
+      { owner_name: "FIRST OWNER &", ownership_pct: 50, tax_year: 2026 },
+      { owner_name: "SECOND OWNER", ownership_pct: 50, tax_year: 2026 },
+    ] };
+  const invalid = [
+    { owner_parties: valid.owner_parties.slice(0, 1) },
+    { owner_parties: [{ ...valid.owner_parties[0], owner_name: "DIFFERENT OWNER &" }, valid.owner_parties[1]] },
+    { owner_parties: [valid.owner_parties[0], { ...valid.owner_parties[1], tax_year: 2025 }] },
+    { owner_parties: [valid.owner_parties[0], { ...valid.owner_parties[1], ownership_pct: 40 }] },
+    { owner_parties: [valid.owner_parties[0], { ...valid.owner_parties[1], owner_name: "SECOND OWNER &" }] },
+    { owner_parties: [valid.owner_parties[0], { ...valid.owner_parties[1], owner_name: "WITHHELD" }] },
+    { owner_parties: [valid.owner_parties[0], { ...valid.owner_parties[1], owner_name: "FIRST OWNER" }] },
+  ];
+  for (const caseValue of invalid) {
+    const { result } = await ownerSections({ normalized: { ...valid, ...caseValue } });
+    assert.equal(result.owner, null, JSON.stringify(caseValue));
+  }
+});
+
 test("a newer explicitly proven raw owner replaces the entire older group without changing valuation-based sections", async () => {
   const normalized = { owner_name: "OLD OWNER", mailing_address: "OLD MAILING", tax_year: 2026,
     owner_parties: [{ owner_name: "OLD OWNER", ownership_pct: "100", tax_year: 2026 }] };

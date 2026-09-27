@@ -113,6 +113,32 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
   }
 }
 
+async function lockMutableAssignmentDocument(client, documentId) {
+  // Upload takes the Custom workfile lock before updating an existing document.
+  // Read the immutable document scope first, then take locks in that same order
+  // so review/deletion cannot deadlock with a concurrent duplicate upload.
+  const { rows: scopedRows } = await client.query(
+    `SELECT account_id, assignment_file_id
+       FROM app.assignment_documents WHERE id = $1`,
+    [documentId],
+  );
+  const scopedDocument = scopedRows[0];
+  if (!scopedDocument) throw new Error("document_not_found");
+  await lockMutableCustomDocumentWorkfile(client, scopedDocument);
+  const { rows } = await client.query(
+    `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+    [documentId],
+  );
+  const document = rows[0];
+  if (!document) throw new Error("document_not_found");
+  if (document.account_id !== scopedDocument.account_id
+    || positiveInteger(document.assignment_file_id)
+      !== positiveInteger(scopedDocument.assignment_file_id)) {
+    throw new Error("document_scope_changed");
+  }
+  return document;
+}
+
 function normalizeDocumentUploadQuota(value) {
   if (value == null) return null;
   const maximumDocuments = positiveInteger(value.maximumDocuments);
@@ -1603,16 +1629,7 @@ export async function deleteAssignmentDocument(pool, storage, documentId) {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows } = await client.query(
-      `SELECT id, account_id, assignment_file_id, storage_provider, object_key
-       FROM app.assignment_documents
-       WHERE id = $1
-       FOR UPDATE`,
-      [id],
-    );
-    const document = rows[0];
-    if (!document) throw new Error("document_not_found");
-    await lockMutableCustomDocumentWorkfile(client, document);
+    const document = await lockMutableAssignmentDocument(client, id);
     const storedInR2 = document.storage_provider === "r2" && Boolean(document.object_key);
     if (storedInR2) {
       if (!storage?.configured || typeof storage.deleteObject !== "function") {
@@ -1659,13 +1676,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows: documentRows } = await client.query(
-      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
-      [document],
-    );
-    const sourceDocument = documentRows[0];
-    if (!sourceDocument) throw new Error("document_not_found");
-    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
+    const sourceDocument = await lockMutableAssignmentDocument(client, document);
     const { rows } = await client.query(
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
@@ -1798,13 +1809,7 @@ export async function confirmAssignmentDocumentCandidates(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows: documentRows } = await client.query(
-      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
-      [document],
-    );
-    const sourceDocument = documentRows[0];
-    if (!sourceDocument) throw new Error("document_not_found");
-    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
+    const sourceDocument = await lockMutableAssignmentDocument(client, document);
     const { rows: candidateRows } = await client.query(
       `SELECT * FROM app.assignment_document_field_candidates
        WHERE document_id = $1
@@ -1903,13 +1908,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const { rows: documentRows } = await client.query(
-      `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
-      [document],
-    );
-    const sourceDocument = documentRows[0];
-    if (!sourceDocument) throw new Error("document_not_found");
-    await lockMutableCustomDocumentWorkfile(client, sourceDocument);
+    const sourceDocument = await lockMutableAssignmentDocument(client, document);
     if (sourceDocument.document_type !== "engagement_letter") {
       throw new Error("engagement_letter_required");
     }

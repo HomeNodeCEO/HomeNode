@@ -8,6 +8,7 @@ import {
   loadUadCompletionSuggestions,
 } from "../src/modules/uad/completionSuggestions.js";
 import { applyUadCompletionSuggestions, buildUadCompletionApplyPlan } from "../src/modules/uad/completionApply.js";
+import { publicUadErrorDetails } from "../src/modules/uad/publicErrorDetails.js";
 import { buildUadStandaloneReviewDocument } from "../src/modules/uad/sharedData.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
 
@@ -1223,6 +1224,21 @@ test("requires explicit confirmation, preservation, revision, and exact provenan
   assert.throws(
     () => buildUadCompletionApplyPlan(suggestions, { ...valid, selected_suggestion_ids: ["field:unknown:0000"] }),
     /uad_completion_selection_changed/,
+  );
+});
+
+test("invalid reviewed completion values retain trusted field details", () => {
+  const suggestions = buildUadCompletionSuggestions(canonicalCompletion());
+  const selected = fieldByKey(suggestions, "unit:0700.0140");
+  assert.ok(selected);
+  selected.value = "not-a-number";
+  assert.throws(
+    () => buildUadCompletionApplyPlan(suggestions, applyInput(suggestions, [selected.suggestion_id]), {
+      existingEntities: [{ id: "unit-id", entity_type: "unit", entity_identifier: "unit-1", data: {} }],
+    }),
+    (error) => error.message === "invalid_uad_completion_suggestion_value" &&
+      Array.isArray(error.details) && error.details.length > 0 &&
+      publicUadErrorDetails(error) === error.details,
   );
 });
 

@@ -10,6 +10,7 @@ import {
 } from "../src/modules/uad/editor.js";
 import { createUadSectionPersistence } from "../src/modules/uad/editorPersistence.js";
 import { getUadField, UAD_PHASE_ONE_FIELDS } from "../src/modules/uad/fieldCatalog.js";
+import { publicUadErrorDetails } from "../src/modules/uad/publicErrorDetails.js";
 
 const WORKFILE = "11111111-1111-4111-8111-111111111111";
 const ACTOR = "22222222-2222-4222-8222-222222222222";
@@ -180,7 +181,9 @@ test("incomplete manual save rejects while the identical bounded autosave remain
   const manual = database();
   await assert.rejects(() => saveUadSection(manual.pool, WORKFILE, "highest_best_use", {
     expected_revision: 7, values: highestBestUse().slice(0, 1),
-  }), error => error.message === "invalid_uad_field_values" && error.details.some(item => item.code === "required"));
+  }), error => error.message === "invalid_uad_field_values" &&
+    error.details.some(item => item.code === "required") &&
+    publicUadErrorDetails(error) === error.details);
   assert.deepEqual(changes(manual), []);
   assert.deepEqual(statements(manual).slice(-2), ["rollback", "release"]);
   const draft = database();
@@ -323,7 +326,8 @@ test("missing, signed, signature-unknown and stale workfiles reject before field
       ? () => saveUadSection(db.pool, WORKFILE, "market", { ...autosave([]), expected_revision: revision })
       : () => persistence()(db.client, persistenceInput(autosave([]), { expectedRevision: revision }));
     await assert.rejects(invoke, error => error.message === message &&
-      (message !== "uad_section_stale_revision" || error.details.current_revision === 7));
+      (message !== "uad_section_stale_revision" ||
+        (error.details.current_revision === 7 && publicUadErrorDetails(error) === error.details)));
     assert.equal(statements(db).includes("load_locked"), false);
     assert.deepEqual(changes(db), []);
     assert.deepEqual(statements(db).filter(kind => ["begin", "commit", "rollback", "release"].includes(kind)),

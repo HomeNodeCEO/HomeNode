@@ -9,6 +9,7 @@ import {
 import { getUadEditor } from "../src/modules/uad/editor.js";
 import { listUadAssets } from "../src/modules/uad/assets.js";
 import { listUadSketches } from "../src/modules/uad/sketches.js";
+import { publicUadErrorDetails } from "../src/modules/uad/publicErrorDetails.js";
 import { buildUadValidationInputDigest } from "../src/modules/uad/validation.js";
 
 const WORKFILE_ID = "00000000-0000-4000-8000-000000000101";
@@ -348,6 +349,7 @@ test("signing assurance: credential errors retain precedence over unsupported po
     { authentication_method: null }, OPTIONS), error => {
     assert.equal(error.message, "uad_signature_credentials_incomplete");
     assert.deepEqual(error.details, { missing: ["active_appraiser_profile"] });
+    assert.equal(publicUadErrorDetails(error), error.details);
     return true;
   });
   assert.deepEqual(fixture.state.calls.map(call => call.kind), ["begin", "lock", "signers", "rollback"]);

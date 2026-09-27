@@ -9,6 +9,7 @@ import {
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
 import { validateAssignmentDetails } from "../util/reportManualValues.js";
 import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
+import { canonicalCustomAppraisalFileName } from "./customAppraisalWorkfiles.js";
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -78,6 +79,36 @@ function cleanText(value, maximum = 4_000) {
 function positiveInteger(value) {
   const parsed = Number(value);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : null;
+}
+
+async function lockMutableCustomDocumentWorkfile(client, document) {
+  const assignmentFileId = positiveInteger(document?.assignment_file_id);
+  if (!assignmentFileId) return;
+  const { rows: assignments } = await client.query(
+    `SELECT id, file_number FROM app.assignment_files
+      WHERE id = $1 AND account_id = $2`,
+    [assignmentFileId, document.account_id],
+  );
+  if (!assignments[0]) throw new Error("assignment_file_not_found");
+  await client.query(
+    `INSERT INTO app.custom_appraisal_workfiles (assignment_file_id, canonical_file_name)
+     VALUES ($1, $2) ON CONFLICT (assignment_file_id) DO NOTHING`,
+    [assignmentFileId, canonicalCustomAppraisalFileName(assignments[0].file_number, assignmentFileId)],
+  );
+  const { rows: workfiles } = await client.query(
+    `SELECT workfile.status,
+            EXISTS (SELECT 1 FROM app.custom_appraisal_signed_snapshots snapshot
+                     WHERE snapshot.assignment_file_id = workfile.assignment_file_id)
+              AS has_signed_snapshot
+       FROM app.custom_appraisal_workfiles workfile
+      WHERE workfile.assignment_file_id = $1
+      FOR UPDATE OF workfile`,
+    [assignmentFileId],
+  );
+  if (!workfiles[0]) throw new Error("assignment_file_not_found");
+  if (workfiles[0].status === "signed" || workfiles[0].has_signed_snapshot) {
+    throw new Error("custom_appraisal_workfile_signed");
+  }
 }
 
 function normalizeDocumentUploadQuota(value) {
@@ -1529,7 +1560,7 @@ export async function deleteAssignmentDocument(pool, storage, documentId) {
   try {
     await client.query("BEGIN");
     const { rows } = await client.query(
-      `SELECT id, storage_provider, object_key
+      `SELECT id, account_id, assignment_file_id, storage_provider, object_key
        FROM app.assignment_documents
        WHERE id = $1
        FOR UPDATE`,
@@ -1537,6 +1568,7 @@ export async function deleteAssignmentDocument(pool, storage, documentId) {
     );
     const document = rows[0];
     if (!document) throw new Error("document_not_found");
+    await lockMutableCustomDocumentWorkfile(client, document);
     const storedInR2 = document.storage_provider === "r2" && Boolean(document.object_key);
     if (storedInR2) {
       if (!storage?.configured || typeof storage.deleteObject !== "function") {

@@ -291,6 +291,9 @@ export function createAssignmentDocumentRouter({
       if (message === "assignment_document_storage_not_configured") {
         return res.status(503).json({ error: message });
       }
+      if (message === "custom_appraisal_workfile_signed") {
+        return res.set("cache-control", "no-store").status(409).json({ error: message });
+      }
       logger.error?.("assignment document delete failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "assignment_document_delete_failed" });
     }

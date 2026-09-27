@@ -595,7 +595,7 @@ test("deleting a private assignment document removes its R2 object before cascad
     async query(sql) {
       events.push(sql);
       if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
-      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+      if (/SELECT id, account_id, assignment_file_id, storage_provider, object_key/.test(sql)) {
         return { rows: [{ id: 42, storage_provider: "r2", object_key: "documents/42.pdf" }] };
       }
       if (/DELETE FROM app\.assignment_documents/.test(sql)) return { rows: [{ id: 42 }] };
@@ -631,13 +631,96 @@ test("deleting a private assignment document removes its R2 object before cascad
   assert.ok(events.includes("COMMIT"));
 });
 
+test("signed Custom documents cannot be deleted from R2 or the database", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
+      if (/SELECT id, account_id, assignment_file_id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 44, account_id: "account-44", assignment_file_id: 91,
+          storage_provider: "r2", object_key: "documents/44.pdf" }] };
+      }
+      if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+        return { rows: [{ id: 91, file_number: "2026-44" }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+      if (/FOR UPDATE OF workfile/.test(sql)) {
+        return { rows: [{ status: "signed", has_signed_snapshot: true }] };
+      }
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() { events.push("RELEASE"); },
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const storage = {
+    configured: true,
+    async deleteObject() { events.push("DELETE_OBJECT"); },
+  };
+  await assert.rejects(deleteAssignmentDocument(pool, storage, 44),
+    /custom_appraisal_workfile_signed/);
+  assert.ok(events.some((sql) => /FOR UPDATE OF workfile/.test(sql)));
+  assert.ok(events.includes("ROLLBACK"));
+  assert.equal(events.includes("DELETE_OBJECT"), false);
+  assert.equal(events.some((sql) => /DELETE FROM app\.assignment_documents/.test(sql)), false);
+});
+
+test("draft Custom document deletion locks the workfile before removing private evidence", async () => {
+  const events = [];
+  const client = {
+    async query(sql) {
+      events.push(sql);
+      if (sql === "BEGIN" || sql === "COMMIT") return { rows: [] };
+      if (/SELECT id, account_id, assignment_file_id, storage_provider, object_key/.test(sql)) {
+        return { rows: [{ id: 45, account_id: "account-45", assignment_file_id: 92,
+          storage_provider: "r2", object_key: "documents/45.pdf" }] };
+      }
+      if (/SELECT id, file_number FROM app\.assignment_files/.test(sql)) {
+        return { rows: [{ id: 92, file_number: "2026-45" }] };
+      }
+      if (/INSERT INTO app\.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
+      if (/FOR UPDATE OF workfile/.test(sql)) {
+        return { rows: [{ status: "draft", has_signed_snapshot: false }] };
+      }
+      if (/DELETE FROM app\.assignment_documents/.test(sql)) return { rows: [{ id: 45 }] };
+      throw new Error(`unexpected query: ${sql}`);
+    },
+    release() { events.push("RELEASE"); },
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected pool query: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const storage = {
+    configured: true,
+    async deleteObject({ objectKey }) { events.push(`DELETE_OBJECT ${objectKey}`); },
+  };
+  assert.deepEqual(await deleteAssignmentDocument(pool, storage, 45), {
+    document_id: 45, deleted: true, storage_deleted: true,
+  });
+  assert.ok(events.findIndex((sql) => /FOR UPDATE OF workfile/.test(sql))
+    < events.indexOf("DELETE_OBJECT documents/45.pdf"));
+  assert.ok(events.indexOf("DELETE_OBJECT documents/45.pdf")
+    < events.findIndex((sql) => /DELETE FROM app\.assignment_documents/.test(sql)));
+  assert.ok(events.includes("COMMIT"));
+});
+
 test("a private document remains in the database when object deletion fails", async () => {
   const events = [];
   const client = {
     async query(sql) {
       events.push(sql);
       if (sql === "BEGIN" || sql === "ROLLBACK") return { rows: [] };
-      if (/SELECT id, storage_provider, object_key/.test(sql)) {
+      if (/SELECT id, account_id, assignment_file_id, storage_provider, object_key/.test(sql)) {
         return { rows: [{ id: 43, storage_provider: "r2", object_key: "documents/43.pdf" }] };
       }
       throw new Error(`unexpected query: ${sql}`);

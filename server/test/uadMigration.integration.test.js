@@ -3,11 +3,86 @@ import { randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 
+import {
+  deleteAssignmentDocument,
+  ensureAssignmentDocumentsSchema,
+} from "../src/services/assignmentDocuments.js";
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
 import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhotoCoverageAudit.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("signed Custom document deletion is denied before R2 deletion against migrated PostgreSQL", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    const identity = await client.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    const transactionScopedPool = {
+      query: (...args) => client.query(...args),
+      connect: async () => ({
+        query: (sql, ...args) => {
+          if (sql === "BEGIN") return client.query("SAVEPOINT signed_document_delete");
+          if (sql === "ROLLBACK") return client.query("ROLLBACK TO SAVEPOINT signed_document_delete");
+          if (sql === "COMMIT") throw new Error("fixture_transaction_must_not_commit");
+          return client.query(sql, ...args);
+        },
+        release() {},
+      }),
+    };
+    await ensureAssignmentDocumentsSchema(transactionScopedPool);
+    await client.query("BEGIN");
+    const suffix = randomUUID();
+    const accountId = `signed-document-${suffix}`;
+    const fileNumber = `signed-document-${suffix}`;
+    await client.query("INSERT INTO core.accounts (account_id) VALUES ($1)", [accountId]);
+    const assignment = await client.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $2) RETURNING id`,
+      [accountId, fileNumber],
+    );
+    const assignmentFileId = assignment.rows[0].id;
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles
+         (assignment_file_id, canonical_file_name, status, signed_at, signed_by)
+       VALUES ($1, $2, 'signed', now(), 'Fixture appraiser')`,
+      [assignmentFileId, `${fileNumber}.homenode-appraisal.json`],
+    );
+    const document = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name, checksum_sha256,
+          file_size_bytes, storage_provider, storage_bucket, object_key, storage_verified_at)
+       VALUES ($1, $2, 'Signed evidence', 'evidence.pdf', repeat('a', 64),
+               12, 'r2', 'fixture-bucket', $3, now()) RETURNING id`,
+      [accountId, assignmentFileId, `fixtures/${suffix}.pdf`],
+    );
+    let deletedFromStorage = false;
+    const storage = {
+      configured: true,
+      async deleteObject() { deletedFromStorage = true; },
+    };
+    await assert.rejects(
+      deleteAssignmentDocument(transactionScopedPool, storage, document.rows[0].id),
+      /custom_appraisal_workfile_signed/,
+    );
+    assert.equal(deletedFromStorage, false);
+    const remaining = await client.query(
+      "SELECT id FROM app.assignment_documents WHERE id = $1",
+      [document.rows[0].id],
+    );
+    assert.equal(remaining.rows.length, 1);
+  } finally {
+    if (client) {
+      await client.query("ROLLBACK");
+      client.release();
+    }
+    await pool.end();
+  }
+});
 
 test("custom signed-photo coverage audit runs against migrated PostgreSQL without writes", {
   skip: !databaseUrl,

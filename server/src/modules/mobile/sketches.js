@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 
 import { calculateManualSketch } from "./manualSketch.js";
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
+import { lockCustomAppraisalInspectionWorkfile } from "./signedCustomWorkfile.js";
 import { canonicalJson } from "./sync.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 
@@ -310,6 +311,7 @@ async function accessibleSession(client, auth, sessionId, { lock = false, writab
   const organizationIds = auth.organizations.map((item) => item.organizationId);
   const { rows } = await client.query(
     `SELECT session.*, report_file.workflow_type, report_file.account_id,
+            report_file.custom_assignment_file_id,
             report_file.file_number, report_file.registry_revision
        FROM app.inspection_sessions session
        JOIN app.report_files report_file ON report_file.id = session.report_file_id
@@ -322,6 +324,9 @@ async function accessibleSession(client, auth, sessionId, { lock = false, writab
   if (!rows.length) throw new Error("inspection_session_not_found");
   if (writable && rows[0].status === "completed") {
     throw new Error("inspection_session_completed_conflict");
+  }
+  if (writable) {
+    rows[0].custom_workfile_status = await lockCustomAppraisalInspectionWorkfile(client, rows[0]);
   }
   return rows[0];
 }
@@ -480,6 +485,7 @@ export async function saveInspectionSketch(pool, auth, sessionIdValue, input = {
       await client.query("COMMIT");
       return priorOperation.rows[0].result;
     }
+    if (session.custom_workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
     const current = await client.query(
       "SELECT * FROM app.inspection_sketches WHERE inspection_session_id = $1 FOR UPDATE",
       [sessionId],

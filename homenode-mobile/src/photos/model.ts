@@ -160,6 +160,7 @@ export function photoSyncErrorMessage(value: string | null | undefined) {
     mobile_library_permission_required: "Photo-library access is required to import photos.",
     empty_mobile_photo_file: "An empty photo was skipped.",
     mobile_photo_limit_conflict: "This inspection already has 100 active photos.",
+    custom_appraisal_workfile_signed: "This appraisal is signed. The photo remains saved on this device until a new revision is opened.",
     mobile_photo_storage_not_configured: "Cloud photo storage is not configured.",
     mobile_photo_registration_failed: "HomeNode could not register this photo for upload.",
     mobile_photo_not_found: "The cloud photo placeholder is already gone. HomeNode will remove its local copy.",

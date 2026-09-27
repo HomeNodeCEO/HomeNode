@@ -112,8 +112,10 @@ test("mobile verification checksum-binds bytes and promotes immutable object key
           organization_id: ORGANIZATION_ID,
           workflow_type: "custom_appraisal",
           bound_report_file_id: REPORT_FILE_ID,
+          custom_assignment_file_id: 42,
         }] };
       }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
       if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
         return { rows: [originalPhoto] };
       }
@@ -203,6 +205,16 @@ test("mobile verification rejects and removes same-size non-image bytes", async 
     async query(sql) {
       failureQueries.push(sql);
       if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{
+          id: SESSION_ID,
+          status: "active",
+          organization_id: ORGANIZATION_ID,
+          workflow_type: "custom_appraisal",
+          custom_assignment_file_id: 42,
+        }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
       if (/SELECT \* FROM app\.inspection_photos/.test(sql)) return { rows: [originalPhoto] };
       if (/UPDATE app\.inspection_photos/.test(sql)
           || /INSERT INTO app\.inspection_photo_events/.test(sql)) return { rows: [] };
@@ -235,4 +247,146 @@ test("mobile verification rejects and removes same-size non-image bytes", async 
   }, auth, SESSION_ID, PHOTO_ID), /invalid_mobile_photo_upload/);
   assert.deepEqual(deleted, [originalObject.object_key]);
   assert.ok(failureQueries.some((sql) => /photo\.verification_failed/.test(sql)));
+});
+
+test("signed Custom files reject photo verification before storage or status changes", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("50000000-0000-4000-8000-000000000001", "display");
+  const client = {
+    async query(sql) {
+      if (["BEGIN", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{
+          id: SESSION_ID,
+          status: "active",
+          workflow_type: "custom_appraisal",
+          custom_assignment_file_id: 42,
+        }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "signed" }] };
+      assert.fail(`unexpected signed-file write: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      assert.fail(`unexpected preflight write: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const storage = {
+    configured: true,
+    bucket: "private",
+    async inspectObject() { assert.fail("signed-file verification must not read storage"); },
+    async getObject() { assert.fail("signed-file verification must not read storage"); },
+  };
+  await assert.rejects(
+    verifyInspectionPhoto(pool, storage, auth, SESSION_ID, PHOTO_ID),
+    /custom_appraisal_workfile_signed/,
+  );
+});
+
+test("a signing race preserves pending source bytes when photo verification fails", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("60000000-0000-4000-8000-000000000001", "display");
+  let workfileReads = 0;
+  const writes = [];
+  const client = {
+    async query(sql) {
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{
+          id: SESSION_ID,
+          status: "active",
+          workflow_type: "custom_appraisal",
+          custom_assignment_file_id: 42,
+        }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        workfileReads += 1;
+        return { rows: [{ status: workfileReads === 1 ? "draft" : "signed" }] };
+      }
+      if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) {
+        writes.push("verifying");
+        return { rows: [] };
+      }
+      assert.fail(`unexpected post-sign write: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      assert.fail(`unexpected preflight write: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const deleted = [];
+  const spoof = Buffer.alloc(PNG.length, 0x41);
+  await assert.rejects(
+    verifyInspectionPhoto(pool, {
+      configured: true,
+      bucket: "private",
+      async inspectObject() { return { byte_size: spoof.length, content_type: "image/png" }; },
+      async getObject() { return { body: spoof, byte_size: spoof.length, content_type: "image/png" }; },
+      async deleteObject({ objectKey }) { deleted.push(objectKey); },
+    }, auth, SESSION_ID, PHOTO_ID),
+    /custom_appraisal_workfile_signed/,
+  );
+  assert.equal(workfileReads, 2);
+  assert.deepEqual(writes, ["verifying"]);
+  assert.deepEqual(deleted, []);
+});
+
+test("a signing race discards a new verified copy before photo commit", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("70000000-0000-4000-8000-000000000001", "display");
+  let workfileReads = 0;
+  const client = {
+    async query(sql) {
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{
+          id: SESSION_ID,
+          status: "active",
+          workflow_type: "custom_appraisal",
+          custom_assignment_file_id: 42,
+        }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
+        workfileReads += 1;
+        return { rows: [{ status: workfileReads === 1 ? "draft" : "signed" }] };
+      }
+      if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) return { rows: [] };
+      assert.fail(`unexpected post-sign write: ${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      assert.fail(`unexpected preflight write: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  const deleted = [];
+  await assert.rejects(
+    verifyInspectionPhoto(pool, {
+      configured: true,
+      bucket: "private",
+      async inspectObject() { return { byte_size: PNG.length, content_type: "image/png" }; },
+      async getObject() { return { body: PNG, byte_size: PNG.length, content_type: "image/png" }; },
+      async putObject({ body }) { return { byte_size: body.length, etag: "verified-etag" }; },
+      async deleteObject({ objectKey }) { deleted.push(objectKey); },
+    }, auth, SESSION_ID, PHOTO_ID),
+    /custom_appraisal_workfile_signed/,
+  );
+  assert.equal(workfileReads, 2);
+  assert.equal(deleted.length, 1);
+  assert.match(deleted[0], /\.verified-[0-9a-f-]+-[a-f0-9]{64}$/);
+  assert.notEqual(deleted[0], originalObject.object_key);
 });

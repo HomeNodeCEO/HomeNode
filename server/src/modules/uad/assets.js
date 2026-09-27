@@ -8,6 +8,7 @@ import {
 } from "./certificationsCatalog.js";
 import { buildUadObjectKey, buildUadVerifiedAssetObjectKey } from "./r2Storage.js";
 import { inspectUadAssetPayload, inspectUadPdfSafety } from "./uadFileSecurity.js";
+import { boundedUadVerificationError, publicUadAssetCaptureMetadata } from "./operationalMetadata.js";
 import {
   UAD_DWELLING_EXTERIOR_CAPTION_TYPES,
   UAD_DWELLING_EXTERIOR_IMAGE_CONTENT_TYPES,
@@ -252,7 +253,7 @@ function assetResponse(row) {
     content_type: row.content_type,
     byte_size: row.byte_size == null ? null : Number(row.byte_size),
     status: row.status,
-    capture_metadata: row.capture_metadata || {},
+    capture_metadata: publicUadAssetCaptureMetadata(row.capture_metadata),
     uploaded_at: row.uploaded_at || null,
     verified_at: row.verified_at || null,
     created_at: row.created_at,
@@ -857,7 +858,7 @@ export async function verifyUadAssetUpload(pool, storage, workfileIdValue, asset
     if (verified.content_type === "application/pdf") await inspectUadPdfSafety(downloaded.body);
   } catch (error) {
     await rejectUadAssetIfWorkfileMutable(pool, workfileId, assetId, asset, {
-      verification_error: String(error?.message || "invalid_uad_uploaded_asset").split(":")[0],
+      verification_error: boundedUadVerificationError(error),
     });
     await cleanupOwnedUadUploadSource(storage, workfileId, assetId, asset);
     throw new Error("invalid_uad_uploaded_asset");

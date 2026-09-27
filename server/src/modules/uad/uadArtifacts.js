@@ -13,6 +13,7 @@ import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 import { assertUadAssetsApplicable } from "./assetApplicability.js";
+import { publicUadArtifactMetadata, uadUploadFailureMetadata } from "./operationalMetadata.js";
 
 const XML_CONTENT_TYPE = "application/xml";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
@@ -35,7 +36,7 @@ function artifactResponse(row, workfile, storage) {
     checksum_sha256: row.checksum_sha256 || null,
     generation_status: row.generation_status,
     generated_at: row.generated_at || null,
-    metadata: row.metadata || {},
+    metadata: publicUadArtifactMetadata(row.metadata),
     created_at: row.created_at,
     is_current_revision: revisionNumber === currentRevision,
     ready_for_download: row.generation_status === "ready" && current,
@@ -119,13 +120,13 @@ async function loadDeliveryAssets(queryable, workfileId) {
   return result.rows;
 }
 
-async function persistUploadFailure(pool, artifactId, message) {
+async function persistUploadFailure(pool, artifactId) {
   await pool.query(
     `UPDATE appraisal.uad_generated_artifacts
         SET generation_status = 'failed',
             metadata = metadata || $2::jsonb
       WHERE id = $1`,
-    [artifactId, JSON.stringify({ upload_error: String(message || "uad_object_upload_failed").split(":")[0] })],
+    [artifactId, JSON.stringify(uadUploadFailureMetadata())],
   );
 }
 
@@ -387,7 +388,7 @@ async function generateUadXmlArtifactOperation(pool, storage, workfileIdValue) {
       schema_validation: schemaValidationResponse(schemaRunRow, schemaFindingRows),
     };
   } catch (error) {
-    await persistUploadFailure(pool, artifactRow.id, error.message);
+    await persistUploadFailure(pool, artifactRow.id);
     throw error;
   }
 }

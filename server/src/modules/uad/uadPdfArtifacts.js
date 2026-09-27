@@ -10,6 +10,7 @@ import { buildUadValidationInputDigest } from "./validation.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { runUadArtifactOperation } from "./uadArtifactExecution.js";
 import { assertUadAssetsApplicable } from "./assetApplicability.js";
+import { publicUadArtifactMetadata, uadUploadFailureMetadata } from "./operationalMetadata.js";
 
 const PDF_CONTENT_TYPE = "application/pdf";
 const DOWNLOADABLE_WORKFILE_STATUSES = new Set(["ready", "signed", "exported", "submitted"]);
@@ -38,7 +39,7 @@ function artifactResponse(row, workfile, storage) {
     checksum_sha256: row.checksum_sha256 || null,
     generation_status: row.generation_status,
     generated_at: row.generated_at || null,
-    metadata: row.metadata || {},
+    metadata: publicUadArtifactMetadata(row.metadata),
     created_at: row.created_at,
     is_current_revision: revisionNumber === currentRevision,
     ready_for_download: row.generation_status === "ready" && current,
@@ -287,7 +288,7 @@ async function generateUadPdfArtifactOperation(pool, storage, workfileIdValue) {
           SET generation_status = 'failed',
               metadata = metadata || $2::jsonb
         WHERE id = $1`,
-      [artifactRow.id, JSON.stringify({ upload_error: String(error.message || "uad_object_upload_failed").split(":")[0] })],
+      [artifactRow.id, JSON.stringify(uadUploadFailureMetadata())],
     );
     throw error;
   }

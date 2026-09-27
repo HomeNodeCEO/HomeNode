@@ -39,7 +39,8 @@ function fixture() {
   return { group, catalog, freshness: 'current' };
 }
 const initialViewport = { west: -97, south: 32, east: -96.9, north: 32.1 };
-const containedViewport = { west: -96.99, south: 32.01, east: -96.95, north: 32.05 };
+const initialDetailViewport = { ...initialViewport, north: 32.01 };
+const containedViewport = { west: -96.99, south: 32.001, east: -96.95, north: 32.005 };
 function freeze(value) {
   if (value && typeof value === 'object') { Object.values(value).forEach(freeze); Object.freeze(value); }
   return value;
@@ -55,7 +56,7 @@ function deferredFixture() {
     unlabelled_group_ids: presented.unlabelled_group_ids,
     subject_parcels: [{ parcel_id: all[0].id, account_id: 'A', coordinates: [-97, 32], anchor_basis: 'retained_exterior_ring_vertex' }],
     counts: { captured_parcels: 3, captured_accounts: 3 } } };
-  const result = (group = props.group, viewport = initialViewport) => ({ status: 'available', display_only: true,
+  const result = (group = props.group, viewport = initialDetailViewport) => ({ status: 'available', display_only: true,
     target: { account_id: group.request.accountId, assignment_file_id: group.request.assignmentFileId }, context_ref: group.binding.contextRef,
     selection_revision: group.binding.selectionRevision, selection_sha256: group.binding.selectionFingerprint, viewport,
     geometry_semantics: 'current_observed_cached_parcels_not_legal_subdivision_boundary',
@@ -276,10 +277,114 @@ test('zoom and pans contained in complete loaded bounds reuse exact geometry wit
   assert.equal(map.fits.length, 1); assert.equal(JSON.stringify(props), before, 'camera detail never changes map/statistics selection');
 });
 
+test('overview resize changes only empty padding: exact manifest coverage reuses geometry without a refit or request', async t => {
+  const { props, all, result } = deferredFixture(), before = JSON.stringify(props);
+  const h = harness({ viewportResult: (_account, _operation, payload) => ({ ...result(props.group, payload.viewport),
+    geojson: { type: 'FeatureCollection', features: all }, counts: { visible_parcels: 3, captured_parcels: 3 } }) });
+  t.after(() => h.unmount()); await h.ready(props);
+  const map = h.maps[0]; map.bounds = { west: -97.1, south: 31.9, east: -96.7, north: 32.2 };
+  h.emit('moveend'); h.fireTimers(200); await h.drain();
+  const [[west, south], [east, north]] = props.group.map_manifest.bounds;
+  assert.deepEqual(h.viewportCalls[0][2].viewport, { west, south, east, north }, 'request excludes all empty margins');
+  const source = map.getSource('custom-cohort-parcels'), data = source.data, replacements = source.replacements.length;
+  map.bounds = { west: -97.3, south: 31.8, east: -96.5, north: 32.4 };
+  h.observers[0].fn(); h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(map.resizeCount, 1); assert.equal(map.fits.length, 1);
+  assert.equal(h.viewportCalls.length, 1); assert.equal(source.data, data); assert.equal(source.replacements.length, replacements);
+  map.bounds = { west: -96.5, south: 32, east: -96.4, north: 32.1 };
+  h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1); assert.equal(source.data.features.length, 0);
+  assert.match(h.html(), /No captured parcels in this view/);
+  map.bounds = { west: -97.2, south: 31.9, east: -96.6, north: 32.2 };
+  h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 1); assert.equal(source.data.features.length, 3);
+  assert.equal(source.data.features[0].geometry, data.features[0].geometry);
+  assert.equal(JSON.stringify(props), before); assert.equal(map.fits.length, 1);
+});
+
+test('partial manifest intersection clips each edge while boundary-touching views never send zero-area bounds', async t => {
+  const { props, result } = deferredFixture();
+  const h = harness({ viewportResult: (_account, _operation, payload) => result(props.group, payload.viewport) });
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+  assert.deepEqual(h.viewportCalls[0][2].viewport, initialDetailViewport);
+  const map = h.maps[0], [[west], [east, north]] = props.group.map_manifest.bounds;
+  map.bounds = { west: -96.85, south: 31.8, east: -96.7, north: 32.2 };
+  h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.deepEqual(h.viewportCalls[1][2].viewport, { west: -96.85, south: 32, east, north });
+  const touching = { west: west - .1, south: 32, east: west, north: 32.1 };
+  map.bounds = touching; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.deepEqual(h.viewportCalls[2][2].viewport, touching, 'touching exact captured extrema preserves server intersection semantics');
+  assert.ok(h.viewportCalls.every(call => call[2].viewport.east > call[2].viewport.west && call[2].viewport.north > call[2].viewport.south));
+});
+
+for (const failure of ['deadline', 'neighborhood_service_busy', 'neighborhood_request_interrupted']) {
+  test(`${failure} retains original complete geometry as incomplete-current-view, with bounded manual retry`, async t => {
+    const { props, result } = deferredFixture(); let recover = false;
+    const h = harness({ viewportResult: (_account, _operation, payload) => {
+      if (h.viewportCalls.length === 1 || recover) return result(props.group, payload.viewport);
+      return failure === 'deadline' ? new Promise(() => {})
+        : Promise.reject(Object.assign(new Error('temporary'), { status: 503, errorCode: failure }));
+    } });
+    t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+    const map = h.maps[0], source = map.getSource('custom-cohort-parcels'), data = source.data;
+    const expanded = { ...initialViewport, east: -96.88 };
+    const expand = async () => { map.bounds = expanded; h.emit('moveend'); h.fireTimers(200); await h.drain();
+      if (failure === 'deadline') { h.fireTimers(30000); await h.drain(); } };
+    await expand();
+    assert.equal(h.viewportCalls.length, 2); assert.equal(source.data, data); assert.equal(painted(map, 'A').selected, true);
+    assert.match(h.html(), /this view is incomplete/); assert.ok(h.node(node => node.type === 'button' && node.props.children === 'Retry parcel detail'));
+    h.fireTimers(30000); await h.drain(); assert.equal(h.viewportCalls.length, 2, 'failure never starts an automatic retry loop');
+    map.bounds = containedViewport; h.emit('moveend'); h.fireTimers(200); await h.drain();
+    assert.equal(h.viewportCalls.length, 2); assert.equal(source.data, data); assert.doesNotMatch(h.html(), /this view is incomplete/);
+    await expand(); assert.equal(h.viewportCalls.length, 3, 'failed expansion never widens the cached coverage bounds');
+    recover = true;
+    h.node(node => node.type === 'button' && node.props.children === 'Retry parcel detail').props.onClick(); h.render(props);
+    assert.equal(h.node(node => node.type === 'button' && node.props.children === 'Retry parcel detail'), null, 'only one bounded retry is active');
+    h.fireTimers(200); await h.drain();
+    assert.equal(h.viewportCalls.length, 4); assert.doesNotMatch(h.html(), /this view is incomplete/);
+    assert.equal(source.data.features.length, 1); assert.equal(map.fits.length, 1);
+  });
+}
+
+for (const [label, failure] of [
+  ['authentication', Object.assign(new Error('refused'), { status: 401, errorCode: 'authentication_required' })],
+  ['authorization', Object.assign(new Error('refused'), { status: 403, errorCode: 'neighborhood_access_denied' })],
+  ['policy conflict', Object.assign(new Error('refused'), { status: 409, errorCode: 'neighborhood_market_policy_changed' })],
+  ['missing context', Object.assign(new Error('refused'), { status: 404, errorCode: 'neighborhood_context_unavailable' })],
+  ['generic server integrity failure', Object.assign(new Error('refused'), { status: 500, errorCode: 'neighborhood_request_failed' })],
+  ['untyped transport/auth provider rejection', new Error('Neighborhood preview request failed')],
+  ['unknown 503 code', Object.assign(new Error('refused'), { status: 503, errorCode: 'unknown' })],
+  ['503 without code', Object.assign(new Error('refused'), { status: 503 })],
+  ['wrong status for transient code', Object.assign(new Error('refused'), { status: 500, errorCode: 'neighborhood_service_busy' })],
+  ['decoder failure', new Error('Invalid neighborhood preview JSON response')],
+  ['malformed response', null],
+]) test(`${label} clears old viewport state and cache instead of hiding invalidation with fallback`, async t => {
+  const { props, result } = deferredFixture();
+  const h = harness({ viewportResult: (_account, _operation, payload) => h.viewportCalls.length === 1
+    ? result(props.group, payload.viewport) : failure ? Promise.reject(failure) : { status: 'available' } });
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+  const map = h.maps[0], source = map.getSource('custom-cohort-parcels'); assert.equal(source.data.features.length, 1);
+  map.bounds = { ...initialViewport, east: -96.88 }; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(source.data.features.length, 0); assert.doesNotMatch(h.html(), /previously loaded parcels|Retry parcel detail/);
+  map.bounds = containedViewport; h.emit('moveend'); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 3, 'returning to old bounds cannot resurrect rejected coverage');
+});
+
+test('transient failure after catalog replacement cannot retain another immutable catalog projection', async t => {
+  const { props, result } = deferredFixture(); freeze(props.catalog); freeze(props.group);
+  const h = harness({ viewportResult: (_account, _operation, payload) => h.viewportCalls.length === 1
+    ? result(props.group, payload.viewport)
+    : Promise.reject(Object.assign(new Error('busy'), { status: 503, errorCode: 'neighborhood_service_busy' })) });
+  t.after(() => h.unmount()); await h.ready(props); h.fireTimers(200); await h.drain();
+  h.render({ ...props, catalog: freeze(structuredClone(props.catalog)) }); h.fireTimers(200); await h.drain();
+  assert.equal(h.viewportCalls.length, 2); assert.equal(h.maps[0].getSource('custom-cohort-parcels').data.features.length, 0);
+  assert.doesNotMatch(h.html(), /previously loaded parcels|Retry parcel detail/);
+});
+
 test('dense broad camera loads bounded tiles and paints exact polygons only when coverage is complete', async t => {
   const { props, result } = deferredFixture(); let resolveLast;
   const h = harness({ viewportResult: (_account, _operation, payload) => {
-    if (JSON.stringify(payload.viewport) === JSON.stringify(initialViewport)) {
+    if (JSON.stringify(payload.viewport) === JSON.stringify(initialDetailViewport)) {
       return Promise.reject(Object.assign(new Error('dense'), { status: 422, errorCode: 'neighborhood_viewport_too_dense' }));
     }
     if (h.viewportCalls.length === 2) return result(props.group, payload.viewport);

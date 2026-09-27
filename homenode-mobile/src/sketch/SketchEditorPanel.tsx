@@ -543,6 +543,7 @@ function sketchError(reason: unknown) {
     invalid_sketch_room_anchor: "The room marker must be inside its measured area.",
     invalid_garage_cutout_bounds: "Keep the closed garage cutout inside or on the walls of its main exterior area.",
     invalid_sketch_deduction_bounds: "The garage cutout must remain inside its main exterior area.",
+    custom_appraisal_workfile_signed: "This appraisal is signed. The sketch remains saved on this device until a new revision is opened.",
     network_request_failed: "The sketch is saved on this device and will synchronize when service returns.",
   };
   return messages[code] || code.replaceAll("_", " ");

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { normalizeUuid, sessionResponse } from "./reportFiles.js";
+import { lockCustomAppraisalInspectionWorkfile } from "./signedCustomWorkfile.js";
 
 const MAX_BATCH_SIZE = 25;
 const MAX_FIELD_PATH = 200;
@@ -206,16 +207,18 @@ function organizationIds(auth) {
 
 async function lockSession(client, auth, sessionId) {
   const { rows } = await client.query(
-    `SELECT session.*
+    `SELECT session.*, report_file.workflow_type, report_file.custom_assignment_file_id
        FROM app.inspection_sessions session
+       JOIN app.report_files report_file ON report_file.id = session.report_file_id
       WHERE session.id = $1
         AND session.organization_id = ANY($2::uuid[])
         AND session.appraiser_user_id = $3
-      FOR UPDATE`,
+      FOR UPDATE OF session`,
     [sessionId, organizationIds(auth), auth.userId],
   );
   if (!rows.length) throw new Error("inspection_session_not_found");
   if (rows[0].status === "completed") throw new Error("inspection_session_completed_conflict");
+  rows[0].custom_workfile_status = await lockCustomAppraisalInspectionWorkfile(client, rows[0]);
   return rows[0];
 }
 
@@ -497,6 +500,16 @@ export async function syncInspectionOperations(pool, auth, sessionIdValue, input
   try {
     await client.query("BEGIN");
     const session = await lockSession(client, auth, sessionId);
+    if (session.custom_workfile_status === "signed") {
+      const prior = [];
+      for (const operation of operations) {
+        const existing = await findExistingOperation(client, sessionId, operation);
+        if (!existing) throw new Error("custom_appraisal_workfile_signed");
+        prior.push(existing);
+      }
+      await client.query("COMMIT");
+      return Object.freeze({ session: sessionResponse(session), operations: prior });
+    }
     let revision = Number(session.revision);
     const responses = [];
     for (const operation of operations) {

@@ -14,7 +14,7 @@ import {
   UAD_PHOTO_CATEGORIES,
 } from "../src/photos/model";
 import { runWithConcurrency } from "../src/offline/concurrency";
-import type { MobileApi, PresignedPhotoUpload } from "../src/api/client";
+import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../src/api/client";
 import type { LocalPhotoDraft, OfflineStore } from "../src/offline/store";
 import { synchronizeDuePhotosWithDependencies, uploadPhotoObject } from "../src/photos/syncCore";
 
@@ -108,6 +108,40 @@ test("a stalled photo PUT aborts and remains queued for a verified retry", async
   assert.equal(draft, null);
 });
 
+test("a signed-file denial keeps the offline photo and its prepared files", async () => {
+  const photo = {
+    clientPhotoId: "photo_signed",
+    sessionId: "inspection_signed",
+    serverPhotoId: null,
+    serverRevision: null,
+    removeOperationId: null,
+    metadataOperationId: null,
+  } as unknown as LocalPhotoDraft;
+  let failure: string | null = null;
+  let deleted = 0;
+  const store = {
+    async ensureReady() {},
+    async duePhotoDrafts() { return [photo]; },
+    async markPhotoDraftState() {},
+    photoUploadRequest() { return { client_photo_id: photo.clientPhotoId }; },
+    async recordPhotoFailure(_owner: string, draft: LocalPhotoDraft, code: string) {
+      assert.equal(draft, photo);
+      failure = code;
+    },
+  } as unknown as OfflineStore;
+  const api = {
+    async createPhotoUploadRequests() {
+      throw new ApiError(409, "custom_appraisal_workfile_signed");
+    },
+  } as unknown as MobileApi;
+  await synchronizeDuePhotosWithDependencies(store, api, "appraiser_1", {
+    async uploadObject() { assert.fail("signed files must not receive an upload URL"); },
+    async deletePreparedPhotoFiles() { deleted += 1; },
+  });
+  assert.equal(failure, "custom_appraisal_workfile_signed");
+  assert.equal(deleted, 0);
+});
+
 test("offline photo positions reuse an excluded slot", () => {
   const occupied = Array.from({ length: 100 }, (_unused, index) => index + 1)
     .filter((position) => position !== 37);
@@ -153,6 +187,7 @@ test("turns cloud photo failures into actionable field messages", () => {
     photoSyncErrorMessage("mobile_photo_verification_failed"),
     "Cloud storage received the photo, but verification could not be completed.",
   );
+  assert.match(photoSyncErrorMessage("custom_appraisal_workfile_signed"), /saved on this device/);
   assert.match(photoSyncErrorMessage("mobile_photo_upload_transport_failed"), /saved locally/);
   assert.doesNotMatch(
     photoSyncErrorMessage("mobile_photo_upload_transport_failed:https://signed.example/token"),

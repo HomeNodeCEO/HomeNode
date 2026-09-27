@@ -7,6 +7,10 @@ import {
   inspectUadAssetPayload,
 } from "../uad/uadFileSecurity.js";
 import { normalizeUuid } from "./reportFiles.js";
+import {
+  assertCustomAppraisalInspectionWritable,
+  lockCustomAppraisalInspectionWorkfile,
+} from "./signedCustomWorkfile.js";
 import { validateSketchRoom } from "./sketches.js";
 import { canonicalJson } from "./sync.js";
 
@@ -317,9 +321,10 @@ function organizationIds(auth) {
   return auth.organizations.map((item) => item.organizationId);
 }
 
-async function lockSession(client, auth, sessionId, { allowCompleted = false } = {}) {
+async function lockSession(client, auth, sessionId, { allowCompleted = false, allowSignedReplay = false } = {}) {
   const { rows } = await client.query(
-    `SELECT session.*, report_file.workflow_type, report_file.id AS bound_report_file_id
+    `SELECT session.*, report_file.workflow_type, report_file.id AS bound_report_file_id,
+            report_file.custom_assignment_file_id
        FROM app.inspection_sessions session
        JOIN app.report_files report_file ON report_file.id = session.report_file_id
       WHERE session.id = $1
@@ -331,6 +336,11 @@ async function lockSession(client, auth, sessionId, { allowCompleted = false } =
   if (!rows.length) throw new Error("inspection_session_not_found");
   if (!allowCompleted && rows[0].status === "completed") {
     throw new Error("inspection_session_completed_conflict");
+  }
+  if (allowSignedReplay) {
+    rows[0].custom_workfile_status = await lockCustomAppraisalInspectionWorkfile(client, rows[0]);
+  } else {
+    await assertCustomAppraisalInspectionWritable(client, rows[0]);
   }
   return rows[0];
 }
@@ -372,7 +382,7 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    const session = await lockSession(client, auth, sessionId);
+    const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
     const existingResult = await client.query(
       `SELECT * FROM app.inspection_photos
         WHERE inspection_session_id = $1 AND client_photo_id = ANY($2::uuid[])
@@ -385,6 +395,18 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
       if (existing && existing.request_sha256 !== photo.requestSha256) {
         throw new Error("mobile_photo_id_conflict");
       }
+    }
+    if (session.custom_workfile_status === "signed") {
+      const results = [];
+      for (const photo of normalizedPhotos) {
+        const existing = existingByClientId.get(photo.clientPhotoId);
+        if (!existing || !["verified", "excluded"].includes(existing.status)) {
+          throw new Error("custom_appraisal_workfile_signed");
+        }
+        results.push({ photo: photoResponse(existing, await objectRows(client, existing.id)), uploads: [] });
+      }
+      await client.query("COMMIT");
+      return Object.freeze({ photos: results });
     }
     const activeCountResult = await client.query(
       `SELECT count(*)::integer AS count,
@@ -546,6 +568,7 @@ async function recordVerificationFailure(pool, auth, photo, reason, inspected = 
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
+    await lockSession(client, auth, photo.inspection_session_id);
     const locked = await client.query(
       "SELECT * FROM app.inspection_photos WHERE id = $1 FOR UPDATE",
       [photo.id],
@@ -591,10 +614,21 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
   if (photo.status === "verified" || photo.status === "excluded") return photoResponse(photo, objects);
   if (photo.status === "deleted" || !objects.length) throw new Error("mobile_photo_not_found");
 
-  await pool.query(
-    "UPDATE app.inspection_photos SET status = 'verifying', updated_at = now() WHERE id = $1",
-    [photoId],
-  );
+  const markingClient = await pool.connect();
+  try {
+    await markingClient.query("BEGIN");
+    await lockSession(markingClient, auth, sessionId);
+    await markingClient.query(
+      "UPDATE app.inspection_photos SET status = 'verifying', updated_at = now() WHERE id = $1",
+      [photoId],
+    );
+    await markingClient.query("COMMIT");
+  } catch (error) {
+    await markingClient.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    markingClient.release();
+  }
   const inspected = [];
   try {
     for (const object of objects) {
@@ -655,11 +689,6 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
       objectKey: item.verifiedObjectKey,
     }).catch(() => undefined)));
     const invalidUpload = String(error?.message || "") === "invalid_mobile_photo_upload";
-    if (invalidUpload) {
-      await Promise.all(objects.map((object) => storage.deleteObject?.({
-        objectKey: object.object_key,
-      }).catch(() => undefined)));
-    }
     await recordVerificationFailure(
       pool,
       auth,
@@ -667,6 +696,11 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
       invalidUpload ? "uploaded_object_does_not_match_request" : "object_storage_verification_failed",
       inspected,
     );
+    if (invalidUpload) {
+      await Promise.all(objects.map((object) => storage.deleteObject?.({
+        objectKey: object.object_key,
+      }).catch(() => undefined)));
+    }
     if (invalidUpload) throw error;
     if (String(error?.message || "").endsWith(":404")) throw new Error("mobile_photo_upload_not_found");
     throw new Error("mobile_photo_verification_failed");
@@ -843,13 +877,14 @@ export async function updateInspectionPhoto(pool, auth, sessionIdValue, photoIdV
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await lockSession(client, auth, sessionId);
+    const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
     const photo = await lockedAccessiblePhoto(client, auth, sessionId, photoId);
     if (await existingPhotoOperation(client, photoId, operation)) {
       const objects = await objectRows(client, photoId);
       await client.query("COMMIT");
       return photoResponse(photo, objects);
     }
+    if (session.custom_workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
     if (Number(photo.revision) !== operation.baseRevision) throw new Error("mobile_photo_revision_conflict");
     const next = {
       category: Object.hasOwn(operation.changes, "category") ? operation.changes.category : photo.category,
@@ -913,7 +948,7 @@ export async function removeInspectionPhoto(pool, auth, sessionIdValue, photoIdV
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
-    await lockSession(client, auth, sessionId);
+    const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
     const photo = await lockedAccessiblePhoto(client, auth, sessionId, photoId, { includeDeleted: true });
     if (await existingPhotoOperation(client, photoId, operation)) {
       const objects = await objectRows(client, photoId);
@@ -923,6 +958,7 @@ export async function removeInspectionPhoto(pool, auth, sessionIdValue, photoIdV
         disposition: photo.status === "excluded" ? "excluded_retained" : "placeholder_deleted",
       };
     }
+    if (session.custom_workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
     if (photo.status === "deleted") throw new Error("mobile_photo_not_found");
     if (Number(photo.revision) !== operation.baseRevision) throw new Error("mobile_photo_revision_conflict");
     const retain = photo.verified_at != null || photo.status === "verified" || photo.status === "excluded";

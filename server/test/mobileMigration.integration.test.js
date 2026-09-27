@@ -783,13 +783,14 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     );
     assert.equal(retriedUpdate.revision, updatedPhoto.revision);
 
+    const removedOperationId = randomUUID();
     const removedPhoto = await removeInspectionPhoto(
       pool,
       auth,
       session.session.id,
       updatedPhoto.id,
       {
-        client_operation_id: randomUUID(),
+        client_operation_id: removedOperationId,
         base_revision: updatedPhoto.revision,
       },
     );
@@ -799,6 +800,110 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     const listedPhotos = await listInspectionPhotos(pool, auth, session.session.id);
     assert.equal(listedPhotos.photos.length, 1);
     assert.equal(listedPhotos.photos[0].status, "excluded");
+
+    const pendingSignedProbe = await createPhotoUploadBatch(pool, photoStorage, auth, session.session.id, {
+      photos: [{
+        ...photoRequest.photos[0],
+        client_photo_id: randomUUID(),
+        objects: photoRequest.photos[0].objects.map((object) => ({
+          ...object,
+          client_object_id: randomUUID(),
+        })),
+      }],
+    });
+    const pendingPhoto = pendingSignedProbe.photos[0].photo;
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'signed', signed_at = now(), signed_by = 'Test appraiser'
+        WHERE assignment_file_id = $1`,
+      [secondCustom.reportFile.target_id],
+    );
+    await assert.rejects(
+      () => syncInspectionOperations(pool, auth, session.session.id, {
+        operations: [syncOperation("field.upsert", 1, {
+          field_path: "inspection.general.appraiser_comments",
+          base: { exists: false }, value: "Late observation",
+          source_type: "appraiser", appraiser_confirmed: true,
+        })],
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    await assert.rejects(
+      () => saveInspectionSketch(pool, auth, session.session.id, {
+        ...sketchRequest,
+        client_operation_id: randomUUID(),
+        base_revision: savedSketch.sketch.revision,
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    await assert.rejects(
+      () => createPhotoUploadBatch(pool, photoStorage, auth, session.session.id, {
+        photos: [{
+          ...photoRequest.photos[0],
+          client_photo_id: randomUUID(),
+          objects: photoRequest.photos[0].objects.map((object) => ({
+            ...object, client_object_id: randomUUID(),
+          })),
+        }],
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    const signedPhotoReplay = await createPhotoUploadBatch(
+      pool, photoStorage, auth, session.session.id, photoRequest,
+    );
+    assert.equal(signedPhotoReplay.photos[0].photo.id, removedPhoto.photo.id);
+    assert.deepEqual(signedPhotoReplay.photos[0].uploads, []);
+    const signedSketchReplay = await saveInspectionSketch(
+      pool, auth, session.session.id, sketchRequest,
+    );
+    assert.equal(signedSketchReplay.sketch.revision, savedSketch.sketch.revision);
+    await assert.rejects(
+      () => verifyInspectionPhoto(pool, photoStorage, auth, session.session.id, pendingPhoto.id),
+      /custom_appraisal_workfile_signed/,
+    );
+    await assert.rejects(
+      () => updateInspectionPhoto(pool, auth, session.session.id, removedPhoto.photo.id, {
+        client_operation_id: randomUUID(), base_revision: removedPhoto.photo.revision,
+        caption: "Late caption",
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    await assert.rejects(
+      () => removeInspectionPhoto(pool, auth, session.session.id, removedPhoto.photo.id, {
+        client_operation_id: randomUUID(), base_revision: removedPhoto.photo.revision,
+      }),
+      /custom_appraisal_workfile_signed/,
+    );
+    const signedUpdateReplay = await updateInspectionPhoto(
+      pool, auth, session.session.id, removedPhoto.photo.id, {
+        client_operation_id: captionOperationId,
+        base_revision: verifiedPhoto.revision,
+        caption: "Updated kitchen with quartz countertops",
+      },
+    );
+    assert.equal(signedUpdateReplay.id, removedPhoto.photo.id);
+    const signedRemovalReplay = await removeInspectionPhoto(
+      pool, auth, session.session.id, removedPhoto.photo.id, {
+        client_operation_id: removedOperationId,
+        base_revision: updatedPhoto.revision,
+      },
+    );
+    assert.equal(signedRemovalReplay.disposition, "excluded_retained");
+    const afterSignedDenials = await pool.query(
+      `SELECT status, revision FROM app.inspection_photos WHERE id = $1`,
+      [pendingPhoto.id],
+    );
+    assert.equal(afterSignedDenials.rows[0].status, pendingPhoto.status);
+    assert.equal(Number(afterSignedDenials.rows[0].revision), pendingPhoto.revision);
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'draft', signed_at = NULL, signed_by = NULL
+        WHERE assignment_file_id = $1`,
+      [secondCustom.reportFile.target_id],
+    );
+    await removeInspectionPhoto(pool, auth, session.session.id, pendingPhoto.id, {
+      client_operation_id: randomUUID(), base_revision: pendingPhoto.revision,
+    });
 
     const firstPayload = {
       field_path: "inspection.general.appraiser_comments",
@@ -818,6 +923,23 @@ test("mobile report files preserve prior versions and allocate one daily assignm
     });
     assert.equal(retriedSync.session.revision, 2);
     assert.equal(retriedSync.operations[0].status, "applied");
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'signed', signed_at = now(), signed_by = 'Test appraiser'
+        WHERE assignment_file_id = $1`,
+      [secondCustom.reportFile.target_id],
+    );
+    const signedSyncReplay = await syncInspectionOperations(pool, auth, session.session.id, {
+      operations: [firstOperation],
+    });
+    assert.equal(signedSyncReplay.session.revision, 2);
+    assert.equal(signedSyncReplay.operations[0].status, "applied");
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'draft', signed_at = NULL, signed_by = NULL
+        WHERE assignment_file_id = $1`,
+      [secondCustom.reportFile.target_id],
+    );
 
     const conflictingPayload = {
       ...firstPayload,

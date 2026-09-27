@@ -383,6 +383,58 @@ test("creation rolls back missing accounts, invalid inheritance, duplicate numbe
   }
 });
 
+test("assignment validation returns exact public codes without reflecting unexpected neighborhood-prefixed failures", async (context) => {
+  const database = createDatabase(successfulCreateHandler());
+  const unsafe = "neighborhood_private_password_in_provider_diagnostic";
+  const logs = [];
+  const logger = { error: (...args) => logs.push(args) };
+  const createFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw new Error(unsafe); },
+  }));
+  const updateFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw new Error(unsafe); },
+  }));
+  const fileNumberFailure = await startRouter(baseOptions(database, {
+    logger,
+    normalizeFileNumber() { throw new Error(`invalid_${unsafe}`); },
+  }));
+  const ordinary = await startRouter(baseOptions(database));
+  context.after(async () => Promise.all([
+    createFailure.close(), updateFailure.close(), fileNumberFailure.close(), ordinary.close(),
+  ]));
+
+  const createResponse = await createFile(createFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(createResponse.status, 500);
+  assert.deepEqual(await createResponse.json(), { error: "assignment_file_create_failed" });
+  const updateResponse = await patchFile(updateFailure.baseUrl, "A-1", 41, {
+    assignment_details: {}, expected_revision: 1,
+  });
+  assert.equal(updateResponse.status, 500);
+  assert.deepEqual(await updateResponse.json(), { error: "assignment_file_update_failed" });
+  const numberResponse = await createFile(fileNumberFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(numberResponse.status, 500);
+  assert.deepEqual(await numberResponse.json(), { error: "assignment_file_create_failed" });
+
+  const invalidCreate = await createFile(ordinary.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: { neighborhood_market_trend: "not_a_trend" },
+  });
+  assert.equal(invalidCreate.status, 400);
+  assert.deepEqual(await invalidCreate.json(), { error: "invalid_neighborhood_market_trend" });
+  const invalidUpdate = await patchFile(ordinary.baseUrl, "A-1", 41, {
+    assignment_details: { neighborhood_boundary_label: "x".repeat(1001) }, expected_revision: 1,
+  });
+  assert.equal(invalidUpdate.status, 400);
+  assert.deepEqual(await invalidUpdate.json(), { error: "neighborhood_boundary_label_too_long" });
+  assert.equal(logs.length, 3);
+  assert.doesNotMatch(JSON.stringify(logs), /private_password|provider_diagnostic/);
+});
+
 test("assignment updates authorize the canonical file and derive audit identity", async (context) => {
   const database = createDatabase(successfulUpdateHandler({
     id: 41,

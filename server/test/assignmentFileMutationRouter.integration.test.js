@@ -400,9 +400,18 @@ test("assignment validation returns exact public codes without reflecting unexpe
     logger,
     normalizeFileNumber() { throw new Error(`invalid_${unsafe}`); },
   }));
+  const hostileError = {
+    get message() { throw new Error("private_message_getter"); },
+    get code() { throw new Error("private_code_getter"); },
+  };
+  const hostileFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw hostileError; },
+  }));
   const ordinary = await startRouter(baseOptions(database));
   context.after(async () => Promise.all([
-    createFailure.close(), updateFailure.close(), fileNumberFailure.close(), ordinary.close(),
+    createFailure.close(), updateFailure.close(), fileNumberFailure.close(),
+    hostileFailure.close(), ordinary.close(),
   ]));
 
   const createResponse = await createFile(createFailure.baseUrl, "A-1", {
@@ -420,6 +429,11 @@ test("assignment validation returns exact public codes without reflecting unexpe
   });
   assert.equal(numberResponse.status, 500);
   assert.deepEqual(await numberResponse.json(), { error: "assignment_file_create_failed" });
+  const hostileResponse = await createFile(hostileFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(hostileResponse.status, 500);
+  assert.deepEqual(await hostileResponse.json(), { error: "assignment_file_create_failed" });
 
   const invalidCreate = await createFile(ordinary.baseUrl, "A-1", {
     file_number: "F-1", assignment_details: { neighborhood_market_trend: "not_a_trend" },
@@ -431,8 +445,8 @@ test("assignment validation returns exact public codes without reflecting unexpe
   });
   assert.equal(invalidUpdate.status, 400);
   assert.deepEqual(await invalidUpdate.json(), { error: "neighborhood_boundary_label_too_long" });
-  assert.equal(logs.length, 3);
-  assert.doesNotMatch(JSON.stringify(logs), /private_password|provider_diagnostic/);
+  assert.equal(logs.length, 4);
+  assert.doesNotMatch(JSON.stringify(logs), /private_password|provider_diagnostic|private_.*getter/);
 });
 
 test("assignment updates authorize the canonical file and derive audit identity", async (context) => {

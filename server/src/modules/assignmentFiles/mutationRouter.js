@@ -391,7 +391,7 @@ export function createAssignmentFileMutationRouter({
       });
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
-      if (error?.code === "23505") {
+      if (safeOperationalErrorCode(error) === "23505") {
         return res.status(409).json({ error: "assignment_file_number_exists" });
       }
       const validationCode = assignmentValidationCode(error);

@@ -20,9 +20,20 @@ const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const CUSTOM_APPRAISAL_WORKFLOW = "custom_appraisal";
 
 const ASSIGNMENT_VALIDATION_ERRORS = new Set([
+  "invalid_file_number",
+  "invalid_assignment_file_id",
   "invalid_assignment_details",
+  "invalid_subject_neighborhood_summary",
   "invalid_pud_value",
   "invalid_assignment_type",
+  "invalid_significant_physical_deficiencies",
+  "invalid_subject_conforms_to_neighborhood",
+  "invalid_highest_best_use_zoning_compatible",
+  "invalid_highest_best_use_flags",
+  "invalid_subject_condition_rating",
+  "invalid_subject_nonconformity_type",
+  "invalid_highest_best_use_conclusion",
+  "invalid_highest_best_use_site_comparison",
   "invalid_hoa_frequency",
   "invalid_occupancy",
   "pud_requires_hoa_dues_or_explanation",
@@ -52,13 +63,74 @@ const ASSIGNMENT_VALIDATION_ERRORS = new Set([
   "contract_requires_arms_length_selection",
   "contract_requires_seller_match_selection",
   "seller_mismatch_requires_explanation",
+  "invalid_neighborhood_boundary_confirmation",
+  "invalid_neighborhood_boundary_engine_warnings",
+  "invalid_neighborhood_land_use_percentage",
+  "neighborhood_land_use_must_total_100",
+  "invalid_neighborhood_land_use_confidence",
+  "invalid_neighborhood_value_position",
+  "invalid_neighborhood_land_use_analysis_metadata",
+  "invalid_neighborhood_unemployment_percentage",
+  "invalid_neighborhood_city_unemployment_percentage",
+  "invalid_neighborhood_range_value",
+  "invalid_neighborhood_range_order",
+  "invalid_neighborhood_profile_count",
+  "invalid_neighborhood_city_comparison",
+  "invalid_neighborhood_median_dom",
+  "invalid_neighborhood_market_change",
+  "invalid_neighborhood_value_comparison",
+  "invalid_neighborhood_boundary_geometry",
+  "neighborhood_boundary_confirmation_requires_geometry",
+  "invalid_neighborhood_unemployment_zip",
+  "neighborhood_search_profile_required",
 ]);
 
-function isAssignmentValidationError(error) {
-  const message = String(error?.message || "");
-  return ASSIGNMENT_VALIDATION_ERRORS.has(message)
-    || message.startsWith("invalid_neighborhood_")
-    || message.startsWith("neighborhood_");
+// Keep this list aligned with the bounded field validation in reportManualValues.
+// A broad error-message prefix would allow a downstream failure to masquerade as
+// a client error and expose its message in an API response.
+const ASSIGNMENT_TEXT_VALIDATION_FIELDS = [
+  "contract_buyer_names", "contract_seller_names", "contract_date",
+  "contract_closing_date", "contract_property_condition", "contract_repairs",
+  "contract_analysis_summary", "seller_mismatch_explanation",
+  "subject_condition_notes", "subject_nonconformity_explanation",
+  "neighborhood_unemployment_zip", "neighborhood_unemployment_source",
+  "neighborhood_unemployment_variable", "neighborhood_city_unemployment_name",
+  "neighborhood_city_unemployment_source", "neighborhood_city_unemployment_variable",
+  "neighborhood_city_name", "neighborhood_city_comparison_as_of",
+  "neighborhood_boundary_label", "neighborhood_boundary_source",
+  "neighborhood_boundary_saved_at", "neighborhood_boundary_streets",
+  "neighborhood_boundary_north", "neighborhood_boundary_east",
+  "neighborhood_boundary_south", "neighborhood_boundary_west",
+  "neighborhood_boundary_exclusions", "neighborhood_boundary_streets_source",
+  "neighborhood_boundary_streets_retrieved_at", "neighborhood_boundary_confirmed_at",
+  "neighborhood_boundary_engine_confidence", "neighborhood_boundary_engine_disclosure",
+  "neighborhood_relevance_override_updated_at", "neighborhood_land_use_analysis_source",
+  "neighborhood_land_use_analyzed_at", "neighborhood_land_use_boundary_signature",
+  "highest_best_use_summary", "highest_best_use_source", "highest_best_use_analyzed_at",
+  "neighborhood_value_conclusion", "neighborhood_value_conclusion_auto",
+  "neighborhood_value_conclusion_signature", "neighborhood_value_conclusion_generated_at",
+  "neighborhood_value_source",
+];
+for (const field of ASSIGNMENT_TEXT_VALIDATION_FIELDS) {
+  ASSIGNMENT_VALIDATION_ERRORS.add(`invalid_${field}`);
+  ASSIGNMENT_VALIDATION_ERRORS.add(`${field}_too_long`);
+}
+for (const field of [
+  "neighborhood_relevance_removed_pocket_ids", "neighborhood_relevance_added_pocket_ids",
+  "neighborhood_location_type", "neighborhood_built_up", "neighborhood_growth",
+  "neighborhood_market_trend", "neighborhood_demand_supply",
+  "neighborhood_marketing_time",
+]) {
+  ASSIGNMENT_VALIDATION_ERRORS.add(`invalid_${field}`);
+}
+
+function assignmentValidationCode(error) {
+  try {
+    const message = String(error?.message || "");
+    return ASSIGNMENT_VALIDATION_ERRORS.has(message) ? message : null;
+  } catch {
+    return null;
+  }
 }
 
 function requestedAccountId(req, res) {
@@ -174,7 +246,10 @@ export function createAssignmentFileMutationRouter({
       fileNumber = normalizeFileNumber(req.body?.file_number);
       inheritedFromFileId = normalizeFileId(req.body?.inherited_from_file_id);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
+      const validationCode = assignmentValidationCode(error);
+      if (validationCode) return res.status(400).json({ error: validationCode });
+      try { logger.error?.("assignment file create validation failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
+      return res.status(500).json({ error: "assignment_file_create_failed" });
     }
     const reviewer = assignmentReviewer(req);
     const client = await pool.connect();
@@ -316,12 +391,11 @@ export function createAssignmentFileMutationRouter({
       });
     } catch (error) {
       await client.query("ROLLBACK").catch(() => {});
-      if (error?.code === "23505") {
+      if (safeOperationalErrorCode(error) === "23505") {
         return res.status(409).json({ error: "assignment_file_number_exists" });
       }
-      if (isAssignmentValidationError(error)) {
-        return res.status(400).json({ error: error.message });
-      }
+      const validationCode = assignmentValidationCode(error);
+      if (validationCode) return res.status(400).json({ error: validationCode });
       try { logger.error?.("assignment file create failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_create_failed" });
     } finally {
@@ -340,7 +414,10 @@ export function createAssignmentFileMutationRouter({
       assignmentFileId = normalizeFileId(req.params.fileId, { required: true });
       validateAssignmentDetails(req.body?.assignment_details);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_assignment_file" });
+      const validationCode = assignmentValidationCode(error);
+      if (validationCode) return res.status(400).json({ error: validationCode });
+      try { logger.error?.("assignment file update validation failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
+      return res.status(500).json({ error: "assignment_file_update_failed" });
     }
     const expectedRevision = Number(req.body?.expected_revision);
     if (!Number.isSafeInteger(expectedRevision) || expectedRevision < 1) {

@@ -7,6 +7,7 @@ import express from "express";
 import {
   createAssignmentFileMutationRouter,
 } from "../src/modules/assignmentFiles/mutationRouter.js";
+import { validateAssignmentDetails } from "../src/util/reportManualValues.js";
 
 const identity = Object.freeze({
   userId: "user-1",
@@ -381,6 +382,130 @@ test("creation rolls back missing accounts, invalid inheritance, duplicate numbe
     assert.ok(database.queries.some(({ sql }) => sql === "ROLLBACK"));
     assert.equal(database.releaseCalls, 1);
   }
+});
+
+test("assignment validation returns exact public codes without reflecting unexpected neighborhood-prefixed failures", async (context) => {
+  const database = createDatabase(successfulCreateHandler());
+  const unsafe = "neighborhood_private_password_in_provider_diagnostic";
+  const logs = [];
+  const logger = { error: (...args) => logs.push(args) };
+  const createFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw new Error(unsafe); },
+  }));
+  const updateFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw new Error(unsafe); },
+  }));
+  const fileNumberFailure = await startRouter(baseOptions(database, {
+    logger,
+    normalizeFileNumber() { throw new Error(`invalid_${unsafe}`); },
+  }));
+  const hostileError = {
+    get message() { throw new Error("private_message_getter"); },
+    get code() { throw new Error("private_code_getter"); },
+  };
+  const hostileFailure = await startRouter(baseOptions(database, {
+    logger,
+    validateAssignmentDetails() { throw hostileError; },
+  }));
+  const ordinary = await startRouter(baseOptions(database));
+  context.after(async () => Promise.all([
+    createFailure.close(), updateFailure.close(), fileNumberFailure.close(),
+    hostileFailure.close(), ordinary.close(),
+  ]));
+
+  const createResponse = await createFile(createFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(createResponse.status, 500);
+  assert.deepEqual(await createResponse.json(), { error: "assignment_file_create_failed" });
+  const updateResponse = await patchFile(updateFailure.baseUrl, "A-1", 41, {
+    assignment_details: {}, expected_revision: 1,
+  });
+  assert.equal(updateResponse.status, 500);
+  assert.deepEqual(await updateResponse.json(), { error: "assignment_file_update_failed" });
+  const numberResponse = await createFile(fileNumberFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(numberResponse.status, 500);
+  assert.deepEqual(await numberResponse.json(), { error: "assignment_file_create_failed" });
+  const hostileResponse = await createFile(hostileFailure.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: {},
+  });
+  assert.equal(hostileResponse.status, 500);
+  assert.deepEqual(await hostileResponse.json(), { error: "assignment_file_create_failed" });
+
+  const invalidCreate = await createFile(ordinary.baseUrl, "A-1", {
+    file_number: "F-1", assignment_details: { neighborhood_market_trend: "not_a_trend" },
+  });
+  assert.equal(invalidCreate.status, 400);
+  assert.deepEqual(await invalidCreate.json(), { error: "invalid_neighborhood_market_trend" });
+  const invalidUpdate = await patchFile(ordinary.baseUrl, "A-1", 41, {
+    assignment_details: { neighborhood_boundary_label: "x".repeat(1001) }, expected_revision: 1,
+  });
+  assert.equal(invalidUpdate.status, 400);
+  assert.deepEqual(await invalidUpdate.json(), { error: "neighborhood_boundary_label_too_long" });
+  assert.equal(logs.length, 4);
+  assert.doesNotMatch(JSON.stringify(logs), /private_password|provider_diagnostic|private_.*getter/);
+});
+
+test("real assignment field validation codes remain client errors through the create route", async (context) => {
+  const database = createDatabase(successfulCreateHandler());
+  const server = await startRouter(baseOptions(database, {
+    validateAssignmentDetails,
+  }));
+  context.after(server.close);
+  const textFields = [
+    "contract_buyer_names", "contract_seller_names", "contract_date",
+    "contract_closing_date", "contract_property_condition", "contract_repairs",
+    "contract_analysis_summary", "seller_mismatch_explanation",
+    "subject_condition_notes", "subject_nonconformity_explanation",
+    "neighborhood_unemployment_zip", "neighborhood_unemployment_source",
+    "neighborhood_unemployment_variable", "neighborhood_city_unemployment_name",
+    "neighborhood_city_unemployment_source", "neighborhood_city_unemployment_variable",
+    "neighborhood_city_name", "neighborhood_city_comparison_as_of",
+    "neighborhood_boundary_label", "neighborhood_boundary_source",
+    "neighborhood_boundary_saved_at", "neighborhood_boundary_streets",
+    "neighborhood_boundary_north", "neighborhood_boundary_east",
+    "neighborhood_boundary_south", "neighborhood_boundary_west",
+    "neighborhood_boundary_exclusions", "neighborhood_boundary_streets_source",
+    "neighborhood_boundary_streets_retrieved_at", "neighborhood_boundary_confirmed_at",
+    "neighborhood_boundary_engine_confidence", "neighborhood_boundary_engine_disclosure",
+    "neighborhood_relevance_override_updated_at", "neighborhood_land_use_analysis_source",
+    "neighborhood_land_use_analyzed_at", "neighborhood_land_use_boundary_signature",
+    "highest_best_use_summary", "highest_best_use_source", "highest_best_use_analyzed_at",
+    "neighborhood_value_conclusion", "neighborhood_value_conclusion_auto",
+    "neighborhood_value_conclusion_signature", "neighborhood_value_conclusion_generated_at",
+    "neighborhood_value_source",
+  ];
+  const selectionFields = [
+    "neighborhood_location_type", "neighborhood_built_up", "neighborhood_growth",
+    "neighborhood_market_trend", "neighborhood_demand_supply",
+    "neighborhood_marketing_time",
+  ];
+  const cases = [
+    ...textFields.map((field) => ({ [field]: 123 })),
+    ...textFields.map((field) => ({ [field]: "x".repeat(8001) })),
+    ...selectionFields.map((field) => ({ [field]: "not_an_option" })),
+    { neighborhood_relevance_removed_pocket_ids: 123 },
+    { neighborhood_relevance_added_pocket_ids: 123 },
+    { neighborhood_boundary_confirmed: "yes" },
+    { neighborhood_land_use_confidence: "not_an_option" },
+    { neighborhood_value_position: "not_an_option" },
+  ];
+  for (const assignmentDetails of cases) {
+    let expectedCode;
+    try { validateAssignmentDetails(assignmentDetails); }
+    catch (error) { expectedCode = error.message; }
+    assert.ok(expectedCode, `fixture must fail validation: ${Object.keys(assignmentDetails)[0]}`);
+    const response = await createFile(server.baseUrl, "A-1", {
+      file_number: "F-1", assignment_details: assignmentDetails,
+    });
+    assert.equal(response.status, 400, expectedCode);
+    assert.deepEqual(await response.json(), { error: expectedCode });
+  }
+  assert.equal(database.queries.some(({ sql }) => sql.includes("INSERT INTO app.assignment_files (")), false);
 });
 
 test("assignment updates authorize the canonical file and derive audit identity", async (context) => {

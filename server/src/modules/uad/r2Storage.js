@@ -86,7 +86,10 @@ function retryDelayMs(response, attempt, baseMs) {
 
 function normalizedStorageError(operation, error) {
   let name = "";
-  try { name = error?.name; } catch { /* Treat hostile exception metadata as unknown. */ }
+  try {
+    const candidate = error?.name;
+    name = typeof candidate === "string" ? candidate : "";
+  } catch { /* Treat hostile exception metadata as unknown. */ }
   if (["AbortError", "TimeoutError"].includes(name)) {
     return new Error(`uad_object_${operation}_timeout`);
   }
@@ -94,7 +97,10 @@ function normalizedStorageError(operation, error) {
   // Preserve only those exact, bounded identities, never the original Error
   // object (which may carry provider-supplied details or a hostile message).
   let message = "";
-  try { message = error?.message; } catch { /* Treat hostile exception metadata as unknown. */ }
+  try {
+    const candidate = error?.message;
+    message = typeof candidate === "string" ? candidate : "";
+  } catch { /* Treat hostile exception metadata as unknown. */ }
   if (operation === "download" && (
     [
       "uad_object_download_too_large",

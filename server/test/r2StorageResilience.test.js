@@ -163,6 +163,16 @@ test("R2 fetch exceptions cannot smuggle public-looking messages or details", as
   }
 });
 
+test("R2 download exceptions with non-string metadata remain bounded", async () => {
+  const storage = createUadObjectStorage({ ...ENVIRONMENT, R2_MAX_ATTEMPTS: "1" }, {
+    fetchImpl: async () => { throw { name: Symbol("private_name"), message: Symbol("private_message") }; },
+  });
+  await assert.rejects(
+    () => storage.getObject({ objectKey: "private/probe", maxBytes: 1024 }),
+    (error) => error.message === "uad_object_download_network_error",
+  );
+});
+
 test("R2 response-body failures retain bounded download errors", async () => {
   const secret = "private-body-token";
   const storage = createUadObjectStorage({ ...ENVIRONMENT, R2_MAX_ATTEMPTS: "1" }, {

@@ -1,16 +1,11 @@
 import express from "express";
 
-import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { logBoundedFailure } from "../../security/boundedRouteErrors.js";
 import { countyGisConfiguration } from "../../services/parcelGis.js";
 import { getTrestleReplicationStatus } from "../../services/trestleReplication.js";
 import { NON_DALLAS_ENRICHMENT_COUNTIES } from "../../util/nonDallasEnrichment.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
-
-function logEnrichmentFailure(logger, label, error) {
-  try { logger.error?.(label, safeOperationalErrorCode(error)); }
-  catch { /* Logging must not replace the fixed response. */ }
-}
 
 export function createEnrichmentReadRouter({
   pool,
@@ -65,7 +60,7 @@ export function createEnrichmentReadRouter({
         resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
       });
     } catch (error) {
-      logEnrichmentFailure(logger, "enrichment status failed", error);
+      logBoundedFailure(logger, "enrichment status failed", error);
       return res.status(500).json({ error: "enrichment_status_failed" });
     }
   });
@@ -116,7 +111,7 @@ export function createEnrichmentReadRouter({
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logEnrichmentFailure(logger, "account enrichment load failed", error);
+      logBoundedFailure(logger, "account enrichment load failed", error);
       return res.status(500).json({ error: "account_enrichment_failed" });
     }
   });

@@ -3,7 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
-import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { knownErrorCode, logBoundedFailure } from "../../security/boundedRouteErrors.js";
 import { normalizeHousingProfileUpdate } from "../../util/housingProfileEdit.js";
 import { validateReportManualSection } from "../../util/reportManualValues.js";
 
@@ -25,20 +25,6 @@ const SECTION_VALIDATION_CODES = new Set([
   "invalid_report_section_value",
   "invalid_subject_value",
 ]);
-
-function knownValidationCode(error, allowedCodes) {
-  try {
-    const message = error?.message;
-    return allowedCodes.has(message) ? message : null;
-  } catch {
-    return null;
-  }
-}
-
-function logManualValueFailure(logger, label, error) {
-  try { logger.error?.(label, safeOperationalErrorCode(error)); }
-  catch { /* Logging must not replace the fixed response. */ }
-}
 
 export function createReportManualValuesRouter({
   pool,
@@ -117,10 +103,10 @@ export function createReportManualValuesRouter({
     try {
       assignmentFileId = normalizeFileId(req.body.assignment_file_id, { required: true });
     } catch (error) {
-      if (knownValidationCode(error, FILE_ID_VALIDATION_CODES)) {
+      if (knownErrorCode(error, FILE_ID_VALIDATION_CODES)) {
         return res.status(400).json({ error: "invalid_assignment_file_id" });
       }
-      logManualValueFailure(logger, "report manual values file validation failed", error);
+      logBoundedFailure(logger, "report manual values file validation failed", error);
       return res.status(500).json({ error: "report_manual_values_update_failed" });
     }
     if (entries.some(([key]) => key === ASSIGNMENT_DETAILS_SECTION)) {
@@ -147,9 +133,9 @@ export function createReportManualValuesRouter({
     try {
       for (const [key, value] of entries) validateSection(key, value);
     } catch (error) {
-      const validationCode = knownValidationCode(error, SECTION_VALIDATION_CODES);
+      const validationCode = knownErrorCode(error, SECTION_VALIDATION_CODES);
       if (validationCode) return res.status(400).json({ error: validationCode });
-      logManualValueFailure(logger, "report manual values section validation failed", error);
+      logBoundedFailure(logger, "report manual values section validation failed", error);
       return res.status(500).json({ error: "report_manual_values_update_failed" });
     }
 
@@ -294,7 +280,7 @@ export function createReportManualValuesRouter({
       });
     } catch (error) {
       if (transactionStarted) await client.query("ROLLBACK").catch(() => {});
-      logManualValueFailure(logger, "/api/accounts/:id/report-manual-values failed", error);
+      logBoundedFailure(logger, "/api/accounts/:id/report-manual-values failed", error);
       return res.status(500).json({ error: "report_manual_values_update_failed" });
     } finally {
       client.release();

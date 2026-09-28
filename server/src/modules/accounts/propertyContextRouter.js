@@ -9,19 +9,11 @@ import {
   propertyContextErrorStatus,
   savePropertyContextReview,
 } from "../../services/propertyContext.js";
-import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { logBoundedFailure } from "../../security/boundedRouteErrors.js";
 
 function requirePool(pool) {
   if (!pool || typeof pool.query !== "function") {
     throw new TypeError("property_context_pool_required");
-  }
-}
-
-function logPropertyContextFailure(logger, label, error) {
-  try {
-    logger.error?.(label, safeOperationalErrorCode(error));
-  } catch {
-    // Diagnostics must never replace the stable API response.
   }
 }
 
@@ -42,7 +34,7 @@ function respondToPropertyContextFailure(res, error, {
   if ([400, 404, 409].includes(status)) {
     return res.status(status).json({ error: message });
   }
-  logPropertyContextFailure(logger, logLabel, error);
+  logBoundedFailure(logger, logLabel, error);
   return res.status(500).json({ error: fallbackCode });
 }
 
@@ -71,7 +63,7 @@ export function createPropertyContextStatusRouter({
       await ensureAvailable();
       return res.json(await getStatus(pool));
     } catch (error) {
-      logPropertyContextFailure(logger, "/api/property-context/status failed", error);
+      logBoundedFailure(logger, "/api/property-context/status failed", error);
       return res.status(500).json({ error: "property_context_status_failed" });
     }
   });

@@ -160,7 +160,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
   }
 }
 
-async function lockMutableAssignmentDocument(client, documentId) {
+async function lockMutableAssignmentDocument(client, documentId, { processingOnly = false } = {}) {
   // Upload takes the Custom workfile lock before updating an existing document.
   // Read the immutable document scope first, then take locks in that same order
   // so review/deletion cannot deadlock with a concurrent duplicate upload.
@@ -172,8 +172,16 @@ async function lockMutableAssignmentDocument(client, documentId) {
   const scopedDocument = scopedRows[0];
   if (!scopedDocument) throw new Error("document_not_found");
   await lockMutableCustomDocumentWorkfile(client, scopedDocument);
+  // Processing needs only scope and retry state. In particular, do not fetch
+  // the potentially large PostgreSQL PDF bytea again for settlement or stale
+  // cleanup; the claim UPDATE below loads it once for extraction.
+  const projection = processingOnly
+    ? `id, account_id, assignment_file_id, uad_workfile_id,
+       tax_protest_file_id, report_file_id, processing_status,
+       processing_attempts, next_processing_at`
+    : "*";
   const { rows } = await client.query(
-    `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+    `SELECT ${projection} FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
     [documentId],
   );
   const document = rows[0];
@@ -1308,7 +1316,7 @@ export async function processAssignmentDocument(pool, documentId, {
   let document;
   try {
     await claimClient.query("BEGIN");
-    const current = await lockMutableAssignmentDocument(claimClient, id);
+    const current = await lockMutableAssignmentDocument(claimClient, id, { processingOnly: true });
     const { rows } = await claimClient.query(
       `UPDATE app.assignment_documents
      SET processing_status = 'processing',
@@ -1373,7 +1381,7 @@ export async function processAssignmentDocument(pool, documentId, {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      const current = await lockMutableAssignmentDocument(client, id);
+      const current = await lockMutableAssignmentDocument(client, id, { processingOnly: true });
       if (!processingDocumentScopeMatches(document, current)) {
         throw new Error("document_scope_changed");
       }
@@ -1491,7 +1499,7 @@ export async function processAssignmentDocument(pool, documentId, {
     try {
       failureClient = await pool.connect();
       await failureClient.query("BEGIN");
-      const current = await lockMutableAssignmentDocument(failureClient, id);
+      const current = await lockMutableAssignmentDocument(failureClient, id, { processingOnly: true });
       if (!processingDocumentScopeMatches(document, current)) {
         throw new Error("document_scope_changed");
       }
@@ -1597,7 +1605,7 @@ export async function processPendingAssignmentDocuments(pool, {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
-      await lockMutableAssignmentDocument(client, row.id);
+      await lockMutableAssignmentDocument(client, row.id, { processingOnly: true });
       await client.query(
         `UPDATE app.assignment_documents
             SET processing_status = 'extraction_failed',

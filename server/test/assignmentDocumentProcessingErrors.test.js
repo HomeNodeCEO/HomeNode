@@ -22,6 +22,13 @@ function fixtureDocument(overrides = {}) {
   };
 }
 
+function isLeanProcessingLock(sql) {
+  if (!/SELECT id, account_id, assignment_file_id, uad_workfile_id,/.test(sql)
+    || !/FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) return false;
+  assert.doesNotMatch(sql, /\bcontent\b|SELECT \*/);
+  return true;
+}
+
 test("extraction persists and logs bounded diagnostics after private-object failure", async () => {
   const failure = new Error("private-url=https://private.example/secret-token");
   failure.code = "ECONNRESET";
@@ -34,7 +41,7 @@ test("extraction persists and logs bounded diagnostics after private-object fail
       if (/SELECT account_id, assignment_file_id/.test(sql)) {
         return { rows: [{ account_id: "fixture", assignment_file_id: null }] };
       }
-      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+      if (isLeanProcessingLock(sql)) {
         return { rows: [fixtureDocument()] };
       }
       if (/SET processing_status = 'processing'/.test(sql)) {
@@ -72,7 +79,7 @@ test("a known invalid PDF code remains visible without raw parser details", asyn
       if (/SELECT account_id, assignment_file_id/.test(sql)) {
         return { rows: [{ account_id: "fixture", assignment_file_id: null }] };
       }
-      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+      if (isLeanProcessingLock(sql)) {
         return { rows: [fixtureDocument()] };
       }
       if (/SET processing_status = 'processing'/.test(sql)) {
@@ -106,7 +113,7 @@ test("maintenance results do not return unexpected worker exception text", async
       if (/SELECT account_id, assignment_file_id/.test(sql)) {
         return { rows: [{ account_id: "fixture", assignment_file_id: null }] };
       }
-      if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+      if (isLeanProcessingLock(sql)) {
         return { rows: [fixtureDocument()] };
       }
       if (/SET processing_status = 'processing'/.test(sql)) {
@@ -156,7 +163,7 @@ for (const [status, expectedWrites] of [["signed", 0], ["draft", 1]]) {
               trace.push("workfile_lock");
               return { rows: [{ status, has_signed_snapshot: false }] };
             }
-            if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) {
+            if (isLeanProcessingLock(sql)) {
               trace.push("document_lock");
               return { rows: [fixtureDocument({ assignment_file_id: 9, processing_attempts: 5 })] };
             }

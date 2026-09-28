@@ -1,8 +1,9 @@
+import { parsePagination } from "../util/pagination.js";
+
 const DALLAS_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z]{17}$/;
 const NATIVE_ACCOUNT_ID_PATTERN = /^[0-9A-Za-z][0-9A-Za-z ._\/#-]{3,99}$/;
 const COLLIN_ACCOUNT_REFERENCE_PATTERN = /^(?=.{4,100}$)(?=.*\d)R[0-9A-Za-z._\/#-]+$/i;
 const COLLIN_ACCOUNT_ID_PATTERN = /^(?=.{6,100}$)(?=.*\d)R-[0-9A-Za-z]+(?:-[0-9A-Za-z]+)+$/i;
-const MAX_RECONCILIATION_QUEUE_OFFSET = 10_000;
 
 function normalizedCounty(value) {
   return String(value ?? "")
@@ -441,12 +442,10 @@ export async function listSalesReconciliationQueue(
   pool,
   { limit = 20, offset = 0 } = {},
 ) {
-  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 20), 1), 100);
-  const requestedOffset = Number(offset);
-  if (!Number.isSafeInteger(requestedOffset) || requestedOffset > MAX_RECONCILIATION_QUEUE_OFFSET) {
-    throw new Error("invalid_offset");
-  }
-  const safeOffset = Math.max(requestedOffset, 0);
+  const { limit: safeLimit, offset: safeOffset } = parsePagination(
+    { limit, offset },
+    { defaultLimit: 20 },
+  );
   const { rows } = await pool.query(
     `
       SELECT

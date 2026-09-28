@@ -3,9 +3,8 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { findAccountByCountyIdentifier } from "../../services/salesReconciliation.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { PaginationError, parsePagination } from "../../util/pagination.js";
 import { normalizePropertyCity, parsePropertySearch } from "../../util/propertySearch.js";
-
-const MAX_PROPERTY_SEARCH_OFFSET = 10_000;
 
 export function createPropertySearchRouter({
   pool,
@@ -49,18 +48,8 @@ export function createPropertySearchRouter({
       await salesReconciliationReady;
       const q = String(req.query.q || "").trim();
       const requestedCity = normalizeCity(req.query.city) || null;
-      const parsedLimit = parseInt(String(req.query.limit || "25"), 10);
-      const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
-        ? Math.min(parsedLimit, 100)
-        : 25;
-      const parsedOffset = parseInt(String(req.query.offset || "0"), 10);
-
       if (!q && !requestedCity) return res.json([]);
-      // Deep OFFSET scans grow with the skipped rows even when LIMIT is small.
-      if (parsedOffset > MAX_PROPERTY_SEARCH_OFFSET) {
-        return res.status(400).json({ error: "search_offset_out_of_range" });
-      }
-      const offset = Number.isFinite(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
+      const { limit, offset } = parsePagination(req.query, { defaultLimit: 25 });
 
       const parsed = q ? parseSearch(q) : null;
       if (q && !parsed.isAccountId && !parsed.normalizedAddress) return res.json([]);
@@ -200,6 +189,7 @@ export function createPropertySearchRouter({
           : rows,
       );
     } catch (error) {
+      if (error instanceof PaginationError) return res.status(400).json({ error: error.message });
       try { logger.error?.("property search failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "search_failed" });
     }

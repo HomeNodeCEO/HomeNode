@@ -91,7 +91,7 @@ test("city-only searches remain canonical-only, ordered, capped, and paginated",
   const server = await startRouter(baseOptions(database));
   context.after(server.close);
 
-  const response = await fetch(`${server.baseUrl}/api/search?city=plano&limit=500&offset=-9`);
+  const response = await fetch(`${server.baseUrl}/api/search?city=plano&limit=500&offset=0`);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), rows);
   assert.equal(database.queries.length, 1);
@@ -105,20 +105,17 @@ test("city-only searches remain canonical-only, ordered, capped, and paginated",
   assert.ok(sql.includes("SELECT m.* FROM core.market_values"));
 });
 
-test("negative search limits use the default instead of causing a database error", async (context) => {
+test("malformed search limits fail before a database query", async (context) => {
   const database = createPool();
   const server = await startRouter(baseOptions(database));
   context.after(server.close);
 
-  for (const limit of ["-1", "-2147483648"]) {
+  for (const limit of ["-1", "0", "1.5", "abc", "Infinity"]) {
     const response = await fetch(`${server.baseUrl}/api/search?city=plano&limit=${limit}`);
-    assert.equal(response.status, 200);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "invalid_limit" });
   }
-  assert.equal(database.queries.length, 2);
-  for (const { sql, params } of database.queries) {
-    assert.match(sql, /LIMIT \$2 OFFSET \$3/);
-    assert.deepEqual(params, ["PLANO%", 25, 0]);
-  }
+  assert.equal(database.queries.length, 0);
 });
 
 test("property search bounds deep offsets before database access", async (context) => {
@@ -126,10 +123,10 @@ test("property search bounds deep offsets before database access", async (contex
   const server = await startRouter(baseOptions(database));
   context.after(server.close);
 
-  for (const offset of ["10001", "9999999999999999999999999999999999999999"]) {
+  for (const offset of ["10001", "9999999999999999999999999999999999999999", "Infinity", "1.5", "abc", "-1"]) {
     const response = await fetch(`${server.baseUrl}/api/search?city=plano&offset=${offset}`);
     assert.equal(response.status, 400);
-    assert.deepEqual(await response.json(), { error: "search_offset_out_of_range" });
+    assert.deepEqual(await response.json(), { error: "invalid_offset" });
   }
   assert.equal(database.queries.length, 0);
 
@@ -137,9 +134,7 @@ test("property search bounds deep offsets before database access", async (contex
   assert.equal(boundary.status, 200);
   assert.deepEqual(database.queries[0].params, ["PLANO%", 25, 10_000]);
 
-  const malformed = await fetch(`${server.baseUrl}/api/search?city=plano&offset=Infinity`);
-  assert.equal(malformed.status, 200);
-  assert.deepEqual(database.queries[1].params, ["PLANO%", 25, 0]);
+  assert.equal(database.queries.length, 1);
 });
 
 test("native county identifiers resolve to canonical accounts and retain legacy-request metadata", async (context) => {

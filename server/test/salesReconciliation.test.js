@@ -88,18 +88,16 @@ test("reconciliation queue bounds pagination before querying PostgreSQL", async 
   assert.deepEqual(calls[0].params, [25, 10_000]);
   assert.match(calls[0].sql, /LIMIT \$1 OFFSET \$2/);
 
-  await listSalesReconciliationQueue(pool, { limit: "0", offset: -5 });
-  assert.deepEqual(calls[1].params, [20, 0]);
-  for (const offset of [10_001, "Infinity", "1.5", "not-a-number", Number.MAX_SAFE_INTEGER + 1]) {
+  for (const offset of [-5, 10_001, "Infinity", "1.5", "not-a-number", Number.MAX_SAFE_INTEGER + 1]) {
     await assert.rejects(
       () => listSalesReconciliationQueue(pool, { offset }),
       /invalid_offset/,
     );
   }
-  assert.equal(calls.length, 2);
+  assert.equal(calls.length, 1);
 });
 
-test("reconciliation queue binds only integral limits while preserving defaults and bounds", async () => {
+test("reconciliation queue preserves valid limits and rejects malformed ones", async () => {
   const limits = [];
   const pool = {
     async query(_sql, params) {
@@ -107,10 +105,14 @@ test("reconciliation queue binds only integral limits while preserving defaults 
       return { rows: [] };
     },
   };
-  for (const limit of ["2.75", "0.5", "0", "not-a-number", "Infinity", "-Infinity", "101"]) {
+  for (const limit of ["2", "101"]) {
     await listSalesReconciliationQueue(pool, { limit });
   }
-  assert.deepEqual(limits, [2, 1, 20, 20, 100, 1, 100]);
+  assert.deepEqual(limits, [2, 100]);
+  for (const limit of ["2.75", "0.5", "0", "not-a-number", "Infinity", "-Infinity"]) {
+    await assert.rejects(() => listSalesReconciliationQueue(pool, { limit }), /invalid_limit/);
+  }
+  assert.deepEqual(limits, [2, 100]);
 });
 
 function lockedSalesSourcePool(source) {

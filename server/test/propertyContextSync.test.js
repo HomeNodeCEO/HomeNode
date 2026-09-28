@@ -332,6 +332,35 @@ test("official zoning normalization retains provider provenance and generalized 
   assert.equal(record.generalized_use, "residential");
 });
 
+test("official zoning failures never persist, return, or log raw exception text", async () => {
+  const statements = [];
+  const logged = [];
+  const pool = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (String(sql).includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const results = await syncOfficialZoningContext(pool, {
+    jurisdictions: ["Garland"],
+    fetchImpl: async () => arcGisResponse({ objectIds: [1] }),
+    logger: {
+      log() { throw new Error("password=do-not-expose"); },
+      error(...args) { logged.push(args); },
+    },
+  });
+
+  assert.equal(results.length, 1);
+  assert.equal(results[0].status, "failed");
+  assert.equal(results[0].error, "property_context_sync_failed");
+  assert.equal(logged[0][1], "property_context_sync_failed");
+  const failedWrites = statements.filter(({ sql }) => sql.includes("SET status = 'failed'"));
+  assert.equal(failedWrites.length, 3);
+  assert.equal(failedWrites.every(({ params }) => params[1] === "property_context_sync_failed"), true);
+  assert.equal(JSON.stringify({ statements, logged, results }).includes("do-not-expose"), false);
+});
+
 test("an implausibly small full DCAD response cannot delete the last good mirror", async () => {
   const statements = [];
   const pool = {
@@ -358,6 +387,12 @@ test("an implausibly small full DCAD response cannot delete the last good mirror
   );
   assert.equal(
     statements.some(({ sql }) => sql.includes("SET status = 'failed'")),
+    true,
+  );
+  assert.equal(
+    statements.filter(({ sql }) => sql.includes("SET status = 'failed'")).every(
+      ({ params }) => params[1] === "property_context_full_sync_incomplete"
+    ),
     true,
   );
   assert.equal(

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 
 import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   classifyDcadLandUse,
   isDcadParcelBuiltUp,
@@ -179,6 +180,25 @@ function normalizedArcGisError(error, signal) {
     return code;
   }
   return "property_context_source_unavailable";
+}
+
+function syncFailureCode(error) {
+  let message = "";
+  try {
+    if (typeof error?.message === "string") message = error.message;
+  } catch {
+    // Diagnostic properties are untrusted; never stringify the exception.
+  }
+  if (/^property_context_source_(?:url_invalid|fetch_unavailable|timeout|unavailable|failed|http_(?:unknown|[1-5]\d{2})|provider_(?:error|\d{1,6})|response_too_large|invalid_response)$/.test(message)) {
+    return message;
+  }
+  if (/^property_context_(?:dcad|tiger_roads_(?:primary|secondary|local)|tiger_railroads|txdot_aadt|fema_nfhl|zoning_city_[a-z_]+_official)_full_sync_(?:empty|incomplete_\d{1,9}|feature_mismatch_\d{1,9}(?:_\d{1,9}){3})$/.test(message)) {
+    return "property_context_full_sync_incomplete";
+  }
+  const operationalCode = safeOperationalErrorCode(error);
+  return operationalCode === "unknown"
+    ? "property_context_sync_failed"
+    : `property_context_sync_${operationalCode}`;
 }
 
 export async function requestArcGis(url, values, {
@@ -586,7 +606,7 @@ async function completeRun(pool, {
 }
 
 async function failRun(pool, { runId, sourceKey, error }) {
-  const message = String(error?.message || error || "property_context_sync_failed").slice(0, 4_000);
+  const message = syncFailureCode(error);
   await pool.query("BEGIN");
   try {
     await pool.query(
@@ -1481,11 +1501,12 @@ async function syncOfficialZoningSource(pool, source, {
     return { source_key: source.sourceKey, run_id: runId, mode: "full", ...progress };
   } catch (error) {
     await failRun(pool, { runId, sourceKey: source.sourceKey, error }).catch(() => {});
+    const code = syncFailureCode(error);
     await pool.query(
       `UPDATE gis.zoning_source_registry
        SET status = 'failed', last_error = $2, updated_at = now()
        WHERE provider_key = $1`,
-      [source.providerKey, String(error?.message || error).slice(0, 4_000)],
+      [source.providerKey, code],
     ).catch(() => {});
     throw error;
   }
@@ -1510,12 +1531,13 @@ async function syncOfficialZoningContextUnlocked(pool, {
       }));
     } catch (error) {
       if (!continueOnError) throw error;
-      logger.error?.(`[property-context] ${source.label} sync failed; retained last usable data`, error);
+      const code = syncFailureCode(error);
+      logger.error?.(`[property-context] ${source.label} sync failed; retained last usable data`, code);
       results.push({
         source_key: source.sourceKey,
         mode: "full",
         status: "failed",
-        error: String(error?.message || error),
+        error: code,
       });
     }
   }

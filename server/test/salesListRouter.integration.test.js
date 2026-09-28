@@ -87,6 +87,13 @@ test("sales list rejects malformed filters before database access", async (conte
     ["min_price=300000&max_price=200000", "invalid_price_range"],
     ["offset=10001", "invalid_offset"],
     ["offset=9999999999999999999999999999999999999999", "invalid_offset"],
+    ["offset=Infinity", "invalid_offset"],
+    ["offset=1.5", "invalid_offset"],
+    ["offset=abc", "invalid_offset"],
+    ["offset=-1", "invalid_offset"],
+    ["limit=0", "invalid_limit"],
+    ["limit=1.5", "invalid_limit"],
+    ["limit=abc", "invalid_limit"],
   ];
   for (const [query, error] of cases) {
     const response = await fetch(`${server.baseUrl}/api/sales?${query}`);
@@ -96,7 +103,7 @@ test("sales list rejects malformed filters before database access", async (conte
   assert.equal(queryCount, 0);
 });
 
-test("sales list preserves bounded and malformed pagination offsets", async (context) => {
+test("sales list preserves the bounded pagination offset", async (context) => {
   const queries = [];
   const server = await startRouter(createSalesListRouter(options({
     pool: { query: async (_sql, params) => {
@@ -110,9 +117,7 @@ test("sales list preserves bounded and malformed pagination offsets", async (con
   assert.equal(boundary.status, 200);
   assert.deepEqual(queries[0], ["closed_sale", 25, 10_000]);
 
-  const malformed = await fetch(`${server.baseUrl}/api/sales?offset=Infinity`);
-  assert.equal(malformed.status, 200);
-  assert.deepEqual(queries[1], ["closed_sale", 25, 0]);
+  assert.equal(queries.length, 1);
 });
 
 test("sales list parameterizes the complete filtered geographic query", async (context) => {
@@ -159,7 +164,7 @@ test("sales list parameterizes the complete filtered geographic query", async (c
     multi_parcel: "confirmed",
     include_attached: "no",
     limit: "999",
-    offset: "-5",
+    offset: "0",
   });
   const response = await fetch(`${server.baseUrl}/api/sales?${params}`);
   assert.equal(response.status, 200);

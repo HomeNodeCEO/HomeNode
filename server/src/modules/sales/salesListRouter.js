@@ -3,6 +3,7 @@ import express from "express";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { resolveComparableSearchProfile } from "../../util/comparableSearchProfiles.js";
 import { isValidIsoCalendarDate } from "../../util/isoCalendarDate.js";
+import { PaginationError, parsePagination } from "../../util/pagination.js";
 
 const PUBLIC_VALIDATION_ERRORS = new Set([
   "invalid_matched",
@@ -11,7 +12,6 @@ const PUBLIC_VALIDATION_ERRORS = new Set([
   "invalid_min_price",
   "invalid_max_price",
 ]);
-const MAX_SALES_SEARCH_OFFSET = 10_000;
 
 export function createSalesListRouter({
   pool,
@@ -49,13 +49,7 @@ export function createSalesListRouter({
       const dateFrom = String(req.query.date_from || "").trim();
       const dateTo = String(req.query.date_to || "").trim();
       const multiParcel = String(req.query.multi_parcel || "").trim().toLowerCase();
-      const limit = Math.min(Math.max(parseInt(String(req.query.limit || "25"), 10) || 25, 1), 200);
-      const parsedOffset = parseInt(String(req.query.offset || "0"), 10);
-      // LIMIT bounds returned rows, but deep OFFSET still scans the skipped rows.
-      if (parsedOffset > MAX_SALES_SEARCH_OFFSET) {
-        return res.status(400).json({ error: "invalid_offset" });
-      }
-      const offset = Number.isFinite(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
+      const { limit, offset } = parsePagination(req.query, { defaultLimit: 25, maxLimit: 200 });
       const searchProfileRequested = req.query.search_profile !== undefined
         && String(req.query.search_profile).trim() !== "";
       const comparableSearchProfile = searchProfileRequested
@@ -306,6 +300,7 @@ export function createSalesListRouter({
       const { rows } = await pool.query(sql, params);
       return res.json(rows);
     } catch (error) {
+      if (error instanceof PaginationError) return res.status(400).json({ error: error.message });
       const message = error?.message;
       if (PUBLIC_VALIDATION_ERRORS.has(message)) {
         return res.status(400).json({ error: message });

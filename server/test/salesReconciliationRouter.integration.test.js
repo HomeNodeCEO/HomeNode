@@ -84,9 +84,16 @@ test("reconciliation queue rejects excessive offsets before database access", as
   }));
   context.after(server.close);
 
-  const response = await fetch(`${server.baseUrl}/api/sales/reconciliation-queue?offset=10001`);
-  assert.equal(response.status, 400);
-  assert.deepEqual(await response.json(), { error: "invalid_offset" });
+  for (const [query, code] of [
+    ["offset=10001", "invalid_offset"],
+    ["offset=1.5", "invalid_offset"],
+    ["offset=abc", "invalid_offset"],
+    ["limit=1.5", "invalid_limit"],
+  ]) {
+    const response = await fetch(`${server.baseUrl}/api/sales/reconciliation-queue?${query}`);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: code });
+  }
   assert.equal(queryCalls, 0);
 });
 

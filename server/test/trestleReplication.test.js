@@ -5,8 +5,18 @@ import {
   ensureTrestleReplicationSchema,
   mapTrestleSourceRecord,
   resolveTrestleAccountMatches,
+  runTrestleMediaBatch,
   runTrestlePropertyReplication,
+  safeTrestleFailureCode,
 } from "../src/services/trestleReplication.js";
+
+test("Trestle failure codes preserve known classes without copying exception text", () => {
+  assert.equal(safeTrestleFailureCode(new Error("trestle_http_503")), "trestle_http_503");
+  assert.equal(safeTrestleFailureCode(new Error("trestle_http_503_token=secret")), "trestle_replication_failed");
+  assert.equal(safeTrestleFailureCode({ code: "42P01", message: "database password=secret" }), "trestle_replication_failed_42P01");
+  assert.equal(safeTrestleFailureCode(new Error("token=secret"), { media: true }), "trestle_media_failed");
+  assert.equal(safeTrestleFailureCode({ get message() { throw new Error("secret"); } }), "trestle_replication_failed");
+});
 
 test("RESO Property maps to the existing sale inventory without losing zero and false", () => {
   const mapped = mapTrestleSourceRecord({
@@ -200,6 +210,68 @@ test("replication failure unlocks through the original connection", async () => 
     assert.equal(warnings.length, unlockFailure ? 1 : 0);
     if (unlockFailure) assert.deepEqual(warnings[0], ["[trestle] advisory lock release failed", "trestle_lock_release_failed"]);
   }
+});
+
+test("replication records bounded failure codes after a started run", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (String(sql).includes("SELECT cursor_timestamp FROM app.trestle_replication_state")) {
+        return { rows: [{ cursor_timestamp: "2026-08-18T00:00:00Z" }] };
+      }
+      if (String(sql).includes("INSERT INTO app.trestle_replication_runs")) {
+        return { rows: [{ id: 77 }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          return String(sql).includes("pg_try_advisory_lock")
+            ? { rows: [{ acquired: true }] }
+            : { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() {},
+      };
+    },
+  };
+  const trestleClient = {
+    config: { initialLookbackDays: 1, overlapMinutes: 10, maximumPages: 1, pageSize: 10 },
+    status: () => ({ replication_ready: true }),
+    async propertyChangesPage() { throw new Error("token=do-not-expose"); },
+  };
+  await assert.rejects(runTrestlePropertyReplication(pool, trestleClient), /do-not-expose/);
+
+  const failedWrites = statements.filter(({ sql }) => sql.includes("SET status = 'failed'"));
+  assert.equal(failedWrites.length, 2);
+  assert.equal(failedWrites.every(({ params }) => params[1] === "trestle_replication_failed"), true);
+  assert.equal(JSON.stringify(statements).includes("do-not-expose"), false);
+});
+
+test("media retries retain their state without storing raw provider exceptions", async () => {
+  const statements = [];
+  const pool = {
+    async query(sql, params) {
+      statements.push({ sql: String(sql), params });
+      if (String(sql).includes("UPDATE app.trestle_media_queue queue")) {
+        return { rows: [{ listing_key: "L1", source_record_id: 1, attempts: 1 }] };
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const result = await runTrestleMediaBatch(pool, {
+    config: { mediaEnabled: true },
+    status: () => ({ replication_ready: true }),
+    async mediaForProperty() { throw new Error("password=do-not-expose"); },
+  });
+
+  assert.equal(result.retry, 1);
+  assert.equal(result.manualReview, 0);
+  const retryWrite = statements.find(({ sql }) => sql.includes("last_error = $4"));
+  assert.equal(retryWrite.params[1], "retry");
+  assert.equal(retryWrite.params[3], "trestle_media_failed");
+  assert.equal(JSON.stringify(statements).includes("do-not-expose"), false);
 });
 
 test("replication follows pages, advances the durable cursor, and aggregates outcomes", async () => {

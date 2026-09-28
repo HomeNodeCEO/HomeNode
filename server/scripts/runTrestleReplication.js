@@ -7,6 +7,7 @@ import {
   getTrestleReplicationStatus,
   runTrestleMediaBatch,
   runTrestlePropertyReplication,
+  safeTrestleFailureCode,
 } from "../src/services/trestleReplication.js";
 
 if (!process.env.DATABASE_URL) throw new Error("database_url_missing");
@@ -58,6 +59,14 @@ try {
     : await getTrestleReplicationStatus(pool, client.status());
   console.log(JSON.stringify({ property, media, enrichment, status }, null, 2));
   if (!enrichment.skipped && !enrichment.ok) process.exitCode = 1;
+} catch (error) {
+  console.error("[trestle] replication failed", safeTrestleFailureCode(error));
+  process.exitCode = 1;
 } finally {
-  await pool.end();
+  try {
+    await pool.end();
+  } catch (error) {
+    console.error("[trestle] pool close failed", safeTrestleFailureCode(error));
+    process.exitCode = 1;
+  }
 }

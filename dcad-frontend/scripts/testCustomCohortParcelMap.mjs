@@ -147,7 +147,7 @@ function harness({ rejectLoad = false, delayedLoad = false, throwPaint = false, 
   class ResizeObserver { constructor(fn) { this.fn = fn; observers.push(this); } observe() {} disconnect() { this.disconnected = true; } }
   // Child effects/network are covered by its own tests. Here its exact current
   // props let us exercise the map owner's real city-camera callback.
-  function CityReferenceStub() { return null; }
+  function CityReferenceStub() { return requireRuntime('react').createElement('div', null, 'City limits marker'); }
   const loaded = loadTrustedRepositoryCommonJs(
     new URL('../src/features/neighborhood/components/CustomCohortParcelMap.tsx', import.meta.url),
     name => {
@@ -223,6 +223,15 @@ test('renders exact retained Polygon holes and disconnected MultiPolygons, never
   assert.match(h.html(), /Included · red outline/);
   assert.doesNotMatch(h.html(), /Color parcels by/);
   assert.match(h.html(), /not legal subdivision or neighborhood boundaries/); assert.doesNotMatch(h.html(), /Loading parcel map/);
+});
+test('range controls follow the similarity legend and live statistics follow the map before city limits', async () => {
+  const props = { ...fixture(), scoreBandSelector: 'Score controls marker', belowMapStatistics: 'Live statistics marker' };
+  const h = harness(); await h.ready(props);
+  const markup = h.html();
+  assert.ok(markup.indexOf('Fill reflects recorded-group similarity') < markup.indexOf('Score controls marker'));
+  assert.ok(markup.indexOf('Score controls marker') < markup.indexOf('Interactive parcel map'));
+  assert.ok(markup.indexOf('Interactive parcel map') < markup.indexOf('Live statistics marker'));
+  assert.ok(markup.indexOf('Live statistics marker') < markup.indexOf('City limits marker'));
 });
 test('opening loads exact green parcel fills and red inclusion outlines beneath the existing clickable dots at normal zoom', async () => {
   const { props, all, result } = deferredFixture();

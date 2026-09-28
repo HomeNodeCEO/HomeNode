@@ -14,6 +14,7 @@ import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomC
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
 import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
 import CustomCohortMapSnapshot from './CustomCohortMapSnapshot';
+import CustomCohortScoreBandSelector from './CustomCohortScoreBandSelector';
 
 export interface CustomCohortControlledWorkspace {
   readonly catalog: CheckedPocketCatalog;
@@ -190,18 +191,21 @@ function WorkspaceSession(props: Props) {
     excludeGroups(family?.pocket_ids ?? [id]);
   };
   const recommendation = desired ? catalog?.recommendation ?? null : null;
-  const reviewById = new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket]));
-  const groups = catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
+  const reviewById = useMemo(() => new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket])), [recommendation]);
+  const groups = useMemo(() => catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
     ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP,
       label: catalog.status === 'incomplete' ? 'Grouping unavailable — capture limit' : 'CAD subdivision not confirmed',
       county: catalog.status === 'incomplete' ? 'Capacity reached' : 'Needs source review', count: catalog.unassigned.member_count }] : [])]
-    .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [];
+    .sort((a, b) => (reviewById.get(a.id)?.review_rank ?? 0) - (reviewById.get(b.id)?.review_rank ?? 0)) : [], [catalog, reviewById]);
   const selectedGroup = groups.find(p => p.id === inspected);
   const selectedFamily = subdivisionFamilies && inspected ? customCohortSubdivisionFamilyForPocket(subdivisionFamilies, inspected) : null;
   const countyMatches = useMemo(() => catalog && inspected ? customCohortCountyNameMatches(catalog, inspected) : [], [catalog, inspected]);
   const subjectCountyMatches = useMemo(() => catalog?.subject_membership.assigned_pocket_id
     ? customCohortCountyNameMatches(catalog, catalog.subject_membership.assigned_pocket_id) : [], [catalog]);
-  const filteredGroups = groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(search.toLowerCase()));
+  const filteredGroups = useMemo(() => {
+    const query = search.toLowerCase();
+    return groups.filter(p => `${p.label} ${p.county}`.toLowerCase().includes(query));
+  }, [groups, search]);
   const pageSize = 50, pageCount = Math.max(1, Math.ceil(filteredGroups.length / pageSize));
   const currentPage = Math.min(groupPage, pageCount - 1);
   const visibleGroups = filteredGroups.slice(currentPage * pageSize, (currentPage + 1) * pageSize);
@@ -227,6 +231,23 @@ function WorkspaceSession(props: Props) {
   const suggestionActive = suggested.length === included.length && suggested.every(id => included.includes(id));
   const suggestionDisabled = selectionDisabled || (!area && recommendation?.status !== 'recommendation_for_review')
     || !suggested.length || suggestionActive;
+  const allGroupsIncluded = useMemo(() => {
+    if (!groups.length || included.length !== groups.length) return false;
+    const selected = new Set(included);
+    return groups.every(pocket => selected.has(pocket.id));
+  }, [groups, included]);
+  const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation} included={included}
+    subjectGroupId={catalog?.subject_membership.assigned_pocket_id ?? null} disabled={selectionDisabled}
+    allGroupsIncluded={allGroupsIncluded}
+    onReplace={ids => choose(ids)} onAdd={includeGroups} onRemove={excludeGroups} />;
+  const liveStatistics = <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3"
+    aria-label="Live neighborhood characteristics and market observations">
+    <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
+    <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
+      <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
+      <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
+    </details>
+  </aside>;
 
   return <section aria-label="Neighborhood pocket exploration" className="space-y-4 rounded-2xl border border-violet-200 p-4 print:hidden">
     <header className="flex flex-wrap items-start justify-between gap-3">
@@ -248,7 +269,9 @@ function WorkspaceSession(props: Props) {
         Automatic ranking is unavailable for this retained study; historical applicability and complete recommendation capacity are required.
         No subset was ranked or omitted. The page list is paginated, not the map or selected statistics.
         {catalog.catalog_version < 3 && ' This saved file uses an older grouping version; Refresh subdivision grouping above requests the expanded version while retaining the saved selection.'}</p>}
-      {recommendation && <section aria-label="Recommended pockets for review" className="space-y-2 rounded-xl border border-amber-300 bg-violet-50/40 p-4">
+      {recommendation && <details className="rounded-xl border border-amber-300 bg-violet-50/40 p-4">
+        <summary className="cursor-pointer text-sm font-medium">Optional automatic recommendation</summary>
+        <section aria-label="Recommended pockets for review" className="mt-3 space-y-2">
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div><h4 className="font-semibold">Recommended area for review</h4>
             <p className="text-sm">{suggested.length.toLocaleString('en-US')} recorded groups · Current observations only</p></div>
@@ -311,7 +334,8 @@ function WorkspaceSession(props: Props) {
         {!recommendation.subject.in_discovery && <p className="text-sm">The subject is not in this captured roster. Review the discovery area before using recommendations.</p>}
         {recommendation.subject.recorded_group_review_ids.some(id => !suggested.includes(id)) && <p className="text-sm">
           The subject’s recorded group is flagged separately for review; it was not automatically added to the suggested set or given a higher score.</p>}
-      </section>}
+        </section>
+      </details>}
       <div className="flex flex-wrap gap-2">
         <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose(customCohortCatalogGroupIds(catalog))}>Include all observations</button>
         <button type="button" className={button} disabled={selectionDisabled} onClick={() => choose([])}>Exclude all</button>
@@ -333,20 +357,19 @@ function WorkspaceSession(props: Props) {
       </p>
       {preview.status === 'failed' && <button type="button" className={button} disabled={selectionDisabled}
         onClick={() => { if (!selectionDisabled) setRetry(n => n + 1); }}>Retry preview</button>}
-      <div className="grid items-start gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(20rem,25rem)]">
+      <div>
         {group ? <CustomCohortParcelMap group={group} catalog={catalog} freshness={freshness}
           subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
           onActivatePocket={activatePocket} onExcludePocket={excludePocket}
           inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
-          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }} />
-          : <p role="status" className="grid min-h-80 place-content-center rounded-xl border border-violet-200 p-4">Waiting for a coherent map and statistics…</p>}
-        <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3" aria-label="Live neighborhood characteristics and market observations">
-          <CustomCohortCompactStatistics group={group} freshness={freshness} includePrivateSales />
-          <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
-            <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
-            <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
-          </details>
-        </aside>
+          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }}
+          scoreBandSelector={scoreBandSelector} belowMapStatistics={liveStatistics} />
+          : <div className="space-y-3 rounded-xl border border-violet-200 p-4">
+            <p role="status" className="grid min-h-40 place-content-center">Waiting for a coherent map and statistics…</p>
+            <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+            {scoreBandSelector}
+            {liveStatistics}
+          </div>}
       </div>
       {group && inspectedFamily && desired && <CustomCohortMapSnapshot key={inspectedFamily.id}
         family={inspectedFamily} catalog={catalog} input={input} included={included}

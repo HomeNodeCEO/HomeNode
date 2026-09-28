@@ -240,7 +240,7 @@ const Workspace = loadTrustedRepositoryCommonJs(new URL('../src/features/neighbo
   if (key === '../customCohortPreviewApi') return { requestCustomCohortOperation() { requests++; assert.fail('No render-time request'); },
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
   assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector',
-    './CustomCohortSubdivisionDialog', './CustomCohortMapSnapshot'].includes(key));
+    './CustomCohortSubdivisionDialog', './CustomCohortMapSnapshot', './CustomCohortScoreBandSelector'].includes(key));
   return { __esModule: true, default: () => null, CustomCohortCompactStatistics: () => null };
 }).default;
 function render(f) {

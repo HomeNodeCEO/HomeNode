@@ -251,6 +251,54 @@ test('same-name county aliases alone can form one review phase without minting a
   assert.equal(phases[0].id, pocketId(1)); assert.deepEqual(phases[0].pocket_ids, [pocketId(1), pocketId(2)]);
 });
 
+test('Broadway Terrace bare-name aliases and numbered phase form one selectable review family', () => {
+  const { catalog } = fixture([
+    { label: 'BROADWAY TERRACE', county: 'Dallas', member_count: 5 },
+    { label: ' Broadway  Terrace ', county: 'DALLAS COUNTY', member_count: 161 },
+    { label: 'BROADWAY TERRACE 2', county: 'DALLAS COUNTY', member_count: 58 },
+    { label: 'BROADWAY TERRACE 2', county: 'Dallas', member_count: 1 },
+    { label: 'BROADWAY TERRACE', county: 'Collin', member_count: 2 },
+  ]);
+  const before = JSON.stringify(catalog), model = build(catalog), broadway = family(model, 1);
+  complete(catalog, model);
+  assert.equal(model.families.length, 2);
+  assert.equal(broadway.basis, 'candidate_numbered_name');
+  assert.equal(broadway.label, 'BROADWAY TERRACE');
+  assert.equal(broadway.member_count, 225);
+  assert.deepEqual(broadway.pocket_ids, [1, 2, 3, 4].map(pocketId));
+  assert.equal(family(model, 5).basis, 'standalone');
+  const phase = phasesFor(catalog, broadway);
+  assert.deepEqual(phase.map(item => [item.label, item.member_count, item.pocket_ids]), [
+    ['BROADWAY TERRACE', 166, [pocketId(1), pocketId(2)]],
+    ['BROADWAY TERRACE 2', 59, [pocketId(3), pocketId(4)]],
+  ]);
+  assert.equal(select(catalog, broadway.pocket_ids, 8).pockets[0].account_ids.length, 225);
+  assert.deepEqual(build({ ...catalog, pockets: [...catalog.pockets].reverse() }), model);
+  assert.equal(JSON.stringify(catalog), before);
+});
+
+test('bare-name county aliases without a numbered phase share one map review label', () => {
+  const { catalog } = fixture([{ label: 'BROADWAY TERRACE', county: 'Dallas', member_count: 5 },
+    { label: ' Broadway  Terrace ', county: 'DALLAS COUNTY', member_count: 161 }]);
+  const model = build(catalog), item = family(model), phase = phasesFor(catalog, item);
+  assert.equal(item.basis, 'recorded_name_alias');
+  assert.equal(item.label, 'Broadway Terrace');
+  assert.deepEqual(item.pocket_ids, [pocketId(1), pocketId(2)]);
+  assert.deepEqual(phase.map(p => [p.label, p.member_count, p.pocket_ids]),
+    [['Broadway Terrace', 166, item.pocket_ids]]);
+});
+
+test('same-county duplicate names and empty aliases remain separate review leaves', () => {
+  const { catalog } = fixture([
+    { label: 'BROADWAY TERRACE', county: 'Dallas' },
+    { label: ' broadway terrace ', county: ' dallas ' },
+    { label: 'BROADWAY TERRACE', county: 'DALLAS COUNTY', member_count: 0 },
+  ]);
+  const model = build(catalog); complete(catalog, model);
+  assert.equal(model.families.length, 3);
+  assert.ok(model.families.every(item => item.basis === 'standalone'));
+});
+
 test('duplicate suffixes without a distinct recognized county spelling stay ambiguous', () => {
   for (const counties of [['Dallas', 'Dallas'], ['Dallas', ' dallas '], ['DALLAS COUNTY', 'Dallas County'],
     ['Travis', 'Travis'], ['Travis', 'Travis County'], ['Unknown', 'UNKNOWN COUNTY']]) {

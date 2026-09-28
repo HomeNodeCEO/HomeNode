@@ -237,6 +237,8 @@ test('opening loads exact green parcel fills and red inclusion outlines beneath 
   const map = h.maps[0];
   assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 0);
   assert.ok(map.getLayer('custom-cohort-group-labels-dot'));
+  assert.deepEqual(map.getLayer('custom-cohort-group-labels-dot').filter,
+    ['any', ['!', ['has', 'subdivision_label']], ['!=', ['get', 'subdivision_label'], '']]);
   assert.equal(map.layers.filter(layer => layer.type === 'circle').length, 1);
   assert.equal(map.getSource('custom-cohort-group-labels').data.features.length, 2);
   assert.equal(h.viewportCalls.length, 0, 'initial camera debounce has not fired yet');
@@ -927,18 +929,18 @@ test('every rendered feature-state ID matches its promoted parcel after reorderi
   assert.equal(h.maps.length, 1); assert.equal(h.loadCount, 1);
 });
 
-test('activation reads live zoom at each click: below 15 subdivision, at and above 15 phase', async () => {
+test('activation uses the complete subdivision at every finite live zoom', async () => {
   const calls = [], legacy = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args),
     onInspectPocket: id => legacy.push(id) }, h = harness(); await h.ready(props);
   const map = h.maps[0];
-  assert.match(h.html(), /Subdivision view: clicks include all captured related phases/);
-  for (const [zoom, mode] of [[14.999, 'subdivision'], [15, 'phase'], [15.001, 'phase'], [12, 'subdivision']]) {
+  assert.match(h.html(), /Subdivision view: clicks include all captured related groups/);
+  for (const zoom of [14.999, 15, 15.001, 12]) {
     // Deliberately do not emit zoom or rerender: the callback must not use the
     // last React display mode, even when the camera changed moments ago.
     map.camera.zoom = zoom;
     h.emit('click', { features: [{ properties: { account_id: 'B' } }] }, 'custom-cohort-parcels-fill');
     h.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }] }, 'custom-cohort-group-labels-text');
-    assert.deepEqual(calls.slice(-2), [['recorded-cad:beta', mode], ['recorded-cad:alpha', mode]]);
+    assert.deepEqual(calls.slice(-2), [['recorded-cad:beta', 'subdivision'], ['recorded-cad:alpha', 'subdivision']]);
   }
   assert.deepEqual(legacy, []); assert.equal(map.states.length, 0);
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
@@ -955,20 +957,20 @@ test('right-click requests exclusion at live zoom without opening inspection or 
   h.emit('contextmenu', { originalEvent, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
   h.emit('contextmenu', { originalEvent, features: [{ properties: { subject_marker: true,
     parcel_id: 'gis.dcad_parcels:1' } }] }, 'custom-cohort-subject-parcels-text');
-  assert.deepEqual(excluded, [['recorded-cad:beta', 'subdivision'], ['recorded-cad:alpha', 'phase'],
-    ['recorded-cad:alpha', 'phase']]);
+  assert.deepEqual(excluded, [['recorded-cad:beta', 'subdivision'], ['recorded-cad:alpha', 'subdivision'],
+    ['recorded-cad:alpha', 'subdivision']]);
   assert.equal(prevented, 3); assert.deepEqual(activated, []);
   assert.equal(map.states.length, 0); assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
 });
 
-test('zoom changes only interaction display and never reselects an excluded phase or replaces either source', async () => {
+test('zoom never changes subdivision interaction, selection or either source', async () => {
   const calls = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args),
     onInspectPocket: id => calls.push(id), onInspectAccount: id => calls.push(id) }, original = JSON.stringify(props), h = harness();
   await h.ready(props); const map = h.maps[0], source = map.getSource('custom-cohort-parcels'), labels = map.getSource('custom-cohort-group-labels');
   const parcelData = source.data, labelData = labels.data;
   for (const zoom of [16, 14, 15, 14.999, 10, 17]) {
     map.camera.zoom = zoom; h.emit('zoom');
-    assert.match(h.html(), zoom < 15 ? /data-map-interaction-mode="subdivision"/ : /data-map-interaction-mode="phase"/);
+    assert.match(h.html(), /data-map-interaction-mode="subdivision"/);
   }
   assert.equal(painted(map, 'B').selected, false); assert.deepEqual(calls, []);
   assert.equal(source.data, parcelData); assert.equal(labels.data, labelData);
@@ -995,8 +997,7 @@ for (const largerSecondChild of [false, true]) test(`parent label keeps exact re
   assert.equal(parent[0].properties.anchor_basis, 'retained_exterior_ring_vertex');
   labels.forEach((label, index) => assert.deepEqual(label.geometry, expected[index].geometry));
   assert.deepEqual(map.getLayer('custom-cohort-group-labels-text').layout['text-field'],
-    ['step', ['zoom'], ['coalesce', ['get', 'subdivision_label'], ['get', 'label']], 15,
-      ['coalesce', ['get', 'phase_label'], ['get', 'label']]]);
+    ['coalesce', ['get', 'subdivision_label'], ['get', 'label']]);
   assert.equal(JSON.stringify(props), original);
 });
 
@@ -1026,7 +1027,7 @@ for (const order of ['parcel_first', 'label_first']) test(`broad parent label wi
   assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
 });
 
-test('a hidden close-view label cannot suppress broad footprint activation, and becomes valid at zoom 15', async () => {
+test('a hidden child label cannot suppress its parent footprint at any zoom', async () => {
   const calls = [], props = { ...familyFixture(), onActivatePocket: (...args) => calls.push(args) }, h = harness(); await h.ready(props);
   const map = h.maps[0], point = { x: 1, y: 1 }, label = { properties: { pocket_id: 'recorded-cad:beta' } };
   map.renderedLabelHits = [label]; map.camera.zoom = 14;
@@ -1036,7 +1037,7 @@ test('a hidden close-view label cannot suppress broad footprint activation, and 
   map.camera.zoom = 15;
   h.emit('click', { point, features: [label] }, 'custom-cohort-group-labels-text');
   h.emit('click', { point, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
-  assert.deepEqual(calls, [['recorded-cad:beta', 'subdivision'], ['recorded-cad:beta', 'phase']]);
+  assert.deepEqual(calls, [['recorded-cad:beta', 'subdivision'], ['recorded-cad:alpha', 'subdivision']]);
 });
 
 for (const corruption of ['context', 'version', 'foreign_child', 'duplicate_child', 'missing_child', 'foreign_index']) {
@@ -1076,10 +1077,10 @@ test('latest activation callback replaces the old callback without remounting an
   const map = h.maps[0]; h.render({ ...props, onActivatePocket: (...args) => calls.push(['new', ...args]) });
   map.camera.zoom = 16;
   h.emit('click', { features: [{ properties: { account_id: 'B' } }] }, 'custom-cohort-parcels-fill');
-  assert.deepEqual(calls, [['new', 'recorded-cad:beta', 'phase']]); assert.equal(h.maps.length, 1);
+  assert.deepEqual(calls, [['new', 'recorded-cad:beta', 'subdivision']]); assert.equal(h.maps.length, 1);
   h.unmount(); map.camera.zoom = 12; map.emit('zoom');
   map.emit('click', { features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
-  assert.deepEqual(calls, [['new', 'recorded-cad:beta', 'phase']]); assert.equal(h.timers.size, 0);
+  assert.deepEqual(calls, [['new', 'recorded-cad:beta', 'subdivision']]); assert.equal(h.timers.size, 0);
 });
 
 test('SUBJECT marker uses an exact subject exterior vertex, not another group member or a computed centroid', async () => {
@@ -1149,7 +1150,7 @@ for (const zoom of [14, 15]) test(`subject marker click wins once over an overla
       subject: () => h.emit('click', { point, features: [marker] }, 'custom-cohort-subject-parcels-text'),
     };
     order.forEach(action => actions[action]());
-    assert.deepEqual(calls, [['recorded-cad:alpha', zoom < 15 ? 'subdivision' : 'phase'], ['account', 'A']]);
+    assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision'], ['account', 'A']]);
     h.unmount();
   }
 });
@@ -1227,17 +1228,59 @@ test('mixed bare/PH Willow map retains one 307-account broad family, standalone 
   assert.equal(JSON.stringify(props), before, 'display grouping does not rewrite original parcels or catalog membership');
 });
 
-test('mixed bare/PH Willow actual broad and near map clicks emit original leaf IDs without collapsing equal-number raw phases', async t => {
+test('mixed bare/PH Willow uses one label while any child parcel selects the entire family at every zoom', async t => {
   const { props, id } = mixedWillowMapFixture(), calls = [], h = harness(); t.after(() => h.unmount());
   props.onActivatePocket = (...args) => calls.push(args);
   await h.ready(props); const map = h.maps[0];
   const click = pocketId => h.emit('click', { features: [{ properties: { pocket_id: pocketId } }] }, 'custom-cohort-group-labels-text');
   map.camera.zoom = 14; click(id(3)); assert.deepEqual(calls, [[id(3), 'subdivision']]);
   map.camera.zoom = 15; click(id(2)); click(id(7));
-  assert.deepEqual(calls.slice(1), [[id(2), 'phase'], [id(7), 'phase']]);
+  assert.equal(calls.length, 1, 'individual phase labels are not interactive at close zoom');
+  h.emit('click', { features: [{ properties: { account_id: props.catalog.pockets[1].account_ids[0] } }] }, 'custom-cohort-parcels-fill');
+  assert.deepEqual(calls.at(-1), [id(2), 'subdivision'], 'the exact child parcel still selects its whole family');
   map.camera.zoom = 14; click(id(1)); assert.deepEqual(calls.at(-1), [id(1), 'subdivision']);
   assert.equal(map.getSource('custom-cohort-parcels').replacements.length, 0);
   assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
+});
+
+test('Broadway Terrace bare and numbered county aliases show one subdivision at every zoom', async t => {
+  const props = fixture(), calls = [], h = harness(); t.after(() => h.unmount());
+  props.catalog.pockets[0].label = 'BROADWAY TERRACE';
+  props.catalog.pockets[1].label = 'BROADWAY TERRACE';
+  props.catalog.pockets[1].county = 'DALLAS COUNTY';
+  props.catalog.pockets.push({ id: 'recorded-cad:gamma', label: 'BROADWAY TERRACE 2', county: 'DALLAS COUNTY',
+    account_ids: ['C'], member_count: 1 },
+  { id: 'recorded-cad:delta', label: 'BROADWAY TERRACE 2', county: 'Dallas',
+    account_ids: ['D'], member_count: 1 });
+  props.catalog.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+  props.catalog.coverage = { discovery_member_count: 4, assigned_account_count: 4, unassigned_account_count: 0 };
+  props.group.parcel_map.geojson.features.push({ type: 'Feature', id: 'gis.dcad_parcels:4',
+    properties: { object_id: '4', account_id: 'D', selected: false }, geometry: polygon(-96.6) });
+  props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
+  props.onActivatePocket = (...args) => calls.push(args);
+  await h.ready(props);
+  const family = props.subdivisionFamilies.families[0], map = h.maps[0];
+  assert.equal(family.basis, 'candidate_numbered_name');
+  assert.deepEqual(family.pocket_ids, ['recorded-cad:alpha', 'recorded-cad:beta', 'recorded-cad:delta', 'recorded-cad:gamma']);
+  const labels = map.getSource('custom-cohort-group-labels').data.features;
+  assert.equal(labels.filter(label => label.properties.subdivision_label === 'BROADWAY TERRACE').length, 1);
+  assert.equal(labels.filter(label => label.properties.phase_label).length, 2);
+  assert.deepEqual(map.getLayer('custom-cohort-group-labels-text').layout['text-field'],
+    ['coalesce', ['get', 'subdivision_label'], ['get', 'label']]);
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 4);
+  map.camera.zoom = 14;
+  h.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }] }, 'custom-cohort-group-labels-text');
+  assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
+  map.camera.zoom = 17;
+  h.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:delta' } }] }, 'custom-cohort-group-labels-text');
+  assert.equal(calls.length, 1, 'a numbered phase has no separate close-zoom target');
+  h.render({ ...props, inspectedPocketIds: family.pocket_ids });
+  assert.equal(painted(map, 'A').inspected, true);
+  assert.equal(painted(map, 'B').inspected, true);
+  assert.equal(painted(map, 'C').inspected, true);
+  assert.equal(painted(map, 'D').inspected, true);
+  assert.equal(painted(map, 'A').selected, true);
+  assert.equal(painted(map, 'B').selected, false);
 });
 
 function countyAliasPhaseFixture() {
@@ -1298,7 +1341,7 @@ for (const order of ['parcel_first', 'label_first']) test(`consolidated phase la
   const parcel = () => h.emit('click', { point, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
   const text = () => h.emit('click', { point, features: [label] }, 'custom-cohort-group-labels-text');
   if (order === 'parcel_first') { parcel(); text(); } else { text(); parcel(); }
-  assert.deepEqual(calls, [['recorded-cad:alpha-large', 'phase']], 'one original leaf callback, not a synthetic phase ID or a duplicate inclusion request');
+  assert.deepEqual(calls, [['recorded-cad:alpha-large', 'subdivision']], 'one original leaf callback, not a synthetic phase ID or a duplicate inclusion request');
   const phase = buildCustomCohortSubdivisionPhases(props.catalog, props.subdivisionFamilies.families[0])
     .find(candidate => candidate.pocket_ids.includes(calls[0][0]));
   assert.deepEqual(new Set(phase.pocket_ids), new Set(['recorded-cad:alpha', 'recorded-cad:alpha-large']));
@@ -1311,7 +1354,7 @@ test('hidden duplicate phase label is not clickable and cannot suppress its vali
   map.camera.zoom = 15; map.renderedLabelHits = [hidden];
   h.emit('click', { point, features: [hidden] }, 'custom-cohort-group-labels-text');
   h.emit('click', { point, features: [{ properties: { account_id: 'A' } }] }, 'custom-cohort-parcels-fill');
-  assert.deepEqual(calls, [['recorded-cad:alpha', 'phase']]);
+  assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
   map.camera.zoom = 12; h.emit('zoom'); map.camera.zoom = 17; h.emit('zoom');
   assert.equal(calls.length, 1); assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
 });

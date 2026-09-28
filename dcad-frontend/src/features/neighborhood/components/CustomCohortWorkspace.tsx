@@ -8,7 +8,7 @@ import { checkCustomCohortPocketCatalog, customCohortCatalogGroupIds, selectionF
   customCohortCountyNameMatches, CUSTOM_COHORT_UNASSIGNED_GROUP } from '../customCohortPocketCatalog';
 import type { CheckedPocketCatalog } from '../customCohortPocketCatalog';
 import type { CheckedRecordedProximity } from '../customCohortPocketRecommendation';
-import { buildCustomCohortSubdivisionFamilies, buildCustomCohortSubdivisionPhases, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
+import { buildCustomCohortSubdivisionFamilies, customCohortSubdivisionFamilyForPocket } from '../customCohortSubdivisionFamilies';
 import CustomCohortParcelMap from './CustomCohortParcelMap';
 import CustomCohortStatistics, { CustomCohortCompactStatistics } from './CustomCohortStatistics';
 import CustomCohortPocketInspector from './CustomCohortPocketInspector';
@@ -100,9 +100,7 @@ function WorkspaceSession(props: Props) {
   const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
   const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
   const fullReviewFamily = subdivisionFamilies?.families.find(family => family.id === fullReviewFamilyId) ?? null;
-  const highlightedIds = useMemo(() => inspectedFamily && catalog ? inspectedPhaseId
-    ? buildCustomCohortSubdivisionPhases(catalog, inspectedFamily).find(phase => phase.pocket_ids.includes(inspectedPhaseId))?.pocket_ids
-    : inspectedFamily.pocket_ids : undefined, [catalog, inspectedFamily, inspectedPhaseId]);
+  const highlightedIds = inspectedFamily?.pocket_ids;
   const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
   const revision = props.workspace?.selection.revision ?? localRevision;
   const saving = props.workspace?.saving ?? false;
@@ -176,24 +174,20 @@ function WorkspaceSession(props: Props) {
     const removed = new Set(ids), next = included.filter(id => !removed.has(id));
     if (next.length !== included.length) choose(next);
   };
-  const activatePocket = (id: string, mode: 'subdivision' | 'phase') => {
+  const activatePocket = (id: string) => {
     if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     setInspected(id);
     setInspectedFamilyId(family?.id ?? null);
-    setInspectedPhaseId(mode === 'phase' ? id : null);
-    // A map click is an explicit selection intent. Phase zoom never silently
-    // changes saved membership; clicking that phase includes its exact groups.
-    const phaseIds = family && mode === 'phase'
-      ? buildCustomCohortSubdivisionPhases(catalog, family).find(phase => phase.pocket_ids.includes(id))?.pocket_ids : null;
-    includeGroups(mode === 'subdivision' ? family?.pocket_ids ?? [id] : phaseIds ?? [id]);
+    setInspectedPhaseId(null);
+    // Map selection always applies to the complete recorded-name family,
+    // regardless of zoom. Individual CAD leaves remain intact in the workfile.
+    includeGroups(family?.pocket_ids ?? [id]);
   };
-  const excludePocket = (id: string, mode: 'subdivision' | 'phase') => {
+  const excludePocket = (id: string) => {
     if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
-    const phaseIds = family && mode === 'phase'
-      ? buildCustomCohortSubdivisionPhases(catalog, family).find(phase => phase.pocket_ids.includes(id))?.pocket_ids : null;
-    excludeGroups(mode === 'subdivision' ? family?.pocket_ids ?? [id] : phaseIds ?? [id]);
+    excludeGroups(family?.pocket_ids ?? [id]);
   };
   const recommendation = desired ? catalog?.recommendation ?? null : null;
   const reviewById = new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket]));
@@ -355,12 +349,14 @@ function WorkspaceSession(props: Props) {
         </aside>
       </div>
       {group && inspectedFamily && desired && <CustomCohortMapSnapshot key={inspectedFamily.id}
-        family={inspectedFamily} phaseId={inspectedPhaseId} catalog={catalog} input={input} included={included}
+        family={inspectedFamily} catalog={catalog} input={input} included={included}
         paused={inspectionsPaused} previewTransport={transport}
         onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
-      <section className="space-y-3 rounded-xl border border-violet-200 p-3" aria-label="Recorded groups">
+      <details className="rounded-xl border border-violet-200 p-3">
+        <summary className="cursor-pointer font-semibold">Recorded CAD source details</summary>
+      <section className="mt-3 space-y-3" aria-label="Recorded groups">
         <h4 className="font-semibold">Recorded subdivisions and groups</h4>
-        <p className="text-xs text-slate-600">Search or review a subdivision and its phases below. Map clicks update the selection directly.</p>
+        <p className="text-xs text-slate-600">The map and area snapshot combine related recorded names. Original CAD groups remain separately reviewable here for traceability.</p>
           <label className="block text-sm">Find a recorded group<input value={search} maxLength={200}
             onChange={event => { setSearch(event.target.value); setGroupPage(0); }} className="input input-bordered mt-1 w-full" /></label>
           <div className="grid max-h-96 gap-2 overflow-auto sm:grid-cols-2 xl:grid-cols-3">
@@ -410,7 +406,10 @@ function WorkspaceSession(props: Props) {
             {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
               <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
               <p>{countyMatches.length.toLocaleString('en-US')} groups · {countyMatches.reduce((sum, p) => sum + p.member_count, 0).toLocaleString('en-US')} accounts.
-                {' '}Review these together if appropriate. Saved groups remain separate; matching names do not prove a common legal subdivision.</p>
+                {' '}{selectedFamily && countyMatches.every(pocket => selectedFamily.pocket_ids.includes(pocket.id))
+                  ? 'They share one map label and map clicks select them together. Each CAD group remains separately editable here.'
+                  : 'Review these together if appropriate. Saved groups remain separate.'}
+                {' '}Matching names do not prove a common legal subdivision.</p>
               <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => included.includes(p.id))}
                 onClick={() => choose([...included, ...countyMatches.filter(p => !included.includes(p.id)).map(p => p.id)])}>Include matching groups</button>
               <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => !included.includes(p.id))}
@@ -418,6 +417,7 @@ function WorkspaceSession(props: Props) {
             </div>}
           </div>}
       </section>
+      </details>
       {fullReviewFamily && desired && <CustomCohortSubdivisionDialog key={fullReviewFamily.id}
         family={fullReviewFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
         selectionDisabled={selectionDisabled} inspectionsPaused={inspectionsPaused} previewTransport={transport}

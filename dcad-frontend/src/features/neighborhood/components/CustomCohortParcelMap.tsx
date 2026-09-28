@@ -20,17 +20,15 @@ interface Props {
   inspectedPocketId?: string | null;
   inspectedPocketIds?: readonly string[];
   subdivisionFamilies?: CustomCohortSubdivisionFamilies;
-  onActivatePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
-  onExcludePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
+  onActivatePocket?: (pocketId: string, mode: 'subdivision') => void;
+  onExcludePocket?: (pocketId: string, mode: 'subdivision') => void;
   onInspectPocket?: (pocketId: string) => void;
   onInspectAccount?: (accountId: string) => void;
 }
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`, LABEL_DOT = `${LABEL_SOURCE}-dot`;
 const SUBJECT_SOURCE = 'custom-cohort-subject-parcels', SUBJECT_LAYER = `${SUBJECT_SOURCE}-text`;
-// A display/interaction threshold, not evidence of legal phase boundaries.
-export const CUSTOM_COHORT_PHASE_ZOOM = 15;
-type ActivationMode = 'subdivision' | 'phase';
+type ActivationMode = 'subdivision';
 type DisplayLabel = CustomCohortMapLabel & { readonly properties: CustomCohortMapLabel['properties'] & {
   readonly subdivision_label?: string;
   readonly phase_label?: string;
@@ -39,7 +37,7 @@ type DisplayLabel = CustomCohortMapLabel & { readonly properties: CustomCohortMa
 } };
 function activationMode(map: ParcelMapRuntimeInstance | null): ActivationMode | null {
   try { const zoom = map?.getZoom(); return typeof zoom === 'number' && Number.isFinite(zoom)
-    ? zoom < CUSTOM_COHORT_PHASE_ZOOM ? 'subdivision' : 'phase' : null; }
+    ? 'subdivision' : null; }
   catch { return null; }
 }
 function subdivisionLabels(labels: readonly CustomCohortMapLabel[], catalog: CheckedPocketCatalog,
@@ -78,7 +76,7 @@ function subdivisionLabels(labels: readonly CustomCohortMapLabel[], catalog: Che
     subdivision_label: parents.get(label.properties.pocket_id) ?? '', phase_label: phases.get(label.properties.pocket_id) ?? '' } }));
 }
 function visibleLabel(label: DisplayLabel, mode: ActivationMode | null): boolean {
-  const text = mode === 'phase' ? label.properties.phase_label : label.properties.subdivision_label;
+  const text = label.properties.subdivision_label;
   return mode !== null && (text === undefined || text.length > 0);
 }
 const COLORS = { included: '#dc2626', excluded: '#64748b', unresolved: '#d97706', inspected: '#eab308', subject: '#7e22ce' };
@@ -393,14 +391,15 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
           } });
           instance.addSource(LABEL_SOURCE, { type: 'geojson', data: latest.current.labels });
           if (deferredMode) instance.addLayer({ id: LABEL_DOT, type: 'circle', source: LABEL_SOURCE, minzoom: 9,
+            filter: ['any', ['!', ['has', 'subdivision_label']], ['!=', ['get', 'subdivision_label'], '']],
             paint: { 'circle-color': ['get', 'fillColor'], 'circle-radius': 6,
               'circle-stroke-color': ['case', ['get', 'selected'], COLORS.included, '#ffffff'],
               'circle-stroke-width': ['case', ['get', 'selected'], 2.5, 1] } });
           instance.addLayer({ id: LABEL_LAYER, type: 'symbol', source: LABEL_SOURCE, minzoom: 9,
             // OpenFreeMap serves Noto Sans. MapLibre's implicit Open Sans/Arial
             // stack returns 404s here and forces repeated local glyph fallback.
-            layout: { 'text-field': ['step', ['zoom'], ['coalesce', ['get', 'subdivision_label'], ['get', 'label']],
-              CUSTOM_COHORT_PHASE_ZOOM, ['coalesce', ['get', 'phase_label'], ['get', 'label']]], 'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 16,
+            layout: { 'text-field': ['coalesce', ['get', 'subdivision_label'], ['get', 'label']],
+              'text-font': ['Noto Sans Regular'], 'text-size': 11, 'text-max-width': 16,
               'text-anchor': 'left', 'text-offset': [0.5, 0], 'text-allow-overlap': false, 'text-optional': true },
             paint: { 'text-color': '#3b0764', 'text-halo-color': '#fff8e7', 'text-halo-width': 2 },
           });
@@ -561,12 +560,11 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
     <div className="space-y-2 px-4 py-3">
       <h3 className="font-semibold">Captured parcel selection</h3>
       <p className="text-xs text-slate-600">{onActivatePocket
-        ? 'Click a subdivision or phase to include it and compare the updated statistics. Right-click to remove it. Zooming does not change your choices. '
+        ? 'Click a subdivision to include all its recorded groups and compare the updated statistics. Right-click to remove it. Zooming does not change your choices. '
         : 'Click a parcel or subdivision label to inspect its recorded CAD group. '}
         Shapes follow cached parcels, not legal subdivision or neighborhood boundaries.</p>
       {onActivatePocket && <p className="text-xs font-medium text-violet-900" role="status" data-map-interaction-mode={displayMode ?? 'unavailable'}>
-        {displayMode === 'subdivision' ? 'Subdivision view: clicks include all captured related phases.'
-          : displayMode === 'phase' ? 'Phase view: clicks include the selected phase.' : 'Map interaction is not ready.'}
+        {displayMode === 'subdivision' ? 'Subdivision view: clicks include all captured related groups.' : 'Map interaction is not ready.'}
         {' '}Related names are review groupings, not verified legal phases or coverage outside this capture.
       </p>}
       <div className="flex flex-wrap items-center gap-4 text-xs">

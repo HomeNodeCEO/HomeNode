@@ -31,25 +31,24 @@ function harness() {
   const props = { family, catalog, input: { accountId: 'A', assignmentFileId: '4', contextRef: {} },
     included: ['phase-1'], paused: false, previewTransport() {}, onClose() { closes++; } };
   return { props, inspector: tree => walk(tree).find(node => node.type === InspectorStub)?.props,
-    render(phaseId = null, overrides = {}) { cursor = 0; return loaded.default({ ...props, phaseId, ...overrides }); },
+    render(overrides = {}) { cursor = 0; return loaded.default({ ...props, ...overrides }); },
     get closes() { return closes; } };
 }
 
-test('area snapshot keeps exact family and phase comparison inputs in a compact regular-flow panel', () => {
-  const h = harness(), parent = h.render(), phase = h.render('phase-2');
+test('area snapshot keeps the exact combined subdivision input at every view level', () => {
+  const h = harness(), parent = h.render();
   assert.equal(parent.props['aria-label'], 'MONICA PARK area snapshot');
   assert.notEqual(parent.props.role, 'dialog'); assert.notEqual(parent.props['aria-modal'], true);
   assert.match(text(parent), /Partly included/);
   assert.equal(h.inspector(parent).pocketIds, family.pocket_ids);
-  assert.deepEqual(h.inspector(phase).pocketIds, ['phase-2']);
-  assert.equal(h.inspector(phase).pocketId, 'phase-2'); assert.equal(h.inspector(phase).label, 'MONICA PARK 2');
-  for (const tree of [parent, phase]) {
+  assert.equal(h.inspector(parent).pocketId, 'phase-1'); assert.equal(h.inspector(parent).label, 'MONICA PARK');
+  for (const tree of [parent]) {
     const inspector = h.inspector(tree);
     assert.equal(inspector.input, h.props.input); assert.equal(inspector.catalog, h.props.catalog);
     assert.equal(inspector.previewTransport, h.props.previewTransport);
     assert.equal(inspector.paused, false); assert.equal(inspector.compact, true);
   }
-  assert.equal(h.inspector(h.render('phase-2', { paused: true })).paused, true);
+  assert.equal(h.inspector(h.render({ paused: true })).paused, true);
   assert.equal(h.closes, 0);
 });
 
@@ -72,7 +71,7 @@ test('snapshot fills normal document flow with a static header and no map coordi
 });
 
 test('Close and Escape still dismiss the panel without mutating accepted inclusion or inspector inputs', () => {
-  const h = harness(), before = JSON.stringify(h.props), card = h.render('phase-2');
+  const h = harness(), before = JSON.stringify(h.props), card = h.render();
   const close = walk(card).find(node => node.type === 'button' && node.props['aria-label'] === 'Close area snapshot');
   assert.ok(close); assert.equal(close.props.type, 'button');
   card.props.onKeyDown({ key: 'Enter' }); assert.equal(h.closes, 0);

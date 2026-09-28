@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { signCustomAppraisalWorkfile, verifyCustomAppraisalSignedSnapshot } from "../src/services/customAppraisalWorkfiles.js";
+import { customAppraisalReadinessErrorDetails } from "../src/services/customAppraisalReadinessErrorDetails.js";
 import { customAppraisalReportFixture } from "./fixtures/customAppraisalReportFixture.js";
 import { customNeighborhoodReportPdfFixture } from "./fixtures/customNeighborhoodReportPdfFixture.js";
 
@@ -14,9 +15,10 @@ const SECRET = "signing-guard-test-secret-32-characters";
 // binding helper, report projection/readiness and HMAC use production functions.
 // No database, remote image requests or generated artifact is needed here.
 function signingHarness({ accepted = false, hasAcceptance = false, hasSection = false,
-  bindingRows, mutateSection, signerAssigned = true, documents = [] } = {}) {
+  bindingRows, mutateSection, mutateFixture, signerAssigned = true, documents = [] } = {}) {
   const fixture = accepted ? customNeighborhoodReportPdfFixture() : customAppraisalReportFixture();
   const { snapshot, property } = fixture;
+  mutateFixture?.(fixture);
   property.assignment.organization_id ||= ORGANIZATION_ID;
   const assignmentFileId = property.assignment.id;
   const accountId = property.assignment.account_id;
@@ -154,6 +156,40 @@ test("verified legacy absence preserves ordinary signing, snapshot shape and HMA
   assert.equal(verifyCustomAppraisalSignedSnapshot(harness.state.signedRow, SECRET), true);
   assert.equal(harness.calls.at(-1).sql, "COMMIT");
   assert.equal(harness.state.released, 1);
+});
+
+test("the signing service marks only its own E&O blocker details before rollback", async () => {
+  const harness = signingHarness({
+    mutateFixture({ snapshot }) {
+      snapshot.sections.sales_comparison.value.comparables = [];
+    },
+  });
+  await assert.rejects(signCustomAppraisalWorkfile(harness.pool, harness.input), (error) => {
+    assert.equal(error.message, "custom_appraisal_eo_incomplete");
+    const details = customAppraisalReadinessErrorDetails(error);
+    assert.ok(details.readinessErrors.some((message) => message.includes("comparable sale")));
+    assert.equal(details.readiness.ready, false);
+    return true;
+  });
+  assert.equal(harness.calls.at(-1).sql, "ROLLBACK");
+  assert.equal(harness.state.signedRow, null);
+});
+
+test("the signing service marks only its own unacknowledged E&O warning details", async () => {
+  const harness = signingHarness({
+    mutateFixture({ property }) {
+      property.account.data_quality_status = "review_pending";
+    },
+  });
+  await assert.rejects(signCustomAppraisalWorkfile(harness.pool, harness.input), (error) => {
+    assert.equal(error.message, "custom_appraisal_eo_warnings_unacknowledged");
+    const details = customAppraisalReadinessErrorDetails(error);
+    assert.ok(details.readinessWarnings.some((warning) => warning.code === "account_data_quality_review"));
+    assert.equal(details.readiness.ready, true);
+    return true;
+  });
+  assert.equal(harness.calls.at(-1).sql, "ROLLBACK");
+  assert.equal(harness.state.signedRow, null);
 });
 
 test("new signed manifest excludes legacy operational document errors without changing evidence", async () => {

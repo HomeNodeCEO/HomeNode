@@ -13,6 +13,7 @@ import { normalizeSalesComparisonQualitativeAnalysis } from "../util/qualitative
 import { CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION } from "./neighborhoodAssessment/customAcceptanceSnapshot.js";
 import { captureCustomNeighborhoodDraftReportBinding } from "./neighborhoodAssessment/customDraftReportBinding.js";
 import { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
+import { attachCustomAppraisalReadinessErrorDetails } from "./customAppraisalReadinessErrorDetails.js";
 import { CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION, prepareCustomNeighborhoodWorkspaceCheckpoint } from "./neighborhoodAssessment/customWorkspaceCheckpoint.js";
 export { normalizeCustomAppraisalSectionValue } from "./customAppraisalSectionValue.js";
 
@@ -849,7 +850,10 @@ export async function signCustomAppraisalWorkfile(pool, {
       const error = new Error("custom_appraisal_eo_incomplete");
       error.readinessErrors = readiness.blocker_messages;
       error.readiness = readiness;
-      throw error;
+      throw attachCustomAppraisalReadinessErrorDetails(error, {
+        readinessErrors: readiness.blocker_messages,
+        readiness,
+      });
     }
     const acknowledgedSet = new Set(acknowledgedWarningCodes);
     const unacknowledgedWarnings = readiness.warnings.filter(
@@ -859,7 +863,10 @@ export async function signCustomAppraisalWorkfile(pool, {
       const error = new Error("custom_appraisal_eo_warnings_unacknowledged");
       error.readinessWarnings = unacknowledgedWarnings;
       error.readiness = readiness;
-      throw error;
+      throw attachCustomAppraisalReadinessErrorDetails(error, {
+        readinessWarnings: unacknowledgedWarnings,
+        readiness,
+      });
     }
     snapshot.eo_readiness = {
       version: 1,

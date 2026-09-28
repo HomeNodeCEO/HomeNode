@@ -337,6 +337,24 @@ test("DCAD account fallback sanitizes transport and provider diagnostics", async
   assert.equal(JSON.stringify(providerWarnings).includes(providerDetail), false);
 });
 
+test("unexpected fallback errors cannot leak private details or break optional account sections", async () => {
+  const privateDetail = "private provider credential in unexpected getter";
+  const warnings = [];
+  const result = await loadAccountDetailSections(emptySectionPool(), "88888888888888888", {
+    logger: { warn: (...args) => warnings.push(args) },
+    fetchImpl: async () => ({ get ok() { throw new Error(privateDetail); } }),
+  });
+  assert.equal(result.primaryImprovement, null);
+  assert.deepEqual(warnings, [["DCAD account fallback lookup failed", "dcad_account_fallback_failed"]]);
+  assert.equal(JSON.stringify(warnings).includes(privateDetail), false);
+
+  const throwingLoggerResult = await loadAccountDetailSections(emptySectionPool(), "99999999999999999", {
+    logger: { warn() { throw new Error("logger unavailable"); } },
+    fetchImpl: async () => ({ get ok() { throw new Error(privateDetail); } }),
+  });
+  assert.equal(throwingLoggerResult.primaryImprovement, null);
+});
+
 test("a failed optional CAD fallback does not delay repeated account-detail loads", async () => {
   assert.equal(accountDetailSectionInternals.DCAD_DETAIL_FALLBACK_TIMEOUT_MS, 2_000);
   const warnings = [];

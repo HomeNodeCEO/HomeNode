@@ -143,6 +143,26 @@ const DCAD_ATTRIBUTE_CACHE_MAX = 500;
 const dcadAttributeFailures = new Map();
 const DCAD_FAILURE_TTL_MS = 60 * 1000;
 const dcadAttributeInflight = new Map();
+const DCAD_FALLBACK_ERROR_CODES = new Set([
+  "dcad_account_fallback_unavailable",
+  "dcad_account_fallback_response_too_large",
+  "dcad_account_fallback_response_unavailable",
+  "dcad_account_fallback_invalid_response",
+  "dcad_account_fallback_error",
+]);
+
+function safeDcadFallbackFailureCode(error) {
+  try {
+    const message = error?.message;
+    if (typeof message !== "string") return "dcad_account_fallback_failed";
+    if (DCAD_FALLBACK_ERROR_CODES.has(message)) return message;
+    if (/^dcad_account_fallback_http_[1-5][0-9]{2}$/.test(message)) return message;
+    if (/^dcad_account_fallback_[0-9]{1,6}$/.test(message)) return message;
+  } catch {
+    // Error getters can throw; the optional account section must remain usable.
+  }
+  return "dcad_account_fallback_failed";
+}
 
 function rowsFrom(result) {
   return Array.isArray(result?.rows) ? result.rows : [];
@@ -513,7 +533,8 @@ export async function loadAccountDetailSections(
       parcelOwner ||= parcelOwnerFrom(liveAttributes);
       parcelAttributes = mergeSourceRows(parcelAttributes, liveAttributes) || {};
     } catch (error) {
-      logger?.warn?.("DCAD account fallback lookup failed", error?.message || error);
+      try { logger?.warn?.("DCAD account fallback lookup failed", safeDcadFallbackFailureCode(error)); }
+      catch { /* Optional diagnostics must not replace the account detail. */ }
     }
   }
   const rawPrimaryImprovement = mergeSourceRows(

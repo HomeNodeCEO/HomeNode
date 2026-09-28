@@ -99,6 +99,20 @@ test("reconciliation queue bounds pagination before querying PostgreSQL", async 
   assert.equal(calls.length, 2);
 });
 
+test("reconciliation queue binds only integral limits while preserving defaults and bounds", async () => {
+  const limits = [];
+  const pool = {
+    async query(_sql, params) {
+      limits.push(params[0]);
+      return { rows: [] };
+    },
+  };
+  for (const limit of ["2.75", "0.5", "0", "not-a-number", "Infinity", "-Infinity", "101"]) {
+    await listSalesReconciliationQueue(pool, { limit });
+  }
+  assert.deepEqual(limits, [2, 1, 20, 20, 100, 1, 100]);
+});
+
 function lockedSalesSourcePool(source) {
   const queries = [];
   const client = {

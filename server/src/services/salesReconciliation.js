@@ -441,7 +441,7 @@ export async function listSalesReconciliationQueue(
   pool,
   { limit = 20, offset = 0 } = {},
 ) {
-  const safeLimit = Math.min(Math.max(Number(limit) || 20, 1), 100);
+  const safeLimit = Math.min(Math.max(Math.trunc(Number(limit) || 20), 1), 100);
   const requestedOffset = Number(offset);
   if (!Number.isSafeInteger(requestedOffset) || requestedOffset > MAX_RECONCILIATION_QUEUE_OFFSET) {
     throw new Error("invalid_offset");

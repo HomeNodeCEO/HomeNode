@@ -271,3 +271,25 @@ test("neighborhood failures retain bounded status, error and no-store semantics"
     });
   }
 });
+
+test("neighborhood error getters and diagnostic logger cannot replace fixed responses", async context => {
+  const privateDetail = "PRIVATE_NEIGHBORHOOD_DATABASE_SECRET";
+  for (const [name, failure, status, publicCode] of [
+    ["hostile getters", {
+      get message() { throw new Error(privateDetail); },
+      get code() { throw new Error(privateDetail); },
+    }, 500, "custom_neighborhood_load_failed"],
+    ["corrupt accepted group", new Error(`custom_neighborhood_acceptance_invalid:${privateDetail}`),
+      409, "custom_neighborhood_saved_group_unavailable"],
+  ]) {
+    await context.test(name, async child => {
+      const baseUrl = await startRouter(child, optionsFor([], {
+        async getNeighborhood() { throw failure; },
+        logger: { error() { throw new Error(privateDetail); } },
+      }));
+      const response = await getJson(endpoint(baseUrl));
+      responseIs(response, status, { error: publicCode });
+      assert.equal(response.text.includes(privateDetail), false);
+    });
+  }
+});

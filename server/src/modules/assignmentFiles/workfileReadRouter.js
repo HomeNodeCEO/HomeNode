@@ -29,6 +29,19 @@ function logOperationalFailure(logger, label, error) {
   }
 }
 
+function workfileReadErrorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch {
+    return "";
+  }
+}
+
+function workfileReadSqlstate(error) {
+  try { return error?.code; } catch { return null; }
+}
+
 function requestedAccountId(req, res) {
   const value = String(req.params.id || "").trim();
   if (!ACCOUNT_ID_PATTERN.test(value)) {
@@ -103,7 +116,7 @@ export function createAssignmentWorkfileReadRouter({
       const neighborhood = await getNeighborhood(pool, { accountId: canonicalId, assignmentFileId, auth: req.mobileAuth });
       return res.json({ ok: true, account_id: canonicalId, neighborhood });
     } catch (error) {
-      const message = String(error?.message || "");
+      const message = workfileReadErrorMessage(error);
       if (message === "assignment_file_not_found") return res.status(404).json({ error: message });
       if (message === "assignment_file_access_denied") return res.status(403).json({ error: message });
       if (message === "authentication_required") return res.status(401).json({ error: message });
@@ -116,11 +129,11 @@ export function createAssignmentWorkfileReadRouter({
       if (message.startsWith("custom_neighborhood_acceptance_") || message.startsWith("neighborhood_application_")
         || message.startsWith("invalid_neighborhood_assessment:") || message.startsWith("neighborhood_jsonb_storage_")
         || error instanceof SyntaxError || message === "custom_neighborhood_saved_group_unavailable") {
-        logger.error?.("custom neighborhood accepted group unavailable", safeOperationalErrorCode(error));
+        logOperationalFailure(logger, "custom neighborhood accepted group unavailable", error);
         return res.status(409).json({ error: "custom_neighborhood_saved_group_unavailable" });
       }
-      if (error?.code === "42P01") return res.status(503).json({ error: "custom_neighborhood_storage_unavailable" });
-      logger.error?.("custom neighborhood accepted group load failed", safeOperationalErrorCode(error));
+      if (workfileReadSqlstate(error) === "42P01") return res.status(503).json({ error: "custom_neighborhood_storage_unavailable" });
+      logOperationalFailure(logger, "custom neighborhood accepted group load failed", error);
       return res.status(500).json({ error: "custom_neighborhood_load_failed" });
     }
   });
@@ -147,11 +160,12 @@ export function createAssignmentWorkfileReadRouter({
       });
       return res.json({ ok: true, account_id: canonicalId, workfile });
     } catch (error) {
-      if (error?.message === "assignment_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = workfileReadErrorMessage(error);
+      if (message === "assignment_file_not_found") {
+        return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (WORKFILE_READ_VALIDATION_ERRORS.has(error?.message)) {
-        return res.status(400).json({ error: error.message });
+      if (WORKFILE_READ_VALIDATION_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
       logOperationalFailure(logger, "custom appraisal workfile load failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_load_failed" });
@@ -180,11 +194,12 @@ export function createAssignmentWorkfileReadRouter({
       });
       return res.json({ ok: true, account_id: canonicalId, readiness });
     } catch (error) {
-      if (error?.message === "assignment_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = workfileReadErrorMessage(error);
+      if (message === "assignment_file_not_found") {
+        return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (WORKFILE_READ_VALIDATION_ERRORS.has(error?.message)) {
-        return res.status(400).json({ error: error.message });
+      if (WORKFILE_READ_VALIDATION_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
       logOperationalFailure(logger, "custom appraisal workfile readiness failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_readiness_failed" });
@@ -225,11 +240,12 @@ export function createAssignmentWorkfileReadRouter({
       if (download.checksum_sha256) res.set("ETag", `"${download.checksum_sha256}"`);
       return res.send(serialized);
     } catch (error) {
-      if (error?.message === "assignment_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = workfileReadErrorMessage(error);
+      if (message === "assignment_file_not_found") {
+        return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (error?.message === "custom_appraisal_signing_secret_not_configured") {
-        return res.status(503).json({ error: error.message });
+      if (message === "custom_appraisal_signing_secret_not_configured") {
+        return res.status(503).json({ error: "custom_appraisal_signing_secret_not_configured" });
       }
       logOperationalFailure(logger, "custom appraisal workfile download failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_download_failed" });
@@ -303,11 +319,12 @@ export function createAssignmentWorkfileReadRouter({
       });
       return res.send(report.content);
     } catch (error) {
-      if (error?.message === "assignment_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = workfileReadErrorMessage(error);
+      if (message === "assignment_file_not_found") {
+        return res.status(404).json({ error: "assignment_file_not_found" });
       }
-      if (error?.message === "custom_appraisal_signing_secret_not_configured") {
-        return res.status(503).json({ error: error.message });
+      if (message === "custom_appraisal_signing_secret_not_configured") {
+        return res.status(503).json({ error: "custom_appraisal_signing_secret_not_configured" });
       }
       logOperationalFailure(logger, "custom appraisal report PDF failed", error);
       return res.status(500).json({ error: "custom_appraisal_report_pdf_failed" });

@@ -76,6 +76,9 @@ export function createSalesReconciliationRouter({
       });
       return res.json(queue);
     } catch (error) {
+      if (error?.message === "invalid_offset") {
+        return res.status(400).json({ error: "invalid_offset" });
+      }
       logger.error?.("sales reconciliation queue failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "sales_reconciliation_queue_failed" });
     }

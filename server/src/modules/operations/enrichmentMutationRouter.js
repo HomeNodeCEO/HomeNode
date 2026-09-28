@@ -7,6 +7,7 @@ import { assertPropertyAttributeKey } from "../../util/nonDallasEnrichment.js";
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const SUGGESTION_ID_PATTERN = /^\d+$/;
 const SUGGESTION_DECISIONS = new Set(["approved", "rejected"]);
+const ATTRIBUTE_VALIDATION_ERRORS = new Set(["unsupported_property_attribute"]);
 
 function auditReviewer(req) {
   const userId = String(req.mobileAuth?.userId || "").trim();
@@ -63,7 +64,14 @@ export function createEnrichmentMutationRouter({
     try {
       attributeKey = assertAttributeKey(req.body?.attribute_key);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_attribute" });
+      const code = ATTRIBUTE_VALIDATION_ERRORS.has(error?.message)
+        ? error.message
+        : "invalid_attribute";
+      if (code === "invalid_attribute") {
+        try { logger.warn?.("verified attribute validation failed", safeOperationalErrorCode(error)); }
+        catch { /* Diagnostics must not disclose or interrupt the public response. */ }
+      }
+      return res.status(400).json({ error: code });
     }
     if (req.body?.attribute_value === undefined) {
       return res.status(400).json({ error: "missing_attribute_value" });

@@ -7,6 +7,11 @@ import { NON_DALLAS_ENRICHMENT_COUNTIES } from "../../util/nonDallasEnrichment.j
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 
+function logEnrichmentFailure(logger, label, error) {
+  try { logger.error?.(label, safeOperationalErrorCode(error)); }
+  catch { /* Logging must not replace the fixed response. */ }
+}
+
 export function createEnrichmentReadRouter({
   pool,
   propertyEnrichmentReady,
@@ -60,7 +65,7 @@ export function createEnrichmentReadRouter({
         resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
       });
     } catch (error) {
-      logger.error?.("enrichment status failed", safeOperationalErrorCode(error));
+      logEnrichmentFailure(logger, "enrichment status failed", error);
       return res.status(500).json({ error: "enrichment_status_failed" });
     }
   });
@@ -111,7 +116,7 @@ export function createEnrichmentReadRouter({
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("account enrichment load failed", error);
+      logEnrichmentFailure(logger, "account enrichment load failed", error);
       return res.status(500).json({ error: "account_enrichment_failed" });
     }
   });

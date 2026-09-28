@@ -495,6 +495,34 @@ test("workfile read error contracts remain bounded and diagnostic-safe", async (
   assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
 });
 
+test("workfile read responses capture exact error messages only once", async (context) => {
+  const privateDetail = "PRIVATE_DATABASE_AND_SIGNING_SECRET";
+  for (const [suffix, firstCode, status, dependency] of [
+    ["", "assignment_file_not_found", 404, "getWorkfile"],
+    ["/readiness", "invalid_readiness_state", 400, "getReadiness"],
+    ["/download", "custom_appraisal_signing_secret_not_configured", 503, "getDownload"],
+    ["/report.pdf", "custom_appraisal_signing_secret_not_configured", 503, "getDownload"],
+  ]) {
+    await context.test(suffix || "workfile", async (child) => {
+      let reads = 0;
+      const failure = {
+        get message() {
+          reads += 1;
+          return reads === 1 ? firstCode : privateDetail;
+        },
+      };
+      const server = await startRouter(baseOptions({
+        [dependency]: async () => { throw failure; },
+      }));
+      child.after(server.close);
+      const response = await fetch(endpoint(server.baseUrl, suffix));
+      assert.equal(response.status, status);
+      assert.deepEqual(await response.json(), { error: firstCode });
+      assert.equal(reads, 1);
+    });
+  }
+});
+
 test("unexpected invalid-prefixed failures stay private even when logging fails", async (context) => {
   const diagnostic = new Error("invalid_internal_database secret-token");
   const logger = { error() { throw new Error("logger_unavailable"); } };

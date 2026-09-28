@@ -410,7 +410,10 @@ function WorkspaceSession(props: Props) {
             {countyMatches.length > 1 && <div aria-label="Matching recorded county names" className="space-y-2 rounded-lg border border-amber-300 p-3 text-sm">
               <p>The same subdivision label is recorded under county-name variants: {[...new Set(countyMatches.map(p => p.county))].join(' / ')}.</p>
               <p>{countyMatches.length.toLocaleString('en-US')} groups · {countyMatches.reduce((sum, p) => sum + p.member_count, 0).toLocaleString('en-US')} accounts.
-                {' '}Review these together if appropriate. Saved groups remain separate; matching names do not prove a common legal subdivision.</p>
+                {' '}{selectedFamily?.basis === 'recorded_name_alias'
+                  ? 'They share one map label and map clicks select them together. Each CAD group remains separately editable here.'
+                  : 'Review these together if appropriate. Saved groups remain separate.'}
+                {' '}Matching names do not prove a common legal subdivision.</p>
               <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => included.includes(p.id))}
                 onClick={() => choose([...included, ...countyMatches.filter(p => !included.includes(p.id)).map(p => p.id)])}>Include matching groups</button>
               <button type="button" className={button} disabled={selectionDisabled || countyMatches.every(p => !included.includes(p.id))}

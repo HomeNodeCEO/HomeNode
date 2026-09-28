@@ -109,10 +109,12 @@ test("grouped analysis rejects invalid inputs before schema or database access",
   assert.equal(queries, 0);
 });
 
-test("unexpected breakdown parser failures keep a fixed public error", async (context) => {
+test("unexpected breakdown parser failures keep a fixed server error and bounded log", async (context) => {
   const secret = "database-password-secret-token";
+  const errors = [];
   const options = routerOptions({
     parseBreakdowns: () => { throw new Error(`invalid_${secret}`); },
+    logger: { error: (...args) => errors.push(args), warn() {} },
   });
   const server = await startRouter(createGroupedAnalysisRouter(options));
   context.after(server.close);
@@ -121,10 +123,26 @@ test("unexpected breakdown parser failures keep a fixed public error", async (co
     subject_account_id: "A-1",
     breakdowns: "city",
   });
-  assert.equal(response.status, 400);
+  assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), {
-    error: "invalid_grouped_analysis_breakdown",
+    error: "grouped_analysis_failed",
   });
+  assert.deepEqual(errors, [["grouped analysis breakdown parse failed", "unknown"]]);
+});
+
+test("a failed grouped-analysis logger cannot replace the fixed parser response", async (context) => {
+  const server = await startRouter(createGroupedAnalysisRouter(routerOptions({
+    parseBreakdowns: () => { throw new Error("unexpected_parser_failure"); },
+    logger: { error: () => { throw new Error("logger_failure"); }, warn() {} },
+  })));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    breakdowns: "city",
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "grouped_analysis_failed" });
 });
 
 test("a real leap day remains a valid as-of date", async (context) => {

@@ -26,6 +26,7 @@ function sourceFiles(path) {
 function dynamicCodes() {
   const codes = new Set([
     "uad_compliance_token_failed",
+    "uad_public_owner_field_missing",
     "uad_xml_attribute_value_required",
     "uad_xml_mapping_missing",
     "uad_xml_mapping_path_invalid",

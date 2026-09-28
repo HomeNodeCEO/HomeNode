@@ -576,6 +576,7 @@ export const PUBLIC_UAD_ERROR_CODES = new Set([
   "uad_pdf_local_validation_required",
   "uad_pdf_local_validation_stale",
   "uad_pdf_signatures_missing",
+  "uad_public_owner_field_missing",
   "uad_rate_limit_not_enforced",
   "uad_redteam_artifact_resilience_v1",
   "uad_redteam_artifact_security_v1",

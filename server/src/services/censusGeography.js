@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { readBoundedResponseBuffer } from "../util/boundedResponse.js";
 
 export const CENSUS_BENCHMARK = "Public_AR_Current";
@@ -1013,7 +1014,11 @@ export function startCensusGeographyWorker(
         logger.info?.("[census-geography] cycle", { workerId, seeded: seed.queued, ...result });
       }
     } catch (error) {
-      logger.warn?.("[census-geography] cycle failed; will retry", error?.message || error);
+      try {
+        logger.warn?.("[census-geography] cycle failed; will retry", safeOperationalErrorCode(error));
+      } catch {
+        // Logging must not turn a retriable background cycle into a rejection.
+      }
     } finally {
       running = false;
       schedule(safeInterval);

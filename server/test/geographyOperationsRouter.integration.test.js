@@ -232,14 +232,16 @@ test("on-demand census lookup retains absence, missing-input, and bounded upstre
   assert.deepEqual(logs, [["on-demand census geography lookup failed", diagnostic]]);
 });
 
-test("ZIP and city profile routes preserve request arguments and upstream status codes", async (context) => {
+test("ZIP and city profile routes preserve requests and expose only known error codes", async (context) => {
   const calls = [];
   const logs = [];
   const accepted = await startRouter(baseOptions({
     getZipProfile: async (postalCode) => { calls.push({ type: "zip", postalCode }); return { postal_code: postalCode }; },
     getCityProfile: async (city, state) => { calls.push({ type: "city", city, state }); return { city, state }; },
   }));
-  const clientError = Object.assign(new Error("invalid_postal_code"), { status: 400 });
+  const clientError = Object.assign(new Error("invalid_census_zip"), {
+    code: "invalid_census_zip", status: 400,
+  });
   const failed = await startRouter(baseOptions({
     getZipProfile: async () => { throw clientError; },
     getCityProfile: async () => { throw Object.assign(new Error("acs_unavailable"), { status: 503 }); },
@@ -259,11 +261,58 @@ test("ZIP and city profile routes preserve request arguments and upstream status
   ]);
   const invalid = await fetch(`${failed.baseUrl}/api/census/zip-profile/bad`);
   assert.equal(invalid.status, 400);
-  assert.deepEqual(await invalid.json(), { error: "invalid_postal_code" });
+  assert.deepEqual(await invalid.json(), { error: "invalid_census_zip" });
   const unavailable = await fetch(`${failed.baseUrl}/api/census/city-profile?city=Dallas&state=TX`);
   assert.equal(unavailable.status, 503);
-  assert.deepEqual(await unavailable.json(), { error: "acs_unavailable" });
-  assert.deepEqual(logs, [["Census city profile lookup failed", "acs_unavailable"]]);
+  assert.deepEqual(await unavailable.json(), { error: "census_city_profile_failed" });
+  assert.deepEqual(logs, [["Census city profile lookup failed", "unknown"]]);
+});
+
+test("Census profile routes hide unexpected messages and reject untrusted statuses", async (context) => {
+  const logs = [];
+  const server = await startRouter(baseOptions({
+    getZipProfile: async () => {
+      throw Object.assign(new Error("upstream db.internal secret-token"), { status: 400 });
+    },
+    getCityProfile: async () => {
+      throw Object.assign(new Error("upstream db.internal secret-token"), { status: 200 });
+    },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+
+  const zip = await fetch(`${server.baseUrl}/api/census/zip-profile/75201`);
+  assert.equal(zip.status, 502);
+  assert.deepEqual(await zip.json(), { error: "census_zip_profile_failed" });
+  const city = await fetch(`${server.baseUrl}/api/census/city-profile?city=Dallas&state=TX`);
+  assert.equal(city.status, 502);
+  assert.deepEqual(await city.json(), { error: "census_city_profile_failed" });
+  assert.equal(logs.length, 2);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
+});
+
+test("Census profile routes retain documented not-found and configuration statuses", async (context) => {
+  const server = await startRouter(baseOptions({
+    getZipProfile: async () => {
+      throw Object.assign(new Error("census_api_key_not_configured"), {
+        code: "census_api_key_not_configured", status: 503,
+      });
+    },
+    getCityProfile: async () => {
+      throw Object.assign(new Error("census_city_profile_not_found"), {
+        code: "census_city_profile_not_found", status: 404,
+      });
+    },
+    logger: { error() {} },
+  }));
+  context.after(server.close);
+
+  const zip = await fetch(`${server.baseUrl}/api/census/zip-profile/75201`);
+  assert.equal(zip.status, 503);
+  assert.deepEqual(await zip.json(), { error: "census_zip_profile_failed" });
+  const city = await fetch(`${server.baseUrl}/api/census/city-profile?city=Missing&state=TX`);
+  assert.equal(city.status, 404);
+  assert.deepEqual(await city.json(), { error: "census_city_profile_not_found" });
 });
 
 test("status and maintenance diagnostics remain server-side with stable failures", async (context) => {

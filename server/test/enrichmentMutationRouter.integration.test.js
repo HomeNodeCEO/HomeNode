@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createEnrichmentMutationRouter } from "../src/modules/operations/enrichmentMutationRouter.js";
+import { assertPropertyAttributeKey } from "../src/util/nonDallasEnrichment.js";
 
 const identity = Object.freeze({
   userId: "appraiser-1",
@@ -119,6 +120,38 @@ test("enrichment mutations validate targets and retain editor gating before side
   assert.equal(invalidSuggestion.status, 400);
   assert.deepEqual(await invalidSuggestion.json(), { error: "invalid_suggestion_target" });
   assert.equal(editorCalls, 1);
+});
+
+test("verified attribute validation exposes only stable public error codes", async (context) => {
+  const database = createDatabase();
+  const logs = [];
+  const expected = await startRouter(baseOptions(database, {
+    assertAttributeKey: assertPropertyAttributeKey,
+  }));
+  const unexpected = await startRouter(baseOptions(database, {
+    assertAttributeKey() {
+      throw new Error("database db.internal secret-token");
+    },
+    logger: { warn: (...args) => logs.push(args) },
+  }));
+  context.after(async () => Promise.all([expected.close(), unexpected.close()]));
+
+  const invalid = await mutate(expected.baseUrl, "/api/accounts/A-1/verified-attribute", "PATCH", {
+    attribute_key: "not_supported",
+    attribute_value: 1,
+  });
+  assert.equal(invalid.status, 400);
+  assert.deepEqual(await invalid.json(), { error: "unsupported_property_attribute" });
+
+  const failure = await mutate(unexpected.baseUrl, "/api/accounts/A-1/verified-attribute", "PATCH", {
+    attribute_key: "year_built",
+    attribute_value: 2004,
+  });
+  assert.equal(failure.status, 400);
+  assert.deepEqual(await failure.json(), { error: "invalid_attribute" });
+  assert.deepEqual(logs, [["verified attribute validation failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
+  assert.equal(database.clients.length, 0);
 });
 
 test("verified attribute writes preserve revision, history, resolution, and transaction order", async (context) => {

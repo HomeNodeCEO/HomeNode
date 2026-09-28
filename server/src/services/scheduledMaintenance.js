@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   ensureLocationBackfillQueueSchema,
   getLocationBackfillStatus,
@@ -64,7 +65,17 @@ function boundedInteger(value, fallback, minimum, maximum) {
 }
 
 function errorMessage(error) {
-  return String(error?.message || error || "scheduled_maintenance_failed").slice(0, 4_000);
+  const code = safeOperationalErrorCode(error);
+  return code === "unknown" ? "scheduled_maintenance_failed" : code;
+}
+
+function logMaintenance(logger, method, label, error) {
+  try {
+    if (method === "warn") logger.warn?.(label, errorMessage(error));
+    else logger.info?.(label);
+  } catch {
+    // Optional diagnostics must not change maintenance outcomes or lock release.
+  }
 }
 
 export function resolveMaintenanceTasks(requestedTask = "routine") {
@@ -532,7 +543,7 @@ export async function runScheduledMaintenance(pool, {
   const workerId = `scheduled-maintenance-${randomUUID()}`;
   const lockClient = await acquireMaintenanceLock(pool);
   if (!lockClient) {
-    logger.info?.("[scheduled-maintenance] another run owns the advisory lock; skipping");
+    logMaintenance(logger, "info", "[scheduled-maintenance] another run owns the advisory lock; skipping");
     return { ok: true, skipped: true, reason: "already_running", tasks };
   }
 
@@ -601,14 +612,14 @@ export async function runScheduledMaintenance(pool, {
         break;
       }
       try {
-        logger.info?.(`[scheduled-maintenance] starting ${taskName}`);
+        logMaintenance(logger, "info", `[scheduled-maintenance] starting ${taskName}`);
         results[taskName] = await taskRunner(pool, taskName, options);
-        logger.info?.(`[scheduled-maintenance] completed ${taskName}`);
+        logMaintenance(logger, "info", `[scheduled-maintenance] completed ${taskName}`);
       } catch (error) {
         const failure = { task: taskName, error: errorMessage(error) };
         failures.push(failure);
         results[taskName] = { ok: false, ...failure };
-        logger.warn?.(`[scheduled-maintenance] ${taskName} failed; retained prior data`, failure.error);
+        logMaintenance(logger, "warn", `[scheduled-maintenance] ${taskName} failed; retained prior data`, error);
       }
     }
 
@@ -647,7 +658,7 @@ export async function runScheduledMaintenance(pool, {
     throw error;
   } finally {
     await releaseMaintenanceLock(lockClient).catch((error) => {
-      logger.warn?.("[scheduled-maintenance] advisory lock release failed", errorMessage(error));
+      logMaintenance(logger, "warn", "[scheduled-maintenance] advisory lock release failed", error);
     });
   }
 }

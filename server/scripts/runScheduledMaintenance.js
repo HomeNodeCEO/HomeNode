@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 
 import { runScheduledMaintenance } from "../src/services/scheduledMaintenance.js";
+import { safeOperationalErrorCode } from "../src/security/safeOperationalErrorCode.js";
 import { createUadObjectStorage } from "../src/modules/uad/r2Storage.js";
 import { createDocumentOcrProvider } from "../src/services/documentOcr.js";
 
@@ -124,7 +125,7 @@ try {
   console.log(JSON.stringify(result, null, 2));
   if (!result.ok) process.exitCode = 1;
 } catch (error) {
-  console.error("[scheduled-maintenance] failed", error);
+  console.error("[scheduled-maintenance] failed", safeOperationalErrorCode(error));
   process.exitCode = 1;
 } finally {
   await pool.end();

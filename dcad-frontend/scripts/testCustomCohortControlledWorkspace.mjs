@@ -63,7 +63,8 @@ function response(request) {
 }
 const same = (a, b) => a && b && a.length === b.length && a.every((value, i) => Object.is(value, b[i]));
 const children = node => (Array.isArray(node?.props?.children) ? node.props.children : [node?.props?.children]).flat(Infinity);
-const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk)] : [];
+const walk = node => node && typeof node === 'object' ? [node, ...children(node).flatMap(walk),
+  ...[node.props?.scoreBandSelector, node.props?.belowMapStatistics].flatMap(walk)] : [];
 const text = node => typeof node === 'string' || typeof node === 'number' ? String(node)
   : node && typeof node === 'object' ? children(node).map(text).join('') : '';
 function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
@@ -87,7 +88,8 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   const api = { requestCustomCohortObservationPreview: previewTransport,
     requestCustomCohortOperation: (...args) => { catalogCalls.push(args); return Promise.resolve(catalogResponse()); } };
   const stubs = Object.fromEntries(['CustomCohortParcelMap', 'CustomCohortStatistics', 'CustomCohortCompactStatistics',
-    'CustomCohortPocketInspector', 'CustomCohortMemberBrowser', 'CustomCohortSubdivisionDialog', 'CustomCohortMapSnapshot'].map(key => [key, function Stub() {}]));
+    'CustomCohortPocketInspector', 'CustomCohortMemberBrowser', 'CustomCohortSubdivisionDialog', 'CustomCohortMapSnapshot',
+    'CustomCohortScoreBandSelector'].map(key => [key, function Stub() {}]));
   const component = loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/components/${name}.tsx`, import.meta.url), key => {
     if (key === 'react') return react;
     if (key === 'react/jsx-runtime') return requireRuntime(key);
@@ -443,6 +445,68 @@ test('Use suggested selection emits one exact intent and updates map/statistics 
   assert.equal(h.intents.length, 1); assert.equal(h.catalogCalls.length, 0);
 });
 
+test('similarity-range replace, add, and remove use the saved-selection path without extra scoring reads', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const all = [groupId(1), groupId(2), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP];
+  const props = withRecommendation(h.props(all));
+  h.render(props); await h.tick(); await h.complete();
+  const initialMap = h.child('CustomCohortParcelMap').group;
+  const band = h.child('CustomCohortParcelMap').scoreBandSelector.props;
+  assert.equal(band.allGroupsIncluded, true);
+  assert.equal(band.recommendation, props.workspace.catalog.recommendation);
+  band.onReplace([groupId(2)]);
+  assert.deepEqual(h.intents, [[groupId(2)]]);
+  assert.equal(h.calls.length, 1);
+  assert.equal(h.child('CustomCohortParcelMap').group, initialMap);
+  h.render(withRecommendation(h.props(all)));
+  h.child('CustomCohortParcelMap').scoreBandSelector.props.onRemove([groupId(2)]);
+  assert.deepEqual(h.intents.at(-1), [groupId(1), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP]);
+  h.render(withRecommendation(h.props([groupId(2)], 8))); await h.tick(); await h.complete();
+  const nextBand = h.child('CustomCohortParcelMap').scoreBandSelector.props;
+  nextBand.onAdd([groupId(1)]);
+  assert.deepEqual(h.intents.at(-1), [groupId(2), groupId(1)]);
+  assert.equal(h.catalogCalls.length, 0);
+});
+
+test('score-range actions are unavailable during blocked saves, even before the map paints', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const props = withRecommendation(h.props([groupId(1)]));
+  h.render(props);
+  const waitingBand = h.child('CustomCohortScoreBandSelector');
+  assert.ok(waitingBand, 'the range control is available while the first preview loads');
+  assert.equal(waitingBand.disabled, false);
+  for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture']) {
+    const blocked = withRecommendation(h.props([groupId(1)]));
+    if (state === 'saving') blocked.workspace.saving = true; else blocked.workspace.blockedReason = state;
+    h.render(blocked);
+    const control = h.child('CustomCohortScoreBandSelector');
+    assert.equal(control.disabled, true);
+    control.onReplace([groupId(2)]);
+    control.onAdd([groupId(2)]);
+    control.onRemove([groupId(1)]);
+    assert.deepEqual(h.intents, []);
+  }
+});
+
+test('chosen range persists from first-preview waiting state into the map and red notice tracks only current paint', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const all = [groupId(1), groupId(2), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP];
+  const props = withRecommendation(h.props(all));
+  h.render(props);
+  const waiting = h.child('CustomCohortScoreBandSelector');
+  assert.equal(waiting.allGroupsIncluded, false, 'no map is showing the included state yet');
+  waiting.onMinimumChange(80);
+  h.render(props);
+  assert.equal(h.child('CustomCohortScoreBandSelector').minimum, 80);
+  await h.tick(); await h.complete();
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.minimum, 80);
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.allGroupsIncluded, true);
+  const saving = withRecommendation(h.props(all)); saving.workspace.saving = true;
+  h.render(saving);
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.allGroupsIncluded, false,
+    'a stale map cannot be explained using an unpainted selection');
+});
+
 for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture']) test(`${state} blocks Use suggested selection without mutating existing choices`, async t => {
   const h = harness(); t.after(() => h.unmount()); const p = withRecommendation(h.props([]));
   if (state === 'saving') p.workspace.saving = true; else p.workspace.blockedReason = state;
@@ -707,7 +771,7 @@ test('broad click includes entire subdivision in one saved intent, preserves unr
   h.child('CustomCohortParcelMap').onActivatePocket(groupId(2), 'subdivision'); await h.drain();
   assert.equal(h.intents.length, 1, 'already included does not write again');
 });
-test('subdivision snapshot is a regular sibling below the map/statistics row and above Recorded groups, never a map overlay', async t => {
+test('subdivision snapshot follows the map with statistics below it, ahead of source details', async t => {
   const h = harness(); t.after(() => h.unmount()); const props = phasedProps(h, [groupId(1), groupId(2)]);
   h.render(props); await h.tick(); await h.complete();
   const mapProps = h.child('CustomCohortParcelMap');
@@ -719,12 +783,13 @@ test('subdivision snapshot is a regular sibling below the map/statistics row and
   const snapshotNode = nodes.find(node => node.props === snapshotProps);
   const groupsNode = nodes.find(node => node.props['aria-label'] === 'Recorded groups');
   const row = nodes.find(node => children(node).includes(mapNode));
-  assert.ok(row); assert.ok(children(row).some(node => node?.type === 'aside'
-    && node.props['aria-label'] === 'Live neighborhood characteristics and market observations'));
+  assert.ok(row);
+  assert.equal(mapProps.belowMapStatistics.props['aria-label'], 'Live neighborhood characteristics and market observations');
+  assert.equal(mapProps.scoreBandSelector.type.name, 'Stub');
   assert.equal(walk(mapNode).includes(snapshotNode), false);
   assert.equal(Object.hasOwn(mapNode.props, 'overlay'), false);
   const siblings = children(nodes.find(node => children(node).includes(row)));
-  assert.ok(siblings.indexOf(snapshotNode) > siblings.indexOf(row), 'snapshot follows the complete map/statistics row');
+  assert.ok(siblings.indexOf(snapshotNode) > siblings.indexOf(row), 'snapshot follows the map with nested statistics');
   const sourceDetails = nodes.find(node => node.type === 'details' && children(node).includes(groupsNode));
   assert.ok(sourceDetails); assert.equal(sourceDetails.props.open, undefined, 'individual CAD groups start collapsed');
   assert.ok(siblings.indexOf(sourceDetails) > siblings.indexOf(snapshotNode), 'combined snapshot precedes source-record details');

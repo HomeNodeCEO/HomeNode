@@ -1,4 +1,5 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
 import { loadMapLibreRuntime, MAPLIBRE_BASE_STYLE } from '../../../lib/mapLibreRuntime';
 import type { ParcelMapClick, ParcelMapRuntimeInstance } from '../../../lib/mapLibreRuntime';
 import NeighborhoodCityReferenceControl from '../../../components/NeighborhoodCityReferenceControl';
@@ -24,6 +25,8 @@ interface Props {
   onExcludePocket?: (pocketId: string, mode: 'subdivision') => void;
   onInspectPocket?: (pocketId: string) => void;
   onInspectAccount?: (accountId: string) => void;
+  scoreBandSelector?: ReactNode;
+  belowMapStatistics?: ReactNode;
 }
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`, LABEL_DOT = `${LABEL_SOURCE}-dot`;
@@ -177,7 +180,8 @@ const state = (key: keyof Paint) => ['coalesce', ['feature-state', key], ['get',
 /** Exact cached parcel outlines with optional existing group-level similarity.
  * View controls never change the accepted controller selection or statistics. */
 export default function CustomCohortParcelMap({ group, catalog, freshness, inspectedPocketId, inspectedPocketIds,
-  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount }: Props) {
+  subdivisionFamilies, onActivatePocket, onExcludePocket, onInspectPocket, onInspectAccount,
+  scoreBandSelector, belowMapStatistics }: Props) {
   const container = useRef<HTMLDivElement>(null), mapRef = useRef<ParcelMapRuntimeInstance | null>(null);
   const painted = useRef<readonly PaintedParcel[]>([]);
   const paintedLabels = useRef(''), cityViewActive = useRef(false);
@@ -578,6 +582,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
         <li className="inline-flex items-center gap-1.5"><span aria-hidden="true" className="h-3 w-3 rounded-sm border" style={{ borderColor: COLORS.subject }} />Subject pointer</li>
       </ul>
       <p className="text-xs text-slate-600">Fill reflects recorded-group similarity to the subject, not an individual parcel score or statistical reliability. Missing observations remain unknown.</p>
+      {scoreBandSelector}
       {catalog.prepared_secondary_map && <p className="text-xs text-slate-600">Map colors include up to 10% supporting bedroom, bath, garage, pool and outbuilding similarity from the prepared CAD snapshot observed {new Date(catalog.prepared_secondary_map.source_observed_at).toLocaleString()}. This is current-recorded review support, not historical condition or a change to the report statistics.</p>}
       {matches && hasMap && !subjectMarkers.features.length && <p className="text-xs text-slate-600">Subject pointer unavailable because captured subject geometry is missing.</p>}
       {matches && hasMap && presentation?.status !== 'available' && <p role="status" className="text-xs text-amber-800">Recorded labels and similarity colors are unavailable for this checked preview. The parcel selection is unchanged.</p>}
@@ -602,6 +607,7 @@ export default function CustomCohortParcelMap({ group, catalog, freshness, inspe
             {detailState === 'partial' && <button type="button" className="ml-2 underline" onClick={() => setCameraRevision(n => n + 1)}>Retry parcel detail</button>}
           </p>}
       </div>}
+    {belowMapStatistics && <div className="px-4 py-3">{belowMapStatistics}</div>}
     <div className="px-4 pb-3"><NeighborhoodCityReferenceControl map={mapState === 'failed' ? null : cityMap}
       onViewChange={active => { if (cityMap && mapRef.current === cityMap && mapState !== 'failed') cityViewActive.current = active; }} /></div>
   </section>;

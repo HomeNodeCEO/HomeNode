@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   ensureAccountLocationsTable,
   refreshAccountLocations,
@@ -14,6 +15,39 @@ const QUEUE_STATUSES = new Set([
   "manual_review",
 ]);
 const schemaReadyByPool = new WeakMap();
+const SAFE_REVIEW_REASONS = new Set([
+  "parcel_geometry_invalid",
+  "parcel_not_found",
+  "multiple_parcel_features",
+  "site_address_mismatch",
+  "location_row_missing",
+]);
+
+export function locationBackfillDiagnostic({ error = null, reviewReason = null, locationStatus = null } = {}) {
+  if (error != null) {
+    let candidate;
+    try {
+      candidate = error?.message;
+    } catch {
+      // Never stringify an exception-like object into queue state or results.
+    }
+    const message = typeof candidate === "string" ? candidate : "";
+    if (/^dcad_parcel_query_(?:unavailable|http_(?:unknown|[1-5]\d{2})|response_(?:too_large|unavailable)|invalid_response|error|\d{1,6})$/.test(message)) {
+      return message;
+    }
+    const operationalCode = safeOperationalErrorCode(error);
+    return operationalCode === "unknown" ? "location_backfill_failed" : `location_backfill_${operationalCode}`;
+  }
+  if (typeof reviewReason === "string") {
+    const reasons = reviewReason.split(",").map((reason) => reason.trim());
+    if (reasons.length > 0 && reasons.length <= 3 && reasons.every((reason) => SAFE_REVIEW_REASONS.has(reason))) {
+      return reasons.join(",");
+    }
+  }
+  if (locationStatus === "not_found") return "parcel_not_found";
+  if (locationStatus === "invalid") return "location_invalid";
+  return "location_unavailable";
+}
 
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
@@ -407,13 +441,7 @@ async function markLocationBackfillOutcome(
   const nextAttempt = Number(item.attempts || 0) + 1;
   const terminal = nextAttempt >= maximumAttempts;
   const delaySeconds = locationBackfillRetryDelaySeconds(nextAttempt);
-  const message = String(
-    error?.message ||
-    error ||
-    reviewReason ||
-    locationStatus ||
-    "location_unavailable",
-  ).slice(0, 1000);
+  const message = locationBackfillDiagnostic({ error, reviewReason, locationStatus });
   await pool.query(
     `
       UPDATE app.location_backfill_queue
@@ -484,7 +512,7 @@ export async function runLocationBackfillBatch(
       completed: 0,
       retry: outcomes.filter((outcome) => outcome === "retry").length,
       manualReview: outcomes.filter((outcome) => outcome === "manual_review").length,
-      error: error?.message || String(error),
+      error: locationBackfillDiagnostic({ error }),
     };
   }
 

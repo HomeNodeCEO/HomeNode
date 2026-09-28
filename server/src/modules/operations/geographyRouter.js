@@ -110,7 +110,7 @@ export function createGeographyOperationsRouter({
       await ensureLocationSchema(pool);
       return res.json(await getLocationStatus(pool));
     } catch (error) {
-      logger.error?.("location backfill status failed", error);
+      logger.error?.("location backfill status failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "location_backfill_status_failed" });
     }
   });
@@ -130,7 +130,7 @@ export function createGeographyOperationsRouter({
       });
       return res.json({ ok: true, seed, result });
     } catch (error) {
-      logger.error?.("location backfill maintenance run failed", error);
+      logger.error?.("location backfill maintenance run failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "location_backfill_run_failed" });
     }
   });
@@ -142,7 +142,7 @@ export function createGeographyOperationsRouter({
       await ensureCensusSchema(pool);
       return res.json(await getCensusStatus(pool));
     } catch (error) {
-      logger.error?.("census geography status failed", error);
+      logger.error?.("census geography status failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "census_geography_status_failed" });
     }
   });
@@ -168,7 +168,7 @@ export function createGeographyOperationsRouter({
       const code = String(error?.code || error?.message || "");
       if (code === "account_not_found") return res.status(404).json({ error: code });
       if (code === "census_lookup_input_missing") return res.status(422).json({ error: code });
-      logger.error?.("on-demand census geography lookup failed", error);
+      logger.error?.("on-demand census geography lookup failed", safeOperationalErrorCode(error));
       return res.status(502).json({ error: "census_geography_lookup_failed" });
     }
   });
@@ -214,7 +214,7 @@ export function createGeographyOperationsRouter({
       });
       return res.json({ ok: true, seed, result });
     } catch (error) {
-      logger.error?.("census geography maintenance run failed", error);
+      logger.error?.("census geography maintenance run failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "census_geography_run_failed" });
     }
   });

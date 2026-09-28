@@ -229,7 +229,7 @@ test("on-demand census lookup retains absence, missing-input, and bounded upstre
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), item.body);
   }
-  assert.deepEqual(logs, [["on-demand census geography lookup failed", diagnostic]]);
+  assert.deepEqual(logs, [["on-demand census geography lookup failed", "unknown"]]);
 });
 
 test("ZIP and city profile routes preserve requests and expose only known error codes", async (context) => {
@@ -320,6 +320,8 @@ test("status and maintenance diagnostics remain server-side with stable failures
   const logs = [];
   const server = await startRouter(baseOptions({
     getLocationStatus: async () => { throw diagnostic; },
+    seedLocationQueue: async () => { throw diagnostic; },
+    getCensusStatus: async () => { throw diagnostic; },
     seedCensusQueue: async () => { throw diagnostic; },
     logger: { error: (...args) => logs.push(args) },
   }));
@@ -328,13 +330,22 @@ test("status and maintenance diagnostics remain server-side with stable failures
   const status = await fetch(`${server.baseUrl}/api/location-backfill/status`);
   assert.equal(status.status, 500);
   assert.deepEqual(await status.json(), { error: "location_backfill_status_failed" });
+  const locationRun = await postJson(`${server.baseUrl}/api/location-backfill/run`, {});
+  assert.equal(locationRun.status, 500);
+  assert.deepEqual(await locationRun.json(), { error: "location_backfill_run_failed" });
+  const censusStatus = await fetch(`${server.baseUrl}/api/census-geography/status`);
+  assert.equal(censusStatus.status, 500);
+  assert.deepEqual(await censusStatus.json(), { error: "census_geography_status_failed" });
   const run = await postJson(`${server.baseUrl}/api/census-geography/run`, {});
   assert.equal(run.status, 500);
   assert.deepEqual(await run.json(), { error: "census_geography_run_failed" });
   assert.deepEqual(logs, [
-    ["location backfill status failed", diagnostic],
-    ["census geography maintenance run failed", diagnostic],
+    ["location backfill status failed", "unknown"],
+    ["location backfill maintenance run failed", "unknown"],
+    ["census geography status failed", "unknown"],
+    ["census geography maintenance run failed", "unknown"],
   ]);
+  assert.equal(JSON.stringify(logs).includes("secret-token"), false);
 });
 
 test("geography operations composition is explicit and inline routes are absent", () => {

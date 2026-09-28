@@ -4,6 +4,8 @@ import test from "node:test";
 import {
   normalizeAppraisalRatingUpdate,
   normalizeEffectiveDate,
+  publicEffectiveDateErrorCode,
+  publicRatingUpdateErrorCode,
 } from "../src/util/appraisalRatings.js";
 
 test("normalizes UAD full and half-grade ranges", () => {
@@ -45,4 +47,18 @@ test("rejects invalid ratings and missing updates", () => {
 test("validates a real calendar effective date", () => {
   assert.equal(normalizeEffectiveDate("2026-08-02"), "2026-08-02");
   assert.throws(() => normalizeEffectiveDate("2026-02-30"), /invalid_effective_date/);
+});
+
+test("public rating validation codes are exact and reject hostile diagnostics", () => {
+  for (const code of [
+    "invalid_condition_rating", "invalid_quality_rating", "invalid_notes",
+    "missing_appraisal_rating", "invalid_expected_revision",
+  ]) {
+    assert.equal(publicRatingUpdateErrorCode(new Error(code)), code);
+  }
+  assert.equal(publicEffectiveDateErrorCode(new Error("invalid_effective_date")), "invalid_effective_date");
+  assert.equal(publicRatingUpdateErrorCode(new Error("invalid_condition_rating: private-token")), null);
+  assert.equal(publicEffectiveDateErrorCode(new Error("invalid_effective_date: private-token")), null);
+  assert.equal(publicRatingUpdateErrorCode({ get message() { throw new Error("private-token"); } }), null);
+  assert.equal(publicEffectiveDateErrorCode({ get message() { throw new Error("private-token"); } }), null);
 });

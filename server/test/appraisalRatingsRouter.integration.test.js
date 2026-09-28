@@ -79,6 +79,49 @@ test("rating reads and history preserve validation, SQL scope, and response shap
   assert.match(calls[1].sql, /LIMIT 100/);
 });
 
+test("unexpected rating validation failures return fixed responses without diagnostics", async (context) => {
+  const privateDetail = "database db.internal private-token";
+  const logs = [];
+  let connectCalls = 0;
+  const pool = {
+    query: async () => ({ rows: [] }),
+    connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); },
+  };
+  const dateServer = await startRouter(baseOptions({
+    pool,
+    normalizeDate: () => { throw new Error(privateDetail); },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  const ratingServer = await startRouter(baseOptions({
+    pool,
+    normalizeRatingUpdate: () => { throw new Error(privateDetail); },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(async () => Promise.all([dateServer.close(), ratingServer.close()]));
+
+  const read = await fetch(`${dateServer.baseUrl}/api/accounts/123/appraisal-rating?effective_date=2026-09-02`);
+  assert.equal(read.status, 500);
+  assert.deepEqual(await read.json(), { error: "subject_rating_failed" });
+  assert.equal(read.headers.get("cache-control"), "no-store");
+  for (const baseUrl of [dateServer.baseUrl, ratingServer.baseUrl]) {
+    const write = await fetch(`${baseUrl}/api/accounts/123/appraisal-rating`, {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ effective_date: "2026-09-02", condition_rating: "C3" }),
+    });
+    assert.equal(write.status, 500);
+    assert.deepEqual(await write.json(), { error: "subject_rating_update_failed" });
+    assert.equal(write.headers.get("cache-control"), "no-store");
+  }
+  assert.equal(connectCalls, 0);
+  assert.deepEqual(logs, [
+    ["subject_rating_validation_failed"],
+    ["subject_rating_validation_failed"],
+    ["subject_rating_validation_failed"],
+  ]);
+  assert.doesNotMatch(JSON.stringify(logs), /db\.internal|private-token/);
+});
+
 test("rating writes preserve transaction, revision, history, and release behavior", async (context) => {
   const calls = [];
   let released = 0;

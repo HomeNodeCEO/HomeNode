@@ -137,6 +137,24 @@ test("sale review validation and editor denial happen before connection acquisit
   assert.equal(validationDatabase.clients.length, 0);
 });
 
+test("unexpected sale-review normalizer diagnostics never cross the API boundary", async (context) => {
+  const database = createDatabase();
+  const logs = [];
+  const server = await startRouter(baseOptions(database, {
+    normalizeRatingUpdate: () => { throw new Error("database db.internal private-token"); },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+
+  const response = await saveReview(server.baseUrl, "71", { condition_rating: "C3" });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "sale_review_update_failed" });
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  assert.equal(database.clients.length, 0);
+  assert.deepEqual(logs, [["sale_review_validation_failed"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /db\.internal|private-token/);
+});
+
 test("valid comparable rating updates use the shared normalizer and preserve audited writes", async (context) => {
   const review = {
     source_record_id: "71",

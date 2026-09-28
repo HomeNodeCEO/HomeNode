@@ -233,7 +233,29 @@ test("Dallas isolation and database failures preserve distinct account responses
   const failedResponse = await fetch(`${failed.baseUrl}/api/accounts/A-1/enrichment`);
   assert.equal(failedResponse.status, 500);
   assert.deepEqual(await failedResponse.json(), { error: "account_enrichment_failed" });
-  assert.deepEqual(logs, [["account enrichment load failed", diagnostic]]);
+  assert.deepEqual(logs, [["account enrichment load failed", "unknown"]]);
+  assert.equal(JSON.stringify(logs).includes("secret-token"), false);
+});
+
+test("enrichment failures preserve fixed responses when diagnostic logging fails", async (context) => {
+  const database = createPool();
+  const logger = { error() { throw new Error("logger unavailable"); } };
+  const status = await startRouter(baseOptions(database, {
+    getReplicationStatus: async () => { throw new Error("sensitive status detail"); },
+    logger,
+  }));
+  const account = await startRouter(baseOptions(database, {
+    getNonDallasAccount: async () => { throw new Error("sensitive account detail"); },
+    logger,
+  }));
+  context.after(async () => Promise.all([status.close(), account.close()]));
+
+  const statusResponse = await fetch(`${status.baseUrl}/api/enrichment/status`);
+  assert.equal(statusResponse.status, 500);
+  assert.deepEqual(await statusResponse.json(), { error: "enrichment_status_failed" });
+  const accountResponse = await fetch(`${account.baseUrl}/api/accounts/A-1/enrichment`);
+  assert.equal(accountResponse.status, 500);
+  assert.deepEqual(await accountResponse.json(), { error: "account_enrichment_failed" });
 });
 
 test("enrichment read composition is explicit and inline routes are absent", () => {

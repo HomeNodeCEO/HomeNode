@@ -1,6 +1,16 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { resolveComparableSearchProfile } from "../../util/comparableSearchProfiles.js";
+import { isValidIsoCalendarDate } from "../../util/isoCalendarDate.js";
+
+const PUBLIC_VALIDATION_ERRORS = new Set([
+  "invalid_matched",
+  "invalid_review",
+  "invalid_include_attached",
+  "invalid_min_price",
+  "invalid_max_price",
+]);
 
 export function createSalesListRouter({
   pool,
@@ -61,10 +71,10 @@ export function createSalesListRouter({
       const review = parseOptionalBoolean(req.query.review, "review");
       const includeAttached =
         parseOptionalBoolean(req.query.include_attached, "include_attached") ?? true;
-      if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      if (dateFrom && !isValidIsoCalendarDate(dateFrom)) {
         return res.status(400).json({ error: "invalid_date_from" });
       }
-      if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      if (dateTo && !isValidIsoCalendarDate(dateTo)) {
         return res.status(400).json({ error: "invalid_date_to" });
       }
       if (multiParcel && !["single", "possible", "confirmed"].includes(multiParcel)) {
@@ -290,11 +300,11 @@ export function createSalesListRouter({
       const { rows } = await pool.query(sql, params);
       return res.json(rows);
     } catch (error) {
-      const message = error?.message || "sales_search_failed";
-      if (String(message).startsWith("invalid_")) {
+      const message = error?.message;
+      if (PUBLIC_VALIDATION_ERRORS.has(message)) {
         return res.status(400).json({ error: message });
       }
-      logger.error?.("/api/sales failed", error);
+      logger.error?.("/api/sales failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "sales_search_failed" });
     }
   });

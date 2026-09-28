@@ -75,7 +75,9 @@ test("sales list rejects malformed filters before database access", async (conte
     ["review=maybe", "invalid_review"],
     ["include_attached=maybe", "invalid_include_attached"],
     ["date_from=09-02-2026", "invalid_date_from"],
+    ["date_from=2026-02-29", "invalid_date_from"],
     ["date_to=tomorrow", "invalid_date_to"],
+    ["date_to=2026-13-01", "invalid_date_to"],
     ["multi_parcel=merged", "invalid_multi_parcel"],
     ["record_type=pending", "invalid_record_type"],
     ["subject_account_id=BAD", "invalid_subject_account_id"],
@@ -219,7 +221,7 @@ test("listing searches use account matching and listing activity dates", async (
 });
 
 test("sales list retains bounded validation and database failure responses", async (context) => {
-  const failure = new Error("database_offline");
+  const failure = new Error("invalid_database_password=secret-token");
   const logs = [];
   const server = await startRouter(createSalesListRouter(options({
     pool: { query: async () => { throw failure; } },
@@ -229,13 +231,16 @@ test("sales list retains bounded validation and database failure responses", asy
   context.after(server.close);
 
   const validation = await fetch(`${server.baseUrl}/api/sales?search_profile=radius_3mi`);
-  assert.equal(validation.status, 400);
-  assert.deepEqual(await validation.json(), { error: "invalid_profile_policy" });
+  assert.equal(validation.status, 500);
+  assert.deepEqual(await validation.json(), { error: "sales_search_failed" });
 
   const database = await fetch(`${server.baseUrl}/api/sales`);
   assert.equal(database.status, 500);
   assert.deepEqual(await database.json(), { error: "sales_search_failed" });
-  assert.deepEqual(logs, [["/api/sales failed", failure]]);
+  assert.deepEqual(logs, [
+    ["/api/sales failed", "unknown"],
+    ["/api/sales failed", "unknown"],
+  ]);
 });
 
 test("sales list router validates collaborators and remains between recommendations and studies", () => {

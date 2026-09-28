@@ -2,9 +2,33 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  failPropertyInfluenceQueueItem,
   getPropertyInfluenceStatus,
+  propertyInfluenceFailureCode,
   seedPropertyInfluenceQueue,
 } from "../src/services/propertyInfluenceStore.js";
+
+test("influence queue stores bounded failure codes rather than raw exception text", async () => {
+  const privateDetail = "password in a private database connection URL";
+  const statements = [];
+  const pool = {
+    async query(sql, params) {
+      statements.push({ sql, params });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  const outcome = await failPropertyInfluenceQueueItem(pool, {
+    accountId: "26272500060150000",
+    attempts: 1,
+    error: new Error(privateDetail),
+  });
+  assert.equal(outcome, "retry");
+  assert.equal(statements[0].params[3], "property_influence_failed");
+  assert.equal(JSON.stringify(statements).includes(privateDetail), false);
+
+  assert.equal(propertyInfluenceFailureCode({ code: "57014", message: privateDetail }), "57014");
+  assert.equal(propertyInfluenceFailureCode({ code: "not-safe", message: privateDetail }), "property_influence_failed");
+});
 
 test("influence coverage reports current migration and unmatched MLS records separately", async () => {
   const statements = [];

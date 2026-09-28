@@ -3,8 +3,41 @@ import test from "node:test";
 
 import {
   refreshInfluenceQueueItem,
+  runPropertyInfluenceBatch,
   runWithConcurrency,
 } from "../src/services/propertyInfluenceQueue.js";
+
+test("influence batch logs bounded codes and survives a throwing logger after retry settlement", async () => {
+  const privateDetail = "private provider token in exception";
+  const settled = [];
+  const warnings = [];
+  const pool = {
+    async query(sql, params) {
+      if (sql.includes("FROM gis.source_sync_state")) return { rows: [] };
+      if (sql.includes("RETURNING queue.account_id")) {
+        return { rows: [{ account_id: "26272500060150000", attempts: 1 }] };
+      }
+      if (sql.includes("last_error = $4")) settled.push(params);
+      return { rows: [], rowCount: 1 };
+    },
+    async connect() { throw new Error(privateDetail); },
+  };
+  const result = await runPropertyInfluenceBatch(pool, {
+    logger: { warn: (...args) => warnings.push(args) },
+  });
+  assert.equal(result.retry, 1);
+  assert.equal(settled[0][3], "property_influence_failed");
+  assert.deepEqual(warnings, [[
+    "[property-influence] refresh failed",
+    { outcome: "retry", code: "property_influence_failed" },
+  ]]);
+  assert.equal(JSON.stringify({ settled, warnings }).includes(privateDetail), false);
+
+  const second = await runPropertyInfluenceBatch(pool, {
+    logger: { warn() { throw new Error("logger unavailable"); } },
+  });
+  assert.equal(second.retry, 1);
+});
 
 test("property influence work respects its concurrency ceiling and processes every item", async () => {
   const items = Array.from({ length: 17 }, (_, index) => index + 1);

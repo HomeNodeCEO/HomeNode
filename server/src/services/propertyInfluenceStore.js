@@ -1,5 +1,6 @@
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
 import { AUTOMATED_ZONING_SOURCE_KEYS } from "./propertyZoningSources.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 
 const CURRENT_INFLUENCE_METHODOLOGY_VERSION = 3;
 
@@ -318,6 +319,11 @@ export async function completePropertyInfluenceQueueItem(pool, accountId) {
   );
 }
 
+export function propertyInfluenceFailureCode(error) {
+  const code = safeOperationalErrorCode(error);
+  return code === "unknown" ? "property_influence_failed" : code;
+}
+
 export async function failPropertyInfluenceQueueItem(pool, {
   accountId,
   attempts,
@@ -338,7 +344,7 @@ export async function failPropertyInfluenceQueueItem(pool, {
       accountId,
       manualReview ? "manual_review" : "retry",
       delayMinutes,
-      String(error?.message || error || "property_influence_failed").slice(0, 4_000),
+      propertyInfluenceFailureCode(error),
     ],
   );
   return manualReview ? "manual_review" : "retry";

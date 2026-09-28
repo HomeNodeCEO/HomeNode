@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import {
   analyzeComparableOutliers,
   analysisWindow,
@@ -12,6 +13,7 @@ import {
 } from "../../util/comparableScoring.js";
 import { resolveComparableSearchProfile } from "../../util/comparableSearchProfiles.js";
 import { parseGroupedAnalysisBreakdowns } from "../../util/groupedAnalysisBreakdowns.js";
+import { isValidIsoCalendarDate } from "../../util/isoCalendarDate.js";
 import { decorateAndRankByInfluence } from "../../util/propertyInfluence.js";
 import { refreshAccountLocations } from "../../services/accountLocations.js";
 import { summarizeComparableResults } from "../../services/comparableResponseSummary.js";
@@ -24,6 +26,20 @@ import {
   analyzeContractPriceSupport,
   loadComparableContractContext,
 } from "../../services/contractPriceSupport.js";
+
+const PUBLIC_RECOMMENDATION_ERRORS = new Set([
+  "invalid_analysis_period",
+  "invalid_outlier_score_threshold",
+  "invalid_scoring_configuration",
+]);
+
+function logOperationalFailure(logger, method, label, error) {
+  try {
+    logger?.[method]?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Optional diagnostics must not replace the stable route response.
+  }
+}
 
 function positiveSiteSize(value) {
   const parsed = typeof value === "string"
@@ -198,13 +214,13 @@ export function createComparableRecommendationsRouter({
         : null;
       await locationsReady;
       await enrichmentReady;
-      if (dateFrom && !/^\d{4}-\d{2}-\d{2}$/.test(dateFrom)) {
+      if (dateFrom && !isValidIsoCalendarDate(dateFrom)) {
         return res.status(400).json({ error: "invalid_date_from" });
       }
-      if (dateTo && !/^\d{4}-\d{2}-\d{2}$/.test(dateTo)) {
+      if (dateTo && !isValidIsoCalendarDate(dateTo)) {
         return res.status(400).json({ error: "invalid_date_to" });
       }
-      if (!/^\d{4}-\d{2}-\d{2}$/.test(requestedAnalysisAsOf)) {
+      if (!isValidIsoCalendarDate(requestedAnalysisAsOf)) {
         return res.status(400).json({ error: "invalid_analysis_as_of" });
       }
       if (
@@ -236,10 +252,12 @@ export function createComparableRecommendationsRouter({
             });
           }
           [marketBreakdown] = parsedBreakdowns;
-        } catch {
-          return res.status(400).json({
-            error: "invalid_market_breakdown",
-          });
+        } catch (error) {
+          if (error?.message === "invalid_grouped_analysis_breakdown") {
+            return res.status(400).json({ error: "invalid_market_breakdown" });
+          }
+          logOperationalFailure(logger, "error", "comparable market breakdown parse failed", error);
+          return res.status(500).json({ error: "comparable_recommendations_failed" });
         }
       }
 
@@ -446,10 +464,7 @@ export function createComparableRecommendationsRouter({
           reason: "comparable_subject",
           priority: 120,
         }).catch((error) => {
-          logger.warn?.(
-            "[recommendations] subject influence queueing failed",
-            error?.message || error,
-          );
+          logOperationalFailure(logger, "warn", "[recommendations] subject influence queueing failed", error);
         });
       }
 
@@ -660,10 +675,7 @@ export function createComparableRecommendationsRouter({
             priority: 100,
           });
         })().catch((error) => {
-          logger.warn?.(
-            "[recommendations] candidate location queueing failed",
-            error?.message || error,
-          );
+          logOperationalFailure(logger, "warn", "[recommendations] candidate location queueing failed", error);
         });
       }
 
@@ -683,10 +695,7 @@ export function createComparableRecommendationsRouter({
           reason: "comparable_recommendation",
           priority: 110,
         }).catch((error) => {
-          logger.warn?.(
-            "[recommendations] candidate influence queueing failed",
-            error?.message || error,
-          );
+          logOperationalFailure(logger, "warn", "[recommendations] candidate influence queueing failed", error);
         });
       }
       const cadSiteSizeByAccount = new Map();
@@ -990,11 +999,11 @@ export function createComparableRecommendationsRouter({
         sales: analyzedSales.slice(0, resultLimit),
       });
     } catch (err) {
-      const message = err?.message || "comparable_recommendations_failed";
-      if (String(message).startsWith("invalid_")) {
+      const message = err?.message;
+      if (PUBLIC_RECOMMENDATION_ERRORS.has(message)) {
         return res.status(400).json({ error: message });
       }
-      logger.error?.("/api/sales/recommendations failed", err);
+      logOperationalFailure(logger, "error", "/api/sales/recommendations failed", err);
       res.status(500).json({ error: "comparable_recommendations_failed" });
     }
   });

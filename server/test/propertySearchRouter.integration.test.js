@@ -121,6 +121,27 @@ test("negative search limits use the default instead of causing a database error
   }
 });
 
+test("property search bounds deep offsets before database access", async (context) => {
+  const database = createPool();
+  const server = await startRouter(baseOptions(database));
+  context.after(server.close);
+
+  for (const offset of ["10001", "9999999999999999999999999999999999999999"]) {
+    const response = await fetch(`${server.baseUrl}/api/search?city=plano&offset=${offset}`);
+    assert.equal(response.status, 400);
+    assert.deepEqual(await response.json(), { error: "search_offset_out_of_range" });
+  }
+  assert.equal(database.queries.length, 0);
+
+  const boundary = await fetch(`${server.baseUrl}/api/search?city=plano&offset=10000`);
+  assert.equal(boundary.status, 200);
+  assert.deepEqual(database.queries[0].params, ["PLANO%", 25, 10_000]);
+
+  const malformed = await fetch(`${server.baseUrl}/api/search?city=plano&offset=Infinity`);
+  assert.equal(malformed.status, 200);
+  assert.deepEqual(database.queries[1].params, ["PLANO%", 25, 0]);
+});
+
 test("native county identifiers resolve to canonical accounts and retain legacy-request metadata", async (context) => {
   const row = { account_id: "COLLIN_CANONICAL", data_quality_status: "verified" };
   const database = createPool(async () => ({ rows: [row] }));

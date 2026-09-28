@@ -150,8 +150,11 @@ function rowsFrom(result) {
 async function optionalRows(promise, label, logger) {
   try {
     return rowsFrom(await promise);
-  } catch (error) {
-    logger?.error?.(`${label} query failed`, error);
+  } catch {
+    // PostgreSQL errors can contain query parameters and connection details.
+    // Optional data must stay optional even if diagnostic logging fails.
+    try { logger?.error?.(`${label} query failed`, "account_detail_optional_query_failed"); }
+    catch { /* Preserve the optional-section fallback. */ }
     return [];
   }
 }

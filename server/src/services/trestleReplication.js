@@ -888,8 +888,15 @@ export async function getTrestleReplicationStatus(pool, clientStatus = {}) {
   );
   return {
     ...clientStatus,
-    state: rows[0] || null,
-    recent_runs: recent.rows,
+    // This status can be returned by the non-admin enrichment endpoint. Old
+    // database rows may contain raw provider or database exception messages.
+    state: rows[0]
+      ? { ...rows[0], last_error: rows[0].last_error ? "trestle_replication_failed" : null }
+      : null,
+    recent_runs: recent.rows.map((run) => ({
+      ...run,
+      error_message: run.error_message ? "trestle_replication_failed" : null,
+    })),
     media_queue: Object.fromEntries(media.rows.map((row) => [row.status, Number(row.count)])),
   };
 }

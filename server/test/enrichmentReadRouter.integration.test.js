@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createEnrichmentReadRouter } from "../src/modules/operations/enrichmentReadRouter.js";
+import { getTrestleReplicationStatus } from "../src/services/trestleReplication.js";
 
 function createPool(handler = async () => ({ rows: [] })) {
   const queries = [];
@@ -88,6 +89,34 @@ test("enrichment status exposes only configured activation metadata", async (con
   ]);
 });
 
+test("enrichment status never returns historical Trestle exception text", async (context) => {
+  const database = createPool(async (sql) => {
+    if (sql.includes("FROM app.trestle_replication_state")) {
+      return { rows: [{ status: "failed", last_error: "token=do-not-expose" }] };
+    }
+    if (sql.includes("FROM app.trestle_replication_runs")) {
+      return { rows: [{ id: "run-1", status: "failed", error_message: "password=do-not-expose" }] };
+    }
+    if (sql.includes("FROM app.trestle_media_queue GROUP BY status")) {
+      return { rows: [{ status: "retry", count: 2 }] };
+    }
+    return { rows: [] };
+  });
+  const server = await startRouter(baseOptions(database, {
+    getReplicationStatus: getTrestleReplicationStatus,
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/enrichment/status`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.trestle.state.status, "failed");
+  assert.equal(body.trestle.state.last_error, "trestle_replication_failed");
+  assert.equal(body.trestle.recent_runs[0].error_message, "trestle_replication_failed");
+  assert.equal(body.trestle.media_queue.retry, 2);
+  assert.equal(JSON.stringify(body).includes("do-not-expose"), false);
+});
+
 test("enrichment status failures remain bounded and diagnostic-safe", async (context) => {
   const database = createPool();
   const diagnostic = new Error("trestle internal secret-token");
@@ -101,7 +130,7 @@ test("enrichment status failures remain bounded and diagnostic-safe", async (con
   const response = await fetch(`${server.baseUrl}/api/enrichment/status`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "enrichment_status_failed" });
-  assert.deepEqual(logs, [["enrichment status failed", diagnostic]]);
+  assert.deepEqual(logs, [["enrichment status failed", "unknown"]]);
 });
 
 test("account enrichment validates identifiers before readiness and account lookup", async (context) => {

@@ -298,6 +298,34 @@ test("desktop sketch creation reports a signed Custom workfile as a stable confl
   assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
 });
 
+test("desktop sketch creation exposes only known validation codes", async (context) => {
+  const errors = [];
+  const server = await startRouter(baseOptions({
+    createSketch: async (_pool, _auth, _accountId, fileId) => {
+      const message = fileId === 1 ? "invalid_sketch_review_status"
+        : fileId === 2 ? "duplicate_sketch_area_id"
+          : "invalid_sketch_database_password_secret-token";
+      throw new Error(message);
+    },
+    logger: { error: (...args) => errors.push(args) },
+  }), identity);
+  context.after(server.close);
+
+  for (const [fileId, status, code] of [
+    [1, 400, "invalid_sketch_review_status"],
+    [2, 400, "duplicate_sketch_area_id"],
+    [3, 500, "assignment_sketch_creation_failed"],
+  ]) {
+    const response = await createSketch(server.baseUrl, "123", fileId, {
+      sketch: { review_status: "draft" },
+    });
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error: code });
+  }
+  assert.deepEqual(errors, [["assignment sketch desktop creation failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(errors), /password|secret-token/);
+});
+
 test("artifact routes preserve not-found, validation, and diagnostic-safe failures", async (context) => {
   const errors = [];
   const missing = await startRouter(baseOptions({ getSketch: async () => null }));
@@ -494,11 +522,12 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
         1: "assignment_sketch_not_found",
         2: "sketch_revision_conflict",
         3: "invalid_sketch_expected_revision",
-        4: "duplicate_room_id",
+        4: "duplicate_sketch_room_id",
         5: "sketch_not_ready_for_confirmation",
         6: "sketch_operation_conflict",
         7: "database_password=secret",
         8: "custom_appraisal_workfile_signed",
+        9: "invalid_sketch_database_password_secret-token",
       };
       const error = new Error(messages[fileId]);
       if (fileId === 2) error.currentRevision = 11;
@@ -512,11 +541,12 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
     [1, 404, { error: "assignment_sketch_not_found" }],
     [2, 409, { error: "sketch_revision_conflict", current_revision: 11 }],
     [3, 400, { error: "invalid_sketch_expected_revision" }],
-    [4, 400, { error: "duplicate_room_id" }],
+    [4, 400, { error: "duplicate_sketch_room_id" }],
     [5, 400, { error: "sketch_not_ready_for_confirmation" }],
     [6, 409, { error: "sketch_operation_conflict" }],
     [7, 500, { error: "assignment_sketch_update_failed" }],
     [8, 409, { error: "custom_appraisal_workfile_signed" }],
+    [9, 500, { error: "assignment_sketch_update_failed" }],
   ]) {
     const response = await patchSketch(server.baseUrl, "123", fileId);
     assert.equal(response.status, status);
@@ -524,7 +554,10 @@ test("desktop sketch save errors retain revision, operation, validation, and bou
     assert.deepEqual(responseBody, body);
     assert.doesNotMatch(JSON.stringify(responseBody), /password|secret/);
   }
-  assert.deepEqual(errors, [["assignment sketch desktop review failed", "unknown"]]);
+  assert.deepEqual(errors, [
+    ["assignment sketch desktop review failed", "unknown"],
+    ["assignment sketch desktop review failed", "unknown"],
+  ]);
   assert.doesNotMatch(JSON.stringify(errors), /password|secret/);
 });
 

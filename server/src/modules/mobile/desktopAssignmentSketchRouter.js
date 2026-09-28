@@ -12,6 +12,61 @@ import { normalizeSketchReviewStatus } from "./sketches.js";
 import { renderSketchPdf, renderSketchSvg } from "./sketchArtifacts.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+const PUBLIC_SKETCH_VALIDATION_ERRORS = new Set([
+  "duplicate_sketch_area_id",
+  "duplicate_sketch_dimension_segment",
+  "duplicate_sketch_room_id",
+  "invalid_client_sketch_id",
+  "invalid_closure_tolerance",
+  "invalid_inspection_session_id",
+  "invalid_manual_sketch",
+  "invalid_sketch_alternate_standard",
+  "invalid_sketch_area",
+  "invalid_sketch_area_classification",
+  "invalid_sketch_area_id",
+  "invalid_sketch_area_label",
+  "invalid_sketch_area_notes",
+  "invalid_sketch_area_position",
+  "invalid_sketch_areas",
+  "invalid_sketch_base_revision",
+  "invalid_sketch_coordinate",
+  "invalid_sketch_deduction_bounds",
+  "invalid_sketch_deduction_classification",
+  "invalid_sketch_dimension_label",
+  "invalid_sketch_dimension_labels",
+  "invalid_sketch_dimension_offset",
+  "invalid_sketch_dimension_segment",
+  "invalid_sketch_document_size",
+  "invalid_sketch_expected_revision",
+  "invalid_sketch_gla_classification",
+  "invalid_sketch_gla_treatment",
+  "invalid_sketch_level_label",
+  "invalid_sketch_measurement_method",
+  "invalid_sketch_measurement_standard",
+  "invalid_sketch_operation_id",
+  "invalid_sketch_parent_area",
+  "invalid_sketch_parent_area_id",
+  "invalid_sketch_review_notes",
+  "invalid_sketch_review_status",
+  "invalid_sketch_room",
+  "invalid_sketch_room_anchor",
+  "invalid_sketch_room_area",
+  "invalid_sketch_room_area_id",
+  "invalid_sketch_room_id",
+  "invalid_sketch_room_label",
+  "invalid_sketch_room_position",
+  "invalid_sketch_room_type",
+  "invalid_sketch_rooms",
+  "invalid_sketch_vertices",
+  "invalid_sketch_zero_length_segment",
+]);
+const PUBLIC_SKETCH_CONFLICT_ERRORS = new Set([
+  "sketch_operation_conflict",
+  "sketch_revision_conflict",
+  "sketch_identity_conflict",
+  "inspection_session_completed_conflict",
+  "custom_appraisal_workfile_signed",
+]);
 
 function logOperationalFailure(logger, label, error) {
   try {
@@ -188,19 +243,12 @@ export function createDesktopAssignmentSketchRouter({
         return res.status(404).json({ error: "assignment_report_file_not_found" });
       }
       if (
-        String(error?.message || "").startsWith("invalid_")
-        || String(error?.message || "").startsWith("duplicate_")
+        PUBLIC_SKETCH_VALIDATION_ERRORS.has(error?.message)
         || error?.message === "sketch_not_ready_for_confirmation"
-        || error?.message === "sketch_operation_conflict"
-        || error?.message === "sketch_revision_conflict"
-        || error?.message === "sketch_identity_conflict"
-        || error?.message === "inspection_session_completed_conflict"
-        || error?.message === "custom_appraisal_workfile_signed"
+        || PUBLIC_SKETCH_CONFLICT_ERRORS.has(error?.message)
       ) {
-        return res.status(
-          String(error?.message || "").includes("conflict")
-            || error?.message === "custom_appraisal_workfile_signed" ? 409 : 400,
-        ).json({ error: error.message });
+        return res.status(PUBLIC_SKETCH_CONFLICT_ERRORS.has(error.message) ? 409 : 400)
+          .json({ error: error.message });
       }
       if (error?.message === "authentication_required") {
         return res.status(401).json({ error: error.message });
@@ -282,8 +330,7 @@ export function createDesktopAssignmentSketchRouter({
         return res.status(401).json({ error: error.message });
       }
       if (
-        String(error?.message || "").startsWith("invalid_")
-        || String(error?.message || "").startsWith("duplicate_")
+        PUBLIC_SKETCH_VALIDATION_ERRORS.has(error?.message)
         || error?.message === "sketch_not_ready_for_confirmation"
         || error?.message === "sketch_operation_conflict"
       ) {

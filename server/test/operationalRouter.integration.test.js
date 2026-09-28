@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createOperationalRouter } from "../src/modules/operations/router.js";
+import { buildDataRepairReadiness } from "../src/services/operationalReadiness.js";
 
 function options(overrides = {}) {
   return {
@@ -236,6 +237,45 @@ test("data-repair diagnostics stay bounded when maintenance and scraper status f
     ["[operations] scraper status unavailable", "unknown"],
   ]);
   assert.doesNotMatch(JSON.stringify(body), /password|scraper secret/i);
+});
+
+test("data-repair response excludes stored and upstream diagnostic text", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/app";
+  const server = await startRouter(options({
+    loadRecentMaintenance: async () => [{
+      id: 1,
+      job_name: "routine",
+      status: "failed",
+      started_at: "2026-09-28T06:00:00.000Z",
+      error_message: privateDetail,
+      details: { results: {
+        locations: { status: {
+          queue: { pending: 3, secret: privateDetail },
+          coverage: { missing_sale_account_count: 2, last_error: privateDetail },
+        } },
+      } },
+    }],
+    loadDcadScraperStatus: async () => ({
+      payload: {
+        phase: "initial_missing",
+        outage_circuit_state: privateDetail,
+        data_quality: { field_repair_pending: 4, private_detail: privateDetail },
+      },
+      error: privateDetail,
+    }),
+    buildRepairReadiness: buildDataRepairReadiness,
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/system/data-repair`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.maintenance.queues.locations.queue.pending, 3);
+  assert.equal(body.maintenance.queues.locations.coverage.missing_sale_account_count, 2);
+  assert.equal(body.dcad_scraper.data_quality.field_repair_pending, 4);
+  assert.equal(body.dcad_scraper.fetch_error, "dcad_scraper_status_unavailable");
+  assert.equal(body.maintenance.recent_failures[0].error, "scheduled_maintenance_failed");
+  assert.doesNotMatch(JSON.stringify(body), /private-password|private_detail|last_error|secret/);
 });
 
 test("operational router fails before mounting when a required dependency is absent", () => {

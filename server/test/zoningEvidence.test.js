@@ -303,6 +303,81 @@ test("official zoning document sync refuses redirects without downloading anothe
   }
 });
 
+test("zoning document sync bounds provider failures in logs and maintenance results", async () => {
+  const logs = [];
+  const result = await syncOfficialZoningDocuments({
+    async query() { return { rows: [] }; },
+  }, {
+    fetchImpl: async () => { throw new Error("token=private-provider-value"); },
+    logger: { warn: (...args) => logs.push(args) },
+  });
+  assert.ok(result.attempted > 0);
+  assert.equal(result.failed, result.attempted);
+  assert.ok(result.results.every((entry) => entry.error === "zoning_document_sync_failed"));
+  assert.equal(JSON.stringify({ result, logs }).includes("private-provider-value"), false);
+});
+
+test("zoning document sync stores a fixed reason when PDF extraction fails", async () => {
+  const extractions = [];
+  const client = {
+    async query(sql, values = []) {
+      if (sql.includes("FROM gis.zoning_source_documents")) return { rows: [] };
+      if (sql.includes("INSERT INTO gis.zoning_source_documents")) {
+        extractions.push(JSON.parse(values[11]));
+        return { rows: [{ id: extractions.length }] };
+      }
+      return { rows: [] };
+    },
+    release() {},
+  };
+  const result = await syncOfficialZoningDocuments({
+    async query() { return { rows: [] }; },
+    async connect() { return client; },
+  }, {
+    fetchImpl: async () => new Response(Buffer.from("%PDF-test"), { status: 200 }),
+    extractPdf: async () => { throw new Error("parser token=private-value"); },
+    logger: { warn() {} },
+  });
+  assert.equal(result.ok, true);
+  assert.equal(extractions.length, result.attempted);
+  assert.ok(extractions.every((entry) => entry.review_reason === "zoning_document_extraction_failed"));
+  assert.equal(JSON.stringify(extractions).includes("private-value"), false);
+});
+
+test("zoning evidence masks historical extraction exception text on read", async () => {
+  const historicalExtraction = {
+    extraction_method: "none",
+    review_reason: "parser token=historical-private-value",
+  };
+  const pool = {
+    async query(sql) {
+      if (/CREATE TABLE IF NOT EXISTS gis\.zoning_source_documents/.test(sql)) return { rows: [] };
+      if (/FROM core\.accounts account/.test(sql)) return { rows: [{
+        account_id: "A-1", address: "1 TEST ST", city: "Dallas", county: "Dallas",
+        latitude: 32.8, longitude: -96.8,
+      }] };
+      if (/FROM gis\.zoning_source_documents/.test(sql)) return { rows: [{
+        id: 5, provider_key: "city_dallas_official", document_key: "zoning_map",
+        title: "Zoning map", official_url: "https://example.test/map.pdf",
+        content_type: "application/pdf", checksum_sha256: "abc", file_size_bytes: 9,
+        page_count: 1, extraction_status: "extraction_failed", extraction: historicalExtraction,
+      }] };
+      if (/FROM app\.property_zoning_verifications/.test(sql)
+          || /JOIN gis\.zoning_districts zoning/.test(sql)
+          || /FROM core\.land_detail/.test(sql)) return { rows: [] };
+      throw new Error(`unexpected_query:${sql.slice(0, 80)}`);
+    },
+  };
+  const result = await getPropertyZoningEvidence(pool, {
+    accountId: "A-1",
+    fetchImpl: async () => jsonResponse({ features: [] }),
+  });
+  assert.equal(result.documents[0].extraction.review_reason, "zoning_document_extraction_failed");
+  assert.equal(result.documents[0].extraction.extraction_method, "none");
+  assert.equal(JSON.stringify(result).includes("historical-private-value"), false);
+  assert.equal(historicalExtraction.review_reason, "parser token=historical-private-value");
+});
+
 test("zoning verification stores only the separately authenticated reviewer", async () => {
   const calls = [];
   const pool = {

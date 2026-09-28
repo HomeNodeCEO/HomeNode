@@ -11,6 +11,7 @@ import {
   findZoningDescriptionInPages,
 } from "./documentIntelligence.js";
 import { refreshAccountLocations } from "./accountLocations.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   readBoundedJsonResponse,
   readBoundedResponseBuffer,
@@ -19,6 +20,37 @@ import {
 const MAX_DOCUMENT_BYTES = 50 * 1024 * 1024;
 const MAX_GIS_RESPONSE_BYTES = 2 * 1024 * 1024;
 const FETCH_TIMEOUT_MS = 45_000;
+const SAFE_EXTRACTION_REVIEW_REASONS = new Set([
+  "OCR-extracted values are suggestions and require appraiser confirmation.",
+  "Machine-extracted values are suggestions and require appraiser confirmation.",
+  "No reliable text was found after available extraction. Visual review is required.",
+  "zoning_document_extraction_failed",
+]);
+const SAFE_ZONING_DOCUMENT_SYNC_ERRORS = new Set([
+  "zoning_document_requires_https",
+  "zoning_document_redirect_forbidden",
+  "zoning_document_too_large",
+  "zoning_document_response_unavailable",
+  "zoning_document_empty",
+  "zoning_document_not_pdf",
+]);
+
+function safeExtractionReviewReason(value) {
+  if (value == null) return value;
+  return SAFE_EXTRACTION_REVIEW_REASONS.has(value)
+    ? value : "zoning_document_extraction_failed";
+}
+
+function safeZoningDocumentSyncCode(error) {
+  let message;
+  try { message = error?.message; } catch { /* Ignore exception-like accessors. */ }
+  if (typeof message === "string" && (
+    SAFE_ZONING_DOCUMENT_SYNC_ERRORS.has(message)
+    || /^zoning_document_http_(?:[1-5]\d{2}|unknown)$/.test(message)
+  )) return message;
+  const code = safeOperationalErrorCode(error);
+  return code === "unknown" ? "zoning_document_sync_failed" : code;
+}
 
 function cleanText(value, maximum = 4_000) {
   const text = String(value ?? "").trim();
@@ -135,6 +167,11 @@ export async function fetchOfficialZoningAtPoint(jurisdiction, {
 
 function publicDocument(row) {
   if (!row) return null;
+  const extraction = row.extraction && typeof row.extraction === "object"
+    && !Array.isArray(row.extraction) ? { ...row.extraction } : {};
+  if (Object.hasOwn(extraction, "review_reason")) {
+    extraction.review_reason = safeExtractionReviewReason(extraction.review_reason);
+  }
   return {
     id: Number(row.id),
     provider_key: row.provider_key,
@@ -146,7 +183,7 @@ function publicDocument(row) {
     file_size_bytes: Number(row.file_size_bytes || 0),
     page_count: row.page_count == null ? null : Number(row.page_count),
     extraction_status: row.extraction_status,
-    extraction: row.extraction || {},
+    extraction,
     fetched_at: row.fetched_at,
     source_last_modified: row.source_last_modified,
     content_url: `/api/zoning-source-documents/${row.id}/content`,
@@ -277,6 +314,7 @@ async function fetchOfficialPdf(url, fetchImpl) {
 export async function syncOfficialZoningDocuments(pool, {
   logger = console,
   fetchImpl = globalThis.fetch,
+  extractPdf = extractPdfEvidence,
 } = {}) {
   await ensureZoningEvidenceSchema(pool);
   const results = [];
@@ -287,13 +325,13 @@ export async function syncOfficialZoningDocuments(pool, {
         const checksum = createHash("sha256").update(fetched.buffer).digest("hex");
         let extraction;
         try {
-          extraction = await extractPdfEvidence(fetched.buffer, {
+          extraction = await extractPdf(fetched.buffer, {
             requestedType: document.key.includes("code") || document.key.includes("ordinance")
               ? "zoning_ordinance"
               : "zoning_map",
             fileName: `${document.title}.pdf`,
           });
-        } catch (error) {
+        } catch {
           extraction = {
             page_count: documentPageCount(fetched.buffer),
             extraction_status: "extraction_failed",
@@ -301,7 +339,7 @@ export async function syncOfficialZoningDocuments(pool, {
             pages: [],
             candidates: [],
             text_length: 0,
-            review_reason: String(error?.message || error),
+            review_reason: "zoning_document_extraction_failed",
           };
         }
         const databaseExtractionStatus = extraction.extraction_status === "ocr_required"
@@ -312,7 +350,7 @@ export async function syncOfficialZoningDocuments(pool, {
           extraction_method: extraction.extraction_method,
           text_length: extraction.text_length,
           candidates: extraction.candidates,
-          review_reason: extraction.review_reason,
+          review_reason: safeExtractionReviewReason(extraction.review_reason),
         });
         const client = await pool.connect();
         try {
@@ -386,9 +424,11 @@ export async function syncOfficialZoningDocuments(pool, {
           client.release();
         }
       } catch (error) {
-        const message = String(error?.message || error);
-        logger.warn?.(`[zoning-documents] ${jurisdiction.city} ${document.key} failed; retained prior version`, message);
-        results.push({ city: jurisdiction.city, document_key: document.key, ok: false, error: message });
+        const code = safeZoningDocumentSyncCode(error);
+        try {
+          logger.warn?.(`[zoning-documents] ${jurisdiction.city} ${document.key} failed; retained prior version`, code);
+        } catch { /* Logging must not interrupt the remaining documents. */ }
+        results.push({ city: jurisdiction.city, document_key: document.key, ok: false, error: code });
       }
     }
   }
@@ -438,7 +478,7 @@ export async function getPropertyZoningEvidence(pool, {
       verification: null,
     };
   }
-  let locationLookupError = null;
+  let locationLookupFailed = false;
   if (jurisdiction.automationStatus === "automatic" &&
       (!validCoordinate(account.latitude, -90, 90) ||
        !validCoordinate(account.longitude, -180, 180))) {
@@ -459,8 +499,8 @@ export async function getPropertyZoningEvidence(pool, {
         account.latitude = refreshedLocationRows[0].latitude;
         account.longitude = refreshedLocationRows[0].longitude;
       }
-    } catch (error) {
-      locationLookupError = cleanText(error?.message || error, 500);
+    } catch {
+      locationLookupFailed = true;
     }
   }
   const [
@@ -547,7 +587,7 @@ export async function getPropertyZoningEvidence(pool, {
         || officialZoningClassificationDescription(source, automaticResult.zoning_code),
     };
   }
-  let liveLookupError = null;
+  let liveLookupFailed = false;
   if (!automaticResult && jurisdiction.automationStatus === "automatic") {
     try {
       automaticResult = await fetchOfficialZoningAtPoint(jurisdiction, {
@@ -555,8 +595,8 @@ export async function getPropertyZoningEvidence(pool, {
         longitude: account.longitude,
         fetchImpl,
       });
-    } catch (error) {
-      liveLookupError = cleanText(error?.message || error, 500);
+    } catch {
+      liveLookupFailed = true;
     }
   }
   const source = OFFICIAL_ZONING_SOURCES.find(
@@ -589,7 +629,7 @@ export async function getPropertyZoningEvidence(pool, {
     review_reason: !reviewRequired
       ? null
       : jurisdiction.automationStatus === "automatic"
-        ? liveLookupError || locationLookupError
+        ? liveLookupFailed || locationLookupFailed
           ? "The official GIS lookup is temporarily unavailable and no cached zoning result is available. Verify the linked city map before relying on zoning."
           : "Stored coordinates are missing or the official GIS did not return a zoning polygon at them. Verify the linked city map before relying on zoning."
         : "The city does not expose a verified queryable zoning polygon. Confirm the map or contact the city before relying on the result.",

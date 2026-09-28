@@ -105,7 +105,7 @@ test("city-only searches remain canonical-only, ordered, capped, and paginated",
   assert.ok(sql.includes("SELECT m.* FROM core.market_values"));
 });
 
-test("negative search limits cannot request an unbounded PostgreSQL result", async (context) => {
+test("negative search limits use the default instead of causing a database error", async (context) => {
   const database = createPool();
   const server = await startRouter(baseOptions(database));
   context.after(server.close);

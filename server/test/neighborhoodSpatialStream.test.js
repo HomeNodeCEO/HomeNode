@@ -44,7 +44,7 @@ function clientFor(rows, options = {}) {
       assert.equal(planner, options.planner ?? 'on', 'caller planner preference is restored before the first fetch');
       const amount = Number(/FETCH FORWARD (\d+) FROM/.exec(call.text)?.[1]);
       assert.ok(portal && call.text.endsWith(portal)); assert.ok(amount > 0 && amount <= 500);
-      if (options.delay) await new Promise(resolve => setTimeout(resolve, options.delay));
+      options.advanceClock?.();
       const page = options.oversized ? rows : rows.slice(offset, offset + amount); offset += amount;
       return { rows: page.map(payload => ({ payload })) };
     }
@@ -84,14 +84,16 @@ test('compact encoding charges its exact array bytes; legacy expanded-byte ceili
   assert.equal((await compact(clientFor([]), geometry, { bytes: 1 })).reason, 'byte_limit');
 });
 
-test('compact capture keeps duplicate, identity, account, parcel, deadline and snapshot refusals', async () => {
+test('compact capture keeps duplicate, identity, account, parcel, deadline and snapshot refusals', async t => {
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
   for (const [rows, limits, opts, reason] of [
     [[parcel(1), parcel(1)], {}, {}, 'parcel_order_invalid'],
     [[parcel('01')], {}, {}, 'parcel_order_invalid'],
     [[parcel(1, '')], {}, {}, 'parcel_account_unresolved'],
     [[parcel(1), parcel(2)], { accounts: 1 }, {}, 'account_limit'],
     [[parcel(1), parcel(2)], { parcels: 1 }, {}, 'parcel_limit'],
-    [[parcel(1)], { duration_ms: 5 }, { delay: 15 }, 'duration_limit'],
+    [[parcel(1)], { duration_ms: 5 }, { advanceClock: () => { now += 6; } }, 'duration_limit'],
     [[parcel(1)], {}, { end: { ...snapshot, backend_pid: 99 } }, 'transaction_changed'],
   ]) {
     const client = clientFor(rows, opts), result = await compact(client, geometry, limits);
@@ -126,6 +128,8 @@ test('empty and exact-full batches are complete only after the final fetch', asy
   }
 });
 test('stream refuses incomplete/invalid inputs and closes without returning a partial roster', async t => {
+  let now = 0;
+  t.mock.method(performance, 'now', () => now);
   for (const [name, rows, limits, opts, reason] of [
     ['duplicates', [parcel(1), parcel(1)], {}, {}, 'parcel_order_invalid'],
     ['malformed id', [parcel('01')], {}, {}, 'parcel_order_invalid'],
@@ -136,7 +140,7 @@ test('stream refuses incomplete/invalid inputs and closes without returning a pa
     ['account cap', [parcel(1), parcel(2)], { accounts: 1 }, {}, 'account_limit'],
     ['byte cap', [parcel(1)], { bytes: 1 }, {}, 'byte_limit'],
     ['oversized batch', [parcel(1), parcel(2)], { page_size: 1 }, { oversized: true }, 'database_page_invalid'],
-    ['deadline', [parcel(1)], { duration_ms: 5 }, { delay: 15 }, 'duration_limit'],
+    ['deadline', [parcel(1)], { duration_ms: 5 }, { advanceClock: () => { now += 6; } }, 'duration_limit'],
     ['snapshot change', [parcel(1)], {}, { end: { ...snapshot, backend_pid: 99 } }, 'transaction_changed'],
   ]) await t.test(name, async () => {
     const c = clientFor(rows, opts); const r = await stream(c, geometry, limits);

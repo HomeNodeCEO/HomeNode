@@ -83,6 +83,20 @@ test("grouped analysis rejects invalid inputs before schema or database access",
   assert.equal(invalidDate.status, 400);
   assert.deepEqual(await invalidDate.json(), { error: "invalid_as_of" });
 
+  const nonexistentDate = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2026-02-29",
+  });
+  assert.equal(nonexistentDate.status, 400);
+  assert.deepEqual(await nonexistentDate.json(), { error: "invalid_as_of" });
+
+  const invalidMonth = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2026-13-01",
+  });
+  assert.equal(invalidMonth.status, 400);
+  assert.deepEqual(await invalidMonth.json(), { error: "invalid_as_of" });
+
   const invalidBreakdown = await get(server.baseUrl, {
     subject_account_id: "A-1",
     breakdowns: "bad",
@@ -111,6 +125,23 @@ test("unexpected breakdown parser failures keep a fixed public error", async (co
   assert.deepEqual(await response.json(), {
     error: "invalid_grouped_analysis_breakdown",
   });
+});
+
+test("a real leap day remains a valid as-of date", async (context) => {
+  let queries = 0;
+  const options = routerOptions({
+    pool: { query: async () => { queries += 1; return { rows: [] }; } },
+  });
+  const server = await startRouter(createGroupedAnalysisRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2024-02-29",
+  });
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "subject_not_found" });
+  assert.equal(queries, 1);
 });
 
 test("a missing subject stops before grouped-sale queries", async (context) => {

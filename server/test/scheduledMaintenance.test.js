@@ -229,10 +229,13 @@ test("a failed advisory-lock query retires its checked-out connection", async ()
 
 test("task failure unlocks through the original checked-out connection", async () => {
   const lockStatements = [];
+  const warnings = [];
+  let updateValues;
   let releases = 0;
   const pool = {
-    async query(sql) {
+    async query(sql, values) {
       if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) return { rows: [{ id: 93 }] };
+      if (/UPDATE app\.scheduled_maintenance_runs/.test(sql)) updateValues = values;
       return { rows: [], rowCount: 0 };
     },
     async connect() {
@@ -249,13 +252,42 @@ test("task failure unlocks through the original checked-out connection", async (
   };
   const result = await runScheduledMaintenance(pool, {
     task: "sessions",
-    taskRunner: async () => { throw new Error("maintenance_task_failed"); },
-    logger: { info() {}, warn() {} },
+    taskRunner: async () => {
+      throw new Error("postgresql://private-user:private-password@database.example/private-db");
+    },
+    logger: { info() {}, warn: (...args) => warnings.push(args) },
   });
   assert.equal(result.ok, false);
-  assert.equal(result.failures[0].error, "maintenance_task_failed");
+  assert.equal(result.failures[0].error, "scheduled_maintenance_failed");
+  assert.deepEqual(warnings, [["[scheduled-maintenance] sessions failed; retained prior data", "scheduled_maintenance_failed"]]);
+  assert.doesNotMatch(JSON.stringify({ result, updateValues, warnings }), /private-password/);
   assert.deepEqual(lockStatements.map((sql) => /pg_try_advisory_lock/.test(sql) ? "acquire" : "release"), ["acquire", "release"]);
   assert.equal(releases, 1);
+});
+
+test("optional maintenance logger failures do not change successful task outcomes", async () => {
+  const pool = {
+    async query(sql) {
+      if (/INSERT INTO app\.scheduled_maintenance_runs/.test(sql)) return { rows: [{ id: 96 }] };
+      return { rows: [], rowCount: 0 };
+    },
+    async connect() {
+      return {
+        async query(sql) {
+          if (/pg_try_advisory_lock/.test(sql)) return { rows: [{ acquired: true }] };
+          return { rows: [{ pg_advisory_unlock: true }] };
+        },
+        release() {},
+      };
+    },
+  };
+  const result = await runScheduledMaintenance(pool, {
+    task: "census",
+    taskRunner: async () => ({ completed: 1 }),
+    logger: { info() { throw new Error("logger_offline"); } },
+  });
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.results.census, { completed: 1 });
 });
 
 test("unlock failures retire the lock client and remain visible without hiding completed work", async () => {

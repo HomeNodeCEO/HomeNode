@@ -2,7 +2,8 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import test from 'node:test';
 
-const sql = await readFile(new URL('../migrations/20261018_sales_source_metadata.sql', import.meta.url), 'utf8');
+// Git may check out this migration with CRLF on Windows; its statements are unchanged.
+const sql = (await readFile(new URL('../migrations/20261018_sales_source_metadata.sql', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const executable = sql.replace(/^--.*$/gm, '').trim();
 
 test('CSV-only source metadata migration adds only nullable optional provider fields', () => {

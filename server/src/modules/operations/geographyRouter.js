@@ -18,8 +18,28 @@ import {
   runLocationBackfillBatch,
   seedLocationBackfillQueue,
 } from "../../services/locationBackfillQueue.js";
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+const PUBLIC_CENSUS_PROFILE_ERRORS = new Map([
+  ["invalid_census_zip", 400],
+  ["invalid_census_city", 400],
+  ["unsupported_census_state", 400],
+  ["census_city_profile_not_found", 404],
+  ["census_zip_profile_unemployment_unavailable", 422],
+  ["census_city_profile_unemployment_unavailable", 422],
+]);
+
+function censusProfilePublicError(error, fallback) {
+  const code = error?.code || error?.message;
+  const expectedStatus = PUBLIC_CENSUS_PROFILE_ERRORS.get(code);
+  if (expectedStatus) return { error: code, status: expectedStatus };
+  const status = Number(error?.status);
+  return {
+    error: fallback,
+    status: [500, 502, 503].includes(status) ? status : 502,
+  };
+}
 
 export function createGeographyOperationsRouter({
   pool,
@@ -158,10 +178,11 @@ export function createGeographyOperationsRouter({
     try {
       return res.json(await getZipProfile(req.params.postalCode));
     } catch (error) {
-      const code = String(error?.code || error?.message || "census_zip_profile_failed");
-      const status = Number(error?.status) || 502;
-      if (status >= 500) logger.error?.("Census ZIP profile lookup failed", code);
-      return res.status(status).json({ error: code });
+      const failure = censusProfilePublicError(error, "census_zip_profile_failed");
+      if (failure.status >= 500) {
+        logger.error?.("Census ZIP profile lookup failed", safeOperationalErrorCode(error));
+      }
+      return res.status(failure.status).json({ error: failure.error });
     }
   });
 
@@ -170,10 +191,11 @@ export function createGeographyOperationsRouter({
     try {
       return res.json(await getCityProfile(req.query.city, req.query.state));
     } catch (error) {
-      const code = String(error?.code || error?.message || "census_city_profile_failed");
-      const status = Number(error?.status) || 502;
-      if (status >= 500) logger.error?.("Census city profile lookup failed", code);
-      return res.status(status).json({ error: code });
+      const failure = censusProfilePublicError(error, "census_city_profile_failed");
+      if (failure.status >= 500) {
+        logger.error?.("Census city profile lookup failed", safeOperationalErrorCode(error));
+      }
+      return res.status(failure.status).json({ error: failure.error });
     }
   });
 

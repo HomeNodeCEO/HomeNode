@@ -1,5 +1,6 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { countyGisConfiguration } from "../../services/parcelGis.js";
 import { getTrestleReplicationStatus } from "../../services/trestleReplication.js";
 import { NON_DALLAS_ENRICHMENT_COUNTIES } from "../../util/nonDallasEnrichment.js";
@@ -59,7 +60,7 @@ export function createEnrichmentReadRouter({
         resolution_order: ["manual_verified", "trestle", "cad", "manual_review"],
       });
     } catch (error) {
-      logger.error?.("enrichment status failed", error);
+      logger.error?.("enrichment status failed", safeOperationalErrorCode(error));
       return res.status(500).json({ error: "enrichment_status_failed" });
     }
   });

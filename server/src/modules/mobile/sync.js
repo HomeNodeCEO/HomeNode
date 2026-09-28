@@ -10,6 +10,7 @@ const MAX_SYNC_PAYLOAD_BYTES = 64 * 1024;
 const MAX_SYNC_PAYLOAD_DEPTH = 24;
 const MAX_SYNC_PAYLOAD_NODES = 4096;
 const FIELD_PATH_PATTERN = /^[a-z][a-z0-9_]*(?:\.[a-z][a-z0-9_]*){1,9}$/;
+const RESERVED_FIELD_PATH_SEGMENTS = new Set(["__proto__", "constructor", "prototype"]);
 const PAYLOAD_HASH_PATTERN = /^[a-f0-9]{64}$/;
 const FIELD_SOURCES = new Set(["appraiser", "measurement", "device", "imported", "suggested"]);
 const OPERATION_KINDS = new Set(["field.upsert", "field.delete", "conflict.resolve"]);
@@ -113,7 +114,8 @@ function normalizeFieldState(value) {
 
 function normalizeFieldPath(value) {
   const fieldPath = String(value || "").trim();
-  if (fieldPath.length > MAX_FIELD_PATH || !FIELD_PATH_PATTERN.test(fieldPath)) {
+  if (fieldPath.length > MAX_FIELD_PATH || !FIELD_PATH_PATTERN.test(fieldPath)
+      || fieldPath.split(".").some((segment) => RESERVED_FIELD_PATH_SEGMENTS.has(segment))) {
     throw new Error("invalid_field_path");
   }
   return fieldPath;

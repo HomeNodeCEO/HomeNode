@@ -331,6 +331,39 @@ test("mobile sync canonicalization treats prototype-like JSON keys as inert data
   assert.equal(Object.hasOwn(payload, "__proto__"), true);
 });
 
+test("mobile sync rejects reserved field-path segments without rejecting JSON data keys", () => {
+  const operation = (fieldPath, value = "observed") => {
+    const payload = {
+      field_path: fieldPath,
+      base: { exists: false },
+      value,
+    };
+    return {
+      client_operation_id: "10000000-0000-4000-8000-000000000005",
+      operation_kind: "field.upsert",
+      base_session_revision: 1,
+      payload_sha256: syncPayloadSha256(payload),
+      payload,
+    };
+  };
+  for (const fieldPath of [
+    "inspection.__proto__.condition",
+    "inspection.constructor.condition",
+    "inspection.general.prototype",
+  ]) {
+    assert.throws(
+      () => normalizeSyncBatch({ operations: [operation(fieldPath)] }),
+      /invalid_field_path/,
+      fieldPath,
+    );
+  }
+
+  const value = JSON.parse('{"__proto__":{"inert":true},"constructor":{"prototype":"data"}}');
+  const [accepted] = normalizeSyncBatch({ operations: [operation("inspection.general.appraiser_comments", value)] });
+  assert.equal(Object.hasOwn(accepted.payload.value, "__proto__"), true);
+  assert.equal(Object.prototype.inert, undefined);
+});
+
 test("property tax adapter exposes a bounded canonical field catalog", () => {
   const catalog = propertyTaxFieldCatalog();
   assert.equal(catalog.length, 23);

@@ -23,6 +23,34 @@ const COUNTY_FIPS = new Map([
   ["tarrant", "439"],
 ]);
 
+const SAFE_CENSUS_REVIEW_REASONS = new Set([
+  "census_coordinate_no_match",
+  "invalid_tract_geoid",
+  "stale_worker_lease",
+  "census_batch_failed",
+]);
+const CENSUS_BATCH_ERROR_PATTERN = /^census_(?:coordinates|address)_batch_(?:fetch_unavailable|timeout|unavailable|response_invalid|response_too_large|redirect_forbidden|http_(?:[1-5]\d{2}|unknown))$/;
+
+export function safeCensusReviewReason(value) {
+  if (value == null) return null;
+  if (typeof value !== "string") return "census_batch_failed";
+  if (SAFE_CENSUS_REVIEW_REASONS.has(value)
+      || CENSUS_BATCH_ERROR_PATTERN.test(value)
+      || /^unexpected_state_fips:(?:\d{2}|missing)$/.test(value)
+      || /^county_fips_mismatch:expected_\d{3}:received_(?:\d{3}|missing)$/.test(value)) {
+    return value;
+  }
+  return "census_batch_failed";
+}
+
+function censusBatchFailureCode(error) {
+  let message;
+  try { message = error?.message; } catch { /* Ignore exception-like accessors. */ }
+  if (typeof message === "string" && CENSUS_BATCH_ERROR_PATTERN.test(message)) return message;
+  const code = safeOperationalErrorCode(error);
+  return code === "unknown" ? "census_batch_failed" : code;
+}
+
 function boundedInteger(value, fallback, minimum, maximum) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
@@ -742,10 +770,12 @@ export async function lookupAccountCensusGeographyNow(
       sourceMethod,
       status,
       result?.response_status || "Missing_Response",
-      validation.reason,
+      safeCensusReviewReason(validation.reason),
     ],
   );
-  return savedRows[0];
+  return savedRows[0]
+    ? { ...savedRows[0], review_reason: safeCensusReviewReason(savedRows[0].review_reason) }
+    : undefined;
 }
 
 function retryDelaySeconds(attempt) {
@@ -776,7 +806,7 @@ async function finishCensusBatch(pool, claimed, results, { maximumAttempts = 5 }
       source_latitude: result?.latitude ?? item.source_latitude ?? null,
       source_longitude: result?.longitude ?? item.source_longitude ?? null,
       response_status: result?.response_status || "Missing_Response",
-      review_reason: validation.reason,
+      review_reason: safeCensusReviewReason(validation.reason),
       retry_delay_seconds: retryDelaySeconds(item.attempts),
     };
   });
@@ -826,13 +856,14 @@ async function finishCensusBatch(pool, claimed, results, { maximumAttempts = 5 }
 }
 
 async function releaseFailedCensusBatch(pool, claimed, error, maximumAttempts) {
+  const code = censusBatchFailureCode(error);
   const outcomes = claimed.map((item) => {
     const terminal = Number(item.attempts || 0) >= maximumAttempts;
     return {
       account_id: item.account_id,
       worker_id: item.worker_id,
       status: terminal ? "failed" : "retry",
-      review_reason: String(error?.message || error || "census_batch_failed").slice(0, 1000),
+      review_reason: code,
       retry_delay_seconds: retryDelaySeconds(item.attempts),
     };
   });
@@ -862,7 +893,7 @@ async function releaseFailedCensusBatch(pool, claimed, error, maximumAttempts) {
     retry: outcomes.filter((row) => row.status === "retry").length,
     reviewRequired: 0,
     failed: outcomes.filter((row) => row.status === "failed").length,
-    error: String(error?.message || error),
+    error: code,
   };
 }
 

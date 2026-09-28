@@ -8,6 +8,7 @@ import {
   completePropertyInfluenceQueueItem,
   failPropertyInfluenceQueueItem,
   getPropertyInfluenceStatus,
+  propertyInfluenceFailureCode,
   recoverStalePropertyInfluenceClaims,
   seedPropertyInfluenceQueue,
 } from "./propertyInfluenceStore.js";
@@ -104,9 +105,12 @@ export async function runPropertyInfluenceBatch(pool, {
       });
       if (outcome === "manual_review") totals.manualReview += 1;
       else totals.retry += 1;
-      logger.warn?.(
-        `[property-influence] ${item.account_id} ${outcome}: ${error?.message || error}`,
-      );
+      try {
+        logger?.warn?.("[property-influence] refresh failed", {
+          outcome,
+          code: propertyInfluenceFailureCode(error),
+        });
+      } catch { /* Logging must not interrupt queue settlement. */ }
     }
   });
   return totals;

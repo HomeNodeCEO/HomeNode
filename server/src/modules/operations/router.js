@@ -1,7 +1,25 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { buildDataRepairReadiness } from "../../services/operationalReadiness.js";
 import { getRecentScheduledMaintenanceRuns } from "../../services/scheduledMaintenance.js";
+
+const PUBLIC_MAINTENANCE_RUN_FIELDS = ["id", "job_name", "status", "started_at", "finished_at"];
+
+function publicMaintenanceRun(run) {
+  if (!run || typeof run !== "object") return {};
+  return Object.fromEntries(PUBLIC_MAINTENANCE_RUN_FIELDS
+    .filter((field) => Object.hasOwn(run, field))
+    .map((field) => [field, run[field]]));
+}
+
+function logOperationalWarning(logger, label, error) {
+  try {
+    logger.warn?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Optional diagnostics must not replace the operational response.
+  }
+}
 
 function requireFunction(value, code) {
   if (typeof value !== "function") throw new TypeError(code);
@@ -86,13 +104,14 @@ export function createOperationalRouter({
   });
 
   router.get("/api/system/performance", async (_req, res) => {
+    res.set("Cache-Control", "no-store");
     let recentMaintenance = [];
     let maintenanceStatus = "available";
     try {
       recentMaintenance = await maintenanceRuns(pool, { limit: 8 });
     } catch (error) {
       maintenanceStatus = "unavailable";
-      logger.warn?.("[performance] maintenance history unavailable", error?.message || error);
+      logOperationalWarning(logger, "[performance] maintenance history unavailable", error);
     }
     return res.json({
       ok: true,
@@ -116,7 +135,10 @@ export function createOperationalRouter({
       artifact_recovery: recovery.snapshot(),
       maintenance: {
         status: maintenanceStatus,
-        recent_runs: recentMaintenance,
+        // Historical task details can contain raw failure text; keep those
+        // internal to data-repair computation and expose only run metadata.
+        recent_runs: (Array.isArray(recentMaintenance) ? recentMaintenance : [])
+          .map(publicMaintenanceRun),
       },
     });
   });
@@ -128,16 +150,10 @@ export function createOperationalRouter({
       scraperStatus(),
     ]);
     if (maintenanceResult.status === "rejected") {
-      logger.warn?.(
-        "[operations] maintenance history unavailable",
-        maintenanceResult.reason?.message || maintenanceResult.reason,
-      );
+      logOperationalWarning(logger, "[operations] maintenance history unavailable", maintenanceResult.reason);
     }
     if (scraperResult.status === "rejected") {
-      logger.warn?.(
-        "[operations] scraper status unavailable",
-        scraperResult.reason?.message || scraperResult.reason,
-      );
+      logOperationalWarning(logger, "[operations] scraper status unavailable", scraperResult.reason);
     }
     const memory = processTarget.memoryUsage();
     const result = repairReadiness({

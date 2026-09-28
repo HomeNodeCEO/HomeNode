@@ -105,6 +105,22 @@ test("city-only searches remain canonical-only, ordered, capped, and paginated",
   assert.ok(sql.includes("SELECT m.* FROM core.market_values"));
 });
 
+test("negative search limits use the default instead of causing a database error", async (context) => {
+  const database = createPool();
+  const server = await startRouter(baseOptions(database));
+  context.after(server.close);
+
+  for (const limit of ["-1", "-2147483648"]) {
+    const response = await fetch(`${server.baseUrl}/api/search?city=plano&limit=${limit}`);
+    assert.equal(response.status, 200);
+  }
+  assert.equal(database.queries.length, 2);
+  for (const { sql, params } of database.queries) {
+    assert.match(sql, /LIMIT \$2 OFFSET \$3/);
+    assert.deepEqual(params, ["PLANO%", 25, 0]);
+  }
+});
+
 test("native county identifiers resolve to canonical accounts and retain legacy-request metadata", async (context) => {
   const row = { account_id: "COLLIN_CANONICAL", data_quality_status: "verified" };
   const database = createPool(async () => ({ rows: [row] }));

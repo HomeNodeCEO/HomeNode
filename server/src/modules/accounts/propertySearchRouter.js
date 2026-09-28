@@ -47,7 +47,10 @@ export function createPropertySearchRouter({
       await salesReconciliationReady;
       const q = String(req.query.q || "").trim();
       const requestedCity = normalizeCity(req.query.city) || null;
-      const limit = Math.min(parseInt(String(req.query.limit || "25"), 10) || 25, 100);
+      const parsedLimit = parseInt(String(req.query.limit || "25"), 10);
+      const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 100)
+        : 25;
       const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
 
       if (!q && !requestedCity) return res.json([]);

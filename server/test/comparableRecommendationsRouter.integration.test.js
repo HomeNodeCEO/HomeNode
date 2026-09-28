@@ -248,8 +248,11 @@ test("recommendations reject malformed policy and market inputs before database 
     [{ subject_account_id: "A-1", search_profile: "bad" }, "invalid_comparable_search_profile"],
     [{ subject_account_id: "bad" }, "invalid_subject_account_id"],
     [{ subject_account_id: "A-1", date_from: "09/01/2026" }, "invalid_date_from"],
+    [{ subject_account_id: "A-1", date_from: "2026-02-30" }, "invalid_date_from"],
     [{ subject_account_id: "A-1", date_to: "09/02/2026" }, "invalid_date_to"],
+    [{ subject_account_id: "A-1", date_to: "2026-13-01" }, "invalid_date_to"],
     [{ subject_account_id: "A-1", analysis_as_of: "bad" }, "invalid_analysis_as_of"],
+    [{ subject_account_id: "A-1", analysis_as_of: "2026-02-30" }, "invalid_analysis_as_of"],
     [{ subject_account_id: "A-1", period_months: "18" }, "invalid_analysis_period"],
     [{ subject_account_id: "A-1", market_breakdown: "city,zip" }, "invalid_market_breakdown"],
     [{ subject_account_id: "A-1", location_weight: "2" }, "invalid_scoring_configuration"],
@@ -268,6 +271,24 @@ test("recommendations reject malformed policy and market inputs before database 
     assert.deepEqual(await response.json(), { error });
   }
   assert.equal(queries, 0);
+});
+
+test("unexpected market-breakdown parser failures are server errors with bounded logs", async (context) => {
+  const logs = [];
+  const options = routerOptions({
+    parseBreakdowns: () => { throw new Error("invalid_database_password_secret-token"); },
+    logger: { error: (...args) => logs.push(args), warn() {} },
+  });
+  const server = await startRouter(createComparableRecommendationsRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    market_breakdown: "city",
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "comparable_recommendations_failed" });
+  assert.deepEqual(logs, [["comparable market breakdown parse failed", "unknown"]]);
 });
 
 test("missing subjects and incomplete subject evidence stop before candidate selection", async (context) => {
@@ -567,8 +588,32 @@ test("missing cached evidence is queued without delaying an empty recommendation
   ]]);
 });
 
+test("background recommendation queue failures log bounded codes without failing the response", async (context) => {
+  const warnings = [];
+  const options = routerOptions({
+    pool: {
+      query: async (sql) => {
+        if (sql.includes("FROM core.accounts account")) return { rows: [subject()] };
+        if (sql.includes("FROM core.v_sales_enriched sale")) return { rows: [] };
+        throw new Error("unexpected_query");
+      },
+    },
+    loadInfluenceContexts: async () => new Map(),
+    enqueueInfluences: async () => { throw new Error("private-queue-token"); },
+    logger: { error() {}, warn: (...args) => warnings.push(args) },
+  });
+  const server = await startRouter(createComparableRecommendationsRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, { subject_account_id: "A-1" });
+  assert.equal(response.status, 200);
+  assert.deepEqual((await response.json()).sales, []);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.deepEqual(warnings, [["[recommendations] subject influence queueing failed", "unknown"]]);
+});
+
 test("unexpected recommendation failures remain bounded and server-side", async (context) => {
-  const failure = new Error("database_connection_failed");
+  const failure = new Error("invalid_database_password_secret-token");
   const logs = [];
   const options = routerOptions({
     pool: { query: async () => { throw failure; } },
@@ -580,7 +625,7 @@ test("unexpected recommendation failures remain bounded and server-side", async 
   const response = await get(server.baseUrl, { subject_account_id: "A-1" });
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "comparable_recommendations_failed" });
-  assert.deepEqual(logs, [["/api/sales/recommendations failed", failure]]);
+  assert.deepEqual(logs, [["/api/sales/recommendations failed", "unknown"]]);
 });
 
 test("recommendation composition is explicit and replaces the final inline route", () => {

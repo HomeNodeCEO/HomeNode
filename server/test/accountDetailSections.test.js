@@ -33,6 +33,47 @@ function deferred() {
   return { promise, resolve, reject };
 }
 
+test("optional account-detail query failures log only a stable code", async () => {
+  const privateDetail = "database password and private connection detail";
+  const databaseError = Object.assign(new Error(privateDetail), { detail: privateDetail });
+  const errors = [];
+  const pool = {
+    query(sql) {
+      if (/FROM core\.(land_detail|secondary_improvements|dcad_json_raw)/.test(sql)) {
+        return Promise.reject(databaseError);
+      }
+      return Promise.resolve({ rows: [] });
+    },
+  };
+  const result = await loadAccountDetailSections(pool, "90000000000000001", {
+    logger: { error: (...args) => errors.push(args) },
+    fetchImpl: async () => jsonResponse({ features: [] }),
+  });
+
+  assert.deepEqual(result.landRows, []);
+  assert.deepEqual(result.additionalImprovements, []);
+  assert.deepEqual(errors, [
+    ["land_detail query failed", "account_detail_optional_query_failed"],
+    ["secondary_improvements query failed", "account_detail_optional_query_failed"],
+    ["dcad_json_raw query failed", "account_detail_optional_query_failed"],
+  ]);
+  assert.equal(JSON.stringify(errors).includes(privateDetail), false);
+});
+
+test("optional account-detail query failure survives a throwing logger", async () => {
+  const pool = {
+    query(sql) {
+      if (/FROM core\.land_detail/.test(sql)) return Promise.reject(new Error("private database detail"));
+      return Promise.resolve({ rows: [] });
+    },
+  };
+  const result = await loadAccountDetailSections(pool, "90000000000000002", {
+    logger: { error: () => { throw new Error("logger unavailable"); } },
+    fetchImpl: async () => jsonResponse({ features: [] }),
+  });
+  assert.deepEqual(result.landRows, []);
+});
+
 test("account detail sections launch independent indexed lookups concurrently", async () => {
   const calls = [];
   const pending = [];

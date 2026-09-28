@@ -9,8 +9,33 @@ import {
   lookupAccountCensusGeographyNow,
   parseCensusAddressBatchResponse,
   parseCensusCoordinatesBatchResponse,
+  startCensusGeographyWorker,
   validateCensusGeography,
 } from "../src/services/censusGeography.js";
+
+test("Census worker failures log bounded codes and tolerate a failing logger", async (context) => {
+  const failure = new Error("postgresql://private-user:private-password@database.example/private-db");
+  const warnings = [];
+  const worker = startCensusGeographyWorker({
+    query: async () => { throw failure; },
+  }, {
+    initialDelayMs: 300_000,
+    logger: { warn: (...args) => warnings.push(args) },
+  });
+  context.after(worker.stop);
+  await worker.runNow();
+  assert.deepEqual(warnings, [["[census-geography] cycle failed; will retry", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(warnings), /private-password/);
+
+  const throwingLoggerWorker = startCensusGeographyWorker({
+    query: async () => { throw failure; },
+  }, {
+    initialDelayMs: 300_000,
+    logger: { warn: () => { throw new Error("logger_offline"); } },
+  });
+  context.after(throwingLoggerWorker.stop);
+  await throwingLoggerWorker.runNow();
+});
 
 const coordinateRow = {
   account_id: "26272500060150000",

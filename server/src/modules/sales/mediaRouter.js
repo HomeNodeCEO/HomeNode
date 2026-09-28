@@ -1,5 +1,7 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+
 export function createSalesMediaRouter({ pool, logger = console } = {}) {
   if (!pool || typeof pool.query !== "function") {
     throw new TypeError("sales_media_pool_required");
@@ -54,7 +56,11 @@ export function createSalesMediaRouter({ pool, logger = console } = {}) {
         photos,
       });
     } catch (error) {
-      logger.error?.("/api/sales/:sourceRecordId/photos failed", error);
+      try {
+        logger.error?.("/api/sales/:sourceRecordId/photos failed", safeOperationalErrorCode(error));
+      } catch {
+        // Optional logging must not replace the stable failure response.
+      }
       return res.status(500).json({ error: "sale_photos_failed" });
     }
   });

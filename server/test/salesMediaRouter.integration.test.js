@@ -86,7 +86,9 @@ test("sales media returns not found without querying the media table", async (co
 });
 
 test("sales media preserves the stable database failure response", async (context) => {
-  const failure = new Error("database_offline");
+  const failure = Object.assign(new Error("postgresql://private-user:private-password@database.example/private-db"), {
+    code: "secret\nforged-log-line",
+  });
   const logs = [];
   const server = await startRouter(createSalesMediaRouter({
     pool: { query: async () => { throw failure; } },
@@ -97,7 +99,20 @@ test("sales media preserves the stable database failure response", async (contex
   const response = await fetch(`${server.baseUrl}/api/sales/42/photos`);
   assert.equal(response.status, 500);
   assert.deepEqual(await response.json(), { error: "sale_photos_failed" });
-  assert.deepEqual(logs, [["/api/sales/:sourceRecordId/photos failed", failure]]);
+  assert.deepEqual(logs, [["/api/sales/:sourceRecordId/photos failed", "unknown"]]);
+  assert.doesNotMatch(JSON.stringify(logs), /private-password|forged-log-line/);
+});
+
+test("sales media still returns its fixed failure when optional logging fails", async (context) => {
+  const server = await startRouter(createSalesMediaRouter({
+    pool: { query: async () => { throw new Error("database_offline"); } },
+    logger: { error: () => { throw new Error("logger_offline"); } },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/sales/42/photos`);
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "sale_photos_failed" });
 });
 
 test("sales media validates dependencies and remains before the property catalog", () => {

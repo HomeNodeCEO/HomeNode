@@ -20,15 +20,15 @@ interface Props {
   inspectedPocketId?: string | null;
   inspectedPocketIds?: readonly string[];
   subdivisionFamilies?: CustomCohortSubdivisionFamilies;
-  onActivatePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
-  onExcludePocket?: (pocketId: string, mode: 'subdivision' | 'phase') => void;
+  onActivatePocket?: (pocketId: string, mode: 'subdivision') => void;
+  onExcludePocket?: (pocketId: string, mode: 'subdivision') => void;
   onInspectPocket?: (pocketId: string) => void;
   onInspectAccount?: (accountId: string) => void;
 }
 const SOURCE = 'custom-cohort-parcels', FILL = 'custom-cohort-parcels-fill';
 const LABEL_SOURCE = 'custom-cohort-group-labels', LABEL_LAYER = `${LABEL_SOURCE}-text`, LABEL_DOT = `${LABEL_SOURCE}-dot`;
 const SUBJECT_SOURCE = 'custom-cohort-subject-parcels', SUBJECT_LAYER = `${SUBJECT_SOURCE}-text`;
-type ActivationMode = 'subdivision' | 'phase';
+type ActivationMode = 'subdivision';
 type DisplayLabel = CustomCohortMapLabel & { readonly properties: CustomCohortMapLabel['properties'] & {
   readonly subdivision_label?: string;
   readonly phase_label?: string;

@@ -174,9 +174,7 @@ function WorkspaceSession(props: Props) {
     const removed = new Set(ids), next = included.filter(id => !removed.has(id));
     if (next.length !== included.length) choose(next);
   };
-  const activatePocket = (id: string, mode: 'subdivision' | 'phase') => {
-    // The legacy callback includes a mode, but map zoom must not narrow the selection.
-    void mode;
+  const activatePocket = (id: string) => {
     if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     setInspected(id);
@@ -186,8 +184,7 @@ function WorkspaceSession(props: Props) {
     // regardless of zoom. Individual CAD leaves remain intact in the workfile.
     includeGroups(family?.pocket_ids ?? [id]);
   };
-  const excludePocket = (id: string, mode: 'subdivision' | 'phase') => {
-    void mode;
+  const excludePocket = (id: string) => {
     if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     excludeGroups(family?.pocket_ids ?? [id]);

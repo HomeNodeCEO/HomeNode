@@ -6,6 +6,7 @@ import {
   findAccountByCountyIdentifier,
   homeNodeCollinAccountIdFromPropertyId,
   isSalesSourceRecordReconciliationEligible,
+  listSalesReconciliationQueue,
   normalizedCountyAccountKey,
   normalizeSalesReconciliationUpdate,
   reconcileSalesSourceRecord,
@@ -71,6 +72,31 @@ test("reconciliation eligibility exactly matches the unresolved queue invariant"
   assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, has_unresolved_parcel: true }), true);
   assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, match_status: "manual_verified" }), false);
   assert.equal(isSalesSourceRecordReconciliationEligible({ ...base, record_type: "listing" }), false);
+});
+
+test("reconciliation queue bounds pagination before querying PostgreSQL", async () => {
+  const calls = [];
+  const pool = {
+    async query(sql, params) {
+      calls.push({ sql: String(sql), params });
+      return { rows: [] };
+    },
+  };
+  assert.deepEqual(await listSalesReconciliationQueue(pool, { limit: "25", offset: "10000" }), {
+    total: 0, limit: 25, offset: 10_000, items: [],
+  });
+  assert.deepEqual(calls[0].params, [25, 10_000]);
+  assert.match(calls[0].sql, /LIMIT \$1 OFFSET \$2/);
+
+  await listSalesReconciliationQueue(pool, { limit: "0", offset: -5 });
+  assert.deepEqual(calls[1].params, [20, 0]);
+  for (const offset of [10_001, "Infinity", "1.5", "not-a-number", Number.MAX_SAFE_INTEGER + 1]) {
+    await assert.rejects(
+      () => listSalesReconciliationQueue(pool, { offset }),
+      /invalid_offset/,
+    );
+  }
+  assert.equal(calls.length, 2);
 });
 
 function lockedSalesSourcePool(source) {

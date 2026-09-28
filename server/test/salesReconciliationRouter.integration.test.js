@@ -5,6 +5,7 @@ import test from "node:test";
 import express from "express";
 
 import { createSalesReconciliationRouter } from "../src/modules/operations/salesReconciliationRouter.js";
+import { listSalesReconciliationQueue } from "../src/services/salesReconciliation.js";
 
 function baseOptions(overrides = {}) {
   return {
@@ -73,6 +74,20 @@ test("reconciliation queue forwards pagination and returns the service response"
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), queue);
   assert.deepEqual(calls, [{ pool: options.pool, input: { limit: "25", offset: "50" } }]);
+});
+
+test("reconciliation queue rejects excessive offsets before database access", async (context) => {
+  let queryCalls = 0;
+  const server = await startRouter(baseOptions({
+    pool: { query: async () => { queryCalls += 1; throw new Error("unexpected_query"); } },
+    listQueue: listSalesReconciliationQueue,
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/sales/reconciliation-queue?offset=10001`);
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "invalid_offset" });
+  assert.equal(queryCalls, 0);
 });
 
 test("reconciliation remains platform-admin-gated before the primary write service", async (context) => {

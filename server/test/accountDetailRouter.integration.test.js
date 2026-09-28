@@ -156,6 +156,26 @@ test("account detail preserves canonical resolution, response shape, and sales d
   assert.match(accountQuery.sql, /LEFT JOIN LATERAL/);
 });
 
+test("account detail masks historical raw Census failure reasons", async (context) => {
+  const pool = {
+    async query(sql) {
+      if (/FROM core\.accounts a/.test(sql)) return { rows: [{ account_id: "A-1" }] };
+      if (/FROM core\.account_census_geographies/.test(sql)) return { rows: [{
+        status: "retry", review_reason: "postgresql://private-password@database",
+      }] };
+      throw new Error("unexpected_query");
+    },
+  };
+  const server = await startRouter(baseOptions({ pool }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/accounts/A-1?assignment_file_id=42`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.census_geography.review_reason, "census_batch_failed");
+  assert.equal(JSON.stringify(body).includes("private-password"), false);
+});
+
 test("account detail returns not found before launching optional loaders", async (context) => {
   let optionalCalls = 0;
   const unexpectedOptional = async () => { optionalCalls += 1; throw new Error("unexpected_optional"); };

@@ -3,7 +3,7 @@ import express from "express";
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { getAccountPropertyActivityHistory } from "../../services/accountSalesHistory.js";
 import { loadAccountDetailSections } from "../../services/accountDetailSections.js";
-import { ensureCensusGeographySchema } from "../../services/censusGeography.js";
+import { ensureCensusGeographySchema, safeCensusReviewReason } from "../../services/censusGeography.js";
 import { getStoredPropertyContext } from "../../services/propertyContext.js";
 import { hasApplicationPermission } from "../../security/applicationAccess.js";
 import { authorizePublicCadastralCatalogRead } from "../../security/publicCadastralCatalog.js";
@@ -163,7 +163,10 @@ export function createAccountDetailRouter({
            WHERE account_id = $1`,
           [canonicalId],
         );
-        return rows[0] || null;
+        const geography = rows[0] || null;
+        return geography && Object.hasOwn(geography, "review_reason")
+          ? { ...geography, review_reason: safeCensusReviewReason(geography.review_reason) }
+          : geography;
       })().catch((error) => {
         try { logger.warn?.("census geography lookup failed", safeOperationalErrorCode(error)); } catch { /* Keep optional evidence optional. */ }
         return null;

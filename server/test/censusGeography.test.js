@@ -9,6 +9,8 @@ import {
   lookupAccountCensusGeographyNow,
   parseCensusAddressBatchResponse,
   parseCensusCoordinatesBatchResponse,
+  runCensusGeographyBatch,
+  safeCensusReviewReason,
   startCensusGeographyWorker,
   validateCensusGeography,
 } from "../src/services/censusGeography.js";
@@ -35,6 +37,59 @@ test("Census worker failures log bounded codes and tolerate a failing logger", a
   });
   context.after(throwingLoggerWorker.stop);
   await throwingLoggerWorker.runNow();
+});
+
+test("Census review reasons preserve known codes and mask historical diagnostics", () => {
+  assert.equal(safeCensusReviewReason("census_coordinates_batch_http_503"),
+    "census_coordinates_batch_http_503");
+  assert.equal(safeCensusReviewReason("county_fips_mismatch:expected_113:received_085"),
+    "county_fips_mismatch:expected_113:received_085");
+  assert.equal(safeCensusReviewReason("postgresql://private-password@database"),
+    "census_batch_failed");
+});
+
+test("failed Census batches persist and return bounded diagnostics", async () => {
+  const stored = [];
+  const claimed = {
+    account_id: "26272500060150000", source_method: "coordinate",
+    source_longitude: -96.63, source_latitude: 32.92,
+    benchmark: "Public_AR_Current", vintage: "Current_Current",
+    county: "Dallas", attempts: 1, worker_id: "worker-1",
+  };
+  const pool = {
+    async connect() { return {
+      async query(sql) {
+        if (sql.includes("RETURNING geography.account_id")) return { rows: [claimed] };
+        return { rows: [] };
+      },
+      release() {},
+    }; },
+    async query(sql, values) {
+      if (sql.includes("SET tract_geoid = outcome.tract_geoid")) {
+        throw new Error("postgresql://private-password@database");
+      }
+      stored.push({ sql, values });
+      return { rows: [] };
+    },
+  };
+  const result = await runCensusGeographyBatch(pool, {
+    workerId: "worker-1", batchSize: 1,
+    fetchImpl: async () => new Response(
+      '"26272500060150000","-96.6300","32.9200","Match","48","113","019004","1001"\n',
+    ),
+  });
+  assert.equal(result.retry, 1);
+  assert.equal(result.error, "census_batch_failed");
+  assert.equal(JSON.parse(stored[0].values[0])[0].review_reason, "census_batch_failed");
+  assert.equal(JSON.stringify({ result, stored }).includes("private-password"), false);
+
+  const providerFailure = await runCensusGeographyBatch(pool, {
+    workerId: "worker-1", batchSize: 1,
+    fetchImpl: async () => new Response(null, { status: 503 }),
+  });
+  assert.equal(providerFailure.error, "census_coordinates_batch_http_503");
+  assert.equal(JSON.parse(stored[1].values[0])[0].review_reason,
+    "census_coordinates_batch_http_503");
 });
 
 const coordinateRow = {

@@ -5,6 +5,8 @@ import { findAccountByCountyIdentifier } from "../../services/salesReconciliatio
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { normalizePropertyCity, parsePropertySearch } from "../../util/propertySearch.js";
 
+const MAX_PROPERTY_SEARCH_OFFSET = 10_000;
+
 export function createPropertySearchRouter({
   pool,
   accountQualityReady,
@@ -51,9 +53,14 @@ export function createPropertySearchRouter({
       const limit = Number.isFinite(parsedLimit) && parsedLimit > 0
         ? Math.min(parsedLimit, 100)
         : 25;
-      const offset = Math.max(parseInt(String(req.query.offset || "0"), 10) || 0, 0);
+      const parsedOffset = parseInt(String(req.query.offset || "0"), 10);
 
       if (!q && !requestedCity) return res.json([]);
+      // Deep OFFSET scans grow with the skipped rows even when LIMIT is small.
+      if (parsedOffset > MAX_PROPERTY_SEARCH_OFFSET) {
+        return res.status(400).json({ error: "search_offset_out_of_range" });
+      }
+      const offset = Number.isFinite(parsedOffset) ? Math.max(parsedOffset, 0) : 0;
 
       const parsed = q ? parseSearch(q) : null;
       if (q && !parsed.isAccountId && !parsed.normalizedAddress) return res.json([]);

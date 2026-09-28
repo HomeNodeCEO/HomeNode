@@ -4,6 +4,7 @@ import {
   ensureAccountLocationsTable,
   refreshAccountLocations,
 } from "../src/services/accountLocations.js";
+import { formatLocationBackfillRetry } from "../src/util/locationBackfillRetryDiagnostic.js";
 
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
 
@@ -76,9 +77,9 @@ try {
     batchSize,
     maximumAttempts,
     onRetry: ({ nextAttempt, delayMs, batchStart, batchSize: retryBatchSize, error }) => {
-      console.warn(
-        `[locations] DCAD GIS retry ${nextAttempt}/${maximumAttempts} for rows ${batchStart + 1}-${batchStart + retryBatchSize} in ${delayMs}ms: ${error?.message || error}`,
-      );
+      console.warn(formatLocationBackfillRetry({
+        nextAttempt, maximumAttempts, batchStart, batchSize: retryBatchSize, delayMs, error,
+      }));
     },
     onBatch: ({ completed, total, summary: progress }) => {
       console.log(

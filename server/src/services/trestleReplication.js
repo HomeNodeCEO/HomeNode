@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { ensureAccountLocationsTable } from "./accountLocations.js";
 import { ensureLocationBackfillQueueSchema } from "./locationBackfillQueue.js";
 import { ensurePropertyContextSchema } from "./propertyContextStore.js";
@@ -14,6 +15,23 @@ import {
 const TRESTLE_REPLICATION_LOCK_A = 48_632_941;
 const TRESTLE_REPLICATION_LOCK_B = 20_260_819;
 const TRESTLE_SOURCE_FILENAME = "trestle://Property";
+
+/** Never persist or print exception messages from a provider or database driver. */
+export function safeTrestleFailureCode(error, { media = false } = {}) {
+  let candidate;
+  try {
+    candidate = error?.message;
+  } catch {
+    // Some exception-like objects implement throwing accessors.
+  }
+  const message = typeof candidate === "string" ? candidate : "";
+  if (/^(?:trestle(?:_token)?_(?:unavailable|invalid_response|response_(?:too_large|unavailable)|endpoint_invalid|http_(?:unknown|[1-5]\d{2}))|trestle_(?:disabled|credentials_missing|token_missing|base_url_invalid|untrusted_path|untrusted_next_link|media_page_limit_reached|listing_key_missing|pool_requires_two_connections)|invalid_trestle_modified_after|missing_listing_identifier|ambiguous_listing_id)$/.test(message)) {
+    return message;
+  }
+  const operationalCode = safeOperationalErrorCode(error);
+  const fallback = media ? "trestle_media_failed" : "trestle_replication_failed";
+  return operationalCode === "unknown" ? fallback : `${fallback}_${operationalCode}`;
+}
 
 function hasValue(value) {
   return value !== null && value !== undefined && String(value).trim() !== "";
@@ -1042,7 +1060,7 @@ export async function runTrestlePropertyReplication(pool, trestleClient, {
     );
     return { ok: true, skipped: false, partial, run_id: runId, cursor_started_at: cursorStartedAt, cursor_completed_at: cursorCompletedAt, ...totals };
   } catch (error) {
-    const message = String(error?.message || error || "trestle_replication_failed").slice(0, 4_000);
+    const message = safeTrestleFailureCode(error);
     if (runId) {
       await pool.query(
         `UPDATE app.trestle_replication_runs
@@ -1192,7 +1210,7 @@ export async function runTrestleMediaBatch(pool, trestleClient, {
           item.listing_key,
           review ? "manual_review" : "retry",
           mediaRetryDelayMinutes(item.attempts),
-          String(error?.message || error).slice(0, 4_000),
+          safeTrestleFailureCode(error, { media: true }),
         ],
       );
       if (review) manualReview += 1;

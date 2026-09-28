@@ -8,6 +8,31 @@ export const UAD_QUALITY_RATINGS = new Set([
   "Q4", "Q5-Q4", "Q5", "Q6-Q5", "Q6",
 ]);
 
+const RATING_UPDATE_ERRORS = new Set([
+  "invalid_condition_rating",
+  "invalid_quality_rating",
+  "invalid_notes",
+  "missing_appraisal_rating",
+  "invalid_expected_revision",
+]);
+
+export function publicRatingUpdateErrorCode(error) {
+  try {
+    const code = error?.message;
+    return typeof code === "string" && RATING_UPDATE_ERRORS.has(code) ? code : null;
+  } catch {
+    return null;
+  }
+}
+
+export function publicEffectiveDateErrorCode(error) {
+  try {
+    return error?.message === "invalid_effective_date" ? "invalid_effective_date" : null;
+  } catch {
+    return null;
+  }
+}
+
 function optionalText(value, maxLength, fieldName) {
   const text = String(value ?? "").trim();
   if (!text) return null;

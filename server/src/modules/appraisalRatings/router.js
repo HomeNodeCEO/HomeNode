@@ -4,6 +4,8 @@ import { SUBJECT_RATING_SELECT } from "../../services/appraisalRatings.js";
 import {
   normalizeAppraisalRatingUpdate,
   normalizeEffectiveDate,
+  publicEffectiveDateErrorCode,
+  publicRatingUpdateErrorCode,
 } from "../../util/appraisalRatings.js";
 
 function authenticatedReviewer(req) {
@@ -21,6 +23,8 @@ export function createAppraisalRatingsRouter({
   ratingsReady,
   accountIdAllowed,
   requireEditor,
+  normalizeDate = normalizeEffectiveDate,
+  normalizeRatingUpdate = normalizeAppraisalRatingUpdate,
   logger = console,
 } = {}) {
   if (!pool || typeof pool.query !== "function" || typeof pool.connect !== "function") {
@@ -35,6 +39,9 @@ export function createAppraisalRatingsRouter({
   if (typeof requireEditor !== "function") {
     throw new TypeError("appraisal_ratings_editor_policy_required");
   }
+  if (typeof normalizeDate !== "function" || typeof normalizeRatingUpdate !== "function") {
+    throw new TypeError("appraisal_ratings_normalizer_required");
+  }
 
   const router = express.Router();
 
@@ -45,9 +52,13 @@ export function createAppraisalRatingsRouter({
     }
     let effectiveDate;
     try {
-      effectiveDate = normalizeEffectiveDate(req.query.effective_date);
+      effectiveDate = normalizeDate(req.query.effective_date);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_effective_date" });
+      const code = publicEffectiveDateErrorCode(error);
+      if (code) return res.status(400).json({ error: code });
+      try { logger.error?.("subject_rating_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      return res.set("cache-control", "no-store")
+        .status(500).json({ error: "subject_rating_failed" });
     }
     try {
       await ratingsReady;
@@ -79,10 +90,14 @@ export function createAppraisalRatingsRouter({
     let effectiveDate;
     let update;
     try {
-      effectiveDate = normalizeEffectiveDate(req.body?.effective_date);
-      update = normalizeAppraisalRatingUpdate(req.body);
+      effectiveDate = normalizeDate(req.body?.effective_date);
+      update = normalizeRatingUpdate(req.body);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_appraisal_rating" });
+      const code = publicEffectiveDateErrorCode(error) || publicRatingUpdateErrorCode(error);
+      if (code) return res.status(400).json({ error: code });
+      try { logger.error?.("subject_rating_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      return res.set("cache-control", "no-store")
+        .status(500).json({ error: "subject_rating_update_failed" });
     }
 
     const client = await pool.connect();

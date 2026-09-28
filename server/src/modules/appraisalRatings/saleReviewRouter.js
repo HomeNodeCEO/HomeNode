@@ -1,7 +1,10 @@
 import express from "express";
 
 import { SALE_REVIEW_SELECT } from "../../services/appraisalRatings.js";
-import { normalizeAppraisalRatingUpdate } from "../../util/appraisalRatings.js";
+import {
+  normalizeAppraisalRatingUpdate,
+  publicRatingUpdateErrorCode,
+} from "../../util/appraisalRatings.js";
 
 const SOURCE_RECORD_ID_PATTERN = /^\d+$/;
 
@@ -76,7 +79,11 @@ export function createSaleReviewRouter({
     try {
       update = normalizeRatingUpdate(req.body);
     } catch (error) {
-      return res.status(400).json({ error: error?.message || "invalid_appraisal_rating" });
+      const code = publicRatingUpdateErrorCode(error);
+      if (code) return res.status(400).json({ error: code });
+      try { logger.error?.("sale_review_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      return res.set("cache-control", "no-store")
+        .status(500).json({ error: "sale_review_update_failed" });
     }
 
     const client = await pool.connect();

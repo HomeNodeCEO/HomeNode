@@ -92,6 +92,7 @@ function WorkspaceSession(props: Props) {
   const [inspectedFamilyId, setInspectedFamilyId] = useState<string | null>(null);
   const [inspectedPhaseId, setInspectedPhaseId] = useState<string | null>(null);
   const [fullReviewFamilyId, setFullReviewFamilyId] = useState<string | null>(null);
+  const [minimumScoreBand, setMinimumScoreBand] = useState(90);
   const [search, setSearch] = useState('');
   const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
@@ -237,8 +238,9 @@ function WorkspaceSession(props: Props) {
     return groups.every(pocket => selected.has(pocket.id));
   }, [groups, included]);
   const scoreBandSelector = <CustomCohortScoreBandSelector recommendation={recommendation} included={included}
+    minimum={minimumScoreBand} onMinimumChange={setMinimumScoreBand}
     subjectGroupId={catalog?.subject_membership.assigned_pocket_id ?? null} disabled={selectionDisabled}
-    allGroupsIncluded={allGroupsIncluded}
+    allGroupsIncluded={Boolean(current && allGroupsIncluded)}
     onReplace={ids => choose(ids)} onAdd={includeGroups} onRemove={excludeGroups} />;
   const liveStatistics = <aside className="min-w-0 rounded-xl border border-violet-200 bg-violet-50/30 p-3"
     aria-label="Live neighborhood characteristics and market observations">

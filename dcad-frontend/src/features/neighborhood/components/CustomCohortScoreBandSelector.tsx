@@ -1,10 +1,12 @@
-import { useMemo, useState } from 'react';
+import { useMemo } from 'react';
 import type { CheckedPocketRecommendation } from '../customCohortPocketRecommendation';
 import { customCohortScoreBands } from '../customCohortScoreBands';
 
 interface Props {
   recommendation: CheckedPocketRecommendation | null;
   included: readonly string[];
+  minimum: number;
+  onMinimumChange: (minimum: number) => void;
   subjectGroupId: string | null;
   disabled: boolean;
   allGroupsIncluded: boolean;
@@ -17,9 +19,8 @@ const button = 'hn-action-secondary btn btn-sm normal-case';
 
 /** Appraiser-directed selection over already checked group scores. All three
  * actions use the workspace's existing atomic selection save/preview path. */
-export default function CustomCohortScoreBandSelector({ recommendation, included, subjectGroupId, disabled,
-  allGroupsIncluded, onReplace, onAdd, onRemove }: Props) {
-  const [minimum, setMinimum] = useState(90);
+export default function CustomCohortScoreBandSelector({ recommendation, included, minimum, onMinimumChange,
+  subjectGroupId, disabled, allGroupsIncluded, onReplace, onAdd, onRemove }: Props) {
   const bands = useMemo(() => customCohortScoreBands(recommendation), [recommendation]);
   const band = bands.find(item => item.minimum === minimum);
   const ids = band?.recorded_group_ids ?? [];
@@ -34,7 +35,7 @@ export default function CustomCohortScoreBandSelector({ recommendation, included
     <div className="mt-2 flex flex-wrap items-end gap-3">
       <label className="min-w-40 flex-1 text-xs font-medium text-violet-900">Similarity range
         <select className="select select-bordered mt-1 w-full" aria-label="Similarity range" value={minimum}
-          disabled={!bands.length} onChange={event => setMinimum(Number(event.target.value))}>
+          disabled={!bands.length} onChange={event => onMinimumChange(Number(event.target.value))}>
           {(bands.length ? bands : Array.from({ length: 10 }, (_, index) => ({ minimum: 90 - index * 10,
             label: index === 0 ? '90–100' : `${90 - index * 10}–<${100 - index * 10}` }))).map(item =>
             <option key={item.minimum} value={item.minimum}>{item.label}</option>)}

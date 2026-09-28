@@ -488,6 +488,25 @@ test('score-range actions are unavailable during blocked saves, even before the 
   }
 });
 
+test('chosen range persists from first-preview waiting state into the map and red notice tracks only current paint', async t => {
+  const h = harness(); t.after(() => h.unmount());
+  const all = [groupId(1), groupId(2), catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP];
+  const props = withRecommendation(h.props(all));
+  h.render(props);
+  const waiting = h.child('CustomCohortScoreBandSelector');
+  assert.equal(waiting.allGroupsIncluded, false, 'no map is showing the included state yet');
+  waiting.onMinimumChange(80);
+  h.render(props);
+  assert.equal(h.child('CustomCohortScoreBandSelector').minimum, 80);
+  await h.tick(); await h.complete();
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.minimum, 80);
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.allGroupsIncluded, true);
+  const saving = withRecommendation(h.props(all)); saving.workspace.saving = true;
+  h.render(saving);
+  assert.equal(h.child('CustomCohortParcelMap').scoreBandSelector.props.allGroupsIncluded, false,
+    'a stale map cannot be explained using an unpainted selection');
+});
+
 for (const state of ['saving', 'read_only', 'reload_required', 'pending_capture']) test(`${state} blocks Use suggested selection without mutating existing choices`, async t => {
   const h = harness(); t.after(() => h.unmount()); const p = withRecommendation(h.props([]));
   if (state === 'saving') p.workspace.saving = true; else p.workspace.blockedReason = state;

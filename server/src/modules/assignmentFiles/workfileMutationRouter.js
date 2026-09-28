@@ -6,9 +6,50 @@ import {
   saveCustomAppraisalWorkfileSection,
   signCustomAppraisalWorkfile,
 } from "../../services/customAppraisalWorkfiles.js";
+import { customAppraisalReadinessErrorDetails } from "../../services/customAppraisalReadinessErrorDetails.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
+const SAVE_VALIDATION_ERRORS = new Set([
+  "invalid_assignment_file_id",
+  "invalid_custom_appraisal_section_key",
+  "invalid_custom_appraisal_section_revision",
+  "invalid_custom_appraisal_save_reason",
+  "invalid_custom_appraisal_section_value",
+  "custom_appraisal_section_too_large",
+]);
+const SIGN_VALIDATION_ERRORS = new Set([
+  "invalid_assignment_file_id",
+  "invalid_custom_appraisal_signer",
+  "invalid_custom_appraisal_signature_event",
+  "invalid_custom_appraisal_warning_codes",
+]);
+
+function workfileMutationErrorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch {
+    return "";
+  }
+}
+
+function workfileConflictRevision(error) {
+  try {
+    const revision = Number(error?.currentRevision);
+    return Number.isSafeInteger(revision) && revision >= 0 ? revision : 0;
+  } catch {
+    return 0;
+  }
+}
+
+function logMutationFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // A broken logger must not replace the bounded response.
+  }
+}
 
 function requestedAccountId(req, res) {
   const value = String(req.params.id || "").trim();
@@ -105,31 +146,29 @@ export function createAssignmentWorkfileMutationRouter({
           section,
         });
       } catch (error) {
-        if (error?.message === "assignment_file_not_found") {
-          return res.status(404).json({ error: error.message });
+        const message = workfileMutationErrorMessage(error);
+        if (message === "assignment_file_not_found") {
+          return res.status(404).json({ error: message });
         }
-        if (error?.message === "custom_appraisal_section_revision_conflict") {
+        if (message === "custom_appraisal_section_revision_conflict") {
           return res.status(409).json({
-            error: error.message,
-            current_revision: Number(error.currentRevision || 0),
+            error: message,
+            current_revision: workfileConflictRevision(error),
           });
         }
-        if (error?.message === "custom_appraisal_workfile_signed") {
-          return res.status(409).json({ error: error.message });
+        if (message === "custom_appraisal_workfile_signed") {
+          return res.status(409).json({ error: message });
         }
-        if (error?.message === "custom_appraisal_workfile_storage_quota_exceeded") {
-          return res.status(409).json({ error: error.message });
+        if (message === "custom_appraisal_workfile_storage_quota_exceeded") {
+          return res.status(409).json({ error: message });
         }
-        if (error?.message === "custom_neighborhood_acceptance_workflow_required") {
-          return res.status(409).json({ error: error.message });
+        if (message === "custom_neighborhood_acceptance_workflow_required") {
+          return res.status(409).json({ error: message });
         }
-        if (
-          String(error?.message || "").startsWith("invalid_")
-          || error?.message === "custom_appraisal_section_too_large"
-        ) {
-          return res.status(400).json({ error: error.message });
+        if (SAVE_VALIDATION_ERRORS.has(message)) {
+          return res.status(400).json({ error: message });
         }
-        logger.error?.("custom appraisal workfile section save failed", safeOperationalErrorCode(error));
+        logMutationFailure(logger, "custom appraisal workfile section save failed", error);
         return res.status(500).json({ error: "custom_appraisal_workfile_save_failed" });
       }
     },
@@ -171,42 +210,42 @@ export function createAssignmentWorkfileMutationRouter({
       });
       return res.json({ ok: true, account_id: canonicalId, workfile });
     } catch (error) {
-      if (error?.message === "assignment_file_not_found") {
-        return res.status(404).json({ error: error.message });
+      const message = workfileMutationErrorMessage(error);
+      if (message === "assignment_file_not_found") {
+        return res.status(404).json({ error: message });
       }
       if ([
         "custom_appraisal_workfile_signed",
         "custom_appraisal_workfile_empty",
         "custom_appraisal_signature_event_conflict",
-      ].includes(
-        error?.message,
-      )) {
-        return res.status(409).json({ error: error.message });
+      ].includes(message)) {
+        return res.status(409).json({ error: message });
       }
-      if (error?.message === "custom_appraisal_signer_not_assigned") {
-        return res.status(403).json({ error: error.message });
+      if (message === "custom_appraisal_signer_not_assigned") {
+        return res.status(403).json({ error: message });
       }
-      if (error?.message === "custom_appraisal_signing_secret_not_configured") {
-        return res.status(503).json({ error: error.message });
+      if (message === "custom_appraisal_signing_secret_not_configured") {
+        return res.status(503).json({ error: message });
       }
-      if (error?.message === "custom_appraisal_eo_incomplete") {
+      const readinessDetails = customAppraisalReadinessErrorDetails(error);
+      if (message === "custom_appraisal_eo_incomplete" && readinessDetails) {
         return res.status(422).json({
-          error: error.message,
-          readiness_errors: error.readinessErrors || [],
-          readiness: error.readiness || null,
+          error: message,
+          readiness_errors: readinessDetails.readinessErrors || [],
+          readiness: readinessDetails.readiness || null,
         });
       }
-      if (error?.message === "custom_appraisal_eo_warnings_unacknowledged") {
+      if (message === "custom_appraisal_eo_warnings_unacknowledged" && readinessDetails) {
         return res.status(422).json({
-          error: error.message,
-          readiness_warnings: error.readinessWarnings || [],
-          readiness: error.readiness || null,
+          error: message,
+          readiness_warnings: readinessDetails.readinessWarnings || [],
+          readiness: readinessDetails.readiness || null,
         });
       }
-      if (String(error?.message || "").startsWith("invalid_")) {
-        return res.status(400).json({ error: error.message });
+      if (SIGN_VALIDATION_ERRORS.has(message)) {
+        return res.status(400).json({ error: message });
       }
-      logger.error?.("custom appraisal workfile signing failed", safeOperationalErrorCode(error));
+      logMutationFailure(logger, "custom appraisal workfile signing failed", error);
       return res.status(500).json({ error: "custom_appraisal_workfile_sign_failed" });
     }
   });

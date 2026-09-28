@@ -7,6 +7,7 @@ import express from "express";
 import {
   createAssignmentWorkfileMutationRouter,
 } from "../src/modules/assignmentFiles/workfileMutationRouter.js";
+import { attachCustomAppraisalReadinessErrorDetails } from "../src/services/customAppraisalReadinessErrorDetails.js";
 
 const identity = Object.freeze({
   userId: "user-1",
@@ -190,8 +191,11 @@ test("section save failures preserve not-found, conflict, validation, and bounde
       body: { error: "custom_appraisal_workfile_storage_quota_exceeded" } },
     { error: new Error("custom_neighborhood_acceptance_workflow_required"), status: 409,
       body: { error: "custom_neighborhood_acceptance_workflow_required" } },
-    { error: new Error("invalid_section_key"), status: 400, body: { error: "invalid_section_key" } },
+    { error: new Error("invalid_custom_appraisal_section_key"), status: 400,
+      body: { error: "invalid_custom_appraisal_section_key" } },
     { error: new Error("custom_appraisal_section_too_large"), status: 400, body: { error: "custom_appraisal_section_too_large" } },
+    { error: new Error("invalid_secret-token"), status: 500,
+      body: { error: "custom_appraisal_workfile_save_failed" } },
     { error: diagnostic, status: 500, body: { error: "custom_appraisal_workfile_save_failed" } },
   ];
   const logs = [];
@@ -210,8 +214,41 @@ test("section save failures preserve not-found, conflict, validation, and bounde
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), item.body);
   }
-  assert.deepEqual(logs, [["custom appraisal workfile section save failed", "unknown"]]);
+  assert.deepEqual(logs, [
+    ["custom appraisal workfile section save failed", "unknown"],
+    ["custom appraisal workfile section save failed", "unknown"],
+  ]);
   assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
+});
+
+test("section failures capture a message once and tolerate hostile revision and logger getters", async (context) => {
+  let messageReads = 0;
+  const conflict = new Error("initial");
+  Object.defineProperty(conflict, "message", {
+    get() {
+      messageReads += 1;
+      return messageReads === 1 ? "custom_appraisal_section_revision_conflict" : "private_token";
+    },
+  });
+  Object.defineProperty(conflict, "currentRevision", { get() { throw new Error("private_token"); } });
+  const conflictServer = await startRouter(baseOptions({
+    saveSection: async () => { throw conflict; },
+  }), identity);
+  const brokenLoggerServer = await startRouter(baseOptions({
+    saveSection: async () => { throw new Error("private_token"); },
+    logger: { error() { throw new Error("private_token"); } },
+  }), identity);
+  context.after(async () => Promise.all([conflictServer.close(), brokenLoggerServer.close()]));
+
+  const response = await saveSection(conflictServer.baseUrl, "A-1", 41, "subject", {});
+  assert.equal(response.status, 409);
+  assert.deepEqual(await response.json(), {
+    error: "custom_appraisal_section_revision_conflict", current_revision: 0,
+  });
+  assert.equal(messageReads, 1);
+  const failure = await saveSection(brokenLoggerServer.baseUrl, "A-1", 41, "subject", {});
+  assert.equal(failure.status, 500);
+  assert.deepEqual(await failure.json(), { error: "custom_appraisal_workfile_save_failed" });
 });
 
 test("signing derives identity and audit inputs exclusively from the session in every mode", async (context) => {
@@ -311,14 +348,14 @@ test("sign assignment denial stops immutable snapshot creation", async (context)
 });
 
 test("sign failures retain signer, readiness, conflict, availability, and diagnostic contracts", async (context) => {
-  const incomplete = Object.assign(new Error("custom_appraisal_eo_incomplete"), {
+  const incomplete = attachCustomAppraisalReadinessErrorDetails(Object.assign(new Error("custom_appraisal_eo_incomplete"), {
     readinessErrors: ["missing_subject"],
     readiness: { ready: false },
-  });
-  const warnings = Object.assign(new Error("custom_appraisal_eo_warnings_unacknowledged"), {
+  }), { readinessErrors: ["missing_subject"], readiness: { ready: false } });
+  const warnings = attachCustomAppraisalReadinessErrorDetails(Object.assign(new Error("custom_appraisal_eo_warnings_unacknowledged"), {
     readinessWarnings: ["review_adjustment"],
     readiness: { ready: false, warnings: 1 },
-  });
+  }), { readinessWarnings: ["review_adjustment"], readiness: { ready: false, warnings: 1 } });
   const diagnostic = new Error("storage.internal secret-token");
   const cases = [
     { error: new Error("assignment_file_not_found"), status: 404, body: { error: "assignment_file_not_found" } },
@@ -345,7 +382,10 @@ test("sign failures retain signer, readiness, conflict, availability, and diagno
         readiness: { ready: false, warnings: 1 },
       },
     },
-    { error: new Error("invalid_signer"), status: 400, body: { error: "invalid_signer" } },
+    { error: new Error("invalid_custom_appraisal_signer"), status: 400,
+      body: { error: "invalid_custom_appraisal_signer" } },
+    { error: new Error("invalid_secret-token"), status: 500,
+      body: { error: "custom_appraisal_workfile_sign_failed" } },
     { error: diagnostic, status: 500, body: { error: "custom_appraisal_workfile_sign_failed" } },
   ];
   const logs = [];
@@ -365,8 +405,42 @@ test("sign failures retain signer, readiness, conflict, availability, and diagno
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), item.body);
   }
-  assert.deepEqual(logs, [["custom appraisal workfile signing failed", "unknown"]]);
+  assert.deepEqual(logs, [
+    ["custom appraisal workfile signing failed", "unknown"],
+    ["custom appraisal workfile signing failed", "unknown"],
+  ]);
   assert.doesNotMatch(JSON.stringify(logs), /secret-token/);
+});
+
+test("signing does not trust an unmarked E&O error or reread an unstable message", async (context) => {
+  const unmarkedReadiness = Object.assign(new Error("custom_appraisal_eo_incomplete"), {
+    readinessErrors: ["private_token"],
+    readiness: { private_token: "hidden" },
+  });
+  let messageReads = 0;
+  const unstable = new Error("initial");
+  Object.defineProperty(unstable, "message", {
+    get() {
+      messageReads += 1;
+      return messageReads === 1 ? "custom_appraisal_workfile_signed" : "private_token";
+    },
+  });
+  const unmarkedServer = await startRouter(baseOptions({
+    signWorkfile: async () => { throw unmarkedReadiness; },
+    logger: { error() { throw new Error("private_token"); } },
+  }), identity);
+  const unstableServer = await startRouter(baseOptions({
+    signWorkfile: async () => { throw unstable; },
+  }), identity);
+  context.after(async () => Promise.all([unmarkedServer.close(), unstableServer.close()]));
+
+  const unmarkedResponse = await signWorkfile(unmarkedServer.baseUrl, "A-1", 41);
+  assert.equal(unmarkedResponse.status, 500);
+  assert.deepEqual(await unmarkedResponse.json(), { error: "custom_appraisal_workfile_sign_failed" });
+  const unstableResponse = await signWorkfile(unstableServer.baseUrl, "A-1", 41);
+  assert.equal(unstableResponse.status, 409);
+  assert.deepEqual(await unstableResponse.json(), { error: "custom_appraisal_workfile_signed" });
+  assert.equal(messageReads, 1);
 });
 
 test("workfile mutation composition is explicit and inline handlers are absent", () => {

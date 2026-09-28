@@ -12,6 +12,10 @@ import { createUadRouter, safeUadEvidenceComparison, uadBodyParserErrorHandler }
 import { renderUadPublicErrorCodes } from "../scripts/generateUadPublicErrorCodes.js";
 
 const WORKFILE_ID = "c164248f-645d-48aa-a389-dc668e6c5dc9";
+const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
+const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
+const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
+const REPORT_FILE_ID = "e2f654e7-d35f-4cb5-8cc5-64e86784d0d0";
 
 test("public UAD error-code catalog matches current source producers", () => {
   const generated = readFileSync(new URL("../src/modules/uad/publicErrorCodes.generated.js", import.meta.url), "utf8");
@@ -20,12 +24,14 @@ test("public UAD error-code catalog matches current source producers", () => {
     "invalid_uad_file_number", "uad_section_stale_revision", "uad_xml_mapping_missing",
     "uad_object_download_failed", "uad_compliance_fannie_not_configured",
     "uad_package_pdf_checksum_mismatch", "invalid_uad_asset_pdf_structure",
+    "uad_asset_upload_capacity_exceeded", "uad_signature_policy_invalid",
+    "uad_signature_reauthentication_unavailable", "invalid_uad_site_asset_entity",
   ]) assert.equal(PUBLIC_UAD_ERROR_CODES.has(code), true, code);
+  for (const nonError of [
+    "invalid_", "delivery_", "delivery_receipts", "uad_uid",
+    "uad_redteam_authenticated_authorization_v1", "uad_sketch_api",
+  ]) assert.equal(PUBLIC_UAD_ERROR_CODES.has(nonError), false, nonError);
 });
-const USER_ID = "711c54f2-d7a4-4418-ab65-0d9f7e0d43a1";
-const ORGANIZATION_ID = "f62aa408-18eb-4ee1-bdae-167b8ff92a0c";
-const OTHER_ORGANIZATION_ID = "b5250368-e8f1-4d47-9f62-a8a7cb2ea383";
-const REPORT_FILE_ID = "e2f654e7-d35f-4cb5-8cc5-64e86784d0d0";
 
 async function withServer(pool, callback, securityOverrides = {}, routerOverrides = {}) {
   const app = express();
@@ -698,6 +704,20 @@ test("unknown code-like UAD provider exceptions fail closed", async () => {
   assert.deepEqual(calls, [["[uad] request failed", "unrecognized_public_code"]]);
   assert.doesNotMatch(JSON.stringify(calls), /private-provider-token/);
 });
+
+for (const nonError of ["invalid_", "delivery_receipts", "uad_uid"]) {
+  test(`non-error source literal ${nonError} cannot become a public UAD error`, async () => {
+    await withServer(securityPool(), async (baseUrl) => {
+      const response = await fetch(`${baseUrl}/api/uad/accounts/PUBLIC-ACCOUNT-1/workfiles`, {
+        method: "POST",
+        headers: { authorization: "Bearer synthetic-token", "content-type": "application/json" },
+        body: JSON.stringify({ organization_id: ORGANIZATION_ID }),
+      });
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: "uad_request_failed" });
+    }, {}, { createWorkfile: async () => { throw new Error(nonError); } });
+  });
+}
 
 for (const [databaseCode, status, publicCode] of [
   ["23505", 409, "uad_request_conflict"],

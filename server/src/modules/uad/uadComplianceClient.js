@@ -3,7 +3,7 @@ import { TextDecoder } from "node:util";
 
 import { readBoundedResponseBuffer } from "../../util/boundedResponse.js";
 
-const PROVIDERS = Object.freeze(["fannie", "freddie"]);
+export const PROVIDERS = Object.freeze(["fannie", "freddie"]);
 const MAX_RESPONSE_BYTES = 2 * 1024 * 1024;
 
 function enabledFlag(value) {

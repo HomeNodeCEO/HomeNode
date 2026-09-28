@@ -3,6 +3,30 @@ import { readBoundedJsonResponse } from "../util/boundedResponse.js";
 const DEFAULT_SCRAPER_STATUS_URL =
   "https://dcad-scraper-with-api.onrender.com/scrape/status";
 const MAX_SCRAPER_STATUS_RESPONSE_BYTES = 1024 * 1024;
+const QUEUE_COUNT_FIELDS = [
+  "pending", "processing", "retry", "matched", "review_required", "failed",
+  "completed", "manual_review",
+];
+const COVERAGE_COUNT_FIELDS = Object.freeze({
+  census: [
+    "account_count", "coordinate_ready_count", "address_ready_count",
+    "lookup_ready_count", "matched_tract_count", "review_required_count",
+    "missing_lookup_input_count", "coverage_percent",
+  ],
+  locations: [
+    "sale_account_count", "located_sale_account_count",
+    "missing_sale_account_count", "coverage_percent",
+  ],
+  influences: [
+    "sale_account_count", "measured_sale_account_count",
+    "missing_sale_account_count", "coverage_percent",
+  ],
+});
+const SCRAPER_QUALITY_COUNT_FIELDS = [
+  "recovery_pending", "needs_review", "resolved", "market_value_pending",
+  "market_value_present", "owner_recovery_pending", "owner_recovery_succeeded",
+  "field_repair_pending", "field_repair_succeeded",
+];
 
 function number(value, fallback = 0) {
   const parsed = Number(value);
@@ -48,7 +72,7 @@ async function cancelResponseBody(response) {
 }
 
 function normalizedScraperStatusError(error) {
-  const code = String(error?.message || "");
+  const code = typeof error === "string" ? error : String(error?.message || "");
   return /^dcad_scraper_status_(?:http_(?:[1-5]\d\d|unknown)|response_too_large|invalid_response|unavailable)$/.test(code)
     ? code
     : "dcad_scraper_status_unavailable";
@@ -77,6 +101,39 @@ function taskOutcome(task) {
   );
 }
 
+function numericFields(value, fields) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  return Object.fromEntries(fields
+    .filter((field) => value[field] != null && Number.isFinite(Number(value[field])))
+    .map((field) => [field, number(value[field])]));
+}
+
+function publicTaskStatus(status, taskName) {
+  if (!status || typeof status !== "object" || Array.isArray(status)) return {};
+  const result = {
+    queue: numericFields(status.queue, QUEUE_COUNT_FIELDS),
+    coverage: numericFields(status.coverage, COVERAGE_COUNT_FIELDS[taskName]),
+  };
+  if (taskName === "influences") {
+    const versions = status.migration?.version_coverage;
+    const versionCoverage = versions && typeof versions === "object" && !Array.isArray(versions)
+      ? numericFields(versions, Object.keys(versions)
+        .filter((key) => /^[0-9]{1,4}$/.test(key)).slice(0, 100))
+      : {};
+    result.current_methodology_version = number(status.current_methodology_version);
+    result.migration = {
+      ...numericFields(status.migration, ["prior_version_sale_account_count"]),
+      version_coverage: versionCoverage,
+      recalculation_in_progress: status.migration?.recalculation_in_progress === true,
+    };
+    result.unmatched_sales = {
+      ...numericFields(status.unmatched_sales, ["review_required_record_count"]),
+      included_in_account_coverage: false,
+    };
+  }
+  return result;
+}
+
 function latestTaskSnapshot(runs, taskName) {
   for (const run of runs || []) {
     const task = run?.details?.results?.[taskName];
@@ -86,7 +143,7 @@ function latestTaskSnapshot(runs, taskName) {
         run_status: run.status,
         observed_at: isoDate(run.finished_at || run.started_at),
         last_run: taskOutcome(task),
-        ...task.status,
+        ...publicTaskStatus(task.status, taskName),
       };
     }
   }
@@ -174,7 +231,8 @@ export function summarizeMaintenanceReadiness(recentRuns, {
       run_id: run.id,
       job_name: run.job_name,
       started_at: isoDate(run.started_at),
-      error: run.error_message || "scheduled_maintenance_failed",
+      // Historical rows may predate bounded task errors and contain provider text.
+      error: "scheduled_maintenance_failed",
     }));
 
   return {
@@ -207,8 +265,10 @@ export function summarizeDcadScraperStatus(payload) {
   const initialTotal = number(payload.initial_missing_count);
   const initialCompleted = number(payload.initial_completed);
   const initialRemaining = number(payload.initial_remaining);
-  const quality = payload.data_quality || {};
-  const circuitState = String(payload.outage_circuit_state || "unknown");
+  const quality = numericFields(payload.data_quality, SCRAPER_QUALITY_COUNT_FIELDS);
+  const circuitState = ["closed", "open", "half_open"].includes(payload.outage_circuit_state)
+    ? payload.outage_circuit_state
+    : "unknown";
   const actions = [];
 
   if (circuitState !== "closed") {
@@ -262,8 +322,8 @@ export function summarizeDcadScraperStatus(payload) {
       : actions.length
         ? "attention"
         : "healthy",
-    campaign_key: payload.campaign_key || null,
-    phase: payload.phase || null,
+    campaign_key: payload.campaign_key === "dallas_residential" ? payload.campaign_key : null,
+    phase: ["initial_missing", "full_cycle"].includes(payload.phase) ? payload.phase : null,
     cycle_number: number(payload.cycle_number),
     outage_circuit_state: circuitState,
     progress: {
@@ -412,7 +472,7 @@ export function buildDataRepairReadiness({
       source_url: scraper?.source_url || null,
       fetched_at: scraper?.fetched_at || null,
       stale: Boolean(scraper?.stale),
-      fetch_error: scraper?.error || null,
+      fetch_error: scraper?.error ? normalizedScraperStatusError(scraper.error) : null,
       ...scraperSummary,
     },
     action_items: actionItems,

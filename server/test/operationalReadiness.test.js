@@ -42,6 +42,35 @@ test("maintenance summary exposes actionable queue backlogs without account iden
   assert.equal(JSON.stringify(result).includes("26272500060150000"), false);
 });
 
+test("maintenance readiness excludes historical failure text and unexpected task fields", () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/app";
+  const run = maintenanceRun();
+  run.details.results.locations.status.queue.secret = privateDetail;
+  run.details.results.locations.status.coverage.last_error = privateDetail;
+  run.details.results.locations.status.provider_error = privateDetail;
+  run.details.results.influences.status.migration.last_error = privateDetail;
+  run.details.results.influences.status.unmatched_sales.private_note = privateDetail;
+  const failed = {
+    id: 92,
+    job_name: "routine",
+    status: "failed",
+    started_at: NOW.toISOString(),
+    error_message: privateDetail,
+  };
+
+  const result = summarizeMaintenanceReadiness([failed, run], { now: NOW });
+  assert.equal(result.queues.locations.coverage.missing_sale_account_count, 6303);
+  assert.equal(result.queues.locations.last_run.completed, 200);
+  assert.equal(result.queues.influences.migration.recalculation_in_progress, true);
+  assert.deepEqual(result.recent_failures, [{
+    run_id: 92,
+    job_name: "routine",
+    started_at: NOW.toISOString(),
+    error: "scheduled_maintenance_failed",
+  }]);
+  assert.doesNotMatch(JSON.stringify(result), /private-password|provider_error|private_note/);
+});
+
 test("stale maintenance is a degraded operational state", () => {
   const run = maintenanceRun();
   run.finished_at = "2026-08-15T00:00:00.000Z";
@@ -67,6 +96,36 @@ test("scraper summary reports campaign and field-repair progress", () => {
   assert.equal(result.progress.initial_percent, 59.04);
   assert.equal(result.data_quality.field_repair_pending, 49191);
   assert.equal(result.action_items.some((item) => item.code === "dcad_field_repair_pending"), true);
+});
+
+test("scraper readiness projects only known aggregate fields and safe error codes", () => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/app";
+  const result = buildDataRepairReadiness({
+    scraper: {
+      error: privateDetail,
+      payload: {
+        campaign_key: privateDetail,
+        phase: privateDetail,
+        outage_circuit_state: privateDetail,
+        initial_missing_count: 10,
+        initial_remaining: 2,
+        data_quality: { field_repair_pending: 3, last_error: privateDetail },
+      },
+    },
+    now: NOW,
+  });
+  assert.equal(result.dcad_scraper.fetch_error, "dcad_scraper_status_unavailable");
+  assert.equal(result.dcad_scraper.campaign_key, null);
+  assert.equal(result.dcad_scraper.phase, null);
+  assert.equal(result.dcad_scraper.outage_circuit_state, "unknown");
+  assert.equal(result.dcad_scraper.data_quality.field_repair_pending, 3);
+  assert.doesNotMatch(JSON.stringify(result), /private-password|last_error/);
+
+  const knownFailure = buildDataRepairReadiness({
+    scraper: { error: "dcad_scraper_status_http_503" },
+    now: NOW,
+  });
+  assert.equal(knownFailure.dcad_scraper.fetch_error, "dcad_scraper_status_http_503");
 });
 
 test("scraper loader caches success and retains last-known data on failure", async () => {

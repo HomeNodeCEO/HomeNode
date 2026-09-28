@@ -6,7 +6,10 @@ import {
   buildPropertyComplexityAssessment,
 } from "../src/util/propertyComplexity.js";
 import { determineInfluenceRelationship } from "../src/services/propertyContext.js";
-import { normalizeSourceHealth } from "../src/services/propertyContextStore.js";
+import {
+  getPropertyContextSourceHealth,
+  normalizeSourceHealth,
+} from "../src/services/propertyContextStore.js";
 
 const CURRENT_SOURCE = {
   source_key: "dcad_parcels",
@@ -101,7 +104,7 @@ test("a failed refresh remains usable and tells the appraiser stale data was use
     status: "failed",
     row_count: 800_000,
     last_success_at: "2026-08-10T12:00:00Z",
-    last_error: "source unavailable",
+    last_error: "provider rejected connection using secret=do-not-expose",
   }, { staleAfterHours: 72, now });
   const assessment = buildPropertyComplexityAssessment({
     peerStatistics: { peer_count: 25 },
@@ -111,7 +114,29 @@ test("a failed refresh remains usable and tells the appraiser stale data was use
 
   assert.equal(health.usable, true);
   assert.equal(health.serving_stale_data, true);
+  assert.equal(health.last_error, "property_context_source_failed");
+  assert.equal(JSON.stringify(health).includes("do-not-expose"), false);
   assert.match(assessment.warnings.join(" "), /most recent locally stored data/i);
+});
+
+test("source health reader does not return persisted raw errors", async () => {
+  const sourceHealth = await getPropertyContextSourceHealth({
+    query: async () => ({ rows: [{
+      source_key: "dcad_parcels",
+      source_label: "Dallas CAD parcel GIS",
+      status: "failed",
+      row_count: 1,
+      last_success_at: "2026-08-10T12:00:00Z",
+      last_error: "password=do-not-expose",
+    }] }),
+  }, { now: Date.parse("2026-08-12T12:00:00Z") });
+
+  const parcelSource = sourceHealth.find((source) => source.source_key === "dcad_parcels");
+  assert.equal(parcelSource.status, "stale");
+  assert.equal(parcelSource.serving_stale_data, true);
+  assert.equal(parcelSource.last_error, "property_context_source_failed");
+  assert.equal(JSON.stringify(sourceHealth).includes("do-not-expose"), false);
+  assert.equal(sourceHealth.find((source) => source.source_key === "fema_nfhl").last_error, null);
 });
 
 test("measured TxDOT traffic volume replaces the road-class proxy when available", () => {

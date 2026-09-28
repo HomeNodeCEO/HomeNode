@@ -572,7 +572,9 @@ export function normalizeSourceHealth(row, { staleAfterHours, now = Date.now() }
     stale_after_hours: staleAfterHours,
     source_url: row?.source_url || null,
     source_vintage: row?.source_vintage || null,
-    last_error: row?.last_error || null,
+    // Source health reaches API responses and saved assessments; upstream errors may
+    // contain connection details or provider credentials, so expose only a marker.
+    last_error: row?.last_error ? "property_context_source_failed" : null,
   };
 }
 

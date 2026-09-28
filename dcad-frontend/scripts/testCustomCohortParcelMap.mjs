@@ -1240,27 +1240,37 @@ test('mixed bare/PH Willow actual broad and near map clicks emit original leaf I
   assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
 });
 
-test('Broadway Terrace county aliases show one map label and retain both parcel selections', async t => {
+test('Broadway Terrace bare and numbered county aliases show one broad label and two phase labels', async t => {
   const props = fixture(), calls = [], h = harness(); t.after(() => h.unmount());
   props.catalog.pockets[0].label = 'BROADWAY TERRACE';
   props.catalog.pockets[1].label = 'BROADWAY TERRACE';
   props.catalog.pockets[1].county = 'DALLAS COUNTY';
+  props.catalog.pockets.push({ id: 'recorded-cad:gamma', label: 'BROADWAY TERRACE 2', county: 'DALLAS COUNTY',
+    account_ids: ['C'], member_count: 1 },
+  { id: 'recorded-cad:delta', label: 'BROADWAY TERRACE 2', county: 'Dallas',
+    account_ids: ['D'], member_count: 1 });
+  props.catalog.unassigned = { account_ids: [], member_count: 0, reason_counts: [] };
+  props.catalog.coverage = { discovery_member_count: 4, assigned_account_count: 4, unassigned_account_count: 0 };
+  props.group.parcel_map.geojson.features.push({ type: 'Feature', id: 'gis.dcad_parcels:4',
+    properties: { object_id: '4', account_id: 'D', selected: false }, geometry: polygon(-96.6) });
   props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
   props.onActivatePocket = (...args) => calls.push(args);
   await h.ready(props);
   const family = props.subdivisionFamilies.families[0], map = h.maps[0];
-  assert.equal(family.basis, 'recorded_name_alias');
-  assert.deepEqual(family.pocket_ids, ['recorded-cad:alpha', 'recorded-cad:beta']);
+  assert.equal(family.basis, 'candidate_numbered_name');
+  assert.deepEqual(family.pocket_ids, ['recorded-cad:alpha', 'recorded-cad:beta', 'recorded-cad:delta', 'recorded-cad:gamma']);
   const labels = map.getSource('custom-cohort-group-labels').data.features;
   assert.equal(labels.filter(label => label.properties.subdivision_label === 'BROADWAY TERRACE').length, 1);
-  assert.equal(labels.filter(label => label.properties.phase_label === 'BROADWAY TERRACE').length, 1);
-  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 3);
+  assert.equal(labels.filter(label => label.properties.phase_label).length, 2);
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 4);
   map.camera.zoom = 14;
   h.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }] }, 'custom-cohort-group-labels-text');
   assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
   h.render({ ...props, inspectedPocketIds: family.pocket_ids });
   assert.equal(painted(map, 'A').inspected, true);
   assert.equal(painted(map, 'B').inspected, true);
+  assert.equal(painted(map, 'C').inspected, true);
+  assert.equal(painted(map, 'D').inspected, true);
   assert.equal(painted(map, 'A').selected, true);
   assert.equal(painted(map, 'B').selected, false);
 });

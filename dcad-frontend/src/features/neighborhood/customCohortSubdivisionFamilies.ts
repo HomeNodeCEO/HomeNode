@@ -98,7 +98,7 @@ function compatibleFamily(members: readonly Candidate[]): boolean {
 }
 
 function familyBasis(members: readonly Candidate[]): ParsedName['basis'] {
-  return members.some(item => item.parsed!.basis === 'candidate_numbered_name')
+  return members.some(item => item.parsed?.basis === 'candidate_numbered_name')
     ? 'candidate_numbered_name' : 'explicit_phase_name';
 }
 
@@ -112,7 +112,9 @@ function familyFromCandidates(members: readonly Candidate[], basis: CustomCohort
   const ordered = [...members].sort(basis === 'standalone' || basis === 'recorded_name_alias'
     ? (a, b) => compare(a.pocket.id, b.pocket.id) : candidateOrder);
   const anchor = [...members].sort((a, b) => compare(a.pocket.id, b.pocket.id))[0];
-  const display = [...members].sort((a, b) => compare(a.pocket.label, b.pocket.label) || compare(a.pocket.id, b.pocket.id))[0];
+  const display = [...(basis === 'standalone' || basis === 'recorded_name_alias'
+    ? members : members.filter(item => item.parsed))]
+    .sort((a, b) => compare(a.pocket.label, b.pocket.label) || compare(a.pocket.id, b.pocket.id))[0];
   return Object.freeze({ id: `subdivision-family-v1:${basis}:${anchor.pocket.id}`,
     label: basis === 'recorded_name_alias' ? display.pocket.label.trim().replace(/\s+/gu, ' ')
       : basis === 'standalone' ? display.pocket.label : display.parsed!.base,
@@ -180,14 +182,20 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
     for (const item of members) { ensure(!assigned.has(item.pocket.id)); assigned.add(item.pocket.id); }
   }
   for (const members of buckets.values()) {
-    // Unexplained repeated slots within either grammar make the candidate
-    // family ambiguous. An unqualified base remains
-    // its own standalone leaf, never an assumed phase absorbed into the family.
+    // Unexplained repeated slots within either grammar make the numbered
+    // family ambiguous. Bare names join only with corroborating county aliases.
     if (!compatibleFamily(members)) continue;
-    add(members, familyBasis(members));
+    const first = members[0].parsed!;
+    const aliases = nameAliases.get(JSON.stringify([members[0].countyKey, first.key]));
+    // A repeated exact bare name across the known county-suffix variants can
+    // be shown as the unnumbered phase beside the numbered recorded phases.
+    // A lone bare name is still too ambiguous to absorb automatically.
+    add(aliases && aliases.length > 1 && equivalentCountyNameLeaves(aliases)
+      ? [...members, ...aliases] : members, familyBasis(members));
   }
   for (const members of nameAliases.values()) {
-    if (members.length > 1 && equivalentCountyNameLeaves(members)) add(members, 'recorded_name_alias');
+    if (!members.some(item => assigned.has(item.pocket.id))
+      && members.length > 1 && equivalentCountyNameLeaves(members)) add(members, 'recorded_name_alias');
   }
   for (const candidate of candidates) if (!assigned.has(candidate.pocket.id)) add([candidate], 'standalone');
   ensure(assigned.size === catalog.pockets.length);
@@ -229,17 +237,22 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
       members.push(candidate); nameAliases.set(key, members);
     }
   }
-  const familyBuckets = new Map([...buckets].filter(([, members]) => compatibleFamily(members)));
-  const aliasBuckets = new Map([...nameAliases].filter(([, members]) =>
-    members.length > 1 && equivalentCountyNameLeaves(members)));
+  const familyBuckets = new Map([...buckets].filter(([, members]) => compatibleFamily(members)).map(([key, members]) => {
+    const aliases = nameAliases.get(key);
+    return [key, aliases && aliases.length > 1 && equivalentCountyNameLeaves(aliases)
+      ? [...members, ...aliases] : members] as const;
+  }));
+  const aliasBuckets = new Map([...nameAliases].filter(([key, members]) =>
+    !familyBuckets.has(key) && members.length > 1 && equivalentCountyNameLeaves(members)));
   return family => {
     ensure(family && Array.isArray(family.pocket_ids) && family.pocket_ids.length > 0
       && family.pocket_ids.length <= pocketCount);
     const first = candidates.get(family.pocket_ids[0]), familyIds = new Set(family.pocket_ids);
     ensure(first && familyIds.size === family.pocket_ids.length);
-    const phaseBucket = first.parsed && first.countyKey !== null
-      ? familyBuckets.get(JSON.stringify([first.countyKey, first.parsed.key])) : undefined;
-    const aliasBucket = !first.parsed && first.countyKey !== null
+    const parsedMember = family.pocket_ids.map(id => candidates.get(id)).find(item => item?.parsed);
+    const phaseBucket = parsedMember?.parsed && parsedMember.countyKey !== null
+      ? familyBuckets.get(JSON.stringify([parsedMember.countyKey, parsedMember.parsed.key])) : undefined;
+    const aliasBucket = !phaseBucket && !first.parsed && first.countyKey !== null
       ? aliasBuckets.get(JSON.stringify([first.countyKey, normalized(first.pocket.label)])) : undefined;
     const members = phaseBucket ?? aliasBucket ?? [first];
     const expected = familyFromCandidates(members, phaseBucket ? familyBasis(members)
@@ -259,7 +272,8 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
       const ordered = [...items].sort((a, b) => compare(a.pocket.id, b.pocket.id));
       const display = [...items].sort((a, b) => compare(a.pocket.label, b.pocket.label) || compare(a.pocket.id, b.pocket.id))[0];
       return Object.freeze({ id: ordered[0].pocket.id,
-        label: aliasBucket ? expected.label : display.pocket.label,
+        label: aliasBucket || (phaseBucket && !display.parsed
+          && normalized(display.pocket.label) === normalized(expected.label)) ? expected.label : display.pocket.label,
         county: items.map(item => item.pocket.county).sort(compare)[0],
         pocket_ids: Object.freeze(ordered.map(item => item.pocket.id)),
         member_count: items.reduce((sum, item) => sum + item.pocket.member_count, 0) });

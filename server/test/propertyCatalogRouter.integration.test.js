@@ -59,6 +59,24 @@ test("property search preserves response shape and caps the requested limit", as
   assert.deepEqual(calls[0].params, [[14], [], [], ["Dallas"], ["A1"], 1000]);
 });
 
+test("property search defaults nonpositive limits before database access", async (context) => {
+  const calls = [];
+  const server = await startRouter({
+    async query(_sql, params) {
+      calls.push(params);
+      return { rows: [] };
+    },
+  });
+  context.after(server.close);
+
+  for (const limit of ["-1", "-999", "0", "bad"]) {
+    const response = await fetch(`${server.baseUrl}/api/properties/search?limit=${limit}`);
+    assert.equal(response.status, 200, limit);
+    assert.deepEqual(await response.json(), { count: 0, rows: [] });
+  }
+  assert.deepEqual(calls, [[100], [100], [100], [100]]);
+});
+
 test("class distribution preserves grouped query and stable failure contracts", async (context) => {
   const successfulCalls = [];
   const successful = await startRouter({
@@ -69,8 +87,8 @@ test("class distribution preserves grouped query and stable failure contracts", 
   });
   const failures = [];
   const failing = await startRouter({
-    async query() { throw new Error("database secret"); },
-    logger: { error(message) { failures.push(message); } },
+    async query() { throw new Error("postgresql://private-user:private-password@database.example/private-db"); },
+    logger: { error(...args) { failures.push(args); } },
   });
   context.after(async () => Promise.all([successful.close(), failing.close()]));
 
@@ -90,9 +108,25 @@ test("class distribution preserves grouped query and stable failure contracts", 
   assert.equal(statsFailure.status, 500);
   assert.deepEqual(await statsFailure.json(), { error: "stats_failed" });
   assert.deepEqual(failures, [
-    "[property-catalog] property search failed",
-    "[property-catalog] class distribution failed",
+    ["[property-catalog] property search failed", "unknown"],
+    ["[property-catalog] class distribution failed", "unknown"],
   ]);
+  assert.doesNotMatch(JSON.stringify(failures), /private-password/);
+});
+
+test("property catalog fixed failures survive an optional logging exception", async (context) => {
+  const server = await startRouter({
+    async query() { throw new Error("database_offline"); },
+    logger: { error() { throw new Error("logger_offline"); } },
+  });
+  context.after(server.close);
+
+  const search = await fetch(`${server.baseUrl}/api/properties/search`);
+  assert.equal(search.status, 500);
+  assert.deepEqual(await search.json(), { error: "query_failed" });
+  const stats = await fetch(`${server.baseUrl}/api/stats/class-distribution`);
+  assert.equal(stats.status, 500);
+  assert.deepEqual(await stats.json(), { error: "stats_failed" });
 });
 
 test("property catalog router rejects a missing query dependency", () => {

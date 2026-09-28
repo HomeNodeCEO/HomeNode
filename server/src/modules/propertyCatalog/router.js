@@ -1,6 +1,15 @@
 import express from "express";
 
+import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { parseClassFilter } from "../../util/parseClasses.js";
+
+function logCatalogFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Optional diagnostics must not replace the stable API response.
+  }
+}
 
 function requireQueryClient(pool) {
   if (!pool || typeof pool.query !== "function") {
@@ -50,7 +59,10 @@ export function createPropertyCatalogRouter({ pool, logger = console } = {}) {
   router.get("/api/properties/search", async (req, res) => {
     try {
       const { classes = "", limit = "100", county = "", neighborhoods = "" } = req.query;
-      const boundedLimit = Math.min(parseInt(limit, 10) || 100, 1000);
+      const parsedLimit = Number.parseInt(limit, 10);
+      const boundedLimit = Number.isInteger(parsedLimit) && parsedLimit > 0
+        ? Math.min(parsedLimit, 1000)
+        : 100;
       const { whereSql, params } = buildPropertyClassWhere({ classes, county, neighborhoods });
       const sql = `
         SELECT p.account_id, p.county, p.situs_address,
@@ -64,7 +76,7 @@ export function createPropertyCatalogRouter({ pool, logger = console } = {}) {
       const { rows } = await queryClient.query(sql, params);
       return res.json({ count: rows.length, rows });
     } catch (error) {
-      logger.error?.("[property-catalog] property search failed", error);
+      logCatalogFailure(logger, "[property-catalog] property search failed", error);
       return res.status(500).json({ error: "query_failed" });
     }
   });
@@ -87,7 +99,7 @@ export function createPropertyCatalogRouter({ pool, logger = console } = {}) {
       const { rows } = await queryClient.query(sql, params);
       return res.json({ count: rows.length, rows });
     } catch (error) {
-      logger.error?.("[property-catalog] class distribution failed", error);
+      logCatalogFailure(logger, "[property-catalog] class distribution failed", error);
       return res.status(500).json({ error: "stats_failed" });
     }
   });

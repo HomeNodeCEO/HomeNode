@@ -83,6 +83,20 @@ test("grouped analysis rejects invalid inputs before schema or database access",
   assert.equal(invalidDate.status, 400);
   assert.deepEqual(await invalidDate.json(), { error: "invalid_as_of" });
 
+  const nonexistentDate = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2026-02-29",
+  });
+  assert.equal(nonexistentDate.status, 400);
+  assert.deepEqual(await nonexistentDate.json(), { error: "invalid_as_of" });
+
+  const invalidMonth = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2026-13-01",
+  });
+  assert.equal(invalidMonth.status, 400);
+  assert.deepEqual(await invalidMonth.json(), { error: "invalid_as_of" });
+
   const invalidBreakdown = await get(server.baseUrl, {
     subject_account_id: "A-1",
     breakdowns: "bad",
@@ -93,6 +107,59 @@ test("grouped analysis rejects invalid inputs before schema or database access",
   });
   assert.equal(parsed, 1);
   assert.equal(queries, 0);
+});
+
+test("unexpected breakdown parser failures keep a fixed server error and bounded log", async (context) => {
+  const secret = "database-password-secret-token";
+  const errors = [];
+  const options = routerOptions({
+    parseBreakdowns: () => { throw new Error(`invalid_${secret}`); },
+    logger: { error: (...args) => errors.push(args), warn() {} },
+  });
+  const server = await startRouter(createGroupedAnalysisRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    breakdowns: "city",
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), {
+    error: "grouped_analysis_failed",
+  });
+  assert.deepEqual(errors, [["grouped analysis breakdown parse failed", "unknown"]]);
+});
+
+test("a failed grouped-analysis logger cannot replace the fixed parser response", async (context) => {
+  const server = await startRouter(createGroupedAnalysisRouter(routerOptions({
+    parseBreakdowns: () => { throw new Error("unexpected_parser_failure"); },
+    logger: { error: () => { throw new Error("logger_failure"); }, warn() {} },
+  })));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    breakdowns: "city",
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "grouped_analysis_failed" });
+});
+
+test("a real leap day remains a valid as-of date", async (context) => {
+  let queries = 0;
+  const options = routerOptions({
+    pool: { query: async () => { queries += 1; return { rows: [] }; } },
+  });
+  const server = await startRouter(createGroupedAnalysisRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    as_of: "2024-02-29",
+  });
+  assert.equal(response.status, 404);
+  assert.deepEqual(await response.json(), { error: "subject_not_found" });
+  assert.equal(queries, 1);
 });
 
 test("a missing subject stops before grouped-sale queries", async (context) => {
@@ -274,7 +341,7 @@ test("multiple breakdowns report unavailable areas while retaining usable studie
   });
   assert.deepEqual(warnings, [[
     "[grouped-analysis] subject location refresh failed; radius studies may be unavailable",
-    refreshFailure.message,
+    "unknown",
   ]]);
   assert.equal(queryCount, 2);
 });

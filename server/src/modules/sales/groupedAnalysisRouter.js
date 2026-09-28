@@ -4,6 +4,15 @@ import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCod
 import { refreshAccountLocations } from "../../services/accountLocations.js";
 import { buildGroupedAnalysis } from "../../util/groupedAnalysis.js";
 import { parseGroupedAnalysisBreakdowns } from "../../util/groupedAnalysisBreakdowns.js";
+import { isValidIsoCalendarDate } from "../../util/isoCalendarDate.js";
+
+function logOperationalFailure(logger, label, error) {
+  try {
+    logger.error?.(label, safeOperationalErrorCode(error));
+  } catch {
+    // Logging must not replace the fixed response.
+  }
+}
 
 export function createGroupedAnalysisRouter({
   pool,
@@ -55,7 +64,7 @@ export function createGroupedAnalysisRouter({
       if (!accountIdAllowed(subjectAccountId)) {
         return res.status(400).json({ error: "invalid_subject_account_id" });
       }
-      if (asOfDate && !/^\d{4}-\d{2}-\d{2}$/.test(asOfDate)) {
+      if (asOfDate && !isValidIsoCalendarDate(asOfDate)) {
         return res.status(400).json({ error: "invalid_as_of" });
       }
 
@@ -65,9 +74,11 @@ export function createGroupedAnalysisRouter({
           req.query.breakdowns,
         );
       } catch (error) {
-        return res.status(400).json({
-          error: error?.message || "invalid_grouped_analysis_breakdown",
-        });
+        if (error?.message === "invalid_grouped_analysis_breakdown") {
+          return res.status(400).json({ error: "invalid_grouped_analysis_breakdown" });
+        }
+        logOperationalFailure(logger, "grouped analysis breakdown parse failed", error);
+        return res.status(500).json({ error: "grouped_analysis_failed" });
       }
 
       await locationsReady;
@@ -121,7 +132,7 @@ export function createGroupedAnalysisRouter({
         } catch (error) {
           logger.warn?.(
             "[grouped-analysis] subject location refresh failed; radius studies may be unavailable",
-            error?.message || error,
+            safeOperationalErrorCode(error),
           );
         }
       }
@@ -545,7 +556,7 @@ export function createGroupedAnalysisRouter({
       });
     } catch (error) {
       const diagnosticCode = safeOperationalErrorCode(error);
-      logger.error?.("/api/sales/grouped-analysis failed", diagnosticCode);
+      logOperationalFailure(logger, "/api/sales/grouped-analysis failed", error);
       res.status(500).json({
         error: "grouped_analysis_failed",
         ...(debugEnabled() ? { diagnostic_code: diagnosticCode } : {}),

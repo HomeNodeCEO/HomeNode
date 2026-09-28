@@ -213,11 +213,18 @@ test("reconciliation errors retain not-found, conflict, validation, and bounded 
     { message: "county_account_identifier_conflict", status: 409 },
     { message: "source_record_already_verified", status: 409 },
     { message: "source_record_not_reconcilable", status: 409 },
-    { message: "invalid_account_identifier", status: 400 },
+    { message: "invalid_account_id", status: 400 },
+    { message: "invalid_dallas_account_id", status: 400 },
+    { message: "invalid_collin_account_id", status: 400 },
+    { message: "invalid_source_record_id", status: 400 },
     { message: "source_record_not_closed_sale", status: 400 },
     { message: "account_county_mismatch", status: 400 },
     { message: "account_identifier_mismatch", status: 400 },
     { error: diagnostic, message: "sales_reconciliation_failed", status: 500 },
+    {
+      error: new Error("invalid_database_url_secret-token"),
+      message: "sales_reconciliation_failed", status: 500,
+    },
   ];
   const errors = [];
   const running = [];
@@ -236,7 +243,10 @@ test("reconciliation errors retain not-found, conflict, validation, and bounded 
     assert.equal(response.status, item.status);
     assert.deepEqual(await response.json(), { error: item.message });
   }
-  assert.deepEqual(errors, [["sales reconciliation failed", "unknown"]]);
+  assert.deepEqual(errors, [
+    ["sales reconciliation failed", "unknown"],
+    ["sales reconciliation failed", "unknown"],
+  ]);
   assert.doesNotMatch(JSON.stringify(errors), /secret-token/);
 });
 

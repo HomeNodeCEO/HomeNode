@@ -11,6 +11,22 @@ import {
 } from "../../services/salesReconciliation.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 
+const PUBLIC_RECONCILIATION_ERRORS = new Map([
+  ["source_record_not_found", 404],
+  ["account_not_found", 404],
+  ["ambiguous_collin_account_id", 409],
+  ["county_account_identifier_conflict", 409],
+  ["source_record_already_verified", 409],
+  ["source_record_not_reconcilable", 409],
+  ["invalid_account_id", 400],
+  ["invalid_dallas_account_id", 400],
+  ["invalid_collin_account_id", 400],
+  ["invalid_source_record_id", 400],
+  ["source_record_not_closed_sale", 400],
+  ["account_county_mismatch", 400],
+  ["account_identifier_mismatch", 400],
+]);
+
 export function createSalesReconciliationRouter({
   pool,
   salesReconciliationReady,
@@ -125,24 +141,7 @@ export function createSalesReconciliationRouter({
       return res.json({ ok: true, ...result });
     } catch (error) {
       const message = error?.message || "sales_reconciliation_failed";
-      let status = 500;
-      if (message === "source_record_not_found" || message === "account_not_found") {
-        status = 404;
-      } else if (
-        message === "ambiguous_collin_account_id"
-        || message === "county_account_identifier_conflict"
-        || message === "source_record_already_verified"
-        || message === "source_record_not_reconcilable"
-      ) {
-        status = 409;
-      } else if (
-        String(message).startsWith("invalid_")
-        || message === "source_record_not_closed_sale"
-        || message === "account_county_mismatch"
-        || message === "account_identifier_mismatch"
-      ) {
-        status = 400;
-      }
+      const status = PUBLIC_RECONCILIATION_ERRORS.get(message) || 500;
       if (status === 500) logger.error?.("sales reconciliation failed", safeOperationalErrorCode(error));
       return res.status(status).json({ error: status === 500 ? "sales_reconciliation_failed" : message });
     }

@@ -66,7 +66,7 @@ export function createGroupedAnalysisRouter({
         );
       } catch (error) {
         return res.status(400).json({
-          error: error?.message || "invalid_grouped_analysis_breakdown",
+          error: "invalid_grouped_analysis_breakdown",
         });
       }
 
@@ -121,7 +121,7 @@ export function createGroupedAnalysisRouter({
         } catch (error) {
           logger.warn?.(
             "[grouped-analysis] subject location refresh failed; radius studies may be unavailable",
-            error?.message || error,
+            safeOperationalErrorCode(error),
           );
         }
       }

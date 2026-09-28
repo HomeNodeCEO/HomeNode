@@ -95,6 +95,24 @@ test("grouped analysis rejects invalid inputs before schema or database access",
   assert.equal(queries, 0);
 });
 
+test("unexpected breakdown parser failures keep a fixed public error", async (context) => {
+  const secret = "database-password-secret-token";
+  const options = routerOptions({
+    parseBreakdowns: () => { throw new Error(`invalid_${secret}`); },
+  });
+  const server = await startRouter(createGroupedAnalysisRouter(options));
+  context.after(server.close);
+
+  const response = await get(server.baseUrl, {
+    subject_account_id: "A-1",
+    breakdowns: "city",
+  });
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), {
+    error: "invalid_grouped_analysis_breakdown",
+  });
+});
+
 test("a missing subject stops before grouped-sale queries", async (context) => {
   let queries = 0;
   const options = routerOptions({
@@ -274,7 +292,7 @@ test("multiple breakdowns report unavailable areas while retaining usable studie
   });
   assert.deepEqual(warnings, [[
     "[grouped-analysis] subject location refresh failed; radius studies may be unavailable",
-    refreshFailure.message,
+    "unknown",
   ]]);
   assert.equal(queryCount, 2);
 });

@@ -4,6 +4,7 @@ import {
   PROPERTY_ATTRIBUTE_KEYS,
   resolveNonDallasAttribute,
 } from "../util/nonDallasEnrichment.js";
+import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 
 async function loadAccountInputs(pool, accountId) {
   const { rows } = await pool.query(
@@ -176,5 +177,66 @@ export async function listEnrichmentCandidates(pool, { county, limit = 25 }) {
     [normalizedCounty, boundedLimit],
   );
   return rows.map((row) => row.account_id);
+}
+
+export function nonDallasEnrichmentFailureCode(error) {
+  const code = safeOperationalErrorCode(error);
+  return code === "unknown" ? "non_dallas_enrichment_failed" : code;
+}
+
+export async function runNonDallasEnrichmentBatch({
+  pool,
+  trestleClient,
+  county,
+  limit,
+  listCandidates = listEnrichmentCandidates,
+  enrichAccount = enrichNonDallasAccount,
+  logger = console,
+}) {
+  const { rows: runRows } = await pool.query(
+    `INSERT INTO app.enrichment_runs (county, provider, status, started_at)
+     VALUES ($1,'trestle','running',now()) RETURNING id`,
+    [county],
+  );
+  const runId = runRows[0].id;
+  let processed = 0;
+  let resolved = 0;
+  let review = 0;
+  let errors = 0;
+  try {
+    const candidates = await listCandidates(pool, { county, limit });
+    for (const accountId of candidates) {
+      try {
+        const result = await enrichAccount({ pool, trestleClient, accountId });
+        processed += 1;
+        review += Object.values(result.resolved).filter((item) => item.review_required).length;
+        resolved += Object.values(result.resolved).filter((item) => !item.review_required).length;
+      } catch (error) {
+        errors += 1;
+        try {
+          logger.error?.(`[non-dallas-enrichment] ${accountId}:`, nonDallasEnrichmentFailureCode(error));
+        } catch { /* Diagnostics must not interrupt the batch. */ }
+      }
+    }
+    await pool.query(
+      `UPDATE app.enrichment_runs
+       SET status = 'completed', processed_count = $2, resolved_count = $3,
+           review_count = $4, error_count = $5, completed_at = now()
+       WHERE id = $1`,
+      [runId, processed, resolved, review, errors],
+    );
+    return { run_id: runId, county, processed, resolved, review, errors };
+  } catch (error) {
+    await pool.query(
+      `UPDATE app.enrichment_runs
+       SET status = 'failed', processed_count = $2, resolved_count = $3,
+           review_count = $4, error_count = $5, completed_at = now(),
+           details = $6::jsonb
+       WHERE id = $1`,
+      [runId, processed, resolved, review, errors + 1,
+        JSON.stringify({ error: nonDallasEnrichmentFailureCode(error) })],
+    ).catch(() => {});
+    throw error;
+  }
 }
 

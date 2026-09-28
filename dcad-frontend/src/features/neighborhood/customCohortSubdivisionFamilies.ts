@@ -4,7 +4,7 @@ export interface CustomCohortSubdivisionFamily {
   readonly id: string;
   readonly label: string;
   readonly county: string;
-  readonly basis: 'explicit_phase_name' | 'candidate_numbered_name' | 'standalone';
+  readonly basis: 'explicit_phase_name' | 'candidate_numbered_name' | 'recorded_name_alias' | 'standalone';
   readonly pocket_ids: readonly string[];
   readonly member_count: number;
 }
@@ -38,7 +38,7 @@ const roadName = /\b(?:route|rte|highway|hwy|interstate|freeway|fwy|turnpike|exp
 const unsupportedMarker = /\b(?:phase|ph|section|sec|unit|addition|addn|replat)\b/iu;
 
 type ParsedName = { base: string; key: string; suffix: number; section: number | null;
-  basis: Exclude<CustomCohortSubdivisionFamily['basis'], 'standalone'> };
+  basis: Extract<CustomCohortSubdivisionFamily['basis'], 'explicit_phase_name' | 'candidate_numbered_name'> };
 type Candidate = { pocket: Pick<CheckedRecordedPocket, 'id' | 'label' | 'county' | 'member_count'>;
   countyKey: string | null; parsed: ParsedName | null };
 
@@ -109,11 +109,13 @@ function candidateOrder(a: Candidate, b: Candidate): number {
 }
 
 function familyFromCandidates(members: readonly Candidate[], basis: CustomCohortSubdivisionFamily['basis']): CustomCohortSubdivisionFamily {
-  const ordered = [...members].sort(basis === 'standalone' ? (a, b) => compare(a.pocket.id, b.pocket.id) : candidateOrder);
+  const ordered = [...members].sort(basis === 'standalone' || basis === 'recorded_name_alias'
+    ? (a, b) => compare(a.pocket.id, b.pocket.id) : candidateOrder);
   const anchor = [...members].sort((a, b) => compare(a.pocket.id, b.pocket.id))[0];
   const display = [...members].sort((a, b) => compare(a.pocket.label, b.pocket.label) || compare(a.pocket.id, b.pocket.id))[0];
   return Object.freeze({ id: `subdivision-family-v1:${basis}:${anchor.pocket.id}`,
-    label: basis === 'standalone' ? display.pocket.label : display.parsed!.base,
+    label: basis === 'recorded_name_alias' ? display.pocket.label.trim().replace(/\s+/gu, ' ')
+      : basis === 'standalone' ? display.pocket.label : display.parsed!.base,
     county: [...members].map(item => item.pocket.county).sort(compare)[0], basis,
     pocket_ids: Object.freeze(ordered.map(item => item.pocket.id)),
     member_count: members.reduce((sum, item) => sum + item.pocket.member_count, 0) });
@@ -155,13 +157,21 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
     && Number.isSafeInteger(catalog.unassigned.member_count) && catalog.unassigned.member_count >= 0
     && accounts.size + catalog.unassigned.member_count === catalog.coverage.discovery_member_count
     && catalog.coverage.discovery_member_count <= 50_000);
-  const buckets = new Map<string, Candidate[]>();
+  const buckets = new Map<string, Candidate[]>(), nameAliases = new Map<string, Candidate[]>();
   for (const candidate of candidates) {
     if (candidate.countyKey === null) continue;
     if (candidate.parsed) {
       const key = JSON.stringify([candidate.countyKey, candidate.parsed.key]);
       const members = buckets.get(key) ?? [];
       members.push(candidate); buckets.set(key, members);
+    } else if (candidate.pocket.member_count && candidate.countyKey.startsWith('known:')
+      && !UNKNOWN.has(normalized(candidate.pocket.label))) {
+      // An exact recorded label under Dallas / DALLAS COUNTY is one review
+      // name even when the CAD source split its accounts into two leaf IDs.
+      // This does not peel a phase marker or infer physical adjacency.
+      const key = JSON.stringify([candidate.countyKey, normalized(candidate.pocket.label)]);
+      const members = nameAliases.get(key) ?? [];
+      members.push(candidate); nameAliases.set(key, members);
     }
   }
   const families: CustomCohortSubdivisionFamily[] = [], assigned = new Set<string>();
@@ -175,6 +185,9 @@ export function buildCustomCohortSubdivisionFamilies(catalog: CheckedPocketCatal
     // its own standalone leaf, never an assumed phase absorbed into the family.
     if (!compatibleFamily(members)) continue;
     add(members, familyBasis(members));
+  }
+  for (const members of nameAliases.values()) {
+    if (members.length > 1 && equivalentCountyNameLeaves(members)) add(members, 'recorded_name_alias');
   }
   for (const candidate of candidates) if (!assigned.has(candidate.pocket.id)) add([candidate], 'standalone');
   ensure(assigned.size === catalog.pockets.length);
@@ -196,7 +209,7 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
   }
   ensure(Array.isArray(catalog.pockets) && catalog.pockets.length <= (catalog.catalog_version === 3 ? 2048 : catalog.catalog_version === 2 ? 1024 : 128));
   const pocketCount = catalog.pockets.length;
-  const candidates = new Map<string, Candidate>(), buckets = new Map<string, Candidate[]>();
+  const candidates = new Map<string, Candidate>(), buckets = new Map<string, Candidate[]>(), nameAliases = new Map<string, Candidate[]>();
   for (const pocket of catalog.pockets) {
     const { id, label, county, member_count } = pocket;
     ensure(typeof id === 'string' && id.startsWith('recorded-cad:') && id.length <= 200
@@ -209,18 +222,28 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
     if (candidate.parsed && candidate.countyKey !== null) {
       const key = JSON.stringify([candidate.countyKey, candidate.parsed.key]), members = buckets.get(key) ?? [];
       members.push(candidate); buckets.set(key, members);
+    } else if (candidate.pocket.member_count && candidate.countyKey?.startsWith('known:')
+      && !UNKNOWN.has(normalized(candidate.pocket.label))) {
+      const key = JSON.stringify([candidate.countyKey, normalized(candidate.pocket.label)]);
+      const members = nameAliases.get(key) ?? [];
+      members.push(candidate); nameAliases.set(key, members);
     }
   }
   const familyBuckets = new Map([...buckets].filter(([, members]) => compatibleFamily(members)));
+  const aliasBuckets = new Map([...nameAliases].filter(([, members]) =>
+    members.length > 1 && equivalentCountyNameLeaves(members)));
   return family => {
     ensure(family && Array.isArray(family.pocket_ids) && family.pocket_ids.length > 0
       && family.pocket_ids.length <= pocketCount);
     const first = candidates.get(family.pocket_ids[0]), familyIds = new Set(family.pocket_ids);
     ensure(first && familyIds.size === family.pocket_ids.length);
-    const bucket = first.parsed && first.countyKey !== null
+    const phaseBucket = first.parsed && first.countyKey !== null
       ? familyBuckets.get(JSON.stringify([first.countyKey, first.parsed.key])) : undefined;
-    const grouped = bucket !== undefined, members = bucket ?? [first];
-    const expected = familyFromCandidates(members, grouped ? familyBasis(members) : 'standalone');
+    const aliasBucket = !first.parsed && first.countyKey !== null
+      ? aliasBuckets.get(JSON.stringify([first.countyKey, normalized(first.pocket.label)])) : undefined;
+    const members = phaseBucket ?? aliasBucket ?? [first];
+    const expected = familyFromCandidates(members, phaseBucket ? familyBasis(members)
+      : aliasBucket ? 'recorded_name_alias' : 'standalone');
     ensure(family.id === expected.id && family.label === expected.label && family.county === expected.county
       && family.basis === expected.basis && family.member_count === expected.member_count
       && familyIds.size === expected.pocket_ids.length && expected.pocket_ids.every(id => familyIds.has(id)));
@@ -235,7 +258,8 @@ export function createCustomCohortSubdivisionPhaseReader(catalog: CheckedPocketC
       ensure(equivalentCountyNameLeaves(items));
       const ordered = [...items].sort((a, b) => compare(a.pocket.id, b.pocket.id));
       const display = [...items].sort((a, b) => compare(a.pocket.label, b.pocket.label) || compare(a.pocket.id, b.pocket.id))[0];
-      return Object.freeze({ id: ordered[0].pocket.id, label: display.pocket.label,
+      return Object.freeze({ id: ordered[0].pocket.id,
+        label: aliasBucket ? expected.label : display.pocket.label,
         county: items.map(item => item.pocket.county).sort(compare)[0],
         pocket_ids: Object.freeze(ordered.map(item => item.pocket.id)),
         member_count: items.reduce((sum, item) => sum + item.pocket.member_count, 0) });

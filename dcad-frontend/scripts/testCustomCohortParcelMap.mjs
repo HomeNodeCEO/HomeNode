@@ -1240,6 +1240,31 @@ test('mixed bare/PH Willow actual broad and near map clicks emit original leaf I
   assert.equal(map.getSource('custom-cohort-group-labels').replacements.length, 0);
 });
 
+test('Broadway Terrace county aliases show one map label and retain both parcel selections', async t => {
+  const props = fixture(), calls = [], h = harness(); t.after(() => h.unmount());
+  props.catalog.pockets[0].label = 'BROADWAY TERRACE';
+  props.catalog.pockets[1].label = 'BROADWAY TERRACE';
+  props.catalog.pockets[1].county = 'DALLAS COUNTY';
+  props.subdivisionFamilies = buildCustomCohortSubdivisionFamilies(props.catalog);
+  props.onActivatePocket = (...args) => calls.push(args);
+  await h.ready(props);
+  const family = props.subdivisionFamilies.families[0], map = h.maps[0];
+  assert.equal(family.basis, 'recorded_name_alias');
+  assert.deepEqual(family.pocket_ids, ['recorded-cad:alpha', 'recorded-cad:beta']);
+  const labels = map.getSource('custom-cohort-group-labels').data.features;
+  assert.equal(labels.filter(label => label.properties.subdivision_label === 'BROADWAY TERRACE').length, 1);
+  assert.equal(labels.filter(label => label.properties.phase_label === 'BROADWAY TERRACE').length, 1);
+  assert.equal(map.getSource('custom-cohort-parcels').data.features.length, 3);
+  map.camera.zoom = 14;
+  h.emit('click', { features: [{ properties: { pocket_id: 'recorded-cad:alpha' } }] }, 'custom-cohort-group-labels-text');
+  assert.deepEqual(calls, [['recorded-cad:alpha', 'subdivision']]);
+  h.render({ ...props, inspectedPocketIds: family.pocket_ids });
+  assert.equal(painted(map, 'A').inspected, true);
+  assert.equal(painted(map, 'B').inspected, true);
+  assert.equal(painted(map, 'A').selected, true);
+  assert.equal(painted(map, 'B').selected, false);
+});
+
 function countyAliasPhaseFixture() {
   const props = fixture();
   props.catalog.pockets[0].label = 'MONICA PARK 1'; props.catalog.pockets[1].label = 'MONICA PARK 2';

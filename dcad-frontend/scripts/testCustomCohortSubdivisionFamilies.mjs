@@ -251,6 +251,40 @@ test('same-name county aliases alone can form one review phase without minting a
   assert.equal(phases[0].id, pocketId(1)); assert.deepEqual(phases[0].pocket_ids, [pocketId(1), pocketId(2)]);
 });
 
+test('unnumbered Broadway Terrace county aliases form one selectable review family', () => {
+  const { catalog } = fixture([
+    { label: 'BROADWAY TERRACE', county: 'Dallas', member_count: 5 },
+    { label: ' Broadway  Terrace ', county: 'DALLAS COUNTY', member_count: 161 },
+    { label: 'BROADWAY TERRACE', county: 'Collin', member_count: 2 },
+  ]);
+  const before = JSON.stringify(catalog), model = build(catalog), broadway = family(model, 1);
+  complete(catalog, model);
+  assert.equal(model.families.length, 2);
+  assert.equal(broadway.basis, 'recorded_name_alias');
+  assert.equal(broadway.label, 'Broadway Terrace');
+  assert.equal(broadway.member_count, 166);
+  assert.deepEqual(broadway.pocket_ids, [pocketId(1), pocketId(2)]);
+  assert.equal(family(model, 3).basis, 'standalone');
+  const phase = phasesFor(catalog, broadway);
+  assert.equal(phase.length, 1);
+  assert.equal(phase[0].label, broadway.label);
+  assert.deepEqual(phase[0].pocket_ids, broadway.pocket_ids);
+  assert.equal(select(catalog, broadway.pocket_ids, 8).pockets[0].account_ids.length, 166);
+  assert.deepEqual(build({ ...catalog, pockets: [...catalog.pockets].reverse() }), model);
+  assert.equal(JSON.stringify(catalog), before);
+});
+
+test('same-county duplicate names and empty aliases remain separate review leaves', () => {
+  const { catalog } = fixture([
+    { label: 'BROADWAY TERRACE', county: 'Dallas' },
+    { label: ' broadway terrace ', county: ' dallas ' },
+    { label: 'BROADWAY TERRACE', county: 'DALLAS COUNTY', member_count: 0 },
+  ]);
+  const model = build(catalog); complete(catalog, model);
+  assert.equal(model.families.length, 3);
+  assert.ok(model.families.every(item => item.basis === 'standalone'));
+});
+
 test('duplicate suffixes without a distinct recognized county spelling stay ambiguous', () => {
   for (const counties of [['Dallas', 'Dallas'], ['Dallas', ' dallas '], ['DALLAS COUNTY', 'Dallas County'],
     ['Travis', 'Travis'], ['Travis', 'Travis County'], ['Unknown', 'UNKNOWN COUNTY']]) {

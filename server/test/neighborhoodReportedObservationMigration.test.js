@@ -7,7 +7,8 @@ import { buildNeighborhoodAssessment, buildNeighborhoodAttachment } from '../src
 import { prepareNeighborhoodPublication } from '../src/services/neighborhoodAssessment/assessmentRepository.js';
 
 const previous = (await readFile(new URL('../migrations/20261010_neighborhood_assessment_persistence.sql', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
-const sql = await readFile(new URL('../migrations/20261017_neighborhood_reported_observations.sql', import.meta.url), 'utf8');
+// Compare SQL semantics, not the checkout's platform-specific line endings.
+const sql = (await readFile(new URL('../migrations/20261017_neighborhood_reported_observations.sql', import.meta.url), 'utf8')).replaceAll('\r\n', '\n');
 const body = (text, name) => {
   const start = text.indexOf(`CREATE OR REPLACE FUNCTION app.${name}(`);
   assert.ok(start >= 0); return text.slice(start, text.indexOf('END $$;', start) + 7);

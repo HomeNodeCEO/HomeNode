@@ -96,6 +96,49 @@ test("operational router preserves liveness, readiness, and aggregate performanc
   });
 });
 
+test("performance exposes only maintenance run metadata, not stored failure details", async (context) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const server = await startRouter(options({
+    loadRecentMaintenance: async () => [{
+      id: 93,
+      job_name: "routine",
+      status: "failed",
+      started_at: "2026-09-28T04:00:00.000Z",
+      finished_at: "2026-09-28T04:01:00.000Z",
+      error_message: privateDetail,
+      details: { failures: [{ task: "census", error: privateDetail }] },
+    }],
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/system/performance`);
+  assert.equal(response.status, 200);
+  assert.equal(response.headers.get("cache-control"), "no-store");
+  const body = await response.json();
+  assert.deepEqual(body.maintenance.recent_runs, [{
+    id: 93,
+    job_name: "routine",
+    status: "failed",
+    started_at: "2026-09-28T04:00:00.000Z",
+    finished_at: "2026-09-28T04:01:00.000Z",
+  }]);
+  assert.doesNotMatch(JSON.stringify(body), /private-password/);
+});
+
+test("performance failures stay stable when optional warning logging fails", async (context) => {
+  const server = await startRouter(options({
+    loadRecentMaintenance: async () => { throw new Error("database password"); },
+    logger: { warn: () => { throw new Error("logger_offline"); } },
+  }));
+  context.after(server.close);
+
+  const response = await fetch(`${server.baseUrl}/api/system/performance`);
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.deepEqual(body.maintenance, { status: "unavailable", recent_runs: [] });
+  assert.doesNotMatch(JSON.stringify(body), /password|logger_offline/);
+});
+
 test("client render failures accept only the bounded operational event contract", async (context) => {
   const recorded = [];
   const server = await startRouter(options({
@@ -169,7 +212,7 @@ test("data-repair diagnostics stay bounded when maintenance and scraper status f
       repairInput = input;
       return { status: "degraded", action_items: [{ code: "dependency_unavailable" }] };
     },
-    logger: { warn(message) { warnings.push(message); } },
+    logger: { warn(...args) { warnings.push(args); } },
   }));
   context.after(server.close);
 
@@ -189,8 +232,8 @@ test("data-repair diagnostics stay bounded when maintenance and scraper status f
   assert.equal(repairInput.scraper.stale, false);
   assert.deepEqual(repairInput.requestPerformance, { requests: 7 });
   assert.deepEqual(warnings, [
-    "[operations] maintenance history unavailable",
-    "[operations] scraper status unavailable",
+    ["[operations] maintenance history unavailable", "unknown"],
+    ["[operations] scraper status unavailable", "unknown"],
   ]);
   assert.doesNotMatch(JSON.stringify(body), /password|scraper secret/i);
 });

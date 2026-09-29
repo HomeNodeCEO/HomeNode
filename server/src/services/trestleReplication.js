@@ -788,9 +788,15 @@ export async function persistTrestlePropertyBatch(pool, sourceRecords) {
     try {
       mapped.push(mapTrestleSourceRecord(sourceRecord));
     } catch (error) {
+      let listingId = null;
+      try {
+        listingId = text(sourceRecord?.ListingId, 255);
+      } catch {
+        // A malformed record must not break rejection reporting.
+      }
       rejected.push({
-        listing_id: text(sourceRecord?.ListingId, 255),
-        error: String(error?.message || error),
+        listing_id: listingId,
+        error: safeTrestleFailureCode(error),
       });
     }
   }

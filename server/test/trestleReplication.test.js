@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   ensureTrestleReplicationSchema,
   mapTrestleSourceRecord,
+  persistTrestlePropertyBatch,
   resolveTrestleAccountMatches,
   runTrestleMediaBatch,
   runTrestlePropertyReplication,
@@ -16,6 +17,22 @@ test("Trestle failure codes preserve known classes without copying exception tex
   assert.equal(safeTrestleFailureCode({ code: "42P01", message: "database password=secret" }), "trestle_replication_failed_42P01");
   assert.equal(safeTrestleFailureCode(new Error("token=secret"), { media: true }), "trestle_media_failed");
   assert.equal(safeTrestleFailureCode({ get message() { throw new Error("secret"); } }), "trestle_replication_failed");
+});
+
+test("rejected Trestle rows never return raw exception text or break on hostile getters", async () => {
+  const result = await persistTrestlePropertyBatch({}, [
+    { ListingId: "first", get ListingKey() { throw new Error("token=private"); } },
+    { get ListingId() { throw new Error("token=private"); } },
+    { ListingId: "third" },
+  ]);
+  assert.equal(result.received, 3);
+  assert.equal(result.upserted, 0);
+  assert.deepEqual(result.rejected, [
+    { listing_id: "first", error: "trestle_replication_failed" },
+    { listing_id: null, error: "trestle_listing_key_missing" },
+    { listing_id: "third", error: "trestle_listing_key_missing" },
+  ]);
+  assert.doesNotMatch(JSON.stringify(result), /private/);
 });
 
 test("RESO Property maps to the existing sale inventory without losing zero and false", () => {

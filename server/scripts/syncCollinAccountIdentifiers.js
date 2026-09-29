@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 
 import { safeCollinCadSyncFailureCode } from "../src/security/safeCollinCadSyncFailureCode.js";
+import { fetchCollinCadCrosswalkStats, fetchCollinCadPage } from "../src/services/collinCadOpenData.js";
 
 import {
   ensureSalesReconciliationSchema,
@@ -27,50 +28,19 @@ function numericArgument(name) {
 }
 
 async function fetchPage(offset, limit) {
-  const url = new URL(`https://data.texas.gov/resource/${DATASET_ID}.json`);
-  url.searchParams.set("$select", "propid,geoid,situsconcat,propyear");
-  url.searchParams.set(
-    "$where",
-    "propid is not null and geoid like 'R%'",
-  );
-  url.searchParams.set("$order", "propid");
-  url.searchParams.set("$limit", String(limit));
-  url.searchParams.set("$offset", String(offset));
-  const headers = {};
-  if (process.env.SOCRATA_APP_TOKEN) {
-    headers["X-App-Token"] = process.env.SOCRATA_APP_TOKEN;
-  }
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
-    throw new Error(`collin_cad_open_data_${response.status}`);
-  }
-  return response.json();
+  return fetchCollinCadPage({
+    datasetId: DATASET_ID,
+    appToken: process.env.SOCRATA_APP_TOKEN,
+    offset,
+    limit,
+  });
 }
 
 async function fetchCrosswalkStats() {
-  const url = new URL(`https://data.texas.gov/resource/${DATASET_ID}.json`);
-  url.searchParams.set(
-    "$select",
-    "count(*) as total, count(distinct propid) as distinct_propid, count(distinct geoid) as distinct_geoid",
-  );
-  url.searchParams.set(
-    "$where",
-    "propid is not null and geoid like 'R%'",
-  );
-  const headers = {};
-  if (process.env.SOCRATA_APP_TOKEN) {
-    headers["X-App-Token"] = process.env.SOCRATA_APP_TOKEN;
-  }
-  const response = await fetch(url, { headers });
-  if (!response.ok) {
-    throw new Error(`collin_cad_open_data_stats_${response.status}`);
-  }
-  const [stats] = await response.json();
-  return {
-    total: Number(stats?.total) || 0,
-    distinctPropertyIds: Number(stats?.distinct_propid) || 0,
-    distinctGeoIds: Number(stats?.distinct_geoid) || 0,
-  };
+  return fetchCollinCadCrosswalkStats({
+    datasetId: DATASET_ID,
+    appToken: process.env.SOCRATA_APP_TOKEN,
+  });
 }
 
 function normalizeOfficialPage(sourceRows) {

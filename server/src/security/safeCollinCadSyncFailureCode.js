@@ -4,6 +4,8 @@ const KNOWN_FAILURES = new Set([
   "database_url_required",
   "collin_cad_existing_identifier_conflict",
   "collin_cad_official_identifier_conflict",
+  "collin_cad_dataset_invalid",
+  "collin_cad_pagination_invalid",
 ]);
 
 /** Keep crosswalk CLI diagnostics useful without printing provider or DB errors. */
@@ -16,7 +18,7 @@ export function safeCollinCadSyncFailureCode(error) {
   }
   if (typeof message === "string" && (
     KNOWN_FAILURES.has(message)
-    || /^collin_cad_open_data_(?:stats_)?[1-5]\d{2}$/.test(message)
+    || /^collin_cad_open_data_(?:stats_)?(?:unknown|[1-5]\d{2}|timeout|unavailable|response_too_large|response_unavailable|invalid_response)$/.test(message)
     || /^collin_cad_crosswalk_conflicts:\d{1,9}$/.test(message)
     || /^collin_cad_row_count_changed:\d{1,9}:\d{1,9}$/.test(message)
   )) return message;

@@ -69,6 +69,7 @@ test("the shared signing API retains and submits the event ID until success", ()
   const signingApi = source.slice(start, end);
   assert.match(signingApi, /getOrCreateCustomAppraisalSignatureEventId\(id, assignmentFileId\)/);
   assert.match(signingApi, /signature_event_id: signatureEventId/);
+  assert.match(signingApi, /timeoutMs: 120_000/);
   assert.doesNotMatch(signingApi, /retryTransient: true/);
   assert.ok(
     signingApi.indexOf("clearCustomAppraisalSignatureEventId")

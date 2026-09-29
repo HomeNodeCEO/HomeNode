@@ -85,10 +85,16 @@ export function createEnrichmentMutationRouter({
       return res.status(400).json({ error: "invalid_expected_revision" });
     }
 
-    const client = await pool.connect();
+    let client;
     try {
       await propertyEnrichmentReady;
+      client = await pool.connect();
       await client.query("BEGIN");
+      // The manual-value row may not exist yet; serialize its first write on the parent.
+      await client.query(
+        "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR NO KEY UPDATE",
+        [id],
+      );
       const account = await getNonDallasAccount(client, id);
       if (!account) {
         await client.query("ROLLBACK");
@@ -138,15 +144,16 @@ export function createEnrichmentMutationRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, manual_value: manualValue });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      if (client) await client.query("ROLLBACK").catch(() => {});
       const message = String(error?.message || "");
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("verified attribute update failed", safeOperationalErrorCode(error));
+      try { logger.error?.("verified attribute update failed", safeOperationalErrorCode(error)); }
+      catch { /* Preserve the fixed response. */ }
       return res.status(500).json({ error: "verified_attribute_update_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 
@@ -219,10 +226,16 @@ export function createEnrichmentMutationRouter({
     }
     if (!requireEditor(req, res)) return undefined;
     const reviewer = auditReviewer(req);
-    const client = await pool.connect();
+    let client;
     try {
       await propertyEnrichmentReady;
+      client = await pool.connect();
       await client.query("BEGIN");
+      // A separate approval can create the same manual-value row concurrently.
+      await client.query(
+        "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR NO KEY UPDATE",
+        [id],
+      );
       const account = await getNonDallasAccount(client, id);
       if (!account) {
         await client.query("ROLLBACK");
@@ -285,15 +298,16 @@ export function createEnrichmentMutationRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, decision });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      if (client) await client.query("ROLLBACK").catch(() => {});
       const message = String(error?.message || "");
       if (message === "dallas_enrichment_isolated") {
         return res.status(409).json({ error: message });
       }
-      logger.error?.("parcel suggestion decision failed", safeOperationalErrorCode(error));
+      try { logger.error?.("parcel suggestion decision failed", safeOperationalErrorCode(error)); }
+      catch { /* Preserve the fixed response. */ }
       return res.status(500).json({ error: "parcel_suggestion_decision_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 

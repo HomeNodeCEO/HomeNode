@@ -195,13 +195,16 @@ test("verified attribute writes preserve revision, history, resolution, and tran
   assert.equal(client.released, true);
   assert.deepEqual(client.queries.map(({ sql }) => sql.trim().split(/\s+/).slice(0, 3).join(" ")), [
     "BEGIN",
+    "SELECT 1 FROM",
     "SELECT revision FROM",
     "INSERT INTO app.property_attribute_manual_values",
     "INSERT INTO app.property_attribute_manual_history",
     "UPDATE app.enrichment_review_queue SET",
     "COMMIT",
   ]);
-  assert.deepEqual(client.queries[2].params, [
+  assert.match(client.queries[1].sql, /FOR NO KEY UPDATE$/);
+  assert.deepEqual(client.queries[1].params, ["A-1"]);
+  assert.deepEqual(client.queries[3].params, [
     "A-1",
     "living_area",
     JSON.stringify({ square_feet: 2010 }),
@@ -209,8 +212,8 @@ test("verified attribute writes preserve revision, history, resolution, and tran
     "Authenticated Appraiser",
     3,
   ]);
-  assert.deepEqual(client.queries[3].params, client.queries[2].params);
-  assert.deepEqual(client.queries[4].params, ["A-1", "living_area"]);
+  assert.deepEqual(client.queries[4].params, client.queries[3].params);
+  assert.deepEqual(client.queries[5].params, ["A-1", "living_area"]);
 });
 
 test("verified attribute conflicts and failures roll back, release, and use bounded diagnostics", async (context) => {
@@ -243,7 +246,7 @@ test("verified attribute conflicts and failures roll back, release, and use boun
   });
   assert.deepEqual(
     conflictDatabase.clients[0].queries.map(({ sql }) => sql.trim().split(/\s+/)[0]),
-    ["BEGIN", "SELECT", "ROLLBACK"],
+    ["BEGIN", "SELECT", "SELECT", "ROLLBACK"],
   );
   assert.equal(conflictDatabase.clients[0].released, true);
 
@@ -350,6 +353,8 @@ test("parcel suggestion approval materializes site size and rejection avoids man
   assert.deepEqual(await approvedResponse.json(), { ok: true, decision: "approved" });
   const approvedQueries = approvedDatabase.clients[0].queries;
   assert.equal(approvedDatabase.clients[0].released, true);
+  assert.match(approvedQueries[1].sql, /FOR NO KEY UPDATE$/);
+  assert.deepEqual(approvedQueries[1].params, ["A-1"]);
   assert.ok(approvedQueries.some(({ sql }) => sql.includes("property_attribute_manual_values")));
   assert.ok(approvedQueries.some(({ sql }) => sql.includes("property_attribute_manual_history")));
   const manualWrite = approvedQueries.find(({ sql }) => sql.includes("INSERT INTO app.property_attribute_manual_values"));
@@ -372,12 +377,52 @@ test("parcel suggestion approval materializes site size and rejection avoids man
   assert.equal(rejectedResponse.status, 200);
   assert.deepEqual(await rejectedResponse.json(), { ok: true, decision: "rejected" });
   const rejectedQueries = rejectedDatabase.clients[0].queries;
+  assert.match(rejectedQueries[1].sql, /FOR NO KEY UPDATE$/);
   assert.equal(
     rejectedQueries.some(({ sql }) => sql.includes("property_attribute_manual_values")),
     false,
   );
   assert.deepEqual(rejectedQueries.at(-2).params, ["A-1", "rejected"]);
   assert.equal(rejectedDatabase.clients[0].released, true);
+});
+
+test("enrichment transaction routes wait for readiness and bound connection failures", async (context) => {
+  const routes = [
+    {
+      path: "/api/accounts/A-1/verified-attribute",
+      method: "PATCH",
+      body: { attribute_key: "year_built", attribute_value: 2004 },
+      code: "verified_attribute_update_failed",
+    },
+    {
+      path: "/api/accounts/A-1/parcel-area-suggestions/17/decision",
+      method: "POST",
+      body: { decision: "approved" },
+      code: "parcel_suggestion_decision_failed",
+    },
+  ];
+  const servers = [];
+  context.after(async () => Promise.all(servers.map((server) => server.close())));
+  for (const route of routes) {
+    for (const failure of ["readiness", "connect"]) {
+      let connectCalls = 0;
+      const server = await startRouter(baseOptions(createDatabase(), {
+        propertyEnrichmentReady: failure === "readiness"
+          ? { then(_resolve, reject) { reject(new Error("database db.internal private-token")); } }
+          : Promise.resolve(),
+        logger: { error() { throw new Error("logger_unavailable"); } },
+        pool: {
+          query: async () => ({ rows: [] }),
+          connect: async () => { connectCalls += 1; throw new Error("database db.internal private-token"); },
+        },
+      }));
+      servers.push(server);
+      const response = await mutate(server.baseUrl, route.path, route.method, route.body);
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: route.code });
+      assert.equal(connectCalls, failure === "connect" ? 1 : 0);
+    }
+  }
 });
 
 test("parcel decision terminal states roll back without changing review data", async (context) => {

@@ -577,6 +577,9 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
       await client.query("COMMIT");
       return verifiedPayload;
     }
+    if (["excluded", "deleted"].includes(locked.rows[0].status)) {
+      throw new Error("assignment_photo_not_found");
+    }
     for (const item of inspected) {
       await client.query(
         `UPDATE app.inspection_photo_objects

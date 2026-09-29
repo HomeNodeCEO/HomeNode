@@ -372,6 +372,83 @@ test("photo verification decodes bytes, records a checksum, and promotes an immu
   assert.ok(!operations.some(([name, key]) => name === "delete" && key === objectUpdate[4]));
 });
 
+test("desktop verification cannot revive a photo removed during storage inspection", async () => {
+  const photoId = "21500000-0000-4000-8000-000000000002";
+  const objectId = "21500000-0000-4000-8000-000000000003";
+  const sourceObjectKey = "private/pending/racing-photo.png";
+  const photo = {
+    id: photoId,
+    origin_channel: "desktop",
+    status: "pending_upload",
+    revision: 1,
+  };
+  const object = {
+    id: objectId,
+    photo_id: photoId,
+    variant: "original",
+    object_key: sourceObjectKey,
+    content_type: "image/png",
+    expected_byte_size: PNG.length,
+    status: "pending_upload",
+  };
+  for (const terminalStatus of ["deleted", "excluded"]) {
+    let lockedStatus = "pending_upload";
+    const writes = [];
+    const deletedKeys = [];
+    let promotedKey = null;
+    const client = {
+      async query(sql) {
+        if (["BEGIN", "ROLLBACK"].includes(sql)) return { rows: [] };
+        if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+          return { rows: [{ id: "report-1", organization_id: "org-1", workfile_status: "draft" }] };
+        }
+        if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return { rows: [{ ...photo, status: lockedStatus, revision: 2 }] };
+        }
+        writes.push(sql);
+        throw new Error(`unexpected_write:${sql}`);
+      },
+      release() {},
+    };
+    const pool = {
+      async query(sql) {
+        if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+          return { rows: [{ id: "report-1", organization_id: "org-1", workfile_status: "draft" }] };
+        }
+        if (/SELECT \* FROM app\.inspection_photos/.test(sql)) return { rows: [photo] };
+        if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [object] };
+        throw new Error(`unexpected_query:${sql}`);
+      },
+      async connect() { return client; },
+    };
+    await assert.rejects(
+      verifyAssignmentPhoto(pool, {
+        configured: true,
+        bucket: "private",
+        async inspectObject() {
+          lockedStatus = terminalStatus;
+          return { byte_size: PNG.length, content_type: "image/png" };
+        },
+        async getObject() { return { body: PNG, byte_size: PNG.length, content_type: "image/png" }; },
+        async putObject({ objectKey, body }) {
+          promotedKey = objectKey;
+          return { byte_size: body.length, etag: "verified-etag" };
+        },
+        async deleteObject({ objectKey }) { deletedKeys.push(objectKey); },
+      }, {
+        accountId: "26355500170360000",
+        assignmentFileId: 91,
+        photoId,
+      }),
+      /assignment_photo_not_found/,
+    );
+    assert.deepEqual(writes, []);
+    assert.match(promotedKey, /\.verified-[0-9a-f-]+-[a-f0-9]{64}$/);
+    assert.deepEqual(deletedKeys, [promotedKey]);
+    assert.equal(lockedStatus, terminalStatus);
+  }
+});
+
 test("photo verification rejects and removes same-size non-image bytes", async () => {
   const spoof = Buffer.alloc(PNG.length, 0x41);
   const photoId = "22000000-0000-4000-8000-000000000002";

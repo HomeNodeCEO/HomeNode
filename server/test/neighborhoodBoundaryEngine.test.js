@@ -177,6 +177,45 @@ test("generates a local, persisted broad boundary without a remote road dependen
   assert.deepEqual(savedBoundary, boundary);
 });
 
+test("persists a fixed review warning when local road lookup exposes a database error", async () => {
+  let savedEvidence = null;
+  const responses = [
+    [], [], [], [], [],
+    [{ geography: "suburban", complexity: "simple" }],
+    [{
+      subject_parcel_object_id: 100,
+      subject_parcel_account_id: "26272500060150000",
+      subject_low_parcel_id: "26272500060150000",
+      subject_point: { type: "Point", coordinates: [-96.65, 32.97] },
+      boundary,
+      boundary_area_square_miles: 1.25,
+      candidate_count: 150,
+      year_built_count: 145,
+      site_size_count: 148,
+      market_value_count: 149,
+    }],
+    [{ subject: { zoning_code: "PD" }, districts: [] }],
+    [],
+  ];
+  const pool = {
+    async query(sql, params = []) {
+      if (String(sql).includes("FROM gis.traffic_volume_segments segment")) {
+        throw new Error("database password=do-not-expose");
+      }
+      if (String(sql).includes("INSERT INTO app.neighborhood_boundary_assessments")) {
+        savedEvidence = JSON.parse(params[8]);
+        return { rows: [generatedRow({ evidence: savedEvidence })], rowCount: 1 };
+      }
+      const rows = responses.shift() || [];
+      return { rows, rowCount: rows.length };
+    },
+  };
+  await generateNeighborhoodBoundary(pool, { accountId: "26272500060150000" });
+  assert.equal(savedEvidence.roads.warning, "local_txdot_boundary_roads_unavailable");
+  assert.equal(savedEvidence.roads.review_required, true);
+  assert.doesNotMatch(JSON.stringify(savedEvidence), /do-not-expose/);
+});
+
 test("rejects an invalid explicit profile before spatial analysis", async () => {
   const statements = [];
   const pool = {

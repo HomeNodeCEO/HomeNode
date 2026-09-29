@@ -644,14 +644,14 @@ export async function generateNeighborhoodBoundary(pool, {
       allowRemoteFallback: false,
       centerPoint: boundaryRow.subject_point,
     });
-  } catch (error) {
+  } catch {
     roadEvidence = {
       source: "Local TxDOT AADT mirror with Census road names",
       street_names: [],
       cardinal_boundaries: {},
       summary: "",
       review_required: true,
-      warning: error?.message || "local_txdot_boundary_roads_unavailable",
+      warning: "local_txdot_boundary_roads_unavailable",
     };
   }
   // Simple-suburban analysis deliberately begins with an exact three-mile

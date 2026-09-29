@@ -574,6 +574,10 @@ async function recordVerificationFailure(pool, auth, photo, reason, inspected = 
       [photo.id],
     );
     if (!locked.rows.length) throw new Error("mobile_photo_not_found");
+    if (["verified", "excluded", "deleted"].includes(locked.rows[0].status)) {
+      await client.query("COMMIT");
+      return;
+    }
     const priorRevision = Number(locked.rows[0].revision);
     for (const object of inspected) {
       await client.query(
@@ -618,6 +622,18 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
   try {
     await markingClient.query("BEGIN");
     await lockSession(markingClient, auth, sessionId);
+    const current = await markingClient.query(
+      "SELECT * FROM app.inspection_photos WHERE id = $1 AND inspection_session_id = $2 FOR UPDATE",
+      [photoId, sessionId],
+    );
+    if (!current.rows.length || current.rows[0].status === "deleted") {
+      throw new Error("mobile_photo_not_found");
+    }
+    if (["verified", "excluded"].includes(current.rows[0].status)) {
+      const currentObjects = await objectRows(markingClient, photoId);
+      await markingClient.query("COMMIT");
+      return photoResponse(current.rows[0], currentObjects);
+    }
     await markingClient.query(
       "UPDATE app.inspection_photos SET status = 'verifying', updated_at = now() WHERE id = $1",
       [photoId],
@@ -722,6 +738,7 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
       await client.query("COMMIT");
       return photoResponse(locked.rows[0], currentObjects);
     }
+    if (locked.rows[0].status === "deleted") throw new Error("mobile_photo_not_found");
     for (const object of inspected) {
       await client.query(
         `UPDATE app.inspection_photo_objects

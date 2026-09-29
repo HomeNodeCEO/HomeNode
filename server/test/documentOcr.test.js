@@ -81,6 +81,29 @@ test("Azure Read OCR submits PDF bytes and returns page-preserving text", async 
   }
 });
 
+test("OCR paragraph fallback indexes regions once and preserves multi-page order", () => {
+  let regionReads = 0;
+  const sharedParagraph = {
+    content: "Shared",
+    get boundingRegions() {
+      regionReads += 1;
+      return [{ pageNumber: 1 }, { pageNumber: 2 }, { pageNumber: 2 }];
+    },
+  };
+  const pages = documentOcrInternals.pageTextFromResult({
+    analyzeResult: {
+      paragraphs: [
+        sharedParagraph,
+        { content: "Second", boundingRegions: [{ pageNumber: 2 }] },
+        { content: "Unmatched", boundingRegions: [{ pageNumber: "not-a-page" }] },
+      ],
+      pages: [{ pageNumber: 2 }, { pageNumber: 1 }, { pageNumber: 3 }],
+    },
+  });
+  assert.deepEqual(pages, ["Shared", "Shared\nSecond", ""]);
+  assert.equal(regionReads, 1);
+});
+
 test("OCR rejects same-origin polling URLs outside the Azure result path", async () => {
   const originalFetch = globalThis.fetch;
   let cancelled = false;

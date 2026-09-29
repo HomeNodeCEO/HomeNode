@@ -130,6 +130,24 @@ function throwIfAborted(signal) {
   if (signal?.aborted) throw artifactRequestAborted();
 }
 
+function streamIdleDeadline(timeoutMs, signal) {
+  const controller = new AbortController();
+  const combinedSignal = signal
+    ? AbortSignal.any([signal, controller.signal])
+    : controller.signal;
+  let timer = null;
+  return {
+    signal: combinedSignal,
+    refresh() {
+      if (controller.signal.aborted) return;
+      if (timer) clearTimeout(timer);
+      timer = setTimeout(() => controller.abort(), timeoutMs);
+    },
+    get expired() { return controller.signal.aborted; },
+    close() { if (timer) clearTimeout(timer); },
+  };
+}
+
 function hmac(key, value, encoding) {
   return createHmac("sha256", key).update(value, "utf8").digest(encoding);
 }
@@ -374,7 +392,7 @@ export function createUadObjectStorage(env = process.env, {
     }
   }
 
-  async function readBoundedResponse(response, maximumBytes, signal = null) {
+  async function readBoundedResponse(response, maximumBytes, signal = null, onChunk = () => {}) {
     throwIfAborted(signal);
     const maximum = boundedInteger(
       maximumBytes,
@@ -391,7 +409,20 @@ export function createUadObjectStorage(env = process.env, {
     }
     const reader = response.body?.getReader?.();
     if (!reader) {
-      const body = Buffer.from(await response.arrayBuffer());
+      let abort;
+      const interrupted = new Promise((_, reject) => {
+        abort = () => reject(artifactRequestAborted());
+        signal?.addEventListener("abort", abort, { once: true });
+      });
+      let body;
+      try {
+        body = Buffer.from(await (signal
+          ? Promise.race([response.arrayBuffer(), interrupted])
+          : response.arrayBuffer()));
+      } finally {
+        signal?.removeEventListener("abort", abort);
+      }
+      throwIfAborted(signal);
       if (body.length > maximum) throw new Error("uad_object_download_too_large");
       if (advertisedKnown && body.length !== advertised) {
         throw new Error("uad_object_download_size_mismatch");
@@ -400,16 +431,25 @@ export function createUadObjectStorage(env = process.env, {
     }
     const chunks = [];
     let bytes = 0;
-    while (true) {
-      throwIfAborted(signal);
-      const { done, value } = await reader.read();
-      if (done) break;
-      bytes += value.byteLength;
-      if (bytes > maximum) {
-        await reader.cancel().catch(() => undefined);
-        throw new Error("uad_object_download_too_large");
+    const cancelOnAbort = () => { void reader.cancel().catch(() => undefined); };
+    signal?.addEventListener("abort", cancelOnAbort, { once: true });
+    try {
+      while (true) {
+        throwIfAborted(signal);
+        const { done, value } = await reader.read();
+        if (done) break;
+        bytes += value.byteLength;
+        if (bytes > maximum) {
+          await reader.cancel().catch(() => undefined);
+          throw new Error("uad_object_download_too_large");
+        }
+        if (value.byteLength) onChunk();
+        chunks.push(Buffer.from(value));
       }
-      chunks.push(Buffer.from(value));
+      throwIfAborted(signal);
+    } finally {
+      signal?.removeEventListener("abort", cancelOnAbort);
+      reader.releaseLock?.();
     }
     if (advertisedKnown && bytes !== advertised) {
       throw new Error("uad_object_download_size_mismatch");
@@ -546,12 +586,17 @@ export function createUadObjectStorage(env = process.env, {
         { method: download.method },
         { signal },
       );
+      const idle = streamIdleDeadline(config.streamTimeoutMs, signal);
       let body;
       try {
-        body = await readBoundedResponse(response, maxBytes, signal);
+        idle.refresh();
+        body = await readBoundedResponse(response, maxBytes, idle.signal, idle.refresh);
       } catch (error) {
         if (signal?.aborted) throw artifactRequestAborted();
+        if (idle.expired) throw new Error("uad_object_download_timeout");
         throw normalizedStorageError("download", error);
+      } finally {
+        idle.close();
       }
       return {
         body,
@@ -569,6 +614,7 @@ export function createUadObjectStorage(env = process.env, {
       let lastError = null;
       for (let attempt = 1; attempt <= config.maxAttempts; attempt += 1) {
         throwIfAborted(signal);
+        let idle = null;
         try {
           await rm(safeFilePath, { force: true }).catch(() => undefined);
           const response = await request("download", download.url, {
@@ -582,10 +628,13 @@ export function createUadObjectStorage(env = process.env, {
             throw new Error("uad_object_download_too_large");
           }
           if (!response.body) throw new Error("uad_object_download_network_error");
+          idle = streamIdleDeadline(config.streamTimeoutMs, signal);
+          idle.refresh();
           let bytes = 0;
           const digest = createHash("sha256");
           const meter = new Transform({
             transform(chunk, _encoding, callback) {
+              if (chunk.length) idle.refresh();
               bytes += chunk.length;
               if (bytes > maximum) {
                 callback(new Error("uad_object_download_too_large"));
@@ -599,7 +648,7 @@ export function createUadObjectStorage(env = process.env, {
             Readable.fromWeb(response.body),
             meter,
             createWriteStream(safeFilePath, { flags: "wx" }),
-            ...(signal ? [{ signal }] : []),
+            { signal: idle.signal },
           );
           if (advertisedKnown && bytes !== advertised) {
             throw new Error("uad_object_download_size_mismatch");
@@ -614,9 +663,13 @@ export function createUadObjectStorage(env = process.env, {
         } catch (error) {
           await rm(safeFilePath, { force: true }).catch(() => undefined);
           if (signal?.aborted) throw artifactRequestAborted();
-          lastError = normalizedStorageError("download", error);
+          lastError = idle?.expired
+            ? new Error("uad_object_download_timeout")
+            : normalizedStorageError("download", error);
           if (attempt >= config.maxAttempts || !transientStorageError(lastError)) throw lastError;
           await waitForRetry(Math.min(5_000, config.retryBaseMs * (2 ** (attempt - 1))), signal);
+        } finally {
+          idle?.close();
         }
       }
       throw lastError || new Error("uad_object_download_network_error");

@@ -3253,6 +3253,7 @@ export async function signCustomAppraisalWorkfile(
         'x-homenode-editor-key': editorKey,
       },
       body: JSON.stringify({ ...input, signature_event_id: signatureEventId }),
+      timeoutMs: 120_000,
     },
   );
   clearCustomAppraisalSignatureEventId(id, assignmentFileId, signatureEventId);

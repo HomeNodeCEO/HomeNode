@@ -18,6 +18,10 @@ function authenticatedReviewer(req) {
   return null;
 }
 
+function logFailure(logger, code) {
+  try { logger.error?.(code); } catch { /* Preserve the fixed response. */ }
+}
+
 export function createSaleReviewRouter({
   pool,
   ratingsReady,
@@ -56,7 +60,7 @@ export function createSaleReviewRouter({
       );
       return res.json({ reviews: rows });
     } catch {
-      logger.error?.("sale_reviews_load_failed");
+      logFailure(logger, "sale_reviews_load_failed");
       return res.status(500).json({ error: "sale_reviews_failed" });
     }
   });
@@ -81,14 +85,15 @@ export function createSaleReviewRouter({
     } catch (error) {
       const code = publicRatingUpdateErrorCode(error);
       if (code) return res.status(400).json({ error: code });
-      try { logger.error?.("sale_review_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      logFailure(logger, "sale_review_validation_failed");
       return res.set("cache-control", "no-store")
         .status(500).json({ error: "sale_review_update_failed" });
     }
 
-    const client = await pool.connect();
+    let client;
     try {
       await ratingsReady;
+      client = await pool.connect();
       await client.query("BEGIN");
       const { rows: sources } = await client.query(
         // Serialize the first review too: the review row cannot be locked before it exists.
@@ -160,11 +165,11 @@ export function createSaleReviewRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, review });
     } catch {
-      await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("sale_review_update_failed");
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      logFailure(logger, "sale_review_update_failed");
       return res.status(500).json({ error: "sale_review_update_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 
@@ -185,7 +190,7 @@ export function createSaleReviewRouter({
       );
       return res.json({ history: rows });
     } catch {
-      logger.error?.("sale_review_history_failed");
+      logFailure(logger, "sale_review_history_failed");
       return res.status(500).json({ error: "sale_review_history_failed" });
     }
   });

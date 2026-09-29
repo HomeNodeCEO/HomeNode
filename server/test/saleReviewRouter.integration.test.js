@@ -234,6 +234,36 @@ test("sale review writes fail closed when the editor policy omits authenticated 
   assert.equal(database.clients.length, 0);
 });
 
+test("sale review writes wait for readiness before borrowing a connection and bound connection failures", async (context) => {
+  const privateDetail = "database db.internal private-token";
+  let readinessConnectCalls = 0;
+  const unreadied = await startRouter(baseOptions(createDatabase(), {
+    ratingsReady: { then(_resolve, reject) { reject(new Error(privateDetail)); } },
+    logger: { error() { throw new Error("logger_unavailable"); } },
+    pool: {
+      query: async () => ({ rows: [] }),
+      connect: async () => { readinessConnectCalls += 1; throw new Error("unexpected_connect"); },
+    },
+  }));
+  let failedConnectCalls = 0;
+  const disconnected = await startRouter(baseOptions(createDatabase(), {
+    logger: { error() { throw new Error("logger_unavailable"); } },
+    pool: {
+      query: async () => ({ rows: [] }),
+      connect: async () => { failedConnectCalls += 1; throw new Error(privateDetail); },
+    },
+  }));
+  context.after(async () => Promise.all([unreadied.close(), disconnected.close()]));
+
+  for (const baseUrl of [unreadied.baseUrl, disconnected.baseUrl]) {
+    const response = await saveReview(baseUrl, "71", { condition_rating: "C3" });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "sale_review_update_failed" });
+  }
+  assert.equal(readinessConnectCalls, 0);
+  assert.equal(failedConnectCalls, 1);
+});
+
 test("missing sources and revision conflicts roll back without writing review history", async (context) => {
   const missingDatabase = createDatabase({
     clientQuery: async (sql) => (

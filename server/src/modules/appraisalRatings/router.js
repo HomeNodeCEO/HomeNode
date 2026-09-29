@@ -18,6 +18,10 @@ function authenticatedReviewer(req) {
   return null;
 }
 
+function logFailure(logger, code) {
+  try { logger.error?.(code); } catch { /* Preserve the fixed response. */ }
+}
+
 export function createAppraisalRatingsRouter({
   pool,
   ratingsReady,
@@ -56,7 +60,7 @@ export function createAppraisalRatingsRouter({
     } catch (error) {
       const code = publicEffectiveDateErrorCode(error);
       if (code) return res.status(400).json({ error: code });
-      try { logger.error?.("subject_rating_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      logFailure(logger, "subject_rating_validation_failed");
       return res.set("cache-control", "no-store")
         .status(500).json({ error: "subject_rating_failed" });
     }
@@ -69,7 +73,7 @@ export function createAppraisalRatingsRouter({
       );
       return res.json({ rating: rows[0] || null });
     } catch {
-      logger.error?.("subject_rating_load_failed");
+      logFailure(logger, "subject_rating_load_failed");
       return res.status(500).json({ error: "subject_rating_failed" });
     }
   });
@@ -95,14 +99,15 @@ export function createAppraisalRatingsRouter({
     } catch (error) {
       const code = publicEffectiveDateErrorCode(error) || publicRatingUpdateErrorCode(error);
       if (code) return res.status(400).json({ error: code });
-      try { logger.error?.("subject_rating_validation_failed"); } catch { /* Preserve the fixed response. */ }
+      logFailure(logger, "subject_rating_validation_failed");
       return res.set("cache-control", "no-store")
         .status(500).json({ error: "subject_rating_update_failed" });
     }
 
-    const client = await pool.connect();
+    let client;
     try {
       await ratingsReady;
+      client = await pool.connect();
       await client.query("BEGIN");
       const accountResult = await client.query(
         // Serialize the first rating too: the dated rating row may not exist yet.
@@ -169,11 +174,11 @@ export function createAppraisalRatingsRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, rating });
     } catch {
-      await client.query("ROLLBACK").catch(() => {});
-      logger.error?.("subject_rating_update_failed");
+      if (client) await client.query("ROLLBACK").catch(() => {});
+      logFailure(logger, "subject_rating_update_failed");
       return res.status(500).json({ error: "subject_rating_update_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 
@@ -195,7 +200,7 @@ export function createAppraisalRatingsRouter({
       );
       return res.json({ history: rows });
     } catch {
-      logger.error?.("subject_rating_history_failed");
+      logFailure(logger, "subject_rating_history_failed");
       return res.status(500).json({ error: "subject_rating_history_failed" });
     }
   });

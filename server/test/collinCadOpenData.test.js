@@ -52,12 +52,19 @@ test("Collin CAD rejects oversized, malformed, and stalled pages", async () => {
     datasetId, offset: 0, limit: 10,
     fetchImpl: async () => new Response("{invalid"),
   }), /collin_cad_open_data_invalid_response/);
-  await assert.rejects(fetchCollinCadPage({
-    datasetId, offset: 0, limit: 10, timeoutMs: 5,
-    fetchImpl: (_url, { signal }) => new Promise((_, reject) => {
-      signal.addEventListener("abort", () => reject(signal.reason), { once: true });
-    }),
-  }), /collin_cad_open_data_timeout/);
+  // AbortSignal.timeout uses an unref'ed timer. Keep this mocked request alive
+  // until the signal fires, as a real network socket would do in production.
+  const keepAlive = setTimeout(() => {}, 1_000);
+  try {
+    await assert.rejects(fetchCollinCadPage({
+      datasetId, offset: 0, limit: 10, timeoutMs: 5,
+      fetchImpl: (_url, { signal }) => new Promise((_, reject) => {
+        signal.addEventListener("abort", () => reject(signal.reason), { once: true });
+      }),
+    }), /collin_cad_open_data_timeout/);
+  } finally {
+    clearTimeout(keepAlive);
+  }
   await assert.rejects(fetchCollinCadPage({
     datasetId: "bad/path", offset: 0, limit: 10,
     fetchImpl: async () => { throw new Error("must not fetch"); },

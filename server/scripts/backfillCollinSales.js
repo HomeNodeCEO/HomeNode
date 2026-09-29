@@ -1,7 +1,7 @@
 import "dotenv/config";
 import pg from "pg";
 
-import { backfillCollinSalesQueue } from "../src/services/collinSalesBackfill.js";
+import { backfillCollinSalesQueue, collinBackfillErrorCode } from "../src/services/collinSalesBackfill.js";
 import { ensureSalesReconciliationSchema } from "../src/services/salesReconciliation.js";
 
 function hasFlag(name) {
@@ -17,7 +17,7 @@ function numericArgument(name, fallback = null) {
 }
 
 async function main() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  if (!process.env.DATABASE_URL) throw new Error("database_url_required");
   const pool = new pg.Pool({
     connectionString: process.env.DATABASE_URL,
     max: 3,
@@ -38,6 +38,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error?.message || error);
+  console.error(collinBackfillErrorCode(error));
   process.exitCode = 1;
 });

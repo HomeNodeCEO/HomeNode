@@ -27,6 +27,42 @@ const CANONICAL_SUFFIXES = new Set([
   "PLAZA",
 ]);
 const UNIT_MARKERS = new Set(["APT", "APARTMENT", "UNIT", "STE", "SUITE", "#"]);
+const SAFE_BACKFILL_ERROR_CODES = new Set([
+  "database_url_required",
+  "invalid_account_id",
+  "invalid_dallas_account_id",
+  "invalid_collin_account_id",
+  "account_county_mismatch",
+  "ambiguous_collin_account_id",
+  "county_account_identifier_conflict",
+  "invalid_source_record_id",
+  "source_record_not_found",
+  "source_record_not_closed_sale",
+  "source_record_already_verified",
+  "source_record_not_reconcilable",
+  "account_not_found",
+  "account_identifier_mismatch",
+]);
+
+/** Keep backfill summaries and CLI errors bounded even when a provider or DB
+ * exception includes SQL text, identifiers, or other sensitive input. */
+export function collinBackfillErrorCode(error) {
+  try {
+    const message = error?.message;
+    if (SAFE_BACKFILL_ERROR_CODES.has(message)) return message;
+  } catch {
+    // A malformed exception must not break error reporting.
+  }
+  try {
+    const code = error?.code;
+    if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+      return `database_sqlstate_${code}`;
+    }
+  } catch {
+    // A malformed exception must not break error reporting.
+  }
+  return "collin_sales_backfill_failed";
+}
 
 function cleanText(value) {
   return String(value ?? "").trim();
@@ -272,7 +308,7 @@ export async function backfillCollinSalesQueue(pool, {
         });
         summary.applied += 1;
       } catch (error) {
-        increment(summary.errors, error?.message || "unknown_error");
+        increment(summary.errors, collinBackfillErrorCode(error));
       }
     }
   }

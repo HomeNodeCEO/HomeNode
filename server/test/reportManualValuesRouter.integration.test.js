@@ -229,10 +229,11 @@ test("rollout manual-value saves use assignment-scoped revisions and authenticat
     },
     release() { releases += 1; },
   };
+  const pool = { query: (...args) => client.query(...args), connect: async () => client };
   const server = await startRouter(baseOptions({
-    pool: { connect: async () => client },
+    pool,
     resolveAccountId: async (receivedClient, requestedId) => {
-      assert.equal(receivedClient, client);
+      assert.equal(receivedClient, pool);
       assert.equal(requestedId, "legacy_1");
       return "CANONICAL_1";
     },
@@ -387,7 +388,7 @@ test("enforced saves authorize, lock, revision, and audit the exact assignment o
   };
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
-    pool: { connect: async () => client },
+    pool: { query: (...args) => client.query(...args), connect: async () => client },
     ensureCustomAppraisalWorkfilesAvailable: async () => { schemaChecks += 1; },
     resolveAccountId: async (_client, value) => value.toUpperCase(),
     requireAssignmentAccess: async (...args) => { accessCalls.push(args); return true; },
@@ -443,8 +444,9 @@ test("enforced saves authorize, lock, revision, and audit the exact assignment o
   assert.equal(calls.at(-1).sql, "COMMIT");
 });
 
-test("enforced assignment denial stops before a transaction or section write", async (context) => {
+test("enforced assignment denial stops before borrowing a transaction client", async (context) => {
   const calls = [];
+  let connectCalls = 0;
   let releases = 0;
   const client = {
     async query(sql) {
@@ -456,7 +458,10 @@ test("enforced assignment denial stops before a transaction or section write", a
   };
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
-    pool: { connect: async () => client },
+    pool: {
+      query: (...args) => client.query(...args),
+      connect: async () => { connectCalls += 1; return client; },
+    },
     async requireAssignmentAccess(_req, res) {
       res.status(403).json({ error: "assignment_file_access_denied" });
       return false;
@@ -471,7 +476,57 @@ test("enforced assignment denial stops before a transaction or section write", a
   });
   assert.equal(response.status, 403);
   assert.deepEqual(calls, ["SELECT 1 FROM core.accounts WHERE account_id = $1"]);
-  assert.equal(releases, 1);
+  assert.equal(connectCalls, 0);
+  assert.equal(releases, 0);
+});
+
+test("manual-value schema readiness failure does not borrow a client or expose diagnostics", async (context) => {
+  let poolCalls = 0;
+  const logs = [];
+  const server = await startRouter(baseOptions({
+    pool: {
+      query: async () => { poolCalls += 1; throw new Error("unexpected_query"); },
+      connect: async () => { poolCalls += 1; throw new Error("unexpected_connect"); },
+    },
+    ensureCustomAppraisalWorkfilesAvailable: async () => {
+      throw new Error("private_schema_failure");
+    },
+    logger: { error: (...args) => logs.push(args) },
+  }));
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "report_manual_values_update_failed" });
+  assert.equal(poolCalls, 0);
+  assert.deepEqual(logs, [["/api/accounts/:id/report-manual-values failed", "unknown"]]);
+});
+
+test("manual-value connection failure uses the fixed error boundary", async (context) => {
+  let connects = 0;
+  let accessChecks = 0;
+  const server = await startRouter(baseOptions({
+    pool: {
+      query: async () => ({ rows: [{}], rowCount: 1 }),
+      connect: async () => { connects += 1; throw new Error("private_connection_failure"); },
+    },
+    requireAssignmentAccess: async () => { accessChecks += 1; return true; },
+  }));
+  context.after(server.close);
+
+  const response = await patchManualValues(server.baseUrl, "A-1", {
+    assignment_file_id: 41,
+    sections: { "report.subject_identification": { county: "Dallas" } },
+    expected_revisions: { "report.subject_identification": 0 },
+  });
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "report_manual_values_update_failed" });
+  assert.equal(accessChecks, 1);
+  assert.equal(connects, 1);
 });
 
 test("enforced saves recheck assignment ownership under the database lock", async (context) => {
@@ -490,7 +545,7 @@ test("enforced saves recheck assignment ownership under the database lock", asyn
   };
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
-    pool: { connect: async () => client },
+    pool: { query: (...args) => client.query(...args), connect: async () => client },
     decideAccess: () => false,
   }), authenticatedIdentity);
   context.after(server.close);
@@ -525,7 +580,7 @@ test("enforced saves reject signed workfiles without changing section history", 
   };
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
-    pool: { connect: async () => client },
+    pool: { query: (...args) => client.query(...args), connect: async () => client },
   }), authenticatedIdentity);
   context.after(server.close);
 
@@ -565,7 +620,7 @@ test("enforced saves return the current assignment revision instead of overwriti
   };
   const server = await startRouter(baseOptions({
     authenticationRequired: true,
-    pool: { connect: async () => client },
+    pool: { query: (...args) => client.query(...args), connect: async () => client },
   }), authenticatedIdentity);
   context.after(server.close);
 
@@ -583,8 +638,9 @@ test("enforced saves return the current assignment revision instead of overwriti
   assert.equal(calls.at(-1), "ROLLBACK");
 });
 
-test("manual-value missing accounts release before starting a transaction", async (context) => {
+test("manual-value missing accounts return before borrowing a transaction client", async (context) => {
   const calls = [];
+  let connectCalls = 0;
   let releases = 0;
   const client = {
     async query(sql) {
@@ -595,7 +651,10 @@ test("manual-value missing accounts release before starting a transaction", asyn
     },
     release() { releases += 1; },
   };
-  const server = await startRouter(baseOptions({ pool: { connect: async () => client } }));
+  const server = await startRouter(baseOptions({ pool: {
+    query: (...args) => client.query(...args),
+    connect: async () => { connectCalls += 1; return client; },
+  } }));
   context.after(server.close);
 
   const response = await patchManualValues(server.baseUrl, "123", {
@@ -606,7 +665,8 @@ test("manual-value missing accounts release before starting a transaction", asyn
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: "account_not_found" });
   assert.deepEqual(calls, ["SELECT 1 FROM core.accounts WHERE account_id = $1"]);
-  assert.equal(releases, 1);
+  assert.equal(connectCalls, 0);
+  assert.equal(releases, 0);
 });
 
 test("manual-value failures roll back, release, and return no diagnostics", async (context) => {
@@ -626,7 +686,7 @@ test("manual-value failures roll back, release, and return no diagnostics", asyn
     release() { releases += 1; },
   };
   const server = await startRouter(baseOptions({
-    pool: { connect: async () => client },
+    pool: { query: (...args) => client.query(...args), connect: async () => client },
     logger: { error(...args) { errors.push(args); } },
   }));
   context.after(server.close);
@@ -653,7 +713,10 @@ test("throwing manual-value logger cannot replace a fixed write-failure response
     release() { releases += 1; },
   };
   const server = await startRouter(baseOptions({
-    pool: { connect: async () => client },
+    pool: {
+      query: async () => ({ rows: [{}], rowCount: 1 }),
+      connect: async () => client,
+    },
     logger: { error() { throw new Error("private_logger_failure"); } },
   }));
   context.after(server.close);

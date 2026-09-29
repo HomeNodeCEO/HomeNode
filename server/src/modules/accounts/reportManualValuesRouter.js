@@ -148,21 +148,17 @@ export function createReportManualValuesRouter({
     const notes = String(req.body?.notes || "Property Report manual edit")
       .trim()
       .slice(0, 4000) || null;
-    const client = await pool.connect();
+    let client;
     let transactionStarted = false;
     try {
       await propertyEnrichmentReady;
       await ensureCustomAppraisalWorkfilesAvailable();
-      const canonicalId = await resolveAccountId(client, requestedId);
-      const accountResult = await client.query(
+      const canonicalId = await resolveAccountId(pool, requestedId);
+      const accountResult = await pool.query(
         "SELECT 1 FROM core.accounts WHERE account_id = $1",
         [canonicalId],
       );
       if (!accountResult.rowCount) {
-        if (transactionStarted) {
-          await client.query("ROLLBACK");
-          transactionStarted = false;
-        }
         return res.status(404).json({ error: "account_not_found" });
       }
 
@@ -174,6 +170,7 @@ export function createReportManualValuesRouter({
         "write",
       )) return undefined;
 
+      client = await pool.connect();
       await client.query("BEGIN");
       transactionStarted = true;
 
@@ -279,11 +276,11 @@ export function createReportManualValuesRouter({
         manual_values: Object.fromEntries(savedEntries),
       });
     } catch (error) {
-      if (transactionStarted) await client.query("ROLLBACK").catch(() => {});
+      if (transactionStarted && client) await client.query("ROLLBACK").catch(() => {});
       logBoundedFailure(logger, "/api/accounts/:id/report-manual-values failed", error);
       return res.status(500).json({ error: "report_manual_values_update_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 

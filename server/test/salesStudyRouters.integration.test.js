@@ -179,9 +179,9 @@ test("subject-backed sales studies stop when exact assignment scope is denied", 
   assert.equal(serviceCalls, 0);
 });
 
-test("comparison study failures retain domain status mapping, detail, and diagnostics", async (context) => {
-  const pairedError = new Error("insufficient_paired_sales");
-  const contextError = Object.assign(new Error("market_context_unavailable"), {
+test("comparison study known failures retain domain status mapping, detail, and diagnostics", async (context) => {
+  const pairedError = new Error("invalid_market_area");
+  const contextError = Object.assign(new Error("invalid_subject_account_id"), {
     detail: { missing: ["latitude"] },
   });
   const logs = [];
@@ -210,6 +210,31 @@ test("comparison study failures retain domain status mapping, detail, and diagno
     error: contextError.message,
     detail: contextError.detail,
   });
+  assert.deepEqual(logs, [
+    ["/api/sales/paired-analysis failed", "unknown"],
+    ["/api/sales/market-context failed", "unknown"],
+  ]);
+});
+
+test("comparison study unknown failures cannot publish prefixed error messages or break fixed responses", async (context) => {
+  const secret = "invalid_provider_token=private";
+  const logs = [];
+  const options = comparisonOptions({
+    buildPairedStudy: async () => { throw new Error(secret); },
+    loadMarketContext: async () => { throw new Error(secret); },
+    pairedErrorStatus: () => { throw new Error("unexpected_status_mapping"); },
+    marketErrorStatus: () => { throw new Error("unexpected_status_mapping"); },
+    logger: { error: (...args) => { logs.push(args); throw new Error("logger_failed"); } },
+  });
+  const server = await startRouter(createComparisonStudyRouter(options));
+  context.after(server.close);
+
+  const paired = await post(server.baseUrl, "/api/sales/paired-analysis");
+  assert.equal(paired.status, 500);
+  assert.deepEqual(await paired.json(), { error: "paired_sales_analysis_failed" });
+  const market = await fetch(`${server.baseUrl}/api/sales/market-context`);
+  assert.equal(market.status, 500);
+  assert.deepEqual(await market.json(), { error: "market_context_failed" });
   assert.deepEqual(logs, [
     ["/api/sales/paired-analysis failed", "unknown"],
     ["/api/sales/market-context failed", "unknown"],

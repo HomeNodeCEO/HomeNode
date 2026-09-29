@@ -249,6 +249,192 @@ test("mobile verification rejects and removes same-size non-image bytes", async 
   assert.ok(failureQueries.some((sql) => /photo\.verification_failed/.test(sql)));
 });
 
+test("mobile verification does not revive a photo deleted before its marking lock", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("41000000-0000-4000-8000-000000000001", "display");
+  const writes = [];
+  const client = {
+    async query(sql) {
+      if (["BEGIN", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{ id: SESSION_ID, status: "active", workflow_type: "custom_appraisal", custom_assignment_file_id: 42 }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [photoRow({ status: "deleted", revision: 2 })] };
+      }
+      writes.push(sql);
+      throw new Error(`unexpected_write:${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    async connect() { return client; },
+  };
+  await assert.rejects(
+    verifyInspectionPhoto(pool, {
+      configured: true,
+      bucket: "private",
+      async inspectObject() { assert.fail("deleted photo must not reach storage"); },
+    }, auth, SESSION_ID, PHOTO_ID),
+    /mobile_photo_not_found/,
+  );
+  assert.deepEqual(writes, []);
+});
+
+test("mobile verification returns a photo completed before its marking lock without storage work", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("41500000-0000-4000-8000-000000000001", "display");
+  for (const terminalStatus of ["verified", "excluded"]) {
+    const currentPhoto = photoRow({ status: terminalStatus, revision: 2 });
+    let writes = 0;
+    const client = {
+      async query(sql) {
+        if (["BEGIN", "COMMIT"].includes(sql)) return { rows: [] };
+        if (/FROM app\.inspection_sessions session/.test(sql)) {
+          return { rows: [{ id: SESSION_ID, status: "active", workflow_type: "custom_appraisal", custom_assignment_file_id: 42 }] };
+        }
+        if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
+        if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return { rows: [currentPhoto] };
+        }
+        if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+        writes += 1;
+        throw new Error(`unexpected_write:${sql}`);
+      },
+      release() {},
+    };
+    const pool = {
+      async query(sql) {
+        if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+        if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+        throw new Error(`unexpected_query:${sql}`);
+      },
+      async connect() { return client; },
+    };
+    const result = await verifyInspectionPhoto(pool, {
+      configured: true,
+      bucket: "private",
+      async inspectObject() { assert.fail("completed photo must not reach storage"); },
+    }, auth, SESSION_ID, PHOTO_ID);
+    assert.equal(result.status, terminalStatus);
+    assert.equal(writes, 0);
+  }
+});
+
+test("mobile verification does not revive a photo deleted during storage inspection", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("42000000-0000-4000-8000-000000000001", "display");
+  let status = "pending_upload";
+  const writes = [];
+  const deletedKeys = [];
+  let promotedKey = null;
+  const client = {
+    async query(sql) {
+      if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{ id: SESSION_ID, status: "active", workflow_type: "custom_appraisal", custom_assignment_file_id: 42 }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [photoRow({ status, revision: status === "deleted" ? 2 : 1 })] };
+      }
+      if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) {
+        writes.push("verifying");
+        status = "verifying";
+        return { rows: [] };
+      }
+      writes.push(sql);
+      throw new Error(`unexpected_write:${sql}`);
+    },
+    release() {},
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      throw new Error(`unexpected_query:${sql}`);
+    },
+    async connect() { return client; },
+  };
+  await assert.rejects(
+    verifyInspectionPhoto(pool, {
+      configured: true,
+      bucket: "private",
+      async inspectObject() {
+        status = "deleted";
+        return { byte_size: PNG.length, content_type: "image/png" };
+      },
+      async getObject() { return { body: PNG, byte_size: PNG.length, content_type: "image/png" }; },
+      async putObject({ objectKey, body }) {
+        promotedKey = objectKey;
+        return { byte_size: body.length, etag: "verified-etag" };
+      },
+      async deleteObject({ objectKey }) { deletedKeys.push(objectKey); },
+    }, auth, SESSION_ID, PHOTO_ID),
+    /mobile_photo_not_found/,
+  );
+  assert.deepEqual(writes, ["verifying"]);
+  assert.match(promotedKey, /\.verified-[0-9a-f-]+-[a-f0-9]{64}$/);
+  assert.deepEqual(deletedKeys, [promotedKey]);
+  assert.equal(status, "deleted");
+});
+
+test("stale mobile verification failure cannot overwrite a terminal photo state", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("43000000-0000-4000-8000-000000000001", "display");
+  for (const terminalStatus of ["verified", "excluded", "deleted"]) {
+    let status = "pending_upload";
+    const writes = [];
+    const client = {
+      async query(sql) {
+        if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return { rows: [] };
+        if (/FROM app\.inspection_sessions session/.test(sql)) {
+          return { rows: [{ id: SESSION_ID, status: "active", workflow_type: "custom_appraisal", custom_assignment_file_id: 42 }] };
+        }
+        if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
+        if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+          return { rows: [photoRow({ status })] };
+        }
+        if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) {
+          status = "verifying";
+          writes.push("verifying");
+          return { rows: [] };
+        }
+        writes.push(sql);
+        throw new Error(`unexpected_write:${sql}`);
+      },
+      release() {},
+    };
+    const pool = {
+      async query(sql) {
+        if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+        if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+        throw new Error(`unexpected_query:${sql}`);
+      },
+      async connect() { return client; },
+    };
+    await assert.rejects(
+      verifyInspectionPhoto(pool, {
+        configured: true,
+        bucket: "private",
+        async inspectObject() {
+          status = terminalStatus;
+          throw new Error("temporary_object_storage_outage");
+        },
+      }, auth, SESSION_ID, PHOTO_ID),
+      /mobile_photo_verification_failed/,
+    );
+    assert.equal(status, terminalStatus);
+    assert.deepEqual(writes, ["verifying"]);
+  }
+});
+
 test("signed Custom files reject photo verification before storage or status changes", async () => {
   const originalPhoto = photoRow();
   const originalObject = objectRow("50000000-0000-4000-8000-000000000001", "display");
@@ -308,6 +494,9 @@ test("a signing race preserves pending source bytes when photo verification fail
         workfileReads += 1;
         return { rows: [{ status: workfileReads === 1 ? "draft" : "signed" }] };
       }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [originalPhoto] };
+      }
       if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) {
         writes.push("verifying");
         return { rows: [] };
@@ -359,6 +548,9 @@ test("a signing race discards a new verified copy before photo commit", async ()
       if (/FROM app\.custom_appraisal_workfiles/.test(sql)) {
         workfileReads += 1;
         return { rows: [{ status: workfileReads === 1 ? "draft" : "signed" }] };
+      }
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [originalPhoto] };
       }
       if (/UPDATE app\.inspection_photos SET status = 'verifying'/.test(sql)) return { rows: [] };
       assert.fail(`unexpected post-sign write: ${sql}`);

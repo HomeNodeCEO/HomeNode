@@ -465,13 +465,43 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
     contentType: object.content_type,
     body: contentBuffer,
   });
-  await pool.query(
-    `UPDATE app.inspection_photo_objects
-        SET storage_etag = $2, checksum_sha256 = $4,
-            uploaded_at = COALESCE(uploaded_at, now()), updated_at = now()
-      WHERE id = $1 AND photo_id = $3`,
-    [object.id, uploaded?.etag || null, photoId, verified.checksum_sha256],
-  );
+  // The R2 PUT cannot share a database transaction. Recheck the workfile and
+  // object under the same lock order as verification before recording its
+  // metadata; verification or signing may have completed during the PUT.
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const lockedReport = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
+    if (lockedReport.workfile_status === "signed") throw new Error("custom_appraisal_workfile_signed");
+    const locked = await client.query(
+      `SELECT photo_object.*
+         FROM app.inspection_photo_objects photo_object
+         JOIN app.inspection_photos photo ON photo.id = photo_object.photo_id
+        WHERE photo_object.id = $1
+          AND photo.id = $2
+          AND photo.report_file_id = $3
+          AND photo.status NOT IN ('verified', 'excluded', 'deleted')
+          AND photo_object.status IN ('pending_upload', 'rejected')
+        FOR UPDATE OF photo, photo_object`,
+      [objectId, photoId, lockedReport.id],
+    );
+    if (!locked.rows.length || locked.rows[0].object_key !== object.object_key) {
+      throw new Error("assignment_photo_object_not_found");
+    }
+    await client.query(
+      `UPDATE app.inspection_photo_objects
+          SET storage_etag = $2, checksum_sha256 = $4,
+              uploaded_at = COALESCE(uploaded_at, now()), updated_at = now()
+        WHERE id = $1 AND photo_id = $3`,
+      [object.id, uploaded?.etag || null, photoId, verified.checksum_sha256],
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    client.release();
+  }
   return {
     object_id: object.id,
     photo_id: photoId,

@@ -605,10 +605,11 @@ test("enforced assignment updates recheck ownership after locking the file", asy
   assert.equal(database.queries.at(-1).sql, "ROLLBACK");
 });
 
-test("denied updates stop before transactions and still release the borrowed client", async (context) => {
+test("denied updates stop before borrowing a transaction client", async (context) => {
   const database = createDatabase(async () => { throw new Error("unexpected_query"); });
   const server = await startRouter(baseOptions(database, {
     async requireAssignmentAccess(_req, res) {
+      assert.equal(database.connectCalls, 0);
       res.status(403).json({ error: "custom_appraisal_assignment_access_denied" });
       return false;
     },
@@ -620,7 +621,45 @@ test("denied updates stop before transactions and still release the borrowed cli
   });
   assert.equal(response.status, 403);
   assert.equal(database.queries.length, 0);
-  assert.equal(database.releaseCalls, 1);
+  assert.equal(database.connectCalls, 0);
+  assert.equal(database.releaseCalls, 0);
+});
+
+test("assignment mutations wait for readiness and bound connection failures", async (context) => {
+  const routes = [
+    {
+      send: (baseUrl) => createFile(baseUrl, "A-1", { file_number: "F-1", organization_id: "org-1" }),
+      code: "assignment_file_create_failed",
+    },
+    {
+      send: (baseUrl) => patchFile(baseUrl, "A-1", 41, {
+        assignment_details: {}, expected_revision: 1,
+      }),
+      code: "assignment_file_update_failed",
+    },
+  ];
+  const servers = [];
+  context.after(async () => Promise.all(servers.map((server) => server.close())));
+  for (const route of routes) {
+    for (const failure of ["readiness", "connect"]) {
+      let connectCalls = 0;
+      const database = createDatabase(async () => { throw new Error("unexpected_query"); });
+      const server = await startRouter(baseOptions(database, {
+        accountQualityReady: failure === "readiness"
+          ? { then(_resolve, reject) { reject(new Error("database db.internal private-token")); } }
+          : Promise.resolve(),
+        pool: {
+          connect: async () => { connectCalls += 1; throw new Error("database db.internal private-token"); },
+        },
+        logger: { error() { throw new Error("logger_unavailable"); } },
+      }));
+      servers.push(server);
+      const response = await route.send(server.baseUrl);
+      assert.equal(response.status, 500);
+      assert.deepEqual(await response.json(), { error: route.code });
+      assert.equal(connectCalls, failure === "connect" ? 1 : 0);
+    }
+  }
 });
 
 test("updates reject missing, signed, and stale files without mutating history", async (context) => {

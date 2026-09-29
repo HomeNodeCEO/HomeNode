@@ -252,7 +252,7 @@ export function createAssignmentFileMutationRouter({
       return res.status(500).json({ error: "assignment_file_create_failed" });
     }
     const reviewer = assignmentReviewer(req);
-    const client = await pool.connect();
+    let client;
     try {
       await Promise.all([
         accountQualityReady,
@@ -260,6 +260,7 @@ export function createAssignmentFileMutationRouter({
         ensureAssignmentFilesAvailable(),
         ensureCustomAppraisalWorkfilesAvailable(),
       ]);
+      client = await pool.connect();
       await client.query("BEGIN");
       const canonicalId = await resolveAccountId(client, accountId);
       const accountResult = await client.query(
@@ -390,7 +391,7 @@ export function createAssignmentFileMutationRouter({
         assignment_file: presentAssignmentFile(rows[0]),
       });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      if (client) await client.query("ROLLBACK").catch(() => {});
       if (safeOperationalErrorCode(error) === "23505") {
         return res.status(409).json({ error: "assignment_file_number_exists" });
       }
@@ -399,7 +400,7 @@ export function createAssignmentFileMutationRouter({
       try { logger.error?.("assignment file create failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_create_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 
@@ -425,7 +426,7 @@ export function createAssignmentFileMutationRouter({
     }
     const reviewer = assignmentReviewer(req);
     const assignmentDetails = req.body.assignment_details;
-    const client = await pool.connect();
+    let client;
     try {
       await Promise.all([
         accountQualityReady,
@@ -433,7 +434,7 @@ export function createAssignmentFileMutationRouter({
         ensureAssignmentFilesAvailable(),
         ensureCustomAppraisalWorkfilesAvailable(),
       ]);
-      const canonicalId = await resolveAccountId(client, accountId);
+      const canonicalId = await resolveAccountId(pool, accountId);
       if (!await requireAssignmentAccess(
         req,
         res,
@@ -441,6 +442,7 @@ export function createAssignmentFileMutationRouter({
         assignmentFileId,
         "write",
       )) return undefined;
+      client = await pool.connect();
       await client.query("BEGIN");
       const existingResult = await client.query(
         `SELECT assignment_file.id, assignment_file.file_number, assignment_file.revision,
@@ -506,11 +508,11 @@ export function createAssignmentFileMutationRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, assignment_file: presentAssignmentFile(rows[0]) });
     } catch (error) {
-      await client.query("ROLLBACK").catch(() => {});
+      if (client) await client.query("ROLLBACK").catch(() => {});
       try { logger.error?.("assignment file update failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_update_failed" });
     } finally {
-      client.release();
+      client?.release();
     }
   });
 

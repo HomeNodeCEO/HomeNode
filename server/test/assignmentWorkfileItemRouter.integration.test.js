@@ -163,6 +163,54 @@ test("unexpected provider failures remain bounded", async context => {
   assert.deepEqual(logs, [["assignment workfile items list failed", { code: "workfile_items_lookup_failed" }]]);
 });
 
+test("workfile item failures stay bounded when diagnostics or error getters throw", async context => {
+  const hostileMessage = new Error("private-password");
+  Object.defineProperty(hostileMessage, "message", {
+    get() { throw new Error("message_getter_failed"); },
+  });
+  for (const failure of [new Error("private-password"), hostileMessage]) {
+    const server = await start(createAssignmentWorkfileItemRouter(options({
+      listItems: async () => { throw failure; },
+      createFile: async () => { throw failure; },
+      authorizeUad: async () => { throw failure; },
+      logger: { error() { throw new Error("logger_unavailable"); } },
+    })));
+    context.after(server.close);
+
+    const list = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/workfile/items`);
+    assert.equal(list.status, 500);
+    assert.deepEqual(await list.json(), { error: "workfile_items_lookup_failed" });
+
+    const upload = await fetch(`${server.baseUrl}/api/accounts/42/assignment-files/7/workfile/items/files`, {
+      method: "POST",
+      headers: { "content-type": "application/pdf", "x-workfile-file-name": "evidence.pdf" },
+      body: Buffer.from("%PDF-test"),
+    });
+    assert.equal(upload.status, 500);
+    assert.deepEqual(await upload.json(), { error: "workfile_file_upload_failed" });
+
+    const denied = await fetch(`${server.baseUrl}/api/appraisal-workfiles/uad/invalid/items`);
+    assert.equal(denied.status, 403);
+    assert.deepEqual(await denied.json(), { error: "uad_workfile_access_denied" });
+  }
+});
+
+test("UAD workfile item access retains exact known error statuses", async context => {
+  for (const [code, status] of [
+    ["invalid_uad_workfile_id", 400],
+    ["uad_workfile_not_found", 404],
+    ["uad_authentication_required", 401],
+  ]) {
+    const server = await start(createAssignmentWorkfileItemRouter(options({
+      authorizeUad: async () => { throw new Error(code); },
+    })));
+    context.after(server.close);
+    const response = await fetch(`${server.baseUrl}/api/appraisal-workfiles/uad/invalid/items`);
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error: code });
+  }
+});
+
 test("workfile downloads use an ASCII fallback and RFC 5987 UTF-8 filename", async context => {
   const server = await start(createAssignmentWorkfileItemRouter(options({
     getFile: async () => ({

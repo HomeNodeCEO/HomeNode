@@ -2,6 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
+import { knownErrorCode } from "../../security/boundedRouteErrors.js";
 import {
   createAssignmentWorkfileFile,
   createAssignmentWorkfileLink,
@@ -30,6 +31,16 @@ const CLIENT_ITEM_ERRORS = new Set([
   "workfile_link_title_required",
   "workfile_storage_not_configured",
 ]);
+const UAD_ACCESS_ERRORS = new Set([
+  "invalid_uad_workfile_id",
+  "uad_workfile_not_found",
+  "uad_authentication_required",
+]);
+
+function logItemFailure(logger, label, code) {
+  try { logger?.error?.(label, { code }); }
+  catch { /* Diagnostics must not replace the bounded response. */ }
+}
 
 function decodedHeader(req, name, fallback = "") {
   const value = String(req.get(name) || fallback);
@@ -54,8 +65,7 @@ function itemErrorStatus(message) {
 }
 
 function boundedItemError(error, fallback) {
-  const message = String(error?.message || "");
-  return CLIENT_ITEM_ERRORS.has(message) ? message : fallback;
+  return knownErrorCode(error, CLIENT_ITEM_ERRORS) || fallback;
 }
 
 export function createAssignmentWorkfileItemRouter({
@@ -129,7 +139,7 @@ export function createAssignmentWorkfileItemRouter({
         storage: uadObjectStorage,
       };
     } catch (error) {
-      const message = String(error?.message || "uad_workfile_access_denied");
+      const message = knownErrorCode(error, UAD_ACCESS_ERRORS) || "uad_workfile_access_denied";
       if (message === "invalid_uad_workfile_id") res.status(400).json({ error: message });
       else if (message === "uad_workfile_not_found") res.status(404).json({ error: message });
       else if (message === "uad_authentication_required") res.status(401).json({ error: message });
@@ -153,7 +163,7 @@ export function createAssignmentWorkfileItemRouter({
         return res.json({ ok: true, items, mutable: state.mutable });
       } catch (error) {
         const message = boundedItemError(error, "workfile_items_lookup_failed");
-        logger.error?.("assignment workfile items list failed", { code: message });
+        logItemFailure(logger, "assignment workfile items list failed", message);
         return res.status(itemErrorStatus(message)).json({ error: message });
       }
     });
@@ -176,7 +186,7 @@ export function createAssignmentWorkfileItemRouter({
         if (!error) return next();
         if (error.type === "encoding.unsupported") return res.status(415).json({ error: "unsupported_content_encoding" });
         if (error.type === "entity.too.large") return res.status(413).json({ error: "workfile_file_too_large" });
-        logger.error?.("assignment workfile upload body rejected", { code: "workfile_file_upload_body_invalid" });
+        logItemFailure(logger, "assignment workfile upload body rejected", "workfile_file_upload_body_invalid");
         return res.status(400).json({ error: "workfile_file_upload_body_invalid" });
       },
       async (req, res) => {
@@ -197,7 +207,7 @@ export function createAssignmentWorkfileItemRouter({
           return res.status(201).json({ ok: true, item });
         } catch (error) {
           const message = boundedItemError(error, "workfile_file_upload_failed");
-          logger.error?.("assignment workfile file upload failed", { code: message });
+          logItemFailure(logger, "assignment workfile file upload failed", message);
           return res.status(itemErrorStatus(message)).json({ error: message });
         }
       },

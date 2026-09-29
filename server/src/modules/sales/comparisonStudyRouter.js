@@ -9,34 +9,7 @@ import {
   buildPairedSalesStudy,
   pairedSalesErrorStatus,
 } from "../../services/pairedSalesAnalysis.js";
-
-// The service raises these fixed validation codes. Never publish an arbitrary
-// exception just because its message happens to start with `invalid_`.
-const PAIRED_PUBLIC_ERRORS = new Set([
-  "subject_not_found",
-  "invalid_subject_account_id",
-  "invalid_market_area",
-  "invalid_market_period",
-  "invalid_as_of",
-  "market_areas_required",
-  "market_area_limit_exceeded",
-  "market_spatial_support_not_ready",
-  "custom_area_must_be_polygon",
-  "custom_area_coordinates_required",
-  "custom_area_requires_three_points",
-  "custom_area_too_many_vertices",
-  "custom_area_ring_invalid",
-  "custom_area_ring_not_closed",
-  "custom_area_coordinate_invalid",
-  "custom_area_outside_dfw_bounds",
-  "custom_area_geometry_invalid",
-  "custom_area_size_invalid",
-]);
-const MARKET_CONTEXT_PUBLIC_ERRORS = new Set([
-  "subject_not_found",
-  "invalid_subject_account_id",
-  "market_spatial_support_not_ready",
-]);
+import { MARKET_CONTEXT_PUBLIC_ERRORS, MARKET_STUDY_PUBLIC_ERRORS } from "./studyPublicErrors.js";
 
 export function createComparisonStudyRouter({
   pool,
@@ -84,7 +57,7 @@ export function createComparisonStudyRouter({
       });
       return res.json(result);
     } catch (error) {
-      const message = knownErrorCode(error, PAIRED_PUBLIC_ERRORS);
+      const message = knownErrorCode(error, MARKET_STUDY_PUBLIC_ERRORS);
       const status = message ? pairedErrorStatus(message) : 500;
       logBoundedFailure(logger, "/api/sales/paired-analysis failed", error);
       return res.status(status).json({

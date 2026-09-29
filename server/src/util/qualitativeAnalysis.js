@@ -144,8 +144,3 @@ export function normalizeSalesComparisonQualitativeAnalysis(section = {}) {
     },
   };
 }
-
-export function qualitativeAnalysisErrorStatus(message) {
-  if (String(message || "").startsWith("invalid_")) return 400;
-  return 500;
-}

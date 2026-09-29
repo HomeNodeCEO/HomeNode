@@ -2,6 +2,7 @@ import "dotenv/config";
 import pg from "pg";
 
 import {
+  propertyContextSyncFailureCode,
   syncDcadPropertyContext,
   syncFemaFloodContext,
   syncOfficialZoningContext,
@@ -66,9 +67,14 @@ try {
   }
   console.log(JSON.stringify({ ok: true, source, mode, results }, null, 2));
 } catch (error) {
-  console.error("[property-context] synchronization failed", error);
+  console.error("[property-context] synchronization failed", propertyContextSyncFailureCode(error));
   process.exitCode = 1;
 } finally {
-  await pool.end();
+  try {
+    await pool.end();
+  } catch (error) {
+    console.error("[property-context] pool close failed", propertyContextSyncFailureCode(error));
+    process.exitCode = 1;
+  }
 }
 

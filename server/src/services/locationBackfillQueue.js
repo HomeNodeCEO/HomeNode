@@ -662,7 +662,7 @@ export function startLocationBackfillWorker(
     } catch (error) {
       logger.warn?.(
         "[location-backfill] cycle failed; will retry",
-        error?.message || error,
+        locationBackfillDiagnostic({ error }),
       );
     } finally {
       running = false;

@@ -105,7 +105,8 @@ export function createAppraisalRatingsRouter({
       await ratingsReady;
       await client.query("BEGIN");
       const accountResult = await client.query(
-        "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR SHARE",
+        // Serialize the first rating too: the dated rating row may not exist yet.
+        "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR NO KEY UPDATE",
         [id],
       );
       if (!accountResult.rowCount) {

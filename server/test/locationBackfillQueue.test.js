@@ -7,6 +7,7 @@ import {
   locationBackfillDiagnostic,
   locationBackfillRetryDelaySeconds,
   runLocationBackfillBatch,
+  startLocationBackfillWorker,
 } from "../src/services/locationBackfillQueue.js";
 
 test("location backfill diagnostics retain only known source and review codes", () => {
@@ -16,6 +17,26 @@ test("location backfill diagnostics retain only known source and review codes", 
   assert.equal(locationBackfillDiagnostic({ reviewReason: "multiple_parcel_features,site_address_mismatch" }), "multiple_parcel_features,site_address_mismatch");
   assert.equal(locationBackfillDiagnostic({ reviewReason: "password=secret" }), "location_unavailable");
   assert.equal(locationBackfillDiagnostic({ locationStatus: "not_found" }), "parcel_not_found");
+});
+
+test("location-backfill worker retries without logging raw database exceptions", async () => {
+  const logged = [];
+  const worker = startLocationBackfillWorker({
+    async query() { throw new Error("database password=do-not-expose"); },
+  }, {
+    initialDelayMs: 300_000,
+    logger: { warn(...args) { logged.push(args); } },
+  });
+  try {
+    await worker.runNow();
+  } finally {
+    worker.stop();
+  }
+  assert.deepEqual(logged, [[
+    "[location-backfill] cycle failed; will retry",
+    "location_backfill_failed",
+  ]]);
+  assert.doesNotMatch(JSON.stringify(logged), /do-not-expose/);
 });
 
 test("location refresh failures never enter queue state or batch results as raw text", async () => {

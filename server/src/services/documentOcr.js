@@ -207,10 +207,12 @@ export function createDocumentOcrProvider(env = process.env) {
       const deadline = Date.now() + maximumPollMs;
       let result = null;
       while (Date.now() < deadline) {
+        // A single slow poll must not extend the configured overall polling window.
+        const remainingPollMs = Math.max(1, deadline - Date.now());
         const pollRequest = await fetchWithTimeout(resultUrl, {
           method: "GET",
           headers: { "ocp-apim-subscription-key": key },
-        }, requestTimeoutMs, "document_ocr_poll_unavailable");
+        }, Math.min(requestTimeoutMs, remainingPollMs), "document_ocr_poll_unavailable");
         const response = pollRequest.response;
         let payload;
         try {

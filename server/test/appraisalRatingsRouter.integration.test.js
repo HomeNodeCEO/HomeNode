@@ -174,7 +174,7 @@ test("rating writes preserve transaction, revision, history, and release behavio
   assert.equal(released, 1);
   assert.deepEqual(calls.map(({ sql }) => sql === "BEGIN" || sql === "COMMIT" ? sql : sql.match(/^(?:\s*)([^\n]+)/)?.[1].trim()), [
     "BEGIN",
-    "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR SHARE",
+    "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR NO KEY UPDATE",
     "SELECT * FROM app.subject_appraisal_ratings",
     "INSERT INTO app.subject_appraisal_ratings (",
     "INSERT INTO app.subject_appraisal_rating_history (",
@@ -298,7 +298,7 @@ test("rating writes retain editor denial and bounded transaction failures", asyn
   const failureBody = await failedResponse.json();
   assert.deepEqual(failureBody, { error: "subject_rating_update_failed" });
   assert.doesNotMatch(JSON.stringify(failureBody), /password|XX000/);
-  assert.deepEqual(failedCalls, ["BEGIN", "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR SHARE", "ROLLBACK"]);
+  assert.deepEqual(failedCalls, ["BEGIN", "SELECT 1 FROM core.accounts WHERE account_id = $1 FOR NO KEY UPDATE", "ROLLBACK"]);
   assert.equal(released, 1);
 });
 

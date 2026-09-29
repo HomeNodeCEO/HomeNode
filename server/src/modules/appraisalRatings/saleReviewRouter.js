@@ -91,7 +91,8 @@ export function createSaleReviewRouter({
       await ratingsReady;
       await client.query("BEGIN");
       const { rows: sources } = await client.query(
-        `SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR SHARE`,
+        // Serialize the first review too: the review row cannot be locked before it exists.
+        `SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR NO KEY UPDATE`,
         [sourceRecordId],
       );
       if (!sources.length) {

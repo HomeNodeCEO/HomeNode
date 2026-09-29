@@ -201,6 +201,7 @@ test("valid comparable rating updates use the shared normalizer and preserve aud
     "INSERT INTO app.sale_characteristic_review_history",
     "COMMIT",
   ]);
+  assert.match(client.queries[1].sql, /FOR NO KEY UPDATE$/);
   assert.deepEqual(client.queries[3].params, [
     "71",
     "MLS-71",
@@ -298,7 +299,7 @@ test("sale review update failures roll back, release, and keep diagnostics out o
   assert.doesNotMatch(JSON.stringify(logs), /db\.internal|secret-token/);
   assert.deepEqual(database.clients[0].queries.map(({ sql }) => sql), [
     "BEGIN",
-    "SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR SHARE",
+    "SELECT id, listing_id FROM core.sales_source_records WHERE id = $1 FOR NO KEY UPDATE",
     "ROLLBACK",
   ]);
   assert.equal(database.clients[0].released, true);

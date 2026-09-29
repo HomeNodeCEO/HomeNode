@@ -3,6 +3,8 @@ import assert from "node:assert/strict";
 
 import {
   addressAgreement,
+  backfillCollinSalesQueue,
+  collinBackfillErrorCode,
   normalizedSitusAddress,
   selectCollinSalesCandidate,
 } from "../src/services/collinSalesBackfill.js";
@@ -60,4 +62,38 @@ test("keeps distinct multi-parcel accounts in manual review", () => {
   }, aliases);
   assert.equal(result.candidate, null);
   assert.equal(result.reason, "multiple_parcel_accounts");
+});
+
+test("reports only recognized reconciliation codes or bounded SQLSTATEs", () => {
+  assert.equal(collinBackfillErrorCode(new Error("database_url_required")), "database_url_required");
+  assert.equal(collinBackfillErrorCode(new Error("source_record_already_verified")), "source_record_already_verified");
+  assert.equal(collinBackfillErrorCode({ code: "23505", message: "duplicate key value contains private data" }), "database_sqlstate_23505");
+  assert.equal(collinBackfillErrorCode({ code: "secret-token", message: "password=private" }), "collin_sales_backfill_failed");
+  assert.equal(collinBackfillErrorCode(new Error("connection failed: password=private")), "collin_sales_backfill_failed");
+  assert.equal(collinBackfillErrorCode({ get message() { throw new Error("private"); }, get code() { throw new Error("private"); } }), "collin_sales_backfill_failed");
+});
+
+test("does not include a raw database exception in the printed backfill summary", async () => {
+  const pool = {
+    async query(sql) {
+      if (sql.includes("FROM core.sales_source_records source")) {
+        return { rows: [{
+          id: 1,
+          parcel_number_raw: "R-1234-567-89",
+          parcel_number2_raw: null,
+          raw_payload: { "Property Address": "100 Main St" },
+        }] };
+      }
+      return { rows: [{ ...account, lookup_key: "123456789" }] };
+    },
+    async connect() {
+      throw new Error("database failed with password=private");
+    },
+  };
+  const summary = await backfillCollinSalesQueue(pool, { apply: true, maximumRows: 1 });
+  assert.equal(summary.scanned, 1);
+  assert.equal(summary.eligible, 1);
+  assert.equal(summary.applied, 0);
+  assert.deepEqual(summary.errors, { collin_sales_backfill_failed: 1 });
+  assert.doesNotMatch(JSON.stringify(summary), /private/);
 });

@@ -50,9 +50,23 @@ import {
 
 const WRITE_ROLES = new Set(["appraiser", "supervisory_appraiser", "organization_admin", "homenode_admin"]);
 
-function errorStatus(error) {
-  const message = String(error?.message || "");
-  if (error?.statusCode) return error.statusCode;
+function errorMessage(error) {
+  try {
+    const message = error?.message;
+    return typeof message === "string" ? message : "";
+  } catch {
+    return "";
+  }
+}
+
+function errorStatus(error, message, diagnosticCode) {
+  // PostgreSQL messages can include constraint names and row values. Map the
+  // SQLSTATE before interpreting any message prefix or publishing a code.
+  if (diagnosticCode === "23505") return 409;
+  if (diagnosticCode === "23503") return 400;
+  let statusCode;
+  try { statusCode = error?.statusCode; } catch { /* Treat malformed errors as unknown. */ }
+  if (Number.isInteger(statusCode) && statusCode >= 400 && statusCode <= 599) return statusCode;
   if (message === "custom_appraisal_workfile_signed") return 409;
   if (message === "uad_workfile_status_locked") return 409;
   if (message.endsWith("_not_found")) return 404;
@@ -61,18 +75,24 @@ function errorStatus(error) {
   if (message.endsWith("_not_configured")) return 503;
   if (message.endsWith("_verification_failed")) return 502;
   if (message.startsWith("invalid_")) return 400;
-  if (error?.code === "23505") return 409;
-  if (error?.code === "23503") return 400;
   return 500;
 }
 
 function sendError(res, error) {
-  const status = errorStatus(error);
-  const code = status === 500
-    ? "mobile_request_failed"
-    : String(error?.message || "mobile_request_failed").split(":")[0];
+  const message = errorMessage(error);
+  const diagnosticCode = safeOperationalErrorCode(error);
+  const status = errorStatus(error, message, diagnosticCode);
+  const candidate = message.split(":")[0];
+  const code = diagnosticCode === "23505" ? "mobile_record_conflict"
+    : diagnosticCode === "23503" ? "mobile_reference_invalid"
+      : status !== 500 && candidate.includes("_") && !message.includes("://")
+        && /^[a-z][a-z0-9_]{0,100}$/.test(candidate)
+        ? candidate : "mobile_request_failed";
   if (code === "uad_workfile_status_locked") res.set("Cache-Control", "no-store");
-  if (status === 500) console.error("[mobile] request failed", safeOperationalErrorCode(error));
+  if (status === 500) {
+    try { console.error("[mobile] request failed", diagnosticCode); }
+    catch { /* Optional diagnostics must not replace the fixed response. */ }
+  }
   return res.status(status).json({
     error: code,
     ...(code === "inspection_not_ready_conflict" ? { details: error.details } : {}),

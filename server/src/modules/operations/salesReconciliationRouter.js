@@ -9,7 +9,7 @@ import {
   listSalesReconciliationQueue,
   reconcileSalesSourceRecord,
 } from "../../services/salesReconciliation.js";
-import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { knownErrorCode, logBoundedFailure } from "../../security/boundedRouteErrors.js";
 import { PaginationError } from "../../util/pagination.js";
 
 const PUBLIC_RECONCILIATION_ERRORS = new Map([
@@ -27,6 +27,8 @@ const PUBLIC_RECONCILIATION_ERRORS = new Map([
   ["account_county_mismatch", 400],
   ["account_identifier_mismatch", 400],
 ]);
+const PUBLIC_RECONCILIATION_CODES = new Set(PUBLIC_RECONCILIATION_ERRORS.keys());
+const PUBLIC_PAGINATION_ERRORS = new Set(["invalid_limit", "invalid_offset"]);
 
 export function createSalesReconciliationRouter({
   pool,
@@ -77,8 +79,11 @@ export function createSalesReconciliationRouter({
       });
       return res.json(queue);
     } catch (error) {
-      if (error instanceof PaginationError) return res.status(400).json({ error: error.message });
-      logger.error?.("sales reconciliation queue failed", safeOperationalErrorCode(error));
+      const paginationCode = error instanceof PaginationError
+        ? knownErrorCode(error, PUBLIC_PAGINATION_ERRORS)
+        : null;
+      if (paginationCode) return res.status(400).json({ error: paginationCode });
+      logBoundedFailure(logger, "sales reconciliation queue failed", error);
       return res.status(500).json({ error: "sales_reconciliation_queue_failed" });
     }
   });
@@ -117,10 +122,7 @@ export function createSalesReconciliationRouter({
           },
         );
       } catch (locationError) {
-        logger.warn?.(
-          "manual sale link saved; location queueing deferred",
-          safeOperationalErrorCode(locationError),
-        );
+        logBoundedFailure(logger, "manual sale link saved; location queueing deferred", locationError, "warn");
       }
       try {
         await ensurePropertyContextAvailable();
@@ -135,17 +137,14 @@ export function createSalesReconciliationRouter({
       } catch (influenceError) {
         // The confirmed sale remains saved. The durable sale trigger and the
         // next maintenance seed provide two independent retry paths.
-        logger.warn?.(
-          "manual sale link saved; influence queueing deferred",
-          safeOperationalErrorCode(influenceError),
-        );
+        logBoundedFailure(logger, "manual sale link saved; influence queueing deferred", influenceError, "warn");
       }
       return res.json({ ok: true, ...result });
     } catch (error) {
-      const message = error?.message || "sales_reconciliation_failed";
-      const status = PUBLIC_RECONCILIATION_ERRORS.get(message) || 500;
-      if (status === 500) logger.error?.("sales reconciliation failed", safeOperationalErrorCode(error));
-      return res.status(status).json({ error: status === 500 ? "sales_reconciliation_failed" : message });
+      const code = knownErrorCode(error, PUBLIC_RECONCILIATION_CODES);
+      const status = PUBLIC_RECONCILIATION_ERRORS.get(code) || 500;
+      if (status === 500) logBoundedFailure(logger, "sales reconciliation failed", error);
+      return res.status(status).json({ error: code || "sales_reconciliation_failed" });
     }
   });
 

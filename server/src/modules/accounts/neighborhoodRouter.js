@@ -2,7 +2,7 @@ import express from "express";
 
 import { resolveCanonicalAccountId } from "../../services/accountQuality.js";
 import { normalizeAssignmentFileId } from "../../services/assignmentFiles.js";
-import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
+import { knownErrorCode, logBoundedFailure } from "../../security/boundedRouteErrors.js";
 import {
   generateNeighborhoodBoundary,
   getLatestNeighborhoodBoundary,
@@ -72,9 +72,10 @@ export function createNeighborhoodRouter({
         county: req.query.county || "Dallas",
       }));
     } catch (error) {
-      logger.error?.("/api/neighborhood-engine/readiness failed", safeOperationalErrorCode(error));
-      if (error?.message === "neighborhood_engine_county_not_configured") {
-        return res.status(400).json({ error: error.message });
+      logBoundedFailure(logger, "/api/neighborhood-engine/readiness failed", error);
+      const code = knownErrorCode(error, new Set(["neighborhood_engine_county_not_configured"]));
+      if (code) {
+        return res.status(400).json({ error: code });
       }
       return res.status(500).json({ error: "neighborhood_engine_readiness_failed" });
     }
@@ -92,12 +93,14 @@ export function createNeighborhoodRouter({
       const assessment = await getBoundary(pool, { accountId, assignmentFileId });
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "neighborhood_boundary_lookup_failed";
-      const status = message === "account_not_found" ? 404
-        : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
+      const code = knownErrorCode(error, new Set([
+        "account_not_found", "invalid_account_id", "invalid_assignment_file",
+      ]));
+      const status = code === "account_not_found" ? 404
+        : code ? 400
           : 500;
-      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-boundary failed", safeOperationalErrorCode(error));
-      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_lookup_failed" : message });
+      if (status === 500) logBoundedFailure(logger, "/api/accounts/:id/neighborhood-boundary failed", error);
+      return res.status(status).json({ error: code || "neighborhood_boundary_lookup_failed" });
     }
   });
 
@@ -118,19 +121,21 @@ export function createNeighborhoodRouter({
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "neighborhood_boundary_generation_failed";
-      logger.error?.("/api/accounts/:id/neighborhood-boundary/generate failed", safeOperationalErrorCode(error));
+      logBoundedFailure(logger, "/api/accounts/:id/neighborhood-boundary/generate failed", error);
       const clientErrors = new Set([
         "invalid_account_id",
         "invalid_assignment_file",
         "invalid_neighborhood_search_profile",
         "invalid_neighborhood_discovery_radius",
       ]);
-      const status = message === "account_not_found" ||
-        message === "subject_parcel_geometry_unavailable" ? 404
-        : clientErrors.has(message) ? 400
+      const code = knownErrorCode(error, new Set([
+        ...clientErrors, "account_not_found", "subject_parcel_geometry_unavailable",
+      ]));
+      const status = code === "account_not_found" ||
+        code === "subject_parcel_geometry_unavailable" ? 404
+        : clientErrors.has(code) ? 400
           : 500;
-      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_generation_failed" : message });
+      return res.status(status).json({ error: code || "neighborhood_boundary_generation_failed" });
     }
   });
 
@@ -153,7 +158,6 @@ export function createNeighborhoodRouter({
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "neighborhood_boundary_review_failed";
       const clientErrors = new Set([
         "invalid_account_id",
         "invalid_assignment_file",
@@ -162,12 +166,15 @@ export function createNeighborhoodRouter({
         "invalid_neighborhood_boundary_reviewer",
         "neighborhood_boundary_notes_too_long",
       ]);
-      const status = message === "account_not_found" ||
-        message === "neighborhood_boundary_assessment_not_found" ? 404
-        : clientErrors.has(message) ? 400
+      const code = knownErrorCode(error, new Set([
+        ...clientErrors, "account_not_found", "neighborhood_boundary_assessment_not_found",
+      ]));
+      const status = code === "account_not_found" ||
+        code === "neighborhood_boundary_assessment_not_found" ? 404
+        : clientErrors.has(code) ? 400
           : 500;
-      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-boundary review failed", safeOperationalErrorCode(error));
-      return res.status(status).json({ error: status === 500 ? "neighborhood_boundary_review_failed" : message });
+      if (status === 500) logBoundedFailure(logger, "/api/accounts/:id/neighborhood-boundary review failed", error);
+      return res.status(status).json({ error: code || "neighborhood_boundary_review_failed" });
     }
   });
 
@@ -183,12 +190,14 @@ export function createNeighborhoodRouter({
       const assessment = await getRelevance(pool, { accountId, assignmentFileId });
       return res.json({ account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "neighborhood_relevance_lookup_failed";
-      const status = message === "account_not_found" ? 404
-        : ["invalid_account_id", "invalid_assignment_file"].includes(message) ? 400
+      const code = knownErrorCode(error, new Set([
+        "account_not_found", "invalid_account_id", "invalid_assignment_file",
+      ]));
+      const status = code === "account_not_found" ? 404
+        : code ? 400
           : 500;
-      if (status === 500) logger.error?.("/api/accounts/:id/neighborhood-relevance failed", safeOperationalErrorCode(error));
-      return res.status(status).json({ error: status === 500 ? "neighborhood_relevance_lookup_failed" : message });
+      if (status === 500) logBoundedFailure(logger, "/api/accounts/:id/neighborhood-relevance failed", error);
+      return res.status(status).json({ error: code || "neighborhood_relevance_lookup_failed" });
     }
   });
 
@@ -208,19 +217,21 @@ export function createNeighborhoodRouter({
       });
       return res.json({ ok: true, account_id: accountId, assessment });
     } catch (error) {
-      const message = error?.message || "neighborhood_relevance_generation_failed";
-      logger.error?.("/api/accounts/:id/neighborhood-relevance/generate failed", safeOperationalErrorCode(error));
+      logBoundedFailure(logger, "/api/accounts/:id/neighborhood-relevance/generate failed", error);
       const clientErrors = new Set([
         "invalid_account_id",
         "invalid_assignment_file",
         "invalid_neighborhood_boundary_assessment",
         "neighborhood_boundary_required",
       ]);
-      const status = message === "account_not_found" ? 404
-        : clientErrors.has(message) ? 400
-          : message === "neighborhood_relevance_candidates_unavailable" ? 422
+      const code = knownErrorCode(error, new Set([
+        ...clientErrors, "account_not_found", "neighborhood_relevance_candidates_unavailable",
+      ]));
+      const status = code === "account_not_found" ? 404
+        : clientErrors.has(code) ? 400
+          : code === "neighborhood_relevance_candidates_unavailable" ? 422
             : 500;
-      return res.status(status).json({ error: status === 500 ? "neighborhood_relevance_generation_failed" : message });
+      return res.status(status).json({ error: code || "neighborhood_relevance_generation_failed" });
     }
   });
 

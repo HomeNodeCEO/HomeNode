@@ -379,6 +379,46 @@ test("unexpected neighborhood failures never expose database details in response
   assert.doesNotMatch(JSON.stringify(logs), /private-password/);
 });
 
+test("neighborhood routes retain fixed failures when diagnostics or error getters throw", async (context) => {
+  const hostileMessage = new Error("private-password");
+  Object.defineProperty(hostileMessage, "message", {
+    get() { throw new Error("message_getter_failed"); },
+  });
+  for (const failure of [new Error("private-password"), hostileMessage]) {
+    const server = await startRouter(createNeighborhoodRouter(options({
+      getReadiness: async () => { throw failure; },
+      getBoundary: async () => { throw failure; },
+      generateBoundary: async () => { throw failure; },
+      reviewBoundary: async () => { throw failure; },
+      getRelevance: async () => { throw failure; },
+      generateRelevance: async () => { throw failure; },
+      logger: { error() { throw new Error("logger_unavailable"); } },
+    })));
+    context.after(server.close);
+
+    for (const [method, path, code] of [
+      ["GET", "/api/neighborhood-engine/readiness", "neighborhood_engine_readiness_failed"],
+      ["GET", "/api/accounts/42/neighborhood-boundary", "neighborhood_boundary_lookup_failed"],
+      ["POST", "/api/accounts/42/neighborhood-boundary/generate", "neighborhood_boundary_generation_failed"],
+      ["PATCH", "/api/accounts/42/neighborhood-boundary/boundary-2", "neighborhood_boundary_review_failed"],
+      ["GET", "/api/accounts/42/neighborhood-relevance", "neighborhood_relevance_lookup_failed"],
+      ["POST", "/api/accounts/42/neighborhood-relevance/generate", "neighborhood_relevance_generation_failed"],
+    ]) {
+      const response = await fetch(`${server.baseUrl}${path}`, {
+        method,
+        ...(method === "GET" ? {} : {
+          headers: { "content-type": "application/json" },
+          body: "{}",
+        }),
+      });
+      assert.equal(response.status, 500, path);
+      const body = await response.json();
+      assert.deepEqual(body, { error: code }, path);
+      assert.doesNotMatch(JSON.stringify(body), /private-password|message_getter_failed|logger_unavailable/);
+    }
+  }
+});
+
 test("neighborhood router validates composition and remains between context mounts", () => {
   assert.throws(() => createNeighborhoodRouter(), /neighborhood_router_pool_required/);
   assert.throws(

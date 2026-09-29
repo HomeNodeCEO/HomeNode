@@ -246,6 +246,50 @@ test("OCR request timeout remains active through polling body consumption", asyn
   }
 });
 
+test("OCR poll request cannot outlast the overall polling budget", async (context) => {
+  context.mock.timers.enable({ apis: ["setTimeout"] });
+  const originalFetch = globalThis.fetch;
+  const originalNow = Date.now;
+  let clockReads = 0;
+  let requestCount = 0;
+  let pollStarted;
+  const pollReady = new Promise((resolve) => { pollStarted = resolve; });
+  Date.now = () => (clockReads++ === 0 ? 0 : 9_999);
+  globalThis.fetch = async (_url, init) => {
+    requestCount += 1;
+    if (requestCount === 1) {
+      return new Response(null, {
+        status: 202,
+        headers: {
+          "operation-location":
+            "https://example.cognitiveservices.azure.com/documentintelligence/documentModels/prebuilt-read/analyzeResults/operation-budget?api-version=2024-11-30",
+        },
+      });
+    }
+    return new Promise((_resolve, reject) => {
+      init.signal.addEventListener("abort", () => reject(new Error("stalled provider")), { once: true });
+      pollStarted();
+    });
+  };
+  try {
+    const provider = createDocumentOcrProvider({
+      DOCUMENT_OCR_PROVIDER: "azure",
+      AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT: "https://example.cognitiveservices.azure.com",
+      AZURE_DOCUMENT_INTELLIGENCE_KEY: "secret",
+      DOCUMENT_OCR_MAX_POLL_MS: "10000",
+      DOCUMENT_OCR_REQUEST_TIMEOUT_MS: "120000",
+    });
+    const analysis = provider.analyzePdf(Buffer.from("%PDF-scanned"));
+    await pollReady;
+    context.mock.timers.tick(1);
+    await assert.rejects(analysis, { message: "document_ocr_poll_unavailable" });
+    assert.equal(requestCount, 2);
+  } finally {
+    Date.now = originalNow;
+    globalThis.fetch = originalFetch;
+  }
+});
+
 test("OCR rejects a provider-directed polling URL outside the configured Azure origin", async () => {
   const originalFetch = globalThis.fetch;
   globalThis.fetch = async () => new Response(null, {

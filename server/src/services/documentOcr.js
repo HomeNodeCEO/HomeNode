@@ -116,11 +116,29 @@ function trustedOperationUrl(operationLocation, endpoint) {
   return resultUrl;
 }
 
+function indexParagraphsByPage(paragraphs) {
+  const byPage = new Map();
+  for (const paragraph of paragraphs) {
+    const regions = paragraph?.boundingRegions;
+    if (!Array.isArray(regions)) continue;
+    const seenPages = new Set();
+    for (const region of regions) {
+      const pageNumber = Number(region?.pageNumber || 0);
+      if (Number.isNaN(pageNumber) || seenPages.has(pageNumber)) continue;
+      seenPages.add(pageNumber);
+      if (!byPage.has(pageNumber)) byPage.set(pageNumber, []);
+      byPage.get(pageNumber).push(paragraph);
+    }
+  }
+  return byPage;
+}
+
 function pageTextFromResult(result = {}) {
   const analyzeResult = result.analyzeResult || {};
   const fullText = String(analyzeResult.content || "");
   const paragraphs = Array.isArray(analyzeResult.paragraphs) ? analyzeResult.paragraphs : [];
   const pages = Array.isArray(analyzeResult.pages) ? analyzeResult.pages : [];
+  let paragraphsByPage;
   return pages
     .slice()
     .sort((left, right) => Number(left?.pageNumber || 0) - Number(right?.pageNumber || 0))
@@ -135,9 +153,8 @@ function pageTextFromResult(result = {}) {
           .trim();
       }
       const pageNumber = Number(page?.pageNumber || 0);
-      return paragraphs
-        .filter((paragraph) => Array.isArray(paragraph?.boundingRegions)
-          && paragraph.boundingRegions.some((region) => Number(region?.pageNumber || 0) === pageNumber))
+      paragraphsByPage ??= indexParagraphsByPage(paragraphs);
+      return (paragraphsByPage.get(pageNumber) || [])
         .map((paragraph) => String(paragraph?.content || "").trim())
         .filter(Boolean)
         .join("\n");
@@ -265,4 +282,5 @@ export function createDocumentOcrProvider(env = process.env) {
 export const documentOcrInternals = Object.freeze({
   MAX_OCR_ERROR_RESPONSE_BYTES,
   MAX_OCR_RESULT_RESPONSE_BYTES,
+  pageTextFromResult,
 });

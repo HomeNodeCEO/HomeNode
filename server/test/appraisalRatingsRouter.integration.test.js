@@ -216,6 +216,39 @@ test("rating writes fail closed when the editor policy omits authenticated ident
   assert.equal(connectCalls, 0);
 });
 
+test("rating writes wait for readiness before borrowing a connection and bound connection failures", async (context) => {
+  const privateDetail = "database db.internal private-token";
+  const body = JSON.stringify({ effective_date: "2026-09-02", condition_rating: "C3" });
+  let readinessConnectCalls = 0;
+  const unreadied = await startRouter(baseOptions({
+    ratingsReady: { then(_resolve, reject) { reject(new Error(privateDetail)); } },
+    logger: { error() { throw new Error("logger_unavailable"); } },
+    pool: {
+      query: async () => ({ rows: [] }),
+      connect: async () => { readinessConnectCalls += 1; throw new Error("unexpected_connect"); },
+    },
+  }));
+  let failedConnectCalls = 0;
+  const disconnected = await startRouter(baseOptions({
+    logger: { error() { throw new Error("logger_unavailable"); } },
+    pool: {
+      query: async () => ({ rows: [] }),
+      connect: async () => { failedConnectCalls += 1; throw new Error(privateDetail); },
+    },
+  }));
+  context.after(async () => Promise.all([unreadied.close(), disconnected.close()]));
+
+  for (const baseUrl of [unreadied.baseUrl, disconnected.baseUrl]) {
+    const response = await fetch(`${baseUrl}/api/accounts/123/appraisal-rating`, {
+      method: "PUT", headers: { "content-type": "application/json" }, body,
+    });
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "subject_rating_update_failed" });
+  }
+  assert.equal(readinessConnectCalls, 0);
+  assert.equal(failedConnectCalls, 1);
+});
+
 test("rating revision conflicts roll back and release without writing", async (context) => {
   const calls = [];
   let released = 0;

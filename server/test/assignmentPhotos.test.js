@@ -129,26 +129,46 @@ test("builds a stable photo change token that reacts to mobile updates", () => {
 test("same-application photo fallback uploads only the registered file-scoped object", async () => {
   const content = PNG;
   const writes = [];
+  const transactions = [];
+  const object = {
+    id: "20000000-0000-4000-8000-000000000003",
+    photo_id: "20000000-0000-4000-8000-000000000002",
+    variant: "original",
+    object_key: "private/photo.png",
+    content_type: "image/png",
+    expected_byte_size: content.length,
+  };
   const pool = {
     async query(sql, values = []) {
       if (/FROM app\.assignment_files assignment_file/.test(sql)) {
         return { rows: [{ id: "report-1", workfile_status: "draft" }] };
       }
       if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
-        return { rows: [{
-          id: "20000000-0000-4000-8000-000000000003",
-          photo_id: "20000000-0000-4000-8000-000000000002",
-          variant: "original",
-          object_key: "private/photo.png",
-          content_type: "image/png",
-          expected_byte_size: content.length,
-        }] };
-      }
-      if (/UPDATE app\.inspection_photo_objects/.test(sql)) {
-        writes.push(values);
-        return { rows: [] };
+        return { rows: [object] };
       }
       throw new Error(`unexpected query: ${sql}`);
+    },
+    async connect() {
+      return {
+        async query(sql, values = []) {
+          transactions.push(sql);
+          if (["BEGIN", "COMMIT"].includes(sql)) return { rows: [] };
+          if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+            assert.match(sql, /FOR UPDATE OF report_file, workfile/);
+            return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+          }
+          if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+            assert.match(sql, /FOR UPDATE OF photo, photo_object/);
+            return { rows: [object] };
+          }
+          if (/UPDATE app\.inspection_photo_objects/.test(sql)) {
+            writes.push(values);
+            return { rows: [] };
+          }
+          throw new Error(`unexpected transaction query: ${sql}`);
+        },
+        release() { transactions.push("RELEASE"); },
+      };
     },
   };
   const stored = [];
@@ -173,7 +193,72 @@ test("same-application photo fallback uploads only the registered file-scoped ob
   assert.equal(stored[0].body, content);
   assert.equal(writes.length, 1);
   assert.match(writes[0][3], /^[a-f0-9]{64}$/);
+  assert.equal(transactions[0], "BEGIN");
+  assert.deepEqual(transactions.slice(-2), ["COMMIT", "RELEASE"]);
 });
+
+for (const terminalState of ["verified", "signed"]) {
+  test(`same-application fallback cannot record a late upload after ${terminalState}`, async () => {
+    const object = {
+      id: "20000000-0000-4000-8000-000000000003",
+      photo_id: "20000000-0000-4000-8000-000000000002",
+      variant: "original",
+      object_key: "private/photo.png",
+      content_type: "image/png",
+      expected_byte_size: PNG.length,
+    };
+    const events = [];
+    const pool = {
+      async query(sql) {
+        if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+          return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+        }
+        if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+          return { rows: [object] };
+        }
+        assert.fail(`unexpected preflight query: ${sql}`);
+      },
+      async connect() {
+        events.push("connect");
+        return {
+          async query(sql) {
+            if (["BEGIN", "ROLLBACK"].includes(sql)) {
+              events.push(sql);
+              return { rows: [] };
+            }
+            if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+              assert.match(sql, /FOR UPDATE OF report_file, workfile/);
+              return { rows: [{ id: "report-1", workfile_status: terminalState === "signed" ? "signed" : "draft" }] };
+            }
+            if (/FROM app\.inspection_photo_objects photo_object/.test(sql)) {
+              assert.match(sql, /FOR UPDATE OF photo, photo_object/);
+              assert.match(sql, /photo\.status NOT IN \('verified', 'excluded', 'deleted'\)/);
+              return { rows: [] };
+            }
+            assert.fail(`late upload must not update evidence: ${sql}`);
+          },
+          release() { events.push("RELEASE"); },
+        };
+      },
+    };
+    await assert.rejects(() => uploadAssignmentPhotoObject(pool, {
+      configured: true,
+      bucket: "private",
+      async putObject() {
+        events.push("PUT");
+        return { etag: "late-upload" };
+      },
+    }, {
+      accountId: "26355500170360000",
+      assignmentFileId: 91,
+      photoId: object.photo_id,
+      objectId: object.id,
+      contentType: "image/png",
+      content: PNG,
+    }), terminalState === "signed" ? /custom_appraisal_workfile_signed/ : /assignment_photo_object_not_found/);
+    assert.deepEqual(events, ["PUT", "connect", "BEGIN", "ROLLBACK", "RELEASE"]);
+  });
+}
 
 test("same-application fallback rejects MIME-spoofed photo bytes before storage", async () => {
   const spoof = Buffer.alloc(PNG.length, 0x41);

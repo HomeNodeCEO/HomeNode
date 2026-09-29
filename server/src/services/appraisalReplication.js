@@ -455,9 +455,13 @@ export async function replicateAppraisalFile(pool, {
     enrichmentFailed = true;
   }
   if (!targetFile) {
-    logger.error?.(enrichmentFailed
-      ? "[appraisal-replication] response_enrichment_failed"
-      : "[appraisal-replication] response_enrichment_unavailable");
+    try {
+      logger.error?.(enrichmentFailed
+        ? "[appraisal-replication] response_enrichment_failed"
+        : "[appraisal-replication] response_enrichment_unavailable");
+    } catch {
+      // The replication is committed; diagnostics must not turn it into an apparent failure.
+    }
     targetFile = committedTarget;
   }
   if (!targetFile) throw new Error("replicated_report_file_not_found");

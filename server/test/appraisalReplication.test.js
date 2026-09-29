@@ -171,6 +171,22 @@ test("a committed replication retry returns the original file when history enric
   assert.deepEqual(logEvents, ["[appraisal-replication] response_enrichment_failed"]);
 });
 
+test("a failed diagnostic logger cannot hide a committed replication", async () => {
+  const pool = retryPool(existingReplicationRow());
+  const result = await replicateAppraisalFile(pool, {
+    accountId: "subject-1",
+    sourceReportFileId: IDS.source,
+    input: replicationInput(),
+    actorUserId: IDS.actor,
+    organizationId: IDS.organization,
+    logger: { error: () => { throw new Error("logging_unavailable"); } },
+  });
+
+  assert.equal(result.report_file.id, IDS.target);
+  assert.equal(pool.queries.at(-1).sql, "COMMIT");
+  assert.equal(pool.released, true);
+});
+
 test("reusing a replication request id with a changed payload rolls back", async () => {
   const pool = retryPool(existingReplicationRow());
   await assert.rejects(

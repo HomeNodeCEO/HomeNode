@@ -190,6 +190,98 @@ test("R2 response-body failures retain bounded download errors", async () => {
   );
 });
 
+test("buffered R2 downloads time out and cancel a body stalled after headers", async () => {
+  let cancelled = false;
+  const storage = createUadObjectStorage({
+    ...ENVIRONMENT,
+    R2_STREAM_TIMEOUT_MS: "5000",
+    R2_MAX_ATTEMPTS: "1",
+  }, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) { controller.enqueue(new Uint8Array([1])); },
+      cancel() { cancelled = true; },
+    }), { status: 200 }),
+  });
+  await assert.rejects(
+    () => storage.getObject({ objectKey: "private/stalled-buffer", maxBytes: 1024 }),
+    (error) => error.message === "uad_object_download_timeout",
+  );
+  assert.equal(cancelled, true);
+});
+
+test("caller cancellation during a buffered R2 body keeps the abort identity", async () => {
+  const controller = new AbortController();
+  const started = Promise.withResolvers();
+  let cancelled = false;
+  const storage = createUadObjectStorage(ENVIRONMENT, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(stream) {
+        stream.enqueue(new Uint8Array([1]));
+        started.resolve();
+      },
+      cancel() { cancelled = true; },
+    }), { status: 200 }),
+  });
+  const request = storage.getObject({
+    objectKey: "private/abandoned-body",
+    maxBytes: 1024,
+    signal: controller.signal,
+  });
+  await started.promise;
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(request, /uad_artifact_request_aborted/);
+  assert.equal(cancelled, true);
+});
+
+test("streamed R2 downloads time out and remove a partial file after body stall", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "uad-r2-stalled-test-"));
+  try {
+    const filePath = path.join(directory, "partial.bin");
+    const storage = createUadObjectStorage({
+      ...ENVIRONMENT,
+      R2_STREAM_TIMEOUT_MS: "5000",
+      R2_MAX_ATTEMPTS: "1",
+    }, {
+      fetchImpl: async () => new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array([1])); },
+      }), { status: 200 }),
+    });
+    await assert.rejects(
+      () => storage.downloadObjectToFile({
+        objectKey: "private/stalled-file",
+        filePath,
+        maxBytes: 1024,
+      }),
+      (error) => error.message === "uad_object_download_timeout",
+    );
+    await assert.rejects(() => readFile(filePath), { code: "ENOENT" });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("buffered R2 body timeout resets when bytes continue arriving", async () => {
+  const storage = createUadObjectStorage({
+    ...ENVIRONMENT,
+    R2_STREAM_TIMEOUT_MS: "5000",
+    R2_MAX_ATTEMPTS: "1",
+  }, {
+    fetchImpl: async () => new Response(new ReadableStream({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]));
+        setTimeout(() => controller.enqueue(new Uint8Array([2])), 3000);
+        setTimeout(() => controller.close(), 6000);
+      },
+    }), { status: 200 }),
+  });
+  const downloaded = await storage.getObject({
+    objectKey: "private/slow-progress",
+    maxBytes: 1024,
+  });
+  assert.deepEqual(downloaded.body, Buffer.from([1, 2]));
+});
+
 test("R2 requests stop immediately when artifact generation is abandoned", async () => {
   let calls = 0;
   const started = Promise.withResolvers();

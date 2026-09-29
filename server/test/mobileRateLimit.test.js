@@ -111,6 +111,73 @@ test("unexpected mobile route failures log only bounded diagnostic codes", async
   assert.doesNotMatch(JSON.stringify(calls), /private-password|forged-log-line/);
 });
 
+test("mobile SQLSTATE responses preserve conflict status without exposing database diagnostics", async (t) => {
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  for (const [sqlstate, status, code] of [
+    ["23505", 409, "mobile_record_conflict"],
+    ["23503", 400, "mobile_reference_invalid"],
+  ]) {
+    const fixture = authenticatedFixture();
+    const originalQuery = fixture.pool.query;
+    fixture.pool.query = async (sql, ...args) => {
+      if (String(sql).includes("WITH accessible_files AS")) {
+        throw Object.assign(new Error(`invalid_constraint:${privateDetail}`), { code: sqlstate });
+      }
+      return originalQuery(sql, ...args);
+    };
+    const app = express();
+    app.use("/api/mobile", createMobileRouter({
+      pool: fixture.pool,
+      verifier: fixture.verifier,
+      enabled: true,
+      security: { apiRateLimitEnabled: false },
+    }));
+    const baseUrl = await listen(app, t);
+    const response = await fetch(`${baseUrl}/api/mobile/properties/search?q=Main`, {
+      headers: { authorization: "Bearer test-token" },
+    });
+    assert.equal(response.status, status);
+    assert.deepEqual(await response.json(), { error: code });
+  }
+});
+
+test("mobile route errors reject malformed status codes and private public-code text", async (t) => {
+  const fixture = authenticatedFixture();
+  const originalQuery = fixture.pool.query;
+  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  let statusCode = "503";
+  fixture.pool.query = async (sql, ...args) => {
+    if (String(sql).includes("WITH accessible_files AS")) {
+      throw Object.assign(new Error(privateDetail), { statusCode });
+    }
+    return originalQuery(sql, ...args);
+  };
+  const app = express();
+  app.use("/api/mobile", createMobileRouter({
+    pool: fixture.pool,
+    verifier: fixture.verifier,
+    enabled: true,
+    security: { apiRateLimitEnabled: false },
+  }));
+  const baseUrl = await listen(app, t);
+  const request = () => fetch(`${baseUrl}/api/mobile/properties/search?q=Main`, {
+    headers: { authorization: "Bearer test-token" },
+  });
+  const originalError = console.error;
+  console.error = () => { throw new Error("logger_failed"); };
+  try {
+    const malformed = await request();
+    assert.equal(malformed.status, 500);
+    assert.deepEqual(await malformed.json(), { error: "mobile_request_failed" });
+    statusCode = 503;
+    const bounded = await request();
+    assert.equal(bounded.status, 503);
+    assert.deepEqual(await bounded.json(), { error: "mobile_request_failed" });
+  } finally {
+    console.error = originalError;
+  }
+});
+
 test("mobile rate limiting and authentication settle before JSON parsing", async (t) => {
   const fixture = authenticatedFixture();
   const app = express();

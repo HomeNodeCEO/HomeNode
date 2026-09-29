@@ -43,7 +43,6 @@ function valuationOptions(overrides = {}) {
     buildSiteValuation: async () => { throw new Error("unexpected_site_valuation"); },
     siteErrorStatus: () => 400,
     calculateQualitative: () => { throw new Error("unexpected_qualitative"); },
-    qualitativeErrorStatus: () => 400,
     logger: { error() {} },
     ...overrides,
   };
@@ -407,12 +406,12 @@ test("cost and qualitative calculators receive the original request evidence", a
   ]);
 });
 
-test("valuation failures retain each domain mapper and asynchronous diagnostics", async (context) => {
+test("valuation known failures retain domain mappings and asynchronous diagnostics", async (context) => {
   const errors = {
     market: Object.assign(new Error("invalid_market_area"), { detail: { area: "bad" } }),
-    regression: new Error("regression_sample_too_small"),
-    cost: new Error("invalid_replacement_cost"),
-    site: new Error("site_sales_unavailable"),
+    regression: new Error("custom_area_ring_invalid"),
+    cost: new Error("invalid_depreciated_cost_number"),
+    site: new Error("subject_not_found"),
     qualitative: new Error("invalid_qualitative_bracketing"),
   };
   const logs = [];
@@ -426,7 +425,6 @@ test("valuation failures retain each domain mapper and asynchronous diagnostics"
     buildSiteValuation: async () => { throw errors.site; },
     siteErrorStatus: () => 404,
     calculateQualitative: () => { throw errors.qualitative; },
-    qualitativeErrorStatus: () => 400,
     logger: { error: (...args) => logs.push(args) },
   });
   const server = await startRouter(createValuationStudyRouter(options));
@@ -437,7 +435,7 @@ test("valuation failures retain each domain mapper and asynchronous diagnostics"
     ["/api/sales/regression-analysis", 409, errors.regression, {}],
     ["/api/sales/depreciated-cost-adjustment", 400, errors.cost, {}],
     ["/api/sales/site-valuation", 404, errors.site, {}],
-    ["/api/sales/qualitative-analysis", 400, errors.qualitative, {}],
+    ["/api/sales/qualitative-analysis", 500, { message: "qualitative_analysis_failed" }, {}],
   ];
   for (const [path, status, error, extra] of cases) {
     const response = await post(server.baseUrl, path);
@@ -448,11 +446,12 @@ test("valuation failures retain each domain mapper and asynchronous diagnostics"
     ["/api/sales/market-analysis failed", "unknown"],
     ["/api/sales/regression-analysis failed", "unknown"],
     ["/api/sales/site-valuation failed", "unknown"],
+    ["/api/sales/qualitative-analysis failed", "unknown"],
   ]);
 });
 
 test("unexpected comparison and valuation failures hide private response and log details", async (context) => {
-  const privateDetail = "postgresql://private-user:private-password@database.example/private-db";
+  const privateDetail = "invalid_postgresql://private-user:private-password@database.example/private-db";
   const failure = Object.assign(new Error(privateDetail), {
     code: "08006",
     detail: { connection_string: privateDetail },
@@ -460,9 +459,9 @@ test("unexpected comparison and valuation failures hide private response and log
   const comparisonLogs = [];
   const comparison = await startRouter(createComparisonStudyRouter(comparisonOptions({
     buildPairedStudy: async () => { throw failure; },
-    pairedErrorStatus: () => 500,
+    pairedErrorStatus: () => 400,
     loadMarketContext: async () => { throw failure; },
-    marketErrorStatus: () => 500,
+    marketErrorStatus: () => 400,
     logger: { error: (...args) => comparisonLogs.push(args) },
   })));
   context.after(comparison.close);
@@ -481,16 +480,15 @@ test("unexpected comparison and valuation failures hide private response and log
   const valuationLogs = [];
   const valuation = await startRouter(createValuationStudyRouter(valuationOptions({
     buildMarketAnalyses: async () => { throw failure; },
-    marketErrorStatus: () => 500,
+    marketErrorStatus: () => 400,
     buildRegression: async () => { throw failure; },
-    regressionErrorStatus: () => 500,
+    regressionErrorStatus: () => 400,
     calculateDepreciatedCost: () => { throw failure; },
-    depreciatedCostErrorStatus: () => 500,
+    depreciatedCostErrorStatus: () => 400,
     buildSiteValuation: async () => { throw failure; },
-    siteErrorStatus: () => 500,
+    siteErrorStatus: () => 400,
     calculateQualitative: () => { throw failure; },
-    qualitativeErrorStatus: () => 500,
-    logger: { error: (...args) => valuationLogs.push(args) },
+    logger: { error: (...args) => { valuationLogs.push(args); throw new Error("logger_failed"); } },
   })));
   context.after(valuation.close);
   for (const [path, code] of [

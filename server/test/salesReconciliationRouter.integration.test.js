@@ -226,6 +226,54 @@ test("influence queue failure is soft after the confirmed sale and location queu
   ]]);
 });
 
+test("failed warning diagnostics cannot hide a committed sale or skip the other queue", async (context) => {
+  const queued = [];
+  const locationFailure = await startRouter(baseOptions({
+    reconcileSourceRecord: async () => successfulResult,
+    ensureLocationSchema: async () => { throw new Error("location_unavailable"); },
+    enqueueInfluenceAccounts: async () => { queued.push("influence"); },
+    logger: { error() {}, warn() { throw new Error("logger_unavailable"); } },
+  }));
+  const influenceFailure = await startRouter(baseOptions({
+    reconcileSourceRecord: async () => successfulResult,
+    enqueueLocationAccounts: async () => { queued.push("location"); },
+    enqueueInfluenceAccounts: async () => { throw new Error("influence_unavailable"); },
+    logger: { error() {}, warn() { throw new Error("logger_unavailable"); } },
+  }));
+  context.after(async () => Promise.all([locationFailure.close(), influenceFailure.close()]));
+
+  for (const server of [locationFailure, influenceFailure]) {
+    const response = await reconcile(server.baseUrl, 55, {});
+    assert.equal(response.status, 200);
+    assert.deepEqual(await response.json(), { ok: true, ...successfulResult });
+  }
+  assert.deepEqual(queued, ["influence", "location"]);
+});
+
+test("throwing error getters and loggers retain fixed reconciliation responses", async (context) => {
+  const failure = new Error("private-password");
+  Object.defineProperty(failure, "message", {
+    get() { throw new Error("message_getter_failed"); },
+  });
+  const logger = { error() { throw new Error("logger_unavailable"); }, warn() {} };
+  const queueServer = await startRouter(baseOptions({
+    listQueue: async () => { throw failure; },
+    logger,
+  }));
+  const reconcileServer = await startRouter(baseOptions({
+    reconcileSourceRecord: async () => { throw failure; },
+    logger,
+  }));
+  context.after(async () => Promise.all([queueServer.close(), reconcileServer.close()]));
+
+  const queue = await fetch(`${queueServer.baseUrl}/api/sales/reconciliation-queue`);
+  assert.equal(queue.status, 500);
+  assert.deepEqual(await queue.json(), { error: "sales_reconciliation_queue_failed" });
+  const write = await reconcile(reconcileServer.baseUrl, 55, {});
+  assert.equal(write.status, 500);
+  assert.deepEqual(await write.json(), { error: "sales_reconciliation_failed" });
+});
+
 test("reconciliation errors retain not-found, conflict, validation, and bounded diagnostics", async (context) => {
   const diagnostic = new Error("database db.internal secret-token");
   const cases = [

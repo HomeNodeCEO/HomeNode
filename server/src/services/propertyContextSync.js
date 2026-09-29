@@ -201,6 +201,8 @@ function syncFailureCode(error) {
     : `property_context_sync_${operationalCode}`;
 }
 
+export { syncFailureCode as propertyContextSyncFailureCode };
+
 export async function requestArcGis(url, values, {
   fetchImpl = fetch,
   timeoutMs = 120_000,

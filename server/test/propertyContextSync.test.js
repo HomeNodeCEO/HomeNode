@@ -9,6 +9,7 @@ import {
   normalizeOfficialZoningFeature,
   normalizeRoadFeature,
   normalizeTrafficVolumeFeature,
+  propertyContextSyncFailureCode,
   propertyContextSyncInternals,
   rebuildRoadGraph,
   requestArcGis,
@@ -18,6 +19,13 @@ import {
   syncTxdotTrafficContext,
   tigerRoadOutFields,
 } from "../src/services/propertyContextSync.js";
+
+test("property context CLI diagnostics never return raw exception text", () => {
+  assert.equal(propertyContextSyncFailureCode(new Error("password=do-not-expose")), "property_context_sync_failed");
+  assert.equal(propertyContextSyncFailureCode(new Error("property_context_source_timeout")), "property_context_source_timeout");
+  assert.equal(propertyContextSyncFailureCode({ code: "23505", message: "secret SQL detail" }), "property_context_sync_23505");
+  assert.equal(propertyContextSyncFailureCode({ get message() { throw new Error("secret"); }, get code() { throw new Error("secret"); } }), "property_context_sync_failed");
+});
 
 function arcGisResponse(payload, status = 200) {
   return new Response(JSON.stringify(payload), {

@@ -2626,6 +2626,7 @@ export async function verifyAssignmentPhotoUpload(
     method: 'POST',
     headers: { 'content-type': 'application/json', 'x-homenode-editor-key': editorKey },
     body: '{}',
+    timeoutMs: 120_000,
   });
   return response.photo;
 }

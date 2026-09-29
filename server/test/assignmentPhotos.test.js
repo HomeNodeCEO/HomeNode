@@ -704,6 +704,8 @@ test("desktop photo center watches the exact active file for mobile changes", ()
   assert.match(center, /uploadAssignmentPhotoObjectViaApi/);
   assert.match(center, /Direct photo upload failed/);
   assert.match(api, /photos\/\$\{encodeURIComponent\(photoId\)\}\/objects/);
+  const verifyApi = api.match(/export async function verifyAssignmentPhotoUpload\([\s\S]*?\n\}/)?.[0];
+  assert.match(verifyApi, /timeoutMs: 120_000/);
   assert.match(center, /loadAssignmentFileFallback/);
   assert.match(api, /getAssignmentPhotos[\s\S]*retryTransient: true/);
   assert.match(center, /Refresh now/);

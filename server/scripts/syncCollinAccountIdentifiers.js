@@ -1,6 +1,8 @@
 import "dotenv/config";
 import pg from "pg";
 
+import { safeCollinCadSyncFailureCode } from "../src/security/safeCollinCadSyncFailureCode.js";
+
 import {
   ensureSalesReconciliationSchema,
   homeNodeCollinAccountIdFromPropertyId,
@@ -161,7 +163,7 @@ async function upsertCrosswalk(queryable, crosswalk) {
 }
 
 async function main() {
-  if (!process.env.DATABASE_URL) throw new Error("DATABASE_URL is required");
+  if (!process.env.DATABASE_URL) throw new Error("database_url_required");
   const apply = hasFlag("--apply");
   const maximumRows = numericArgument("--limit");
   const pool = new pg.Pool({
@@ -237,6 +239,6 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error?.message || error);
+  console.error("[collin-cad] sync failed", safeCollinCadSyncFailureCode(error));
   process.exitCode = 1;
 });

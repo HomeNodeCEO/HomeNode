@@ -72,6 +72,69 @@ test("readiness bounds a stalled database probe instead of hanging the health en
   assert.ok(Date.now() - startedAt < 1_000);
 });
 
+test("concurrent readiness requests share one database probe and retry after it settles", async () => {
+  let resolveProbe;
+  let queries = 0;
+  const handlers = createRuntimeHealthHandlers({
+    pool: {
+      query() {
+        queries += 1;
+        if (queries === 1) return new Promise(resolve => { resolveProbe = resolve; });
+        return Promise.resolve({ rows: [{ ready: 1 }] });
+      },
+    },
+  });
+  const first = response();
+  const second = response();
+  const firstCall = handlers.readiness({}, first);
+  const secondCall = handlers.readiness({}, second);
+  await Promise.resolve();
+  assert.equal(queries, 1);
+
+  resolveProbe({ rows: [{ ready: 1 }] });
+  await Promise.all([firstCall, secondCall]);
+  assert.equal(first.statusCode, 200);
+  assert.equal(second.statusCode, 200);
+
+  const next = response();
+  await handlers.readiness({}, next);
+  assert.equal(queries, 2);
+  assert.equal(next.statusCode, 200);
+});
+
+test("timed-out readiness requests do not queue new probes while the old query is pending", async () => {
+  let resolveProbe;
+  let queries = 0;
+  const handlers = createRuntimeHealthHandlers({
+    pool: {
+      query() {
+        queries += 1;
+        if (queries === 1) return new Promise(resolve => { resolveProbe = resolve; });
+        return Promise.resolve({ rows: [{ ready: 1 }] });
+      },
+    },
+    environment: { READINESS_DATABASE_TIMEOUT_MS: "100" },
+  });
+  const first = response();
+  const second = response();
+  await Promise.all([handlers.readiness({}, first), handlers.readiness({}, second)]);
+  assert.equal(queries, 1);
+  assert.equal(first.statusCode, 503);
+  assert.equal(second.statusCode, 503);
+
+  const third = response();
+  await handlers.readiness({}, third);
+  assert.equal(queries, 1);
+  assert.equal(third.statusCode, 503);
+
+  resolveProbe({ rows: [{ ready: 1 }] });
+  await new Promise(resolve => setImmediate(resolve));
+  const recovered = response();
+  await handlers.readiness({}, recovered);
+  assert.equal(queries, 2);
+  assert.equal(recovered.statusCode, 200);
+});
+
 test("readiness returns bounded blocker codes without leaking dependency errors", async () => {
   const handlers = createRuntimeHealthHandlers({
     pool: {

@@ -71,14 +71,11 @@ function initializationSnapshot(loadSnapshot) {
   }
 }
 
-async function queryWithDeadline(pool, timeoutMs) {
+async function queryWithDeadline(query, timeoutMs) {
   let timer = null;
   try {
     await Promise.race([
-      Promise.resolve().then(() => pool.query({
-        text: "SELECT 1 AS ready",
-        query_timeout: timeoutMs,
-      })),
+      query,
       new Promise((_, reject) => {
         timer = setTimeout(() => reject(new Error("database_readiness_timeout")), timeoutMs);
       }),
@@ -125,6 +122,24 @@ export function createRuntimeHealthHandlers({
     0,
     65_536,
   );
+  let pendingDatabaseProbe = null;
+
+  function databaseProbe() {
+    if (pendingDatabaseProbe) return pendingDatabaseProbe;
+    // The HTTP deadline may fire before the pool's connection timeout. Keep
+    // sharing that underlying query until it settles instead of queueing one
+    // abandoned pool request for every concurrent health check.
+    const probe = Promise.resolve().then(() => pool.query({
+      text: "SELECT 1 AS ready",
+      query_timeout: databaseProbeTimeoutMs,
+    }));
+    pendingDatabaseProbe = probe;
+    const clear = () => {
+      if (pendingDatabaseProbe === probe) pendingDatabaseProbe = null;
+    };
+    probe.then(clear, clear);
+    return probe;
+  }
 
   function liveness(_req, res) {
     const shuttingDown = Boolean(isShuttingDown());
@@ -141,7 +156,7 @@ export function createRuntimeHealthHandlers({
     if (isShuttingDown()) blockers.push("server_shutting_down");
     let databaseConnected = false;
     try {
-      await queryWithDeadline(pool, databaseProbeTimeoutMs);
+      await queryWithDeadline(databaseProbe(), databaseProbeTimeoutMs);
       databaseConnected = true;
     } catch {
       blockers.push("database_unavailable");

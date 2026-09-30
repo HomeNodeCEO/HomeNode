@@ -519,6 +519,7 @@ export async function reconcileSalesSourceRecord(
   if (!/^\d+$/.test(id)) throw new Error("invalid_source_record_id");
   const update = normalizeSalesReconciliationUpdate(input, audit);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const sourceResult = await client.query(
@@ -722,9 +723,13 @@ export async function reconcileSalesSourceRecord(
       unresolved_parcel_count: unresolvedCount,
     };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("sales_reconciliation_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }

@@ -58,11 +58,14 @@ export async function runNeighborhoodParcelPrecompute(pool, {
   if (!pool || typeof pool.connect !== 'function') throw new TypeError('neighborhood_precompute_pool_required');
   const client = await pool.connect();
   let locked = false;
+  let retireClient = true;
   const started = Date.now();
   let scanned = 0, refreshed = 0, removed = 0, cursor = '-9223372036854775808';
   try {
     const lock = await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked', [LOCK_KEY]);
-    locked = lock.rows?.[0]?.locked === true;
+    if (typeof lock.rows?.[0]?.locked !== 'boolean') throw new Error('neighborhood_precompute_lock_state_unverified');
+    locked = lock.rows[0].locked;
+    retireClient = false;
     if (!locked) return { status: 'already_running', scanned: 0, refreshed: 0, removed: 0 };
     await client.query(`INSERT INTO app.neighborhood_parcel_precompute_state
       (id, status, started_at, completed_at, rows_scanned, rows_refreshed, last_error_code, updated_at)
@@ -119,10 +122,12 @@ export async function runNeighborhoodParcelPrecompute(pool, {
     throw error;
   } finally {
     if (locked) {
-      try { await client.query('SELECT pg_advisory_unlock($1::bigint)', [LOCK_KEY]); }
-      catch { /* A lost connection also releases its session lock. */ }
+      try {
+        const { rows } = await client.query('SELECT pg_advisory_unlock($1::bigint)', [LOCK_KEY]);
+        if (rows?.[0]?.pg_advisory_unlock !== true) retireClient = true;
+      } catch { retireClient = true; }
     }
-    client.release();
+    client.release(retireClient ? new Error('neighborhood_precompute_lock_state_unverified') : undefined);
   }
 }
 

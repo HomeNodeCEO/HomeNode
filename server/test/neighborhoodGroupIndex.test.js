@@ -3,13 +3,21 @@ import test from 'node:test';
 import { getPreparedNeighborhoodGroupSummary,runNeighborhoodGroupIndex,NEIGHBORHOOD_GROUP_INDEX_SQL }
   from '../src/services/neighborhoodAssessment/neighborhoodGroupIndex.js';
 
-function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=false}={}) {
-  const calls=[];let released=false;
+function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=false,
+  lockError=false,unlockOutcome='succeeded'}={}) {
+  const calls=[];let released=false,releaseError;
   const client={
     async query(input,values) {
       const sql=typeof input==='string'?input:input.text;
       calls.push({sql,values:values??input.values,queryTimeout:typeof input==='object'?input.query_timeout:undefined});
-      if (sql.includes('pg_try_advisory_lock')) return {rows:[{locked}]};
+      if (sql.includes('pg_try_advisory_lock')) {
+        if (lockError) throw new Error('synthetic_lock_failure');
+        return locked==='missing' ? {rows:[]} : {rows:[{locked}]};
+      }
+      if (sql.includes('pg_advisory_unlock')) {
+        if (unlockOutcome==='rejected') throw new Error('synthetic_unlock_failure');
+        return unlockOutcome==='missing' ? {rows:[]} : {rows:[{pg_advisory_unlock:unlockOutcome==='succeeded'}]};
+      }
       if (sql===NEIGHBORHOOD_GROUP_INDEX_SQL.parcelBatch || sql===NEIGHBORHOOD_GROUP_INDEX_SQL.saleBatch) {
         if (fail) throw new Error('synthetic_batch_error');
         return {rows:[{cursor:'-9223372036854775808',scanned:0,copied:0}]};
@@ -20,9 +28,10 @@ function fixture({locked=true,fail=false,failSummary=false,failSalesSummary=fals
       if (sql.startsWith('UPDATE app.neighborhood_group_generations')) return {rowCount:1,rows:[]};
       return {rows:[]};
     },
-    release(){released=true;},
+    release(error){released=true;releaseError=error;},
   };
-  return {pool:{async connect(){return client;}},calls,get released(){return released;}};
+  return {pool:{async connect(){return client;}},calls,get released(){return released;},
+    get releaseError(){return releaseError;}};
 }
 
 test('publishes only after parcel, sale and summary preparation in one snapshot',async()=>{
@@ -46,6 +55,7 @@ test('publishes only after parcel, sale and summary preparation in one snapshot'
   assert.ok(sql.findIndex(value=>value.includes('INSERT INTO app.neighborhood_group_active'))<sql.indexOf('COMMIT'));
   assert.equal(sql.includes('ROLLBACK'),false);
   assert.equal(f.released,true);
+  assert.equal(f.releaseError,undefined);
 });
 
 test('failed generation rolls back and never replaces the active pointer',async()=>{
@@ -84,9 +94,29 @@ test('overlapping worker and invalid budgets do not read source tables',async()=
   const f=fixture({locked:false});
   assert.deepEqual(await runNeighborhoodGroupIndex(f.pool),{status:'already_running'});
   assert.equal(f.calls.length,1);
+  assert.equal(f.releaseError,undefined);
   await assert.rejects(runNeighborhoodGroupIndex(f.pool,{batchSize:5001}),/invalid_neighborhood_group_index:batch_size/);
   assert.equal(f.calls.length,1);
 });
+
+for (const unlockOutcome of ['rejected','not_owned','missing']) {
+  test(`group-index worker retires its client after ${unlockOutcome} advisory unlock`,async()=>{
+    const f=fixture({unlockOutcome});
+    const result=await runNeighborhoodGroupIndex(f.pool,{logger:{info(){}}});
+    assert.equal(result.status,'complete');
+    assert.equal(f.releaseError?.message,'neighborhood_group_index_lock_state_unverified');
+  });
+}
+
+for (const lockCase of [{lockError:true},{locked:'missing'}]) {
+  test(`group-index worker fails closed after uncertain advisory acquisition ${JSON.stringify(lockCase)}`,async()=>{
+    const f=fixture(lockCase);
+    await assert.rejects(runNeighborhoodGroupIndex(f.pool,{logger:{warn(){}}}),
+      /synthetic_lock_failure|neighborhood_group_index_lock_state_unverified/);
+    assert.equal(f.calls.some(call=>call.sql.includes('pg_advisory_unlock')),false);
+    assert.equal(f.releaseError?.message,'neighborhood_group_index_lock_state_unverified');
+  });
+}
 
 test('lookup normalizes exact keys and reads only the published generation',async()=>{
   let values;

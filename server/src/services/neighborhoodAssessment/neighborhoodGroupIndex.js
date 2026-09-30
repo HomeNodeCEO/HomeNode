@@ -246,9 +246,13 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
   if (!pool || typeof pool.connect!=='function') throw new TypeError('neighborhood_group_index_pool_required');
   const client=await pool.connect();
   let locked=false,transaction=false,phase='lock';
+  let retireClient=true;
   const generationId=randomUUID(),deadline=Date.now()+maximumRuntimeMinutes*60_000;
   try {
-    locked=(await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[LOCK_KEY])).rows?.[0]?.locked===true;
+    const lockResult=await client.query('SELECT pg_try_advisory_lock($1::bigint) AS locked',[LOCK_KEY]);
+    if (typeof lockResult.rows?.[0]?.locked!=='boolean') throw new Error('neighborhood_group_index_lock_state_unverified');
+    locked=lockResult.rows[0].locked;
+    retireClient=false;
     if (!locked) return {status:'already_running'};
     await client.query('BEGIN ISOLATION LEVEL REPEATABLE READ'); transaction=true;
     await client.query("INSERT INTO app.neighborhood_group_generations (generation_id,status) VALUES ($1::uuid,'building')",[generationId]);
@@ -304,8 +308,13 @@ export async function runNeighborhoodGroupIndex(pool,{batchSize=1000,maximumRunt
     if (transaction) await client.query('ROLLBACK').catch(()=>{});
     throw error;
   } finally {
-    if (locked) await client.query('SELECT pg_advisory_unlock($1::bigint)',[LOCK_KEY]).catch(()=>{});
-    client.release();
+    if (locked) {
+      try {
+        const {rows}=await client.query('SELECT pg_advisory_unlock($1::bigint)',[LOCK_KEY]);
+        if (rows?.[0]?.pg_advisory_unlock!==true) retireClient=true;
+      } catch { retireClient=true; }
+    }
+    client.release(retireClient ? new Error('neighborhood_group_index_lock_state_unverified') : undefined);
   }
 }
 

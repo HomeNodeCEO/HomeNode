@@ -520,6 +520,83 @@ test("an overlapping source sync is skipped before it creates a run", async () =
   assert.equal(released, true);
 });
 
+test("a failed advisory-lock acquisition retires its pinned connection", async () => {
+  const releases = [];
+  const pool = {
+    async query() { return { rows: [], rowCount: 0 }; },
+    async connect() {
+      return {
+        async query(sql) {
+          assert.match(String(sql), /pg_try_advisory_lock/);
+          throw new Error("connection interrupted");
+        },
+        release(error) { releases.push(error); },
+      };
+    },
+  };
+  await assert.rejects(syncDcadPropertyContext(pool), /connection interrupted/);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.message, "property_context_sync_lock_state_unverified");
+});
+
+test("an unverified advisory-lock acquisition fails closed and retires its connection", async () => {
+  const releases = [];
+  const pool = {
+    async query() { return { rows: [], rowCount: 0 }; },
+    async connect() {
+      return {
+        async query(sql) {
+          assert.match(String(sql), /pg_try_advisory_lock/);
+          return { rows: [] };
+        },
+        release(error) { releases.push(error); },
+      };
+    },
+  };
+  await assert.rejects(syncDcadPropertyContext(pool), /property_context_sync_lock_state_unverified/);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.message, "property_context_sync_lock_state_unverified");
+});
+
+for (const unlockOutcome of ["succeeded", "rejected", "not_owned"]) {
+  test(`advisory unlock ${unlockOutcome} after sync settles the pinned connection safely`, async () => {
+    const releases = [];
+    const pool = {
+      async query() { return { rows: [], rowCount: 0 }; },
+      async connect() {
+        return {
+          async query(sql) {
+            const statement = String(sql);
+            if (statement.includes("pg_try_advisory_lock")) return { rows: [{ acquired: true }] };
+            if (statement.includes("pg_advisory_unlock")) {
+              if (unlockOutcome === "rejected") throw new Error("unlock connection interrupted");
+              return { rows: [{ pg_advisory_unlock: unlockOutcome === "succeeded" }] };
+            }
+            if (statement.includes("SELECT last_success_at")) {
+              return { rows: [{ last_success_at: "2026-09-29T00:00:00Z" }] };
+            }
+            if (statement.includes("COUNT(*)::bigint AS count")) {
+              return { rows: [{ count: 0, max_source_updated_at: null }] };
+            }
+            return { rows: [], rowCount: 0 };
+          },
+          release(error) { releases.push(error); },
+        };
+      },
+    };
+    const result = await syncDcadPropertyContext(pool, {
+      mode: "incremental",
+      fetchImpl: async () => arcGisResponse({ objectIds: [] }),
+      logger: { log() {} },
+    });
+    assert.equal(result.mode, "incremental");
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, unlockOutcome === "succeeded"
+      ? undefined
+      : "property_context_sync_lock_state_unverified");
+  });
+}
+
 test("multi-source sync contention preserves the iterable CLI response contract", async () => {
   function contendedPool() {
     return {

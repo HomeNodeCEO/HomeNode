@@ -41,6 +41,15 @@ const MLS_DOCUMENT_FIELDS = new Set([
   "days_on_market", "original_list_price", "list_price",
 ]);
 
+async function rollbackUadDocumentTransaction(client) {
+  try {
+    await client.query("ROLLBACK");
+    return null;
+  } catch {
+    return new Error("uad_document_rollback_failed");
+  }
+}
+
 export const PURCHASE_CONTRACT_REVIEW_FIELDS = new Set([
   "buyer_name",
   "seller_name",
@@ -296,6 +305,7 @@ async function lockMutableDocumentWorkfile(client, workfileId) {
 
 async function findOrCreateClientContact(pool, workfileId, documentId, actorUserId) {
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     await lockMutableDocumentWorkfile(client, workfileId);
@@ -330,10 +340,10 @@ async function findOrCreateClientContact(pool, workfileId, documentId, actorUser
     await client.query("COMMIT");
     return entity.id;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackUadDocumentTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -348,6 +358,7 @@ async function synchronizeDocumentSellerParties(
   const parties = uadDocumentSellerParties(sellerName);
   if (!parties) throw new Error("uad_document_party_name_requires_manual_entry");
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     await lockMutableDocumentWorkfile(client, workfileId);
@@ -427,15 +438,16 @@ async function synchronizeDocumentSellerParties(
       }));
     });
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackUadDocumentTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
 async function findOrCreateSubjectListing(pool, workfileId, documentId, actorUserId) {
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     await lockMutableDocumentWorkfile(client, workfileId);
@@ -470,10 +482,10 @@ async function findOrCreateSubjectListing(pool, workfileId, documentId, actorUse
     await client.query("COMMIT");
     return entity.id;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackUadDocumentTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

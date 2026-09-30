@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { UAD_MIGRATION_NAMES } from "../src/database/uadMigrations.js";
 import {
+  applyConfirmedUadDocumentCandidate,
   buildUadSalesContractAnalysis,
   parseUadClientAddress,
   uadPurchaseContractAssignmentValues,
@@ -11,6 +12,7 @@ import {
   uadDocumentSellerParties,
   uadDocumentCandidateIsApplicable,
   uadMlsListingValues,
+  synchronizeUadPurchaseContract,
 } from "../src/modules/uad/documentEvidence.js";
 import { validateCompleteSection } from "../src/modules/uad/editor.js";
 import { getUadEditorSections } from "../src/modules/uad/fieldCatalog.js";
@@ -29,6 +31,80 @@ test("UAD document evidence accepts only fields with reviewed canonical mappings
     assert.equal(uadDocumentCandidateIsApplicable(field), true, field);
   }
   assert.equal(uadDocumentCandidateIsApplicable("subject_property_address"), false);
+});
+
+test("UAD document entity transactions retire clients only when rollback fails", async () => {
+  const workfileId = "10000000-0000-4000-8000-000000000001";
+  const documentId = 23;
+  const candidateId = 29;
+  const cases = [
+    {
+      name: "seller",
+      run: (pool) => synchronizeUadPurchaseContract(pool, workfileId, documentId),
+      candidate: { field_key: "seller_name", review_status: "confirmed",
+        confirmed_value: "Jane Doe" },
+    },
+    {
+      name: "client",
+      run: (pool) => applyConfirmedUadDocumentCandidate(pool, workfileId, documentId, candidateId),
+      candidate: { field_key: "lender_client_name", review_status: "confirmed",
+        confirmed_value: "Example Bank", document_type: "engagement_letter" },
+    },
+    {
+      name: "listing",
+      run: (pool) => applyConfirmedUadDocumentCandidate(pool, workfileId, documentId, candidateId),
+      candidate: { field_key: "listing_status", review_status: "confirmed",
+        confirmed_value: "Active", document_type: "mls_sheet" },
+    },
+  ];
+  for (const item of cases) {
+    for (const rollbackFails of [false, true]) {
+      const queries = [];
+      const releases = [];
+      const pool = {
+        async query(sql) {
+          if (sql.includes("FROM app.assignment_documents")) {
+            return { rows: [{ id: documentId, uad_workfile_id: workfileId,
+              document_type: "purchase_contract", checksum_sha256: "a".repeat(64) }] };
+          }
+          if (sql.includes("FROM app.assignment_document_field_candidates candidate")) {
+            return { rows: [item.candidate] };
+          }
+          if (sql.includes("FROM app.assignment_document_field_candidates")) {
+            return { rows: [item.candidate] };
+          }
+          assert.fail(`unexpected preflight query for ${item.name}: ${sql}`);
+        },
+        async connect() {
+          return {
+            async query(sql) {
+              queries.push(sql);
+              if (sql === "BEGIN ISOLATION LEVEL READ COMMITTED") {
+                return { rows: [] };
+              }
+              if (sql.includes("FROM appraisal.uad_workfiles") && sql.includes("FOR UPDATE")) {
+                throw new Error("uad_document_lock_failed");
+              }
+              if (sql === "ROLLBACK") {
+                if (rollbackFails) throw new Error("private_rollback_transport_failure");
+                return { rows: [] };
+              }
+              assert.fail(`unexpected entity query for ${item.name}: ${sql}`);
+            },
+            release(reason) { releases.push(reason); },
+          };
+        },
+      };
+      await assert.rejects(item.run(pool), /uad_document_lock_failed/);
+      assert.equal(queries[0], "BEGIN ISOLATION LEVEL READ COMMITTED");
+      assert.match(queries[1], /FROM appraisal\.uad_workfiles.*FOR UPDATE/);
+      assert.equal(queries[2], "ROLLBACK");
+      assert.equal(queries.length, 3);
+      assert.equal(releases.length, 1);
+      assert.equal(releases[0]?.message,
+        rollbackFails ? "uad_document_rollback_failed" : undefined);
+    }
+  }
 });
 
 const hardyContractCandidates = [

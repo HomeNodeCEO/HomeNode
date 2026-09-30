@@ -205,6 +205,7 @@ export async function replicateAppraisalFile(pool, {
   const client = await pool.connect();
   let targetReportFileId;
   let committedTarget;
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     let replayed = false;
@@ -436,10 +437,14 @@ export async function replicateAppraisalFile(pool, {
     }
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("appraisal_replication_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 
   let targetFile = null;

@@ -55,24 +55,28 @@ function existingReplicationRow(overrides = {}) {
   };
 }
 
-function retryPool(row) {
+function retryPool(row, { rollbackFails = false } = {}) {
   const queries = [];
   let released = false;
+  let releaseReason;
   const client = {
     async query(sql, parameters = []) {
       queries.push({ sql, parameters });
+      if (sql === "ROLLBACK" && rollbackFails) throw new Error("rollback_transport_failed");
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
       if (sql.includes("pg_advisory_xact_lock")) return { rows: [] };
       if (sql.includes("WHERE target.creation_request_id = $1")) return { rows: [row] };
       throw new Error(`unexpected_query:${sql}`);
     },
-    release() {
+    release(reason) {
       released = true;
+      releaseReason = reason;
     },
   };
   return {
     queries,
     get released() { return released; },
+    get releaseReason() { return releaseReason; },
     async connect() { return client; },
     async query() { throw new Error("history_temporarily_unavailable"); },
   };
@@ -202,6 +206,25 @@ test("reusing a replication request id with a changed payload rolls back", async
   );
   assert.equal(pool.queries.at(-1).sql, "ROLLBACK");
   assert.equal(pool.released, true);
+  assert.equal(pool.releaseReason, undefined);
+});
+
+test("failed replication rollback retires its client without hiding the request conflict", async () => {
+  const pool = retryPool(existingReplicationRow(), { rollbackFails: true });
+  await assert.rejects(
+    () => replicateAppraisalFile(pool, {
+      accountId: "subject-1",
+      sourceReportFileId: IDS.source,
+      input: replicationInput({ inspection_date: "2026-09-01" }),
+      actorUserId: IDS.actor,
+      organizationId: IDS.organization,
+      logger: { error: () => {} },
+    }),
+    /replication_request_conflict/,
+  );
+  assert.equal(pool.queries.at(-1).sql, "ROLLBACK");
+  assert.equal(pool.released, true);
+  assert.equal(pool.releaseReason?.message, "appraisal_replication_rollback_failed");
 });
 
 test("an invalid replication request id is rejected before a database connection", async () => {

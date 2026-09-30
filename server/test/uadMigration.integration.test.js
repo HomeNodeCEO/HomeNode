@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
+import PDFDocument from "pdfkit";
 import pg from "pg";
 
 import {
@@ -10,6 +11,7 @@ import {
   deleteAssignmentDocument,
   ensureAssignmentDocumentsSchema,
   migrateAssignmentDocumentStorageBatch,
+  processAssignmentDocument,
   reviewAssignmentDocumentCandidate,
 } from "../src/services/assignmentDocuments.js";
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
@@ -90,6 +92,114 @@ test("scheduled legacy migration leaves signed Custom document bytes and metadat
       await client.query("ROLLBACK").catch(() => {});
       client.release();
     }
+    await pool.end();
+  }
+});
+
+test("signed Custom file blocks an already-claimed extraction before evidence replacement", {
+  skip: !databaseUrl,
+  timeout: 15_000,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 3 });
+  let accountId;
+  let assignmentFileId;
+  let documentId;
+  let releaseStorage;
+  try {
+    const identity = await pool.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    await ensureAssignmentDocumentsSchema(pool);
+    const pdf = new PDFDocument({ size: "LETTER", margin: 54 });
+    const chunks = [];
+    pdf.on("data", (chunk) => chunks.push(chunk));
+    const completed = new Promise((resolve, reject) => {
+      pdf.on("end", () => resolve(Buffer.concat(chunks)));
+      pdf.on("error", reject);
+    });
+    pdf.text("Signed assignment extraction race fixture with machine-readable text.");
+    pdf.end();
+    const content = await completed;
+    accountId = `signed-worker-${randomUUID()}`;
+    await pool.query("INSERT INTO core.accounts (account_id) VALUES ($1)", [accountId]);
+    const assignment = await pool.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $2) RETURNING id`,
+      [accountId, accountId],
+    );
+    assignmentFileId = assignment.rows[0].id;
+    await pool.query(
+      `INSERT INTO app.custom_appraisal_workfiles (assignment_file_id, canonical_file_name)
+       VALUES ($1, $2)`,
+      [assignmentFileId, `${accountId}.homenode-appraisal.json`],
+    );
+    const inserted = await pool.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name, checksum_sha256,
+          file_size_bytes, storage_provider, storage_bucket, object_key, storage_verified_at)
+       VALUES ($1, $2, 'Worker evidence', 'evidence.pdf', $3,
+               $4, 'r2', 'fixture-bucket', $5, now()) RETURNING id`,
+      [accountId, assignmentFileId,
+        createHash("sha256").update(content).digest("hex"), content.length,
+        `fixtures/${accountId}.pdf`],
+    );
+    documentId = inserted.rows[0].id;
+    let announceStorageLoad;
+    const storageLoadStarted = new Promise((resolve) => { announceStorageLoad = resolve; });
+    const storageReleased = new Promise((resolve) => { releaseStorage = resolve; });
+    const processing = processAssignmentDocument(pool, documentId, {
+      storage: {
+        configured: true,
+        async getObject() {
+          announceStorageLoad();
+          await storageReleased;
+          return { body: content, byte_size: content.length };
+        },
+      },
+      logger: { warn() {} },
+    });
+    await storageLoadStarted;
+    const claimed = await pool.query(
+      "SELECT processing_status, processing_attempts FROM app.assignment_documents WHERE id = $1",
+      [documentId],
+    );
+    assert.equal(claimed.rows[0].processing_status, "processing");
+    assert.equal(claimed.rows[0].processing_attempts, 1);
+    await pool.query(
+      `UPDATE app.custom_appraisal_workfiles
+          SET status = 'signed', signed_at = now(), signed_by = 'Fixture appraiser'
+        WHERE assignment_file_id = $1`,
+      [assignmentFileId],
+    );
+    releaseStorage();
+    await assert.rejects(processing, /custom_appraisal_workfile_signed/);
+    const untouched = await pool.query(
+      `SELECT processing_status, processing_attempts, last_processing_error,
+              (SELECT COUNT(*)::integer FROM app.assignment_document_pages WHERE document_id = $1)
+                AS page_count,
+              (SELECT COUNT(*)::integer FROM app.assignment_document_field_candidates WHERE document_id = $1)
+                AS candidate_count
+         FROM app.assignment_documents WHERE id = $1`,
+      [documentId],
+    );
+    assert.deepEqual(untouched.rows[0], {
+      processing_status: "processing",
+      processing_attempts: 1,
+      last_processing_error: null,
+      page_count: 0,
+      candidate_count: 0,
+    });
+    await assert.rejects(
+      processAssignmentDocument(pool, documentId, { force: true, logger: { warn() {} } }),
+      /custom_appraisal_workfile_signed/,
+    );
+  } finally {
+    releaseStorage?.();
+    if (documentId) await pool.query("DELETE FROM app.assignment_documents WHERE id = $1", [documentId]);
+    if (assignmentFileId) {
+      await pool.query("DELETE FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1", [assignmentFileId]);
+      await pool.query("DELETE FROM app.assignment_files WHERE id = $1", [assignmentFileId]);
+    }
+    if (accountId) await pool.query("DELETE FROM core.accounts WHERE account_id = $1", [accountId]);
     await pool.end();
   }
 });

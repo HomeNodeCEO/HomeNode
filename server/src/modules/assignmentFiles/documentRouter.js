@@ -338,6 +338,7 @@ export function createAssignmentDocumentRouter({
       const clientErrors = new Set([
         "invalid_document_id",
         "document_processing_in_progress",
+        "document_processing_attempt_stale",
         "document_retry_not_due",
         "document_not_processable",
       ]);

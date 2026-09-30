@@ -93,8 +93,10 @@ const DOCUMENT_EXTRACTION_PUBLIC_ERRORS = new Set([
   "assignment_document_storage_checksum_mismatch",
   "document_not_found",
   "document_processing_in_progress",
+  "document_processing_attempt_stale",
   "document_retry_not_due",
   "document_not_processable",
+  "custom_appraisal_workfile_signed",
 ]);
 
 function documentExtractionFailureCode(error) {
@@ -118,6 +120,14 @@ function publicDocumentStorageError(value) {
   if (value === "assignment_document_storage_upload_failed"
     || value === "assignment_document_storage_migration_failed") return value;
   return "assignment_document_storage_failed";
+}
+
+function processingDocumentScopeMatches(claimed, current) {
+  return claimed.account_id === current.account_id
+    && positiveInteger(claimed.assignment_file_id) === positiveInteger(current.assignment_file_id)
+    && (claimed.uad_workfile_id || null) === (current.uad_workfile_id || null)
+    && (claimed.tax_protest_file_id || null) === (current.tax_protest_file_id || null)
+    && (claimed.report_file_id || null) === (current.report_file_id || null);
 }
 
 async function lockMutableCustomDocumentWorkfile(client, document) {
@@ -150,7 +160,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
   }
 }
 
-async function lockMutableAssignmentDocument(client, documentId) {
+async function lockMutableAssignmentDocument(client, documentId, { processingOnly = false } = {}) {
   // Upload takes the Custom workfile lock before updating an existing document.
   // Read the immutable document scope first, then take locks in that same order
   // so review/deletion cannot deadlock with a concurrent duplicate upload.
@@ -162,8 +172,16 @@ async function lockMutableAssignmentDocument(client, documentId) {
   const scopedDocument = scopedRows[0];
   if (!scopedDocument) throw new Error("document_not_found");
   await lockMutableCustomDocumentWorkfile(client, scopedDocument);
+  // Processing needs only scope and retry state. In particular, do not fetch
+  // the potentially large PostgreSQL PDF bytea again for settlement or stale
+  // cleanup; the claim UPDATE below loads it once for extraction.
+  const projection = processingOnly
+    ? `id, account_id, assignment_file_id, uad_workfile_id,
+       tax_protest_file_id, report_file_id, processing_status,
+       processing_attempts, next_processing_at`
+    : "*";
   const { rows } = await client.query(
-    `SELECT * FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
+    `SELECT ${projection} FROM app.assignment_documents WHERE id = $1 FOR UPDATE`,
     [documentId],
   );
   const document = rows[0];
@@ -1294,8 +1312,13 @@ export async function processAssignmentDocument(pool, documentId, {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
   if (!id) throw new Error("invalid_document_id");
-  const { rows } = await pool.query(
-    `UPDATE app.assignment_documents
+  const claimClient = await pool.connect();
+  let document;
+  try {
+    await claimClient.query("BEGIN");
+    const current = await lockMutableAssignmentDocument(claimClient, id, { processingOnly: true });
+    const { rows } = await claimClient.query(
+      `UPDATE app.assignment_documents
      SET processing_status = 'processing',
          processing_attempts = processing_attempts + 1,
          processing_started_at = now(),
@@ -1324,21 +1347,22 @@ export async function processAssignmentDocument(pool, documentId, {
        )
      )
      RETURNING *`,
-    [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
-  );
-  const document = rows[0];
-  if (!document) {
-    const current = await pool.query(
-      `SELECT processing_status, next_processing_at
-       FROM app.assignment_documents WHERE id = $1`,
-      [id],
+      [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
     );
-    if (!current.rows[0]) throw new Error("document_not_found");
-    if (current.rows[0].processing_status === "processing") {
-      throw new Error("document_processing_in_progress");
+    document = rows[0];
+    if (!document) {
+      if (current.processing_status === "processing") {
+        throw new Error("document_processing_in_progress");
+      }
+      if (current.next_processing_at) throw new Error("document_retry_not_due");
+      throw new Error("document_not_processable");
     }
-    if (current.rows[0].next_processing_at) throw new Error("document_retry_not_due");
-    throw new Error("document_not_processable");
+    await claimClient.query("COMMIT");
+  } catch (error) {
+    await claimClient.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally {
+    claimClient.release();
   }
   try {
     const documentWithContent = Buffer.isBuffer(document.content) && document.content.length
@@ -1357,6 +1381,14 @@ export async function processAssignmentDocument(pool, documentId, {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      const current = await lockMutableAssignmentDocument(client, id, { processingOnly: true });
+      if (!processingDocumentScopeMatches(document, current)) {
+        throw new Error("document_scope_changed");
+      }
+      if (current.processing_status !== "processing"
+        || Number(current.processing_attempts) !== Number(document.processing_attempts)) {
+        throw new Error("document_processing_attempt_stale");
+      }
       const previousReviewResult = await client.query(
         `SELECT field_key, raw_value, normalized_value, review_status,
                 confirmed_value, reviewer, reviewed_at
@@ -1421,7 +1453,8 @@ export async function processAssignmentDocument(pool, documentId, {
              processed_at = now(),
              reviewed_at = CASE WHEN $4 = 'reviewed' THEN COALESCE(reviewed_at, now()) ELSE NULL END,
              updated_at = now()
-         WHERE id = $1
+         WHERE id = $1 AND processing_status = 'processing'
+           AND processing_attempts = $7
          RETURNING *`,
         [
           id,
@@ -1439,8 +1472,10 @@ export async function processAssignmentDocument(pool, documentId, {
             ocr: extraction.ocr_metadata,
             processing_attempts: Number(document.processing_attempts || 0),
           }),
+          document.processing_attempts,
         ],
       );
+      if (!updated.rows[0]) throw new Error("document_processing_attempt_stale");
       await client.query("COMMIT");
       return publicDocument(updated.rows[0], storedCandidates);
     } catch (error) {
@@ -1451,6 +1486,7 @@ export async function processAssignmentDocument(pool, documentId, {
     }
   } catch (error) {
     const message = documentExtractionFailureCode(error);
+    let terminalError = error;
     const attempts = Number(document.processing_attempts || 1);
     const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
       ? null
@@ -1459,8 +1495,18 @@ export async function processAssignmentDocument(pool, documentId, {
       logger.warn?.(`[documents] extraction failed for document ${id}`,
         safeOperationalErrorCode(error));
     } catch { /* Logging must not prevent a bounded failure result. */ }
-    await pool.query(
-      `UPDATE app.assignment_documents
+    let failureClient;
+    try {
+      failureClient = await pool.connect();
+      await failureClient.query("BEGIN");
+      const current = await lockMutableAssignmentDocument(failureClient, id, { processingOnly: true });
+      if (!processingDocumentScopeMatches(document, current)) {
+        throw new Error("document_scope_changed");
+      }
+      if (current.processing_status === "processing"
+        && Number(current.processing_attempts) === attempts) {
+        await failureClient.query(
+          `UPDATE app.assignment_documents
        SET processing_status = 'extraction_failed',
            extraction_summary = jsonb_build_object(
              'error', $2::text,
@@ -1472,16 +1518,34 @@ export async function processAssignmentDocument(pool, documentId, {
            next_processing_at = $4,
            last_processing_error = $2,
            processed_at = now(), updated_at = now()
-       WHERE id = $1`,
-      [
-        id,
-        message,
-        attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
-        nextProcessingAt,
-        DOCUMENT_EXTRACTION_SCHEMA_VERSION,
-      ],
-    );
-    throw error;
+       WHERE id = $1 AND processing_status = 'processing'
+         AND processing_attempts = $6`,
+          [
+            id,
+            message,
+            attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
+            nextProcessingAt,
+            DOCUMENT_EXTRACTION_SCHEMA_VERSION,
+            attempts,
+          ],
+        );
+      } else {
+        terminalError = new Error("document_processing_attempt_stale");
+      }
+      await failureClient.query("COMMIT");
+    } catch (settleError) {
+      await failureClient?.query("ROLLBACK").catch(() => {});
+      if (documentExtractionFailureCode(settleError) === "custom_appraisal_workfile_signed") {
+        terminalError = settleError;
+      }
+      try {
+        logger.warn?.(`[documents] extraction failure settlement skipped for document ${id}`,
+          safeOperationalErrorCode(settleError));
+      } catch { /* Preserve the original bounded failure. */ }
+    } finally {
+      failureClient?.release();
+    }
+    throw terminalError;
   }
 }
 
@@ -1511,15 +1575,73 @@ export async function processPendingAssignmentDocuments(pool, {
          ),
          updated_at = now()
      WHERE processing_status = 'processing'
+       AND assignment_file_id IS NULL
        AND processing_attempts >= $1
        AND COALESCE(processing_started_at, updated_at)
          < now() - ($2::integer * interval '1 minute')`,
     [boundedMaximumAttempts, STALE_PROCESSING_MINUTES],
   );
+  const { rows: staleCustomRows } = await pool.query(
+    `SELECT document.id
+       FROM app.assignment_documents document
+      WHERE document.assignment_file_id IS NOT NULL
+        AND document.processing_status = 'processing'
+        AND document.processing_attempts >= $1
+        AND COALESCE(document.processing_started_at, document.updated_at)
+          < now() - ($2::integer * interval '1 minute')
+        AND NOT EXISTS (
+          SELECT 1 FROM app.custom_appraisal_workfiles workfile
+           WHERE workfile.assignment_file_id = document.assignment_file_id
+             AND (workfile.status = 'signed' OR EXISTS (
+               SELECT 1 FROM app.custom_appraisal_signed_snapshots snapshot
+                WHERE snapshot.assignment_file_id = workfile.assignment_file_id
+             ))
+        )
+      ORDER BY document.uploaded_at
+      LIMIT $3`,
+    [boundedMaximumAttempts, STALE_PROCESSING_MINUTES, boundedLimit],
+  );
+  for (const row of staleCustomRows) {
+    const client = await pool.connect();
+    try {
+      await client.query("BEGIN");
+      await lockMutableAssignmentDocument(client, row.id, { processingOnly: true });
+      await client.query(
+        `UPDATE app.assignment_documents
+            SET processing_status = 'extraction_failed',
+                processing_started_at = NULL,
+                next_processing_at = NULL,
+                last_processing_error = 'document_processing_interrupted_retry_exhausted',
+                extraction_summary = extraction_summary || jsonb_build_object(
+                  'error', 'document_processing_interrupted_retry_exhausted',
+                  'processing_attempts', processing_attempts,
+                  'automatic_retry_exhausted', true
+                ),
+                updated_at = now()
+          WHERE id = $1 AND assignment_file_id IS NOT NULL
+            AND processing_status = 'processing' AND processing_attempts >= $2
+            AND COALESCE(processing_started_at, updated_at)
+              < now() - ($3::integer * interval '1 minute')`,
+        [row.id, boundedMaximumAttempts, STALE_PROCESSING_MINUTES],
+      );
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => {});
+      if (documentExtractionFailureCode(error) !== "custom_appraisal_workfile_signed") {
+        try {
+          logger.warn?.("[documents] stale Custom extraction settlement skipped",
+            safeOperationalErrorCode(error));
+        } catch { /* Continue bounded maintenance. */ }
+      }
+    } finally {
+      client.release();
+    }
+  }
   const { rows } = await pool.query(
     `SELECT id
      FROM app.assignment_documents
-     WHERE processing_status = 'uploaded'
+     WHERE (
+       processing_status = 'uploaded'
         OR (
           processing_status = 'ocr_required'
           AND $4::boolean
@@ -1536,6 +1658,15 @@ export async function processPendingAssignmentDocuments(pool, {
           AND COALESCE(processing_started_at, updated_at)
             < now() - ($3::integer * interval '1 minute')
         )
+     )
+       AND (assignment_file_id IS NULL OR NOT EXISTS (
+         SELECT 1 FROM app.custom_appraisal_workfiles workfile
+          WHERE workfile.assignment_file_id = app.assignment_documents.assignment_file_id
+            AND (workfile.status = 'signed' OR EXISTS (
+              SELECT 1 FROM app.custom_appraisal_signed_snapshots snapshot
+               WHERE snapshot.assignment_file_id = workfile.assignment_file_id
+            ))
+       ))
      ORDER BY uploaded_at
      LIMIT $1`,
     [

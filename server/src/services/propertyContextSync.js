@@ -492,12 +492,24 @@ async function withSourceSyncLock(pool, sourceKey, callback) {
   const client = typeof pool.connect === "function" ? await pool.connect() : pool;
   const lockKey = `${SYNC_LOCK_PREFIX}${sourceKey}`;
   let acquired = false;
+  let retireClient = false;
   try {
-    const { rows } = await client.query(
-      "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
-      [lockKey],
-    );
-    acquired = rows[0]?.acquired === true;
+    let rows;
+    try {
+      ({ rows } = await client.query(
+        "SELECT pg_try_advisory_lock(hashtextextended($1, 0)) AS acquired",
+        [lockKey],
+      ));
+    } catch (error) {
+      retireClient = true;
+      throw error;
+    }
+    const lockAcquisition = rows?.[0]?.acquired;
+    if (typeof lockAcquisition !== "boolean") {
+      retireClient = true;
+      throw new Error("property_context_sync_lock_state_unverified");
+    }
+    acquired = lockAcquisition;
     if (!acquired) {
       return {
         source_key: sourceKey,
@@ -508,12 +520,20 @@ async function withSourceSyncLock(pool, sourceKey, callback) {
     return await callback(client);
   } finally {
     if (acquired) {
-      await client.query(
-        "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
-        [lockKey],
-      ).catch(() => {});
+      try {
+        const { rows } = await client.query(
+          "SELECT pg_advisory_unlock(hashtextextended($1, 0))",
+          [lockKey],
+        );
+        if (rows?.[0]?.pg_advisory_unlock !== true) retireClient = true;
+      } catch {
+        // The session may still own the lock. Never return it to the pool.
+        retireClient = true;
+      }
     }
-    if (client !== pool) client.release();
+    if (client !== pool) {
+      client.release(retireClient ? new Error("property_context_sync_lock_state_unverified") : undefined);
+    }
   }
 }
 

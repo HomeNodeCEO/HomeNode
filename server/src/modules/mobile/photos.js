@@ -73,6 +73,15 @@ const SHARP_FORMATS_BY_CONTENT_TYPE = new Map([
   ["image/webp", new Set(["webp"])],
 ]);
 
+async function rollbackMobilePhotoTransaction(client) {
+  try {
+    await client.query("ROLLBACK");
+    return null;
+  } catch {
+    return new Error("mobile_photo_rollback_failed");
+  }
+}
+
 function plainObject(value) {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     && (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null);
@@ -380,6 +389,7 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
   const sessionId = normalizeUuid(sessionIdValue, "invalid_inspection_session_id");
   const normalizedPhotos = normalizePhotoBatch(input);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
@@ -543,10 +553,10 @@ export async function createPhotoUploadBatch(pool, storage, auth, sessionIdValue
     await client.query("COMMIT");
     return Object.freeze({ photos: results });
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackMobilePhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -566,6 +576,7 @@ async function accessiblePhoto(pool, auth, sessionId, photoId) {
 
 async function recordVerificationFailure(pool, auth, photo, reason, inspected = []) {
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     await lockSession(client, auth, photo.inspection_session_id);
@@ -602,10 +613,10 @@ async function recordVerificationFailure(pool, auth, photo, reason, inspected = 
     );
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackMobilePhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -619,6 +630,7 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
   if (photo.status === "deleted" || !objects.length) throw new Error("mobile_photo_not_found");
 
   const markingClient = await pool.connect();
+  let markingRollbackFailure = null;
   try {
     await markingClient.query("BEGIN");
     await lockSession(markingClient, auth, sessionId);
@@ -640,10 +652,10 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
     );
     await markingClient.query("COMMIT");
   } catch (error) {
-    await markingClient.query("ROLLBACK").catch(() => {});
+    markingRollbackFailure = await rollbackMobilePhotoTransaction(markingClient);
     throw error;
   } finally {
-    markingClient.release();
+    markingClient.release(markingRollbackFailure || undefined);
   }
   const inspected = [];
   try {
@@ -725,6 +737,7 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
   const client = await pool.connect();
   let verificationCommitted = false;
   let verifiedPhoto = null;
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     await lockSession(client, auth, sessionId);
@@ -793,10 +806,10 @@ export async function verifyInspectionPhoto(pool, storage, auth, sessionIdValue,
     verificationCommitted = true;
     verifiedPhoto = photoResponse(updated.rows[0], currentObjects);
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackMobilePhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
     if (!verificationCommitted) {
       await Promise.all(inspected.map((item) => storage.deleteObject?.({
         objectKey: item.verifiedObjectKey,
@@ -892,6 +905,7 @@ export async function updateInspectionPhoto(pool, auth, sessionIdValue, photoIdV
   const photoId = normalizeUuid(photoIdValue, "invalid_mobile_photo_id");
   const operation = normalizeMetadataOperation(input);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
@@ -951,10 +965,10 @@ export async function updateInspectionPhoto(pool, auth, sessionIdValue, photoIdV
     await client.query("COMMIT");
     return photoResponse(updated.rows[0], objects);
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackMobilePhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -963,6 +977,7 @@ export async function removeInspectionPhoto(pool, auth, sessionIdValue, photoIdV
   const photoId = normalizeUuid(photoIdValue, "invalid_mobile_photo_id");
   const operation = normalizeMetadataOperation(input, { removal: true });
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const session = await lockSession(client, auth, sessionId, { allowSignedReplay: true });
@@ -1006,10 +1021,10 @@ export async function removeInspectionPhoto(pool, auth, sessionIdValue, photoIdV
       disposition: retain ? "excluded_retained" : "placeholder_deleted",
     };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackMobilePhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

@@ -86,8 +86,12 @@ export async function applyUadMigrations(pool, { logger = console } = {}) {
 
   const client = await pool.connect();
   const results = [];
+  let lockAcquired = false;
+  let retireClient = true;
   try {
     await client.query("SELECT pg_advisory_lock($1)", [ADVISORY_LOCK_KEY]);
+    lockAcquired = true;
+    retireClient = false;
     for (const migrationName of MIGRATIONS) {
       const migrationPath = path.join(SERVER_DIRECTORY, "migrations", migrationName);
       const sql = await fs.readFile(migrationPath, "utf8");
@@ -127,8 +131,16 @@ export async function applyUadMigrations(pool, { logger = console } = {}) {
     await client.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
-    await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]).catch(() => {});
-    client.release();
+    if (lockAcquired) {
+      try {
+        const { rows } = await client.query("SELECT pg_advisory_unlock($1)", [ADVISORY_LOCK_KEY]);
+        if (rows?.[0]?.pg_advisory_unlock !== true) retireClient = true;
+      } catch {
+        // An uncertain session lock must not return to the pool.
+        retireClient = true;
+      }
+    }
+    client.release(retireClient ? new Error("uad_migration_lock_state_unverified") : undefined);
   }
   return results;
 }

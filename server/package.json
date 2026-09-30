@@ -5,6 +5,8 @@
     "main": "index.js",
     "scripts": {
         "test": "node --test",
+        "generate:uad-public-error-codes": "node scripts/generateUadPublicErrorCodes.js --write",
+        "check:uad-public-error-codes": "node scripts/generateUadPublicErrorCodes.js --check",
         "test:uad-chaos-recovery": "node --test test/runtimeHealth.test.js test/runtimeResilience.test.js test/r2StorageResilience.test.js test/uadArtifactExecution.test.js test/uadArtifactRecovery.test.js test/uadRouterSecurity.test.js",
         "migrate:uad": "node scripts/runUadMigrations.js",
         "migrate:mobile": "node scripts/runMobileMigrations.js",

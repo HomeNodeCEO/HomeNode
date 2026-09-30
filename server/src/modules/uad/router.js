@@ -4,6 +4,7 @@ import { ipKeyGenerator, rateLimit } from "express-rate-limit";
 
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { publicUadErrorDetails } from "./publicErrorDetails.js";
+import { PUBLIC_UAD_ERROR_CODES } from "./publicErrorCodes.generated.js";
 
 import {
   createUadAssetUpload,
@@ -199,12 +200,14 @@ function sendError(res, error) {
   const databaseCode = uadErrorCode(error);
   const message = uadErrorMessage(error);
   const messageCode = boundedUadMessageCode(message);
-  const status = errorStatus(messageCode ? message : "", databaseCode);
+  const unknownCode = Boolean(messageCode) && !PUBLIC_UAD_ERROR_CODES.has(messageCode);
+  const knownMessage = messageCode && !unknownCode ? message : "";
+  const status = errorStatus(knownMessage, databaseCode);
   let code = status === 500 ? "uad_request_failed" : messageCode;
   if (databaseCode === "23505") code = "uad_request_conflict";
   if (databaseCode === "23503") code = "invalid_uad_reference";
   if (status === 500) {
-    try { console.error("[uad] request failed", safeOperationalErrorCode(error)); }
+    try { console.error("[uad] request failed", unknownCode ? "unrecognized_public_code" : safeOperationalErrorCode(error)); }
     catch { /* Keep the fixed response even if logging fails. */ }
   }
   const details = status !== 500 ? publicUadErrorDetails(error) : null;

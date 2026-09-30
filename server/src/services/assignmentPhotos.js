@@ -29,6 +29,15 @@ const SHARP_FORMATS_BY_CONTENT_TYPE = new Map([
   ["image/webp", new Set(["webp"])],
 ]);
 
+async function rollbackAssignmentPhotoTransaction(client) {
+  try {
+    await client.query("ROLLBACK");
+    return null;
+  } catch {
+    return new Error("assignment_photo_rollback_failed");
+  }
+}
+
 function sha256(value) {
   return createHash("sha256").update(value).digest("hex");
 }
@@ -329,6 +338,7 @@ export async function createAssignmentPhotoUpload(pool, storage, { accountId, as
   ensureStorage(storage);
   const normalized = normalizeAssignmentPhotoUpload(input);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const report = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -406,10 +416,10 @@ export async function createAssignmentPhotoUpload(pool, storage, { accountId, as
     await client.query("COMMIT");
     return { photo: photoPayload(storage, photo, objects), uploads };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackAssignmentPhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -469,6 +479,7 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
   // object under the same lock order as verification before recording its
   // metadata; verification or signing may have completed during the PUT.
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const lockedReport = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -497,10 +508,10 @@ export async function uploadAssignmentPhotoObject(pool, storage, {
     );
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackAssignmentPhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
   return {
     object_id: object.id,
@@ -592,6 +603,7 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
   const client = await pool.connect();
   let verifiedPayload = null;
   let verificationCommitted = false;
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const lockedReport = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -667,10 +679,10 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
     await client.query("COMMIT");
     verificationCommitted = true;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackAssignmentPhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
     if (!verificationCommitted) {
       await Promise.all(inspected.map((item) => storage.deleteObject?.({
         objectKey: item.verifiedObjectKey,
@@ -686,6 +698,7 @@ export async function verifyAssignmentPhoto(pool, storage, { accountId, assignme
 export async function removeAssignmentPhoto(pool, { accountId, assignmentFileId, photoId: value }) {
   const photoId = normalizeUuid(value, "invalid_assignment_photo_id");
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const report = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -731,10 +744,10 @@ export async function removeAssignmentPhoto(pool, { accountId, assignmentFileId,
     await client.query("COMMIT");
     return { disposition: retained ? "excluded_retained" : "placeholder_deleted" };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackAssignmentPhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -747,6 +760,7 @@ export async function updateAssignmentPhotoMetadata(pool, storage, {
   const photoId = normalizeUuid(value, "invalid_assignment_photo_id");
   const normalized = normalizeAssignmentPhotoMetadata(input);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const report = await assignmentReport(client, accountId, assignmentFileId, { lock: true });
@@ -808,9 +822,9 @@ export async function updateAssignmentPhotoMetadata(pool, storage, {
     await client.query("COMMIT");
     return photoPayload(storage, updated.rows[0], objects);
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackAssignmentPhotoTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }

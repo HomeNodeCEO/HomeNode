@@ -47,11 +47,66 @@ test("rebuilds durable road corridors and intersection graph from the local mirr
   };
   const result = await rebuildRoadGraph(pool);
   assert.equal(result.corridor_count, 200);
+  assert.ok(statements.indexOf("BEGIN") >= 0);
+  assert.ok(statements.findIndex((sql) => /^TRUNCATE gis\.road_graph_edges/.test(sql)) > statements.indexOf("BEGIN"));
+  assert.equal(statements.at(-1), "COMMIT");
   assert.ok(statements.some((sql) => /gis\.road_corridor_aliases/.test(sql)));
   assert.ok(statements.some((sql) => /TRUNCATE gis\.road_graph_edges/.test(sql)));
   assert.ok(statements.some((sql) => /INSERT INTO gis\.road_graph_edges/.test(sql)));
   assert.ok(statements.some((sql) => /INSERT INTO gis\.road_graph_nodes/.test(sql)));
   assert.ok(statements.some((sql) => /INSERT INTO gis\.road_corridors/.test(sql)));
+});
+
+test("road graph rebuild rolls back a failed insert on the supplied client", async () => {
+  const statements = [];
+  const client = {
+    async query(sql) {
+      statements.push(String(sql));
+      if (/INSERT INTO gis\.road_graph_edges/.test(String(sql))) {
+        throw new Error("road graph insert failed");
+      }
+      return { rows: [], rowCount: 0 };
+    },
+  };
+
+  await assert.rejects(
+    rebuildRoadGraph(client, { ensureSchema: false }),
+    { message: "road graph insert failed" },
+  );
+  assert.equal(statements[0], "BEGIN");
+  assert.match(statements[1], /^TRUNCATE gis\.road_graph_edges/);
+  assert.equal(statements.at(-1), "ROLLBACK");
+  assert.equal(statements.includes("COMMIT"), false);
+});
+
+test("road graph rebuild pins a pool connection through commit and releases it", async () => {
+  const statements = [];
+  let releases = 0;
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          statements.push(String(sql));
+          if (/SELECT[\s\S]+corridor_count/.test(String(sql))) {
+            return { rows: [{ corridor_count: 1, node_count: 2, edge_count: 3 }] };
+          }
+          return { rows: [], rowCount: 0 };
+        },
+        release() {
+          releases += 1;
+        },
+      };
+    },
+    async query() {
+      throw new Error("pool query must not be used during rebuild");
+    },
+  };
+
+  const result = await rebuildRoadGraph(pool, { ensureSchema: false });
+  assert.equal(result.edge_count, 3);
+  assert.equal(statements[0], "BEGIN");
+  assert.equal(statements.at(-1), "COMMIT");
+  assert.equal(releases, 1);
 });
 
 test("ArcGIS object IDs are numeric, unique, and sorted", async () => {

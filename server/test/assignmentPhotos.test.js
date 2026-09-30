@@ -197,8 +197,10 @@ test("same-application photo fallback uploads only the registered file-scoped ob
   assert.deepEqual(transactions.slice(-2), ["COMMIT", "RELEASE"]);
 });
 
-for (const terminalState of ["verified", "signed"]) {
-  test(`same-application fallback cannot record a late upload after ${terminalState}`, async () => {
+for (const [terminalState, rollbackFails] of [
+  ["verified", false], ["verified", true], ["signed", false], ["signed", true],
+]) {
+  test(`same-application fallback cannot record a late upload after ${terminalState} when rollback ${rollbackFails ? "fails" : "succeeds"}`, async () => {
     const object = {
       id: "20000000-0000-4000-8000-000000000003",
       photo_id: "20000000-0000-4000-8000-000000000002",
@@ -208,6 +210,7 @@ for (const terminalState of ["verified", "signed"]) {
       expected_byte_size: PNG.length,
     };
     const events = [];
+    let releaseReason;
     const pool = {
       async query(sql) {
         if (/FROM app\.assignment_files assignment_file/.test(sql)) {
@@ -224,6 +227,7 @@ for (const terminalState of ["verified", "signed"]) {
           async query(sql) {
             if (["BEGIN", "ROLLBACK"].includes(sql)) {
               events.push(sql);
+              if (sql === "ROLLBACK" && rollbackFails) throw new Error("rollback_transport_failed");
               return { rows: [] };
             }
             if (/FROM app\.assignment_files assignment_file/.test(sql)) {
@@ -237,7 +241,7 @@ for (const terminalState of ["verified", "signed"]) {
             }
             assert.fail(`late upload must not update evidence: ${sql}`);
           },
-          release() { events.push("RELEASE"); },
+          release(reason) { events.push("RELEASE"); releaseReason = reason; },
         };
       },
     };
@@ -257,6 +261,7 @@ for (const terminalState of ["verified", "signed"]) {
       content: PNG,
     }), terminalState === "signed" ? /custom_appraisal_workfile_signed/ : /assignment_photo_object_not_found/);
     assert.deepEqual(events, ["PUT", "connect", "BEGIN", "ROLLBACK", "RELEASE"]);
+    assert.equal(releaseReason?.message, rollbackFails ? "assignment_photo_rollback_failed" : undefined);
   });
 }
 
@@ -631,6 +636,37 @@ test("appraiser label edits are file-scoped, revision-checked, and audited", asy
   assert.ok(queries.some(({ sql }) => /desktop_photo\.metadata_updated/.test(sql)));
   assert.deepEqual(queries.find(({ sql }) => /WHERE id = \$1 AND report_file_id = \$2/.test(sql)).values,
     [original.id, "report-1"]);
+});
+
+test("a photo metadata conflict retires its client if rollback fails", async () => {
+  const photoId = "30000000-0000-4000-8000-000000000001";
+  const releases = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          if (sql === "BEGIN") return { rows: [] };
+          if (sql === "ROLLBACK") throw new Error("rollback_transport_failed");
+          if (/FROM app\.assignment_files assignment_file/.test(sql)) {
+            return { rows: [{ id: "report-1", workfile_status: "draft" }] };
+          }
+          if (/SELECT \* FROM app\.inspection_photos/.test(sql)) {
+            return { rows: [{ id: photoId, revision: 5 }] };
+          }
+          assert.fail(`unexpected photo mutation: ${sql}`);
+        },
+        release(reason) { releases.push(reason); },
+      };
+    },
+  };
+  await assert.rejects(updateAssignmentPhotoMetadata(pool, { configured: false }, {
+    accountId: "26355500170360000",
+    assignmentFileId: 4,
+    photoId,
+    input: { base_revision: 4, category: "Rear", caption: "Subject rear elevation" },
+  }), /assignment_photo_revision_conflict/);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.message, "assignment_photo_rollback_failed");
 });
 
 test("desktop photo migration preserves mobile rows while enabling file-scoped desktop evidence", () => {

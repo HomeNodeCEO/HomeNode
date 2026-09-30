@@ -115,8 +115,9 @@ test("reconciliation queue preserves valid limits and rejects malformed ones", a
   assert.deepEqual(limits, [2, 100]);
 });
 
-function lockedSalesSourcePool(source) {
+function lockedSalesSourcePool(source, { rollbackFails = false } = {}) {
   const queries = [];
+  const releases = [];
   const client = {
     async query(sql) {
       const statement = String(sql).trim();
@@ -124,12 +125,13 @@ function lockedSalesSourcePool(source) {
       if (statement.startsWith("SELECT *") && statement.includes("core.sales_source_records")) {
         return { rows: [source], rowCount: 1 };
       }
+      if (statement === "ROLLBACK" && rollbackFails) throw new Error("rollback_transport_failed");
       if (["BEGIN", "ROLLBACK"].includes(statement)) return { rows: [], rowCount: 0 };
       assert.fail(`reconciliation state guard allowed query: ${statement}`);
     },
-    release() { queries.push("RELEASE"); },
+    release(reason) { queries.push("RELEASE"); releases.push(reason); },
   };
-  return { queries, pool: { connect: async () => client } };
+  return { queries, releases, pool: { connect: async () => client } };
 }
 
 test("the locked mutation rejects verified and otherwise resolved sales before writes", async () => {
@@ -153,6 +155,26 @@ test("the locked mutation rejects verified and otherwise resolved sales before w
     assert.ok(queries.includes("ROLLBACK"));
     assert.ok(queries.includes("RELEASE"));
     assert.equal(queries.some((query) => /^(UPDATE|INSERT)/.test(query)), false);
+  }
+});
+
+test("failed sales reconciliation retires the client only when rollback fails", async () => {
+  const source = {
+    id: 55,
+    record_type: "closed_sale",
+    match_status: "manual_verified",
+    primary_account_id: "ACCOUNT_1",
+    has_unresolved_parcel: false,
+  };
+  for (const rollbackFails of [false, true]) {
+    const { pool, queries, releases } = lockedSalesSourcePool(source, { rollbackFails });
+    await assert.rejects(
+      () => reconcileSalesSourceRecord(pool, "55", { account_id: "00000416188000000" }),
+      /source_record_already_verified/,
+    );
+    assert.equal(queries.filter((query) => query === "ROLLBACK").length, 1);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, rollbackFails ? "sales_reconciliation_rollback_failed" : undefined);
   }
 });
 

@@ -1,6 +1,7 @@
 import express from "express";
 
 import { fetchParcelAreaSuggestion } from "../../services/parcelGis.js";
+import { knownErrorCode, logBoundedFailure } from "../../security/boundedRouteErrors.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { assertPropertyAttributeKey } from "../../util/nonDallasEnrichment.js";
 
@@ -8,6 +9,10 @@ const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const SUGGESTION_ID_PATTERN = /^\d+$/;
 const SUGGESTION_DECISIONS = new Set(["approved", "rejected"]);
 const ATTRIBUTE_VALIDATION_ERRORS = new Set(["unsupported_property_attribute"]);
+const PARCEL_SUGGESTION_CONFLICT_ERRORS = new Set([
+  "dallas_enrichment_isolated",
+  "county_gis_not_configured",
+]);
 
 function auditReviewer(req) {
   const userId = String(req.mobileAuth?.userId || "").trim();
@@ -164,6 +169,9 @@ export function createEnrichmentMutationRouter({
       return res.status(400).json({ error: "invalid_account_id" });
     }
     if (!requireEditor(req, res)) return undefined;
+    let client;
+    let transactionOpen = false;
+    let storedSuggestion;
     try {
       await propertyEnrichmentReady;
       const account = await getNonDallasAccount(pool, id);
@@ -173,7 +181,12 @@ export function createEnrichmentMutationRouter({
         accountId: id,
       });
       if (!suggestion) return res.status(404).json({ error: "parcel_geometry_not_found" });
-      const { rows } = await pool.query(
+      // Keep the evidence row and its review-queue pointer atomic; GIS fetching
+      // stays outside the database transaction.
+      client = await pool.connect();
+      await client.query("BEGIN");
+      transactionOpen = true;
+      const { rows } = await client.query(
         `INSERT INTO app.parcel_geometry_suggestions (
            account_id, county, source_url, geometry, area_square_feet,
            area_acres, source_attributes, status
@@ -190,7 +203,7 @@ export function createEnrichmentMutationRouter({
           JSON.stringify(suggestion.source_attributes),
         ],
       );
-      await pool.query(
+      await client.query(
         `INSERT INTO app.enrichment_review_queue (
            account_id, county, attribute_key, reason, evidence
          ) VALUES ($1,$2,'site_size_sqft','gis_site_area_requires_approval',$3::jsonb)
@@ -203,15 +216,21 @@ export function createEnrichmentMutationRouter({
            updated_at = now()`,
         [id, suggestion.county, JSON.stringify({ suggestion_id: rows[0].id })],
       );
-      return res.json({ ok: true, suggestion: rows[0] });
+      await client.query("COMMIT");
+      transactionOpen = false;
+      storedSuggestion = rows[0];
     } catch (error) {
-      const message = String(error?.message || "");
-      if (["dallas_enrichment_isolated", "county_gis_not_configured"].includes(message)) {
-        return res.status(409).json({ error: message });
+      if (transactionOpen) await client.query("ROLLBACK").catch(() => {});
+      const code = knownErrorCode(error, PARCEL_SUGGESTION_CONFLICT_ERRORS);
+      if (code) {
+        return res.status(409).json({ error: code });
       }
-      logger.error?.("parcel area suggestion failed", safeOperationalErrorCode(error));
+      logBoundedFailure(logger, "parcel area suggestion failed", error);
       return res.status(500).json({ error: "parcel_area_suggestion_failed" });
+    } finally {
+      client?.release();
     }
+    return res.json({ ok: true, suggestion: storedSuggestion });
   });
 
   router.post("/api/accounts/:id/parcel-area-suggestions/:suggestionId/decision", async (req, res) => {

@@ -270,7 +270,7 @@ test("parcel-area suggestion remains review-only and stores exact GIS evidence",
     status: "pending",
   };
   const database = createDatabase({
-    query: async (sql) => (
+    clientQuery: async (sql) => (
       sql.includes("INSERT INTO app.parcel_geometry_suggestions")
         ? { rows: [storedSuggestion] }
         : { rows: [] }
@@ -291,6 +291,7 @@ test("parcel-area suggestion remains review-only and stores exact GIS evidence",
       return { normalized_county: "Collin" };
     },
     fetchParcelSuggestion: async (input) => {
+      assert.equal(database.clients.length, 0, "GIS fetch precedes the transaction");
       assert.deepEqual(input, { county: "Collin", accountId: "A-1" });
       return gisSuggestion;
     },
@@ -301,8 +302,15 @@ test("parcel-area suggestion remains review-only and stores exact GIS evidence",
   const response = await mutate(server.baseUrl, "/api/accounts/A-1/parcel-area-suggestion", "POST");
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, suggestion: storedSuggestion });
-  assert.equal(database.poolQueries.length, 2);
-  assert.deepEqual(database.poolQueries[0].params, [
+  assert.equal(database.poolQueries.length, 0);
+  const [{ queries, released }] = database.clients;
+  assert.equal(released, true);
+  assert.equal(queries.length, 4);
+  assert.equal(queries[0].sql, "BEGIN");
+  assert.match(queries[1].sql, /INSERT INTO app\.parcel_geometry_suggestions/);
+  assert.match(queries[2].sql, /INSERT INTO app\.enrichment_review_queue/);
+  assert.equal(queries[3].sql, "COMMIT");
+  assert.deepEqual(queries[1].params, [
     "A-1",
     "Collin",
     gisSuggestion.source_url,
@@ -311,12 +319,50 @@ test("parcel-area suggestion remains review-only and stores exact GIS evidence",
     0.2009,
     JSON.stringify(gisSuggestion.source_attributes),
   ]);
-  assert.deepEqual(database.poolQueries[1].params, [
+  assert.deepEqual(queries[2].params, [
     "A-1",
     "Collin",
     JSON.stringify({ suggestion_id: 17 }),
   ]);
-  assert.ok(database.poolQueries[1].sql.includes("gis_site_area_requires_approval"));
+  assert.ok(queries[2].sql.includes("gis_site_area_requires_approval"));
+});
+
+test("parcel-area suggestion rolls back its evidence row if review queueing fails", async (context) => {
+  const database = createDatabase({
+    clientQuery: async (sql) => {
+      if (sql.includes("INSERT INTO app.parcel_geometry_suggestions")) {
+        return { rows: [{ id: 17 }] };
+      }
+      if (sql.includes("INSERT INTO app.enrichment_review_queue")) {
+        throw new Error("private database detail");
+      }
+      return { rows: [] };
+    },
+  });
+  const server = await startRouter(baseOptions(database, {
+    getNonDallasAccount: async () => ({ normalized_county: "Collin" }),
+    fetchParcelSuggestion: async () => ({
+      county: "Collin",
+      source_url: "https://gis.example/parcel/1",
+      geometry: { type: "Polygon", coordinates: [] },
+      area_square_feet: 8750,
+      area_acres: 0.2009,
+      source_attributes: {},
+    }),
+    logger: { error() { throw new Error("logger_unavailable"); } },
+  }));
+  context.after(server.close);
+
+  const response = await mutate(server.baseUrl, "/api/accounts/A-1/parcel-area-suggestion", "POST");
+  assert.equal(response.status, 500);
+  assert.deepEqual(await response.json(), { error: "parcel_area_suggestion_failed" });
+  const { queries } = database.clients[0];
+  assert.equal(queries.length, 4);
+  assert.equal(queries[0].sql, "BEGIN");
+  assert.match(queries[1].sql, /INSERT INTO app\.parcel_geometry_suggestions/);
+  assert.match(queries[2].sql, /INSERT INTO app\.enrichment_review_queue/);
+  assert.equal(queries[3].sql, "ROLLBACK");
+  assert.equal(database.clients[0].released, true);
 });
 
 test("parcel suggestion approval materializes site size and rejection avoids manual-value writes", async (context) => {

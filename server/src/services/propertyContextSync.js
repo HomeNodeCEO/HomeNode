@@ -1180,10 +1180,12 @@ export async function syncTigerRoadContext(pool, options = {}) {
 
 export async function rebuildRoadGraph(pool, { ensureSchema = true } = {}) {
   if (ensureSchema) await ensurePropertyContextSchema(pool);
-  const client = typeof pool.connect === "function" ? await pool.connect() : null;
-  const queryable = client || pool;
+  const acquiredClient = typeof pool.connect === "function" ? await pool.connect() : null;
+  const queryable = acquiredClient || pool;
   try {
-    if (client) await client.query("BEGIN");
+    // Tiger sync passes its already-pinned advisory-lock client here. The graph
+    // rebuild still needs its own transaction so a failed insert undoes TRUNCATE.
+    await queryable.query("BEGIN");
     await queryable.query("TRUNCATE gis.road_graph_edges, gis.road_graph_nodes, gis.road_corridors");
     await queryable.query(`
       WITH parts AS MATERIALIZED (
@@ -1247,13 +1249,13 @@ export async function rebuildRoadGraph(pool, { ensureSchema = true } = {}) {
         (SELECT COUNT(*)::integer FROM gis.road_graph_nodes) AS node_count,
         (SELECT COUNT(*)::integer FROM gis.road_graph_edges) AS edge_count
     `);
-    if (client) await client.query("COMMIT");
+    await queryable.query("COMMIT");
     return rows[0] || { corridor_count: 0, node_count: 0, edge_count: 0 };
   } catch (error) {
-    if (client) await client.query("ROLLBACK").catch(() => {});
+    await queryable.query("ROLLBACK").catch(() => {});
     throw error;
   } finally {
-    client?.release();
+    acquiredClient?.release();
   }
 }
 

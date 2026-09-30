@@ -181,7 +181,7 @@ test("overlapping replication releases the unacquired lock client", async () => 
           assert.match(sql, /pg_try_advisory_lock/);
           return { rows: [{ acquired: false }] };
         },
-        release() { releases += 1; },
+        release(reason) { assert.equal(reason, undefined); releases += 1; },
       };
     },
   };
@@ -190,6 +190,29 @@ test("overlapping replication releases the unacquired lock client", async () => 
   });
   assert.equal(result.reason, "trestle_replication_already_running");
   assert.equal(releases, 1);
+});
+
+test("unverified replication lock acquisition retires the client instead of reporting contention", async () => {
+  for (const result of [undefined, { rows: [] }, { rows: [{ acquired: "false" }] }]) {
+    const releases = [];
+    const pool = {
+      async query() { return { rows: [], rowCount: 0 }; },
+      async connect() {
+        return {
+          async query(sql) {
+            assert.match(sql, /pg_try_advisory_lock/);
+            return result;
+          },
+          release(reason) { releases.push(reason); },
+        };
+      },
+    };
+    await assert.rejects(runTrestlePropertyReplication(pool, {
+      status: () => ({ configured: true, enabled: true, replication_ready: true }),
+    }), /trestle_lock_acquisition_unverified/);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, "trestle_lock_acquisition_unverified");
+  }
 });
 
 test("replication failure unlocks through the original connection", async () => {

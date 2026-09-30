@@ -860,17 +860,19 @@ function maximumModificationTimestamp(records, fallback) {
 
 async function acquireReplicationLock(pool) {
   const client = await pool.connect();
-  let rows;
+  let acquired;
   try {
-    ({ rows } = await client.query(
+    const result = await client.query(
       "SELECT pg_try_advisory_lock($1, $2) AS acquired",
       [TRESTLE_REPLICATION_LOCK_A, TRESTLE_REPLICATION_LOCK_B],
-    ));
+    );
+    acquired = result?.rows?.[0]?.acquired;
+    if (typeof acquired !== "boolean") throw new Error("trestle_lock_acquisition_unverified");
   } catch (error) {
     client.release(error);
     throw error;
   }
-  if (rows[0]?.acquired) return client;
+  if (acquired) return client;
   client.release();
   return null;
 }

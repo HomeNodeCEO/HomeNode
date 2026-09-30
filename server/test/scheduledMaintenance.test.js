@@ -197,7 +197,7 @@ test("an overlapping scheduled run exits without starting task work", async () =
           assert.match(sql, /pg_try_advisory_lock/);
           return { rows: [{ acquired: false }] };
         },
-        release() { released = true; },
+        release(reason) { assert.equal(reason, undefined); released = true; },
       };
     },
   };
@@ -225,6 +225,31 @@ test("a failed advisory-lock query retires its checked-out connection", async ()
   };
   await assert.rejects(runScheduledMaintenance(pool, { task: "sessions" }), /lock_query_failed/);
   assert.equal(releaseReason, failure);
+});
+
+test("unverified maintenance lock acquisition retires the client instead of reporting contention", async () => {
+  for (const result of [undefined, { rows: [] }, { rows: [{ acquired: "false" }] }]) {
+    let taskCalls = 0;
+    const releases = [];
+    const pool = {
+      async connect() {
+        return {
+          async query(sql) {
+            assert.match(sql, /pg_try_advisory_lock/);
+            return result;
+          },
+          release(reason) { releases.push(reason); },
+        };
+      },
+    };
+    await assert.rejects(runScheduledMaintenance(pool, {
+      task: "sessions",
+      taskRunner: async () => { taskCalls += 1; },
+    }), /maintenance_lock_acquisition_unverified/);
+    assert.equal(taskCalls, 0);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, "maintenance_lock_acquisition_unverified");
+  }
 });
 
 test("task failure unlocks through the original checked-out connection", async () => {

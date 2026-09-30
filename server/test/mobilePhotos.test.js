@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  createPhotoUploadBatch,
   inspectMobilePhotoPayload,
   normalizePhotoBatch,
+  removeInspectionPhoto,
+  updateInspectionPhoto,
   verifyInspectionPhoto,
 } from "../src/modules/mobile/photos.js";
 
@@ -249,10 +252,55 @@ test("mobile verification rejects and removes same-size non-image bytes", async 
   assert.ok(failureQueries.some((sql) => /photo\.verification_failed/.test(sql)));
 });
 
+test("mobile photo mutation entrypoints retire a client when rollback fails", async () => {
+  const operationId = "20000000-0000-4000-8000-000000000001";
+  const actions = [
+    (pool) => createPhotoUploadBatch(pool, { configured: true, bucket: "private" }, auth,
+      SESSION_ID, { photos: [{
+        client_photo_id: PHOTO_ID,
+        category: "Front",
+        source: "camera",
+        captured_at: "2026-09-04T12:00:00.000Z",
+        objects: [
+          { client_object_id: "20000000-0000-4000-8000-000000000002",
+            variant: "original", file_name: "front.png", content_type: "image/png", byte_size: PNG.length },
+          { client_object_id: "20000000-0000-4000-8000-000000000003",
+            variant: "display", file_name: "front.jpg", content_type: "image/jpeg", byte_size: PNG.length },
+        ],
+      }] }),
+    (pool) => updateInspectionPhoto(pool, auth, SESSION_ID, PHOTO_ID, {
+      client_operation_id: operationId, base_revision: 1, caption: "Updated front",
+    }),
+    (pool) => removeInspectionPhoto(pool, auth, SESSION_ID, PHOTO_ID, {
+      client_operation_id: operationId, base_revision: 1,
+    }),
+  ];
+  for (const action of actions) {
+    const releases = [];
+    const queries = [];
+    const pool = { async connect() {
+      return {
+        async query(sql) {
+          queries.push(sql);
+          if (sql === "BEGIN") throw new Error("private_begin_failure");
+          if (sql === "ROLLBACK") throw new Error("private_rollback_failure");
+          assert.fail(`unexpected photo query: ${sql}`);
+        },
+        release(reason) { releases.push(reason); },
+      };
+    } };
+    await assert.rejects(action(pool), /private_begin_failure/);
+    assert.deepEqual(queries, ["BEGIN", "ROLLBACK"]);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, "mobile_photo_rollback_failed");
+  }
+});
+
 test("mobile verification does not revive a photo deleted before its marking lock", async () => {
   const originalPhoto = photoRow();
   const originalObject = objectRow("41000000-0000-4000-8000-000000000001", "display");
   const writes = [];
+  let releaseReason;
   const client = {
     async query(sql) {
       if (["BEGIN", "ROLLBACK"].includes(sql)) return { rows: [] };
@@ -266,7 +314,7 @@ test("mobile verification does not revive a photo deleted before its marking loc
       writes.push(sql);
       throw new Error(`unexpected_write:${sql}`);
     },
-    release() {},
+    release(reason) { releaseReason = reason; },
   };
   const pool = {
     async query(sql) {
@@ -285,6 +333,47 @@ test("mobile verification does not revive a photo deleted before its marking loc
     /mobile_photo_not_found/,
   );
   assert.deepEqual(writes, []);
+  assert.equal(releaseReason, undefined);
+});
+
+test("mobile verification retires a failed-rollback marking client without touching storage", async () => {
+  const originalPhoto = photoRow();
+  const originalObject = objectRow("41000000-0000-4000-8000-000000000002", "display");
+  const queries = [];
+  const releases = [];
+  const client = {
+    async query(sql) {
+      queries.push(sql);
+      if (sql === "BEGIN") return { rows: [] };
+      if (sql === "ROLLBACK") throw new Error("private_rollback_failure");
+      if (/FROM app\.inspection_sessions session/.test(sql)) {
+        return { rows: [{ id: SESSION_ID, status: "active", workflow_type: "custom_appraisal",
+          custom_assignment_file_id: 42 }] };
+      }
+      if (/FROM app\.custom_appraisal_workfiles/.test(sql)) return { rows: [{ status: "draft" }] };
+      if (/SELECT \* FROM app\.inspection_photos/.test(sql) && /FOR UPDATE/.test(sql)) {
+        return { rows: [photoRow({ status: "deleted", revision: 2 })] };
+      }
+      assert.fail(`unexpected photo write: ${sql}`);
+    },
+    release(reason) { releases.push(reason); },
+  };
+  const pool = {
+    async query(sql) {
+      if (/FROM app\.inspection_photos photo/.test(sql)) return { rows: [originalPhoto] };
+      if (/FROM app\.inspection_photo_objects/.test(sql)) return { rows: [originalObject] };
+      assert.fail(`unexpected preflight query: ${sql}`);
+    },
+    async connect() { return client; },
+  };
+  await assert.rejects(verifyInspectionPhoto(pool, {
+    configured: true,
+    bucket: "private",
+    async inspectObject() { assert.fail("deleted photo must not reach storage"); },
+  }, auth, SESSION_ID, PHOTO_ID), /mobile_photo_not_found/);
+  assert.equal(queries.filter((sql) => sql === "ROLLBACK").length, 1);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.message, "mobile_photo_rollback_failed");
 });
 
 test("mobile verification returns a photo completed before its marking lock without storage work", async () => {

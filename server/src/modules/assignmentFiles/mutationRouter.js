@@ -19,6 +19,15 @@ import { validateReportManualSection } from "../../util/reportManualValues.js";
 const ACCOUNT_ID_PATTERN = /^[0-9A-Za-z_-]{1,50}$/;
 const CUSTOM_APPRAISAL_WORKFLOW = "custom_appraisal";
 
+async function rollbackAssignmentFileTransaction(client) {
+  try {
+    await client.query("ROLLBACK");
+    return null;
+  } catch {
+    return new Error("assignment_file_rollback_failed");
+  }
+}
+
 const ASSIGNMENT_VALIDATION_ERRORS = new Set([
   "invalid_file_number",
   "invalid_assignment_file_id",
@@ -253,6 +262,7 @@ export function createAssignmentFileMutationRouter({
     }
     const reviewer = assignmentReviewer(req);
     let client;
+    let rollbackFailure = null;
     try {
       await Promise.all([
         accountQualityReady,
@@ -391,7 +401,7 @@ export function createAssignmentFileMutationRouter({
         assignment_file: presentAssignmentFile(rows[0]),
       });
     } catch (error) {
-      if (client) await client.query("ROLLBACK").catch(() => {});
+      if (client) rollbackFailure = await rollbackAssignmentFileTransaction(client);
       if (safeOperationalErrorCode(error) === "23505") {
         return res.status(409).json({ error: "assignment_file_number_exists" });
       }
@@ -400,7 +410,7 @@ export function createAssignmentFileMutationRouter({
       try { logger.error?.("assignment file create failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_create_failed" });
     } finally {
-      client?.release();
+      client?.release(rollbackFailure || undefined);
     }
   });
 
@@ -427,6 +437,7 @@ export function createAssignmentFileMutationRouter({
     const reviewer = assignmentReviewer(req);
     const assignmentDetails = req.body.assignment_details;
     let client;
+    let rollbackFailure = null;
     try {
       await Promise.all([
         accountQualityReady,
@@ -508,11 +519,11 @@ export function createAssignmentFileMutationRouter({
       await client.query("COMMIT");
       return res.json({ ok: true, assignment_file: presentAssignmentFile(rows[0]) });
     } catch (error) {
-      if (client) await client.query("ROLLBACK").catch(() => {});
+      if (client) rollbackFailure = await rollbackAssignmentFileTransaction(client);
       try { logger.error?.("assignment file update failed", safeOperationalErrorCode(error)); } catch { /* Keep the fixed response. */ }
       return res.status(500).json({ error: "assignment_file_update_failed" });
     } finally {
-      client?.release();
+      client?.release(rollbackFailure || undefined);
     }
   });
 

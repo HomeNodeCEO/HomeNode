@@ -19,21 +19,26 @@ const identity = Object.freeze({
   ],
 });
 
-function createDatabase(handler) {
+function createDatabase(handler, { rollbackFails = false } = {}) {
   const queries = [];
   let connectCalls = 0;
   let releaseCalls = 0;
+  const releaseReasons = [];
   const client = {
     async query(text, params = []) {
       const sql = String(text);
       queries.push({ sql, params });
+      if (sql === "ROLLBACK" && rollbackFails) {
+        throw new Error("private_rollback_transport_failure");
+      }
       if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
         return { rows: [], rowCount: 0 };
       }
       return handler(sql, params, queries);
     },
-    release() {
+    release(reason) {
       releaseCalls += 1;
+      releaseReasons.push(reason);
     },
   };
   return {
@@ -45,6 +50,7 @@ function createDatabase(handler) {
       },
     },
     queries,
+    releaseReasons,
     get connectCalls() { return connectCalls; },
     get releaseCalls() { return releaseCalls; },
   };
@@ -381,6 +387,64 @@ test("creation rolls back missing accounts, invalid inheritance, duplicate numbe
   for (const database of [missingDb, inheritedDb, duplicateDb, validationDb]) {
     assert.ok(database.queries.some(({ sql }) => sql === "ROLLBACK"));
     assert.equal(database.releaseCalls, 1);
+    assert.deepEqual(database.releaseReasons, [undefined]);
+  }
+});
+
+test("failed assignment-file rollback retires creation and autosave clients", async (context) => {
+  const duplicate = Object.assign(new Error("private_unique_diagnostic"), { code: "23505" });
+  const duplicateDb = createDatabase(async (sql) => {
+    if (sql.includes("SELECT 1 FROM core.accounts")) return { rows: [{}], rowCount: 1 };
+    if (sql.includes("INSERT INTO app.assignment_files (")) throw duplicate;
+    throw new Error(`unexpected_query:${sql.slice(0, 80)}`);
+  }, { rollbackFails: true });
+  const missingDb = createDatabase(successfulCreateHandler({ accountExists: false }), {
+    rollbackFails: true,
+  });
+  const updateDb = createDatabase(async () => {
+    throw new Error("private_autosave_diagnostic");
+  }, { rollbackFails: true });
+  const cases = [
+    {
+      database: duplicateDb,
+      send: (baseUrl) => createFile(baseUrl, "A-1", {
+        file_number: "F-1", assignment_details: {},
+      }),
+      status: 409,
+      body: { error: "assignment_file_number_exists" },
+      rollbackCount: 1,
+    },
+    {
+      database: missingDb,
+      send: (baseUrl) => createFile(baseUrl, "A-1", {
+        file_number: "F-1", assignment_details: {},
+      }),
+      status: 500,
+      body: { error: "assignment_file_create_failed" },
+      rollbackCount: 2,
+    },
+    {
+      database: updateDb,
+      send: (baseUrl) => patchFile(baseUrl, "A-1", 41, {
+        assignment_details: {}, expected_revision: 1,
+      }),
+      status: 500,
+      body: { error: "assignment_file_update_failed" },
+      rollbackCount: 1,
+    },
+  ];
+  const servers = await Promise.all(cases.map(({ database }) => startRouter(baseOptions(database))));
+  context.after(async () => Promise.all(servers.map((server) => server.close())));
+
+  for (const [index, item] of cases.entries()) {
+    const response = await item.send(servers[index].baseUrl);
+    assert.equal(response.status, item.status);
+    assert.deepEqual(await response.json(), item.body);
+    assert.equal(item.database.queries.filter(({ sql }) => sql === "ROLLBACK").length,
+      item.rollbackCount);
+    assert.equal(item.database.releaseCalls, 1);
+    assert.equal(item.database.releaseReasons[0]?.message, "assignment_file_rollback_failed");
+    assert.doesNotMatch(JSON.stringify(item.body), /private_/);
   }
 });
 

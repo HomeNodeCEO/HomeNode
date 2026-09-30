@@ -147,6 +147,25 @@ test("failed session purge rolls back without deleting a second batch", async ()
   assert.equal(calls.filter((sql) => /DELETE FROM app_auth\.web_sessions/.test(sql)).length, 1);
 });
 
+test("failed session purge retires its client when rollback cannot be confirmed", async () => {
+  const releases = [];
+  const pool = {
+    async connect() {
+      return {
+        async query(sql) {
+          if (/DELETE FROM app_auth\.web_sessions/.test(sql)) throw new Error("session_purge_failed");
+          if (sql === "ROLLBACK") throw new Error("rollback_transport_failed");
+          return { rows: [] };
+        },
+        release(reason) { releases.push(reason); },
+      };
+    },
+  };
+  await assert.rejects(purgeExpiredWebSessions(pool), /session_purge_failed/);
+  assert.equal(releases.length, 1);
+  assert.equal(releases[0]?.message, "scheduled_maintenance_rollback_failed");
+});
+
 test("session maintenance records only aggregate purge results", async () => {
   const pool = {
     async query(sql, values) {

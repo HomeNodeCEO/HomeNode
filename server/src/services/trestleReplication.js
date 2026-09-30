@@ -813,6 +813,7 @@ export async function persistTrestlePropertyBatch(pool, sourceRecords) {
   const prepared = mapped.map((record) => persistenceRecord(record, matches.get(record.listing_key)));
   const client = await pool.connect();
   let persisted = [];
+  let rollbackFailure = null;
   let canonicalSales = 0;
   let mediaQueued = 0;
   try {
@@ -832,10 +833,14 @@ export async function persistTrestlePropertyBatch(pool, sourceRecords) {
     await queuePropertyInfluences(client, persisted);
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("trestle_replication_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
   const matched = persisted.filter((row) => row.primary_account_id).length;
   return {
@@ -1134,6 +1139,7 @@ export async function runTrestleMediaBatch(pool, trestleClient, {
     try {
       const media = await trestleClient.mediaForProperty({ listingKey: item.listing_key });
       const client = await pool.connect();
+      let rollbackFailure = null;
       try {
         await client.query("BEGIN");
         await client.query(
@@ -1200,10 +1206,14 @@ export async function runTrestleMediaBatch(pool, trestleClient, {
         await client.query("COMMIT");
         completed += 1;
       } catch (error) {
-        await client.query("ROLLBACK").catch(() => {});
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          rollbackFailure = new Error("trestle_media_rollback_failed");
+        }
         throw error;
       } finally {
-        client.release();
+        client.release(rollbackFailure || undefined);
       }
     } catch (error) {
       const review = Number(item.attempts) >= Number(maximumAttempts);

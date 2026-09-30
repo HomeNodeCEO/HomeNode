@@ -35,6 +35,28 @@ test("rejected Trestle rows never return raw exception text or break on hostile 
   assert.doesNotMatch(JSON.stringify(result), /private/);
 });
 
+test("Trestle persistence retires a client only when rollback cannot be confirmed", async () => {
+  for (const rollbackFails of [false, true]) {
+    const releases = [];
+    const pool = {
+      async query() { return { rows: [] }; },
+      async connect() {
+        return {
+          async query(sql) {
+            if (sql === "BEGIN") throw new Error("persist_write_failed");
+            assert.equal(sql, "ROLLBACK");
+            if (rollbackFails) throw new Error("rollback_transport_failed");
+          },
+          release(reason) { releases.push(reason); },
+        };
+      },
+    };
+    await assert.rejects(persistTrestlePropertyBatch(pool, [{ ListingKey: "L1" }]), /persist_write_failed/);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, rollbackFails ? "trestle_replication_rollback_failed" : undefined);
+  }
+});
+
 test("RESO Property maps to the existing sale inventory without losing zero and false", () => {
   const mapped = mapTrestleSourceRecord({
     ListingKey: "NTREIS-1",
@@ -312,6 +334,38 @@ test("media retries retain their state without storing raw provider exceptions",
   assert.equal(retryWrite.params[1], "retry");
   assert.equal(retryWrite.params[3], "trestle_media_failed");
   assert.equal(JSON.stringify(statements).includes("do-not-expose"), false);
+});
+
+test("Trestle media retries retire a client only when rollback cannot be confirmed", async () => {
+  for (const rollbackFails of [false, true]) {
+    const releases = [];
+    const pool = {
+      async query(sql) {
+        if (String(sql).includes("UPDATE app.trestle_media_queue queue")) {
+          return { rows: [{ listing_key: "L1", source_record_id: 1, attempts: 1 }] };
+        }
+        return { rows: [], rowCount: 0 };
+      },
+      async connect() {
+        return {
+          async query(sql) {
+            if (sql === "BEGIN") throw new Error("media_write_failed");
+            assert.equal(sql, "ROLLBACK");
+            if (rollbackFails) throw new Error("rollback_transport_failed");
+          },
+          release(reason) { releases.push(reason); },
+        };
+      },
+    };
+    const result = await runTrestleMediaBatch(pool, {
+      config: { mediaEnabled: true },
+      status: () => ({ replication_ready: true }),
+      async mediaForProperty() { return []; },
+    });
+    assert.equal(result.retry, 1);
+    assert.equal(releases.length, 1);
+    assert.equal(releases[0]?.message, rollbackFails ? "trestle_media_rollback_failed" : undefined);
+  }
 });
 
 test("replication follows pages, advances the durable cursor, and aggregates outcomes", async () => {

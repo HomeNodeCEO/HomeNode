@@ -8,11 +8,14 @@ function database({
   mismatchedDocument = false,
   uadScopedDocument = false,
   propertyTaxScopedDocument = false,
+  rollbackFails = false,
 } = {}) {
   const statements = [];
+  const releases = [];
   const client = {
     async query(sql, params = []) {
       statements.push({ sql, params });
+      if (sql === "ROLLBACK" && rollbackFails) throw new Error("rollback_transport_failed");
       if (sql.includes("FROM app.assignment_files")) {
         const rows = [{
           id: 4,
@@ -48,10 +51,11 @@ function database({
       }
       return { rows: [], rowCount: 0 };
     },
-    release() {},
+    release(reason) { releases.push(reason); },
   };
   return {
     statements,
+    releases,
     pool: { async connect() { return client; } },
   };
 }
@@ -109,4 +113,34 @@ test("reconciliation rejects ambiguous assignments and cross-account documents",
     ),
     (error) => error?.code === "assignment_document_already_scoped",
   );
+});
+
+test("failed ownership reconciliation retires the client when rollback fails", async () => {
+  const fixture = database({ mismatchedDocument: true, rollbackFails: true });
+  await assert.rejects(
+    () => reconcileLegacyAssignmentDocuments(fixture.pool, request),
+    (error) => error?.code === "assignment_document_account_mismatch",
+  );
+  assert.equal(fixture.releases.length, 1);
+  assert.equal(fixture.releases[0]?.code, "assignment_document_rollback_failed");
+  assert.equal(fixture.statements.at(-1).sql, "ROLLBACK");
+});
+
+test("dry-run reconciliation retires the client if both rollback attempts fail", async () => {
+  const fixture = database({ rollbackFails: true });
+  await assert.rejects(
+    () => reconcileLegacyAssignmentDocuments(fixture.pool, request),
+    /rollback_transport_failed/,
+  );
+  assert.equal(fixture.statements.filter(({ sql }) => sql === "ROLLBACK").length, 2);
+  assert.equal(fixture.releases[0]?.code, "assignment_document_rollback_failed");
+});
+
+test("successful ownership reconciliation rollback keeps normal pool reuse", async () => {
+  const fixture = database({ mismatchedDocument: true });
+  await assert.rejects(
+    () => reconcileLegacyAssignmentDocuments(fixture.pool, request),
+    (error) => error?.code === "assignment_document_account_mismatch",
+  );
+  assert.deepEqual(fixture.releases, [undefined]);
 });

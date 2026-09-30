@@ -40,6 +40,7 @@ export async function reconcileLegacyAssignmentDocuments(pool, {
   const actor = requiredText(actorValue, "reconciliation_actor_required", 200);
   const documentIds = normalizeDocumentIds(documentIdValues);
   const client = await pool.connect();
+  let rollbackFailure = null;
 
   try {
     await client.query("BEGIN");
@@ -134,10 +135,14 @@ export async function reconcileLegacyAssignmentDocuments(pool, {
     await client.query("COMMIT");
     return plan;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = codedError("assignment_document_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

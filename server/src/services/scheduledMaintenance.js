@@ -150,6 +150,7 @@ export async function purgeExpiredWebSessions(pool, {
   // exactly the terminal age used by the matching retention expression index.
   const client = await pool.connect();
   let rowCount = 0;
+  let rollbackFailure = null;
   try {
     const remainingMs = deadline === null ? 30_000 : deadline - Date.now();
     if (remainingMs <= 0) throw new Error("maintenance_deadline_reached");
@@ -174,10 +175,14 @@ export async function purgeExpiredWebSessions(pool, {
     rowCount = result.rowCount || 0;
     await client.query("COMMIT");
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("scheduled_maintenance_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
   return {
     purged: rowCount || 0,

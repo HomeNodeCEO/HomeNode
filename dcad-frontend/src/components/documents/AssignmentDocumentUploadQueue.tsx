@@ -132,7 +132,7 @@ export default function AssignmentDocumentUploadQueue({ disabled, onUpload, onCo
           className="block w-full text-sm text-slate-600 file:mr-3 file:rounded-lg file:border file:border-slate-300 file:bg-slate-50 file:px-3 file:py-2 file:text-sm file:font-medium"
           onChange={event => { addFiles(Array.from(event.target.files || [])); event.target.value = ''; }} />
       </div>
-      {notice ? <p role="status" className="mt-3 text-sm text-slate-700">{notice}</p> : null}
+      <p role="status" aria-live="polite" aria-atomic="true" className={notice ? 'mt-3 text-sm text-slate-700' : 'sr-only'}>{notice}</p>
       {disabled && running ? <p role="status" className="mt-3 text-sm text-amber-900">Uploads are paused. The current upload may finish; no further files will start.</p> : null}
       {items.length ? <>
         <p className="mt-3 text-xs text-slate-600">{items.length} files · {fileSize(items.reduce((sum, item) => sum + item.file.size, 0))} · {uploaded} uploaded</p>

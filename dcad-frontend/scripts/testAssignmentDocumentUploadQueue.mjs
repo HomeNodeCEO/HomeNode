@@ -229,6 +229,40 @@ function componentHarness(initialProps = {}) {
   return harness.render();
 }
 
+for (const fails of [false, true]) {
+  test(`upload notice has an empty live region before announcing ${fails ? 'failure' : 'completion'}`, async () => {
+    const waiting = deferred();
+    const h = componentHarness({ onUpload: async () => {
+      await waiting.promise;
+      if (fails) throw new Error('Connection lost');
+    } });
+    const notice = () => h.find(node => node.props.role === 'status');
+    const assertEmptyNotice = () => {
+      const region = notice();
+      assert.equal(region.type, 'p');
+      assert.equal(region.props['aria-live'], 'polite');
+      assert.equal(region.props['aria-atomic'], 'true');
+      assert.equal(nodeText(region), '');
+      assert.match(region.props.className, /\bsr-only\b/);
+      assert.equal(region.props.hidden, undefined);
+      assert.equal(region.props['aria-hidden'], undefined);
+    };
+    assertEmptyNotice();
+    h.add([pdf('document.pdf')]);
+    assertEmptyNotice();
+    h.button('Upload 1').props.onClick();
+    h.render();
+    assertEmptyNotice();
+    waiting.resolve(); await settle(); h.render();
+    const completed = notice();
+    assert.equal(completed.props['aria-live'], 'polite');
+    assert.equal(completed.props['aria-atomic'], 'true');
+    assert.equal(nodeText(completed), fails ? '0 uploaded; 1 failed.' : '1 uploaded.');
+    assert.doesNotMatch(completed.props.className, /\bsr-only\b/);
+    h.unmount();
+  });
+}
+
 test('actual component accepts multiple selection and drop, sends per-file edits, and blocks duplicate clicks', async () => {
   const waiting = deferred(), calls = [];
   const h = componentHarness({ onUpload: async (file, metadata) => { calls.push({ file, metadata }); if (calls.length === 1) await waiting.promise; } });

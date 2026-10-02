@@ -477,7 +477,50 @@ const saveRoutes = [
   { name: 'Custom mismatch override', apiName: 'confirmAssignmentDocumentDespiteSubjectMismatch', button: 'Upload Anyway', override: true },
   { name: 'UAD mismatch override', apiName: 'confirmUadDocumentDespiteSubjectMismatch', button: 'Upload Anyway', uad: true, override: true },
 ];
-for (const route of saveRoutes) for (const result of ['saved', 'failed', 'edited during save']) {
+
+test('stale approve-all completion cannot replace a newly selected document or its draft', async t => {
+  const pending = deferred(), applied = [];
+  const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+  const h = harness({ props: { onCustomAssignmentApplied: value => applied.push(value) }, documents: [document(7), document(8)], api: {
+    getAssignmentDocument: async id => metadata(id),
+    confirmAllAssignmentDocumentCandidates: () => pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.click('Approve All (1)'); h.select(8); await h.settle();
+  h.candidateInput(801).props.onChange({ target: { value: 'Document B draft' } }); h.flush();
+  const before = h.calls.length;
+  pending.resolve({ document: metadata(7), assignmentApplication: { applied: true } }); await h.settle();
+  assert.equal(h.candidateInput(801)?.props.value, 'Document B draft');
+  assert.deepEqual(applied, []);
+  assert.equal(h.calls.length, before, 'stale completion starts no refresh');
+});
+
+for (const reviewStatus of ['confirmed', 'rejected']) {
+  test(`real ${reviewStatus} response cannot hide a newer edit because the submitted input is locked`, async t => {
+    const pending = deferred(); let saved = false;
+    const metadata = id => document(id, { candidates: [{ ...candidate(701, 'A'),
+      confirmed_value: saved && reviewStatus === 'confirmed' ? 'B' : null,
+      review_status: saved ? reviewStatus : 'suggested' }, candidate(702, 'Unrelated')] });
+    const h = harness({ documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), reviewAssignmentDocumentCandidate: () => pending.promise,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+    const staleChange = h.candidateInput(701).props.onChange;
+    h.click(reviewStatus === 'confirmed' ? 'Confirm' : 'Reject', 701);
+    assert.equal(h.candidateInput(701).props.disabled, true);
+    assert.match(h.text, /Saving/);
+    staleChange({ target: { value: 'C' } }); h.flush();
+    assert.equal(h.candidateInput(701).props.value, 'B');
+    assert.equal(h.candidateInput(702).props.disabled, false);
+    h.candidateInput(702).props.onChange({ target: { value: 'Editable unrelated draft' } }); h.flush();
+    saved = true; pending.resolve({}); await h.settle();
+    assert.equal(h.candidateInput(701), null, 'the saved candidate becomes a reviewed card');
+    assert.equal(h.candidateInput(702).props.value, 'Editable unrelated draft');
+  });
+}
+
+for (const route of saveRoutes) for (const result of ['saved', 'failed', 'edit attempted during save']) {
   test(`${route.name} preserves correct dirty state when ${result}`, async t => {
     const pending = deferred(); let serverValue = 'A';
     const metadata = id => document(id, { processing_status: 'processing',
@@ -496,9 +539,10 @@ for (const route of saveRoutes) for (const result of ['saved', 'failed', 'edited
     h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
     h.click(route.button, route.candidateId);
     assert.equal(h.requests(route.apiName).length, 1);
-    if (result === 'edited during save') {
+    if (result === 'edit attempted during save') {
+      assert.equal(h.candidateInput(701).props.disabled, true);
       h.candidateInput(701).props.onChange({ target: { value: 'Newer draft' } }); h.flush();
-      h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+      assert.equal(h.candidateInput(701).props.value, 'B', 'queued changes cannot alter a submitted value');
     }
     serverValue = 'B';
     if (result === 'failed') pending.reject(new Error('synthetic save failed'));
@@ -507,10 +551,280 @@ for (const route of saveRoutes) for (const result of ['saved', 'failed', 'edited
     if (result === 'failed') assert.match(h.text, /synthetic save failed/);
     assert.equal(h.candidateInput(701).props.value, 'B');
     serverValue = 'C'; h.poll(); await h.settle();
-    assert.equal(h.candidateInput(701).props.value, result === 'saved' ? 'C' : 'B',
-      'only a successfully submitted edit version is acknowledged, never a newer edit with identical text');
+    assert.equal(h.candidateInput(701).props.value, result === 'failed' ? 'B' : 'C',
+      'failed saves retain drafts; successful saves acknowledge the locked submitted value');
   });
 }
+
+const mismatchPresentation = {
+  assignmentDocumentConfirmationBlocked: () => true,
+  documentSubjectAddressComparison: () => ({ matches: false }),
+};
+function reviewedResponse(route, item) {
+  const reviewed = { ...item, candidates: item.candidates.map(value => ({ ...value, review_status: 'confirmed', confirmed_value: 'B' })) };
+  return route.single ? { assignment_application: { applied: true } }
+    : route.override ? reviewed : { document: reviewed, application: { applied: true }, assignmentApplication: { applied: true } };
+}
+
+for (const route of saveRoutes) for (const transition of ['document', 'round trip', 'scope', 'unmount', 'newer review', ...(route.uad ? [] : ['account'])]) {
+  for (const outcome of ['success', 'failure']) {
+    test(`${route.name} ignores stale ${outcome} after ${transition}`, async t => {
+      const pending = deferred(), newer = deferred(), applied = []; let saves = 0;
+      const metadata = id => document(id, {
+        document_type: route.override ? 'engagement_letter' : route.contract ? 'purchase_contract' : 'mls_sheet',
+        candidates: [{ ...candidate(id * 100 + 1, `Document ${id}`), field_key: route.override ? 'subject_property_address' : 'county' }],
+      });
+      const h = harness({ props: { ...(route.uad ? { uadWorkfileId: 'synthetic-uad-77' } : {}),
+        onCustomAssignmentApplied: value => applied.push(value), onUadApplied: value => applied.push(value),
+        onApplyConfirmedCandidate: value => applied.push(value) }, documents: [document(7), document(8)],
+        presentation: { ...(route.override ? mismatchPresentation : {}),
+          confirmedDocumentFieldApplications: values => values.filter(value => value.review_status === 'confirmed')
+            .map(value => ({ fieldKey: value.field_key, value: value.confirmed_value })),
+        }, api: {
+          getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+          [route.apiName]: () => ++saves === 1 ? pending.promise : newer.promise,
+          applyUadDocumentCandidate: async () => ({ applied: true }),
+        } });
+      t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+      h.click(route.button, route.candidateId);
+      let selectedId = 8;
+      if (transition === 'unmount') h.cleanup();
+      else {
+        if (transition === 'scope' || transition === 'account') {
+          h.render(transition === 'account' ? { accountId: 'OTHER-ACCOUNT' }
+            : route.uad ? { uadWorkfileId: 'synthetic-uad-78' } : { assignmentFileId: 15 }); await h.settle();
+          selectedId = 7;
+        } else h.select(8);
+        await h.settle();
+        if (transition === 'round trip') selectedId = 7;
+        if (selectedId === 7) { h.select(7); await h.settle(); }
+        h.candidateInput(selectedId * 100 + 1).props.onChange({ target: { value: 'Current draft' } }); h.flush();
+        if (transition === 'newer review') h.click(route.button, route.candidateId ? selectedId * 100 + 1 : undefined);
+      }
+      const before = h.calls.length;
+      if (outcome === 'failure') pending.reject(new Error('stale save failed'));
+      else pending.resolve(reviewedResponse(route, metadata(7)));
+      await h.settle();
+      assert.equal(h.calls.length, before, 'stale saves start no reload, apply, or subsequent iterative review');
+      assert.deepEqual(applied, []);
+      assert.deepEqual(h.lateStateWrites, []);
+      if (transition !== 'unmount') {
+        assert.equal(h.candidateInput(selectedId * 100 + 1)?.props.value, transition === 'round trip' ? 'Document 7' : 'Current draft');
+        assert.doesNotMatch(h.text, /stale save failed/);
+        assert.equal(h.candidateInput(selectedId * 100 + 1).props.disabled, transition === 'newer review');
+        if (transition === 'newer review') {
+          assert.match(h.text, /Saving this field/);
+          newer.reject(new Error('current save failed')); await h.settle();
+          assert.match(h.text, /current save failed/);
+          assert.equal(h.candidateInput(selectedId * 100 + 1).props.disabled, false);
+        }
+      }
+    });
+  }
+}
+
+for (const route of saveRoutes) {
+  test(`${route.name} keeps submitted fields locked through polls and real confirmed status`, async t => {
+    const pending = deferred(); let saved = false, pollAddsCandidate = false;
+    const metadata = id => document(id, { processing_status: 'processing',
+      document_type: route.override ? 'engagement_letter' : route.contract ? 'purchase_contract' : 'mls_sheet',
+      candidates: [{ ...candidate(701, 'A'), field_key: route.override ? 'subject_property_address' : 'county',
+        review_status: saved ? 'confirmed' : 'suggested', confirmed_value: saved ? 'B' : null },
+      ...(pollAddsCandidate ? [candidate(702, 'New unrelated suggestion')] : [])],
+    });
+    const h = harness({ props: route.uad ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)],
+      presentation: route.override ? mismatchPresentation : {}, api: {
+        getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+        [route.apiName]: () => pending.promise, applyUadDocumentCandidate: async () => ({ applied: false }),
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+    const staleChange = h.candidateInput(701).props.onChange;
+    h.click(route.button, route.candidateId);
+    pollAddsCandidate = true; h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.disabled, true, 'poll cleanup must not unlock an explicit save');
+    const description = h.candidateInput(701).props['aria-describedby'];
+    assert.ok(nodes(h.tree, node => node.props?.id === description && node.props.role === 'status').length);
+    assert.equal(h.candidateInput(702).props.disabled, false, 'only submitted IDs are locked');
+    h.candidateInput(702).props.onChange({ target: { value: 'Unrelated draft' } }); staleChange({ target: { value: 'C' } }); h.flush();
+    assert.equal(h.candidateInput(701).props.value, 'B');
+    saved = true;
+    pending.resolve(route.single ? {} : route.override ? metadata(7) : { document: metadata(7), application: {} });
+    await h.settle();
+    assert.equal(h.candidateInput(701), null, 'real saved fields render as reviewed cards');
+    assert.equal(h.candidateInput(702)?.props.value, 'Unrelated draft');
+    assert.equal(h.candidateInput(702).props.disabled, false);
+  });
+}
+
+for (const transition of ['same-document retry', 'A-B-A']) {
+  test(`${transition} retains the original save lock until its request settles`, async t => {
+    const pending = deferred();
+    const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, 'A')] });
+    const h = harness({ documents: [document(7), document(8)], api: {
+      getAssignmentDocument: async id => metadata(id), reviewAssignmentDocumentCandidate: () => pending.promise,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.click('Confirm', 701);
+    if (transition === 'A-B-A') {
+      h.select(8); await h.settle(); assert.equal(h.candidateInput(801).props.disabled, false);
+    }
+    h.select(7); await h.settle();
+    assert.equal(h.candidateInput(701).props.disabled, true, 'navigation cannot cancel the already-sent save');
+    h.candidateInput(701).props.onChange({ target: { value: 'C' } }); h.flush();
+    assert.equal(h.candidateInput(701).props.value, 'A');
+    pending.resolve({}); await h.settle();
+    assert.equal(h.candidateInput(701).props.disabled, false);
+  });
+}
+
+for (const mode of ['Custom', 'UAD']) for (const reload of ['document', 'list']) for (const outcome of ['success', 'failure']) {
+  test(`${mode} stale action-owned ${reload} reload ignores ${outcome} after navigation`, async t => {
+    const pending = deferred(); let metadataRequests = 0, listRequests = 0;
+    const metadata = id => document(id, { document_type: reload === 'list' ? 'purchase_contract' : 'mls_sheet',
+      candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+    const get = async id => id === 7 && ++metadataRequests === 2 && reload === 'document' ? pending.promise : metadata(id);
+    const list = async () => ++listRequests === 2 && reload === 'list' ? pending.promise : [document(7), document(8)];
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, api: {
+      getAssignmentDocuments: list, listUadDocuments: list,
+      getAssignmentDocument: get, getUadDocument: async (_workfile, id) => get(id),
+      reviewAssignmentDocumentCandidate: async () => ({}), reviewUadDocumentCandidate: async () => ({}),
+      applyUadDocumentCandidate: async () => ({ applied: false }),
+      confirmAllAssignmentDocumentCandidates: async () => ({ document: metadata(7) }),
+      confirmAllUadPurchaseContractCandidates: async () => ({ document: metadata(7), application: {} }),
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.click(reload === 'list' ? 'Approve All (1)' : 'Confirm', reload === 'document' ? 701 : undefined); await h.settle();
+    assert.equal(reload === 'list' ? listRequests : metadataRequests, 2, 'save reached its nested refresh');
+    h.select(8); await h.settle();
+    h.candidateInput(801).props.onChange({ target: { value: 'Current draft' } }); h.flush();
+    const before = h.calls.length;
+    if (outcome === 'failure') pending.reject(new Error('stale reload failed'));
+    else pending.resolve(reload === 'list' ? [metadata(7)] : metadata(7));
+    await h.settle();
+    assert.equal(h.candidateInput(801)?.props.value, 'Current draft');
+    assert.doesNotMatch(h.text, /stale reload failed/);
+    assert.equal(h.calls.length, before, 'stale nested reload does not continue to another refresh');
+  });
+}
+
+for (const route of saveRoutes) {
+  test(`${route.name} stops follow-on application when the workfile becomes read-only`, async t => {
+    const pending = deferred(), applied = [];
+    const metadata = id => document(id, { document_type: route.override ? 'engagement_letter' : route.contract ? 'purchase_contract' : 'mls_sheet',
+      candidates: [{ ...candidate(701, 'A'), field_key: route.override ? 'subject_property_address' : 'county' }] });
+    const h = harness({ props: { ...(route.uad ? { uadWorkfileId: 'synthetic-uad-77' } : {}),
+      onCustomAssignmentApplied: value => applied.push(value), onUadApplied: value => applied.push(value),
+      onApplyConfirmedCandidate: value => applied.push(value) }, documents: [document(7)],
+      presentation: route.override ? mismatchPresentation : {}, api: {
+        getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+        [route.apiName]: () => pending.promise, applyUadDocumentCandidate: async () => ({ applied: true }),
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.click(route.button, route.candidateId); h.render({ readOnly: true }); h.flush();
+    const before = h.calls.length;
+    pending.resolve(reviewedResponse(route, metadata(7))); await h.settle();
+    assert.deepEqual(applied, []); assert.equal(h.calls.length, before);
+    assert.equal(h.candidateInput(701).props.disabled, true);
+  });
+}
+
+for (const route of saveRoutes.filter(route => route.uad && !route.contract)) for (const transition of ['navigation', 'read-only']) {
+  test(`${route.name} stops after an in-flight UAD apply loses ${transition} authority`, async t => {
+    const pending = deferred(), applied = [];
+    const metadata = id => document(id, { document_type: route.override ? 'engagement_letter' : 'mls_sheet',
+      candidates: [{ ...candidate(id * 100 + 1, 'A'), field_key: route.override ? 'subject_property_address' : 'county' }, candidate(id * 100 + 2, 'Other')] });
+    const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77', onUadApplied: value => applied.push(value) }, documents: [document(7), document(8)],
+      presentation: route.override ? mismatchPresentation : {}, api: {
+        getUadDocument: async (_workfile, id) => metadata(id),
+        [route.apiName]: async () => reviewedResponse(route, metadata(7)),
+        applyUadDocumentCandidate: () => pending.promise,
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.click(route.button.replace('(1)', '(2)'), route.candidateId); await h.settle();
+    assert.equal(h.requests('applyUadDocumentCandidate').length, 1);
+    if (transition === 'navigation') { h.select(8); await h.settle(); }
+    else { h.render({ readOnly: true }); h.flush(); }
+    const before = h.calls.length;
+    pending.resolve({ applied: true }); await h.settle();
+    assert.deepEqual(applied, []); assert.equal(h.calls.length, before, 'no next candidate save, apply, or reload');
+  });
+}
+
+for (const mode of ['Custom', 'UAD']) for (const path of ['poll', 'reopened document', 'failed save reload']) {
+  for (const status of ['confirmed', 'rejected']) for (const draft of ['Recover this draft', '']) {
+    test(`${mode} reviewed ${status} card preserves ${JSON.stringify(draft)} after ${path}`, async t => {
+      const pending = deferred(); let saved = false, requests = 0;
+      const metadata = id => document(id, { processing_status: 'processing', candidates: [{ ...candidate(id * 100 + 1, 'A'),
+        review_status: saved && id === 7 ? status : 'suggested', confirmed_value: saved && status === 'confirmed' ? 'Server B' : null }] });
+      const get = async id => {
+        if (id === 7 && ++requests === 2 && path === 'failed save reload') throw new Error('synthetic metadata refresh failed');
+        return metadata(id);
+      };
+      const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7), document(8)], api: {
+        getAssignmentDocument: get, getUadDocument: async (_workfile, id) => get(id),
+        reviewAssignmentDocumentCandidate: () => pending.promise, reviewUadDocumentCandidate: () => pending.promise,
+        applyUadDocumentCandidate: async () => ({ applied: false }),
+      } });
+      t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+      if (path !== 'poll') {
+        h.click(status === 'confirmed' ? 'Confirm' : 'Reject', 701);
+        if (path === 'reopened document') { h.select(8); await h.settle(); h.select(7); await h.settle(); }
+        saved = true; pending.resolve({}); await h.settle();
+      }
+      h.candidateInput(701).props.onChange({ target: { value: draft } }); h.flush();
+      saved = true;
+      if (path === 'failed save reload') h.select(7);
+      else h.poll();
+      await h.settle();
+      assert.equal(h.candidateInput(701), null);
+      const note = nodes(h.tree, node => node.props?.['aria-label'] === 'Unsaved local edit')[0];
+      assert.ok(note, 'the local draft is visible, not only retained in memory');
+      assert.match(text(note), /not submitted or applied/);
+      assert.ok(text(note).includes(draft === '' ? '(empty draft)' : draft));
+      assert.ok(nodes(h.tree, node => node.type === 'details' && node.props.open === true).length, 'recoverable edits are expanded');
+      if (status === 'confirmed') assert.match(h.text, /Server B/, 'server-approved value remains separately visible');
+      assert.doesNotMatch(h.text, /Review complete/);
+      const before = h.calls.length; await h.settle(); assert.equal(h.calls.length, before, 'draft recovery does not apply anything');
+    });
+  }
+}
+
+test('pending review blocks competing mutation handlers but leaves unrelated edits usable', async t => {
+  const pending = deferred();
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { candidates: [candidate(701, 'A'), candidate(702, 'Other')] }),
+    reviewAssignmentDocumentCandidate: () => pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  const handlers = nodes(h.tree, node => node.type === 'button' && ['Re-run Extraction', 'Delete From File', 'Approve All (2)', 'Confirm'].includes(text(node)))
+    .map(button => button.props.onClick);
+  h.click('Confirm', 701);
+  for (const handler of handlers) handler(); await h.settle();
+  assert.equal(h.requests('reviewAssignmentDocumentCandidate').length, 1);
+  assert.equal(h.requests('reprocessAssignmentDocument').length, 0);
+  assert.equal(h.requests('deleteAssignmentDocument').length, 0);
+  assert.equal(h.requests('confirmAllAssignmentDocumentCandidates').length, 0);
+  h.candidateInput(702).props.onChange({ target: { value: 'Unrelated draft' } }); h.flush();
+  assert.equal(h.candidateInput(702).props.value, 'Unrelated draft');
+  pending.reject(new Error('synthetic save failed')); await h.settle();
+  assert.equal(h.candidateInput(701).props.disabled, false);
+});
+
+test('submitted select inputs reject queued changes while review is pending', async t => {
+  const pending = deferred();
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { candidates: [{ ...candidate(701, 'Yes'), field_key: 'contract_personal_property_included' }] }),
+    reviewAssignmentDocumentCandidate: () => pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.candidateInput(701).props.onChange({ target: { value: 'No' } }); h.flush();
+  const queued = h.candidateInput(701).props.onChange; h.click('Confirm', 701);
+  assert.equal(h.candidateInput(701).type, 'select'); assert.equal(h.candidateInput(701).props.disabled, true);
+  queued({ target: { value: 'Yes' } }); h.flush(); assert.equal(h.candidateInput(701).props.value, 'No');
+  pending.reject(new Error('synthetic save failed')); await h.settle();
+  assert.equal(h.candidateInput(701).props.value, 'No'); assert.equal(h.candidateInput(701).props.disabled, false);
+});
 
 test('partially failed UAD approve-all acknowledges only successfully reviewed candidates', async t => {
   let serverValue = 'A';

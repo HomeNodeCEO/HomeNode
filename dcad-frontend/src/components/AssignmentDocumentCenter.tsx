@@ -40,6 +40,12 @@ import {
 } from '@/features/uad/api';
 
 type EvidenceDocument = AssignmentDocument & Partial<UadEvidenceDocument>;
+type DocumentReviewOperation = {
+  scope: string;
+  documentId: number;
+  selectionEpoch: number;
+  candidateIds: ReadonlySet<number>;
+};
 
 const AssignmentPdfPreview = lazy(() => import('./documents/AssignmentPdfPreview'));
 const EMPTY_EDITOR_KEY = () => '';
@@ -186,7 +192,12 @@ export default function AssignmentDocumentCenter({
   const [sourcePdf, setSourcePdf] = useState<{ scope: string; documentId: number; blob: Blob } | null>(null);
   const sourcePdfRef = useRef(sourcePdf);
   sourcePdfRef.current = sourcePdf;
-  const [loading, setLoading] = useState(false);
+  const [documentLoading, setLoading] = useState(false);
+  const [reviewLocks, setReviewLocks] = useState<DocumentReviewOperation[]>([]);
+  const reviewLocksRef = useRef(new Set<DocumentReviewOperation>());
+  const pendingReviewRef = useRef<DocumentReviewOperation | null>(null);
+  const selectionEpochRef = useRef(0);
+  const renderedSelectionEpoch = selectionEpochRef.current;
   const [message, setMessage] = useState('');
   const discrepancyDocumentCount = isUad
     ? documents.filter((document) => (document.uad_discrepancies?.length || 0) > 0).length
@@ -201,7 +212,55 @@ export default function AssignmentDocumentCenter({
   const mountedRef = useRef(true);
   const lastUploadedRef = useRef<{ scope: string; id: number } | null>(null);
   const loadDocumentRequestRef = useRef(0);
+  const reviewOperationIsCurrent = useCallback((operation: DocumentReviewOperation) => (
+    mountedRef.current && pendingReviewRef.current === operation
+    && currentScopeKeyRef.current === operation.scope
+    && selectionEpochRef.current === operation.selectionEpoch
+    && selectedDocumentScopeRef.current === operation.scope
+    && selectedDocumentRef.current?.id === operation.documentId
+  ), []);
+  const reviewIsPending = () => [...reviewLocksRef.current].some(operation => (
+    operation.scope === currentScopeKeyRef.current && selectedDocumentScopeRef.current === operation.scope
+    && operation.documentId === selectedDocumentRef.current?.id
+  ));
+  const reviewCanContinue = (operation: DocumentReviewOperation) => reviewOperationIsCurrent(operation) && !readOnlyRef.current;
+  const loading = documentLoading || reviewLocks.some(operation => operation.scope === scopeKey && operation.documentId === selectedDocument?.id);
+  const invalidateReviewSelection = useCallback(() => {
+    selectionEpochRef.current += 1;
+    pendingReviewRef.current = null;
+  }, []);
+  const beginReview = (candidates: AssignmentDocumentCandidate[]) => {
+    if (!mountedRef.current || readOnlyRef.current || currentScopeKeyRef.current !== scopeKey
+      || renderedSelectionEpoch !== selectionEpochRef.current || !selectedDocument
+      || selectedDocumentScopeRef.current !== scopeKey || selectedDocumentRef.current?.id !== selectedDocument.id
+      || reviewIsPending()) return null;
+    const operation: DocumentReviewOperation = {
+      scope: scopeKey, documentId: selectedDocument.id, selectionEpoch: selectionEpochRef.current,
+      candidateIds: new Set(candidates.flatMap(candidate => candidate.id ? [candidate.id] : [])),
+    };
+    pendingReviewRef.current = operation;
+    reviewLocksRef.current.add(operation);
+    setReviewLocks([...reviewLocksRef.current]);
+    return operation;
+  };
+  const finishReview = (operation: DocumentReviewOperation) => {
+    // Navigation invalidates completion effects, not an already-sent write.
+    // Release only this operation's locks, even if another document is active.
+    reviewLocksRef.current.delete(operation);
+    if (mountedRef.current) setReviewLocks([...reviewLocksRef.current]);
+    if (!reviewOperationIsCurrent(operation)) return;
+    pendingReviewRef.current = null;
+    setLoading(false);
+  };
+  const candidateIsSaving = (id?: number) => Boolean(id && reviewLocks.some(operation => operation.scope === scopeKey
+    && operation.documentId === selectedDocument?.id && operation.candidateIds.has(id)));
   const editCandidateValue = (id: number, value: string) => {
+    if (!mountedRef.current || readOnlyRef.current || currentScopeKeyRef.current !== scopeKey
+      || renderedSelectionEpoch !== selectionEpochRef.current || selectedDocumentScopeRef.current !== scopeKey
+      || selectedDocumentRef.current?.id !== selectedDocument?.id
+      || !selectedDocumentRef.current?.candidates?.some(candidate => candidate.id === id && candidate.review_status === 'suggested')
+      || [...reviewLocksRef.current].some(operation => operation.scope === scopeKey
+        && operation.documentId === selectedDocument?.id && operation.candidateIds.has(id))) return;
     candidateEditVersionsRef.current.set(id, ++candidateEditSequenceRef.current);
     setCandidateValues(current => ({ ...current, [id]: value }));
   };
@@ -269,6 +328,9 @@ export default function AssignmentDocumentCenter({
     )),
     [reviewableCandidates],
   );
+  const hasUnsavedCandidateValue = (id?: number) => Boolean(id
+    && candidateEditVersionsRef.current.has(id) && Object.hasOwn(candidateValues, id));
+  const hasUnsavedReviewedValues = reviewedCandidates.some(candidate => hasUnsavedCandidateValue(candidate.id));
   const confirmedCandidateCount = reviewedCandidates.filter((candidate) => (
     candidate.review_status === 'confirmed'
   )).length;
@@ -277,7 +339,7 @@ export default function AssignmentDocumentCenter({
   )).length;
 
   const requireMutableWorkfile = () => {
-    if (!readOnly) return true;
+    if (!readOnlyRef.current) return true;
     setMessage('This appraisal workfile is locked. Document evidence remains available for review, but it cannot be changed.');
     return false;
   };
@@ -286,6 +348,8 @@ export default function AssignmentDocumentCenter({
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
+      pendingReviewRef.current = null;
+      selectionEpochRef.current += 1;
       loadDocumentRequestRef.current += 1;
     };
   }, []);
@@ -298,6 +362,7 @@ export default function AssignmentDocumentCenter({
 
   useEffect(() => {
     loadDocumentRequestRef.current += 1;
+    invalidateReviewSelection();
     setSfrepOpen(false);
     setDocuments([]);
     setSelectedDocument(null);
@@ -308,11 +373,14 @@ export default function AssignmentDocumentCenter({
     setMessage('');
     setLoading(false);
     setSourcePdf(null);
-  }, [scopeKey]);
+  }, [invalidateReviewSelection, scopeKey]);
 
-  const loadDocuments = useCallback(async () => {
+  const loadDocuments = useCallback(async (reviewOperation?: DocumentReviewOperation) => {
     if (!accountId) return;
     const requestedScopeKey = scopeKey;
+    const requestIsCurrent = () => mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
+      && (!reviewOperation || reviewOperationIsCurrent(reviewOperation));
+    if (!requestIsCurrent()) return;
     setLoading(true);
     setMessage('');
     try {
@@ -321,15 +389,17 @@ export default function AssignmentDocumentCenter({
       const loaded: EvidenceDocument[] = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
-      if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!requestIsCurrent()) return;
       setDocuments(loaded);
       if (selectedDocumentRef.current?.id) {
         const selectedId = selectedDocumentRef.current.id;
         const matching = loaded.find((document) => document.id === selectedId);
         if (!matching) {
+          invalidateReviewSelection();
           setSelectedDocument(null);
           candidateEditVersionsRef.current.clear();
           setCandidateValues({});
+          setLoading(false);
         }
         else if (isUad) setSelectedDocument((current) => current?.id === matching.id
           ? { ...current, uad_discrepancies: matching.uad_discrepancies,
@@ -337,26 +407,31 @@ export default function AssignmentDocumentCenter({
           : current);
       }
     } catch (error) {
-      if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!requestIsCurrent()) return;
       setMessage(error instanceof Error ? error.message : 'Documents could not be loaded.');
     } finally {
-      if (mountedRef.current && currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
+      if (requestIsCurrent()) setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, uadWorkfileId]);
+  }, [accountId, assignmentFileId, getEditorKey, invalidateReviewSelection, isUad, reviewOperationIsCurrent, scopeKey, uadWorkfileId]);
 
-  const loadDocument = useCallback(async (documentId: number, expectedPollRequest?: number) => {
+  const loadDocument = useCallback(async (documentId: number, expectedPollRequest?: number, reviewOperation?: DocumentReviewOperation) => {
     const requestedScopeKey = scopeKey;
     const metadataOnly = expectedPollRequest !== undefined;
     if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+    if (reviewOperation && !reviewOperationIsCurrent(reviewOperation)) return;
     if (metadataOnly && (loadDocumentRequestRef.current !== expectedPollRequest
       || selectedDocumentScopeRef.current !== requestedScopeKey
       || selectedDocumentRef.current?.id !== documentId
       || !['uploaded', 'processing'].includes(selectedDocumentRef.current.processing_status))) return;
+    // User selection, including A -> B -> A, invalidates saves immediately.
+    // Metadata polls and a save's own refresh are not new selections.
+    if (!metadataOnly && !reviewOperation) invalidateReviewSelection();
     const requestId = loadDocumentRequestRef.current + 1;
     loadDocumentRequestRef.current = requestId;
     const requestIsCurrent = () => (
       mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
       && loadDocumentRequestRef.current === requestId
+      && (!reviewOperation || reviewOperationIsCurrent(reviewOperation))
     );
     // Original PDFs are immutable. Keep the loaded bytes during extraction polls,
     // but never show a previous document's PDF beside another document's fields.
@@ -412,7 +487,7 @@ export default function AssignmentDocumentCenter({
     } finally {
       if (requestIsCurrent()) setLoading(false);
     }
-  }, [getEditorKey, isUad, refreshCandidateValues, scopeKey, uadWorkfileId]);
+  }, [getEditorKey, invalidateReviewSelection, isUad, refreshCandidateValues, reviewOperationIsCurrent, scopeKey, uadWorkfileId]);
 
   useEffect(() => {
     if (isUad || embedded || open) void loadDocuments();
@@ -466,6 +541,8 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const operation = beginReview([candidate]);
+    if (!operation) return;
     const submittedEdits = snapshotCandidateEdits([candidate]);
     setLoading(true);
     setMessage('');
@@ -484,6 +561,7 @@ export default function AssignmentDocumentCenter({
           candidate.id,
           reviewInput,
         );
+        if (!reviewCanContinue(operation)) return;
         clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
       } else {
         const reviewed = await reviewAssignmentDocumentCandidate(
@@ -492,15 +570,18 @@ export default function AssignmentDocumentCenter({
           reviewInput,
           editorKey,
         );
+        if (!reviewCanContinue(operation)) return;
         clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
         if (reviewed.assignment_application) {
           customApplication = reviewed.assignment_application;
           onCustomAssignmentApplied?.(reviewed.assignment_application);
         }
       }
+      if (!reviewCanContinue(operation)) return;
       if (reviewStatus === 'confirmed') {
         if (isUad && uadWorkfileId) {
           const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
+          if (!reviewCanContinue(operation)) return;
           onUadApplied?.(result);
           setMessage(result.applied
             ? `Candidate confirmed and applied to UAD ${uadSectionLabel(result.section)}.`
@@ -509,8 +590,11 @@ export default function AssignmentDocumentCenter({
           onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
         }
       }
-      await loadDocument(selectedDocument.id);
-      await loadDocuments();
+      if (!reviewCanContinue(operation)) return;
+      await loadDocument(selectedDocument.id, undefined, operation);
+      if (!reviewCanContinue(operation)) return;
+      await loadDocuments(operation);
+      if (!reviewCanContinue(operation)) return;
       if (reviewStatus === 'rejected') {
         setMessage('Candidate rejected; the source PDF remains unchanged.');
       } else if (!isUad) {
@@ -519,13 +603,15 @@ export default function AssignmentDocumentCenter({
           : 'Candidate confirmed with its exact source page retained.');
       }
     } catch (error) {
+      if (!reviewOperationIsCurrent(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The review could not be saved.');
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
   const reprocess = async () => {
+    if (reviewIsPending()) return;
     if (!requireMutableWorkfile()) return;
     if (!selectedDocument) return;
     const editorKey = getEditorKey();
@@ -548,6 +634,7 @@ export default function AssignmentDocumentCenter({
   };
 
   const deleteFromFile = async () => {
+    if (reviewIsPending()) return;
     if (!requireMutableWorkfile()) return;
     if (!selectedDocument) return;
     const confirmed = window.confirm(
@@ -580,24 +667,29 @@ export default function AssignmentDocumentCenter({
     }
   };
 
-  const applyConfirmedDocumentFields = (document: AssignmentDocument) => {
+  const applyConfirmedDocumentFields = (document: AssignmentDocument, operation?: DocumentReviewOperation) => {
+    if (operation ? !reviewCanContinue(operation) : reviewIsPending()) return 0;
     if (!requireMutableWorkfile()) return 0;
     const applications = confirmedDocumentFieldApplications(document.candidates);
     applications.forEach(({ fieldKey, value }) => {
+      if (operation && !reviewCanContinue(operation)) return;
       onApplyConfirmedCandidate?.(fieldKey, value, document.document_type);
     });
     return applications.length;
   };
 
-  const applyConfirmedCandidateToUad = async (candidate: AssignmentDocumentCandidate) => {
+  const applyConfirmedCandidateToUad = async (candidate: AssignmentDocumentCandidate, operation?: DocumentReviewOperation) => {
+    if (operation ? !reviewCanContinue(operation) : reviewIsPending()) return null;
     if (!requireMutableWorkfile()) return null;
     if (!uadWorkfileId || !selectedDocument || !candidate.id) return null;
     const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
+    if (readOnlyRef.current || (operation && !reviewOperationIsCurrent(operation))) return null;
     onUadApplied?.(result);
     return result;
   };
 
   const synchronizeReviewedUadPurchaseContract = async () => {
+    if (reviewIsPending()) return;
     if (!requireMutableWorkfile()) return;
     if (!uadWorkfileId || !selectedDocument || selectedDocument.document_type !== 'purchase_contract') return;
     setLoading(true);
@@ -628,6 +720,8 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const operation = beginReview(suggestedCandidates);
+    if (!operation) return;
     const submittedEdits = snapshotCandidateEdits(suggestedCandidates);
     setLoading(true);
     setMessage('');
@@ -643,11 +737,15 @@ export default function AssignmentDocumentCenter({
               candidateValues,
             },
           );
+          if (!reviewCanContinue(operation)) return;
           clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
+          loadDocumentRequestRef.current += 1;
           setSelectedDocument(response.document);
           refreshCandidateValues(response.document);
           onUadApplied?.(response.application);
-          await loadDocuments();
+          if (!reviewCanContinue(operation)) return;
+          await loadDocuments(operation);
+          if (!reviewCanContinue(operation)) return;
           setMessage(
             `${suggestedCandidates.length} extracted contract field${suggestedCandidates.length === 1 ? '' : 's'} approved and synchronized with UAD Assignment Information and Sales Contract.`,
           );
@@ -655,6 +753,7 @@ export default function AssignmentDocumentCenter({
         }
         let applied = 0;
         for (const candidate of suggestedCandidates) {
+          if (!reviewCanContinue(operation)) return;
           if (!candidate.id) continue;
           await reviewUadDocumentCandidate(
             uadWorkfileId,
@@ -666,12 +765,16 @@ export default function AssignmentDocumentCenter({
               reviewer: reviewer.trim(),
             },
           );
+          if (!reviewCanContinue(operation)) return;
           clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
-          const result = await applyConfirmedCandidateToUad(candidate);
+          const result = await applyConfirmedCandidateToUad(candidate, operation);
+          if (!reviewCanContinue(operation)) return;
           if (result?.applied) applied += 1;
         }
-        await loadDocument(selectedDocument.id);
-        await loadDocuments();
+        await loadDocument(selectedDocument.id, undefined, operation);
+        if (!reviewCanContinue(operation)) return;
+        await loadDocuments(operation);
+        if (!reviewCanContinue(operation)) return;
         setMessage(
           `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
             + `${applied ? ` and ${applied} supported value${applied === 1 ? '' : 's'} applied to the canonical UAD workfile` : ''}.`,
@@ -683,27 +786,32 @@ export default function AssignmentDocumentCenter({
         reportSubjectAddress: subjectAddress,
         candidateValues,
       }, editorKey);
+      if (!reviewCanContinue(operation)) return;
       clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
       const { document } = response;
       if (response.assignmentApplication) {
         onCustomAssignmentApplied?.(response.assignmentApplication);
       } else {
-        applyConfirmedDocumentFields(document);
+        applyConfirmedDocumentFields(document, operation);
       }
+      if (!reviewCanContinue(operation)) return;
+      loadDocumentRequestRef.current += 1;
       setSelectedDocument(document);
       refreshCandidateValues(document);
-      await loadDocuments();
+      await loadDocuments(operation);
+      if (!reviewCanContinue(operation)) return;
       setMessage(
         `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
           + ' and synchronized with Assignment Details and Contract Analysis.',
       );
     } catch (error) {
+      if (!reviewOperationIsCurrent(operation)) return;
       const errorMessage = error instanceof Error ? error.message : 'The extracted fields could not be approved.';
       setMessage(errorMessage === 'document_subject_address_mismatch'
         ? 'The engagement-letter address differs from this report. Use Upload Anyway only after verifying the assignment.'
         : errorMessage);
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
@@ -716,7 +824,10 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
-    const submittedEdits = snapshotCandidateEdits((selectedDocument.candidates || []).filter(candidate => candidate.review_status === 'suggested'));
+    const submittedCandidates = (selectedDocument.candidates || []).filter(candidate => candidate.review_status === 'suggested');
+    const operation = beginReview(submittedCandidates);
+    if (!operation) return;
+    const submittedEdits = snapshotCandidateEdits(submittedCandidates);
     setLoading(true);
     setMessage('');
     try {
@@ -736,26 +847,32 @@ export default function AssignmentDocumentCenter({
             overrideInput,
             editorKey,
           );
+      if (!reviewCanContinue(operation)) return;
       clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
       if (isUad) {
         for (const candidate of document.candidates || []) {
+          if (!reviewCanContinue(operation)) return;
           if (candidate.review_status === 'confirmed' && candidate.id) {
-            await applyConfirmedCandidateToUad(candidate);
+            await applyConfirmedCandidateToUad(candidate, operation);
           }
         }
       } else {
-        applyConfirmedDocumentFields(document);
+        applyConfirmedDocumentFields(document, operation);
       }
+      if (!reviewCanContinue(operation)) return;
+      loadDocumentRequestRef.current += 1;
       setSelectedDocument(document);
       refreshCandidateValues(document);
-      await loadDocuments();
+      await loadDocuments(operation);
+      if (!reviewCanContinue(operation)) return;
       setMessage(isUad
         ? 'Override recorded. Supported, appraiser-confirmed evidence was applied to the canonical UAD workfile.'
         : 'Override recorded. Extracted assignment fields were added to the current draft; save Assignment Details to retain them.');
     } catch (error) {
+      if (!reviewOperationIsCurrent(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The address override could not be saved.');
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
@@ -1015,14 +1132,16 @@ export default function AssignmentDocumentCenter({
                             className="select select-bordered select-sm mt-2 w-full bg-white"
                             value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value}
                             onChange={(event) => candidate.id && editCandidateValue(candidate.id, event.target.value)}
-                            disabled={readOnly}
+                            disabled={readOnly || candidateIsSaving(candidate.id)}
+                            aria-describedby={candidateIsSaving(candidate.id) ? `${reviewerInputId}-saving-${candidate.id}` : undefined}
                           >
                             <option value="Yes">Yes</option>
                             <option value="No">No</option>
                           </select>
                         ) : (
-                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && editCandidateValue(candidate.id, event.target.value)} disabled={readOnly} />
+                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && editCandidateValue(candidate.id, event.target.value)} disabled={readOnly || candidateIsSaving(candidate.id)} aria-describedby={candidateIsSaving(candidate.id) ? `${reviewerInputId}-saving-${candidate.id}` : undefined} />
                         )}
+                        {candidateIsSaving(candidate.id) ? <p id={`${reviewerInputId}-saving-${candidate.id}`} role="status" className="mt-2 text-xs text-slate-600">Saving this field. Editing is temporarily disabled.</p> : null}
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.id ? (
                           <div className="mt-2 flex gap-2">
@@ -1067,9 +1186,9 @@ export default function AssignmentDocumentCenter({
                     ) : null}
                   </div>
                   {reviewedCandidates.length ? (
-                    <details className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
+                    <details open={hasUnsavedReviewedValues || undefined} className="rounded-lg border border-emerald-200 bg-emerald-50 p-3">
                       <summary className="cursor-pointer text-xs font-semibold text-emerald-900">
-                        {suggestedCandidates.length ? 'Reviewed fields' : 'Review complete'} · {confirmedCandidateCount} approved{rejectedCandidateCount ? ` · ${rejectedCandidateCount} rejected` : ''}
+                        {hasUnsavedReviewedValues ? 'Reviewed fields — unsaved local edits' : suggestedCandidates.length ? 'Reviewed fields' : 'Review complete'} · {confirmedCandidateCount} approved{rejectedCandidateCount ? ` · ${rejectedCandidateCount} rejected` : ''}
                       </summary>
                       <div className="mt-3 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
                         {reviewedCandidates.map((candidate) => (
@@ -1082,6 +1201,13 @@ export default function AssignmentDocumentCenter({
                             </div>
                             {candidate.review_status === 'confirmed' ? (
                               <p className="mt-1 break-words">{candidate.confirmed_value || candidate.normalized_value || candidate.raw_value}</p>
+                            ) : null}
+                            {candidate.id && hasUnsavedCandidateValue(candidate.id) ? (
+                              <div role="note" aria-label="Unsaved local edit" className="mt-2 rounded border border-amber-300 bg-amber-50 p-2 text-amber-950">
+                                <strong>Unsaved local edit — not submitted or applied</strong>
+                                <p className="mt-1 whitespace-pre-wrap break-words">{candidateValues[candidate.id] === '' ? '(empty draft)' : candidateValues[candidate.id]}</p>
+                                <p className="mt-1">Copy this draft before leaving this document.</p>
+                              </div>
                             ) : null}
                             <p className="mt-1 text-slate-400">Page {candidate.page_number || 'unknown'}</p>
                           </div>

@@ -141,14 +141,32 @@ build/bundle budgets. The private original-PDF package also validates against
 the public AIXML 1.5 schema; all 17 exported field IDs exist in the installed
 1004 dictionary. These checks do not remove the native-import release gate below.
 
+The later frontend-only review-save correction passed all 3,381 frontend tests
+(213 document-center tests; 270 in the related focused suite), plus TypeScript,
+lint, source budgets, and the production build/bundle budgets. Another 109 focused
+server document, ownership, authorization, and export tests passed with no backend
+changes. The stale-save and navigation-lock regressions were reproduced before
+their fixes; an independent read-only review reran the 213 document-center tests.
+
 Document-center processing polls only refresh metadata. Same-document retries
 and polls preserve dirty review fields and PDF-error messages, without repeatedly
 downloading a failed PDF. Explicit selection retries the preview; request-generation
 and assignment-scope guards reject late polls and stale responses.
 Per-candidate edit versions preserve intent when a server refresh temporarily
-matches a draft. A successful review acknowledges only the submitted edits;
-newer in-flight edits, failed reviews and fields outside an approve-all submission
-remain dirty. Removed candidates and document/assignment changes reset that state.
+matches a draft. Explicit review saves temporarily lock only the submitted fields,
+with visible Saving feedback; metadata polls and unrelated fields remain usable.
+Locks belong to the original assignment/document until that request settles, even
+after switching away and back. A separate selection generation guards the entire
+completion, including parent callbacks, UAD follow-on writes, nested reloads, errors,
+and loading cleanup, so a late response cannot reopen the previous document or
+overwrite the current review.
+
+A successful current review acknowledges only its submitted edits. Failed reviews
+and fields outside an approve-all submission remain dirty. If a later refresh shows
+a dirty field as confirmed or rejected, its local draft is displayed separately as
+an **Unsaved local edit**, including explicitly empty drafts; it is not silently
+hidden, confirmed, or applied. Removed candidates and document/assignment changes
+reset that state, and the draft notice tells reviewers to copy it before leaving.
 
 ### Verified native synthetic QA
 

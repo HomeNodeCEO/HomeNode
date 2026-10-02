@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
+import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
+import AssignmentDocumentUploadQueue from './documents/AssignmentDocumentUploadQueue';
 import {
   confirmAllAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
@@ -39,15 +40,7 @@ import {
 
 type EvidenceDocument = AssignmentDocument & Partial<UadEvidenceDocument>;
 
-const DOCUMENT_TYPE_OPTIONS: Array<[AssignmentDocumentType, string]> = [
-  ['zoning_map', 'Zoning Map'],
-  ['zoning_ordinance', 'Zoning Ordinance / Code'],
-  ['purchase_contract', 'Purchase Contract'],
-  ['engagement_letter', 'Engagement Letter'],
-  ['mls_sheet', 'MLS Sheet'],
-  ['map', 'Other Map'],
-  ['other', 'Other Appraisal Document'],
-];
+const AssignmentPdfPreview = lazy(() => import('./documents/AssignmentPdfPreview'));
 const EMPTY_EDITOR_KEY = () => '';
 
 const FIELD_LABELS: Record<string, string> = {
@@ -155,13 +148,13 @@ export default function AssignmentDocumentCenter({
 }: AssignmentDocumentCenterProps) {
   const { session } = useApplicationAuth();
   const isUad = Boolean(uadWorkfileId);
+  const uploadScopeReady = isUad || (Number.isSafeInteger(assignmentFileId) && Number(assignmentFileId) > 0);
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
   const [open, setOpen] = useState(defaultOpen);
   const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
-  const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
-  const [documentTitle, setDocumentTitle] = useState('');
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const selectedDocumentRef = useRef(selectedDocument);
+  selectedDocumentRef.current = selectedDocument;
   const [reviewer, setReviewer] = useState(() => defaultReviewer.trim());
   const reviewerInputId = useId();
   const [reviewerAnimationEnabled, setReviewerAnimationEnabled] = useState(() => (
@@ -170,7 +163,9 @@ export default function AssignmentDocumentCenter({
       : false
   ));
   const [candidateValues, setCandidateValues] = useState<Record<number, string>>({});
-  const [viewerUrl, setViewerUrl] = useState('');
+  const [sourcePdf, setSourcePdf] = useState<{ scope: string; documentId: number; blob: Blob } | null>(null);
+  const sourcePdfRef = useRef(sourcePdf);
+  sourcePdfRef.current = sourcePdf;
   const [loading, setLoading] = useState(false);
   const [message, setMessage] = useState('');
   const discrepancyDocumentCount = isUad
@@ -181,6 +176,10 @@ export default function AssignmentDocumentCenter({
     : `custom:${accountId}:${assignmentFileId ?? ''}`;
   const currentScopeKeyRef = useRef(scopeKey);
   currentScopeKeyRef.current = scopeKey;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const mountedRef = useRef(true);
+  const lastUploadedRef = useRef<{ scope: string; id: number } | null>(null);
   const loadDocumentRequestRef = useRef(0);
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
@@ -235,6 +234,14 @@ export default function AssignmentDocumentCenter({
   };
 
   useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      loadDocumentRequestRef.current += 1;
+    };
+  }, []);
+
+  useEffect(() => {
     const authenticatedReviewer = defaultReviewer.trim();
     if (!authenticatedReviewer) return;
     setReviewer((current) => current.trim() || authenticatedReviewer);
@@ -245,14 +252,10 @@ export default function AssignmentDocumentCenter({
     setDocuments([]);
     setSelectedDocument(null);
     setCandidateValues({});
-    setSelectedFile(null);
-    setDocumentTitle('');
+    lastUploadedRef.current = null;
     setMessage('');
     setLoading(false);
-    setViewerUrl((current) => {
-      if (current) URL.revokeObjectURL(current);
-      return '';
-    });
+    setSourcePdf(null);
   }, [scopeKey]);
 
   const loadDocuments = useCallback(async () => {
@@ -266,10 +269,11 @@ export default function AssignmentDocumentCenter({
       const loaded: EvidenceDocument[] = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
-      if (currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
       setDocuments(loaded);
-      if (selectedDocument?.id) {
-        const matching = loaded.find((document) => document.id === selectedDocument.id);
+      if (selectedDocumentRef.current?.id) {
+        const selectedId = selectedDocumentRef.current.id;
+        const matching = loaded.find((document) => document.id === selectedId);
         if (!matching) setSelectedDocument(null);
         else if (isUad) setSelectedDocument((current) => current?.id === matching.id
           ? { ...current, uad_discrepancies: matching.uad_discrepancies,
@@ -277,21 +281,31 @@ export default function AssignmentDocumentCenter({
           : current);
       }
     } catch (error) {
-      if (currentScopeKeyRef.current !== requestedScopeKey) return;
+      if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
       setMessage(error instanceof Error ? error.message : 'Documents could not be loaded.');
     } finally {
-      if (currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
+      if (mountedRef.current && currentScopeKeyRef.current === requestedScopeKey) setLoading(false);
     }
-  }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, selectedDocument?.id, uadWorkfileId]);
+  }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, uadWorkfileId]);
 
   const loadDocument = useCallback(async (documentId: number) => {
     const requestedScopeKey = scopeKey;
     const requestId = loadDocumentRequestRef.current + 1;
     loadDocumentRequestRef.current = requestId;
     const requestIsCurrent = () => (
-      currentScopeKeyRef.current === requestedScopeKey
+      mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
       && loadDocumentRequestRef.current === requestId
     );
+    // Original PDFs are immutable. Keep the loaded bytes during extraction polls,
+    // but never show a previous document's PDF beside another document's fields.
+    const cached = sourcePdfRef.current;
+    const cachedBlob = cached?.scope === requestedScopeKey && cached.documentId === documentId
+      ? cached.blob : null;
+    if (!cachedBlob) {
+      setSourcePdf(null);
+      setSelectedDocument(null);
+      setCandidateValues({});
+    }
     setLoading(true);
     setMessage('');
     try {
@@ -301,7 +315,7 @@ export default function AssignmentDocumentCenter({
         isUad && uadWorkfileId
           ? getUadDocument(uadWorkfileId, documentId)
           : getAssignmentDocument(documentId, editorKey),
-        isUad && uadWorkfileId
+        cachedBlob ? Promise.resolve(cachedBlob) : isUad && uadWorkfileId
           ? getUadDocumentContent(uadWorkfileId, documentId)
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
@@ -319,13 +333,13 @@ export default function AssignmentDocumentCenter({
           .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
       ));
       if (contentResult.status === 'fulfilled') {
-        setViewerUrl(URL.createObjectURL(contentResult.value));
+        setSourcePdf({ scope: requestedScopeKey, documentId, blob: contentResult.value });
       } else {
-        setViewerUrl('');
+        setSourcePdf(null);
         const previewError = contentResult.reason instanceof Error
           ? contentResult.reason.message
           : 'The source PDF preview is temporarily unavailable.';
-        setMessage(`Contract information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
+        setMessage(`Document information loaded for review, but the source PDF preview could not be opened: ${previewError}`);
       }
     } catch (error) {
       if (!requestIsCurrent()) return;
@@ -345,46 +359,33 @@ export default function AssignmentDocumentCenter({
     return () => window.clearTimeout(timer);
   }, [loadDocument, selectedDocument]);
 
-  useEffect(() => () => {
-    if (viewerUrl) URL.revokeObjectURL(viewerUrl);
-  }, [viewerUrl]);
-
-  const upload = async () => {
-    if (!requireMutableWorkfile()) return;
-    if (!selectedFile) {
-      setMessage('Choose a PDF before uploading.');
-      return;
-    }
-    if (selectedFile.type && selectedFile.type !== 'application/pdf') {
-      setMessage('The document evidence center currently accepts PDF files.');
-      return;
+  const uploadQueuedDocument = async (
+    file: File,
+    metadata: { documentType: AssignmentDocumentType; title: string },
+  ) => {
+    const requestedScopeKey = scopeKey;
+    if (!mountedRef.current || readOnlyRef.current || !uploadScopeReady || currentScopeKeyRef.current !== requestedScopeKey) {
+      throw new Error('The active workfile changed or is locked. No upload was started.');
     }
     const editorKey = getEditorKey();
-    if (!isUad && !editorKey) return;
-    setLoading(true);
-    setMessage('');
-    try {
-      const metadata = {
-        documentType,
-        title: documentTitle || selectedFile.name,
-        uploadedBy: reviewer,
-      };
-      const document = isUad && uadWorkfileId
-        ? await uploadUadDocument(uadWorkfileId, selectedFile, metadata)
-        : await uploadAssignmentDocument(accountId, selectedFile, {
-            ...metadata,
-            assignmentFileId,
-          }, editorKey);
-      setSelectedFile(null);
-      setDocumentTitle('');
-      await loadDocuments();
-      await loadDocument(document.id);
-      setMessage('PDF saved. HomeNode is extracting page-cited suggestions for appraiser review.');
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : 'The PDF could not be uploaded.');
-    } finally {
-      setLoading(false);
-    }
+    if (!isUad && !editorKey) throw new Error('Sign in before uploading documents.');
+    const input = { ...metadata, uploadedBy: reviewer };
+    const document = isUad && uadWorkfileId
+      ? await uploadUadDocument(uadWorkfileId, file, input)
+      : await uploadAssignmentDocument(accountId, file, { ...input, assignmentFileId }, editorKey);
+    if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+    setDocuments((current) => [...current.filter((item) => item.id !== document.id), document]);
+    lastUploadedRef.current = { scope: requestedScopeKey, id: document.id };
+  };
+
+  const completeQueuedUpload = async () => {
+    const requestedScopeKey = scopeKey;
+    if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+    const lastUploaded = lastUploadedRef.current;
+    lastUploadedRef.current = null;
+    await loadDocuments();
+    if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+    if (lastUploaded?.scope === requestedScopeKey) await loadDocument(lastUploaded.id);
   };
 
   const reviewCandidate = async (
@@ -499,7 +500,7 @@ export default function AssignmentDocumentCenter({
       setDocuments((current) => current.filter((document) => document.id !== deletedId));
       setSelectedDocument(null);
       setCandidateValues({});
-      setViewerUrl('');
+      setSourcePdf(null);
       setMessage(`"${deletedTitle}" was permanently deleted from this appraisal file.`);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The document could not be deleted.');
@@ -728,25 +729,12 @@ export default function AssignmentDocumentCenter({
               Document changes are unavailable while this workfile is locked or its status is being verified. Existing documents remain available for review and download.
             </p>
           ) : null}
-          <div className="grid gap-3 rounded-xl border border-slate-200 bg-slate-50 p-4 lg:grid-cols-[13rem_minmax(0,1fr)_minmax(14rem,1fr)_auto] lg:items-end">
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Document Type</span>
-              <select className="hn-document-type select select-bordered select-sm mt-1 w-full" value={documentType} onChange={(event) => setDocumentType(event.target.value as AssignmentDocumentType)} disabled={readOnly}>
-                {DOCUMENT_TYPE_OPTIONS.map(([value, label]) => <option key={value} value={value}>{label}</option>)}
-              </select>
-            </label>
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">Title</span>
-              <input className="input input-bordered input-sm mt-1 w-full bg-white" value={documentTitle} onChange={(event) => setDocumentTitle(event.target.value)} placeholder="Defaults to the PDF file name" disabled={readOnly} />
-            </label>
-            <label className="block">
-              <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">PDF File</span>
-              <input className="file-input file-input-bordered file-input-sm mt-1 w-full bg-white" type="file" accept="application/pdf,.pdf" onChange={(event) => setSelectedFile(event.target.files?.[0] || null)} disabled={readOnly} />
-            </label>
-            <button type="button" className="hn-action-primary btn btn-primary btn-sm normal-case rounded-lg" onClick={() => void upload()} disabled={readOnly || loading || !selectedFile}>
-              {loading ? 'Working...' : 'Upload and Analyze'}
-            </button>
-          </div>
+          <AssignmentDocumentUploadQueue
+            key={scopeKey}
+            disabled={readOnly || !uploadScopeReady}
+            onUpload={uploadQueuedDocument}
+            onComplete={completeQueuedUpload}
+          />
 
           <div className="mt-4 grid gap-4 xl:grid-cols-[16rem_minmax(0,1fr)]">
             <div className="space-y-2">
@@ -773,11 +761,13 @@ export default function AssignmentDocumentCenter({
             </div>
 
             <div className="min-w-0">
-              {selectedDocument && viewerUrl ? (
-                <iframe title={selectedDocument.title} src={`/pdfjs-viewer.html?file=${encodeURIComponent(viewerUrl)}`} className="h-[80vh] min-h-[52rem] max-h-[72rem] w-full rounded-lg border border-slate-300 bg-slate-100" />
+              {selectedDocument && sourcePdf?.scope === scopeKey && sourcePdf.documentId === selectedDocument.id ? (
+                <Suspense fallback={<p role="status">Loading PDF viewer…</p>}>
+                  <AssignmentPdfPreview key={`${scopeKey}:${selectedDocument.id}`} blob={sourcePdf.blob} title={selectedDocument.title} />
+                </Suspense>
               ) : selectedDocument ? (
                 <div className="flex h-64 items-center justify-center rounded-lg border border-amber-300 bg-amber-50 p-5 text-center text-sm text-amber-900">
-                  The contract details are available below. The immutable source PDF preview is temporarily unavailable; select the contract again to retry it.
+                  The document details are available below. The immutable source PDF preview is temporarily unavailable; select the document again to retry it.
                 </div>
               ) : (
                 <div className="flex h-64 items-center justify-center rounded-lg border border-dashed border-slate-300 bg-slate-50 p-5 text-center text-sm text-slate-600">Select a document to view the immutable source PDF.</div>

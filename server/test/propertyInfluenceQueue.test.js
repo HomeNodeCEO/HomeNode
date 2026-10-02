@@ -118,3 +118,70 @@ test("a timed influence item rolls back without leaking its database client", as
   assert.equal(statements.at(-1), "ROLLBACK");
   assert.equal(released, true);
 });
+
+for (const failureStage of ["BEGIN", "timeout", "refresh", "COMMIT"]) {
+  for (const rollbackFails of [false, true]) {
+    test(`influence ${failureStage} failure preserves the cause and ${rollbackFails ? "retires" : "reuses"} the client after rollback`, async () => {
+      const primaryError = new Error("private influence operation detail");
+      const rollbackError = new Error("private rollback connection detail");
+      const statements = [];
+      const releases = [];
+      const client = {
+        async query(sql) {
+          statements.push(sql);
+          if (sql === "ROLLBACK" && rollbackFails) throw rollbackError;
+          if (sql === failureStage || (failureStage === "timeout" && sql.includes("set_config"))) throw primaryError;
+          return { rows: [] };
+        },
+        release(error) { releases.push(error); },
+      };
+      await assert.rejects(refreshInfluenceQueueItem({ async connect() { return client; } }, {
+        accountId: "26272500060150000",
+        async refresh(queryable) {
+          assert.equal(queryable, client);
+          if (failureStage === "refresh") throw primaryError;
+          return { updated: true };
+        },
+      }), error => error === primaryError);
+      assert.equal(statements.at(-1), "ROLLBACK");
+      assert.equal(statements.filter(sql => sql === "ROLLBACK").length, 1);
+      assert.equal(releases.length, 1);
+      if (rollbackFails) {
+        assert.ok(releases[0] instanceof Error);
+        assert.equal(releases[0].message, "property_influence_rollback_failed");
+        assert.notEqual(releases[0], primaryError);
+        assert.notEqual(releases[0], rollbackError);
+      } else {
+        assert.equal(releases[0], undefined);
+      }
+    });
+  }
+}
+
+test("influence refresh does not manage a borrowed queryable transaction", async () => {
+  const queryable = {
+    query() { assert.fail("borrowed transaction must not be changed"); },
+    release() { assert.fail("borrowed client must not be released"); },
+  };
+  const result = { updated: true };
+  assert.equal(await refreshInfluenceQueueItem(queryable, {
+    async refresh(client, options) {
+      assert.equal(client, queryable);
+      assert.equal(options.schemaReady, true);
+      return result;
+    },
+  }), result);
+  const primaryError = new Error("borrowed refresh failed");
+  await assert.rejects(refreshInfluenceQueueItem(queryable, {
+    async refresh() { throw primaryError; },
+  }), error => error === primaryError);
+});
+
+test("influence connection acquisition failure does not run refresh", async () => {
+  const primaryError = new Error("connection unavailable");
+  await assert.rejects(refreshInfluenceQueueItem({
+    async connect() { throw primaryError; },
+  }, {
+    async refresh() { assert.fail("refresh must not run without a client"); },
+  }), error => error === primaryError);
+});

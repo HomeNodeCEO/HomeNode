@@ -52,6 +52,7 @@ export async function refreshInfluenceQueueItem(pool, {
     });
   }
   const client = await pool.connect();
+  let rollbackFailure;
   try {
     await client.query("BEGIN");
     await client.query("SELECT set_config('statement_timeout', $1, true)", [`${timeoutMs}ms`]);
@@ -63,10 +64,14 @@ export async function refreshInfluenceQueueItem(pool, {
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("property_influence_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

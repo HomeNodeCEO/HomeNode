@@ -36,7 +36,7 @@ function text(tree) {
 // Load the actual checked-in component through the repository's restricted,
 // file-backed test loader. Child components are deliberately not executed here:
 // these tests exercise the parent authentication, scope, and async boundaries.
-function harness({ props: initialProps = {}, api: overrides = {}, presentation = {}, documents = [] } = {}) {
+function harness({ props: initialProps = {}, api: overrides = {}, presentation = {}, documents = [], confirm = () => true } = {}) {
   const cells = [], effects = [], timers = new Map(), calls = [], lateStateWrites = [];
   let cursor = 0, dirty = false, tree, unmounted = false, timerId = 0;
   const react = {
@@ -106,6 +106,7 @@ function harness({ props: initialProps = {}, api: overrides = {}, presentation =
     assert.ok(Object.hasOwn(imports, name), `unexpected component dependency ${name}`);
     return imports[name];
   }, { environment: { window: {
+    confirm,
     matchMedia: () => ({ matches: true }),
     setTimeout: fn => { const id = ++timerId; timers.set(id, fn); return id; },
     clearTimeout: id => timers.delete(id),
@@ -825,6 +826,280 @@ test('submitted select inputs reject queued changes while review is pending', as
   pending.reject(new Error('synthetic save failed')); await h.settle();
   assert.equal(h.candidateInput(701).props.value, 'No'); assert.equal(h.candidateInput(701).props.disabled, false);
 });
+
+const documentActions = [
+  { name: 'reprocess', button: 'Re-run Extraction', custom: 'reprocessAssignmentDocument', uad: 'reprocessUadDocument' },
+  { name: 'delete', button: 'Delete From File', custom: 'deleteAssignmentDocument', uad: 'deleteUadDocument' },
+];
+for (const action of documentActions) for (const mode of ['Custom', 'UAD']) {
+  test(`${mode} stale ${action.name} completion preserves the new document draft and preview`, async t => {
+    const pending = deferred();
+    const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+    const apiName = mode === 'UAD' ? action.uad : action.custom;
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7), document(8)], api: {
+      getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+      [apiName]: () => pending.promise,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.click(action.button); assert.equal(h.requests(apiName).length, 1);
+    h.select(8); await h.settle();
+    h.candidateInput(801).props.onChange({ target: { value: 'Current B draft' } }); h.flush();
+    const before = h.calls.length;
+    pending.resolve(action.name === 'reprocess' ? metadata(7) : undefined); await h.settle();
+    assert.equal(h.candidateInput(801)?.props.value, 'Current B draft');
+    assert.equal(h.preview?.props.title, 'Synthetic PDF 8');
+    assert.equal(h.calls.length, before, 'stale actions do not start nested refreshes');
+  });
+}
+
+for (const action of documentActions) for (const mode of ['Custom', 'UAD']) {
+  for (const transition of ['round trip', 'scope', 'read-only', 'unmount', 'newer review', ...(mode === 'Custom' ? ['account'] : [])]) {
+    for (const outcome of ['success', 'failure']) {
+      test(`${mode} ${action.name} ignores stale ${outcome} after ${transition}`, async t => {
+        const pending = deferred(), newer = deferred();
+        const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+        const apiName = mode === 'UAD' ? action.uad : action.custom;
+        const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7), document(8)], api: {
+          getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+          [apiName]: () => pending.promise,
+          reviewAssignmentDocumentCandidate: () => newer.promise, reviewUadDocumentCandidate: () => newer.promise,
+        } });
+        t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+        h.candidateInput(701).props.onChange({ target: { value: 'Current draft' } }); h.flush(); h.click(action.button);
+        let selectedId = 7;
+        if (transition === 'unmount') h.cleanup();
+        else if (transition === 'read-only') { h.render({ readOnly: true }); h.flush(); }
+        else {
+          if (transition === 'scope' || transition === 'account') {
+            h.render(transition === 'account' ? { accountId: 'OTHER-ACCOUNT' }
+              : mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-78' } : { assignmentFileId: 15 }); await h.settle();
+            h.select(7); await h.settle();
+          } else {
+            h.select(8); await h.settle(); selectedId = 8;
+            if (transition === 'round trip') { h.select(7); await h.settle(); selectedId = 7; }
+          }
+          h.candidateInput(selectedId * 100 + 1).props.onChange({ target: { value: 'Current draft' } }); h.flush();
+          if (transition === 'newer review') h.click('Confirm', 801);
+        }
+        const before = h.calls.length;
+        if (outcome === 'failure') pending.reject(new Error('stale document action failed'));
+        else pending.resolve(action.name === 'reprocess' ? metadata(7) : undefined);
+        await h.settle();
+        assert.equal(h.calls.length, before, 'stale actions do not refresh or apply anything');
+        assert.deepEqual(h.lateStateWrites, []);
+        if (transition !== 'unmount') {
+          assert.equal(h.candidateInput(selectedId * 100 + 1)?.props.value, 'Current draft');
+          assert.equal(h.preview?.props.title, `Synthetic PDF ${selectedId}`);
+          assert.doesNotMatch(h.text, /stale document action failed|Extraction completed|permanently deleted/);
+          if (transition === 'newer review') {
+            assert.equal(h.candidateInput(801).props.disabled, true, 'old finally cannot release a newer operation');
+            newer.reject(new Error('current review failed')); await h.settle();
+            assert.equal(h.candidateInput(801).props.disabled, false);
+          }
+        }
+      });
+    }
+  }
+}
+
+for (const mode of ['Custom', 'UAD']) {
+  test(`${mode} current reprocess preserves drafts, refreshes suggestions, and finishes its own lifecycle`, async t => {
+    let refreshed = false;
+    const original = pdf();
+    const metadata = id => document(id, { candidates: [candidate(701, refreshed ? 'Fresh server suggestion' : 'Original'),
+      ...(refreshed ? [candidate(702, 'New extracted field')] : [])] });
+    const reprocess = async () => { refreshed = true; return metadata(7); };
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+      getAssignmentDocumentContent: async () => original, getUadDocumentContent: async () => original,
+      reprocessAssignmentDocument: reprocess, reprocessUadDocument: reprocess,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'Local draft' } }); h.flush(); h.click('Re-run Extraction'); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, 'Local draft');
+    assert.equal(h.candidateInput(702).props.value, 'New extracted field');
+    assert.equal(h.preview.props.blob, original);
+    assert.match(h.text, /Extraction completed with the current document rules/);
+    assert.equal(h.requests(mode === 'UAD' ? 'getUadDocument' : 'getAssignmentDocument').length, mode === 'UAD' ? 2 : 1);
+    assert.equal(h.requests(mode === 'UAD' ? 'getUadDocumentContent' : 'getAssignmentDocumentContent').length, 1);
+    const button = nodes(h.tree, node => node.type === 'button' && text(node) === 'Re-run Extraction')[0];
+    assert.equal(button.props.disabled, false, 'the UAD nested refresh does not invalidate its own cleanup');
+  });
+
+  test(`${mode} current delete clears only its document and supports selecting the next PDF`, async t => {
+    let confirmed = 0;
+    const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7), document(8)],
+      confirm: () => { confirmed++; return true; }, api: {
+        getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+        deleteAssignmentDocument: async () => {}, deleteUadDocument: async () => {},
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'Old draft' } }); h.flush(); h.click('Delete From File'); await h.settle();
+    assert.equal(confirmed, 1); assert.equal(h.preview, null); assert.equal(h.candidateInput(701), null);
+    assert.equal(nodes(h.tree, node => node.type === 'button' && node.key === 7).length, 0);
+    assert.match(h.text, /Synthetic PDF 7.*permanently deleted/);
+    h.select(8); await h.settle();
+    assert.equal(h.candidateInput(801).props.value, 'Document 8'); assert.equal(h.preview.props.title, 'Synthetic PDF 8');
+    assert.equal(nodes(h.tree, node => node.type === 'button' && text(node) === 'Delete From File')[0].props.disabled, false);
+  });
+}
+
+test('cancelled delete starts no operation and preserves the selected document', async t => {
+  const h = harness({ documents: [document(7)], confirm: () => false });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  const before = h.calls.length; h.click('Delete From File'); await h.settle();
+  assert.equal(h.calls.length, before); assert.equal(h.preview.props.title, 'Synthetic PDF 7');
+});
+
+const manualUadActions = [
+  { name: 'contract synchronization', button: 'Sync Approved Contract to UAD 3.6', api: 'synchronizeUadPurchaseContract' },
+  { name: 'confirmed-field application', button: 'Apply Confirmed Fields', api: 'applyUadDocumentCandidate' },
+];
+function manualUadDocument(action, id) {
+  if (id !== 7) return document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+  return document(id, {
+    document_type: action.name === 'contract synchronization' ? 'purchase_contract' : 'engagement_letter',
+    extraction_summary: { subject_address_override: { acknowledged: true, reviewer: 'Synthetic Reviewer' } },
+    candidates: [{ ...candidate(701, '123 Synthetic Road'), field_key: 'subject_property_address', review_status: 'confirmed', confirmed_value: '123 Synthetic Road' },
+      { ...candidate(702, 'Synthetic county'), review_status: 'confirmed', confirmed_value: 'Synthetic county' }],
+  });
+}
+for (const action of manualUadActions) {
+  test(`stale manual UAD ${action.name} stops callbacks and further writes after navigation`, async t => {
+    const pending = deferred(), applied = [];
+    const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77', onUadApplied: value => applied.push(value) }, documents: [document(7), document(8)],
+      presentation: { documentSubjectAddressComparison: () => ({ matches: false }) }, api: {
+        getUadDocument: async (_workfile, id) => manualUadDocument(action, id), [action.api]: () => pending.promise,
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click(action.button);
+    assert.equal(h.requests(action.api).length, 1); h.select(8); await h.settle();
+    h.candidateInput(801).props.onChange({ target: { value: 'Current B draft' } }); h.flush();
+    const before = h.calls.length;
+    pending.resolve({ applied: true, changed_field_count: 1 }); await h.settle();
+    assert.deepEqual(applied, []); assert.equal(h.calls.length, before);
+    assert.equal(h.candidateInput(801).props.value, 'Current B draft');
+    assert.doesNotMatch(h.text, /Reapplied|contract information synchronized/);
+  });
+}
+
+for (const action of manualUadActions) for (const transition of ['round trip', 'scope', 'read-only', 'unmount', 'newer review']) {
+  for (const outcome of ['success', 'failure']) {
+    test(`manual UAD ${action.name} ignores stale ${outcome} after ${transition}`, async t => {
+      const pending = deferred(), newer = deferred(), applied = [];
+      const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77', onUadApplied: value => applied.push(value) }, documents: [document(7), document(8)],
+        presentation: { documentSubjectAddressComparison: () => ({ matches: false }) }, api: {
+          getUadDocument: async (_workfile, id) => manualUadDocument(action, id), [action.api]: () => pending.promise,
+          reviewUadDocumentCandidate: () => newer.promise,
+        } });
+      t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click(action.button);
+      if (transition === 'unmount') h.cleanup();
+      else if (transition === 'read-only') { h.render({ readOnly: true }); h.flush(); }
+      else if (transition === 'scope') { h.render({ uadWorkfileId: 'synthetic-uad-78' }); await h.settle(); h.select(7); await h.settle(); }
+      else {
+        h.select(8); await h.settle();
+        if (transition === 'round trip') { h.select(7); await h.settle(); }
+        else h.click('Confirm', 801);
+      }
+      const before = h.calls.length;
+      if (outcome === 'failure') pending.reject(new Error('stale manual UAD action failed'));
+      else pending.resolve({ applied: true, changed_field_count: 1 });
+      await h.settle();
+      assert.deepEqual(applied, []); assert.deepEqual(h.lateStateWrites, []);
+      assert.equal(h.calls.length, before, 'a stale apply loop cannot start the next field or any reload');
+      if (transition !== 'unmount') {
+        assert.doesNotMatch(h.text, /stale manual UAD action failed|Reapplied|contract information synchronized/);
+        if (transition === 'newer review') {
+          assert.equal(h.candidateInput(801).props.disabled, true);
+          newer.reject(new Error('current review failed')); await h.settle();
+          assert.equal(h.candidateInput(801).props.disabled, false);
+        }
+      }
+    });
+  }
+}
+
+for (const action of manualUadActions) for (const outcome of ['success', 'failure']) {
+  test(`current manual UAD ${action.name} handles ${outcome} and releases its busy state`, async t => {
+    const applied = [];
+    const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77', onUadApplied: value => applied.push(value) }, documents: [document(7)],
+      presentation: { documentSubjectAddressComparison: () => ({ matches: false }) }, api: {
+        getUadDocument: async (_workfile, id) => manualUadDocument(action, id),
+        [action.api]: async () => {
+          if (outcome === 'failure') throw new Error('current manual action failed');
+          return { applied: true, changed_field_count: 1 };
+        },
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click(action.button); await h.settle();
+    if (outcome === 'failure') { assert.match(h.text, /current manual action failed/); assert.deepEqual(applied, []); }
+    else {
+      assert.equal(applied.length, action.name === 'contract synchronization' ? 1 : 2);
+      assert.match(h.text, action.name === 'contract synchronization' ? /contract information synchronized/ : /Reapplied 2 confirmed/);
+    }
+    const button = nodes(h.tree, node => node.type === 'button' && text(node) === action.button)[0];
+    assert.ok(button); assert.equal(button.props.disabled, false);
+  });
+}
+
+test('Custom Apply Confirmed Fields still applies current reviewed values synchronously', async t => {
+  const applied = [], action = manualUadActions[1];
+  const h = harness({ props: { onApplyConfirmedCandidate: (...args) => applied.push(args) }, documents: [document(7)],
+    presentation: { documentSubjectAddressComparison: () => ({ matches: false }),
+      confirmedDocumentFieldApplications: values => values.filter(value => value.review_status === 'confirmed')
+        .map(value => ({ fieldKey: value.field_key, value: value.confirmed_value })),
+    }, api: { getAssignmentDocument: async id => manualUadDocument(action, id) } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Apply Confirmed Fields'); await h.settle();
+  assert.equal(applied.length, 2); assert.equal(applied[0][1], '123 Synthetic Road');
+  assert.match(h.text, /Confirmed engagement fields were reapplied/);
+  assert.equal(nodes(h.tree, node => node.type === 'button' && text(node) === 'Apply Confirmed Fields')[0].props.disabled, false);
+});
+
+for (const mode of ['Custom', 'UAD']) for (const boundary of ['list', ...(mode === 'UAD' ? ['document'] : [])]) {
+  for (const transition of ['navigation', 'read-only']) for (const outcome of ['success', 'failure']) {
+    test(`${mode} reprocess owns its nested ${boundary} reload across ${transition} and ${outcome}`, async t => {
+      const pending = deferred(); let gets = 0, lists = 0;
+      const metadata = id => document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
+      const get = async id => id === 7 && ++gets === 2 && boundary === 'document' ? pending.promise : metadata(id);
+      const list = async () => ++lists === 2 && boundary === 'list' ? pending.promise : [document(7), document(8)];
+      const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, api: {
+        getAssignmentDocuments: list, listUadDocuments: list, getAssignmentDocument: get, getUadDocument: async (_workfile, id) => get(id),
+        reprocessAssignmentDocument: async () => metadata(7), reprocessUadDocument: async () => metadata(7),
+      } });
+      t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+      h.click('Re-run Extraction'); await h.settle(); assert.equal(boundary === 'list' ? lists : gets, 2);
+      let selectedId = 7;
+      if (transition === 'navigation') { h.select(8); await h.settle(); selectedId = 8; }
+      h.candidateInput(selectedId * 100 + 1).props.onChange({ target: { value: 'Keep current draft' } }); h.flush();
+      if (transition === 'read-only') { h.render({ readOnly: true }); h.flush(); }
+      const before = h.calls.length;
+      if (outcome === 'failure') pending.reject(new Error('stale nested reprocess reload failed'));
+      else pending.resolve(boundary === 'list' ? [metadata(7)] : metadata(7));
+      await h.settle();
+      assert.equal(h.candidateInput(selectedId * 100 + 1)?.props.value, 'Keep current draft');
+      assert.equal(h.preview?.props.title, `Synthetic PDF ${selectedId}`);
+      assert.doesNotMatch(h.text, /stale nested reprocess reload failed|Extraction completed/);
+      assert.equal(h.calls.length, before);
+    });
+  }
+}
+
+for (const mode of ['Custom', 'UAD']) {
+  test(`${mode} successful delete invalidates an older metadata poll before it can resurrect the PDF`, async t => {
+    const deletion = deferred(), poll = deferred(); let requests = 0;
+    const metadata = id => document(id, { processing_status: 'processing', candidates: [candidate(701, 'Original')] });
+    const get = async id => ++requests === 2 ? poll.promise : metadata(id);
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: get, getUadDocument: async (_workfile, id) => get(id),
+      deleteAssignmentDocument: () => deletion.promise, deleteUadDocument: () => deletion.promise,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Delete From File'); h.poll(); await h.settle();
+    deletion.resolve(); await h.settle(); assert.equal(h.preview, null);
+    poll.resolve(metadata(7)); await h.settle();
+    assert.equal(h.preview, null); assert.equal(h.candidateInput(701), null);
+    assert.equal(nodes(h.tree, node => node.type === 'button' && node.key === 7).length, 0);
+    assert.match(h.text, /permanently deleted/); assert.equal(h.timers.size, 0);
+  });
+}
 
 test('partially failed UAD approve-all acknowledges only successfully reviewed candidates', async t => {
   let serverValue = 'A';

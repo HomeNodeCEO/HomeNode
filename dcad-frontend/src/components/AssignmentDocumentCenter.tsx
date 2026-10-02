@@ -379,7 +379,7 @@ export default function AssignmentDocumentCenter({
     if (!accountId) return;
     const requestedScopeKey = scopeKey;
     const requestIsCurrent = () => mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
-      && (!reviewOperation || reviewOperationIsCurrent(reviewOperation));
+      && (!reviewOperation || (reviewOperationIsCurrent(reviewOperation) && !readOnlyRef.current));
     if (!requestIsCurrent()) return;
     setLoading(true);
     setMessage('');
@@ -418,7 +418,7 @@ export default function AssignmentDocumentCenter({
     const requestedScopeKey = scopeKey;
     const metadataOnly = expectedPollRequest !== undefined;
     if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
-    if (reviewOperation && !reviewOperationIsCurrent(reviewOperation)) return;
+    if (reviewOperation && (!reviewOperationIsCurrent(reviewOperation) || readOnlyRef.current)) return;
     if (metadataOnly && (loadDocumentRequestRef.current !== expectedPollRequest
       || selectedDocumentScopeRef.current !== requestedScopeKey
       || selectedDocumentRef.current?.id !== documentId
@@ -431,7 +431,7 @@ export default function AssignmentDocumentCenter({
     const requestIsCurrent = () => (
       mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
       && loadDocumentRequestRef.current === requestId
-      && (!reviewOperation || reviewOperationIsCurrent(reviewOperation))
+      && (!reviewOperation || (reviewOperationIsCurrent(reviewOperation) && !readOnlyRef.current))
     );
     // Original PDFs are immutable. Keep the loaded bytes during extraction polls,
     // but never show a previous document's PDF beside another document's fields.
@@ -616,20 +616,27 @@ export default function AssignmentDocumentCenter({
     if (!selectedDocument) return;
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const operation = beginReview([]);
+    if (!operation) return;
     setLoading(true);
     try {
       const document = isUad && uadWorkfileId
         ? await reprocessUadDocument(uadWorkfileId, selectedDocument.id)
         : await reprocessAssignmentDocument(selectedDocument.id, editorKey);
+      if (!reviewCanContinue(operation)) return;
+      loadDocumentRequestRef.current += 1;
       setSelectedDocument(document);
       refreshCandidateValues(document);
-      await loadDocuments();
-      if (isUad) await loadDocument(document.id);
+      await loadDocuments(operation);
+      if (!reviewCanContinue(operation)) return;
+      if (isUad) await loadDocument(document.id, undefined, operation);
+      if (!reviewCanContinue(operation)) return;
       setMessage('Extraction completed with the current document rules.');
     } catch (error) {
+      if (!reviewCanContinue(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be reprocessed.');
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
@@ -644,6 +651,8 @@ export default function AssignmentDocumentCenter({
     if (!confirmed) return;
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const operation = beginReview([]);
+    if (!operation) return;
     const deletedId = selectedDocument.id;
     const deletedTitle = selectedDocument.title;
     setLoading(true);
@@ -654,16 +663,22 @@ export default function AssignmentDocumentCenter({
       } else {
         await deleteAssignmentDocument(deletedId, editorKey);
       }
+      if (!reviewCanContinue(operation)) return;
+      loadDocumentRequestRef.current += 1;
+      invalidateReviewSelection();
+      selectedDocumentScopeRef.current = null;
       setDocuments((current) => current.filter((document) => document.id !== deletedId));
       setSelectedDocument(null);
       candidateEditVersionsRef.current.clear();
       setCandidateValues({});
       setSourcePdf(null);
+      setLoading(false);
       setMessage(`"${deletedTitle}" was permanently deleted from this appraisal file.`);
     } catch (error) {
+      if (!reviewCanContinue(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be deleted.');
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
@@ -692,18 +707,23 @@ export default function AssignmentDocumentCenter({
     if (reviewIsPending()) return;
     if (!requireMutableWorkfile()) return;
     if (!uadWorkfileId || !selectedDocument || selectedDocument.document_type !== 'purchase_contract') return;
+    const operation = beginReview([]);
+    if (!operation) return;
     setLoading(true);
     setMessage('');
     try {
       const result = await synchronizeUadPurchaseContract(uadWorkfileId, selectedDocument.id);
+      if (!reviewCanContinue(operation)) return;
       onUadApplied?.(result);
+      if (!reviewCanContinue(operation)) return;
       setMessage(result.changed_field_count
         ? `Approved contract information synchronized with UAD Sections 2 and 20 (${result.changed_field_count} updated field${result.changed_field_count === 1 ? '' : 's'}).`
         : 'Approved contract information is already synchronized with UAD Sections 2 and 20.');
     } catch (error) {
+      if (!reviewCanContinue(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The approved contract information could not be synchronized with UAD.');
     } finally {
-      setLoading(false);
+      finishReview(operation);
     }
   };
 
@@ -1069,22 +1089,37 @@ export default function AssignmentDocumentCenter({
                               type="button"
                               className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
                               onClick={() => void (async () => {
-                                if (isUad) {
-                                  let applied = 0;
-                                  for (const candidate of selectedDocument.candidates || []) {
-                                    if (candidate.review_status !== 'confirmed' || !candidate.id) continue;
-                                    const result = await applyConfirmedCandidateToUad(candidate);
-                                    if (result?.applied) applied += 1;
+                                if (!requireMutableWorkfile()) return;
+                                const operation = beginReview([]);
+                                if (!operation) return;
+                                setLoading(true);
+                                setMessage('');
+                                try {
+                                  if (isUad) {
+                                    let applied = 0;
+                                    for (const candidate of selectedDocument.candidates || []) {
+                                      if (!reviewCanContinue(operation)) return;
+                                      if (candidate.review_status !== 'confirmed' || !candidate.id) continue;
+                                      const result = await applyConfirmedCandidateToUad(candidate, operation);
+                                      if (!reviewCanContinue(operation)) return;
+                                      if (result?.applied) applied += 1;
+                                    }
+                                    setMessage(applied
+                                      ? `Reapplied ${applied} confirmed suggestion${applied === 1 ? '' : 's'} to the canonical UAD workfile.`
+                                      : 'This document has no confirmed fields with a direct UAD mapping.');
+                                    return;
                                   }
+                                  const applied = applyConfirmedDocumentFields(selectedDocument, operation);
+                                  if (!reviewCanContinue(operation)) return;
                                   setMessage(applied
-                                    ? `Reapplied ${applied} confirmed suggestion${applied === 1 ? '' : 's'} to the canonical UAD workfile.`
-                                    : 'This document has no confirmed fields with a direct UAD mapping.');
-                                  return;
+                                    ? 'Confirmed engagement fields were reapplied to the current assignment draft; save Assignment Details to retain them.'
+                                    : 'This document has no confirmed fields to apply.');
+                                } catch (error) {
+                                  if (!reviewCanContinue(operation)) return;
+                                  setMessage(error instanceof Error ? error.message : 'The confirmed fields could not be applied.');
+                                } finally {
+                                  finishReview(operation);
                                 }
-                                const applied = applyConfirmedDocumentFields(selectedDocument);
-                                setMessage(applied
-                                  ? 'Confirmed engagement fields were reapplied to the current assignment draft; save Assignment Details to retain them.'
-                                  : 'This document has no confirmed fields to apply.');
                               })()}
                               disabled={readOnly || loading}
                             >
@@ -1162,17 +1197,22 @@ export default function AssignmentDocumentCenter({
                             type="button"
                             className="hn-action-secondary btn btn-outline btn-xs mt-2 w-full normal-case rounded-lg"
                             onClick={() => void (async () => {
+                              if (!requireMutableWorkfile()) return;
+                              const operation = beginReview([]);
+                              if (!operation) return;
                               setLoading(true);
                               setMessage('');
                               try {
-                                const result = await applyConfirmedCandidateToUad(candidate);
+                                const result = await applyConfirmedCandidateToUad(candidate, operation);
+                                if (!reviewCanContinue(operation)) return;
                                 setMessage(result?.applied
                                   ? `Confirmed evidence applied to UAD ${uadSectionLabel(result.section)}.`
                                   : 'This evidence is retained for review but has no direct UAD form mapping.');
                               } catch (error) {
+                                if (!reviewCanContinue(operation)) return;
                                 setMessage(error instanceof Error ? error.message : 'The confirmed evidence could not be applied to UAD.');
                               } finally {
-                                setLoading(false);
+                                finishReview(operation);
                               }
                             })()}
                             disabled={readOnly || loading}

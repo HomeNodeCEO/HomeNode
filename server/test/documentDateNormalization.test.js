@@ -54,6 +54,17 @@ const invalidTextualTimeCases = [
   "September 24, 2026 00:30:00 GMT+0900junk",
   "February 30, 2026 00:30:00 GMT+0900",
 ].map(source => [source, null]);
+const yearFirstTimeCases = [
+  ["2026 September 24 00:30:00", "2026-09-24"],
+  ["2026 September 24 23:30:00", "2026-09-24"],
+  ["2026 September 24 00:30:00 GMT+0900", "2026-09-23"],
+  ["2026 September 24 23:30:00 -0500", "2026-09-25"],
+  ["2024 February 29 23:30:00 UTC-0500", "2024-03-01"],
+  ["2026 February 30 00:30:00", null],
+  ["2025 February 29 23:30:00 GMT+0900", null],
+  ["2026 September 24 00:30:00 GMT+0999", null],
+  ["2026 September 24 00:30:00 EST", null],
+];
 const invalidCases = [
   "February 30, 2026", "29 February 2025", "2026/02/30", "2026.02.30",
   "2026-02-30T00:30:00", "2025-02-29T23:30:00-05:00", "02/30/2026",
@@ -119,5 +130,12 @@ for (const [timezone, offset] of [["UTC", 0], ["Asia/Tokyo", -540], ["America/Ch
   test(`unsupported or malformed textual document zones stay unresolved in ${timezone}`, () => {
     const actual = extractInTimezone(timezone, invalidTextualTimeCases);
     for (const result of actual.results) assert.equal(result.contract, null, result.source);
+  });
+
+  test(`year-first document datetimes use the complete earliest calendar match in ${timezone}`, () => {
+    const actual = extractInTimezone(timezone, yearFirstTimeCases);
+    for (const [index, [source, expected]] of yearFirstTimeCases.entries()) {
+      assert.equal(actual.results[index].contract, expected, source);
+    }
   });
 }

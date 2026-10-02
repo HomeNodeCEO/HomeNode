@@ -191,6 +191,14 @@ real in-memory 251-page PDFs to verify the existing upload rejection remains.
 Private original-PDF extraction, byte-preserving packaging, and AIXML schema
 validation passed again after the changes; this still is not native import QA.
 
+A later targeted check corrected year-first textual datetimes: the earliest
+complete calendar match now supplies both the date components and the time suffix,
+so the clock hour cannot be mistaken for a two-digit year. Three cross-timezone
+regression groups reproduced the issue before the fix, then passed; 231 related
+extraction, reference-source, mapping, and Subject-pipeline tests passed. Calendar,
+suffix, and explicit-zone validation remain enforced. This follow-up has no frontend
+or stored-data changes and awaits its own final-head CI checks.
+
 ### Verified native synthetic QA
 
 Appraise-It Pro 3.7.9 successfully opened the generated

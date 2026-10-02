@@ -70,20 +70,25 @@ function normalizedDate(value) {
     const monthFirst = source.match(/\b([A-Za-z]+)\.?[\s-]*(\d{1,2})[,\s-]+(\d{4}|\d{2})\b/);
     const dayFirst = source.match(/\b(\d{1,2})[\s-]+([A-Za-z]+)\.?[,\s-]+(\d{4}|\d{2})\b/);
     const yearFirst = source.match(/\b(\d{4})[\s-]+([A-Za-z]+)\.?[\s-]+(\d{1,2})\b/);
-    if (iso) {
-      [year, month, day] = iso.slice(1).map(Number);
-    } else if (monthFirst || dayFirst || yearFirst) {
-      const monthName = monthFirst?.[1] || dayFirst?.[2] || yearFirst[2];
+    // A year-first datetime can also contain a later month-first match that
+    // mistakes the clock hour for a two-digit year. Use the same earliest
+    // complete calendar match for both components and the remaining suffix.
+    const calendar = [iso, monthFirst, dayFirst, yearFirst]
+      .filter(Boolean).sort((left, right) => left.index - right.index)[0];
+    if (!calendar) return null; // No printed calendar components to verify safely.
+    if (calendar === iso) {
+      [year, month, day] = calendar.slice(1).map(Number);
+    } else {
+      const monthName = calendar === monthFirst ? calendar[1] : calendar[2];
       month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName.slice(0, 3).toLowerCase()) + 1;
-      day = Number(monthFirst?.[2] || dayFirst?.[1] || yearFirst[3]);
-      year = Number(monthFirst?.[3] || dayFirst?.[3] || yearFirst[1]);
+      day = Number(calendar === monthFirst ? calendar[2] : calendar === dayFirst ? calendar[1] : calendar[3]);
+      year = Number(calendar === yearFirst ? calendar[1] : calendar[3]);
       if (year < 100) year += year >= 50 ? 1900 : 2000;
-    } else return null; // No printed calendar components to verify safely.
+    }
     if (!isCalendarDate(year, month, day)) return null;
     // An optional time must have a complete, supported suffix. Unknown zone
     // names must not silently become timezone-free calendar dates. Date's
     // textual parser also accepts out-of-range offsets, so check those here.
-    const calendar = iso || monthFirst || dayFirst || yearFirst;
     const suffix = source.slice(calendar.index + calendar[0].length);
     const time = suffix && suffix.match(/^(?:T|\s+)\d{1,2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:\s*[AP]M)?(?:\s*(Z|(?:GMT|UTC)(?:[+-]\d{2}:?\d{2})?|[+-]\d{2}:?\d{2}))?$/i);
     if (suffix && !time) return null;

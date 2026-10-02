@@ -8,6 +8,7 @@ import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarRe
 export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-02-v1";
 const LIMITS = Object.freeze({ pages: 250, pageChars: 500_000, totalChars: 4_000_000, lineChars: 4_000, lines: 50_000, candidates: 2_000, issues: 500 });
 const SOURCES = new Set(["engagement_letter", "mls_sheet", "cad", "realist"]);
+const NON_SUBJECT_DOCUMENT_TYPES = new Set(["purchase_contract", "district_evidence", "zoning_map", "zoning_ordinance", "map"]);
 const EMPTY = /^(?:unknown|unavailable|not available|not provided|not applicable|not disclosed|undisclosed|unassigned|pending|tbd|tba|to be determined|to be assigned|to be confirmed|to be announced|n\/?a|null|undefined|[-_?]+)[.!]?$/i;
 const STATES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR VI".split(" "));
 const compact = value => typeof value === "string" ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/\s+/g, " ").trim() : "";
@@ -178,6 +179,7 @@ function sourceFor(documentType, sourceKind, entries, referenceLayout = null) {
 /** Use before the general classifier for Other uploads: an incidental MLS #
  * inside a Realist/CAD report must not change the explicit source family. */
 export function identifyUrarSubjectSource({ documentType = "other", pages = [] } = {}) {
+  if (NON_SUBJECT_DOCUMENT_TYPES.has(documentType)) return null;
   const unresolved = [];
   const entries = collectLines(pages, unresolved);
   const reference = inspectUrarReferenceLayout(pages);
@@ -289,6 +291,13 @@ function collectConflicts(candidates, conflicts) {
  */
 export function buildUrarSubjectEvidence({ documentType = "other", pages = [], sourceKind = null } = {}) {
   const unresolved = [], candidates = [], conflicts = [];
+  // Explicit contract, zoning, district, and map types retain their own parsers.
+  // Subject-only bounds or source hints must not veto or take over those types.
+  // Unknown Other uploads still undergo the full fail-closed source checks.
+  if (NON_SUBJECT_DOCUMENT_TYPES.has(documentType)) {
+    return { schema_version: URAR_SUBJECT_EVIDENCE_VERSION, source_kind: null,
+      review_required: true, candidates, conflicts, unresolved };
+  }
   const entries = collectLines(pages, unresolved);
   const reference = inspectUrarReferenceLayout(pages);
   const inputIncomplete = unresolved.length > 0 || reference.unresolved.length > 0;

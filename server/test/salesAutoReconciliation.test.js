@@ -121,3 +121,152 @@ test("batch dry run never opens a write transaction", async () => {
   assert.equal(result.remaining_candidate_count, 2);
 });
 
+const TRANSACTION_STAGES = [
+  "BEGIN", "source lock", "parcel update", "parcel insert", "source update",
+  "sale update", "sale insert", "history insert", "COMMIT",
+];
+
+function writeStage(sql) {
+  if (["BEGIN", "COMMIT", "ROLLBACK"].includes(sql)) return sql;
+  if (sql.includes("FOR UPDATE OF source")) return "source lock";
+  if (sql.includes("UPDATE core.sale_parcels parcel")) return "parcel update";
+  if (sql.includes("INSERT INTO core.sale_parcels")) return "parcel insert";
+  if (sql.includes("UPDATE core.sales_source_records source")) return "source update";
+  if (sql.includes("UPDATE core.sales sale")) return "sale update";
+  if (sql.includes("INSERT INTO core.sales (")) return "sale insert";
+  if (sql.includes("INSERT INTO app.sales_auto_reconciliation_history")) return "history insert";
+  assert.fail("unexpected query in sales auto-reconciliation transaction");
+}
+
+function transactionPool({
+  failureStage = null, rollbackFails = false, lockedIds = [44], noCandidates = false, connectError = null,
+} = {}) {
+  const reads = auditPool();
+  const primaryError = new Error("private reconciliation operation detail");
+  const rollbackError = new Error("private rollback connection detail");
+  const statements = [], releases = [];
+  let connections = 0, injectedFailures = 0;
+  const pool = {
+    async query(sql, params) {
+      if (noCandidates && (sql.includes("source.has_unresolved_parcel = true")
+          || sql.includes("source.match_status = 'unmatched'"))) return { rows: [], rowCount: 0 };
+      return reads.query(sql, params);
+    },
+    async connect() {
+      connections += 1;
+      if (connectError) throw connectError;
+      return {
+        async query(sql, params) {
+          const stage = writeStage(sql);
+          statements.push({ stage, sql, params });
+          if (stage === "ROLLBACK" && rollbackFails) throw rollbackError;
+          if (stage === failureStage) {
+            injectedFailures += 1;
+            throw primaryError;
+          }
+          if (stage === "source lock") return { rows: lockedIds.map(id => ({ id })) };
+          return { rows: [], rowCount: stage === "source update" ? lockedIds.length : 0 };
+        },
+        release(error) { releases.push(error); },
+      };
+    },
+  };
+  return {
+    pool, primaryError, rollbackError, statements, releases,
+    get connections() { return connections; },
+    get injectedFailures() { return injectedFailures; },
+  };
+}
+
+for (const failureStage of TRANSACTION_STAGES) {
+  for (const rollbackFails of [false, true]) {
+    test(`sales auto-reconciliation ${failureStage} failure preserves its error and ${rollbackFails ? "retires" : "reuses"} the client`, async () => {
+      const fixture = transactionPool({ failureStage, rollbackFails });
+      let caught;
+      try {
+        await runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 });
+      } catch (error) {
+        caught = error;
+      }
+      assert.equal(fixture.injectedFailures, 1);
+      assert.equal(fixture.connections, 1);
+      assert.deepEqual(fixture.statements.map(({ stage }) => stage), [
+        ...TRANSACTION_STAGES.slice(0, TRANSACTION_STAGES.indexOf(failureStage) + 1), "ROLLBACK",
+      ]);
+      assert.equal(fixture.releases.length, 1);
+      assert.equal(caught, fixture.primaryError, "rollback failure must not replace the original operation error");
+      if (rollbackFails) {
+        assert.ok(fixture.releases[0] instanceof Error);
+        assert.equal(fixture.releases[0].message, "sales_auto_reconciliation_rollback_failed");
+        assert.notEqual(fixture.releases[0], fixture.primaryError);
+        assert.notEqual(fixture.releases[0], fixture.rollbackError);
+      } else {
+        assert.equal(fixture.releases[0], undefined);
+      }
+    });
+  }
+}
+
+test("actual sales batch applies all six writes in order to only the source rows retained by the lock", async () => {
+  const fixture = transactionPool();
+  const result = await runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 });
+  assert.deepEqual(result, {
+    dry_run: false, trusted_existing_links: 1, unique_exact_addresses: 1,
+    inspected_unmatched_addresses: 2, resolved: 1,
+  });
+  assert.deepEqual(fixture.statements.map(({ stage }) => stage), TRANSACTION_STAGES);
+  const lock = fixture.statements[1];
+  assert.deepEqual(JSON.parse(lock.params[0]).map(item => item.source_record_id), [3901, 44]);
+  const eligible = [{
+    source_record_id: 44,
+    account_id: "00000000000000044",
+    resolution_method: "unique_exact_address",
+    previous_match_status: "unmatched",
+    raw_parcel_number: "000",
+    address_key: "100 MAIN ST",
+    city_key: "GARLAND",
+    postal_code5: null,
+  }];
+  const writes = fixture.statements.slice(2, -1);
+  assert.equal(writes.length, 6);
+  for (const write of writes) {
+    assert.equal(write.params.length, 1);
+    assert.deepEqual(JSON.parse(write.params[0]), eligible, `${write.stage} must use only locked eligible resolutions`);
+  }
+  assert.equal(fixture.connections, 1);
+  assert.deepEqual(fixture.releases, [undefined]);
+});
+
+test("a sales batch whose locked rows are no longer eligible commits without writes and releases normally", async () => {
+  const fixture = transactionPool({ lockedIds: [] });
+  const result = await runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 });
+  assert.deepEqual(result, {
+    dry_run: false, trusted_existing_links: 1, unique_exact_addresses: 1,
+    inspected_unmatched_addresses: 2, resolved: 0,
+  });
+  assert.deepEqual(fixture.statements.map(({ stage }) => stage), ["BEGIN", "source lock", "COMMIT"]);
+  assert.equal(fixture.connections, 1);
+  assert.deepEqual(fixture.releases, [undefined]);
+});
+
+test("sales batches without candidates never check out a transaction client", async () => {
+  const fixture = transactionPool({ noCandidates: true, connectError: new Error("must not connect without candidates") });
+  const result = await runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 });
+  assert.deepEqual(result, {
+    dry_run: false, trusted_existing_links: 0, unique_exact_addresses: 0,
+    inspected_unmatched_addresses: 0, resolved: 0, remaining_candidate_count: 0, sample: [],
+  });
+  assert.equal(fixture.connections, 0);
+  assert.deepEqual(fixture.statements, []);
+  assert.deepEqual(fixture.releases, []);
+});
+
+test("sales batch checkout failure preserves its cause without transaction cleanup", async () => {
+  const connectError = new Error("private connection failure");
+  const fixture = transactionPool({ connectError });
+  await assert.rejects(runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 }), error => error === connectError);
+  assert.equal(fixture.connections, 1);
+  assert.deepEqual(fixture.statements, []);
+  assert.deepEqual(fixture.releases, []);
+});
+

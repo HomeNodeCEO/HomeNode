@@ -524,6 +524,7 @@ export async function runSalesAutoReconciliationBatch(pool, {
   }
 
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const resolved = await applySalesAutoResolutions(client, resolutions);
@@ -536,10 +537,14 @@ export async function runSalesAutoReconciliationBatch(pool, {
       resolved,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("sales_auto_reconciliation_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

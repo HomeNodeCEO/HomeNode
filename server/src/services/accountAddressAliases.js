@@ -120,6 +120,7 @@ export async function seedAccountAddressAliasBatch(pool, {
   const safeRefreshDays = boundedInteger(refreshDays, 7, 1, 90);
   await ensureAccountAddressAliasSchema(pool);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const lock = await client.query(
@@ -241,10 +242,14 @@ export async function seedAccountAddressAliasBatch(pool, {
       last_account_id: lastAccountId,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("account_address_alias_seed_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

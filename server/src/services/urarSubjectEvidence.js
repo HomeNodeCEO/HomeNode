@@ -208,8 +208,37 @@ function legalSubdivision(value) {
   return { name, method: "legal_subdivision_lot_block" };
 }
 
-function multipleMlsListings(entries) {
-  return new Set(entries.map(entry => entry.line.match(/^MLS\s*#\s*:\s*(\d{4,20})\b/i)?.[1]).filter(Boolean)).size > 1;
+function mlsListingIdentityIssue(entries) {
+  // Match the legacy MLS-number label family, including inline columns and
+  // standalone values, but never truncate a malformed ID to a valid prefix.
+  // A missing/placeholder record ID is not evidence that two records agree.
+  const labels = /(?:^|[\s|;])(?:MLS|LISTING)\s*(?:#|NO\.|(?:NO|NUMBER|ID)(?=$|[\s:=#-]))/gi;
+  const identifiers = new Set();
+  for (let index = 0; index < entries.length; index += 1) {
+    const entry = entries[index];
+    for (const match of entry.line.matchAll(labels)) {
+      let raw = entry.line.slice(match.index + match[0].length).trim().replace(/^[:=#-]\s*/, "");
+      // Matrix's explicitly qualified, empty lease-reference field is not a
+      // second primary listing. Filled or unqualified missing IDs remain gated.
+      if (!raw && /\b(?:Lse|Lease)\s*$/i.test(entry.line.slice(0, match.index))) continue;
+      if (!raw) {
+        const next = entries[index + 1];
+        // Only a standalone label can take the next same-page line as its value.
+        if (match.index !== 0 || !next || next.page_number !== entry.page_number || labeled(next.line)) {
+          return "ambiguous_mls_listing_identity";
+        }
+        raw = next.line;
+      }
+      const token = raw.match(/^([A-Z0-9][A-Z0-9-]{2,44})(?=$|[\s|;])/i)?.[1];
+      if (!token || EMPTY.test(token) || EMPTY.test(raw)
+        || /^(?:not\s+(?:available|provided|disclosed|applicable)|to\s+be\s+(?:determined|assigned|confirmed|announced))(?=$|[\s|;])/i.test(raw)) {
+        return "ambiguous_mls_listing_identity";
+      }
+      identifiers.add(token.toUpperCase());
+      if (identifiers.size > 1) return "multiple_mls_listing_identities";
+    }
+  }
+  return null;
 }
 
 function addMlsHeadingIdentity(entries, add) {
@@ -274,8 +303,9 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
     return result;
   }
   if (!source) { issue(unresolved, { reason: entries.length ? "source_not_identified" : "no_readable_text" }); return result; }
-  if (source === "mls_sheet" && multipleMlsListings(entries)) {
-    issue(unresolved, { reason: "multiple_mls_listing_identities" }); return result;
+  const listingIdentityIssue = source === "mls_sheet" ? mlsListingIdentityIssue(entries) : null;
+  if (listingIdentityIssue) {
+    issue(unresolved, { reason: listingIdentityIssue }); return result;
   }
   if (referenceLayout === source) {
     // A recognized table layout owns its omissions too. The generic label

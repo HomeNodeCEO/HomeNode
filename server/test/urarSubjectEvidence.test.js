@@ -319,6 +319,85 @@ test("MLS heading identity is not guessed from later office addresses, unrelated
   assert.deepEqual(multiLabeled.candidates, []);
 });
 
+test("multi-listing guard recognizes every supported MLS and Listing label with optional delimiters", () => {
+  const first = "Property Address: 100 Example Dr, Garland, TX 75041\nMLS#: 12345678\nList Date: 09/01/2026";
+  for (const label of ["MLS#", "MLS #", "MLS No", "MLS No.", "MLS Number", "MLS ID",
+    "Listing #", "Listing No", "Listing No.", "Listing Number", "Listing ID"]) {
+    for (const delimiter of [" ", ": ", "= ", "# ", "- "]) {
+      const second = `${label}${delimiter}87654321\nList Date: 09/24/2026`;
+      for (const pages of [[first, second], [second, first]]) {
+        const result = extract("mls_sheet", ...pages);
+        assert.deepEqual(result.candidates, [], `${label}${delimiter}`);
+        assert.ok(result.unresolved.some(item => item.reason === "multiple_mls_listing_identities"), `${label}${delimiter}`);
+      }
+    }
+  }
+});
+
+test("inline, undelimited hash, alphanumeric and same-page standalone listing IDs cannot mix records", () => {
+  for (const identifiers of [
+    "NTREIS Report MLS No. AB-123 Status: Active\nMLS ID=CD-456",
+    "MLS#12345678\nListing#87654321",
+    "MLS No: AB-123 | Listing Number: CD-456",
+    "MLS No: AB-123; Listing ID: CD-456",
+    "MLS#\n12345678\nListing ID:\n87654321",
+  ]) {
+    const result = extract("mls_sheet", `Property Address: 100 Example Dr, Garland, TX 75041\n${identifiers}\nList Date: 09/24/2026`);
+    assert.deepEqual(result.candidates, [], identifiers);
+    assert.ok(result.unresolved.some(item => item.reason === "multiple_mls_listing_identities"), identifiers);
+  }
+});
+
+test("equivalent listing IDs deduplicate case-insensitively without weakening Matrix identity rules", () => {
+  const result = extract("mls_sheet", "Property Address: 100 Example Dr, Garland, TX 75041\nMLS No. ab-123\nListing ID=AB-123\nMLS#\nAb-123\nList Date: 09/24/2026");
+  assert.equal(value(result, "subject_property_address"), "100 Example Dr, Garland, TX 75041");
+  assert.equal(value(result, "list_date"), "2026-09-24");
+  assert.equal(result.unresolved.some(item => /mls_listing_identit/.test(item.reason)), false);
+  const noMatrixHeading = extract("mls_sheet", "100 Example Dr, Garland, TX 75041\nMLS No. 12345678 Active 100 Example Dr Garland, TX 75041 LP: $200,000\nList Date: 09/24/2026");
+  assert.equal(value(noMatrixHeading, "subject_property_address"), undefined);
+});
+
+test("a blank explicitly qualified Matrix lease reference is not another primary listing", () => {
+  const first = "Property Address: 100 Example Dr, Garland, TX 75041\nMLS#: 12345678";
+  const result = extract("mls_sheet", `${first}\nCountry: United States Lse MLS#:`, "List Date: 09/24/2026");
+  assert.equal(value(result, "list_date"), "2026-09-24");
+  assert.equal(result.unresolved.some(item => /mls_listing_identit/.test(item.reason)), false);
+  assert.deepEqual(extract("mls_sheet", `${first}\nCountry: United States Lse MLS#: UNKNOWN\nList Date: 09/24/2026`).candidates, []);
+});
+
+test("recognized missing or malformed listing IDs fail closed rather than matching a token prefix", () => {
+  const first = "Property Address: 100 Example Dr, Garland, TX 75041\nMLS#: 12345678";
+  for (const token of ["UNKNOWN", "Unavailable", "Not Available", "PENDING", "TBD", "N/A", "", "AB", "A".repeat(46),
+    "12345678/OTHER", "12345678_OTHER", "12345678.OTHER", "12345678@OTHER", "---"]) {
+    const second = `MLS#: ${token}\nList Date: 09/24/2026`;
+    for (const pages of [[first, second], [second, first], [`${first}\n${second}`]]) {
+      const result = extract("mls_sheet", ...pages);
+      assert.deepEqual(result.candidates, [], token);
+      assert.ok(result.unresolved.some(item => item.reason === "ambiguous_mls_listing_identity"), token);
+    }
+  }
+});
+
+test("standalone listing labels never borrow an ID from a different page or another field", () => {
+  for (const pages of [
+    ["Property Address: 100 Example Dr, Garland, TX 75041\nMLS No.", "12345678\nList Date: 09/24/2026"],
+    ["Property Address: 100 Example Dr, Garland, TX 75041\nMLS ID:\nList Date: 09/24/2026"],
+  ]) {
+    const result = extract("mls_sheet", ...pages);
+    assert.deepEqual(result.candidates, []);
+    assert.ok(result.unresolved.some(item => item.reason === "ambiguous_mls_listing_identity"));
+  }
+});
+
+test("MLS guard does not invent identifiers from partial label words or unrelated digits", () => {
+  for (const incidental of ["XMLS No: 87654321", "MLS Numbered: 87654321", "Listing Identifier: 87654321",
+    "MLS Nozzle: 87654321", "AMLS#: 87654321", "Parcel ID: 87654321", "Tax Year: 2025"]) {
+    const result = extract("mls_sheet", `Property Address: 100 Example Dr, Garland, TX 75041\nMLS#: 12345678\n${incidental}\nList Date: 09/24/2026`);
+    assert.equal(value(result, "list_date"), "2026-09-24", incidental);
+    assert.equal(result.unresolved.some(item => /mls_listing_identit/.test(item.reason)), false, incidental);
+  }
+});
+
 test("a Realist jurisdiction amount never becomes the total property tax", () => {
   const result = extract("other", "REALIST\nProperty Address: 100 Example Dr, Garland, TX 75041\nAPN: 00001234567890000\nTax Jurisdiction: City of Example\nTax Amount: $1,500.00");
   assert.equal(value(result, "tax_amount"), undefined);

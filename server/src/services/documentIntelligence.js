@@ -946,7 +946,7 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
   if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
-  if (subjectEvidence.unresolved.some(item => item.reason === "multiple_mls_listing_identities")) return [];
+  if (subjectEvidence.unresolved.some(item => ["multiple_mls_listing_identities", "ambiguous_mls_listing_identity"].includes(item.reason))) return [];
   const entries = pageLines(pages);
   const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;
   if (mls?.dateLimitExceeded) return [];

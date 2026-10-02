@@ -397,6 +397,32 @@ test("multi-listing diagnostics suppress legacy candidates instead of mixing one
     subjectEvidence: { source_kind: "mls_sheet", candidates: [], conflicts: [], unresolved: [{ reason: "multiple_mls_listing_identities" }] } }), []);
 });
 
+test("alternate MLS identity labels cannot mix subject fields with another listing's date", () => {
+  const pairs = [
+    ["MLS No. 12345678", "MLS No. 87654321"],
+    ["MLS Number: 12345678", "MLS Number: 87654321"],
+    ["MLS ID=A1001", "MLS ID=B1002"],
+    ["Listing ID: A1001", "Listing ID: B1002"],
+    ["NTREIS Full Report MLS No 12345678 ST P", "NTREIS Full Report MLS No 87654321 ST P"],
+    ["MLS #\n12345678", "MLS #\n87654321"],
+  ];
+  for (const [first, second] of pairs) {
+    const pages = [`Property Address: 100 Example Drive, Garland, TX 75041\n${first}`,
+      `999 Other Road, Dallas, TX 75225\n${second}\nList Date: 09/24/2026`];
+    assert.deepEqual(buildDocumentFieldCandidates({ documentType: "mls_sheet", pages }), [], first);
+  }
+});
+
+test("an additional malformed MLS record cannot borrow another record's subject identity", () => {
+  const subject = "100 Example Drive, Garland, TX 75041\nMLS#: 12345678 Active 100 Example Drive Garland, TX 75041 LP: $295,000";
+  for (const label of ["MLS#: UNKNOWN", "MLS Number: ?", "MLS ID:\nUNKNOWN"]) {
+    const other = `${label}\nList Date: 09/24/2026`;
+    for (const pages of [[subject, other], [other, subject]]) {
+      assert.deepEqual(buildDocumentFieldCandidates({ documentType: "mls_sheet", pages }), [], label);
+    }
+  }
+});
+
 test("an active MLS listing derives a reviewable end date from LD and DOM when no end date is printed", () => {
   const candidates = buildDocumentFieldCandidates({
     documentType: "mls_sheet",

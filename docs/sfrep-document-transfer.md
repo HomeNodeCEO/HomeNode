@@ -35,6 +35,10 @@ jurisdiction's amount. An incomplete latest row is not silently replaced by an
 older year. Layout identity, page provenance, and bounded input are required;
 mixed or truncated records fail closed. Multi-listing PDFs need separate source
 review rather than mixing one listing's identity with another listing's date.
+The identity guard covers MLS/Listing #, No., Number and ID labels, inline or
+same-page standalone values. Distinct or malformed identities stop extraction;
+repeated identical IDs are compatible. An explicitly empty Matrix lease-reference
+field does not create a second primary record.
 
 Previously reviewed uploads are not silently reprocessed. Use **Re-run extraction**
 to obtain the new Subject candidates; existing confirmations are preserved only
@@ -131,8 +135,8 @@ private contents, and package are outside the repository; no production review
 state or appraisal was changed. This verifies extraction and packaging, not final
 native form rendering or appraiser approval.
 
-The print-layout follow-up passed 9,014 server tests (46 skipped, zero failures),
-3,208 frontend tests, TypeScript, lint, source-size checks, and the production
+The print-layout and review-hardening follow-up passed 9,023 server tests (46 skipped, zero failures),
+3,246 frontend tests, TypeScript, lint, source-size checks, and the production
 build/bundle budgets. The private original-PDF package also validates against
 the public AIXML 1.5 schema; all 17 exported field IDs exist in the installed
 1004 dictionary. These checks do not remove the native-import release gate below.
@@ -141,6 +145,10 @@ Document-center processing polls only refresh metadata. Same-document retries
 and polls preserve dirty review fields and PDF-error messages, without repeatedly
 downloading a failed PDF. Explicit selection retries the preview; request-generation
 and assignment-scope guards reject late polls and stale responses.
+Per-candidate edit versions preserve intent when a server refresh temporarily
+matches a draft. A successful review acknowledges only the submitted edits;
+newer in-flight edits, failed reviews and fields outside an approve-all submission
+remain dirty. Removed candidates and document/assignment changes reset that state.
 
 ### Verified native synthetic QA
 

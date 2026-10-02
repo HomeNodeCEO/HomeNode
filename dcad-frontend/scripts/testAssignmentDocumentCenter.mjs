@@ -36,7 +36,7 @@ function text(tree) {
 // Load the actual checked-in component through the repository's restricted,
 // file-backed test loader. Child components are deliberately not executed here:
 // these tests exercise the parent authentication, scope, and async boundaries.
-function harness({ props: initialProps = {}, api: overrides = {}, documents = [] } = {}) {
+function harness({ props: initialProps = {}, api: overrides = {}, presentation = {}, documents = [] } = {}) {
   const cells = [], effects = [], timers = new Map(), calls = [], lateStateWrites = [];
   let cursor = 0, dirty = false, tree, unmounted = false, timerId = 0;
   const react = {
@@ -99,6 +99,7 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
       assignmentDocumentConfirmationBlocked: () => false,
       confirmedDocumentFieldApplications: () => [],
       documentSubjectAddressComparison: () => ({ matches: null }),
+      ...presentation,
     },
   };
   const { default: Component } = loadTrustedRepositoryCommonJs(source, name => {
@@ -137,7 +138,14 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
     requests: name => calls.filter(call => call.name === name),
     candidateInput(id) {
       const card = nodes(tree, node => node.type === 'div' && node.key === id)[0];
-      return nodes(card, node => node.type === 'input')[0] || null;
+      return nodes(card, node => node.type === 'input' || node.type === 'select')[0] || null;
+    },
+    click(label, candidateId) {
+      const root = candidateId ? nodes(tree, node => node.type === 'div' && node.key === candidateId)[0] : tree;
+      const button = nodes(root, node => node.type === 'button' && text(node) === label)[0];
+      assert.ok(button, `button ${label} exists`);
+      assert.equal(Boolean(button.props.disabled), false, `button ${label} is enabled`);
+      button.props.onClick(); flush();
     },
     select(id) {
       const button = nodes(tree, node => node.type === 'button' && node.key === id)[0];
@@ -399,6 +407,187 @@ test('retrying the same PDF after a preview failure preserves reviewer drafts an
   assert.equal(h.candidateInput(704).props.value, 'New candidate');
   assert.equal(h.candidateInput(705), null);
   assert.ok(h.preview); assert.equal(contentRequests, 2);
+});
+
+for (const mode of ['Custom', 'UAD']) for (const draft of ['B', '']) {
+  test(`${mode} explicit edit intent survives server A-to-draft-to-C polling for ${JSON.stringify(draft)}`, async t => {
+    let request = 0;
+    const metadata = id => document(id, { processing_status: 'processing',
+      candidates: [candidate(701, ['A', draft, 'C'][Math.min(request++, 2)])] });
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, 'A');
+    h.candidateInput(701).props.onChange({ target: { value: draft } }); h.flush();
+    h.poll(); await h.settle(); assert.equal(h.candidateInput(701).props.value, draft);
+    h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, draft, 'a matching server value must not revoke explicit edit intent');
+  });
+}
+
+for (const mode of ['Custom', 'UAD']) for (const action of ['Confirm', 'Reject']) {
+  test(`${mode} successful ${action} clears only the submitted candidate edit`, async t => {
+    let serverValue = 'A';
+    const metadata = id => document(id, { processing_status: 'processing',
+      candidates: [candidate(701, serverValue), candidate(702, serverValue)] });
+    const save = async () => { serverValue = 'B'; return {}; };
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+      reviewAssignmentDocumentCandidate: save, reviewUadDocumentCandidate: save,
+      applyUadDocumentCandidate: async () => ({ applied: false }),
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: '' } });
+    h.candidateInput(702).props.onChange({ target: { value: 'Unsaved other field' } }); h.flush();
+    h.click(action, 701); await h.settle();
+    const saved = h.requests(mode === 'UAD' ? 'reviewUadDocumentCandidate' : 'reviewAssignmentDocumentCandidate')[0];
+    assert.equal(saved.args[mode === 'UAD' ? 3 : 2].confirmedValue, '', 'an empty draft is not replaced before submission');
+    assert.equal(h.candidateInput(701).props.value, 'B', 'the submitted edit is acknowledged on success');
+    serverValue = 'C'; h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, 'C');
+    assert.equal(h.candidateInput(702).props.value, 'Unsaved other field');
+  });
+}
+
+for (const mode of ['Custom', 'UAD']) {
+  test(`${mode} failed review preserves explicit edit intent through later matching polls`, async t => {
+    let serverValue = 'A';
+    const metadata = id => document(id, { processing_status: 'processing', candidates: [candidate(701, serverValue)] });
+    const fail = async () => { throw new Error('synthetic review failed'); };
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+      reviewAssignmentDocumentCandidate: fail, reviewUadDocumentCandidate: fail,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+    h.click('Confirm', 701); await h.settle(); assert.match(h.text, /synthetic review failed/);
+    serverValue = 'B'; h.poll(); await h.settle();
+    serverValue = 'C'; h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, 'B');
+  });
+}
+
+const saveRoutes = [
+  { name: 'Custom single review', apiName: 'reviewAssignmentDocumentCandidate', button: 'Confirm', candidateId: 701, single: true },
+  { name: 'UAD single review', apiName: 'reviewUadDocumentCandidate', button: 'Confirm', candidateId: 701, single: true, uad: true },
+  { name: 'Custom approve-all', apiName: 'confirmAllAssignmentDocumentCandidates', button: 'Approve All (1)' },
+  { name: 'UAD purchase-contract approve-all', apiName: 'confirmAllUadPurchaseContractCandidates', button: 'Approve All (1)', uad: true, contract: true },
+  { name: 'UAD iterative approve-all', apiName: 'reviewUadDocumentCandidate', button: 'Approve All (1)', uad: true, single: true },
+  { name: 'Custom mismatch override', apiName: 'confirmAssignmentDocumentDespiteSubjectMismatch', button: 'Upload Anyway', override: true },
+  { name: 'UAD mismatch override', apiName: 'confirmUadDocumentDespiteSubjectMismatch', button: 'Upload Anyway', uad: true, override: true },
+];
+for (const route of saveRoutes) for (const result of ['saved', 'failed', 'edited during save']) {
+  test(`${route.name} preserves correct dirty state when ${result}`, async t => {
+    const pending = deferred(); let serverValue = 'A';
+    const metadata = id => document(id, { processing_status: 'processing',
+      document_type: route.override ? 'engagement_letter' : route.contract ? 'purchase_contract' : 'mls_sheet',
+      candidates: [{ ...candidate(701, serverValue), field_key: route.override ? 'subject_property_address' : 'county' }] });
+    const h = harness({ props: route.uad ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)],
+      presentation: route.override ? {
+        assignmentDocumentConfirmationBlocked: () => true,
+        documentSubjectAddressComparison: () => ({ matches: false, documentAddress: 'Synthetic A', reportAddress: 'Synthetic B' }),
+      } : {}, api: {
+        getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+        [route.apiName]: () => pending.promise,
+        applyUadDocumentCandidate: async () => ({ applied: false }),
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+    h.click(route.button, route.candidateId);
+    assert.equal(h.requests(route.apiName).length, 1);
+    if (result === 'edited during save') {
+      h.candidateInput(701).props.onChange({ target: { value: 'Newer draft' } }); h.flush();
+      h.candidateInput(701).props.onChange({ target: { value: 'B' } }); h.flush();
+    }
+    serverValue = 'B';
+    if (result === 'failed') pending.reject(new Error('synthetic save failed'));
+    else pending.resolve(route.single ? {} : route.override ? metadata(7) : { document: metadata(7), application: {} });
+    await h.settle();
+    if (result === 'failed') assert.match(h.text, /synthetic save failed/);
+    assert.equal(h.candidateInput(701).props.value, 'B');
+    serverValue = 'C'; h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, result === 'saved' ? 'C' : 'B',
+      'only a successfully submitted edit version is acknowledged, never a newer edit with identical text');
+  });
+}
+
+test('partially failed UAD approve-all acknowledges only successfully reviewed candidates', async t => {
+  let serverValue = 'A';
+  const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77' }, documents: [document(7)], api: {
+    getUadDocument: async (_workfile, id) => document(id, { processing_status: 'processing',
+      candidates: [candidate(701, serverValue), candidate(702, serverValue)] }),
+    reviewUadDocumentCandidate: async (_workfile, _document, id) => {
+      if (id === 702) throw new Error('synthetic second save failed');
+      return {};
+    },
+    applyUadDocumentCandidate: async () => ({ applied: false }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.candidateInput(701).props.onChange({ target: { value: 'B' } });
+  h.candidateInput(702).props.onChange({ target: { value: '' } }); h.flush();
+  h.click('Approve All (2)'); await h.settle(); assert.match(h.text, /synthetic second save failed/);
+  assert.equal(h.requests('reviewUadDocumentCandidate')[1].args[3].confirmedValue, '');
+  serverValue = 'C'; h.poll(); await h.settle();
+  assert.equal(h.candidateInput(701).props.value, 'C');
+  assert.equal(h.candidateInput(702).props.value, '');
+});
+
+for (const route of saveRoutes.filter(route => !route.single)) {
+  test(`${route.name} does not acknowledge a dirty candidate already reviewed by the server`, async t => {
+    let stage = 0;
+    const metadata = id => document(id, { processing_status: 'processing',
+      document_type: route.override ? 'engagement_letter' : route.contract ? 'purchase_contract' : 'mls_sheet',
+      candidates: [
+        { ...candidate(701, stage === 0 ? 'A' : 'Server change'),
+          field_key: route.override ? 'subject_property_address' : 'county',
+          review_status: stage === 1 ? 'confirmed' : 'suggested' },
+        candidate(702, 'Other value'),
+      ] });
+    const save = async () => route.override ? metadata(7) : { document: metadata(7), application: {} };
+    const h = harness({ props: route.uad ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)],
+      presentation: route.override ? {
+        assignmentDocumentConfirmationBlocked: () => true,
+        documentSubjectAddressComparison: () => ({ matches: false }),
+      } : {}, api: {
+        getAssignmentDocument: async id => metadata(id), getUadDocument: async (_workfile, id) => metadata(id),
+        [route.apiName]: save, applyUadDocumentCandidate: async () => ({ applied: false }),
+      } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'Unsaved local edit' } }); h.flush();
+    stage = 1; h.poll(); await h.settle(); assert.equal(h.candidateInput(701), null);
+    h.click(route.button); await h.settle(); assert.equal(h.requests(route.apiName).length, 1);
+    stage = 2; h.poll(); await h.settle();
+    assert.equal(h.candidateInput(701).props.value, 'Unsaved local edit',
+      'bulk endpoints save only suggested candidates, not every entry in candidateValues');
+  });
+}
+
+test('removed candidates lose old edit intent even if the ID reappears in a later extraction', async t => {
+  let stage = 0;
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { processing_status: 'processing',
+      candidates: stage === 1 ? [] : [candidate(701, stage === 0 ? 'A' : `Fresh ${stage}`)] }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.candidateInput(701).props.onChange({ target: { value: 'Old edit' } }); h.flush();
+  stage = 1; h.poll(); await h.settle(); assert.equal(h.candidateInput(701), null);
+  stage = 2; h.poll(); await h.settle(); assert.equal(h.candidateInput(701).props.value, 'Fresh 2');
+  stage = 3; h.poll(); await h.settle(); assert.equal(h.candidateInput(701).props.value, 'Fresh 3');
+});
+
+test('a select input keeps explicit edits when the server first matches and then changes', async t => {
+  let serverValue = 'Yes';
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { processing_status: 'processing',
+      candidates: [{ ...candidate(701, serverValue), field_key: 'contract_personal_property_included' }] }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  assert.equal(h.candidateInput(701).type, 'select');
+  h.candidateInput(701).props.onChange({ target: { value: 'No' } }); h.flush();
+  serverValue = 'No'; h.poll(); await h.settle();
+  serverValue = 'Yes'; h.poll(); await h.settle();
+  assert.equal(h.candidateInput(701).props.value, 'No');
 });
 
 for (const mode of ['Custom', 'UAD']) {

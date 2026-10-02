@@ -181,6 +181,8 @@ export default function AssignmentDocumentCenter({
       : false
   ));
   const [candidateValues, setCandidateValues] = useState<Record<number, string>>({});
+  const candidateEditVersionsRef = useRef(new Map<number, number>());
+  const candidateEditSequenceRef = useRef(0);
   const [sourcePdf, setSourcePdf] = useState<{ scope: string; documentId: number; blob: Blob } | null>(null);
   const sourcePdfRef = useRef(sourcePdf);
   sourcePdfRef.current = sourcePdf;
@@ -199,6 +201,35 @@ export default function AssignmentDocumentCenter({
   const mountedRef = useRef(true);
   const lastUploadedRef = useRef<{ scope: string; id: number } | null>(null);
   const loadDocumentRequestRef = useRef(0);
+  const editCandidateValue = (id: number, value: string) => {
+    candidateEditVersionsRef.current.set(id, ++candidateEditSequenceRef.current);
+    setCandidateValues(current => ({ ...current, [id]: value }));
+  };
+  const snapshotCandidateEdits = (candidates: AssignmentDocumentCandidate[]) => {
+    const ids = new Set(candidates.map(candidate => candidate.id));
+    return new Map([...candidateEditVersionsRef.current].filter(([id]) => ids.has(id)));
+  };
+  const refreshCandidateValues = useCallback((document: EvidenceDocument) => {
+    const candidates = (document.candidates || [])
+      .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id));
+    const available = new Set(candidates.map(candidate => candidate.id));
+    for (const id of candidateEditVersionsRef.current.keys()) {
+      if (!available.has(id)) candidateEditVersionsRef.current.delete(id);
+    }
+    const dirty = new Set(candidateEditVersionsRef.current.keys());
+    setCandidateValues(current => Object.fromEntries(candidates.map(candidate => [candidate.id,
+      dirty.has(candidate.id) && Object.hasOwn(current, candidate.id) ? current[candidate.id]
+        : candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value])));
+  }, []);
+  const clearSavedCandidateEdits = (documentId: number, submitted: ReadonlyMap<number, number>, ids: Iterable<number> = submitted.keys()) => {
+    if (!mountedRef.current || currentScopeKeyRef.current !== scopeKey || selectedDocumentScopeRef.current !== scopeKey
+      || selectedDocumentRef.current?.id !== documentId) return;
+    for (const id of ids) {
+      // A save acknowledges the submitted edit, never a newer edit made while
+      // that save was in flight (even if both edits happen to have equal text).
+      if (submitted.has(id) && candidateEditVersionsRef.current.get(id) === submitted.get(id)) candidateEditVersionsRef.current.delete(id);
+    }
+  };
   const documentSubjectCandidate = useMemo(
     () => selectedDocument?.candidates?.find((candidate) => (
       candidate.field_key === 'subject_property_address'
@@ -271,6 +302,7 @@ export default function AssignmentDocumentCenter({
     setDocuments([]);
     setSelectedDocument(null);
     selectedDocumentScopeRef.current = null;
+    candidateEditVersionsRef.current.clear();
     setCandidateValues({});
     lastUploadedRef.current = null;
     setMessage('');
@@ -294,7 +326,11 @@ export default function AssignmentDocumentCenter({
       if (selectedDocumentRef.current?.id) {
         const selectedId = selectedDocumentRef.current.id;
         const matching = loaded.find((document) => document.id === selectedId);
-        if (!matching) setSelectedDocument(null);
+        if (!matching) {
+          setSelectedDocument(null);
+          candidateEditVersionsRef.current.clear();
+          setCandidateValues({});
+        }
         else if (isUad) setSelectedDocument((current) => current?.id === matching.id
           ? { ...current, uad_discrepancies: matching.uad_discrepancies,
               uad_comparison_incomplete: matching.uad_comparison_incomplete }
@@ -332,6 +368,7 @@ export default function AssignmentDocumentCenter({
       && selectedDocumentRef.current?.id === documentId;
     if (!sameDocument) {
       selectedDocumentScopeRef.current = null;
+      candidateEditVersionsRef.current.clear();
       setSelectedDocument(null);
       setCandidateValues({});
     }
@@ -351,25 +388,15 @@ export default function AssignmentDocumentCenter({
       if (documentResult.status === 'rejected') throw documentResult.reason;
       if (!requestIsCurrent()) return;
       const document: EvidenceDocument = documentResult.value;
-      const previousDocument = selectedDocumentScopeRef.current === requestedScopeKey
-        && selectedDocumentRef.current?.id === documentId ? selectedDocumentRef.current : null;
-      const previousValues = new Map((previousDocument?.candidates || []).map(candidate => [candidate.id,
-        candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]));
       selectedDocumentScopeRef.current = requestedScopeKey;
       setSelectedDocument(document);
       if (isUad) setDocuments((current) => current.map((item) => item.id === document.id
         ? { ...item, uad_discrepancies: document.uad_discrepancies,
             uad_comparison_incomplete: document.uad_comparison_incomplete }
         : item));
-      // Refresh server defaults without discarding edits made before or during
-      // a same-document retry/poll. Removed candidates never retain draft state.
-      setCandidateValues(current => Object.fromEntries(
-        (document.candidates || [])
-          .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
-          .map((candidate) => [candidate.id, previousValues.has(candidate.id)
-            && Object.hasOwn(current, candidate.id) && current[candidate.id] !== previousValues.get(candidate.id)
-            ? current[candidate.id] : candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
-      ));
+      // Explicit edit intent survives even when an intermediate server refresh
+      // happens to match the draft. Only save/reset acknowledges that intent.
+      refreshCandidateValues(document);
       if (!metadataOnly && contentResult.status === 'fulfilled' && contentResult.value) {
         setSourcePdf({ scope: requestedScopeKey, documentId, blob: contentResult.value });
       } else if (!metadataOnly && contentResult.status === 'rejected') {
@@ -385,7 +412,7 @@ export default function AssignmentDocumentCenter({
     } finally {
       if (requestIsCurrent()) setLoading(false);
     }
-  }, [getEditorKey, isUad, scopeKey, uadWorkfileId]);
+  }, [getEditorKey, isUad, refreshCandidateValues, scopeKey, uadWorkfileId]);
 
   useEffect(() => {
     if (isUad || embedded || open) void loadDocuments();
@@ -439,10 +466,11 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const submittedEdits = snapshotCandidateEdits([candidate]);
     setLoading(true);
     setMessage('');
     try {
-      const confirmedValue = candidateValues[candidate.id] || candidate.raw_value;
+      const confirmedValue = candidateValues[candidate.id] ?? candidate.raw_value;
       const reviewInput = {
         reviewStatus,
         confirmedValue,
@@ -456,6 +484,7 @@ export default function AssignmentDocumentCenter({
           candidate.id,
           reviewInput,
         );
+        clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
       } else {
         const reviewed = await reviewAssignmentDocumentCandidate(
           selectedDocument.id,
@@ -463,6 +492,7 @@ export default function AssignmentDocumentCenter({
           reviewInput,
           editorKey,
         );
+        clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
         if (reviewed.assignment_application) {
           customApplication = reviewed.assignment_application;
           onCustomAssignmentApplied?.(reviewed.assignment_application);
@@ -506,6 +536,7 @@ export default function AssignmentDocumentCenter({
         ? await reprocessUadDocument(uadWorkfileId, selectedDocument.id)
         : await reprocessAssignmentDocument(selectedDocument.id, editorKey);
       setSelectedDocument(document);
+      refreshCandidateValues(document);
       await loadDocuments();
       if (isUad) await loadDocument(document.id);
       setMessage('Extraction completed with the current document rules.');
@@ -538,6 +569,7 @@ export default function AssignmentDocumentCenter({
       }
       setDocuments((current) => current.filter((document) => document.id !== deletedId));
       setSelectedDocument(null);
+      candidateEditVersionsRef.current.clear();
       setCandidateValues({});
       setSourcePdf(null);
       setMessage(`"${deletedTitle}" was permanently deleted from this appraisal file.`);
@@ -596,6 +628,7 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const submittedEdits = snapshotCandidateEdits(suggestedCandidates);
     setLoading(true);
     setMessage('');
     try {
@@ -610,12 +643,9 @@ export default function AssignmentDocumentCenter({
               candidateValues,
             },
           );
+          clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
           setSelectedDocument(response.document);
-          setCandidateValues(Object.fromEntries(
-            (response.document.candidates || [])
-              .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
-              .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
-          ));
+          refreshCandidateValues(response.document);
           onUadApplied?.(response.application);
           await loadDocuments();
           setMessage(
@@ -632,10 +662,11 @@ export default function AssignmentDocumentCenter({
             candidate.id,
             {
               reviewStatus: 'confirmed',
-              confirmedValue: candidateValues[candidate.id] || candidate.raw_value,
+              confirmedValue: candidateValues[candidate.id] ?? candidate.raw_value,
               reviewer: reviewer.trim(),
             },
           );
+          clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
           const result = await applyConfirmedCandidateToUad(candidate);
           if (result?.applied) applied += 1;
         }
@@ -652,6 +683,7 @@ export default function AssignmentDocumentCenter({
         reportSubjectAddress: subjectAddress,
         candidateValues,
       }, editorKey);
+      clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
       const { document } = response;
       if (response.assignmentApplication) {
         onCustomAssignmentApplied?.(response.assignmentApplication);
@@ -659,11 +691,7 @@ export default function AssignmentDocumentCenter({
         applyConfirmedDocumentFields(document);
       }
       setSelectedDocument(document);
-      setCandidateValues(Object.fromEntries(
-        (document.candidates || [])
-          .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
-          .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
-      ));
+      refreshCandidateValues(document);
       await loadDocuments();
       setMessage(
         `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
@@ -688,6 +716,7 @@ export default function AssignmentDocumentCenter({
     }
     const editorKey = getEditorKey();
     if (!isUad && !editorKey) return;
+    const submittedEdits = snapshotCandidateEdits((selectedDocument.candidates || []).filter(candidate => candidate.review_status === 'suggested'));
     setLoading(true);
     setMessage('');
     try {
@@ -707,6 +736,7 @@ export default function AssignmentDocumentCenter({
             overrideInput,
             editorKey,
           );
+      clearSavedCandidateEdits(selectedDocument.id, submittedEdits);
       if (isUad) {
         for (const candidate of document.candidates || []) {
           if (candidate.review_status === 'confirmed' && candidate.id) {
@@ -717,11 +747,7 @@ export default function AssignmentDocumentCenter({
         applyConfirmedDocumentFields(document);
       }
       setSelectedDocument(document);
-      setCandidateValues(Object.fromEntries(
-        (document.candidates || [])
-          .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
-          .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
-      ));
+      refreshCandidateValues(document);
       await loadDocuments();
       setMessage(isUad
         ? 'Override recorded. Supported, appraiser-confirmed evidence was applied to the canonical UAD workfile.'
@@ -988,14 +1014,14 @@ export default function AssignmentDocumentCenter({
                           <select
                             className="select select-bordered select-sm mt-2 w-full bg-white"
                             value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value}
-                            onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))}
+                            onChange={(event) => candidate.id && editCandidateValue(candidate.id, event.target.value)}
                             disabled={readOnly}
                           >
                             <option value="Yes">Yes</option>
                             <option value="No">No</option>
                           </select>
                         ) : (
-                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && setCandidateValues((current) => ({ ...current, [candidate.id as number]: event.target.value }))} disabled={readOnly} />
+                          <input className="input input-bordered input-sm mt-2 w-full bg-white" value={candidate.id ? candidateValues[candidate.id] ?? candidate.raw_value : candidate.raw_value} onChange={(event) => candidate.id && editCandidateValue(candidate.id, event.target.value)} disabled={readOnly} />
                         )}
                         <p className="mt-2 rounded bg-slate-50 p-2 text-[11px] leading-4 text-slate-600">{candidate.evidence_excerpt || candidate.raw_value}</p>
                         {candidate.id ? (

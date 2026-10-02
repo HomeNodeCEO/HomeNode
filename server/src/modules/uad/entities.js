@@ -10,6 +10,15 @@ import { normalizeUadWorkfileId } from "./workfiles.js";
 
 const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_REPEATABLE_ENTITY_GROUPS));
 
+async function rollbackUadEntityTransaction(client) {
+  try {
+    await client.query("ROLLBACK");
+    return null;
+  } catch {
+    return new Error("uad_entity_rollback_failed");
+  }
+}
+
 function entityResponse(row) {
   return {
     id: row.id,
@@ -181,16 +190,17 @@ export async function createUadEntityWithClient(client, workfileIdValue, input =
 
 export async function createUadEntity(pool, workfileIdValue, input = {}, actorUserId = null) {
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const entity = await createUadEntityWithClient(client, workfileIdValue, input, { actorUserId });
     await client.query("COMMIT");
     return entity;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackUadEntityTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 
@@ -240,15 +250,16 @@ export async function deleteUadEntityWithClient(client, workfileIdValue, entityI
 
 export async function deleteUadEntity(pool, workfileIdValue, entityIdValue, actorUserId = null) {
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN ISOLATION LEVEL READ COMMITTED");
     const deleted = await deleteUadEntityWithClient(client, workfileIdValue, entityIdValue, { actorUserId });
     await client.query("COMMIT");
     return deleted;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackUadEntityTransaction(client);
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }

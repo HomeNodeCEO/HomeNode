@@ -43,6 +43,44 @@ test("entity creation and deletion stop at the locked finalized workfile row", a
   }
 });
 
+for (const [operation, invoke] of [
+  ["create", (pool) => createUadEntity(pool, WORKFILE_ID, { entity_type: "sales_comparable" })],
+  ["delete", (pool) => deleteUadEntity(pool, WORKFILE_ID, ENTITY_ID)],
+]) {
+  for (const rollbackFails of [false, true]) {
+    test(`public UAD entity ${operation} ${rollbackFails ? "retires" : "reuses"} client after rollback`, async () => {
+      const operationError = new Error("synthetic_entity_lock_failure");
+      const queries = [];
+      const releases = [];
+      const client = {
+        async query(statement) {
+          const sql = String(statement).replace(/\s+/g, " ").trim();
+          queries.push(sql);
+          if (sql === "BEGIN ISOLATION LEVEL READ COMMITTED") return { rows: [] };
+          if (sql.includes("FROM appraisal.uad_workfiles") && sql.endsWith("FOR UPDATE")) {
+            throw operationError;
+          }
+          if (sql === "ROLLBACK") {
+            if (rollbackFails) throw new Error("synthetic_rollback_failure");
+            return { rows: [] };
+          }
+          assert.fail(`unexpected entity transaction SQL: ${sql}`);
+        },
+        release(reason) { releases.push(reason); },
+      };
+      const pool = { async connect() { return client; } };
+      await assert.rejects(() => invoke(pool), (error) => error === operationError);
+      assert.equal(queries.length, 3);
+      assert.equal(queries[0], "BEGIN ISOLATION LEVEL READ COMMITTED");
+      assert.match(queries[1], /FOR UPDATE$/);
+      assert.equal(queries[2], "ROLLBACK");
+      assert.equal(releases.length, 1);
+      if (rollbackFails) assert.equal(releases[0]?.message, "uad_entity_rollback_failed");
+      else assert.equal(releases[0], undefined);
+    });
+  }
+}
+
 test("asset URL creation and verification reject finalized workfiles before storage access", async () => {
   let storageTouched = false;
   const storage = {

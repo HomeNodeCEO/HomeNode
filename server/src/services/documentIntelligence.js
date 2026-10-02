@@ -1,4 +1,5 @@
 import { extractText, getDocumentProxy } from "unpdf";
+import { buildUrarSubjectEvidence, identifyUrarSubjectSource } from "./urarSubjectEvidence.js";
 
 export const DOCUMENT_TYPES = Object.freeze([
   "zoning_map",
@@ -835,6 +836,9 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   const normalizedRequested = normalizeDocumentType(requestedType);
   if (normalizedRequested !== "other") return normalizedRequested;
   const sample = `${fileName}\n${pages.join("\n").slice(0, 80_000)}`.toLowerCase();
+  // A Realist/CAD report can quote an MLS number. Its explicit source heading
+  // controls the Subject parser instead of misclassifying it as a listing sheet.
+  if (["cad", "realist"].includes(identifyUrarSubjectSource({ documentType: "other", pages }))) return "other";
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }
@@ -887,7 +891,7 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
   return null;
 }
 
-export function buildDocumentFieldCandidates({ documentType, pages }) {
+export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
   const entries = pageLines(pages);
   const districtCandidates = documentType === "district_evidence"
     ? buildDistrictComparableCandidates(pages)
@@ -1014,6 +1018,27 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
     .filter(Boolean);
   candidates.unshift(...specializedCandidates);
 
+  // Preserve the established engagement parser for repeated Client/Lender labels
+  // and multiline addresses. New Subject-only fields use strict source-specific
+  // rules. CAD/Realist have no legacy specialized parser, so use only their
+  // labeled evidence rather than treating incidental contract/MLS text as facts.
+  if (["cad", "realist"].includes(subjectEvidence.source_kind)) {
+    candidates.splice(0, candidates.length, ...subjectEvidence.candidates);
+  } else if (["engagement_letter", "mls_sheet"].includes(subjectEvidence.source_kind)) {
+    const established = new Set(candidates.map(candidate => candidate.field_key));
+    const strictKeys = new Set(subjectEvidence.conflicts.map(item => item.field_key));
+    if (subjectEvidence.source_kind === "mls_sheet"
+      && (subjectEvidence.candidates.some(item => item.field_key === "list_date")
+        || subjectEvidence.unresolved.some(item => item.field_key === "list_date" && item.reason !== "label_not_found"))) strictKeys.add("list_date");
+    // Conflicting alternatives must reach review/export together, not be reduced
+    // to the first legacy match. Invalid dates must not survive a permissive date
+    // normalizer (e.g. February 30 rolling forward into March).
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      if (strictKeys.has(candidates[index].field_key)) candidates.splice(index, 1);
+    }
+    candidates.push(...subjectEvidence.candidates.filter(candidate => !established.has(candidate.field_key) || strictKeys.has(candidate.field_key)));
+  }
+
   if (documentType === "purchase_contract" && !candidates.some((candidate) => candidate.field_key === "assignment_type")) {
     const purchaseEvidence = entries.find((entry) => (
       /one\s+to\s+four\s+family\s+residential\s+contract|purchase\s+contract|earnest\s+money/i.test(entry.line)
@@ -1076,7 +1101,8 @@ export async function extractPdfEvidence(buffer, {
       };
     }
     const documentType = classifyDocument({ requestedType, fileName, pages });
-    const candidates = buildDocumentFieldCandidates({ documentType, pages })
+    const subjectEvidence = buildUrarSubjectEvidence({ documentType, pages });
+    const candidates = buildDocumentFieldCandidates({ documentType, pages, subjectEvidence })
       .map((candidate) => (ocrMetadata ? {
         ...candidate,
         extraction_method: `${extractionMethod}:${candidate.extraction_method}`,
@@ -1090,6 +1116,9 @@ export async function extractPdfEvidence(buffer, {
       pages,
       candidates,
       ocr_metadata: ocrMetadata,
+      urar_subject_evidence: { schema_version: subjectEvidence.schema_version,
+        source_kind: subjectEvidence.source_kind, conflicts: subjectEvidence.conflicts,
+        unresolved: subjectEvidence.unresolved },
       review_reason: textLength >= 40
         ? `${ocrMetadata ? "OCR-extracted" : "Machine-extracted"} values are suggestions and require appraiser confirmation.`
         : "No reliable text was found after available extraction. Visual review is required.",

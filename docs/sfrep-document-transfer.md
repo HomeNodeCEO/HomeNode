@@ -17,12 +17,44 @@ No SFREP runtime, desktop client, or SDK is required on the HomeNode server.
 `sfrepReportExport.js` is a pure mapper. Each mapped value must be individually
 confirmed and belong to an extraction ready for review. Its field IDs were checked
 against the installed Appraise-It Pro 3.7.9 conversion dictionary and SFREP's sample.
-Typical currently extracted transfers include lender/client name and address,
-contract price and date, reviewed assignment type, and subject address components.
-Additional verified mappings cover explicit public-record evidence candidates.
-The current CAD/Realist upload path is **Other Appraisal Document**; copying those
-PDFs does not imply automatic extraction of every fact inside them. The preview
-lists exactly which fields will transfer and which reviewed values lack a mapping.
+The page-one Subject profile extracts address components, borrower, public-record
+owner, county, APN, tax year and taxes, CAD subdivision/legal description,
+engagement assignment type and lender/client details, explicit PUD evidence,
+HOA amount/frequency, and subject MLS listing dates. CAD/Realist PDFs currently use
+**Other Appraisal Document**. Their content must identify the source; a filename
+alone is not evidence. Unrecognized layouts remain available as PDF addenda.
+The preview includes a 17-item Subject checklist, sources, missing fields, and
+conflicts. Extraction is not confirmation: review the suggested values first.
+
+Previously reviewed uploads are not silently reprocessed. Use **Re-run extraction**
+to obtain the new Subject candidates; existing confirmations are preserved only
+where the new field and value still match.
+
+### Subject identity and date rules
+
+An exact confirmed parcel ID, or confirmed street/unit plus locality, must match
+the assignment's canonical subject. Contradictory identity blocks the PDF's
+Subject fields; uncertain identity stays unknown. Comparable MLS sheets cannot
+populate Subject merely because they are uploaded to the same file. Ambiguous
+punctuated unit identifiers are not collapsed into a different unit.
+
+The exact assignment's saved effective date takes precedence, including
+retrospective appraisals, then its inspection date. If neither exists, the earliest
+selected, review-ready subject document's UTC upload date is a visible placeholder.
+This does not write or change the report's effective date. Processing/failed uploads
+cannot establish identity or supply the placeholder from stale confirmations.
+
+A reviewed subject MLS list date within the inclusive preceding 12 calendar months
+supports the offered-for-sale **Yes** checkbox. Missing MLS evidence or an older
+list date does not prove **No**. Explicit reviewed negative evidence is supported;
+conflicting positive/negative evidence stays unresolved. The composite offering
+history narrative is not synthesized from a date alone.
+
+Fee Simple is the requested user default, clearly marked as an assumption rather
+than document evidence, and never overrides reviewed property-rights evidence.
+HOA dues alone do not establish PUD status: the PUD checkbox needs explicit evidence.
+Monthly/annual dues keep their reviewed frequency; quarterly dues are not silently
+annualized. Unknown or negative PUD evidence emits no affirmative checkbox.
 
 The exporter emits no blank field values: empty, unknown, and unconfirmed values
 are omitted. Preservation of existing fields during native import into a populated
@@ -65,7 +97,14 @@ generator can create a synthetic package for manual testing in a separate window
 
 ```powershell
 node server/scripts/renderSfrepTransferSample.js <output-directory>
+node server/scripts/renderSfrepSubjectSample.js <output-directory>
 ```
+
+The Subject sample runs four generated synthetic PDFs through the actual extraction,
+explicit synthetic confirmation, subject-identity, and transfer pipeline. The
+automated pipeline verifies all 17 Subject checklist entries, including source
+documents and the separately identified Fee Simple default. These are synthetic
+test files, not completed appraisals or permission to apply unreviewed values.
 
 ### Verified native synthetic QA
 

@@ -20,7 +20,7 @@ await finished;
 const values = { file_number: 'HOMENODE-SFREP-QA', lender_client_name: 'Example QA Bank',
   lender_client_address: '100 Example Avenue, Sample City, TX 75000', contract_price: '282500.00',
   contract_date: '2026-09-30', assignment_type: 'purchase_transaction' };
-const mapped = buildSfrepReportExport({ documents: [{ id: 1, title: 'Synthetic engagement and contract', processing_status: 'reviewed',
+const mapped = buildSfrepReportExport({ documents: [{ id: 1, title: 'Synthetic engagement and contract', document_type: 'engagement_letter', processing_status: 'reviewed',
   candidates: Object.entries(values).map(([field_key, confirmed_value], index) => ({
     id: index + 1, document_id: 1, field_key, confirmed_value, review_status: 'confirmed',
   })) }], pdfAddenda: [{ documentId: 1, fileName: 'synthetic-evidence.pdf', title: 'HomeNode QA source evidence' }] });

@@ -13,7 +13,10 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
 const documents = [{ id: 21, title: 'Contract', file_name: 'contract.pdf', document_type: 'purchase_contract', processing_status: 'reviewed', file_size_bytes: 100 },
   { id: 22, title: 'Realist reference', file_name: 'realist.pdf', document_type: 'other', processing_status: 'review_required', file_size_bytes: 200 }];
 const response = () => ({ ok: true, preview_digest: 'a'.repeat(64), formId: helpers.SFREP_FORM_ID, filename: 'HomeNode-test.rpti',
-  fields: [{ sourceField: 'contract_price', fieldId: 'SalePriceAmount', value: '200000', documentId: 21, candidateId: 41, type: 'TextField' }],
+  fields: [{ sourceField: 'contract_price', fieldId: 'SalePriceAmount', value: '200000', documentId: 21, candidateId: 41, type: 'TextField',
+    provenance: { kind: 'reviewed_document', sourceField: 'contract_price', documentId: 21, candidateId: 41, documentType: 'purchase_contract' } }],
+  effectiveDateContext: { effectiveDate: null, source: null, sourceDocumentId: null, windowStart: null, windowEnd: null, calendarMonths: 12, isPlaceholder: false },
+  assumptions: [], knownMissing: [],
   documents: [documents[0]], omitted: [{ sourceField: 'seller_name', documentId: 21, candidateId: 42, reason: 'No verified mapping' }],
   conflicts: [{ sourceField: 'lender_client_name', documentIds: [21, 22], values: ['First bank', 'Second bank'] }], warnings: ['Review imported fields.'] });
 
@@ -84,6 +87,53 @@ test('preview shows fields and exclusions; only explicit download sends the revi
   assert.equal(h.calls[1][0], 'export'); assert.equal(h.calls[1][2], 'a'.repeat(64));
   assert.equal(h.clicks, 1); assert.match(h.text, /Download started/);
   h.close(); assert.deepEqual(h.revoked, ['blob:test']);
+});
+
+test('Subject checklist exposes gaps and rerun guidance without claiming a completed report', async () => {
+  const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  const checklist = walk(h.tree).find(node => node.props?.['aria-label'] === '1004 Subject export checklist');
+  const rows = walk(checklist).filter(node => node.type === 'tr');
+  assert.equal(rows.length, 18); // Header plus all 17 Subject items.
+  for (const expected of ['Street address', 'City', 'State', 'ZIP code', 'Borrower', 'Public-record owner', 'County',
+    'Assessor parcel number', 'Tax year', 'Real estate taxes', 'Neighborhood', 'PUD status', 'Property rights / fee simple',
+    'Assignment type', 'Lender / client', 'Lender / client address', 'Offered for sale in prior 12 months']) assert.ok(text(checklist).includes(expected), expected);
+  assert.match(text(checklist), /Missing — not exported/); assert.match(text(checklist), /Review conflict/);
+  assert.match(h.text, /Effective date unavailable — review needed/);
+  assert.match(h.text, /not a completed appraisal/); assert.match(h.text, /existing SFREP values may remain/);
+  assert.match(h.text, /HOA dues or membership do not establish PUD status/);
+  assert.match(h.text, /No MLS evidence is not a No answer/);
+  assert.match(h.text, /For documents uploaded before this update, use Re-run extraction and review the new suggestions\./);
+  assert.match(h.text, /Reviewed document evidence/);
+  const mapped = walk(h.tree).find(node => node.type === 'details' && text(node).startsWith('Mapped fields and provenance'));
+  assert.notEqual(mapped.props.open, true); h.close();
+});
+
+test('placeholder dates, fee-simple defaults, and derived listing provenance are explicit in the preview', async () => {
+  const result = response(); result.conflicts = []; result.omitted = [];
+  result.effectiveDateContext = { effectiveDate: '2026-10-01', source: 'document_upload_date_placeholder', sourceDocumentId: 21,
+    windowStart: '2025-10-01', windowEnd: '2026-10-01', calendarMonths: 12, isPlaceholder: true };
+  result.fields.push({ sourceField: 'property_rights', fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', value: 'true',
+    documentId: null, candidateId: null, type: 'CheckBoxField', provenance: { kind: 'user_default', sourceField: 'property_rights',
+      documentId: null, candidateId: null, rule: 'user_requested_fee_simple_default' } },
+  { sourceField: 'list_date', fieldId: 'CurrentPriorListingYesCheckBox', value: 'true', type: 'CheckBoxField', documentId: 21, candidateId: 42,
+    provenance: { kind: 'derived_reviewed_document', sourceField: 'list_date', documentId: 21, candidateId: 42, documentType: 'mls_sheet',
+      rule: 'subject_mls_list_date_within_preceding_12_calendar_months', sourceValue: '2026-09-15', effectiveDate: '2026-10-01',
+      effectiveDateSource: 'document_upload_date_placeholder', effectiveDateSourceDocumentId: 21, windowStart: '2025-10-01', windowEnd: '2026-10-01' } });
+  result.assumptions = [{ fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', value: 'true', rule: 'user_requested_fee_simple_default', reason: 'User-requested fee simple default; confirm property rights.' }];
+  result.knownMissing = [{ fieldId: 'CurrentPriorListingDataSources', reason: 'Complete the prior-listing data-source narrative in SFREP.' }];
+  const h = harness({ preview: async () => helpers.checkSfrepPreview(result, [21]) });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Placeholder effective date — review required: 2026-10-01/);
+  assert.match(h.text, /document upload date, not a confirmed inspection or appraisal effective date/);
+  assert.match(h.text, /Date source: Contract/);
+  assert.match(h.text, /Prior 12-calendar-month window: 2025-10-01 through 2026-10-01/);
+  const assumptions = walk(h.tree).find(node => node.props?.['aria-label'] === 'Assumptions requiring confirmation');
+  assert.match(text(assumptions), /User-requested fee simple default; confirm property rights/);
+  assert.match(h.text, /User default — confirm/); assert.match(h.text, /No source document \(user default\)/);
+  assert.match(h.text, /not document evidence/); assert.match(h.text, /Derived — review/);
+  assert.match(h.text, /Derived from reviewed MLS listing date 2026-09-15/);
+  assert.match(h.text, /Complete the prior-listing data-source narrative in SFREP/);
+  assert.equal(h.button('Download SFREP .rpti').props.disabled, false); h.close();
 });
 
 test('selection and original-PDF choices invalidate previews before another download', async () => {

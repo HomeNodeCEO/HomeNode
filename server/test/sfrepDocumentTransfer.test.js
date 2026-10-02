@@ -29,8 +29,27 @@ test('source read binds account, assignment and document IDs and rejects a parti
   assert.deepEqual(query.values, ['account-1', 14, [2], 201]);
   assert.match(query.text, /document\.assignment_file_id = \$2/);
   assert.match(query.text, /uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL/);
+  assert.match(query.text, /report_file\.custom_assignment_file_id = assignment\.id/);
+  assert.match(query.text, /appraisal_case\.organization_id IS NOT DISTINCT FROM assignment\.organization_id/);
   await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [] }) }, input()), /sfrep_document_not_found/);
   await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [{ ...source(), assignment_file_id: 15 }] }) }, input()), /sfrep_document_not_found/);
+});
+
+test('production preview binds subject identity and effective date into the reviewed digest', async () => {
+  const row = { ...source(), subject_context: { accountId: 'account-1', address: '100 Example Dr', city: 'Garland', postalCode: '75041', effectiveDate: '2026-08-31', inspectionDate: null },
+    upload_date: '2026-10-02', candidates: [...source().candidates, { id: 21, document_id: 2, field_key: 'subject_property_address', confirmed_value: '100 Example Dr, Garland, TX 75041', review_status: 'confirmed' }] };
+  const read = () => readSfrepDocuments({ query: async () => ({ rows: [row] }) }, input());
+  let docs = await read();
+  assert.equal(docs[0].property_role, 'subject');
+  const preview = previewSfrepDocuments(docs, input());
+  assert.equal(preview.effectiveDateContext.effectiveDate, '2026-08-31');
+  assert.match(preview.reportXml, /Example &amp; Bank/);
+  row.subject_context = { ...row.subject_context, effectiveDate: '2026-09-01' };
+  assert.notEqual(preview.preview_digest, previewSfrepDocuments(await read(), input()).preview_digest);
+  row.subject_context = { ...row.subject_context, address: '102 Example Dr' };
+  docs = await read();
+  assert.equal(docs[0].property_role, 'comparable');
+  assert.doesNotMatch(previewSfrepDocuments(docs, input()).reportXml, /Example &amp; Bank/);
 });
 
 test('preview changes when evidence, assignment or source-copy choice changes', () => {

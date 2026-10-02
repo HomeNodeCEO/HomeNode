@@ -7,8 +7,25 @@ export interface SfrepSelection {
   includeDocuments: boolean;
 }
 export interface SfrepField {
-  sourceField: string; fieldId: string; value: string; documentId: number; candidateId: number | null;
+  sourceField: string; fieldId: string; value: string; documentId: number | null; candidateId: number | null;
   type: 'TextField' | 'CheckBoxField';
+  provenance: SfrepProvenance;
+}
+export type SfrepEffectiveDateSource = 'inspection_date' | 'assignment_effective_date' | 'document_upload_date_placeholder';
+export interface SfrepEffectiveDateContext {
+  effectiveDate: string | null; source: SfrepEffectiveDateSource | null; sourceDocumentId: number | null;
+  windowStart: string | null; windowEnd: string | null; calendarMonths: 12; isPlaceholder: boolean;
+}
+export interface SfrepProvenance {
+  kind: 'reviewed_document' | 'derived_reviewed_document' | 'user_default';
+  sourceField: string; documentId: number | null; candidateId: number | null;
+  documentType?: string | null; rule?: string; sourceValue?: string;
+  effectiveDate?: string; effectiveDateSource?: SfrepEffectiveDateSource;
+  effectiveDateSourceDocumentId?: number | null; windowStart?: string; windowEnd?: string;
+}
+export interface SfrepAssumption {
+  fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox'; value: 'true';
+  rule: 'user_requested_fee_simple_default'; reason: string;
 }
 export interface SfrepDocument {
   id: number; title: string; file_name: string; file_size_bytes: number; processing_status: string;
@@ -26,6 +43,9 @@ export interface SfrepPreview {
   warnings: string[];
   documents: SfrepDocument[];
   filename: string;
+  effectiveDateContext: SfrepEffectiveDateContext;
+  assumptions: SfrepAssumption[];
+  knownMissing: { fieldId: string; reason: string }[];
 }
 interface TransportOptions {
   request: (url: string, init: RequestInit) => Promise<Response>;
@@ -38,15 +58,62 @@ const validText = (value: unknown): value is string => typeof value === 'string'
 const cancelled = () => new DOMException('SFREP request cancelled', 'AbortError');
 const checkSignal = (signal: AbortSignal) => { if (signal.aborted) throw cancelled(); };
 const stop = (response: Response) => { void response.body?.cancel().catch(() => {}); };
+const feeSimpleField = 'PropertyRightsAppraisedFeeSimpleCheckBox';
+const feeSimpleRule = 'user_requested_fee_simple_default';
+const listingRule = 'subject_mls_list_date_within_preceding_12_calendar_months';
+const dateSource = (value: unknown): value is SfrepEffectiveDateSource =>
+  value === 'inspection_date' || value === 'assignment_effective_date' || value === 'document_upload_date_placeholder';
+function isoDate(value: unknown): value is string {
+  if (typeof value !== 'string' || !/^[1-9]\d{3}-\d{2}-\d{2}$/.test(value)) return false;
+  const parsed = new Date(`${value}T00:00:00Z`);
+  return Number.isFinite(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
+  if (!record(value) || value.calendarMonths !== 12 || typeof value.isPlaceholder !== 'boolean') return false;
+  if (value.effectiveDate === null) return value.source === null && value.sourceDocumentId === null
+    && value.windowStart === null && value.windowEnd === null && value.isPlaceholder === false;
+  if (!isoDate(value.effectiveDate) || !dateSource(value.source)
+    || (value.sourceDocumentId !== null && !positiveId(value.sourceDocumentId))
+    || value.windowEnd !== value.effectiveDate || !isoDate(value.windowStart)
+    || value.isPlaceholder !== (value.source === 'document_upload_date_placeholder')
+    || (value.isPlaceholder && !positiveId(value.sourceDocumentId))) return false;
+  const [year, month, day] = value.effectiveDate.split('-').map(Number);
+  const lastDay = new Date(Date.UTC(year - 1, month, 0)).getUTCDate();
+  return value.windowStart === `${year - 1}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
+}
+function validField(value: unknown): value is SfrepField {
+  if (!record(value) || !validText(value.sourceField) || !validText(value.fieldId) || !validText(value.value)
+    || (value.candidateId !== null && !positiveId(value.candidateId))
+    || (value.type !== 'TextField' && value.type !== 'CheckBoxField') || !record(value.provenance)) return false;
+  const provenance = value.provenance;
+  if (provenance.sourceField !== value.sourceField || provenance.documentId !== value.documentId
+    || provenance.candidateId !== value.candidateId) return false;
+  if (provenance.kind === 'user_default') return value.sourceField === 'property_rights'
+    && value.fieldId === feeSimpleField && value.type === 'CheckBoxField' && value.value === 'true'
+    && value.documentId === null && value.candidateId === null && provenance.rule === feeSimpleRule
+    && Object.keys(provenance).every(key => ['kind', 'sourceField', 'documentId', 'candidateId', 'rule'].includes(key));
+  if (!positiveId(value.documentId) || (provenance.documentType !== null && !validText(provenance.documentType))) return false;
+  if (provenance.kind === 'reviewed_document') return Object.keys(provenance)
+    .every(key => ['kind', 'sourceField', 'documentId', 'candidateId', 'documentType'].includes(key));
+  return provenance.kind === 'derived_reviewed_document' && provenance.documentType === 'mls_sheet'
+    && value.sourceField === 'list_date' && value.fieldId === 'CurrentPriorListingYesCheckBox'
+    && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === listingRule
+    && isoDate(provenance.sourceValue) && isoDate(provenance.effectiveDate) && dateSource(provenance.effectiveDateSource)
+    && (provenance.effectiveDateSourceDocumentId === null || positiveId(provenance.effectiveDateSourceDocumentId))
+    && isoDate(provenance.windowStart) && provenance.windowEnd === provenance.effectiveDate
+    && provenance.sourceValue >= provenance.windowStart && provenance.sourceValue <= provenance.windowEnd;
+}
 
 export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly number[]): SfrepPreview {
   if (!record(value) || value.ok !== true || value.formId !== SFREP_FORM_ID
     || typeof value.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(value.preview_digest)
     || !validText(value.filename) || !value.filename.toLowerCase().endsWith('.rpti')
-    || !Array.isArray(value.fields) || !value.fields.every(field => record(field)
-      && validText(field.sourceField) && validText(field.fieldId) && typeof field.value === 'string'
-      && positiveId(field.documentId) && (field.candidateId === null || positiveId(field.candidateId))
-      && (field.type === 'TextField' || field.type === 'CheckBoxField'))
+    || !Array.isArray(value.fields) || !value.fields.every(validField)
+    || new Set(value.fields.map(field => field.fieldId)).size !== value.fields.length
+    || !validDateContext(value.effectiveDateContext)
+    || !Array.isArray(value.assumptions) || value.assumptions.length > 1 || !value.assumptions.every(item => record(item)
+      && item.fieldId === feeSimpleField && item.value === 'true' && item.rule === feeSimpleRule && validText(item.reason))
+    || !Array.isArray(value.knownMissing) || !value.knownMissing.every(item => record(item) && validText(item.fieldId) && validText(item.reason))
     || !Array.isArray(value.conflicts) || !value.conflicts.every(conflict => record(conflict)
       && validText(conflict.sourceField) && Array.isArray(conflict.documentIds) && conflict.documentIds.every(positiveId)
       && Array.isArray(conflict.values) && conflict.values.every(item => typeof item === 'string'))
@@ -60,11 +127,27 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     throw new Error('The SFREP preview response is invalid. No export was downloaded.');
   }
   const preview = value as unknown as SfrepPreview;
+  const date = preview.effectiveDateContext;
+  if (preview.fields.filter(field => field.provenance.kind === 'user_default').length !== preview.assumptions.length
+    || preview.fields.some(({ provenance }) => provenance.kind === 'derived_reviewed_document'
+      && (provenance.effectiveDate !== date.effectiveDate || provenance.effectiveDateSource !== date.source
+        || provenance.effectiveDateSourceDocumentId !== date.sourceDocumentId
+        || provenance.windowStart !== date.windowStart || provenance.windowEnd !== date.windowEnd))) {
+    throw new Error('The SFREP preview provenance is invalid. No export was downloaded.');
+  }
+  const received = new Set(preview.documents.map(doc => doc.id));
+  if (received.size !== preview.documents.length
+    || preview.fields.some(field => field.documentId !== null && !received.has(field.documentId))
+    || preview.omitted.some(field => !received.has(field.documentId))
+    || preview.conflicts.some(conflict => conflict.documentIds.some(id => !received.has(id)))
+    || (date.sourceDocumentId !== null && !received.has(date.sourceDocumentId))) {
+    throw new Error('The SFREP preview does not match the selected source documents. Preview again.');
+  }
   if (selectedDocumentIds) {
-    const selected = new Set(selectedDocumentIds), received = new Set(preview.documents.map(doc => doc.id));
+    const selected = new Set(selectedDocumentIds);
     if (selected.size !== received.size || received.size !== preview.documents.length
       || [...received].some(id => !selected.has(id))
-      || [...preview.fields, ...preview.omitted].some(field => !selected.has(field.documentId))
+      || [...preview.fields, ...preview.omitted].some(field => field.documentId !== null && !selected.has(field.documentId))
       || preview.conflicts.some(conflict => conflict.documentIds.some(id => !selected.has(id)))) {
       throw new Error('The SFREP preview does not match the selected source documents. Preview again.');
     }
@@ -83,6 +166,64 @@ export function sfrepNoticeText(notice: SfrepNotice): string {
   const label = notice.sourceField.replace(/_/g, ' ') || 'Document';
   if ('values' in notice) return `${label}: ${notice.values.join(' / ')} (documents ${notice.documentIds.join(', ')})`;
   return `${label}: ${notice.reason.replace(/_/g, ' ')} (document ${notice.documentId})`;
+}
+
+export function sfrepProvenanceText(field: SfrepField): string {
+  const source = field.provenance;
+  if (source.kind === 'user_default') return 'User-requested default — not document evidence; confirm property rights.';
+  if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
+  return 'Reviewed document evidence';
+}
+
+interface SubjectItem {
+  key: string; label: string; fieldIds: string[]; sourceFields: string[]; note?: string;
+}
+const SUBJECT_ITEMS: SubjectItem[] = [
+  { key: 'street', label: 'Street address', fieldIds: ['StreetAddress'], sourceFields: ['subject_street_address', 'subject_property_address'] },
+  { key: 'city', label: 'City', fieldIds: ['City'], sourceFields: ['subject_city', 'subject_property_address'] },
+  { key: 'state', label: 'State', fieldIds: ['State'], sourceFields: ['subject_state', 'subject_property_address'] },
+  { key: 'zip', label: 'ZIP code', fieldIds: ['ZipCode'], sourceFields: ['subject_zip', 'subject_zip_code', 'subject_property_address'] },
+  { key: 'borrower', label: 'Borrower', fieldIds: ['BorrowerName'], sourceFields: ['borrower_name', 'buyer_name'], note: 'A buyer is not automatically the borrower.' },
+  { key: 'owner', label: 'Public-record owner', fieldIds: ['OwnerName'], sourceFields: ['owner_name', 'seller_name'], note: 'A seller is not automatically the public-record owner.' },
+  { key: 'county', label: 'County', fieldIds: ['County'], sourceFields: ['county'] },
+  { key: 'apn', label: 'Assessor parcel number (APN)', fieldIds: ['AssessorsParcelNumber'], sourceFields: ['assessor_parcel_number', 'assessors_parcel_number'] },
+  { key: 'tax-year', label: 'Tax year', fieldIds: ['RealEstateTaxYear'], sourceFields: ['tax_year', 'real_estate_tax_year'] },
+  { key: 'taxes', label: 'Real estate taxes', fieldIds: ['RealEstateTaxAmount'], sourceFields: ['tax_amount', 'real_estate_tax_amount'] },
+  { key: 'neighborhood', label: 'Neighborhood', fieldIds: ['NeighborhoodName'], sourceFields: ['neighborhood_name', 'subdivision_name'] },
+  { key: 'pud', label: 'PUD status', fieldIds: ['PropertyTypePUDCheckBox'], sourceFields: ['pud', 'is_pud', 'property_type'], note: 'HOA dues or membership do not establish PUD status. An omitted checkbox is not No.' },
+  { key: 'property-rights', label: 'Property rights / fee simple', fieldIds: [feeSimpleField, 'PropertyRightsAppraisedLeaseholdCheckBox'], sourceFields: ['property_rights', 'property_rights_appraised'] },
+  { key: 'assignment', label: 'Assignment type', fieldIds: ['AssignmentTypePurchaseCheckBox', 'AssignmentTypeRefinanceCheckBox'], sourceFields: ['assignment_type'] },
+  { key: 'lender', label: 'Lender / client', fieldIds: ['LenderClientCompanyName'], sourceFields: ['lender_client_name'] },
+  { key: 'lender-address', label: 'Lender / client address', fieldIds: ['LenderClientCompanyUnparsedAddress'], sourceFields: ['lender_client_address'] },
+  { key: 'listing', label: 'Offered for sale in prior 12 months', fieldIds: ['CurrentPriorListingYesCheckBox', 'CurrentPriorListingNoCheckBox', 'CurrentPriorListingDataSources'], sourceFields: ['list_date', 'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months'], note: 'No MLS evidence is not a No answer. Review listing details and the effective-date window.' },
+];
+const CHECKBOX_LABELS: Record<string, string> = {
+  [feeSimpleField]: 'Fee simple', PropertyRightsAppraisedLeaseholdCheckBox: 'Leasehold',
+  AssignmentTypePurchaseCheckBox: 'Purchase transaction', AssignmentTypeRefinanceCheckBox: 'Refinance',
+  CurrentPriorListingYesCheckBox: 'Yes', CurrentPriorListingNoCheckBox: 'No', PropertyTypePUDCheckBox: 'PUD checked',
+};
+export interface SfrepSubjectChecklistItem {
+  key: string; label: string; status: 'included' | 'review' | 'missing'; statusLabel: string;
+  values: string[]; notes: string[];
+}
+/** Export coverage only: absence never asserts a negative answer or a complete report. */
+export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectChecklistItem[] {
+  return SUBJECT_ITEMS.map(item => {
+    const fields = preview.fields.filter(field => item.fieldIds.includes(field.fieldId));
+    const conflict = preview.conflicts.some(entry => item.sourceFields.includes(entry.sourceField));
+    const omissions = preview.omitted.filter(entry => item.sourceFields.includes(entry.sourceField));
+    const knownMissing = preview.knownMissing.filter(entry => item.fieldIds.includes(entry.fieldId));
+    const hasDefault = fields.some(field => field.provenance.kind === 'user_default');
+    const hasDerived = fields.some(field => field.provenance.kind === 'derived_reviewed_document');
+    const needsReview = conflict || omissions.length > 0 || knownMissing.length > 0 || hasDefault || hasDerived;
+    const status = needsReview ? 'review' : fields.length ? 'included' : 'missing';
+    const statusLabel = conflict ? 'Review conflict — not fully exported' : hasDefault ? 'User default — confirm'
+      : hasDerived ? 'Derived — review' : needsReview ? 'Review needed' : fields.length ? 'Included — reviewed' : 'Missing — not exported';
+    return { key: item.key, label: item.label, status, statusLabel,
+      values: fields.map(field => field.type === 'CheckBoxField' ? CHECKBOX_LABELS[field.fieldId] || field.value : field.value),
+      notes: [...new Set([...(item.note ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
+        ...(omissions.length ? [omissions[0].reason] : []), ...(conflict ? ['Resolve the conflicting source evidence before relying on this item.'] : [])])] };
+  });
 }
 
 /** Cancellation also settles promptly if authentication is still waiting for a token. */

@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { loadAssignmentDocumentContent } from './assignmentDocuments.js';
 import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
 import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExport.js';
+import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -29,8 +30,25 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
            document.document_type, document.title, document.file_name, document.content_type,
            document.file_size_bytes, document.checksum_sha256, document.processing_status,
            document.extraction_summary, document.updated_at,
+           (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
+           jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
+             'city', subject.city, 'postalCode', subject.postal_code,
+             'effectiveDate', appraisal_case.effective_date::text,
+             'inspectionDate', appraisal_case.inspection_date::text) AS subject_context,
            COALESCE(evidence.candidates, '[]'::json) AS candidates
       FROM app.assignment_documents document
+      JOIN app.assignment_files assignment
+        ON assignment.id = document.assignment_file_id AND assignment.account_id = document.account_id
+      JOIN core.accounts subject ON subject.account_id = assignment.account_id
+      LEFT JOIN app.report_files report_file
+        ON report_file.custom_assignment_file_id = assignment.id
+       AND report_file.account_id = assignment.account_id
+       AND report_file.organization_id IS NOT DISTINCT FROM assignment.organization_id
+       AND report_file.workflow_type = 'custom_appraisal'
+      LEFT JOIN app.appraisal_cases appraisal_case
+        ON appraisal_case.id = report_file.appraisal_case_id
+       AND appraisal_case.account_id = assignment.account_id
+       AND appraisal_case.organization_id IS NOT DISTINCT FROM assignment.organization_id
       LEFT JOIN LATERAL (
         SELECT json_agg(candidate ORDER BY candidate.id) AS candidates FROM (
           SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
@@ -53,6 +71,7 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
     if (!Array.isArray(document.candidates) || document.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
     if (!Number.isSafeInteger(document.file_size_bytes) || document.file_size_bytes < 1
       || document.content_type !== 'application/pdf' || !/^[a-f0-9]{64}$/.test(document.checksum_sha256)) fail('sfrep_document_integrity_failed');
+    document.property_role = sfrepDocumentPropertyRole(document);
   }
   if (Buffer.byteLength(JSON.stringify(documents)) > 8 * 1024 * 1024) fail('sfrep_evidence_limit');
   return documents;
@@ -64,10 +83,11 @@ export function previewSfrepDocuments(documents, input) {
   const pdfAddenda = input.includeDocuments ? documents.map(document => ({
     documentId: document.id, fileName: `document-${document.id}.pdf`, title: document.title || document.file_name,
   })) : [];
-  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId });
+  const subjectContext = sfrepSubjectContext(documents);
+  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext });
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    documents, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
+    documents, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
   return { ...mapped, preview_digest: previewDigest, filename: `HomeNode-SFREP-file-${input.assignmentFileId}.rpti`,
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) =>
       ({ id, title, file_name, file_size_bytes, processing_status })) };

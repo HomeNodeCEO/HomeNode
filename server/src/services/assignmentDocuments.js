@@ -1437,6 +1437,7 @@ export async function processAssignmentDocument(pool, documentId, {
             review_reason: extraction.review_reason,
             requested_document_type: requestedDocumentType,
             ocr: extraction.ocr_metadata,
+            urar_subject_evidence: extraction.urar_subject_evidence,
             processing_attempts: Number(document.processing_attempts || 0),
           }),
         ],

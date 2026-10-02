@@ -1,3 +1,5 @@
+import { parseStructuredAddress } from "../util/structuredAddress.js";
+
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
  *
@@ -9,8 +11,9 @@
  * No installation, filesystem access, network, or database is required at runtime.
  *
  * The caller must authorize and load assignment-scoped documents. Only current
- * candidates explicitly confirmed by the appraiser may populate report fields;
+ * candidates explicitly confirmed by the appraiser may populate evidence fields;
  * document-level processing/review status does not approve individual values.
+ * The sole opt-in user default (fee simple) is separate, labeled provenance.
  * Original PDFs are separate evidence addenda and need not have extracted fields.
  */
 export const SFREP_PRIMARY_FORM_ID = "FNMA-1004-0911";
@@ -98,6 +101,7 @@ const MAPPINGS = Object.freeze({
   subject_zip_code: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
   borrower_name: ["BorrowerName", identity],
   owner_name: ["OwnerName", identity],
+  record_owner_name: ["OwnerName", identity],
   county: ["County", identity],
   legal_description: ["LegalDescription", identity],
   assessor_parcel_number: ["AssessorsParcelNumber", identity],
@@ -106,6 +110,9 @@ const MAPPINGS = Object.freeze({
   tax_amount: ["RealEstateTaxAmount", money],
   real_estate_tax_year: ["RealEstateTaxYear", year],
   real_estate_tax_amount: ["RealEstateTaxAmount", money],
+  neighborhood_name: ["NeighborhoodName", identity],
+  subdivision_name: ["NeighborhoodName", identity],
+  hoa_dues_amount: ["AssessmentAmount", money],
   lender_client_name: ["LenderClientCompanyName", identity],
   lender_client_address: ["LenderClientCompanyUnparsedAddress", identity],
   contract_price: ["SalePriceAmount", money],
@@ -129,7 +136,56 @@ const UNMAPPED_REASONS = Object.freeze({
   financing_type: "Financing detail has no verified direct FNMA 1004 field mapping.",
   assignment_type: "Only explicitly reviewed purchase_transaction or refinance assignment types are supported.",
   contract_property_condition: "Contract terms do not establish appraiser conclusions about property condition.",
+  hoa_frequency: "Only explicitly reviewed per_month or per_year HOA frequencies have verified checkboxes; amounts are not prorated.",
+  property_type: "Property type is not PUD evidence unless it explicitly identifies a planned unit development.",
+  property_rights: "Only explicit fee_simple or leasehold property rights are supported; no property right is inferred from ownership.",
+  property_rights_appraised: "Only explicit fee_simple or leasehold property rights are supported; no property right is inferred from ownership.",
+  pud: "PUD requires an explicit reviewed yes/true or no/false assertion; HOA dues are not proof.",
+  is_pud: "PUD requires an explicit reviewed yes/true or no/false assertion; HOA dues are not proof.",
+  offered_for_sale_prior_12_months: "Offered-for-sale status requires an explicit reviewed yes/true or no/false assertion.",
+  subject_offered_for_sale_prior_12_months: "Offered-for-sale status requires an explicit reviewed yes/true or no/false assertion.",
 });
+
+const PROPERTY_RIGHTS_FIELDS = new Set(["property_rights", "property_rights_appraised"]);
+const OFFERED_FOR_SALE_FIELDS = new Set(["offered_for_sale_prior_12_months", "subject_offered_for_sale_prior_12_months"]);
+const BOOLEAN_FIELDS = new Set(["pud", "is_pud", ...OFFERED_FOR_SALE_FIELDS]);
+
+function booleanValue(value) {
+  return /^(?:true|yes)$/i.test(value) ? true : /^(?:false|no)$/i.test(value) ? false : null;
+}
+
+function isoDate(value) {
+  const normalized = typeof value === "string" ? date(value) : null;
+  return normalized ? `${normalized.slice(6)}-${normalized.slice(0, 2)}-${normalized.slice(3, 5)}` : null;
+}
+
+/** A calendar-year lookback clamps February 29 to February 28, never March 1. */
+function previousCalendarYear(value) {
+  const [year, month, day] = value.split("-").map(Number);
+  const lastDay = new Date(Date.UTC(year - 1, month, 0)).getUTCDate();
+  return `${String(year - 1).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(Math.min(day, lastDay)).padStart(2, "0")}`;
+}
+
+function effectiveDateContext(subjectContext) {
+  if (subjectContext === undefined) subjectContext = {};
+  if (!subjectContext || typeof subjectContext !== "object" || Array.isArray(subjectContext)) fail("sfrep_invalid_subject_context");
+  if (subjectContext.feeSimpleDefault !== undefined && typeof subjectContext.feeSimpleDefault !== "boolean") fail("sfrep_invalid_subject_context");
+  const supplied = subjectContext.effectiveDate;
+  const effectiveDate = supplied == null || supplied === "" ? null : isoDate(supplied);
+  if (supplied != null && supplied !== "" && (!effectiveDate || !/^\d{4}-\d{2}-\d{2}$/.test(supplied))) fail("sfrep_invalid_effective_date");
+  const source = subjectContext.effectiveDateSource ?? null;
+  if (source !== null && !["inspection_date", "assignment_effective_date", "document_upload_date_placeholder"].includes(source)) fail("sfrep_invalid_effective_date_source");
+  if ((effectiveDate === null) !== (source === null)) fail("sfrep_invalid_effective_date_source");
+  const sourceDocumentId = subjectContext.effectiveDateSourceDocumentId == null ? null : positiveId(subjectContext.effectiveDateSourceDocumentId);
+  if (subjectContext.effectiveDateSourceDocumentId != null && !sourceDocumentId) fail("sfrep_invalid_effective_date_source");
+  if (!source && sourceDocumentId) fail("sfrep_invalid_effective_date_source");
+  return {
+    effectiveDate, source, sourceDocumentId,
+    windowStart: effectiveDate ? previousCalendarYear(effectiveDate) : null,
+    windowEnd: effectiveDate, calendarMonths: 12,
+    isPlaceholder: source === "document_upload_date_placeholder",
+  };
+}
 
 function unmappedReason(sourceField) {
   if (Object.hasOwn(UNMAPPED_REASONS, sourceField)) return UNMAPPED_REASONS[sourceField];
@@ -140,6 +196,28 @@ function unmappedReason(sourceField) {
 }
 
 function projectValue(sourceField, value) {
+  if (sourceField === "pud" || sourceField === "is_pud") {
+    const explicit = booleanValue(value);
+    return explicit === null ? [] : [{ fieldId: "PropertyTypePUDCheckBox", value: String(explicit), type: "CheckBoxField", group: "pud", suppress: !explicit }];
+  }
+  if (sourceField === "property_type" && /^(?:pud|planned unit development)$/i.test(value)) {
+    return [{ fieldId: "PropertyTypePUDCheckBox", value: "true", type: "CheckBoxField", group: "pud" }];
+  }
+  if (PROPERTY_RIGHTS_FIELDS.has(sourceField)) {
+    const normalized = value.toLowerCase().replace(/[ -]+/g, "_");
+    const fieldId = normalized === "fee_simple" ? "PropertyRightsAppraisedFeeSimpleCheckBox"
+      : normalized === "leasehold" ? "PropertyRightsAppraisedLeaseholdCheckBox" : null;
+    return fieldId ? [{ fieldId, value: "true", type: "CheckBoxField", group: "property_rights" }] : [];
+  }
+  if (OFFERED_FOR_SALE_FIELDS.has(sourceField)) {
+    const explicit = booleanValue(value);
+    return explicit === null ? [] : [{ fieldId: explicit ? "CurrentPriorListingYesCheckBox" : "CurrentPriorListingNoCheckBox", value: "true", type: "CheckBoxField", group: "offered_for_sale" }];
+  }
+  if (sourceField === "hoa_frequency") {
+    const fieldId = value === "per_month" ? "AssessmentPerMonthCheckBox"
+      : value === "per_year" ? "AssessmentPerYearCheckBox" : null;
+    return fieldId ? [{ fieldId, value: "true", type: "CheckBoxField", group: "hoa_frequency" }] : [];
+  }
   if (sourceField === "assignment_type") {
     const fieldId = value === "purchase_transaction" ? "AssignmentTypePurchaseCheckBox"
       : value === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
@@ -172,6 +250,31 @@ function compare(a, b) {
 function sourceOrder(a, b) {
   return a.documentId - b.documentId || compare(a.sourceField, b.sourceField)
     || (a.candidateId ?? 0) - (b.candidateId ?? 0) || compare(a.value ?? "", b.value ?? "");
+}
+
+function destinationComparisonKey(entry) {
+  if (entry.fieldId === "City") {
+    return JSON.stringify([entry.fieldId, entry.value.trim().replace(/\s+/g, " ").toUpperCase()]);
+  }
+  if (entry.fieldId === "StreetAddress") {
+    const parsed = parseStructuredAddress(entry.value);
+    const unsegmented = parseStructuredAddress(entry.value.replace(/,/g, " "));
+    const identityKeys = ["house_number", "street_key", "unit_key", "building_key", "floor_key"];
+    // The parser intentionally ignores comma-delimited locality tails. A value
+    // sent to StreetAddress must not compare equal by dropping such information.
+    // It also removes punctuation in secondary identifiers, so retain exact
+    // comparison when a unit/building/floor token includes a hyphen or slash.
+    const punctuatedSecondary = parsed.secondary_labels.some((label) => (
+      new RegExp(`\\b${label}\\s+[A-Z0-9]*[-/][A-Z0-9/-]*\\b`).test(parsed.normalized_address)
+    ));
+    if (parsed.house_number && parsed.street_key && !punctuatedSecondary
+      && identityKeys.every((key) => parsed[key] === unsegmented[key])) {
+      return JSON.stringify([entry.fieldId, ...identityKeys.map((key) => parsed[key])]);
+    }
+  }
+  // ZIP+4 versus ZIP5, names, legal descriptions, and all other identities
+  // remain exact. Never invoke fuzzy address similarity to resolve conflicts.
+  return JSON.stringify([entry.fieldId, entry.value]);
 }
 
 function selectedDocuments(documents, selectedDocumentIds) {
@@ -218,24 +321,45 @@ function validatePdfAddenda(addenda, documents) {
  * the SFREP destination level too, so aliases never emit duplicate field IDs.
  * An explicit blank confirmed_value is never replaced by the extracted value.
  * reportXml uses UTF-8; package it as UTF-8 bytes at the RPTI root, Report.xml.
+ * subjectContext is server-resolved context, never an unreviewed field override.
+ * property_role must be "subject" to derive a listing checkbox from MLS dates;
+ * explicit non-subject roles suppress all subject-field evidence from that PDF.
+ * feeSimpleDefault is opt-in, recorded as an assumption, and never overrides a
+ * reviewed rights assertion, including an unsupported or conflicting assertion.
+ * Bind effectiveDateContext, assumptions, and provenance into the preview digest.
  */
 export function buildSfrepReportExport({
   documents = [], selectedDocumentIds, fieldSelections = {}, pdfAddenda = [],
-  formId = SFREP_PRIMARY_FORM_ID, application = {},
+  formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
   const selected = selectedDocuments(documents, selectedDocumentIds);
+  const dateContext = effectiveDateContext(subjectContext);
   for (const id of Object.values(fieldSelections)) {
     if (!positiveId(id) || !selected.has(positiveId(id))) fail("sfrep_invalid_field_selection");
   }
   const omitted = [];
   const projected = [];
+  const listingDates = [];
+  const listingConflicts = [];
+  const assumptions = [];
+  const knownMissing = [];
+  const supplementalWarnings = [];
+  let hasReviewedRights = false;
+  let hasReviewedHoa = false;
+  let hasReviewedListing = false;
   const omit = (entry, reason) => omitted.push({
     sourceField: entry.sourceField, documentId: entry.documentId, candidateId: entry.candidateId, reason,
   });
   for (const [documentId, document] of selected) {
-    for (const candidate of Array.isArray(document.candidates) ? document.candidates : []) {
+    const candidates = Array.isArray(document.candidates) ? document.candidates : [];
+    const hoaFrequencies = new Set(candidates.filter((candidate) => candidate?.review_status === "confirmed"
+      && candidate.field_key === "hoa_frequency"
+      && (candidate.document_id == null || positiveId(candidate.document_id) === documentId)
+      && (!Object.hasOwn(fieldSelections, "hoa_frequency") || positiveId(fieldSelections.hoa_frequency) === documentId))
+      .map((candidate) => textValue(candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value)));
+    for (const candidate of candidates) {
       if (candidate?.review_status !== "confirmed") continue;
       const sourceField = typeof candidate.field_key === "string" ? candidate.field_key : "";
       const entry = { sourceField, documentId, candidateId: positiveId(candidate.id) };
@@ -251,13 +375,51 @@ export function buildSfrepReportExport({
         omit(entry, "A different source document was selected for this field.");
         continue;
       }
-      const value = textValue(candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value);
+      if (document.property_role != null && document.property_role !== "subject") {
+        omit(entry, "Document is not verified as subject-property evidence; comparable or unknown-property values are not exported to Subject fields.");
+        continue;
+      }
+      if (sourceField === "assignment_type" && document.document_type !== "engagement_letter") {
+        omit(entry, "Subject assignment type must come from reviewed engagement evidence; a purchase-contract classification is not the assignment instruction.");
+        continue;
+      }
+      if (PROPERTY_RIGHTS_FIELDS.has(sourceField)) hasReviewedRights = true;
+      const rawValue = candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value;
+      const value = textValue(BOOLEAN_FIELDS.has(sourceField) && typeof rawValue === "boolean" ? String(rawValue) : rawValue);
       if (value === null) {
         omit(entry, "Blank, unknown, or non-scalar reviewed value omitted to preserve existing report data.");
         continue;
       }
       if (INVALID_XML.test(value)) {
         omit(entry, "Reviewed value contains characters not allowed in XML 1.0.");
+        continue;
+      }
+      const provenance = {
+        kind: "reviewed_document", sourceField, documentId, candidateId: entry.candidateId,
+        documentType: textValue(document.document_type),
+      };
+      if (["hoa_dues_amount", "hoa_frequency"].includes(sourceField)) hasReviewedHoa = true;
+      if (sourceField === "hoa_dues_amount" && (hoaFrequencies.size !== 1
+        || !["per_month", "per_year"].includes([...hoaFrequencies][0]))) {
+        omit(entry, "HOA amount needs one reviewed monthly or annual frequency from the same source; unsupported or ambiguous periods are not prorated.");
+        continue;
+      }
+      if (["mls_number", "listing_status", "list_price", "original_list_price", "list_date", "listing_end_date", "days_on_market"].includes(sourceField)) hasReviewedListing = true;
+      if (sourceField === "list_date") {
+        if (document.document_type !== "mls_sheet" || document.property_role !== "subject") {
+          omit(entry, "A listing date can establish offered-for-sale Yes only on a verified subject MLS sheet.");
+          continue;
+        }
+        const listedOn = isoDate(value);
+        if (!listedOn) {
+          omit(entry, "Reviewed MLS listing date is invalid; no listing checkbox was inferred.");
+          continue;
+        }
+        listingDates.push({ ...entry, value: listedOn, provenance });
+        continue;
+      }
+      if (OFFERED_FOR_SALE_FIELDS.has(sourceField) && document.property_role !== "subject") {
+        omit(entry, "An explicit offered-for-sale assertion must be verified as subject-property evidence.");
         continue;
       }
       const fields = projectValue(sourceField, value);
@@ -269,9 +431,60 @@ export function buildSfrepReportExport({
             : unmappedReason(sourceField));
         continue;
       }
-      projected.push(...fields.map((field) => ({ ...entry, ...field })));
+      projected.push(...fields.map((field) => ({ ...entry, ...field, provenance })));
     }
   }
+
+  // A date-based conclusion is downstream of the reviewed date. Conflicting
+  // dates are not collapsed to the same Yes even if both happen to be in range.
+  if (new Set(listingDates.map((entry) => entry.value)).size > 1) {
+    listingConflicts.push({
+      sourceField: "list_date",
+      documentIds: [...new Set(listingDates.map((entry) => entry.documentId))].sort((a, b) => a - b),
+      values: [...new Set(listingDates.map((entry) => entry.value))].sort(compare),
+    });
+    for (const entry of listingDates) omit(entry, "Conflicting reviewed subject listing dates; no offered-for-sale checkbox was inferred.");
+  } else {
+    for (const entry of listingDates) {
+      if (!dateContext.effectiveDate) {
+        omit(entry, "Effective date is unavailable; the preceding 12-calendar-month listing window cannot be determined.");
+      } else if (entry.value < dateContext.windowStart || entry.value > dateContext.windowEnd) {
+        omit(entry, "Listing date is outside the preceding 12-calendar-month window; this does not establish offered-for-sale No.");
+      } else {
+        projected.push({
+          ...entry, fieldId: "CurrentPriorListingYesCheckBox", value: "true", type: "CheckBoxField", group: "offered_for_sale",
+          provenance: { ...entry.provenance, kind: "derived_reviewed_document",
+            rule: "subject_mls_list_date_within_preceding_12_calendar_months", sourceValue: entry.value,
+            effectiveDate: dateContext.effectiveDate, effectiveDateSource: dateContext.source,
+            effectiveDateSourceDocumentId: dateContext.sourceDocumentId,
+            windowStart: dateContext.windowStart, windowEnd: dateContext.windowEnd,
+          },
+        });
+      }
+    }
+  }
+  if (subjectContext?.feeSimpleDefault === true && !hasReviewedRights) {
+    const assumption = {
+      fieldId: "PropertyRightsAppraisedFeeSimpleCheckBox", value: "true",
+      rule: "user_requested_fee_simple_default",
+      reason: "Fee simple is a user-requested default, not a fact extracted from the source documents. Confirm the appraised property rights.",
+    };
+    assumptions.push(assumption);
+    projected.push({
+      sourceField: "property_rights", documentId: null, candidateId: null,
+      fieldId: assumption.fieldId, value: "true", type: "CheckBoxField", group: "property_rights",
+      provenance: { kind: "user_default", sourceField: "property_rights", documentId: null, candidateId: null, rule: assumption.rule },
+    });
+    supplementalWarnings.push(assumption.reason);
+  } else if (subjectContext?.feeSimpleDefault === true && hasReviewedRights) {
+    supplementalWarnings.push("The fee-simple default was not used because reviewed property-rights evidence is present; unresolved or conflicting rights remain omitted.");
+  }
+  if (hasReviewedHoa) supplementalWarnings.push("HOA dues or a mandatory HOA do not establish PUD status. PUD is checked only from an explicit reviewed PUD assertion.");
+  if (dateContext.isPlaceholder) supplementalWarnings.push("The effective date is provisionally a document upload date, not an inspection date. Confirm the effective date before relying on the listing determination.");
+  if (hasReviewedListing) knownMissing.push({
+    fieldId: "CurrentPriorListingDataSources",
+    reason: "The composite UAD listing-data encoding is not verified. MLS scalar details are not concatenated into this field; any derived checkbox is a separate determination.",
+  });
 
   const grouped = new Map();
   for (const field of projected.sort(sourceOrder)) {
@@ -279,29 +492,39 @@ export function buildSfrepReportExport({
     if (!grouped.has(key)) grouped.set(key, []);
     grouped.get(key).push(field);
   }
+  if (new Set((grouped.get("hoa_frequency") || []).map((entry) => entry.fieldId)).size > 1) {
+    for (const entry of grouped.get("AssessmentAmount") || []) omit(entry, "Conflicting HOA frequencies make the amount's period ambiguous; no amount was exported.");
+    grouped.delete("AssessmentAmount");
+  }
   const fields = [];
-  const conflicts = [];
+  const conflicts = [...listingConflicts];
   for (const [, entries] of [...grouped.entries()].sort(([a], [b]) => compare(a, b))) {
-    const alternatives = new Set(entries.map((entry) => `${entry.fieldId}\u0000${entry.value}`));
+    const alternatives = new Set(entries.map(destinationComparisonKey));
     if (alternatives.size > 1) {
       const sourceFields = [...new Set(entries.map((entry) => entry.sourceField))].sort(compare);
       conflicts.push({
         sourceField: sourceFields[0],
         documentIds: [...new Set(entries.map((entry) => entry.documentId))].sort((a, b) => a - b),
-        values: [...new Set(entries.map((entry) => entry.type === "CheckBoxField" ? entry.fieldId : entry.value))].sort(compare),
+        values: [...new Set(entries.map((entry) => entry.type === "CheckBoxField" ? `${entry.fieldId}=${entry.value}` : entry.value))].sort(compare),
       });
       for (const entry of entries) omit(entry, "Conflicting reviewed values; deselect a source document or explicitly choose one source for this field.");
       continue;
     }
-    const { group: _group, ...field } = entries[0];
+    if (entries[0].suppress) {
+      for (const entry of entries) omit(entry, "Explicit not-PUD evidence was retained for conflict checks; an unchecked PUD value is not exported because it could erase an existing field.");
+      continue;
+    }
+    const { group: _group, suppress: _suppress, ...field } = entries[0];
     fields.push(field);
   }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));
+  conflicts.sort((a, b) => compare(a.sourceField, b.sourceField));
   omitted.sort(sourceOrder);
   const validatedAddenda = validatePdfAddenda(pdfAddenda, selected);
   const warnings = [
     "This export targets the legacy FNMA 1004 (09/2011) form, not the dynamic UAD 3.6 URAR.",
-    "Only explicitly confirmed evidence is mapped. Review imported values in Appraise-It Pro before use.",
+    "Document-derived fields use explicitly confirmed evidence. Any user-requested defaults are identified separately. Review imported values in Appraise-It Pro before use.",
+    ...supplementalWarnings,
   ];
   if (conflicts.length) warnings.push("Conflicting fields were omitted; resolve the source selection before relying on the import.");
   if (omitted.length) warnings.push("Some reviewed values were omitted; consult the omission list and original PDF evidence.");
@@ -332,5 +555,7 @@ export function buildSfrepReportExport({
     "  </Forms>",
     "</Report>",
   ];
-  return { formId, reportXml: `${lines.join("\n")}\n`, fields, conflicts, omitted, warnings, pdfAddenda: validatedAddenda, specificationUrl: SPEC_URL };
+  return { formId, reportXml: `${lines.join("\n")}\n`, fields, conflicts, omitted, warnings,
+    pdfAddenda: validatedAddenda, specificationUrl: SPEC_URL,
+    effectiveDateContext: dateContext, assumptions, knownMissing };
 }

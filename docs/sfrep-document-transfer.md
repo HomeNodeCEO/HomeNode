@@ -131,17 +131,32 @@ separate synthetic reports; never use an existing client report as the target:
 - Import into a populated synthetic legacy 1004 and confirm omitted values do not
   erase existing fields; inspect mutually exclusive assignment-type checkboxes.
 - Check the HomeNode dialog at desktop and narrow widths, including selection,
-  preview, cancellation, and download using an authorized QA assignment.
+  preview, cancellation, and download using an authorized QA assignment. Local
+  synthetic visual checks passed at 1100, 390, and 320 pixel frame widths, including
+  all 17 checklist items, upload-date placeholder labeling, and preview invalidation
+  after changing the source-copy option. No horizontal dialog overflow was observed.
+  This is not a production API/download test.
 
 Import into an existing populated report remains unverified. The native **Import
 Forms** chooser exposed import options, but automation could not reliably select
 RPTI because nested-modal focus/actions reset. No successful existing-report import
 was observed; this automation limitation does not establish an SFREP defect.
 
-Browser discovery returned no available browser (`[]`), so browser-visual checks
-remain unverified. XML schema/sample validation, automated unit/integration tests,
-and a production build do not substitute for these remaining native-import and
-browser checks.
+The newer four-PDF Subject sample is generated from the extraction pipeline, but
+its full native import remains unverified: the Windows file-picker automation
+again failed to accept input reliably. The earlier smaller native sample's success
+does not prove all newly added fields render correctly. XML schema/sample validation,
+automated tests, and a production build do not substitute for this remaining check.
+
+### Release gate
+
+The feature and coordinated document-preview/batch-upload integration remain on
+the feature branch until the final combined head passes protected checks. The
+Python dependency repair pins `pypdf==6.19.0` (the isolated change coordinated from
+security PR #1084); it does not import that PR's separate mobile Forge patch or
+approve an audit exception. The mobile Forge advisory still requires resolution
+under the existing release process. Do not disable audits or claim production
+availability while that gate fails.
 
 Field mapping evidence and format references:
 

@@ -89,6 +89,7 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
     'react/jsx-runtime': { jsx: (type, props, key) => ({ type, props, key }),
       jsxs: (type, props, key) => ({ type, props, key }), Fragment: 'Fragment' },
     '@/features/auth/ApplicationAuth': { useApplicationAuth: () => ({ session: { display_name: 'Synthetic Reviewer' } }) },
+    '@/features/sfrep/SfrepExportDialog': { default: 'SfrepExportDialog', __esModule: true },
     './documents/AssignmentDocumentUploadQueue': { default: 'AssignmentDocumentUploadQueue', __esModule: true },
     '@/lib/api': api,
     '@/features/uad/api': api,
@@ -127,6 +128,8 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
     calls, lateStateWrites, timers, render, flush,
     get tree() { return tree; },
     get queue() { return findOne('AssignmentDocumentUploadQueue'); },
+    get sfrep() { return nodes(tree, node => node.type === 'SfrepExportDialog')[0] || null; },
+    get sfrepButton() { return nodes(tree, node => node.type === 'button' && text(node) === 'Export to SFREP')[0] || null; },
     get preview() { return nodes(tree, node => node.type === 'AssignmentPdfPreview')[0] || null; },
     get text() { return text(tree); },
     requests: name => calls.filter(call => call.name === name),
@@ -145,6 +148,66 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
     },
   };
 }
+
+test('upload queue and SFREP export coexist with exact assignment, evidence, and authentication props', async t => {
+  const evidence = [document(7), document(8)], pending = deferred();
+  const h = harness({ api: { getAssignmentDocuments: () => pending.promise } });
+  t.after(h.cleanup);
+  assert.equal(h.sfrepButton.props.disabled, true, 'export waits for source evidence');
+  assert.equal(h.queue.props.disabled, false, 'document loading does not disable upload');
+  pending.resolve(evidence); await h.settle();
+  const queueKey = h.queue.key;
+  assert.equal(h.sfrepButton.props.disabled, false); assert.equal(h.sfrep, null);
+  h.sfrepButton.props.onClick(); h.flush();
+  assert.equal(h.sfrep.key, `custom:${ACCOUNT}:14`);
+  assert.equal(h.sfrep.props.accountId, ACCOUNT);
+  assert.equal(h.sfrep.props.assignmentFileId, 14);
+  assert.deepEqual(h.sfrep.props.documents, evidence);
+  assert.equal(h.sfrep.props.getEditorKey, getEditorKey);
+  assert.equal(h.queue.key, queueKey, 'opening export preserves the existing upload queue');
+  assert.equal(h.requests('uploadAssignmentDocument').length, 0);
+  h.sfrep.props.onClose(); h.flush();
+  assert.equal(h.sfrep, null); assert.equal(h.queue.key, queueKey);
+});
+
+test('locked Custom assignment keeps read-only SFREP export while disabling document mutations', async t => {
+  const h = harness({ props: { readOnly: true }, documents: [document(7)] });
+  t.after(h.cleanup); await h.settle();
+  assert.equal(h.queue.props.disabled, true);
+  assert.match(h.text, /Existing documents remain available for review and download/);
+  assert.equal(h.sfrepButton.props.disabled, false);
+  h.sfrepButton.props.onClick(); h.flush();
+  assert.equal(h.sfrep.props.assignmentFileId, 14);
+  await assert.rejects(h.queue.props.onUpload(pdf(), { title: 'Synthetic', documentType: 'other' }), /active workfile changed or is locked/);
+  assert.equal(h.requests('uploadAssignmentDocument').length, 0);
+});
+
+for (const patch of [{ assignmentFileId: 15 }, { accountId: 'OTHER-ACCOUNT' }, { uadWorkfileId: 'other-uad' }]) {
+  test(`scope change closes SFREP export and remounts the upload queue: ${JSON.stringify(patch)}`, async t => {
+    const h = harness({ documents: [document(7)] }); t.after(h.cleanup); await h.settle();
+    const oldQueueKey = h.queue.key;
+    h.sfrepButton.props.onClick(); h.flush(); assert.ok(h.sfrep);
+    h.render(patch); h.flush();
+    assert.equal(h.sfrep, null, 'the export dialog is closed by the scope reset');
+    assert.notEqual(h.queue.key, oldQueueKey);
+    await h.settle();
+    assert.equal(h.sfrep, null, 'loading the next scope never reopens the old export');
+    if (patch.uadWorkfileId) assert.equal(h.sfrepButton, null, 'legacy SFREP export is not offered for UAD');
+    else {
+      h.sfrepButton.props.onClick(); h.flush();
+      assert.equal(h.sfrep.key, h.queue.key);
+      assert.equal(h.sfrep.props.accountId, patch.accountId || ACCOUNT);
+      assert.equal(h.sfrep.props.assignmentFileId, patch.assignmentFileId || 14);
+    }
+  });
+}
+
+test('unsaved Custom assignment has a disabled queue and no SFREP export action', async t => {
+  const h = harness({ props: { assignmentFileId: null }, documents: [document(7)] });
+  t.after(h.cleanup); await h.settle();
+  assert.equal(h.queue.props.disabled, true);
+  assert.equal(h.sfrepButton, null); assert.equal(h.sfrep, null);
+});
 
 test('Custom batch upload preserves exact assignment, original File, label, type, and reviewer', async t => {
   const h = harness(); t.after(h.cleanup); await h.settle();

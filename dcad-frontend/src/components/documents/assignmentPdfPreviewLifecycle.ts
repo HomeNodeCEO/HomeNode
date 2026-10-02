@@ -82,6 +82,9 @@ export function renderPdfPreviewPage(
       const geometry = pdfPreviewGeometry(original.width, original.height, options.availableWidth, options.zoom, options.pixelRatio);
       canvas.width = geometry.canvasWidth;
       canvas.height = geometry.canvasHeight;
+      // The global responsive-media rule caps canvases at 100% width. Zoom
+      // needs the full scaled width and horizontal scrolling to keep its ratio.
+      canvas.style.maxWidth = 'none';
       canvas.style.width = `${geometry.displayWidth}px`;
       canvas.style.height = `${geometry.displayHeight}px`;
       const context = canvas.getContext('2d');

@@ -118,6 +118,9 @@ test('PDF component navigates and zooms using separate canvases and resets selec
   assert.equal(h.nodes().find((node) => node.type === 'button' && text(node) === 'Next page').props.disabled, true);
   h.zoom(2); await h.settle();
   assert.equal(h.host.canvas.style.width, '1224px');
+  assert.equal(h.host.canvas.style.height, '1584px');
+  assert.equal(h.host.canvas.style.maxWidth, 'none', 'global responsive canvas rule must not clamp a zoomed page');
+  assert.equal(parseFloat(h.host.canvas.style.width) / parseFloat(h.host.canvas.style.height), 612 / 792);
   h.update(new Blob(['b'])); await h.settle(); h.loads[1].pending.resolve(h.document(5)); await h.settle();
   assert.equal(h.renders.at(-1).number, 1);
   assert.equal(h.host.canvas.style.width, '612px');

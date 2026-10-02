@@ -92,6 +92,85 @@ test("failed Census batches persist and return bounded diagnostics", async () =>
     "census_coordinates_batch_http_503");
 });
 
+for (const failureStage of ["BEGIN", "lease recovery", "claim", "COMMIT"]) {
+  for (const rollbackFails of [false, true]) {
+    test(`Census ${failureStage} failure preserves its error and ${rollbackFails ? "retires" : "reuses"} the client`, async () => {
+      const primaryError = new Error("private claim operation detail");
+      const rollbackError = new Error("private rollback connection detail");
+      const statements = [];
+      const releases = [];
+      const client = {
+        async query(sql) {
+          statements.push(sql);
+          if (sql === "ROLLBACK" && rollbackFails) throw rollbackError;
+          if (sql === failureStage
+              || (failureStage === "lease recovery" && sql.includes("SET status = 'retry'"))
+              || (failureStage === "claim" && sql.includes("RETURNING geography.account_id"))) {
+            throw primaryError;
+          }
+          return { rows: [] };
+        },
+        release(error) { releases.push(error); },
+      };
+      const pool = {
+        async connect() { return client; },
+        async query() { assert.fail("failed claims must not settle queue items"); },
+      };
+      await assert.rejects(runCensusGeographyBatch(pool, {
+        fetchImpl: async () => { assert.fail("failed claims must not call Census"); },
+      }), error => error === primaryError);
+      assert.equal(statements.at(-1), "ROLLBACK");
+      assert.equal(statements.filter(sql => sql === "ROLLBACK").length, 1);
+      assert.equal(releases.length, 1);
+      if (rollbackFails) {
+        assert.ok(releases[0] instanceof Error);
+        assert.equal(releases[0].message, "census_geography_rollback_failed");
+        assert.notEqual(releases[0], primaryError);
+        assert.notEqual(releases[0], rollbackError);
+      } else {
+        assert.equal(releases[0], undefined);
+      }
+    });
+  }
+}
+
+test("an empty Census claim commits and releases a reusable client", async () => {
+  const statements = [];
+  const releases = [];
+  const client = {
+    async query(sql, params) {
+      statements.push({ sql, params });
+      return { rows: [] };
+    },
+    release(error) { releases.push(error); },
+  };
+  const result = await runCensusGeographyBatch({
+    async connect() { return client; },
+    async query() { assert.fail("an empty batch needs no settlement"); },
+  }, {
+    workerId: "claim-test-worker",
+    batchSize: 7,
+    fetchImpl: async () => { assert.fail("an empty batch must not call Census"); },
+  });
+  assert.deepEqual(result, { claimed: 0, matched: 0, retry: 0, reviewRequired: 0 });
+  assert.equal(statements[0].sql, "BEGIN");
+  assert.match(statements[1].sql, /SET status = 'retry'/);
+  assert.deepEqual(statements[2].params, [7, "claim-test-worker"]);
+  assert.equal(statements[3].sql, "COMMIT");
+  assert.equal(statements.length, 4);
+  assert.deepEqual(releases, [undefined]);
+});
+
+test("Census connection failure preserves its cause without provider or settlement work", async () => {
+  const primaryError = new Error("claim connection unavailable");
+  await assert.rejects(runCensusGeographyBatch({
+    async connect() { throw primaryError; },
+    async query() { assert.fail("connection failure must not settle claims"); },
+  }, {
+    fetchImpl: async () => { assert.fail("connection failure must not call Census"); },
+  }), error => error === primaryError);
+});
+
 const coordinateRow = {
   account_id: "26272500060150000",
   source_longitude: -96.63,

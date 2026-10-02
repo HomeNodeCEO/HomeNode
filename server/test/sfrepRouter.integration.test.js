@@ -121,7 +121,7 @@ function responseLifecycle(context, overrides = {}) {
   });
   const handler = router.stack.find(layer => layer.route?.path.endsWith('/export')).route.stack[0].handle;
   context.after(() => { for (const response of responses) response.destroy(); });
-  return { signals, async request(assignmentFileId = 14, autoFinish = false) {
+  return { responses, signals, async request(assignmentFileId = 14, autoFinish = false) {
     const response = new Response(autoFinish); responses.push(response);
     await handler({ mobileAuth: identity, params: { id: 'account-1' },
       body: { ...body, assignment_file_id: assignmentFileId, preview_digest: 'a'.repeat(64) } }, response);
@@ -174,3 +174,34 @@ test('pre-send failures and successful responses do not leak slots or deadlines'
   assert.equal(refused.listenerCount('close'), 0); assert.equal(successful.listenerCount('close'), 0);
   assert.equal((await fixture.request(14, true)).statusCode, 200);
 });
+
+for (const [stage, result] of [
+  ['ensureAvailable', undefined], ['resolveAccountId', 'account-1'], ['requireAssignmentAccess', true],
+]) {
+  test(`disconnect during ${stage} skips evidence and packaging and releases its export slot`, async context => {
+    let entered, release, calls = 0, reads = 0;
+    const started = new Promise(resolve => { entered = resolve; });
+    const gate = new Promise(resolve => { release = resolve; });
+    const fixture = responseLifecycle(context, {
+      [stage]: async () => {
+        if (++calls === 1) { entered(); await gate; }
+        return result;
+      },
+      readDocuments: async () => { reads++; return []; },
+    });
+    const pending = fixture.request();
+    await started;
+    const disconnected = fixture.responses[0];
+    disconnected.destroy();
+    release();
+    await pending;
+    assert.equal(reads, 0);
+    assert.equal(fixture.signals.length, 0);
+    assert.equal(disconnected.headersSent, false);
+    assert.equal(disconnected.listenerCount('finish'), 0);
+    assert.equal(disconnected.listenerCount('close'), 0);
+    assert.equal((await fixture.request(14, true)).statusCode, 200);
+    assert.equal(reads, 1);
+    assert.equal(fixture.signals.length, 1);
+  });
+}

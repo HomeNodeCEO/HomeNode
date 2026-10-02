@@ -49,6 +49,8 @@ export function createSfrepDocumentRouter({ pool, objectStorage, ensureAvailable
         }
         res.once('close', close);
         res.once('finish', cleanup);
+        // A disconnect during readiness/authorization predates these listeners.
+        if (res.destroyed) { close(); return; }
         timeout = setTimeout(() => {
           controller.abort();
           // Once download headers have been sent, JSON cannot report a timeout.

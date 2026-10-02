@@ -1,3 +1,5 @@
+import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarReferenceLayouts.js";
+
 /**
  * Conservative, page-cited Subject suggestions from already-extracted PDF text.
  * No OCR, network, model, report writes, or automatic confirmation occurs here.
@@ -160,15 +162,15 @@ function collectLines(pages, unresolved) {
   return entries;
 }
 
-function sourceFor(documentType, sourceKind, entries) {
+function sourceFor(documentType, sourceKind, entries, referenceLayout = null) {
   if (SOURCES.has(sourceKind)) return sourceKind;
   if (documentType === "engagement_letter" || documentType === "mls_sheet") return documentType;
   if (documentType !== "other") return null;
   // A filename alone is not source evidence. Identify reference families from
   // their text; a report mentioning another source in prose is not a heading.
   const headings = entries.filter(entry => entry.line.length <= 160).map(entry => entry.line);
-  const realist = headings.some(line => /^(?:(?:corelogic|cotality)\s+)?realist\b/i.test(line));
-  const cad = headings.some(line => /^(?:[A-Za-z .'-]+\s+)?(?:central\s+)?appraisal\s+district(?:\s+(?:property|account|record|search|detail|summary|report)[\w -]*)?$/i.test(line)
+  const realist = referenceLayout === "realist" || headings.some(line => /^(?:(?:corelogic|cotality)\s+)?realist\b/i.test(line));
+  const cad = referenceLayout === "cad" || headings.some(line => /^(?:[A-Za-z .'-]+\s+)?(?:central\s+)?appraisal\s+district(?:\s+(?:property|account|record|search|detail|summary|report)[\w -]*)?$/i.test(line)
     || /^(?:DALLAS|COLLIN|DENTON|TARRANT)\s+CAD(?:\s+(?:PROPERTY|ACCOUNT|RECORD|REPORT))?$/i.test(line));
   return realist && cad ? null : realist ? "realist" : cad ? "cad" : null;
 }
@@ -176,7 +178,10 @@ function sourceFor(documentType, sourceKind, entries) {
 /** Use before the general classifier for Other uploads: an incidental MLS #
  * inside a Realist/CAD report must not change the explicit source family. */
 export function identifyUrarSubjectSource({ documentType = "other", pages = [] } = {}) {
-  return sourceFor(documentType, null, collectLines(pages, []));
+  const unresolved = [];
+  const entries = collectLines(pages, unresolved);
+  const reference = inspectUrarReferenceLayout(pages);
+  return unresolved.length || reference.unresolved.length ? null : sourceFor(documentType, null, entries, reference.sourceKind);
 }
 
 function postalParts(value) {
@@ -203,6 +208,50 @@ function legalSubdivision(value) {
   return { name, method: "legal_subdivision_lot_block" };
 }
 
+function multipleMlsListings(entries) {
+  return new Set(entries.map(entry => entry.line.match(/^MLS\s*#\s*:\s*(\d{4,20})\b/i)?.[1]).filter(Boolean)).size > 1;
+}
+
+function addMlsHeadingIdentity(entries, add) {
+  // Matrix prints the property address before its MLS-number/status row. That
+  // bounded heading is evidence; an address elsewhere may be a broker or comp.
+  const headers = entries.filter(entry => /^MLS\s*#\s*:\s*\d{4,20}\b/i.test(entry.line));
+  const header = headers.find(entry => entry.page_number === 1);
+  if (!header) return;
+  const headingIndex = entries.indexOf(header);
+  if (headingIndex > 12) return;
+  const addresses = entries.slice(0, headingIndex).filter(entry => entry.page_number === 1)
+    .map(entry => ({ entry, normalized: entry.line.replace(/,\s*Texas\s+(\d{5}(?:-\d{4})?)$/i, ", TX $1") }))
+    .map(item => ({ ...item, parts: postalParts(item.normalized) }))
+    .filter(item => item.parts && subjectAddress(item.normalized));
+  if (addresses.length !== 1) return;
+  const { entry, normalized, parts } = addresses[0];
+  // Cross-check the address printed in the listing row. A brokerage letterhead
+  // before MLS# is not property evidence, even when it is the only postal line.
+  const beforePrice = header.line.match(/^(.*?)\s+(?:LP|List\s+Price)\s*:/i)?.[1];
+  const rowZip = beforePrice?.match(/\b(\d{5}(?:-\d{4})?)$/)?.[1];
+  const headerPostal = value => compact(value.replace(/,\s*/g, " ").replace(/\bTexas(?=\s+\d{5})/i, "TX")
+    .replace(/(\b\d{5})-\d{4}$/, "$1")).toUpperCase();
+  if (!beforePrice || !rowZip || rowZip.slice(0, 5) !== parts.subject_zip.slice(0, 5)
+    || (rowZip.length === 10 && parts.subject_zip.length === 10 && rowZip !== parts.subject_zip)
+    || !headerPostal(beforePrice).endsWith(` ${headerPostal(normalized)}`)) return;
+  const evidence = `${entry.line}\n${header.line}`;
+  add("subject_property_address", entry.line, normalized, entry, evidence, "mls_print_heading");
+  for (const [key, value] of Object.entries(parts)) add(key, value, value, entry, evidence, "mls_print_heading");
+  for (const parcelEntry of entries.filter(item => item.page_number === 1)) {
+    const matched = parcelEntry.line.match(/^Parcel\s+ID\s*:\s*([A-Za-z0-9][A-Za-z0-9.-]{1,78})(?=\s+(?:Plan\s+Dvlpm|Lot|Block)\s*:|\s*$)/i);
+    if (matched && parcel(matched[1])) add("assessor_parcel_number", matched[1], parcel(matched[1]), parcelEntry, parcelEntry.line, "mls_print_parcel");
+  }
+}
+
+function collectConflicts(candidates, conflicts) {
+  for (const fieldKey of new Set(candidates.map(candidate => candidate.field_key))) {
+    const alternatives = candidates.filter(candidate => candidate.field_key === fieldKey);
+    const values = [...new Set(alternatives.map(candidate => candidate.normalized_value))];
+    if (values.length > 1) conflicts.push({ field_key: fieldKey, values, page_numbers: [...new Set(alternatives.map(candidate => candidate.page_number))] });
+  }
+}
+
 /**
  * Returns the existing candidate shape plus non-persisted review diagnostics.
  * sourceKind may be supplied by a trusted caller that already identified CAD or
@@ -212,9 +261,31 @@ function legalSubdivision(value) {
 export function buildUrarSubjectEvidence({ documentType = "other", pages = [], sourceKind = null } = {}) {
   const unresolved = [], candidates = [], conflicts = [];
   const entries = collectLines(pages, unresolved);
-  const source = sourceFor(documentType, sourceKind, entries);
+  const reference = inspectUrarReferenceLayout(pages);
+  const inputIncomplete = unresolved.length > 0 || reference.unresolved.length > 0;
+  const referenceLayout = documentType === "other" ? reference.sourceKind : null;
+  const source = sourceFor(documentType, sourceKind, entries, referenceLayout);
   const result = { schema_version: URAR_SUBJECT_EVIDENCE_VERSION, source_kind: source, review_required: true, candidates, conflicts, unresolved };
+  if (inputIncomplete) {
+    reference.unresolved.forEach(item => issue(unresolved, item));
+    // Never project the retained first pages after losing a conflicting page or
+    // merging different report families. Legacy extraction honors this gate too.
+    issue(unresolved, { reason: "source_input_incomplete" });
+    return result;
+  }
   if (!source) { issue(unresolved, { reason: entries.length ? "source_not_identified" : "no_readable_text" }); return result; }
+  if (source === "mls_sheet" && multipleMlsListings(entries)) {
+    issue(unresolved, { reason: "multiple_mls_listing_identities" }); return result;
+  }
+  if (referenceLayout === source) {
+    // A recognized table layout owns its omissions too. The generic label
+    // parser must not fill an absent total with a jurisdiction's Tax Amount.
+    const layout = extractUrarReferenceLayout({ sourceKind: source, pages });
+    candidates.push(...layout.candidates);
+    layout.unresolved.forEach(item => issue(unresolved, item));
+    collectConflicts(candidates, conflicts);
+    return result;
+  }
   const rules = new Map(RULES[source].flatMap(([key, labels, normalize]) => labels.map(label => [label, { key, normalize }])));
   const found = new Set();
   const add = (fieldKey, raw, normalized, entry, evidence, method = "labeled_text") => {
@@ -227,6 +298,8 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
       page_number: entry.page_number, confidence: method.startsWith("legal_subdivision_") ? 0.8 : 0.9,
       evidence_excerpt: evidence.slice(0, 2_000), extraction_method: `urar_subject_${source}_${method}`, review_status: "suggested" });
   };
+  if (source === "mls_sheet") addMlsHeadingIdentity(entries, add);
+  for (const candidate of candidates) found.add(candidate.field_key);
   for (let index = 0; index < entries.length; index += 1) {
     const entry = entries[index];
     const match = entry.line.match(/^([A-Za-z][A-Za-z /()#.'-]{0,55}?)\s*[:=]\s*(.*)$/);
@@ -235,6 +308,10 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
     const rule = rules.get(labelKey(match ? match[1] : entry.line));
     if (!rule) continue;
     found.add(rule.key);
+    if (source === "realist" && rule.key === "tax_amount" && labelKey(match ? match[1] : entry.line) === "tax amount"
+      && entries.slice(0, index).some(item => item.page_number === entry.page_number && /^(?:tax\s+)?jurisdiction\b/i.test(item.line))) {
+      issue(unresolved, { field_key: rule.key, page_number: entry.page_number, reason: "jurisdiction_tax_is_not_property_total" }); continue;
+    }
     let raw = compact(match?.[2]);
     const evidence = [entry.line];
     const next = entries[index + 1];
@@ -301,10 +378,6 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
   for (const fieldKey of new Set(RULES[source].map(([key]) => key))) {
     if (!found.has(fieldKey)) issue(unresolved, { field_key: fieldKey, reason: "label_not_found" });
   }
-  for (const fieldKey of new Set(candidates.map(candidate => candidate.field_key))) {
-    const alternatives = candidates.filter(candidate => candidate.field_key === fieldKey);
-    const values = [...new Set(alternatives.map(candidate => candidate.normalized_value))];
-    if (values.length > 1) conflicts.push({ field_key: fieldKey, values, page_numbers: [...new Set(alternatives.map(candidate => candidate.page_number))] });
-  }
+  collectConflicts(candidates, conflicts);
   return result;
 }

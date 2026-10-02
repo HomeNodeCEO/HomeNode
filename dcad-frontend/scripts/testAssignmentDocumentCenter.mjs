@@ -12,6 +12,8 @@ const document = (id, patch = {}) => ({
   candidates: [], ...patch,
 });
 const pdf = (name = 'synthetic-mls.pdf') => new File(['%PDF-1.7\nsynthetic fixture'], name, { type: 'application/pdf' });
+const candidate = (id, value) => ({ id, field_key: 'county', raw_value: value, normalized_value: value,
+  confirmed_value: null, review_status: 'suggested', page_number: 1, confidence: 0.9 });
 const deferred = () => {
   let resolve, reject;
   const promise = new Promise((yes, no) => { resolve = yes; reject = no; });
@@ -133,6 +135,10 @@ function harness({ props: initialProps = {}, api: overrides = {}, documents = []
     get preview() { return nodes(tree, node => node.type === 'AssignmentPdfPreview')[0] || null; },
     get text() { return text(tree); },
     requests: name => calls.filter(call => call.name === name),
+    candidateInput(id) {
+      const card = nodes(tree, node => node.type === 'div' && node.key === id)[0];
+      return nodes(card, node => node.type === 'input')[0] || null;
+    },
     select(id) {
       const button = nodes(tree, node => node.type === 'button' && node.key === id)[0];
       assert.ok(button, `document ${id} is available`); button.props.onClick(); flush();
@@ -369,6 +375,112 @@ test('changing document clears its predecessor immediately, and content failure 
   assert.match(h.text, /Document information loaded for review/);
   assert.match(h.text, /synthetic preview unavailable/);
   assert.equal(nodes(h.tree, node => node.type === 'button' && node.key === 8)[0].props['aria-pressed'], true);
+});
+
+test('retrying the same PDF after a preview failure preserves reviewer drafts and refreshes untouched candidates', async t => {
+  const pending = deferred(); let metadataRequests = 0, contentRequests = 0;
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { candidates: ++metadataRequests === 1
+      ? [candidate(701, 'First suggestion'), candidate(702, 'Clear this'), candidate(703, 'Old untouched'), candidate(705, 'Removed candidate')]
+      : [candidate(701, 'Changed suggestion'), candidate(702, 'Changed clear suggestion'), candidate(703, 'Fresh untouched'), candidate(704, 'New candidate')] }),
+    getAssignmentDocumentContent: () => ++contentRequests === 1 ? Promise.reject(new Error('synthetic preview unavailable')) : pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  assert.equal(h.preview, null); assert.ok(h.candidateInput(701));
+  h.candidateInput(701).props.onChange({ target: { value: 'Unsaved reviewer correction' } });
+  h.candidateInput(702).props.onChange({ target: { value: '' } }); h.flush();
+  h.select(7);
+  assert.equal(h.candidateInput(701)?.props.value, 'Unsaved reviewer correction', 'same-document PDF retry must not clear the review form');
+  h.candidateInput(701).props.onChange({ target: { value: 'Correction during retry' } }); h.flush();
+  pending.resolve(pdf()); await h.settle();
+  assert.equal(h.candidateInput(701).props.value, 'Correction during retry');
+  assert.equal(h.candidateInput(702).props.value, '', 'an intentional empty draft also survives');
+  assert.equal(h.candidateInput(703).props.value, 'Fresh untouched');
+  assert.equal(h.candidateInput(704).props.value, 'New candidate');
+  assert.equal(h.candidateInput(705), null);
+  assert.ok(h.preview); assert.equal(contentRequests, 2);
+});
+
+for (const mode of ['Custom', 'UAD']) {
+  test(`${mode} processing polls keep failed-preview drafts and errors without re-requesting PDF bytes`, async t => {
+    let metadataRequests = 0, contentRequests = 0;
+    const metadata = id => document(id, { processing_status: ++metadataRequests < 3 ? 'processing' : 'review_required',
+      candidates: [candidate(701, 'Initial suggestion'), candidate(702, `Untouched ${metadataRequests}`)] });
+    const content = async () => {
+      if (++contentRequests === 1) throw new Error('synthetic PDF denied');
+      return pdf();
+    };
+    const h = harness({ props: mode === 'UAD' ? { uadWorkfileId: 'synthetic-uad-77' } : {}, documents: [document(7)], api: {
+      getAssignmentDocument: async id => metadata(id), getAssignmentDocumentContent: content,
+      getUadDocument: async (_workfile, id) => metadata(id), getUadDocumentContent: content,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    h.candidateInput(701).props.onChange({ target: { value: 'Retain my correction' } }); h.flush();
+    h.poll();
+    assert.equal(h.candidateInput(701).props.value, 'Retain my correction');
+    assert.match(h.text, /synthetic PDF denied/);
+    await h.settle();
+    assert.equal(h.preview, null); assert.equal(contentRequests, 1);
+    assert.equal(h.candidateInput(701).props.value, 'Retain my correction');
+    assert.equal(h.candidateInput(702).props.value, 'Untouched 2');
+    assert.match(h.text, /synthetic PDF denied/);
+    h.poll(); await h.settle();
+    assert.equal(h.timers.size, 0, 'processing-to-ready transition stops polling');
+    assert.equal(contentRequests, 1);
+    h.select(7); await h.settle();
+    assert.equal(contentRequests, 2, 'explicit same-document selection retries the failed PDF');
+    assert.ok(h.preview); assert.doesNotMatch(h.text, /synthetic PDF denied/);
+    assert.equal(h.candidateInput(701).props.value, 'Retain my correction');
+  });
+}
+
+test('a stale extraction timer cannot supersede a newer document request or restore its drafts', async t => {
+  const pending = deferred();
+  const h = harness({ documents: [document(7), document(8)], api: {
+    getAssignmentDocument: async id => document(id, { processing_status: id === 7 ? 'processing' : 'review_required',
+      candidates: [candidate(701, `Document ${id} suggestion`)] }),
+    getAssignmentDocumentContent: id => id === 8 ? pending.promise : Promise.resolve(pdf()),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.candidateInput(701).props.onChange({ target: { value: 'Old document correction' } }); h.flush();
+  const staleTimer = [...h.timers.values()][0];
+  h.select(8);
+  assert.equal(h.candidateInput(701), null, 'a different document clears the previous review form');
+  const before = h.requests('getAssignmentDocument').length;
+  staleTimer(); await h.settle();
+  assert.equal(h.requests('getAssignmentDocument').length, before, 'a stale timer is rejected before it starts work');
+  pending.resolve(pdf('new.pdf')); await h.settle();
+  assert.equal(h.preview.props.title, 'Synthetic PDF 8', 'the newer request generation still wins');
+  assert.equal(h.candidateInput(701).props.value, 'Document 8 suggestion');
+});
+
+test('an earlier poll timer cannot supersede an explicit retry of the same failed PDF', async t => {
+  const pending = deferred(); let contentRequests = 0;
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { processing_status: 'processing', candidates: [candidate(701, 'Suggestion')] }),
+    getAssignmentDocumentContent: () => ++contentRequests === 1 ? Promise.reject(new Error('synthetic PDF denied')) : pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  const staleTimer = [...h.timers.values()][0];
+  h.candidateInput(701).props.onChange({ target: { value: 'Unsaved correction' } }); h.flush();
+  h.select(7); staleTimer(); await h.settle();
+  assert.equal(h.requests('getAssignmentDocument').length, 2);
+  pending.resolve(pdf()); await h.settle();
+  assert.ok(h.preview, 'the explicit retry response is still current');
+  assert.equal(h.candidateInput(701).props.value, 'Unsaved correction');
+});
+
+test('candidate drafts do not cross assignment scope even when document and candidate IDs repeat', async t => {
+  let sourceValue = 'First assignment';
+  const h = harness({ documents: [document(7)], api: {
+    getAssignmentDocument: async id => document(id, { candidates: [candidate(701, sourceValue)] }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  h.candidateInput(701).props.onChange({ target: { value: 'Old assignment correction' } }); h.flush();
+  sourceValue = 'Second assignment'; h.render({ assignmentFileId: 15 }); h.flush();
+  assert.equal(h.candidateInput(701), null);
+  await h.settle(); h.select(7); await h.settle();
+  assert.equal(h.candidateInput(701).props.value, 'Second assignment');
 });
 
 test('newer document selection wins even when the old metadata/content resolves later', async t => {

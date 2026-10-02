@@ -22,7 +22,8 @@ export const SFREP_MAX_DOCUMENTS = 50;
 
 const SPEC_URL = "https://api.sfrep.com/rpti/aixml_spec.html";
 const INVALID_XML = /[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
-const EMPTY_MARKERS = /^(?:xsi:nil|null|undefined|unknown|n\/?a|not available|not provided|[-–—]+)$/i;
+// Exact markers only: meaningful names such as "TBD Holdings" stay untouched.
+const EMPTY_MARKERS = /^(?:xsi:nil|null|undefined|unknown|unavailable|n\/?a|not available|not provided|not applicable|not disclosed|undisclosed|unassigned|pending|tbd|tba|to be determined|to be assigned|to be confirmed|to be announced|[-–—_?]+)[.!]?$/i;
 
 function fail(code) {
   const error = new Error(code);
@@ -134,7 +135,7 @@ const UNMAPPED_REASONS = Object.freeze({
   earnest_money: "Earnest money has no verified direct FNMA 1004 field mapping.",
   seller_concessions: "The SFREP concessions field has composite UAD semantics; an amount alone is not exported.",
   financing_type: "Financing detail has no verified direct FNMA 1004 field mapping.",
-  assignment_type: "Only explicitly reviewed purchase_transaction or refinance assignment types are supported.",
+  assignment_type: "Only explicitly reviewed purchase_transaction, refinance, or known Other engagement purposes are supported; unknown purposes are not inferred.",
   contract_property_condition: "Contract terms do not establish appraiser conclusions about property condition.",
   hoa_frequency: "Only explicitly reviewed per_month or per_year HOA frequencies have verified checkboxes; amounts are not prorated.",
   property_type: "Property type is not PUD evidence unless it explicitly identifies a planned unit development.",
@@ -149,6 +150,14 @@ const UNMAPPED_REASONS = Object.freeze({
 const PROPERTY_RIGHTS_FIELDS = new Set(["property_rights", "property_rights_appraised"]);
 const OFFERED_FOR_SALE_FIELDS = new Set(["offered_for_sale_prior_12_months", "subject_offered_for_sale_prior_12_months"]);
 const BOOLEAN_FIELDS = new Set(["pud", "is_pud", ...OFFERED_FOR_SALE_FIELDS]);
+const OTHER_ASSIGNMENT_DESCRIPTIONS = Object.freeze({
+  heloc: "HELOC",
+  rtl: "RTL",
+  bridge_loan: "Bridge loan",
+  new_construction: "New construction",
+  rehab: "Rehab",
+  dscr: "DSCR",
+});
 
 function booleanValue(value) {
   return /^(?:true|yes)$/i.test(value) ? true : /^(?:false|no)$/i.test(value) ? false : null;
@@ -219,22 +228,41 @@ function projectValue(sourceField, value) {
     return fieldId ? [{ fieldId, value: "true", type: "CheckBoxField", group: "hoa_frequency" }] : [];
   }
   if (sourceField === "assignment_type") {
-    const fieldId = value === "purchase_transaction" ? "AssignmentTypePurchaseCheckBox"
-      : value === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
-    return fieldId ? [{ fieldId, value: "true", type: "CheckBoxField", group: "assignment_type" }] : [];
+    const assignmentType = value.toLowerCase().replace(/[ -]+/g, "_");
+    const fieldId = assignmentType === "purchase_transaction" ? "AssignmentTypePurchaseCheckBox"
+      : assignmentType === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
+    const choice = { group: "assignment_type", assignmentType };
+    if (fieldId) return [{ ...choice, fieldId, value: "true", type: "CheckBoxField" }];
+    if (!Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, assignmentType)) return [];
+    return [
+      { ...choice, fieldId: "AssignmentTypeOtherCheckBox", value: "true", type: "CheckBoxField" },
+      { ...choice, fieldId: "AssignmentTypeOtherDescription", value: OTHER_ASSIGNMENT_DESCRIPTIONS[assignmentType], type: "TextField" },
+    ];
   }
-  if (sourceField === "subject_property_address") {
+  if (sourceField === "subject_property_address" || sourceField === "subject_street_address") {
     // Only split explicit comma-delimited localities. Do not guess the boundary
     // between a street and a multi-word city from a whitespace-only address.
-    const full = value.match(/^([^,\r\n]+),\s*([^,\r\n]+?)(?:,\s*|\s+)([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
-    if (full) return ["StreetAddress", "City", "State", "ZipCode"].map((fieldId, index) => ({
-      fieldId, value: index === 2 ? full[index + 1].trim().toUpperCase() : full[index + 1].trim(), type: "TextField",
-    }));
+    const full = value.match(/^([^,\r\n]+),\s*([A-Za-z][A-Za-z .'-]*?)(?:,\s*|\s+)([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/);
+    if (full) {
+      // Legacy/manual confirmations bypass extraction guards. Splitting must
+      // not turn a composite value into an exported exact placeholder.
+      if (full.slice(1).some((component) => textValue(component) === null)) return [];
+      return ["StreetAddress", "City", "State", "ZipCode"].map((fieldId, index) => ({
+        fieldId, value: index === 2 ? full[index + 1].trim().toUpperCase() : full[index + 1].trim(), type: "TextField",
+      }));
+    }
     // Street-only evidence is usable, but locality-looking suffixes require
     // separate reviewed address components instead of truncating the source.
     if (!/[,\r\n]/.test(value) && !/\b[A-Za-z]{2}\s+\d{5}(?:-\d{4})?$/.test(value)) {
       return [{ fieldId: "StreetAddress", value, type: "TextField" }];
     }
+    // Preserve explicit comma-delimited secondary street identifiers, but do
+    // not treat an incomplete or unrecognized locality tail as street text.
+    const commaParts = value.split(",");
+    if (sourceField === "subject_street_address" && !/[\r\n]/.test(value) && commaParts.length > 1
+      && textValue(commaParts[0]) !== null && commaParts.slice(1).every((part) => (
+        /^(?:#\s*|(?:apartment|apt|flat|lot|no|number|num|penthouse|ph|rm|room|space|spc|ste|suite|unit|bld|bldg|building|tower|fl|floor|level|lvl)[\s:#.-]+)[0-9A-Z][0-9A-Z/-]*$/i.test(part.trim())
+      ))) return [{ fieldId: "StreetAddress", value, type: "TextField" }];
     return [];
   }
   if (!Object.hasOwn(MAPPINGS, sourceField)) return [];
@@ -253,8 +281,16 @@ function sourceOrder(a, b) {
 }
 
 function destinationComparisonKey(entry) {
+  // Other purpose's checkbox and description are one reviewed choice, not two
+  // conflicting destinations. Distinct Other purposes still conflict together.
+  if (entry.group === "assignment_type") return JSON.stringify([entry.group, entry.assignmentType]);
   if (entry.fieldId === "City") {
     return JSON.stringify([entry.fieldId, entry.value.trim().replace(/\s+/g, " ").toUpperCase()]);
+  }
+  if (entry.fieldId === "AssessorsParcelNumber" && /^\d+(?:-\d+)*$/.test(entry.value)) {
+    // Numeric parcel identifiers may use display separators. Preserve every
+    // digit (including leading zeroes), and leave alphanumeric IDs exact.
+    return JSON.stringify([entry.fieldId, entry.value.replace(/-/g, "")]);
   }
   if (entry.fieldId === "StreetAddress") {
     const parsed = parseStructuredAddress(entry.value);
@@ -272,9 +308,16 @@ function destinationComparisonKey(entry) {
       return JSON.stringify([entry.fieldId, ...identityKeys.map((key) => parsed[key])]);
     }
   }
-  // ZIP+4 versus ZIP5, names, legal descriptions, and all other identities
-  // remain exact. Never invoke fuzzy address similarity to resolve conflicts.
+  // Names, legal descriptions, and other identities remain exact. Compatible
+  // ZIP5/ZIP+4 groups are handled together below; ZIP5 cannot bridge two +4s.
   return JSON.stringify([entry.fieldId, entry.value]);
+}
+
+function compatibleZipGroup(entries) {
+  return entries[0]?.fieldId === "ZipCode"
+    && entries.every((entry) => /^\d{5}(?:-\d{4})?$/.test(entry.value))
+    && new Set(entries.map((entry) => entry.value.slice(0, 5))).size === 1
+    && new Set(entries.filter((entry) => entry.value.length === 10).map((entry) => entry.value)).size <= 1;
 }
 
 function selectedDocuments(documents, selectedDocumentIds) {
@@ -385,7 +428,11 @@ export function buildSfrepReportExport({
       }
       if (PROPERTY_RIGHTS_FIELDS.has(sourceField)) hasReviewedRights = true;
       const rawValue = candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value;
-      const value = textValue(BOOLEAN_FIELDS.has(sourceField) && typeof rawValue === "boolean" ? String(rawValue) : rawValue);
+      // Pending is meaningful MLS status, not an unknown value. It still has
+      // no scalar export mapping; keep the accurate composite-field omission.
+      const value = sourceField === "listing_status" && typeof rawValue === "string" && /^pending$/i.test(rawValue.trim())
+        ? rawValue.trim()
+        : textValue(BOOLEAN_FIELDS.has(sourceField) && typeof rawValue === "boolean" ? String(rawValue) : rawValue);
       if (value === null) {
         omit(entry, "Blank, unknown, or non-scalar reviewed value omitted to preserve existing report data.");
         continue;
@@ -424,7 +471,7 @@ export function buildSfrepReportExport({
       }
       const fields = projectValue(sourceField, value);
       if (!fields.length) {
-        omit(entry, sourceField === "subject_property_address"
+        omit(entry, ["subject_property_address", "subject_street_address"].includes(sourceField)
           ? "Address locality cannot be safely split; review separate street, city, state, and ZIP fields."
           : Object.hasOwn(MAPPINGS, sourceField)
             ? "Reviewed value does not match the verified destination field's format."
@@ -500,7 +547,8 @@ export function buildSfrepReportExport({
   const conflicts = [...listingConflicts];
   for (const [, entries] of [...grouped.entries()].sort(([a], [b]) => compare(a, b))) {
     const alternatives = new Set(entries.map(destinationComparisonKey));
-    if (alternatives.size > 1) {
+    const compatibleZip = compatibleZipGroup(entries);
+    if (alternatives.size > 1 && !compatibleZip) {
       const sourceFields = [...new Set(entries.map((entry) => entry.sourceField))].sort(compare);
       conflicts.push({
         sourceField: sourceFields[0],
@@ -514,8 +562,13 @@ export function buildSfrepReportExport({
       for (const entry of entries) omit(entry, "Explicit not-PUD evidence was retained for conflict checks; an unchecked PUD value is not exported because it could erase an existing field.");
       continue;
     }
-    const { group: _group, suppress: _suppress, ...field } = entries[0];
-    fields.push(field);
+    const chosenEntries = entries[0].group === "assignment_type"
+      ? entries.filter((entry, index) => entries.findIndex((other) => other.fieldId === entry.fieldId) === index)
+      : [compatibleZip ? entries.find((entry) => entry.value.length === 10) || entries[0] : entries[0]];
+    for (const entry of chosenEntries) {
+      const { group: _group, suppress: _suppress, assignmentType: _assignmentType, ...field } = entry;
+      fields.push(field);
+    }
   }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));
   conflicts.sort((a, b) => compare(a.sourceField, b.sourceField));

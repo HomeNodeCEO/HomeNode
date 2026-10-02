@@ -278,3 +278,65 @@ test("standalone Realist identity permits confirmed taxes but matching APN never
     assert.equal(preview.fields.find(item => item.fieldId === "StreetAddress")?.value, address.endsWith("TBD") ? undefined : "100 Example Dr");
   }
 });
+
+test("single-listing MLS print heading supplies exact subject identity without using broker addresses", () => {
+  const result = extract("mls_sheet", [
+    "100 Example Drive, Garland, Texas 75041",
+    "MLS#: 12345678 Active Option Contract 100 Example Drive Garland, TX 75041-1234 LP: $295,000",
+    "Property Type: Residential SubType: Single Family OLP: $295,000",
+    "Parcel ID: 00001234567890000 Plan Dvlpm:",
+    "HOA: None HOA Co:",
+    "LO Addr: 999 Other Road Dallas, Texas 75225",
+  ].join("\n"));
+  assert.equal(value(result, "subject_property_address"), "100 Example Drive, Garland, TX 75041");
+  assert.equal(value(result, "subject_city"), "Garland");
+  assert.equal(value(result, "subject_state"), "TX");
+  assert.equal(value(result, "subject_zip"), "75041");
+  assert.equal(value(result, "assessor_parcel_number"), "00001234567890000");
+  assert.equal(value(result, "pud"), undefined);
+  assert.equal(value(result, "hoa_dues_amount"), undefined);
+  assert.ok(field(result, "subject_property_address").evidence_excerpt.includes("MLS#: 12345678"));
+  assert.ok(result.candidates.every(candidate => candidate.page_number === 1 && candidate.review_status === "suggested"));
+});
+
+test("MLS heading identity is not guessed from later office addresses, unrelated PDFs, or multiple listings", () => {
+  const heading = "100 Example Drive, Garland, TX 75041\nMLS#: 12345678 Active LP: $295,000\nParcel ID: 00001234567890000 Plan Dvlpm:";
+  const multiple = extract("mls_sheet", heading, heading.replaceAll("12345678", "87654321"));
+  assert.equal(value(multiple, "subject_property_address"), undefined);
+  assert.equal(value(multiple, "assessor_parcel_number"), undefined);
+  assert.ok(multiple.unresolved.some(item => item.reason === "multiple_mls_listing_identities"));
+  for (const pages of [
+    ["MLS#: 12345678 Active LP: $295,000\nLO Addr: 999 Other Rd, Dallas, TX 75225"],
+    ["A report about available listings\n100 Example Dr, Garland, TX 75041"],
+    ["MLS#: 12345678 Active LP: $295,000", "100 Example Dr, Garland, TX 75041"],
+  ]) assert.equal(value(extract("mls_sheet", ...pages), "subject_property_address"), undefined);
+  assert.equal(value(extract("other", heading), "subject_property_address"), undefined);
+  const letterhead = extract("mls_sheet", "Example Brokerage\n999 Broker Road, Garland, TX 75041\nMLS#: 12345678 Active 100 Example Drive Garland, TX 75041 LP: $295,000");
+  assert.equal(value(letterhead, "subject_property_address"), undefined);
+  const differingExtendedZip = extract("mls_sheet", "100 Example Drive, Garland, TX 75041-1111\nMLS#: 12345678 Active 100 Example Drive Garland, TX 75041-2222 LP: $295,000");
+  assert.equal(value(differingExtendedZip, "subject_property_address"), undefined);
+  const multiLabeled = extract("mls_sheet", `${heading}\nProperty Address: 100 Example Dr, Garland, TX 75041`, "MLS#: 87654321 Active LP: $123,000\nList Date: 09/01/2026");
+  assert.deepEqual(multiLabeled.candidates, []);
+});
+
+test("a Realist jurisdiction amount never becomes the total property tax", () => {
+  const result = extract("other", "REALIST\nProperty Address: 100 Example Dr, Garland, TX 75041\nAPN: 00001234567890000\nTax Jurisdiction: City of Example\nTax Amount: $1,500.00");
+  assert.equal(value(result, "tax_amount"), undefined);
+  assert.ok(result.unresolved.some(item => item.reason === "jurisdiction_tax_is_not_property_total"));
+});
+
+test("invalid or mixed reference inputs cannot fall back to apparently valid first-page fields", () => {
+  const firstPage = "REALIST PROPERTY REPORT\nProperty Address: 100 Example Dr, Garland, TX 75041\nTax Year: 2025\nTax Amount: $1,234";
+  for (const pages of [[firstPage, "x".repeat(500_001)], [firstPage, null], [firstPage, "\uFFFD"]]) {
+    const result = extract("other", ...pages);
+    assert.deepEqual(result.candidates, []);
+    assert.ok(result.unresolved.some(item => item.reason === "source_input_incomplete"));
+    assert.deepEqual(buildDocumentFieldCandidates({ documentType: "other", pages }), []);
+  }
+  const cad = "Residential Account #00001234567890000\nProperty Location (Current 2027)\nDCAD: Residential Acct Detail\nhttps://www.dallascad.org/AcctDetailRes.aspx?ID=00001234567890000";
+  const realist = `${firstPage}\nOWNER INFORMATION\nLOCATION INFORMATION\nTAX INFORMATION\nASSESSMENT & TAX\nProperty Details Courtesy of QA Reviewer Generated on: 10/02/26\nThe data within this report is compiled by CoreLogic from public and private sources.`;
+  const mixed = extract("other", cad, realist);
+  assert.deepEqual(mixed.candidates, []);
+  assert.ok(mixed.unresolved.some(item => item.reason === "reference_layout_mixed_sources"));
+  assert.deepEqual(buildDocumentFieldCandidates({ documentType: "other", pages: [cad, realist] }), []);
+});

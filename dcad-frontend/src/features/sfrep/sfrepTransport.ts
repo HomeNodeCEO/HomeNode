@@ -192,7 +192,7 @@ const SUBJECT_ITEMS: SubjectItem[] = [
   { key: 'neighborhood', label: 'Neighborhood', fieldIds: ['NeighborhoodName'], sourceFields: ['neighborhood_name', 'subdivision_name'] },
   { key: 'pud', label: 'PUD status', fieldIds: ['PropertyTypePUDCheckBox'], sourceFields: ['pud', 'is_pud', 'property_type'], note: 'HOA dues or membership do not establish PUD status. An omitted checkbox is not No.' },
   { key: 'property-rights', label: 'Property rights / fee simple', fieldIds: [feeSimpleField, 'PropertyRightsAppraisedLeaseholdCheckBox'], sourceFields: ['property_rights', 'property_rights_appraised'] },
-  { key: 'assignment', label: 'Assignment type', fieldIds: ['AssignmentTypePurchaseCheckBox', 'AssignmentTypeRefinanceCheckBox'], sourceFields: ['assignment_type'] },
+  { key: 'assignment', label: 'Assignment type', fieldIds: ['AssignmentTypePurchaseCheckBox', 'AssignmentTypeRefinanceCheckBox', 'AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'], sourceFields: ['assignment_type'] },
   { key: 'lender', label: 'Lender / client', fieldIds: ['LenderClientCompanyName'], sourceFields: ['lender_client_name'] },
   { key: 'lender-address', label: 'Lender / client address', fieldIds: ['LenderClientCompanyUnparsedAddress'], sourceFields: ['lender_client_address'] },
   { key: 'listing', label: 'Offered for sale in prior 12 months', fieldIds: ['CurrentPriorListingYesCheckBox', 'CurrentPriorListingNoCheckBox', 'CurrentPriorListingDataSources'], sourceFields: ['list_date', 'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months'], note: 'No MLS evidence is not a No answer. Review listing details and the effective-date window.' },
@@ -200,6 +200,7 @@ const SUBJECT_ITEMS: SubjectItem[] = [
 const CHECKBOX_LABELS: Record<string, string> = {
   [feeSimpleField]: 'Fee simple', PropertyRightsAppraisedLeaseholdCheckBox: 'Leasehold',
   AssignmentTypePurchaseCheckBox: 'Purchase transaction', AssignmentTypeRefinanceCheckBox: 'Refinance',
+  AssignmentTypeOtherCheckBox: 'Other assignment',
   CurrentPriorListingYesCheckBox: 'Yes', CurrentPriorListingNoCheckBox: 'No', PropertyTypePUDCheckBox: 'PUD checked',
 };
 export interface SfrepSubjectChecklistItem {

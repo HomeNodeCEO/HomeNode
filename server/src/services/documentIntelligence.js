@@ -41,6 +41,13 @@ function normalizedMoney(value) {
   return Number.isFinite(amount) ? amount.toFixed(2) : null;
 }
 
+function isCalendarDate(year, month, day) {
+  const verified = new Date(Date.UTC(year, month - 1, day));
+  return verified.getUTCFullYear() === year
+    && verified.getUTCMonth() + 1 === month
+    && verified.getUTCDate() === day;
+}
+
 function normalizedDate(value) {
   const source = cleanText(value, 200);
   if (!source) return null;
@@ -56,16 +63,28 @@ function normalizedDate(value) {
   } else {
     const parsed = new Date(source);
     if (Number.isNaN(parsed.getTime())) return null;
+    // Date accepts impossible ISO/text dates by rolling them into the next
+    // month. Validate the printed calendar components before retaining the
+    // legacy datetime parser's UTC normalization (including timezone offsets).
+    const iso = source.match(/\b(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?=\b|T)/);
+    const monthFirst = source.match(/\b([A-Za-z]+)\.?[\s-]*(\d{1,2})[,\s-]+(\d{4}|\d{2})\b/);
+    const dayFirst = source.match(/\b(\d{1,2})[\s-]+([A-Za-z]+)\.?[,\s-]+(\d{4}|\d{2})\b/);
+    const yearFirst = source.match(/\b(\d{4})[\s-]+([A-Za-z]+)\.?[\s-]+(\d{1,2})\b/);
+    if (iso) {
+      if (!isCalendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))) return null;
+    } else if (monthFirst || dayFirst || yearFirst) {
+      const monthName = monthFirst?.[1] || dayFirst?.[2] || yearFirst[2];
+      const sourceMonth = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName.slice(0, 3).toLowerCase()) + 1;
+      const sourceDay = Number(monthFirst?.[2] || dayFirst?.[1] || yearFirst[3]);
+      let sourceYear = Number(monthFirst?.[3] || dayFirst?.[3] || yearFirst[1]);
+      if (sourceYear < 100) sourceYear += sourceYear >= 50 ? 1900 : 2000;
+      if (!isCalendarDate(sourceYear, sourceMonth, sourceDay)) return null;
+    } else return null; // No printed calendar components to verify safely.
     year = parsed.getUTCFullYear();
     month = parsed.getUTCMonth() + 1;
     day = parsed.getUTCDate();
   }
-  const verified = new Date(Date.UTC(year, month - 1, day));
-  if (
-    verified.getUTCFullYear() !== year ||
-    verified.getUTCMonth() + 1 !== month ||
-    verified.getUTCDate() !== day
-  ) return null;
+  if (!isCalendarDate(year, month, day)) return null;
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
@@ -130,7 +149,7 @@ function pageLines(pages) {
     .filter((entry) => entry.line));
 }
 
-function firstMlsLabeledCandidate(entries, {
+function* mlsLabeledCandidates(entries, {
   fieldKey,
   labelSource,
   valueSource,
@@ -150,7 +169,7 @@ function firstMlsLabeledCandidate(entries, {
       const rawValue = cleanText(inline[2], 2_000);
       const normalizedValue = normalize(rawValue);
       if (rawValue && normalizedValue != null && normalizedValue !== "") {
-        return {
+        yield {
           field_key: fieldKey,
           raw_value: rawValue,
           normalized_value: String(normalizedValue),
@@ -167,7 +186,7 @@ function firstMlsLabeledCandidate(entries, {
     const rawValue = cleanText(nextEntry.line.match(new RegExp(`^(${valueSource})`, "i"))?.[1], 2_000);
     const normalizedValue = normalize(rawValue);
     if (!rawValue || normalizedValue == null || normalizedValue === "") continue;
-    return {
+    yield {
       field_key: fieldKey,
       raw_value: rawValue,
       normalized_value: String(normalizedValue),
@@ -177,7 +196,34 @@ function firstMlsLabeledCandidate(entries, {
       extraction_method: "mls_labeled_text",
     };
   }
-  return null;
+}
+
+function firstMlsLabeledCandidate(entries, options) {
+  return mlsLabeledCandidates(entries, options).next().value ?? null;
+}
+
+const MAX_MLS_LIST_DATES = 2_000;
+function allMlsListDates(entries) {
+  // Match complete printed dates, not an arbitrary numeric substring. Keep ISO
+  // timezone offsets intact before normalization; a date prefix can be a day off.
+  const year = "(?:\\d{4}|\\d{2})";
+  const month = "[A-Za-z]{3,9}\\.?";
+  const iso = "\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?";
+  const formats = [iso, `\\d{1,2}[/-]\\d{1,2}[/-]${year}`,
+    `${month}[\\s-]*\\d{1,2}[,\\s-]+${year}`,
+    `\\d{1,2}[\\s-]+${month}[,\\s-]+${year}`, `\\d{4}\\s+${month}\\s+\\d{1,2}`].join("|");
+  const boundary = "(?=$|\\s*[|;]|\\s+[A-Za-z][A-Za-z /()#.'-]{0,55}[:=#]|\\s+(?:DOM|CDOM|LP|OLP|ST|STATUS|LD|CD|CTD|SD|XD)\\b)";
+  const dates = new Map();
+  for (const candidate of mlsLabeledCandidates(entries, {
+    fieldKey: "list_date", labelSource: "(?:ORIGINAL\\s+LIST(?:ING)?\\s+DATE|LIST(?:ING)?\\s+DATE|LD)",
+    valueSource: `(?:${formats})${boundary}`, normalize: normalizedDate,
+    reject: (entry, match) => /(?:last|most\s+recent)\s*$/i.test(entry.line.slice(0, match.index)),
+  })) {
+    if (!dates.has(candidate.normalized_value)) dates.set(candidate.normalized_value, candidate);
+    // Do not keep a truncated first winner when pathological input exceeds bounds.
+    if (dates.size > MAX_MLS_LIST_DATES) return null;
+  }
+  return [...dates.values()];
 }
 
 function buildMlsSheetCandidates(entries) {
@@ -191,24 +237,31 @@ function buildMlsSheetCandidates(entries) {
     "PENDING", "CLOSED", "ACTIVE", "SOLD", "AOC", "CONT", "PEND", "PND", "ACT",
     "TOM", "EXP", "WDN", "CAN", "CLS", "SLD", "UC", "CS", "A", "P", "S",
   ].join("|");
+  const explicitStatus = firstMlsLabeledCandidate(entries, {
+    fieldKey: "listing_status",
+    labelSource: "(?:(?:CURRENT|MLS|LIST(?:ING)?|LSTG|LST|PROPERTY)\\s+)?STATUS(?:\\s+CODE)?|(?:MLS\\s+)?ST|STAT",
+    // A whole token is required on each side: ST + A inside "States" must
+    // never become Active. Longer status phrases precede their short forms.
+    valueSource: `(?:${status})(?=$|[\\s|,;])`,
+    normalize: normalizedListingStatus,
+  });
+  const headerStatusPattern = new RegExp(`^MLS\\s*#\\s*:\\s*\\d{4,20}\\s+(${status})(?=\\s|$)`, "i");
+  const headerEntry = entries.find(entry => headerStatusPattern.test(entry.line));
+  const headerStatus = headerEntry?.line.match(headerStatusPattern)?.[1];
+  const listingDates = allMlsListDates(entries);
+  if (!listingDates) return { candidates: [], dateLimitExceeded: true };
   const candidates = [
-    firstMlsLabeledCandidate(entries, {
-      fieldKey: "listing_status",
-      labelSource: "(?:(?:CURRENT|MLS|LIST(?:ING)?|LSTG|LST|PROPERTY)\\s+)?STATUS(?:\\s+CODE)?|(?:MLS\\s+)?ST|STAT",
-      valueSource: `(?:${status})`,
-      normalize: normalizedListingStatus,
-    }),
+    explicitStatus || (headerStatus ? {
+      field_key: "listing_status", raw_value: headerStatus, normalized_value: normalizedListingStatus(headerStatus),
+      page_number: headerEntry.pageNumber, confidence: 0.94,
+      evidence_excerpt: headerEntry.line.slice(0, 2_000), extraction_method: "mls_print_header_status",
+    } : null),
     firstMlsLabeledCandidate(entries, {
       fieldKey: "mls_number",
       labelSource: "(?:MLS\\s*(?:#|NO\\.?|NUMBER|ID)|LISTING\\s*(?:#|NO\\.?|NUMBER|ID))",
       valueSource: "[A-Z0-9][A-Z0-9-]{2,44}",
     }),
-    firstMlsLabeledCandidate(entries, {
-      fieldKey: "list_date",
-      labelSource: "(?:ORIGINAL\\s+LIST(?:ING)?\\s+DATE|LIST(?:ING)?\\s+DATE|LD)",
-      valueSource: date,
-      normalize: normalizedDate,
-    }),
+    ...listingDates,
     firstMlsLabeledCandidate(entries, {
       fieldKey: "days_on_market",
       labelSource: "(?:DAYS\\s+ON\\s+MARKET|DOM)(?:\\s*[/&]\\s*CDOM)?",
@@ -263,7 +316,7 @@ function buildMlsSheetCandidates(entries) {
     || explicitEndDate;
   if (endDate) {
     candidates.splice(3, 0, endDate);
-  } else if (lifecycle === "active") {
+  } else if (lifecycle === "active" && listingDates.length === 1) {
     const start = candidates.find((candidate) => candidate.field_key === "list_date");
     const dom = candidates.find((candidate) => candidate.field_key === "days_on_market");
     const derivedEndDate = isoDateFromExposure(start?.normalized_value, dom?.normalized_value);
@@ -279,7 +332,7 @@ function buildMlsSheetCandidates(entries) {
       });
     }
   }
-  return candidates;
+  return { candidates, dateLimitExceeded: false };
 }
 
 function firstLabeledCandidate(entries, {
@@ -836,9 +889,6 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   const normalizedRequested = normalizeDocumentType(requestedType);
   if (normalizedRequested !== "other") return normalizedRequested;
   const sample = `${fileName}\n${pages.join("\n").slice(0, 80_000)}`.toLowerCase();
-  // A Realist/CAD report can quote an MLS number. Its explicit source heading
-  // controls the Subject parser instead of misclassifying it as a listing sheet.
-  if (["cad", "realist"].includes(identifyUrarSubjectSource({ documentType: "other", pages }))) return "other";
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }
@@ -848,6 +898,9 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   if (/appraisal\s+district\s+evidence|arb\s+evidence|district\s+comparable\s+sales?/.test(sample)) {
     return "district_evidence";
   }
+  // Preserve contract, engagement, and district-packet precedence. A standalone
+  // Realist/CAD report can quote an MLS number without becoming a listing sheet.
+  if (["cad", "realist"].includes(identifyUrarSubjectSource({ documentType: "other", pages }))) return "other";
   const explicitMlsIdentity = /multiple\s+listing\s+service|\bmls\s*(?:#|number\b|no\.?)/.test(sample);
   const mlsSignals = [
     /\b(?:dom|days\s+on\s+market)\b/.test(sample),
@@ -892,7 +945,11 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 }
 
 export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
+  if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
+  if (subjectEvidence.unresolved.some(item => item.reason === "multiple_mls_listing_identities")) return [];
   const entries = pageLines(pages);
+  const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;
+  if (mls?.dateLimitExceeded) return [];
   const districtCandidates = documentType === "district_evidence"
     ? buildDistrictComparableCandidates(pages)
     : [];
@@ -903,7 +960,7 @@ export function buildDocumentFieldCandidates({ documentType, pages, subjectEvide
       : documentType === "purchase_contract"
         ? buildPurchaseContractCandidates(pages)
         : documentType === "mls_sheet"
-          ? buildMlsSheetCandidates(entries)
+          ? mls.candidates
           : [];
   const specializedFields = new Set(specializedCandidates.map((candidate) => candidate.field_key));
   const definitions = [
@@ -1013,6 +1070,7 @@ export function buildDocumentFieldCandidates({ documentType, pages, subjectEvide
     .filter((definition) => (
       (!allowedFields || allowedFields.has(definition.fieldKey))
       && !specializedFields.has(definition.fieldKey)
+      && !(documentType === "mls_sheet" && definition.fieldKey === "list_date")
     ))
     .map((definition) => firstLabeledCandidate(entries, definition))
     .filter(Boolean);
@@ -1027,16 +1085,28 @@ export function buildDocumentFieldCandidates({ documentType, pages, subjectEvide
   } else if (["engagement_letter", "mls_sheet"].includes(subjectEvidence.source_kind)) {
     const established = new Set(candidates.map(candidate => candidate.field_key));
     const strictKeys = new Set(subjectEvidence.conflicts.map(item => item.field_key));
-    if (subjectEvidence.source_kind === "mls_sheet"
-      && (subjectEvidence.candidates.some(item => item.field_key === "list_date")
-        || subjectEvidence.unresolved.some(item => item.field_key === "list_date" && item.reason !== "label_not_found"))) strictKeys.add("list_date");
-    // Conflicting alternatives must reach review/export together, not be reduced
-    // to the first legacy match. Invalid dates must not survive a permissive date
-    // normalizer (e.g. February 30 rolling forward into March).
-    for (let index = candidates.length - 1; index >= 0; index -= 1) {
-      if (strictKeys.has(candidates[index].field_key)) candidates.splice(index, 1);
+    const listingDates = new Map();
+    if (subjectEvidence.source_kind === "mls_sheet") {
+      for (const candidate of [...candidates, ...subjectEvidence.candidates]) {
+        if (candidate.field_key === "list_date" && normalizedDate(candidate.normalized_value) === candidate.normalized_value) {
+          listingDates.set(candidate.normalized_value, candidate);
+        }
+      }
+      if (listingDates.size > MAX_MLS_LIST_DATES) return [];
+      strictKeys.add("list_date");
     }
-    candidates.push(...subjectEvidence.candidates.filter(candidate => !established.has(candidate.field_key) || strictKeys.has(candidate.field_key)));
+    // Conflicting alternatives must reach review/export together, not be reduced
+    // to the first legacy match. Preserve valid legacy date formats that the
+    // narrower Subject parser does not support, but require an exact ISO result.
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      const invalidListingDate = candidate.field_key === "list_date"
+        && normalizedDate(candidate.normalized_value) !== candidate.normalized_value;
+      if (strictKeys.has(candidate.field_key) || invalidListingDate
+        || (listingDates.size > 1 && candidate.extraction_method === "mls_list_date_dom_derivation")) candidates.splice(index, 1);
+    }
+    candidates.push(...subjectEvidence.candidates.filter(candidate => candidate.field_key !== "list_date"
+      && (!established.has(candidate.field_key) || strictKeys.has(candidate.field_key))), ...listingDates.values());
   }
 
   if (documentType === "purchase_contract" && !candidates.some((candidate) => candidate.field_key === "assignment_type")) {

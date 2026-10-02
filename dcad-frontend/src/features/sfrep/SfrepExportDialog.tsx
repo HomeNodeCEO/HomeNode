@@ -114,7 +114,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
           <h5 className="font-semibold">Effective-date context</h5>
           {preview.effectiveDateContext.effectiveDate ? <>
             <p className="font-medium">{preview.effectiveDateContext.isPlaceholder ? 'Placeholder effective date — review required' : preview.effectiveDateContext.source === 'inspection_date' ? 'Inspection date' : 'Assignment effective date'}: {preview.effectiveDateContext.effectiveDate}</p>
-            {preview.effectiveDateContext.isPlaceholder && <p>Using the document upload date, not a confirmed inspection or appraisal effective date. Confirm the effective date before relying on the listing determination.</p>}
+            {preview.effectiveDateContext.isPlaceholder && <p>Using the document upload date (UTC), not a confirmed inspection or appraisal effective date. Confirm the effective date before relying on the listing determination.</p>}
             {preview.effectiveDateContext.sourceDocumentId !== null && <p>Date source: {documentTitle(preview.effectiveDateContext.sourceDocumentId)}</p>}
             <p>Prior 12-calendar-month window: {preview.effectiveDateContext.windowStart} through {preview.effectiveDateContext.windowEnd}.</p>
           </> : <p>Effective date unavailable — review needed. A date-based 12-month listing determination cannot be made.</p>}

@@ -185,6 +185,18 @@ test('Subject checklist distinguishes coverage, defaults, missing narrative, and
   assert.match(listing.notes.join(' '), /Complete the prior-listing data-source narrative/);
 });
 
+test('Subject checklist includes the reviewed Other assignment checkbox and its description', () => {
+  const value = preview();
+  const source = { kind: 'reviewed_document', sourceField: 'assignment_type', documentId: 21, candidateId: null, documentType: 'engagement_letter' };
+  value.fields = [
+    field('assignment_type', 'AssignmentTypeOtherCheckBox', 'true', { type: 'CheckBoxField', provenance: source }),
+    field('assignment_type', 'AssignmentTypeOtherDescription', 'HELOC', { provenance: source }),
+  ];
+  const row = sfrepSubjectChecklist(checkSfrepPreview(value, [21])).find(item => item.key === 'assignment');
+  assert.equal(row.status, 'included');
+  assert.deepEqual(row.values, ['Other assignment', 'HELOC']);
+});
+
 test('cancellation settles pending authentication and disposes of a late response', async () => {
   let resolve, cancelled = 0;
   const h = harness(() => new Promise(r => { resolve = r; }));

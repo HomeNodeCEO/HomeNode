@@ -6,6 +6,7 @@ import {
   SFREP_PRIMARY_FORM_ID,
   SFREP_SUPPORTED_FORM_IDS,
 } from "../src/services/sfrepReportExport.js";
+import { sfrepDocumentPropertyRole } from "../src/services/sfrepSubjectContext.js";
 
 const candidate = (field_key, value, rest = {}) => ({ field_key, confirmed_value: value, review_status: "confirmed", ...rest });
 const doc = (id, candidates = [], rest = {}) => ({ id, candidates, processing_status: "reviewed", ...rest });
@@ -62,6 +63,48 @@ test("explicit blank confirmation never falls back to extracted text; unknowns c
 test("legacy confirmed candidates may use their normalized value when no edited value exists", () => {
   const result = buildSfrepReportExport({ documents: [doc(1, [{ field_key: "contract_price", review_status: "confirmed", confirmed_value: null, normalized_value: "500000.00" }])] });
   assert.equal(values(result).SalePriceAmount, "500000.00");
+});
+
+test("exact reviewed placeholders cannot escape through old confirmations or matching parcel identity", () => {
+  const accountId = "00001234567890000";
+  for (const sourceField of ["subject_street_address", "subject_property_address"]) {
+    for (const marker of ["TBD", "tba", "Pending", "UNASSIGNED", "Unknown", "To be determined", "not disclosed", "unavailable", "TBD."]) {
+      for (const storage of [
+        { confirmed_value: marker, normalized_value: "100 Old Suggestion Dr" },
+        { confirmed_value: null, normalized_value: marker },
+        { confirmed_value: null, normalized_value: null, raw_value: marker },
+      ]) {
+        const document = doc(1, [candidate(sourceField, null, storage), candidate("assessor_parcel_number", accountId)], {
+          document_type: "public_record",
+          subject_context: { accountId, address: "100 Example Dr", city: "Garland", postalCode: "75041" },
+        });
+        document.property_role = sfrepDocumentPropertyRole(document);
+        assert.equal(document.property_role, "subject", `${sourceField}: ${marker}`);
+        const result = buildSfrepReportExport({ documents: [document] });
+        assert.deepEqual(values(result), { AssessorsParcelNumber: accountId });
+        assert.equal(result.omitted[0].sourceField, sourceField);
+        assert.doesNotMatch(result.reportXml, /StreetAddress|100 Old Suggestion Dr/);
+      }
+    }
+  }
+});
+
+test("address splitting rejects exact placeholder components without stripping meaningful names", () => {
+  for (const sourceField of ["subject_property_address", "subject_street_address"]) {
+    for (const address of ["TBD, Garland, TX 75041", "Pending, Garland, TX 75041", "100 Example Dr, Unknown, TX 75041"]) {
+      const result = buildSfrepReportExport({ documents: [doc(1, [candidate(sourceField, address)], { property_role: "subject" })] });
+      assert.equal(result.fields.length, 0, address);
+      assert.equal(result.omitted.length, 1);
+    }
+  }
+  const result = buildSfrepReportExport({ documents: [doc(1, [
+    candidate("owner_name", "TBD Holdings LLC"), candidate("borrower_name", "Pending Investments LLC"),
+    candidate("lender_client_name", "Unknown River Bank"), candidate("subject_property_address", "100 Pending Lane, Unknown Creek, TX 75041"),
+  ])] });
+  assert.deepEqual(values(result), {
+    OwnerName: "TBD Holdings LLC", BorrowerName: "Pending Investments LLC", LenderClientCompanyName: "Unknown River Bank",
+    StreetAddress: "100 Pending Lane", City: "Unknown Creek", State: "TX", ZipCode: "75041",
+  });
 });
 
 test("stale candidates from processing, failed, or unknown-status documents never populate fields", () => {
@@ -138,6 +181,58 @@ test("assignment types use reviewed engagement evidence, not purchase-contract d
   assert.equal(values(engagementWins).AssignmentTypePurchaseCheckBox, undefined);
   assert.equal(engagementWins.conflicts.length, 0);
   assert.match(engagementWins.omitted[0].reason, /reviewed engagement evidence/);
+});
+
+test("explicit known Other engagement purposes export their checkbox and meaningful description together", () => {
+  for (const [purpose, description] of [
+    ["heloc", "HELOC"], ["HELOC", "HELOC"], ["rtl", "RTL"], ["bridge_loan", "Bridge loan"],
+    ["new_construction", "New construction"], ["rehab", "Rehab"], ["dscr", "DSCR"],
+  ]) {
+    const result = buildSfrepReportExport({ documents: [doc(1, [candidate("assignment_type", purpose, { id: 10 })], {
+      document_type: "engagement_letter", property_role: "subject",
+    })] });
+    assert.deepEqual(values(result), { AssignmentTypeOtherCheckBox: "true", AssignmentTypeOtherDescription: description });
+    assert.equal(result.conflicts.length, 0);
+    for (const field of result.fields) {
+      assert.equal(field.documentId, 1);
+      assert.equal(field.candidateId, 10);
+      assert.equal(field.provenance.kind, "reviewed_document");
+      assert.equal(field.assignmentType, undefined);
+    }
+    assert.match(result.reportXml, /<CheckBoxField Id="AssignmentTypeOtherCheckBox" Data="true"/);
+    assert.match(result.reportXml, /<TextField Id="AssignmentTypeOtherDescription"/);
+  }
+  for (const purpose of ["other", "unknown", "TBD", "any reason", "__proto__"]) {
+    const result = buildSfrepReportExport({ documents: [doc(1, [candidate("assignment_type", purpose)], { document_type: "engagement_letter" })] });
+    assert.equal(result.fields.length, 0, purpose);
+  }
+  for (const override of [{ review_status: "suggested" }, { review_status: "rejected" }]) {
+    const result = buildSfrepReportExport({ documents: [doc(1, [candidate("assignment_type", "heloc", override)], { document_type: "engagement_letter" })] });
+    assert.equal(result.fields.length, 0);
+  }
+});
+
+test("assignment conflicts suppress every Other component and source selection restores one complete choice", () => {
+  const engagement = (id, purpose) => doc(id, [candidate("assignment_type", purpose, { id: id * 10 })], { document_type: "engagement_letter" });
+  for (const other of ["purchase_transaction", "refinance", "bridge_loan"]) {
+    const documents = [engagement(1, "heloc"), engagement(2, other)];
+    const result = buildSfrepReportExport({ documents });
+    assert.equal(result.fields.length, 0, other);
+    assert.equal(result.conflicts.length, 1);
+    assert.equal(result.conflicts[0].sourceField, "assignment_type");
+    assert.deepEqual(result.conflicts[0].documentIds, [1, 2]);
+    assert.deepEqual(result, buildSfrepReportExport({ documents: [...documents].reverse() }));
+    const selected = buildSfrepReportExport({ documents, fieldSelections: { assignment_type: 1 } });
+    assert.deepEqual(values(selected), { AssignmentTypeOtherCheckBox: "true", AssignmentTypeOtherDescription: "HELOC" });
+    assert.equal(selected.conflicts.length, 0);
+    assert.ok(selected.fields.every((field) => field.documentId === 1));
+  }
+  const documents = [engagement(2, "heloc"), engagement(1, "heloc")];
+  const duplicate = buildSfrepReportExport({ documents });
+  assert.equal(duplicate.fields.length, 2);
+  assert.equal(duplicate.conflicts.length, 0);
+  assert.ok(duplicate.fields.every((field) => field.documentId === 1 && field.candidateId === 10));
+  assert.deepEqual(duplicate, buildSfrepReportExport({ documents: [...documents].reverse() }));
 });
 
 test("reviewed public-record facts target verified fields without treating values as appraiser opinions", () => {
@@ -515,7 +610,7 @@ test("structured street comparison allows presentation labels but keeps every se
   }
 });
 
-test("locality differences remain conflicts and ZIP codes are never reduced to ZIP5", () => {
+test("locality differences and distinct ZIP destinations remain conflicts", () => {
   const differentCity = buildSfrepReportExport({ documents: [
     subjectDoc(1, [candidate("subject_property_address", "100 Example Drive, Dallas, TX 75001")]),
     subjectDoc(2, [candidate("subject_property_address", "100 Example Dr, Addison, TX 75001")]),
@@ -527,7 +622,7 @@ test("locality differences remain conflicts and ZIP codes are never reduced to Z
     ["subject_city", "Fort Worth", "Ft Worth"],
     ["subject_state", "TX", "OK"],
     ["subject_zip", "75001", "75002"],
-    ["subject_zip", "75001", "75001-1234"],
+    ["subject_zip", "75001-1234", "75001-5678"],
   ]) {
     const result = buildSfrepReportExport({ documents: [subjectDoc(1, [candidate(field, first)]), subjectDoc(2, [candidate(field, second)])] });
     assert.equal(result.fields.length, 0);
@@ -535,9 +630,87 @@ test("locality differences remain conflicts and ZIP codes are never reduced to Z
   }
 });
 
-test("street comparison never drops raw locality tails or collapses punctuated secondary identifiers", () => {
+test("equivalent numeric APN separators collapse without changing display, leading zeroes, or source provenance", () => {
+  const documents = [
+    subjectDoc(2, [candidate("assessors_parcel_number", "00123450067890000", { id: 22 })]),
+    subjectDoc(1, [candidate("assessor_parcel_number", "00-12345-006-789-0000", { id: 11 })]),
+  ];
+  const before = structuredClone(documents);
+  const result = buildSfrepReportExport({ documents });
+  assert.equal(result.conflicts.length, 0);
+  assert.deepEqual(values(result), { AssessorsParcelNumber: "00-12345-006-789-0000" });
+  assert.equal(result.fields[0].documentId, 1);
+  assert.equal(result.fields[0].candidateId, 11);
+  assert.equal(result.fields[0].provenance.sourceField, "assessor_parcel_number");
+  assert.deepEqual(result, buildSfrepReportExport({ documents: [...documents].reverse() }));
+  assert.deepEqual(documents, before);
+  for (const other of ["123450067890000", "00123450067890001", "AB-123", "0012345/0067890000"]) {
+    const conflict = buildSfrepReportExport({ documents: [documents[1], subjectDoc(3, [candidate("assessor_parcel_number", other)])] });
+    assert.equal(conflict.fields.length, 0, other);
+    assert.equal(conflict.conflicts.length, 1);
+  }
+  const alpha = buildSfrepReportExport({ documents: [subjectDoc(1, [candidate("assessor_parcel_number", "AB-123")]), subjectDoc(2, [candidate("assessor_parcel_number", "AB123")])] });
+  assert.equal(alpha.fields.length, 0);
+  assert.equal(alpha.conflicts.length, 1);
+});
+
+test("compatible ZIP5 and one ZIP+4 preserve the complete reviewed value and its exact provenance", () => {
+  const documents = [
+    subjectDoc(1, [candidate("subject_zip", "75001", { id: 11 })]),
+    subjectDoc(3, [candidate("subject_zip_code", "75001-2468", { id: 33 })]),
+    subjectDoc(2, [candidate("subject_property_address", "100 Example Dr, Addison, TX 75001-2468", { id: 22 })]),
+  ];
+  const before = structuredClone(documents);
+  const result = buildSfrepReportExport({ documents });
+  assert.equal(result.conflicts.length, 0);
+  const zip = result.fields.find((field) => field.fieldId === "ZipCode");
+  assert.equal(zip.value, "75001-2468");
+  assert.equal(zip.documentId, 2);
+  assert.equal(zip.candidateId, 22);
+  assert.equal(zip.sourceField, "subject_property_address");
+  assert.deepEqual(zip.provenance, { kind: "reviewed_document", sourceField: "subject_property_address", documentId: 2, candidateId: 22, documentType: null });
+  assert.deepEqual(result, buildSfrepReportExport({ documents: [...documents].reverse() }));
+  assert.deepEqual(documents, before);
+});
+
+test("ZIP5 cannot bridge conflicting ZIP+4 destinations or different base ZIPs", () => {
+  for (const additional of ["75001-1357", "75002", "75002-2468"]) {
+    const result = buildSfrepReportExport({ documents: [
+      subjectDoc(1, [candidate("subject_zip", "75001")]),
+      subjectDoc(2, [candidate("subject_zip_code", "75001-2468")]),
+      subjectDoc(3, [candidate("subject_zip", additional)]),
+    ] });
+    assert.equal(values(result).ZipCode, undefined, additional);
+    assert.equal(result.conflicts.length, 1);
+    assert.deepEqual(result.conflicts[0].documentIds, [1, 2, 3]);
+  }
+});
+
+test("old confirmed street fields with full localities split into verified address destinations", () => {
+  const document = doc(1, [candidate("subject_street_address", "100 Example Dr, Garland, TX 75041")], {
+    subject_context: { address: "100 Example Dr", city: "Garland", postalCode: "75041" },
+  });
+  document.property_role = sfrepDocumentPropertyRole(document);
+  assert.equal(document.property_role, "subject");
+  assert.deepEqual(values(buildSfrepReportExport({ documents: [document] })), {
+    StreetAddress: "100 Example Dr", City: "Garland", State: "TX", ZipCode: "75041",
+  });
+  const conflict = buildSfrepReportExport({ documents: [
+    subjectDoc(1, [candidate("subject_street_address", "100 Example Drive, Dallas, TX 75001")]),
+    subjectDoc(2, [candidate("subject_street_address", "100 Example Dr, Addison, TX 75001")]),
+  ] });
+  assert.equal(values(conflict).StreetAddress, "100 Example Drive");
+  assert.equal(values(conflict).City, undefined);
+  assert.deepEqual(conflict.conflicts[0].values, ["Addison", "Dallas"]);
+  for (const ambiguous of ["100 Example Dr, Garland", "100 Example Dr, unknown locality", "100 Example Dr Garland TX 75041", "100 Example Dr, Apt 2, Garland, TX 75041", "100 Example Dr, Apt 2 TX 75041"]) {
+    const result = buildSfrepReportExport({ documents: [subjectDoc(1, [candidate("subject_street_address", ambiguous)])] });
+    assert.equal(result.fields.length, 0, ambiguous);
+    assert.match(result.omitted[0].reason, /cannot be safely split/);
+  }
+});
+
+test("street comparison preserves explicit secondary components without collapsing their punctuation", () => {
   for (const [first, second] of [
-    ["100 Example Drive, Dallas, TX 75001", "100 Example Dr, Addison, TX 75001"],
     ["100 Example Drive Apt 1-2", "100 Example Dr Apt 12"],
     ["100 Example Drive Building A-1 Apt 2", "100 Example Dr Building A1 Apt 2"],
     ["100 Example Drive Floor 1/2", "100 Example Dr Floor 12"],
@@ -562,4 +735,13 @@ test("address comparison normalization never rewrites or reorders borrower, owne
     assert.equal(result.conflicts.length, 1);
     assert.deepEqual(result.conflicts[0].values, [first, second].sort());
   }
+});
+
+test("Pending MLS status gets its unmapped-listing reason without weakening placeholder protection", () => {
+  const result = buildSfrepReportExport({ documents: [subjectDoc(1, [
+    candidate("listing_status", "Pending"), candidate("subject_street_address", "Pending"),
+  ], { document_type: "mls_sheet" })] });
+  assert.equal(result.fields.length, 0);
+  assert.match(result.omitted.find((entry) => entry.sourceField === "listing_status").reason, /composite UAD semantics/);
+  assert.match(result.omitted.find((entry) => entry.sourceField === "subject_street_address").reason, /Blank, unknown/);
 });

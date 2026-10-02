@@ -172,6 +172,7 @@ export default function AssignmentDocumentCenter({
   const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
   const selectedDocumentRef = useRef(selectedDocument);
   selectedDocumentRef.current = selectedDocument;
+  const selectedDocumentScopeRef = useRef<string | null>(null);
   const [reviewer, setReviewer] = useState(() => defaultReviewer.trim());
   const reviewerInputId = useId();
   const [reviewerAnimationEnabled, setReviewerAnimationEnabled] = useState(() => (
@@ -269,6 +270,7 @@ export default function AssignmentDocumentCenter({
     setSfrepOpen(false);
     setDocuments([]);
     setSelectedDocument(null);
+    selectedDocumentScopeRef.current = null;
     setCandidateValues({});
     lastUploadedRef.current = null;
     setMessage('');
@@ -306,8 +308,14 @@ export default function AssignmentDocumentCenter({
     }
   }, [accountId, assignmentFileId, getEditorKey, isUad, scopeKey, uadWorkfileId]);
 
-  const loadDocument = useCallback(async (documentId: number) => {
+  const loadDocument = useCallback(async (documentId: number, expectedPollRequest?: number) => {
     const requestedScopeKey = scopeKey;
+    const metadataOnly = expectedPollRequest !== undefined;
+    if (!mountedRef.current || currentScopeKeyRef.current !== requestedScopeKey) return;
+    if (metadataOnly && (loadDocumentRequestRef.current !== expectedPollRequest
+      || selectedDocumentScopeRef.current !== requestedScopeKey
+      || selectedDocumentRef.current?.id !== documentId
+      || !['uploaded', 'processing'].includes(selectedDocumentRef.current.processing_status))) return;
     const requestId = loadDocumentRequestRef.current + 1;
     loadDocumentRequestRef.current = requestId;
     const requestIsCurrent = () => (
@@ -319,13 +327,16 @@ export default function AssignmentDocumentCenter({
     const cached = sourcePdfRef.current;
     const cachedBlob = cached?.scope === requestedScopeKey && cached.documentId === documentId
       ? cached.blob : null;
-    if (!cachedBlob) {
-      setSourcePdf(null);
+    if (!metadataOnly && !cachedBlob) setSourcePdf(null);
+    const sameDocument = selectedDocumentScopeRef.current === requestedScopeKey
+      && selectedDocumentRef.current?.id === documentId;
+    if (!sameDocument) {
+      selectedDocumentScopeRef.current = null;
       setSelectedDocument(null);
       setCandidateValues({});
     }
     setLoading(true);
-    setMessage('');
+    if (!metadataOnly) setMessage('');
     try {
       const editorKey = getEditorKey();
       if (!isUad && !editorKey) return;
@@ -333,26 +344,35 @@ export default function AssignmentDocumentCenter({
         isUad && uadWorkfileId
           ? getUadDocument(uadWorkfileId, documentId)
           : getAssignmentDocument(documentId, editorKey),
-        cachedBlob ? Promise.resolve(cachedBlob) : isUad && uadWorkfileId
+        metadataOnly || cachedBlob ? Promise.resolve(cachedBlob) : isUad && uadWorkfileId
           ? getUadDocumentContent(uadWorkfileId, documentId)
           : getAssignmentDocumentContent(documentId, editorKey),
       ]);
       if (documentResult.status === 'rejected') throw documentResult.reason;
       if (!requestIsCurrent()) return;
       const document: EvidenceDocument = documentResult.value;
+      const previousDocument = selectedDocumentScopeRef.current === requestedScopeKey
+        && selectedDocumentRef.current?.id === documentId ? selectedDocumentRef.current : null;
+      const previousValues = new Map((previousDocument?.candidates || []).map(candidate => [candidate.id,
+        candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]));
+      selectedDocumentScopeRef.current = requestedScopeKey;
       setSelectedDocument(document);
       if (isUad) setDocuments((current) => current.map((item) => item.id === document.id
         ? { ...item, uad_discrepancies: document.uad_discrepancies,
             uad_comparison_incomplete: document.uad_comparison_incomplete }
         : item));
-      setCandidateValues(Object.fromEntries(
+      // Refresh server defaults without discarding edits made before or during
+      // a same-document retry/poll. Removed candidates never retain draft state.
+      setCandidateValues(current => Object.fromEntries(
         (document.candidates || [])
           .filter((candidate): candidate is AssignmentDocumentCandidate & { id: number } => Boolean(candidate.id))
-          .map((candidate) => [candidate.id, candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
+          .map((candidate) => [candidate.id, previousValues.has(candidate.id)
+            && Object.hasOwn(current, candidate.id) && current[candidate.id] !== previousValues.get(candidate.id)
+            ? current[candidate.id] : candidate.confirmed_value || candidate.normalized_value || candidate.raw_value]),
       ));
-      if (contentResult.status === 'fulfilled') {
+      if (!metadataOnly && contentResult.status === 'fulfilled' && contentResult.value) {
         setSourcePdf({ scope: requestedScopeKey, documentId, blob: contentResult.value });
-      } else {
+      } else if (!metadataOnly && contentResult.status === 'rejected') {
         setSourcePdf(null);
         const previewError = contentResult.reason instanceof Error
           ? contentResult.reason.message
@@ -373,7 +393,8 @@ export default function AssignmentDocumentCenter({
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;
-    const timer = window.setTimeout(() => void loadDocument(selectedDocument.id), 1800);
+    const requestId = loadDocumentRequestRef.current;
+    const timer = window.setTimeout(() => void loadDocument(selectedDocument.id, requestId), 1800);
     return () => window.clearTimeout(timer);
   }, [loadDocument, selectedDocument]);
 

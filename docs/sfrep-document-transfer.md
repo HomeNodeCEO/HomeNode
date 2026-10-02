@@ -26,6 +26,16 @@ alone is not evidence. Unrecognized layouts remain available as PDF addenda.
 The preview includes a 17-item Subject checklist, sources, missing fields, and
 conflicts. Extraction is not confirmation: review the suggested values first.
 
+Recognized print layouts also include DCAD Residential Account pages whose logo
+is image-only, CoreLogic Property Details reports with assessment/tax tables, and
+single-listing Matrix headers. DCAD owner names stop before mailing information;
+numbered legal lines retain the recorded subdivision. Property Details uses the
+latest complete explicit **Tax Year / Total Tax** row, not assessment values or a
+jurisdiction's amount. An incomplete latest row is not silently replaced by an
+older year. Layout identity, page provenance, and bounded input are required;
+mixed or truncated records fail closed. Multi-listing PDFs need separate source
+review rather than mixing one listing's identity with another listing's date.
+
 Previously reviewed uploads are not silently reprocessed. Use **Re-run extraction**
 to obtain the new Subject candidates; existing confirmations are preserved only
 where the new field and value still match.
@@ -37,6 +47,9 @@ the assignment's canonical subject. Contradictory identity blocks the PDF's
 Subject fields; uncertain identity stays unknown. Comparable MLS sheets cannot
 populate Subject merely because they are uploaded to the same file. Ambiguous
 punctuated unit identifiers are not collapsed into a different unit.
+Numeric APNs differing only in hyphen formatting are equivalent without dropping
+leading zeroes. ZIP5 and its one consistent ZIP+4 are compatible; the complete
+ZIP+4 is retained with its source. Different ZIP+4 values remain a conflict.
 
 The exact assignment's saved effective date takes precedence, including
 retrospective appraisals, then its inspection date. If neither exists, the earliest
@@ -65,6 +78,9 @@ a buyer is not automatically treated as the borrower. UAD composite listing and
 contract narrative fields are not populated with incomplete scalar encodings.
 Assignment-type checkboxes export affirmative values only; review existing
 alternative selections in SFREP after importing into a populated report.
+Explicit reviewed engagement purposes HELOC, RTL, bridge loan, new construction,
+rehab, and DSCR export the Other checkbox and description as one coherent choice.
+Conflicting purposes suppress both parts until resolved.
 
 ## Server boundary
 
@@ -105,6 +121,26 @@ explicit synthetic confirmation, subject-identity, and transfer pipeline. The
 automated pipeline verifies all 17 Subject checklist entries, including source
 documents and the separately identified Fee Simple default. These are synthetic
 test files, not completed appraisals or permission to apply unreviewed values.
+
+A second synthetic PDF pipeline covers the actual print-layout shapes, multiple
+public-record owners, display-format differences, and the tax-table boundary.
+An additional private local check of seven user-provided PDFs produced 17 Subject
+fields without conflicts after **simulated QA confirmation**. All seven original
+PDF byte streams were preserved in a local QA RPTI package. Those PDFs, extracted
+private contents, and package are outside the repository; no production review
+state or appraisal was changed. This verifies extraction and packaging, not final
+native form rendering or appraiser approval.
+
+The print-layout follow-up passed 9,014 server tests (46 skipped, zero failures),
+3,208 frontend tests, TypeScript, lint, source-size checks, and the production
+build/bundle budgets. The private original-PDF package also validates against
+the public AIXML 1.5 schema; all 17 exported field IDs exist in the installed
+1004 dictionary. These checks do not remove the native-import release gate below.
+
+Document-center processing polls only refresh metadata. Same-document retries
+and polls preserve dirty review fields and PDF-error messages, without repeatedly
+downloading a failed PDF. Explicit selection retries the preview; request-generation
+and assignment-scope guards reject late polls and stale responses.
 
 ### Verified native synthetic QA
 
@@ -147,6 +183,10 @@ its full native import remains unverified: the Windows file-picker automation
 again failed to accept input reliably. The earlier smaller native sample's success
 does not prove all newly added fields render correctly. XML schema/sample validation,
 automated tests, and a production build do not substitute for this remaining check.
+In particular, the installed MISMO dictionary's specialized internal
+`UadAssessorsParcelNumberField` is not an RPTI XML element: the public RPTI schema
+uses `TextField` for static text. Verify APN display in that native Subject check;
+dictionary field-ID agreement alone does not establish correct native rendering.
 
 ### Release gate
 

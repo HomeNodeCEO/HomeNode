@@ -124,7 +124,7 @@ test('placeholder dates, fee-simple defaults, and derived listing provenance are
   const h = harness({ preview: async () => helpers.checkSfrepPreview(result, [21]) });
   h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   assert.match(h.text, /Placeholder effective date — review required: 2026-10-01/);
-  assert.match(h.text, /document upload date, not a confirmed inspection or appraisal effective date/);
+  assert.match(h.text, /document upload date \(UTC\), not a confirmed inspection or appraisal effective date/);
   assert.match(h.text, /Date source: Contract/);
   assert.match(h.text, /Prior 12-calendar-month window: 2025-10-01 through 2026-10-01/);
   const assumptions = walk(h.tree).find(node => node.props?.['aria-label'] === 'Assumptions requiring confirmation');

@@ -57,6 +57,7 @@ import { createReportManualValuesRouter } from "./modules/accounts/reportManualV
 import { createAssignmentFileListRouter } from "./modules/assignmentFiles/listRouter.js";
 import { createAssignmentFileMutationRouter } from "./modules/assignmentFiles/mutationRouter.js";
 import { createAssignmentDocumentRouter } from "./modules/assignmentFiles/documentRouter.js";
+import { createSfrepDocumentRouter } from "./modules/assignmentFiles/sfrepRouter.js";
 import { createAssignmentSalesImportRouter } from "./modules/assignmentFiles/salesImportRouter.js";
 import { createAssignmentPhotoRouter } from "./modules/assignmentFiles/photoRouter.js";
 import { createAssignmentWorkfileRouter } from "./modules/assignmentFiles/workfileRouter.js";
@@ -546,6 +547,14 @@ app.use(createAssignmentDocumentRouter({
   requireAssignmentAccess: requireCustomAssignmentAccess,
   authenticationRequired: applicationAuthenticationRequired,
   ocrProvider: documentOcrProvider,
+}));
+
+app.use(createSfrepDocumentRouter({
+  pool,
+  objectStorage: sharedObjectStorage,
+  ensureAvailable: ensureAssignmentDocumentsAvailable,
+  requireWorkflowAccess,
+  requireAssignmentAccess: requireCustomAssignmentAccess,
 }));
 
 app.use(createAssignmentSalesImportRouter({ pool }));

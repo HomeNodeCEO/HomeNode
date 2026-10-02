@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from 'react';
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
+import SfrepExportDialog from '@/features/sfrep/SfrepExportDialog';
 import {
   confirmAllAssignmentDocumentCandidates,
   confirmAssignmentDocumentDespiteSubjectMismatch,
@@ -157,6 +158,7 @@ export default function AssignmentDocumentCenter({
   const isUad = Boolean(uadWorkfileId);
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
   const [open, setOpen] = useState(defaultOpen);
+  const [sfrepOpen, setSfrepOpen] = useState(false);
   const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
   const [documentType, setDocumentType] = useState<AssignmentDocumentType>('other');
@@ -242,6 +244,7 @@ export default function AssignmentDocumentCenter({
 
   useEffect(() => {
     loadDocumentRequestRef.current += 1;
+    setSfrepOpen(false);
     setDocuments([]);
     setSelectedDocument(null);
     setCandidateValues({});
@@ -723,6 +726,10 @@ export default function AssignmentDocumentCenter({
 
       {embedded || open ? (
         <div className={embedded ? '' : 'border-t border-slate-200 p-5'}>
+          {!isUad && assignmentFileId ? <div className="mb-3 flex justify-end">
+            <button type="button" className="hn-action-gold btn btn-sm rounded-lg normal-case" disabled={loading || !documents.length}
+              onClick={() => setSfrepOpen(true)}>Export to SFREP</button>
+          </div> : null}
           {readOnly ? (
             <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs font-medium text-amber-900">
               Document changes are unavailable while this workfile is locked or its status is being verified. Existing documents remain available for review and download.
@@ -1067,6 +1074,9 @@ export default function AssignmentDocumentCenter({
           {message ? <p className="mt-4 text-xs font-medium text-slate-700">{message}</p> : null}
         </div>
       ) : null}
+      {sfrepOpen && !isUad && assignmentFileId ? <SfrepExportDialog key={scopeKey}
+        accountId={accountId} assignmentFileId={assignmentFileId} documents={documents} getEditorKey={getEditorKey}
+        onClose={() => setSfrepOpen(false)} /> : null}
     </section>
   );
 }

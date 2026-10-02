@@ -63,26 +63,37 @@ function normalizedDate(value) {
   } else {
     const parsed = new Date(source);
     if (Number.isNaN(parsed.getTime())) return null;
-    // Date accepts impossible ISO/text dates by rolling them into the next
-    // month. Validate the printed calendar components before retaining the
-    // legacy datetime parser's UTC normalization (including timezone offsets).
+    // Validate the printed calendar components: Date can roll an impossible
+    // day into the next month, or interpret an unzoned date in the host's local
+    // timezone. Neither may change a document's printed calendar date.
     const iso = source.match(/\b(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?=\b|T)/);
     const monthFirst = source.match(/\b([A-Za-z]+)\.?[\s-]*(\d{1,2})[,\s-]+(\d{4}|\d{2})\b/);
     const dayFirst = source.match(/\b(\d{1,2})[\s-]+([A-Za-z]+)\.?[,\s-]+(\d{4}|\d{2})\b/);
     const yearFirst = source.match(/\b(\d{4})[\s-]+([A-Za-z]+)\.?[\s-]+(\d{1,2})\b/);
     if (iso) {
-      if (!isCalendarDate(Number(iso[1]), Number(iso[2]), Number(iso[3]))) return null;
+      [year, month, day] = iso.slice(1).map(Number);
     } else if (monthFirst || dayFirst || yearFirst) {
       const monthName = monthFirst?.[1] || dayFirst?.[2] || yearFirst[2];
-      const sourceMonth = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName.slice(0, 3).toLowerCase()) + 1;
-      const sourceDay = Number(monthFirst?.[2] || dayFirst?.[1] || yearFirst[3]);
-      let sourceYear = Number(monthFirst?.[3] || dayFirst?.[3] || yearFirst[1]);
-      if (sourceYear < 100) sourceYear += sourceYear >= 50 ? 1900 : 2000;
-      if (!isCalendarDate(sourceYear, sourceMonth, sourceDay)) return null;
+      month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName.slice(0, 3).toLowerCase()) + 1;
+      day = Number(monthFirst?.[2] || dayFirst?.[1] || yearFirst[3]);
+      year = Number(monthFirst?.[3] || dayFirst?.[3] || yearFirst[1]);
+      if (year < 100) year += year >= 50 ? 1900 : 2000;
     } else return null; // No printed calendar components to verify safely.
-    year = parsed.getUTCFullYear();
-    month = parsed.getUTCMonth() + 1;
-    day = parsed.getUTCDate();
+    if (!isCalendarDate(year, month, day)) return null;
+    // An optional time must have a complete, supported suffix. Unknown zone
+    // names must not silently become timezone-free calendar dates. Date's
+    // textual parser also accepts out-of-range offsets, so check those here.
+    const calendar = iso || monthFirst || dayFirst || yearFirst;
+    const suffix = source.slice(calendar.index + calendar[0].length);
+    const time = suffix && suffix.match(/^(?:T|\s+)\d{1,2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:\s*[AP]M)?(?:\s*(Z|(?:GMT|UTC)(?:[+-]\d{2}:?\d{2})?|[+-]\d{2}:?\d{2}))?$/i);
+    if (suffix && !time) return null;
+    if (time?.[1]) {
+      const offset = time[1].match(/[+-](\d{2}):?(\d{2})$/);
+      if (offset && (Number(offset[1]) > 23 || Number(offset[2]) > 59)) return null;
+      year = parsed.getUTCFullYear();
+      month = parsed.getUTCMonth() + 1;
+      day = parsed.getUTCDate();
+    }
   }
   if (!isCalendarDate(year, month, day)) return null;
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;

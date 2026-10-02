@@ -168,6 +168,29 @@ an **Unsaved local edit**, including explicitly empty drafts; it is not silently
 hidden, confirmed, or applied. Removed candidates and document/assignment changes
 reset that state, and the draft notice tells reviewers to copy it before leaving.
 
+The same operation ownership also covers re-extraction, deletion, and manual UAD
+apply/synchronization continuations. A completed delete invalidates old metadata
+requests so an earlier poll cannot restore the deleted selection. This does not
+cancel or roll back an already-sent server mutation when the reviewer navigates.
+
+Date-only and timezone-free printed dates retain their calendar components across
+host time zones. Explicit supported numeric offsets retain UTC normalization, and
+impossible calendar dates remain unresolved. Subject-only input validation applies
+to engagement/MLS and Other reference-source extraction, not the explicitly typed
+contract, district, zoning, and map parsers. Source hints cannot override those
+explicit non-Subject types. Mixed or incomplete Other/CAD/Realist/MLS input still
+fails closed; the separate PDF page/byte/text admission limits are unchanged.
+
+These additional CodeRabbit findings were reproduced before remediation. The
+document-center suite now has 307 passing cases (364 related frontend cases),
+and the full frontend suite passes 3,475 tests. The final frozen server suite passes
+9,099 tests (46 skipped, zero failures). Cross-timezone tests exercise UTC,
+Tokyo, and Chicago, including textual GMT/UTC offsets, invalid offsets, and the
+legacy contract/MLS extraction paths. A 61-case source-ownership suite includes
+real in-memory 251-page PDFs to verify the existing upload rejection remains.
+Private original-PDF extraction, byte-preserving packaging, and AIXML schema
+validation passed again after the changes; this still is not native import QA.
+
 ### Verified native synthetic QA
 
 Appraise-It Pro 3.7.9 successfully opened the generated

@@ -185,6 +185,27 @@ suppressed for these advisories. HomeNode does not run Metro or `image-size` in
 the deployed API; untrusted appraisal images must not be processed through the
 mobile build toolchain.
 
+### Mobile cryptography dependency candidate
+
+`GHSA-86w9-cpqp-85rv` affects `node-forge` 1.4.0 used by Expo CLI and
+`@expo/code-signing-certificates`. As of 2026-10-02, no fixed package release
+is published. The draft package patch checks the nested DigestAlgorithm child
+count and rejects nonempty ASN.1 NULL parameters. The child-count correction
+follows the proposed [upstream fix](https://github.com/digitalbazaar/forge/pull/1152);
+the empty-NULL check additionally follows X.690 section 8.8.2. Only `lib/rsa.js`
+is patched; browser `dist` bundles are not covered. HomeNode's current Expo
+consumers use the Node library entry point.
+
+The regression suite exercises both Expo resolution paths. Synthetic signatures
+created with test-only private keys demonstrate malformed encoding acceptance
+before the patch and rejection afterward; this is not a demonstrated forgery
+without a private key. Valid SHA-256 encodings, RSA-PSS, Expo certificates, CSRs,
+and signed buffers remain covered. The package stays at version 1.4.0 with a
+lockfile-pinned patch hash. The advisory remains visible and blocking in the
+ordinary dependency audit; the draft is not cleared for release by these tests
+alone. Replace this candidate with an official fixed release when available,
+or obtain review of any explicit, narrowly scoped release exception.
+
 ## Finding lifecycle
 
 Each finding records a stable identifier, control reference, severity,

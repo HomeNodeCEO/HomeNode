@@ -73,6 +73,85 @@ test("location refresh failures never enter queue state or batch results as raw 
   assert.equal(JSON.stringify({ statements, result }).includes("do-not-expose"), false);
 });
 
+for (const failureStage of ["BEGIN", "lease recovery", "claim", "COMMIT"]) {
+  for (const rollbackFails of [false, true]) {
+    test(`location ${failureStage} failure preserves its error and ${rollbackFails ? "retires" : "reuses"} the client`, async () => {
+      const primaryError = new Error("private location claim detail");
+      const rollbackError = new Error("private rollback connection detail");
+      const statements = [];
+      const releases = [];
+      const client = {
+        async query(sql) {
+          statements.push(sql);
+          if (sql === "ROLLBACK" && rollbackFails) throw rollbackError;
+          if (sql === failureStage
+              || (failureStage === "lease recovery" && sql.includes("SET status = 'retry'"))
+              || (failureStage === "claim" && sql.includes("UPDATE app.location_backfill_queue queue"))) {
+            throw primaryError;
+          }
+          return { rows: [] };
+        },
+        release(error) { releases.push(error); },
+      };
+      await assert.rejects(runLocationBackfillBatch({
+        async connect() { return client; },
+        async query() { assert.fail("failed claims must not refresh or settle locations"); },
+      }, {
+        fetchImpl: async () => { assert.fail("failed claims must not contact the provider"); },
+      }), error => error === primaryError);
+      assert.equal(statements.at(-1), "ROLLBACK");
+      assert.equal(statements.filter(sql => sql === "ROLLBACK").length, 1);
+      assert.equal(releases.length, 1);
+      if (rollbackFails) {
+        assert.ok(releases[0] instanceof Error);
+        assert.equal(releases[0].message, "location_backfill_rollback_failed");
+        assert.notEqual(releases[0], primaryError);
+        assert.notEqual(releases[0], rollbackError);
+      } else {
+        assert.equal(releases[0], undefined);
+      }
+    });
+  }
+}
+
+test("an empty location claim commits and releases a reusable client", async () => {
+  const statements = [];
+  const releases = [];
+  const client = {
+    async query(sql, params) {
+      statements.push({ sql, params });
+      return { rows: [] };
+    },
+    release(error) { releases.push(error); },
+  };
+  const result = await runLocationBackfillBatch({
+    async connect() { return client; },
+    async query() { assert.fail("empty claims need no location refresh or settlement"); },
+  }, {
+    workerId: "location-claim-test-worker",
+    batchSize: 7,
+    fetchImpl: async () => { assert.fail("empty claims must not contact the provider"); },
+  });
+  assert.deepEqual(result, { claimed: 0, completed: 0, retry: 0, manualReview: 0 });
+  assert.equal(statements.length, 4);
+  assert.equal(statements[0].sql, "BEGIN");
+  assert.match(statements[1].sql, /SET status = 'retry'/);
+  assert.match(statements[2].sql, /UPDATE app\.location_backfill_queue queue/);
+  assert.deepEqual(statements[2].params, [7, "location-claim-test-worker"]);
+  assert.equal(statements[3].sql, "COMMIT");
+  assert.deepEqual(releases, [undefined]);
+});
+
+test("location connection failure preserves its cause without provider or settlement work", async () => {
+  const primaryError = new Error("location claim connection unavailable");
+  await assert.rejects(runLocationBackfillBatch({
+    async connect() { throw primaryError; },
+    async query() { assert.fail("connection failure must not refresh or settle locations"); },
+  }, {
+    fetchImpl: async () => { assert.fail("connection failure must not contact the provider"); },
+  }), error => error === primaryError);
+});
+
 test("location-backfill schema ensure shares one per-pool attempt and caches success", async () => {
   let finishQueue;
   const queuePending = new Promise((resolve) => { finishQueue = resolve; });

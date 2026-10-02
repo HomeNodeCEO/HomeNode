@@ -24,9 +24,11 @@ The current CAD/Realist upload path is **Other Appraisal Document**; copying tho
 PDFs does not imply automatic extraction of every fact inside them. The preview
 lists exactly which fields will transfer and which reviewed values lack a mapping.
 
-Empty/unknown/unconfirmed values never clear existing report fields. Conflicting
-confirmed values targeting the same SFREP field are omitted and displayed for
-source selection. A seller is not automatically treated as the public-record owner;
+The exporter emits no blank field values: empty, unknown, and unconfirmed values
+are omitted. Preservation of existing fields during native import into a populated
+report has not yet been verified. Conflicting confirmed values targeting the same
+SFREP field are omitted and displayed for source selection. A seller is not
+automatically treated as the public-record owner;
 a buyer is not automatically treated as the borrower. UAD composite listing and
 contract narrative fields are not populated with incomplete scalar encodings.
 Assignment-type checkboxes export affirmative values only; review existing
@@ -65,20 +67,42 @@ generator can create a synthetic package for manual testing in a separate window
 node server/scripts/renderSfrepTransferSample.js <output-directory>
 ```
 
-Before describing this as end-to-end verified, complete the following manual checks
-in a separate synthetic report; never use an existing client report as the target:
+### Verified native synthetic QA
 
-- Open the synthetic RPTI in Appraise-It Pro and verify lender name/address,
-  contract price/date, purchase checkbox, and the named PDF addendum.
+Appraise-It Pro 3.7.9 successfully opened the generated
+`HomeNode-SFREP-synthetic.rpti` as an isolated synthetic report. Visual inspection
+confirmed `Example QA Bank`, the full lender/client address, the selected Purchase
+Transaction checkbox, a contract price of `282,500`, and a contract date of
+`09/30/2026`. The named **HomeNode QA source evidence** PDF addendum rendered
+`SYNTHETIC EVIDENCE - NOT AN APPRAISAL`.
+
+The report was saved as an isolated local `.rptx` and reopened. The mapped fields
+were retained and the named PDF addendum rendered correctly after reopening.
+
+SFREP displayed a file-number overflow warning in **UAD Sales Comps Adjustments**
+for the long synthetic value `HOMENODE-SFREP-QA`. The value was not truncated.
+Do not silently shorten or otherwise alter file numbers to suppress layout warnings;
+review their presentation in SFREP.
+
+### Remaining manual checks
+
+Before describing this as fully end-to-end verified, complete these checks in
+separate synthetic reports; never use an existing client report as the target:
+
 - Import into a populated synthetic legacy 1004 and confirm omitted values do not
   erase existing fields; inspect mutually exclusive assignment-type checkboxes.
 - Check the HomeNode dialog at desktop and narrow widths, including selection,
   preview, cancellation, and download using an authorized QA assignment.
 
-These native-import and browser-visual checks remain unverified in the initial
-implementation: the isolated desktop test window was unavailable and the browser
-runtime reported no available browser. XML schema/sample validation, automated
-unit/integration tests, and a production build are not substitutes for that check.
+Import into an existing populated report remains unverified. The native **Import
+Forms** chooser exposed import options, but automation could not reliably select
+RPTI because nested-modal focus/actions reset. No successful existing-report import
+was observed; this automation limitation does not establish an SFREP defect.
+
+Browser discovery returned no available browser (`[]`), so browser-visual checks
+remain unverified. XML schema/sample validation, automated unit/integration tests,
+and a production build do not substitute for these remaining native-import and
+browser checks.
 
 Field mapping evidence and format references:
 

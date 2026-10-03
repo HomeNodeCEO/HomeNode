@@ -1327,7 +1327,11 @@ function AddressHero({
   });
 
   const recordLenderRevisionRequest = async () => {
-    if (!accountId || !activeAssignmentFile) return;
+    const fileAtStart = activeAssignmentFileRef.current;
+    if (!accountId || !fileAtStart) return;
+    const selectionIsCurrent = captureAssignmentSaveSelection(
+      selectionGenerationRef, activeAssignmentFileRef, fileAtStart.id,
+    );
     const note = window.prompt(
       "Record a lender/client-requested appraisal revision. Add an optional note, or choose Cancel.",
       "",
@@ -1349,29 +1353,32 @@ function AddressHero({
     try {
       const response = await updateAssignmentFile(
         accountId,
-        activeAssignmentFile.id,
+        fileAtStart.id,
         {
           assignment_details: updatedDetails,
-          expected_revision: activeAssignmentFile.revision,
+          expected_revision: fileAtStart.revision,
         },
         editorKey,
       );
-      const updatedFile = {
+      if (!selectionIsCurrent()) return;
+      const updatedFile = preserveNewerReportSections(activeAssignmentFileRef.current || fileAtStart, {
         ...response.assignment_file,
-        custom_appraisal_sections: activeAssignmentFile.custom_appraisal_sections,
-        mobile_inspection_sketch: activeAssignmentFile.mobile_inspection_sketch,
-        mobile_inspection_photos: activeAssignmentFile.mobile_inspection_photos,
-      };
+        mobile_inspection_sketch: fileAtStart.mobile_inspection_sketch,
+        mobile_inspection_photos: fileAtStart.mobile_inspection_photos,
+      });
       const savedDraft = assignmentDraftFromDetail(updatedFile.assignment_details);
       assignmentDraftRef.current = savedDraft;
       assignmentSavedDraftRef.current = cloneEditorValue(savedDraft);
       assignmentDirtyRef.current = false;
       activeAssignmentFileRef.current = updatedFile;
       setAssignmentDraft(savedDraft);
-      setActiveAssignmentFile(updatedFile);
-      setAssignmentFiles((current) => current.map((file) =>
-        file.id === updatedFile.id ? updatedFile : file
-      ));
+      setActiveAssignmentFile((current) => {
+        if (!selectionIsCurrent() || !current) return current;
+        const next = preserveNewerReportSections(current, updatedFile);
+        activeAssignmentFileRef.current = next;
+        return next;
+      });
+      setAssignmentFiles((current) => selectionIsCurrent() ? current.map((file) => preserveNewerReportSections(file, updatedFile)) : current);
       setAssignmentDirty(false);
       setAssignmentConflictKeys([]);
       setAssignmentAutosaveState("saved");
@@ -1380,6 +1387,7 @@ function AddressHero({
         `Recorded lender/client revision request ${nextRevisionCount} for file ${response.assignment_file.file_number}.`,
       );
     } catch (error) {
+      if (!selectionIsCurrent()) return;
       const message = error instanceof Error
         ? error.message
         : "The lender/client revision request could not be recorded.";
@@ -1392,7 +1400,7 @@ function AddressHero({
           : message,
       );
     } finally {
-      setSavingAssignmentFile(false);
+      if (selectionIsCurrent()) setSavingAssignmentFile(false);
     }
   };
 

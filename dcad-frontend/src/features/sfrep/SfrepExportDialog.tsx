@@ -61,6 +61,8 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         const link = document.createElement('a');
         link.href = url; link.download = sfrepDownloadFilename(preview.filename);
         document.body.appendChild(link); link.click(); link.remove();
+        // Retain one URL until replacement/unmount: click() does not acknowledge
+        // that the browser has consumed the blob, so immediate revocation can race it.
         setMessage('Download started. Import the .rpti file into SFREP, then verify the imported fields and attached documents.');
       }
     } catch (failure) {

@@ -113,7 +113,7 @@ function writeValue(target, definition, value) {
 /** Preserve appraiser edits and retain stale receipts so an unavailable source
  * cannot silently turn an automatic value into an appraiser-authored fact. */
 export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails = {}, evidence = {}, projection,
-  actorUserId = null, reviewer = null, reviewedDocumentId = null } = {}) {
+  actorUserId = null, reviewer = null, reviewedDocumentId = null, invalidateOnly = false } = {}) {
   const result = { subject: structuredClone(subject), assignmentDetails: structuredClone(assignmentDetails),
     evidence: { version: 1, fields: record(evidence.fields) ? structuredClone(evidence.fields) : {}, warnings: [] } };
   const proposals = new Map(projection.fields.map(field => [field.key, field]));
@@ -121,13 +121,16 @@ export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails 
   for (const definition of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
     const key = definition.key, proposal = proposals.get(key), prior = result.evidence.fields[key];
     const current = readCustomSubjectValue(result, key);
-    if (!proposal) {
+    if (!proposal || (invalidateOnly && prior?.documentId === reviewedDocumentId)) {
       if (prior) {
         prior.status = 'needs_review';
         warnings.push(`${key}: previously applied evidence is unavailable, rejected, or conflicting. The saved value is preserved and needs review.`);
       }
       continue;
     }
+    // Rejection of an unavailable extraction can retire receipts, but cannot
+    // apply another source or revalidate any previously stale receipt.
+    if (invalidateOnly) continue;
     const explicitlyReviewed = Number.isSafeInteger(reviewedDocumentId) && reviewedDocumentId > 0
       && (proposal.provenance.documentId === reviewedDocumentId || proposal.provenance.kind === 'user_default');
     if (prior?.status === 'needs_review' && !explicitlyReviewed) {
@@ -198,12 +201,12 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
 /** Caller holds assignment -> workfile -> source document locks and owns the
  * transaction. This writer deliberately never commits or writes core.accounts. */
 export async function persistCustomSubjectApplication(client, { assignmentFile, sourceDocument,
-  legacyAssignmentDetails = null, actorUserId = null, reviewer = null }) {
+  legacyAssignmentDetails = null, actorUserId = null, reviewer = null, invalidateOnly = false }) {
   const assignmentFileId = Number(assignmentFile.id), accountId = assignmentFile.account_id;
   if (Number(sourceDocument.assignment_file_id) !== assignmentFileId || sourceDocument.account_id !== accountId
     || sourceDocument.uad_workfile_id || sourceDocument.tax_protest_file_id) fail('document_scope_changed');
   if (assignmentFile.workfile_status === 'signed') fail('custom_appraisal_workfile_signed');
-  if (!['reviewed', 'review_required'].includes(sourceDocument.processing_status)) fail('document_not_processable');
+  if (!invalidateOnly && !['reviewed', 'review_required'].includes(sourceDocument.processing_status)) fail('document_not_processable');
   const documents = await readCustomSubjectDocuments(client, { accountId, assignmentFileId });
   const projection = projectCustomSubjectDocuments(documents);
   const { rows } = await client.query(
@@ -218,10 +221,10 @@ export async function persistCustomSubjectApplication(client, { assignmentFile, 
   const oldEvidence = sections.get(CUSTOM_SUBJECT_EVIDENCE_SECTION)?.section_value || {};
   const merged = mergeCustomSubjectApplication({ subject: oldSubject,
     assignmentDetails: assignmentFile.assignment_details || {}, evidence: oldEvidence, projection, actorUserId, reviewer,
-    reviewedDocumentId: Number(sourceDocument.id) });
+    reviewedDocumentId: Number(sourceDocument.id), invalidateOnly });
   // Preserve the pre-existing purchase-contract application path. Subject
   // proposals themselves still come exclusively from the reviewed projection.
-  if (legacyAssignmentDetails) {
+  if (!invalidateOnly && legacyAssignmentDetails) {
     for (const [key, value] of Object.entries(legacyAssignmentDetails)) {
       if (CONTRACT_FIELDS.has(key) && !same(value, assignmentFile.assignment_details?.[key])) merged.assignmentDetails[key] = value;
     }

@@ -214,7 +214,8 @@ test('new manual Subject values are typed while existing extension fields remain
 // Transaction fake models committed versus pending rows, so a failure after
 // candidate/assignment/Subject writes proves the public confirmation rolls all
 // of them back. No live database or private PDF data is used by these tests.
-function database({ documents = [fullDocument()], assignmentDetails = {}, sections = {}, failHistory = null } = {}) {
+function database({ documents = [fullDocument()], assignmentDetails = {}, sections = {}, failHistory = null,
+  workfileStatus = 'draft', hasSignedSnapshot = false, lockedDocumentOverrides = null } = {}) {
   let committed = { documents: structuredClone(documents), assignment: { id: 4, account_id: '000123', file_number: 'SYNTHETIC-1',
     assignment_details: assignmentDetails, revision: 3, workfile_status: 'draft' }, sections: structuredClone(sections), history: [] };
   let pending;
@@ -228,12 +229,13 @@ function database({ documents = [fullDocument()], assignmentDetails = {}, sectio
     if (/SELECT account_id, assignment_file_id/.test(sql)) return { rows: [state.documents.find(item => item.id === values[0])] };
     if (/SELECT id, file_number FROM app.assignment_files/.test(sql)) return { rows: [state.assignment] };
     if (/INSERT INTO app.custom_appraisal_workfiles/.test(sql)) return { rows: [] };
-    if (/FOR UPDATE OF workfile/.test(sql)) return { rows: [{ status: 'draft', has_signed_snapshot: false }] };
-    if (/SELECT \* FROM app.assignment_documents WHERE/.test(sql)) return { rows: [structuredClone(state.documents.find(item => item.id === values[0]))] };
+    if (/FOR UPDATE OF workfile/.test(sql)) return { rows: [{ status: workfileStatus, has_signed_snapshot: hasSignedSnapshot }] };
+    if (/SELECT \* FROM app.assignment_documents WHERE/.test(sql)) return { rows: [{ ...structuredClone(state.documents.find(item => item.id === values[0])), ...lockedDocumentOverrides }] };
     if (/SELECT \* FROM app.assignment_document_field_candidates/.test(sql)) return { rows: structuredClone(state.documents.find(item => item.id === values[0]).candidates) };
     if (/UPDATE app.assignment_document_field_candidates/.test(sql)) {
       const source = state.documents.find(item => item.id === values[0]);
       const candidate = source.candidates.find(item => item.id === values[1]);
+      if (!candidate) return { rows: [] };
       const single = /CASE WHEN/.test(sql);
       candidate.review_status = single ? values[2] : 'confirmed';
       candidate.confirmed_value = single ? (values[2] === 'confirmed' ? values[3] || candidate.raw_value : null) : values[2];
@@ -351,13 +353,125 @@ test('single rejection preserves report value but invalidates its receipt in the
   assert.equal(saved[CUSTOM_SUBJECT_EVIDENCE_SECTION].revision, 2);
 });
 
-test('stale processing source cannot promote old evidence through a new review', async () => {
-  const source = fullDocument(); source.processing_status = 'processing';
-  const db = database({ documents: [source] }), before = db.state;
-  await assert.rejects(reviewAssignmentDocumentCandidate(db.pool, { documentId: 1,
-    candidateId: source.candidates[0].id, reviewStatus: 'confirmed', reviewer: 'Example Appraiser' }), /document_not_processable/);
-  assert.deepEqual(db.state, before);
+const unavailableStatuses = ['uploaded', 'processing', 'ocr_required', 'extraction_failed'];
+for (const processingStatus of unavailableStatuses) {
+  for (const remainingSuggested of [false, true]) {
+    test(`${processingStatus} rejection with pending=${remainingSuggested} preserves extraction state and invalidates stale receipts`, async () => {
+      const source = fullDocument(), applied = merge([source]);
+      source.processing_status = processingStatus;
+      source.reviewed_at = '2026-09-01T00:00:00Z';
+      source.next_processing_at = '2026-10-03T00:00:00Z';
+      source.last_processing_error = 'assignment_document_extraction_failed';
+      const candidate = source.candidates.find(item => item.field_key === 'tax_amount');
+      candidate.review_status = 'suggested'; candidate.confirmed_value = null;
+      if (remainingSuggested) source.candidates[0].review_status = 'suggested';
+      const sections = Object.fromEntries([[CUSTOM_SUBJECT_SECTION, applied.subject], [CUSTOM_SUBJECT_EVIDENCE_SECTION, applied.evidence]]
+        .map(([key, value]) => [key, { section_key: key, section_value: value, revision: 1 }]));
+      const db = database({ documents: [source], assignmentDetails: applied.assignmentDetails, sections }), before = db.state;
+      const response = await reviewAssignmentDocumentCandidate(db.pool, { documentId: 1, candidateId: candidate.id,
+        reviewStatus: 'rejected', reviewer: 'Example Appraiser', actorUserId: 'user-1' });
+      assert.equal(response.review_status, 'rejected');
+      assert.equal(response.confirmed_value, null);
+      const saved = db.state, reviewed = saved.documents[0];
+      for (const key of ['processing_status', 'reviewed_at', 'next_processing_at', 'last_processing_error']) {
+        assert.equal(reviewed[key], source[key], key);
+      }
+      assert.deepEqual(saved.assignment, before.assignment);
+      assert.deepEqual(saved.sections[CUSTOM_SUBJECT_SECTION], before.sections[CUSTOM_SUBJECT_SECTION]);
+      const evidence = saved.sections[CUSTOM_SUBJECT_EVIDENCE_SECTION];
+      assert.equal(evidence.revision, 2);
+      for (const [key, receipt] of Object.entries(evidence.section_value.fields)) {
+        assert.deepEqual(receipt, { ...applied.evidence.fields[key], status: 'needs_review' }, key);
+      }
+      assert.equal(saved.history.filter(item => item[0] === 'candidate').length, 1);
+      assert.equal(saved.history.filter(item => item[0] === 'section').length, 1);
+      assert.equal(saved.history.find(item => item[0] === 'section')[5], 'user-1');
+      assert.ok(db.calls.some(item => item.sql === 'COMMIT'));
+      assert.equal(db.calls.some(item => item.sql === 'ROLLBACK'), false);
+      assert.equal(db.calls.some(item => /UPDATE app.assignment_documents/.test(item.sql)), false);
+    });
+  }
+
+  test(`${processingStatus} source cannot promote old evidence through individual or bulk confirmation`, async () => {
+    for (const confirm of [
+      pool => reviewAssignmentDocumentCandidate(pool, { documentId: 1, candidateId: 100,
+        reviewStatus: 'confirmed', reviewer: 'Example Appraiser' }),
+      pool => confirmAssignmentDocumentCandidates(pool, { documentId: 1, reviewer: 'Example Appraiser' }),
+    ]) {
+      const source = fullDocument(); source.processing_status = processingStatus;
+      source.candidates.forEach(item => { item.review_status = 'suggested'; item.confirmed_value = null; });
+      const db = database({ documents: [source] }), before = db.state;
+      await assert.rejects(confirm(db.pool), /document_not_processable/);
+      assert.deepEqual(db.state, before);
+      assert.ok(db.calls.some(item => item.sql === 'ROLLBACK'));
+      assert.equal(db.calls.some(item => item.sql === 'COMMIT'), false);
+    }
+  });
+}
+
+test('failed extraction rejection cannot apply old contract fields or alternative documents, or refresh stale receipts', async () => {
+  const source = document(1, { tax_amount: '4321.50', contract_price: '300000', loan_amount: '250000' }, { document_type: 'purchase_contract' });
+  const applied = merge([source]);
+  source.processing_status = 'extraction_failed';
+  const alternative = document(2, { tax_amount: '4321.50', lender_client_name: 'Unapplied Bank' });
+  applied.evidence.fields.subject_city.status = 'needs_review';
+  const sections = Object.fromEntries([[CUSTOM_SUBJECT_SECTION, applied.subject], [CUSTOM_SUBJECT_EVIDENCE_SECTION, applied.evidence]]
+    .map(([key, value]) => [key, { section_key: key, section_value: value, revision: 1 }]));
+  const db = database({ documents: [source, alternative], sections, assignmentDetails: { lender_client_name: '' } });
+  const before = db.state;
+  await reviewAssignmentDocumentCandidate(db.pool, { documentId: 1,
+    candidateId: source.candidates.find(item => item.field_key === 'contract_price').id,
+    reviewStatus: 'rejected', reviewer: 'Example Appraiser' });
+  assert.deepEqual(db.state.assignment, before.assignment);
+  assert.deepEqual(db.state.sections[CUSTOM_SUBJECT_SECTION], before.sections[CUSTOM_SUBJECT_SECTION]);
+  const fields = db.state.sections[CUSTOM_SUBJECT_EVIDENCE_SECTION].section_value.fields;
+  assert.equal(fields.tax_amount.status, 'needs_review');
+  assert.equal(fields.tax_amount.documentId, 1);
+  assert.equal(fields.subject_city.status, 'needs_review');
+  assert.equal(fields.lender_client_name, undefined);
 });
+
+test('unavailable rejection without prior receipts never fills Subject or assignment from retained candidates', async () => {
+  const source = fullDocument(); source.processing_status = 'extraction_failed';
+  const db = database({ documents: [source] }), before = db.state;
+  const response = await reviewAssignmentDocumentCandidate(db.pool, { documentId: 1,
+    candidateId: 100, reviewStatus: 'rejected', reviewer: 'Example Appraiser' });
+  assert.equal(response.review_status, 'rejected');
+  assert.deepEqual(db.state.assignment, before.assignment);
+  assert.equal(db.state.sections[CUSTOM_SUBJECT_SECTION], undefined);
+  assert.deepEqual(db.state.sections[CUSTOM_SUBJECT_EVIDENCE_SECTION].section_value.fields, {});
+  assert.equal(db.state.documents[0].processing_status, 'extraction_failed');
+});
+
+test('failed extraction rejection and receipt invalidation roll back together on history failure', async () => {
+  const source = fullDocument(), applied = merge([source]); source.processing_status = 'extraction_failed';
+  const sections = Object.fromEntries([[CUSTOM_SUBJECT_SECTION, applied.subject], [CUSTOM_SUBJECT_EVIDENCE_SECTION, applied.evidence]]
+    .map(([key, value]) => [key, { section_key: key, section_value: value, revision: 1 }]));
+  const db = database({ documents: [source], sections, assignmentDetails: applied.assignmentDetails,
+    failHistory: CUSTOM_SUBJECT_EVIDENCE_SECTION }), before = db.state;
+  await assert.rejects(reviewAssignmentDocumentCandidate(db.pool, { documentId: 1,
+    candidateId: 100, reviewStatus: 'rejected', reviewer: 'Example Appraiser' }), /synthetic_history_failure/);
+  assert.deepEqual(db.state, before);
+  assert.ok(db.calls.some(item => item.sql === 'ROLLBACK'));
+  assert.equal(db.calls.some(item => item.sql === 'COMMIT'), false);
+});
+
+for (const [options, error] of [
+  [{ workfileStatus: 'signed' }, /custom_appraisal_workfile_signed/],
+  [{ hasSignedSnapshot: true }, /custom_appraisal_workfile_signed/],
+  [{ lockedDocumentOverrides: { account_id: 'other' } }, /document_scope_changed/],
+  [{ lockedDocumentOverrides: { assignment_file_id: 5 } }, /document_scope_changed/],
+]) {
+  test(`unavailable rejection retains lifecycle and scope guards: ${JSON.stringify(options)}`, async () => {
+    const source = fullDocument(); source.processing_status = 'extraction_failed';
+    const db = database({ documents: [source], ...options }), before = db.state;
+    await assert.rejects(reviewAssignmentDocumentCandidate(db.pool, { documentId: 1,
+      candidateId: 100, reviewStatus: 'rejected', reviewer: 'Example Appraiser' }), error);
+    assert.deepEqual(db.state, before);
+    assert.equal(db.calls.some(item => /UPDATE app.assignment_document_field_candidates/.test(item.sql)), false);
+    assert.ok(db.calls.some(item => item.sql === 'ROLLBACK'));
+  });
+}
 
 test('contract-specific legacy values persist without overriding engagement/appraiser lender or purpose', async () => {
   const source = document(1, {}, { document_type: 'purchase_contract' });
@@ -387,7 +501,10 @@ test('scoped read has bounded candidates, exact file/account and organization-qu
 test('persistence rejects signed and cross-scope sources before reading or writing sections', async () => {
   const client = { query() { throw new Error('unexpected_query'); } }, source = fullDocument();
   const assignment = { id: 4, account_id: '000123', workfile_status: 'draft' };
-  await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: { ...assignment, workfile_status: 'signed' }, sourceDocument: source }), /workfile_signed/);
-  await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: assignment, sourceDocument: { ...source, assignment_file_id: 5 } }), /scope_changed/);
-  await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: assignment, sourceDocument: { ...source, uad_workfile_id: 'other' } }), /scope_changed/);
+  for (const invalidateOnly of [false, true]) {
+    await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: { ...assignment, workfile_status: 'signed' }, sourceDocument: source, invalidateOnly }), /workfile_signed/);
+    await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: assignment, sourceDocument: { ...source, assignment_file_id: 5 }, invalidateOnly }), /scope_changed/);
+    await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: assignment, sourceDocument: { ...source, uad_workfile_id: 'other' }, invalidateOnly }), /scope_changed/);
+    await assert.rejects(persistCustomSubjectApplication(client, { assignmentFile: assignment, sourceDocument: { ...source, tax_protest_file_id: 'other' }, invalidateOnly }), /scope_changed/);
+  }
 });

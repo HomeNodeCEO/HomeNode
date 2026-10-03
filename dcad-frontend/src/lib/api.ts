@@ -2688,8 +2688,9 @@ export interface AssignmentDocumentCandidate {
 
 export interface AssignmentDocumentApplication {
   applied: boolean;
-  account_id: string;
-  assignment_file_id: number;
+  // Early non-applied responses (such as rejection or an unscoped document) omit scope.
+  account_id?: string;
+  assignment_file_id?: number;
   reason?: string;
   revision?: number;
   assignment_details?: AssignmentDetailsPayload;

@@ -21,7 +21,7 @@ const response = () => ({ ok: true, preview_digest: 'a'.repeat(64), formId: help
   conflicts: [{ sourceField: 'lender_client_name', documentIds: [21, 22], values: ['First bank', 'Second bank'] }], warnings: ['Review imported fields.'] });
 
 function harness(api = {}) {
-  let cursor = 0, tree, opens = 0, closes = 0, restores = 0, clicks = 0, closeRequests = 0;
+  let cursor = 0, tree, opens = 0, closes = 0, restores = 0, clicks = 0, closeRequests = 0, urlCount = 0;
   const cells = [], effects = [], cleanups = [], calls = [], revoked = [], timers = new Map();
   class Element { isConnected = true; focus() { restores++; } }
   const document = { activeElement: new Element(), body: { appendChild() {} }, createElement() { return { click() { clicks++; }, remove() {} }; } };
@@ -40,7 +40,7 @@ function harness(api = {}) {
     if (key === './sfrepApi') return { sfrepApi: transport };
     assert.equal(key, './sfrepTransport'); return helpers;
   }, { environment: { document, HTMLElement: Element,
-    URL: { createObjectURL: () => 'blob:test', revokeObjectURL: value => revoked.push(value) },
+    URL: { createObjectURL: () => ++urlCount === 1 ? 'blob:test' : `blob:test-${urlCount}`, revokeObjectURL: value => revoked.push(value) },
     window: { setTimeout(fn) { const id = timers.size + 1; timers.set(id, fn); return id; }, clearTimeout(id) { timers.delete(id); } } } });
   const props = { accountId: 'R1', assignmentFileId: 12, documents, getEditorKey: () => 'editor', onClose: () => { closeRequests++; } };
   const render = () => {
@@ -86,6 +86,26 @@ test('preview shows fields and exclusions; only explicit download sends the revi
   h.click('Download SFREP .rpti'); await h.drain();
   assert.equal(h.calls[1][0], 'export'); assert.equal(h.calls[1][2], 'a'.repeat(64));
   assert.equal(h.clicks, 1); assert.match(h.text, /Download started/);
+  h.close(); assert.deepEqual(h.revoked, ['blob:test']);
+});
+
+test('downloads retain only the latest blob URL until replacement or modal close', async () => {
+  const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  h.click('Download SFREP .rpti'); await h.drain();
+  assert.equal(h.clicks, 1); assert.deepEqual(h.revoked, [], 'do not revoke before the browser can acquire the download');
+  h.click('Download SFREP .rpti'); await h.drain();
+  assert.equal(h.clicks, 2); assert.deepEqual(h.revoked, ['blob:test']);
+  h.close(); assert.deepEqual(h.revoked, ['blob:test', 'blob:test-2']);
+  h.close(); assert.deepEqual(h.revoked, ['blob:test', 'blob:test-2']);
+});
+
+test('a failed repeat download creates no new URL and still cleans the previous URL on close', async () => {
+  let attempts = 0;
+  const h = harness({ export: async () => { if (++attempts > 1) throw new Error('Export unavailable'); return new Blob(['rpti']); } });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  h.click('Download SFREP .rpti'); await h.drain();
+  h.click('Download SFREP .rpti'); await h.drain();
+  assert.equal(h.clicks, 1); assert.deepEqual(h.revoked, []); assert.match(h.text, /Export unavailable/);
   h.close(); assert.deepEqual(h.revoked, ['blob:test']);
 });
 

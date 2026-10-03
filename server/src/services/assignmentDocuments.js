@@ -531,6 +531,7 @@ async function persistConfirmedDocumentCandidates(client, {
   candidates,
   reviewerName,
   actorUserId = null,
+  invalidateOnly = false,
 }) {
   const assignmentFileId = positiveInteger(sourceDocument?.assignment_file_id);
   if (!assignmentFileId) return { applied: false, reason: "document_not_assignment_scoped" };
@@ -550,12 +551,12 @@ async function persistConfirmedDocumentCandidates(client, {
   if (assignmentFile.workfile_status === "signed") {
     return { applied: false, reason: "custom_appraisal_workfile_signed" };
   }
-  const legacy = sourceDocument.document_type === "purchase_contract"
+  const legacy = !invalidateOnly && sourceDocument.document_type === "purchase_contract"
     ? assignmentDetailsFromConfirmedDocument(assignmentFile.assignment_details, candidates, sourceDocument.document_type)
     : null;
   return persistCustomSubjectApplication(client, { assignmentFile, sourceDocument,
     legacyAssignmentDetails: legacy?.changed ? legacy.assignmentDetails : null,
-    actorUserId, reviewer: reviewerName });
+    actorUserId, reviewer: reviewerName, invalidateOnly });
 }
 
 function publicDocument(row, candidates = undefined) {
@@ -1719,6 +1720,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   try {
     await client.query("BEGIN");
     const sourceDocument = await lockMutableAssignmentDocument(client, document);
+    const sourceReady = ["reviewed", "review_required"].includes(sourceDocument.processing_status);
     const { rows } = await client.query(
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
@@ -1756,7 +1758,9 @@ export async function reviewAssignmentDocumentCandidate(pool, {
        WHERE document_id = $1 AND review_status = 'suggested'`,
       [document],
     );
-    if (Number(remaining[0]?.count || 0) === 0) {
+    // A failed or running re-extraction may retain old candidates. Rejecting
+    // them must not turn that stale extraction into a reviewed source.
+    if (sourceReady && Number(remaining[0]?.count || 0) === 0) {
       await client.query(
         `UPDATE app.assignment_documents
          SET processing_status = 'reviewed', reviewed_at = now(), updated_at = now()
@@ -1777,6 +1781,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
         candidates: documentCandidates,
         reviewerName,
         actorUserId,
+        invalidateOnly: status === "rejected" && !sourceReady,
       });
     }
     await client.query("COMMIT");

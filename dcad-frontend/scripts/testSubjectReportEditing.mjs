@@ -129,6 +129,18 @@ test('approval messages distinguish saved supported fields from evidence-only ap
   assert.match(documentApplicationMessage('Approved.', { ...application(), applied: false }), /report fields may be unchanged/);
 });
 
+test('non-applied unscoped responses match the API contract and cannot update a selected report', () => {
+  const api = readFileSync(new URL('../src/lib/api.ts', import.meta.url), 'utf8');
+  const contract = api.match(/export interface AssignmentDocumentApplication \{([^}]+)\}/)?.[1];
+  assert.ok(contract);
+  assert.match(contract, /account_id\?: string;/); assert.match(contract, /assignment_file_id\?: number;/);
+  for (const reason of ['candidate_rejected', 'document_not_assignment_scoped', 'assignment_file_not_found', 'custom_appraisal_workfile_signed']) {
+    const result = { applied: false, reason };
+    assert.equal(mergeDocumentApplication(file(), result), null);
+    assert.match(documentApplicationMessage('Reviewed.', result), /report fields may be unchanged/);
+  }
+});
+
 test('queued document and assignment completions retain a newer manual Subject revision from the same React batch', () => {
   const snapshot = file();
   const incoming = application();

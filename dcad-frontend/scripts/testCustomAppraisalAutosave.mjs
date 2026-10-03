@@ -94,7 +94,11 @@ test("assignment selection changes invalidate every asynchronous save completion
     assignmentFilesHookSource,
     /useLayoutEffect\(\(\) => \{\s*selectionGenerationRef\.current \+= 1;\s*setActiveAssignmentFile\(null\);\s*setAssignmentFileNumber\(""\);\s*\}, \[accountId, enabled, requestedAssignmentFileId\]\);/u,
   );
-  assert.equal(propertyReportSource.match(/selectionIsCurrent\(\)/gu)?.length, 9);
+  const assignmentSaveSource = propertyReportSource.slice(
+    propertyReportSource.indexOf('const saveAssignmentDetails ='),
+    propertyReportSource.indexOf('const resolveAssignmentAutosaveConflict ='),
+  );
+  assert.equal(assignmentSaveSource.match(/selectionIsCurrent\(\)/gu)?.length, 9);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\) \|\| !current\) return current;/u);
   assert.match(propertyReportSource, /preserveNewerReportSections\(current, updatedFile\)/u);
   assert.match(propertyReportSource, /preserveNewerReportSections\(current, refreshedFile\)/u);

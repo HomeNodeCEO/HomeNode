@@ -11,7 +11,7 @@ export interface SfrepField {
   type: 'TextField' | 'CheckBoxField';
   provenance: SfrepProvenance;
   sourceValue?: string;
-  formattingRule?: 'uad_whole_dollars_half_up' | 'single_line_legal_description';
+  formattingRule?: 'uad_whole_dollars_half_up' | 'single_line_legal_description' | 'single_line_owner_name';
 }
 export type SfrepEffectiveDateSource = 'inspection_date' | 'assignment_effective_date' | 'document_upload_date_placeholder';
 export interface SfrepEffectiveDateContext {
@@ -19,11 +19,14 @@ export interface SfrepEffectiveDateContext {
   windowStart: string | null; windowEnd: string | null; calendarMonths: 12; isPlaceholder: boolean;
 }
 export interface SfrepProvenance {
-  kind: 'reviewed_document' | 'derived_reviewed_document' | 'user_default';
+  kind: 'reviewed_document' | 'derived_reviewed_document' | 'user_default' | 'saved_report';
   sourceField: string; documentId: number | null; candidateId: number | null;
   documentType?: string | null; rule?: string; sourceValue?: string;
   effectiveDate?: string; effectiveDateSource?: SfrepEffectiveDateSource;
   effectiveDateSourceDocumentId?: number | null; windowStart?: string; windowEnd?: string;
+  assignmentFileId?: number; sectionKey?: 'report.subject_identification' | 'report.assignment_details'; revision?: number;
+  origin?: 'appraiser_edit' | 'reviewed_document' | 'derived_reviewed_document' | 'user_default';
+  sourceDocumentId?: number; sourceCandidateId?: number;
 }
 export interface SfrepAssumption {
   fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox'; value: 'true';
@@ -48,6 +51,7 @@ export interface SfrepPreview {
   effectiveDateContext: SfrepEffectiveDateContext;
   assumptions: SfrepAssumption[];
   knownMissing: { fieldId: string; reason: string }[];
+  savedReport?: { assignmentFileId: number; assignmentRevision: number; subjectRevision: number; sourceDocumentIds: number[] };
 }
 interface TransportOptions {
   request: (url: string, init: RequestInit) => Promise<Response>;
@@ -85,10 +89,13 @@ function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
 }
 function validFormatting(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
   if (!Object.hasOwn(value, 'sourceValue') && !Object.hasOwn(value, 'formattingRule')) return true;
-  if (provenance.kind !== 'reviewed_document' || value.type !== 'TextField' || !validText(value.sourceValue)) return false;
+  if (!['reviewed_document', 'saved_report'].includes(String(provenance.kind)) || value.type !== 'TextField' || !validText(value.sourceValue)) return false;
   const source = value.sourceValue.trim();
   if (value.formattingRule === 'single_line_legal_description') return value.sourceField === 'legal_description'
     && value.fieldId === 'LegalDescription' && source.length > 0
+    && value.value === source.replace(/[ \t\r\n]*[\t\r\n][ \t\r\n]*/g, ' ').trim();
+  if (value.formattingRule === 'single_line_owner_name') return ['owner_name', 'record_owner_name'].includes(String(value.sourceField))
+    && value.fieldId === 'OwnerName' && source.length > 0
     && value.value === source.replace(/[ \t\r\n]*[\t\r\n][ \t\r\n]*/g, ' ').trim();
   if (value.formattingRule !== 'uad_whole_dollars_half_up'
     || !((value.fieldId === 'RealEstateTaxAmount' && ['tax_amount', 'real_estate_tax_amount'].includes(String(value.sourceField)))
@@ -106,6 +113,29 @@ function validField(value: unknown): value is SfrepField {
   const provenance = value.provenance;
   if (provenance.sourceField !== value.sourceField || provenance.documentId !== value.documentId
     || provenance.candidateId !== value.candidateId || !validFormatting(value, provenance)) return false;
+  if (provenance.kind === 'saved_report') {
+    if (value.documentId !== null || value.candidateId !== null || !positiveId(provenance.assignmentFileId)
+      || !positiveId(provenance.revision) || !['report.subject_identification', 'report.assignment_details'].includes(String(provenance.sectionKey))
+      || !['appraiser_edit', 'reviewed_document', 'derived_reviewed_document', 'user_default'].includes(String(provenance.origin))
+      || (provenance.sourceDocumentId !== undefined && !positiveId(provenance.sourceDocumentId))
+      || (provenance.sourceCandidateId !== undefined && !positiveId(provenance.sourceCandidateId))
+      || !Object.keys(provenance).every(key => ['kind', 'sourceField', 'documentId', 'candidateId', 'assignmentFileId',
+        'sectionKey', 'revision', 'origin', 'sourceDocumentId', 'sourceCandidateId', 'rule', 'sourceValue',
+        'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'].includes(key))) return false;
+    if (provenance.origin === 'appraiser_edit') return provenance.sourceDocumentId === undefined
+      && provenance.sourceCandidateId === undefined && provenance.rule === undefined;
+    if (provenance.origin === 'user_default') return value.sourceField === 'property_rights' && value.fieldId === feeSimpleField
+      && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === feeSimpleRule
+      && provenance.sourceDocumentId === undefined && provenance.sourceCandidateId === undefined;
+    if (!positiveId(provenance.sourceDocumentId)) return false;
+    if (provenance.origin === 'reviewed_document') return provenance.rule === undefined;
+    return value.sourceField === 'offered_for_sale_prior_12_months' && value.fieldId === 'CurrentPriorListingYesCheckBox'
+      && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === listingRule
+      && isoDate(provenance.sourceValue) && isoDate(provenance.effectiveDate) && dateSource(provenance.effectiveDateSource)
+      && (provenance.effectiveDateSourceDocumentId === null || positiveId(provenance.effectiveDateSourceDocumentId))
+      && isoDate(provenance.windowStart) && provenance.windowEnd === provenance.effectiveDate
+      && provenance.sourceValue >= provenance.windowStart && provenance.sourceValue <= provenance.windowEnd;
+  }
   if (provenance.kind === 'user_default') return value.sourceField === 'property_rights'
     && value.fieldId === feeSimpleField && value.type === 'CheckBoxField' && value.value === 'true'
     && value.documentId === null && value.candidateId === null && provenance.rule === feeSimpleRule
@@ -145,9 +175,20 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     throw new Error('The SFREP preview response is invalid. No export was downloaded.');
   }
   const preview = value as unknown as SfrepPreview;
+  const saved = preview.savedReport;
+  if (saved !== undefined && (!record(saved) || !positiveId(saved.assignmentFileId) || !positiveId(saved.assignmentRevision)
+    || !Number.isSafeInteger(saved.subjectRevision) || saved.subjectRevision < 0 || !Array.isArray(saved.sourceDocumentIds)
+    || saved.sourceDocumentIds.length > 50 || !saved.sourceDocumentIds.every(positiveId)
+    || new Set(saved.sourceDocumentIds).size !== saved.sourceDocumentIds.length)) throw new Error('The saved HomeNode report reference is invalid.');
+  if (preview.fields.some(({ provenance }) => provenance.kind === 'saved_report' && (!saved
+    || provenance.assignmentFileId !== saved.assignmentFileId
+    || provenance.revision !== (provenance.sectionKey === 'report.subject_identification' ? saved.subjectRevision : saved.assignmentRevision)
+    || (provenance.sourceDocumentId !== undefined && !saved.sourceDocumentIds.includes(provenance.sourceDocumentId))))) {
+    throw new Error('The SFREP preview does not match the saved HomeNode report.');
+  }
   const date = preview.effectiveDateContext;
-  if (preview.fields.filter(field => field.provenance.kind === 'user_default').length !== preview.assumptions.length
-    || preview.fields.some(({ provenance }) => provenance.kind === 'derived_reviewed_document'
+  if (preview.fields.filter(field => field.provenance.kind === 'user_default' || field.provenance.origin === 'user_default').length !== preview.assumptions.length
+    || preview.fields.some(({ provenance }) => (provenance.kind === 'derived_reviewed_document' || provenance.origin === 'derived_reviewed_document')
       && (provenance.effectiveDate !== date.effectiveDate || provenance.effectiveDateSource !== date.source
         || provenance.effectiveDateSourceDocumentId !== date.sourceDocumentId
         || provenance.windowStart !== date.windowStart || provenance.windowEnd !== date.windowEnd))) {
@@ -158,7 +199,7 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     || preview.fields.some(field => field.documentId !== null && !received.has(field.documentId))
     || preview.omitted.some(field => !received.has(field.documentId))
     || preview.conflicts.some(conflict => conflict.documentIds.some(id => !received.has(id)))
-    || (date.sourceDocumentId !== null && !received.has(date.sourceDocumentId))) {
+    || (date.sourceDocumentId !== null && !received.has(date.sourceDocumentId) && !saved?.sourceDocumentIds.includes(date.sourceDocumentId))) {
     throw new Error('The SFREP preview does not match the selected source documents. Preview again.');
   }
   if (selectedDocumentIds) {
@@ -188,6 +229,14 @@ export function sfrepNoticeText(notice: SfrepNotice): string {
 
 export function sfrepProvenanceText(field: SfrepField): string {
   const source = field.provenance;
+  if (source.kind === 'saved_report') {
+    const origin = source.origin === 'appraiser_edit' ? 'Saved appraiser entry/correction'
+      : source.origin === 'user_default' ? 'Saved user-requested default — confirm property rights'
+        : source.origin === 'derived_reviewed_document' ? 'Saved MLS listing determination'
+          : `Applied from reviewed document ${source.sourceDocumentId}`;
+    const formatting = field.formattingRule ? ` Original saved value: ${JSON.stringify(field.sourceValue)}; export ${field.formattingRule === 'uad_whole_dollars_half_up' ? 'rounded to whole dollars, half up' : 'folded to one line'}.` : '';
+    return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
+  }
   if (source.kind === 'user_default') return 'User-requested default — not document evidence; confirm property rights.';
   if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
   if (field.formattingRule) {
@@ -338,7 +387,11 @@ export function createSfrepTransport(options: TransportOptions) {
     async preview(selection: SfrepSelection, io: RequestOptions): Promise<SfrepPreview> {
       const value: unknown = JSON.parse(await (await post(selection, 'preview', io)).text());
       checkSignal(io.signal);
-      return checkSfrepPreview(value, selection.documentIds);
+      const checked = checkSfrepPreview(value, selection.documentIds);
+      if (checked.savedReport && checked.savedReport.assignmentFileId !== selection.assignmentFileId) {
+        throw new Error('The SFREP preview does not match the selected HomeNode file.');
+      }
+      return checked;
     },
     async export(selection: SfrepSelection, previewDigest: string, io: RequestOptions): Promise<Blob> {
       const blob = await post(selection, 'export', io, previewDigest);

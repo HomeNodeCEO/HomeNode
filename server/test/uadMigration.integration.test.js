@@ -15,8 +15,156 @@ import {
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
 import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhotoCoverageAudit.js";
+import {
+  CUSTOM_SUBJECT_SECTION,
+  CUSTOM_SUBJECT_EVIDENCE_SECTION,
+  persistCustomSubjectApplication,
+} from "../src/services/customSubjectApplication.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("reviewed Custom Subject and server-only receipts persist with migrated constraints and histories", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    const identity = await client.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    await client.query("BEGIN");
+    const transactionClient = {
+      query: (sql, ...args) => {
+        assert.doesNotMatch(String(sql), /^\s*(?:BEGIN|COMMIT|END|ROLLBACK)\b/i,
+          "the production writer must not end the rollback-only fixture transaction");
+        return client.query(sql, ...args);
+      },
+    };
+    await ensureAssignmentDocumentsSchema(transactionClient);
+    const accountId = `subject-receipt-${randomUUID()}`;
+    await client.query(
+      `INSERT INTO core.accounts (account_id, address, city, postal_code)
+       VALUES ($1, '100 Example Dr', 'Garland', '75041')`,
+      [accountId],
+    );
+    const assignment = await client.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $1) RETURNING *`,
+      [accountId],
+    );
+    const assignmentFileId = Number(assignment.rows[0].id);
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles (assignment_file_id, canonical_file_name, status)
+       VALUES ($1, $2, 'draft')`,
+      [assignmentFileId, `${accountId}.homenode-appraisal.json`],
+    );
+    const content = Buffer.from("%PDF-SYNTHETIC-SUBJECT-RECEIPT-NOT-AN-APPRAISAL");
+    const document = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, document_type, processing_status, title, file_name,
+          checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'engagement_letter', 'reviewed', 'Synthetic Subject evidence', 'synthetic.pdf', $3, $4, $5)
+       RETURNING *`,
+      [accountId, assignmentFileId, createHash("sha256").update(content).digest("hex"), content.length, content],
+    );
+    const documentId = Number(document.rows[0].id);
+    const candidateIds = new Map();
+    for (const [field, value] of Object.entries({
+      subject_property_address: "100 Example Dr, Garland, TX 75041",
+      borrower_name: "Synthetic Borrower",
+      tax_amount: "4321.50",
+      lender_client_name: "Synthetic QA Bank",
+    })) {
+      const inserted = await client.query(
+        `INSERT INTO app.assignment_document_field_candidates
+           (document_id, field_key, raw_value, confirmed_value, review_status, reviewer, reviewed_at)
+         VALUES ($1, $2, $3, $3, 'confirmed', 'Fixture appraiser', now()) RETURNING id`,
+        [documentId, field, value],
+      );
+      candidateIds.set(field, Number(inserted.rows[0].id));
+    }
+    // Match the writer's required assignment -> workfile -> source lock order.
+    await client.query("SELECT id FROM app.assignment_files WHERE id = $1 FOR UPDATE", [assignmentFileId]);
+    await client.query("SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE", [assignmentFileId]);
+    await client.query("SELECT id FROM app.assignment_documents WHERE id = $1 FOR UPDATE", [documentId]);
+    const applied = await persistCustomSubjectApplication(transactionClient, {
+      assignmentFile: { ...assignment.rows[0], workfile_status: "draft" },
+      sourceDocument: document.rows[0], reviewer: "Fixture appraiser",
+    });
+    assert.equal(applied.applied, true);
+    assert.equal(applied.account_id, accountId);
+    assert.equal(applied.assignment_file_id, assignmentFileId);
+    assert.equal(applied.revision, Number(assignment.rows[0].revision) + 1);
+    const stored = await client.query(
+      `SELECT section_key, section_value, revision FROM app.custom_appraisal_sections
+        WHERE assignment_file_id = $1 ORDER BY section_key`,
+      [assignmentFileId],
+    );
+    assert.deepEqual(stored.rows.map(row => row.section_key), [CUSTOM_SUBJECT_EVIDENCE_SECTION, CUSTOM_SUBJECT_SECTION]);
+    const subject = stored.rows.find(row => row.section_key === CUSTOM_SUBJECT_SECTION);
+    const evidence = stored.rows.find(row => row.section_key === CUSTOM_SUBJECT_EVIDENCE_SECTION);
+    assert.equal(subject.revision, 1);
+    assert.equal(subject.section_value.property_location.address, "100 Example Dr");
+    assert.equal(subject.section_value.urar_subject.borrower_name, "Synthetic Borrower");
+    assert.equal(subject.section_value.urar_subject.tax_amount, "4321.50");
+    assert.equal(evidence.revision, 1);
+    assert.equal(evidence.section_value.fields.borrower_name.status, "current");
+    assert.equal(evidence.section_value.fields.borrower_name.kind, "reviewed_document");
+    assert.equal(evidence.section_value.fields.borrower_name.documentId, documentId);
+    assert.equal(evidence.section_value.fields.borrower_name.candidateId, candidateIds.get("borrower_name"));
+    const histories = await client.query(
+      `SELECT section_key, section_value, revision, inspection_session_id, changed_path
+         FROM app.custom_appraisal_section_history WHERE assignment_file_id = $1 ORDER BY section_key`,
+      [assignmentFileId],
+    );
+    assert.equal(histories.rows.length, 2);
+    for (const row of histories.rows) {
+      assert.deepEqual(row.section_value, stored.rows.find(section => section.section_key === row.section_key).section_value);
+      assert.equal(row.revision, 1);
+      assert.equal(row.inspection_session_id, null);
+      assert.deepEqual(row.changed_path, [row.section_key]);
+    }
+    const assignmentHistory = await client.query(
+      `SELECT history.revision, history.assignment_details, assignment.assignment_details AS current_details
+         FROM app.assignment_file_history history JOIN app.assignment_files assignment ON assignment.id = history.assignment_file_id
+        WHERE history.assignment_file_id = $1`,
+      [assignmentFileId],
+    );
+    assert.equal(assignmentHistory.rows.length, 1);
+    assert.equal(assignmentHistory.rows[0].revision, applied.revision);
+    assert.deepEqual(assignmentHistory.rows[0].assignment_details, assignmentHistory.rows[0].current_details);
+    assert.equal(assignmentHistory.rows[0].assignment_details.lender_client_name, "Synthetic QA Bank");
+
+    // The migration adds one receipt key without losing prior keys or allowing arbitrary ones.
+    const insertSection = `INSERT INTO app.custom_appraisal_sections (assignment_file_id, section_key, section_value)
+      VALUES ($1, $2, '{}'::jsonb)`;
+    const insertHistory = `INSERT INTO app.custom_appraisal_section_history
+      (assignment_file_id, section_key, section_value, revision, inspection_session_id, changed_path)
+      VALUES ($1, $2, '{}'::jsonb, 1, NULL, ARRAY[$2]::text[])`;
+    for (const [sql, constraint] of [
+      [insertSection, "custom_appraisal_sections_section_key_check"],
+      [insertHistory, "custom_appraisal_section_history_section_key_check"],
+    ]) {
+      await client.query(sql, [assignmentFileId, "report.property_characteristics"]);
+      await client.query("SAVEPOINT invalid_subject_receipt_key");
+      try {
+        await assert.rejects(client.query(sql, [assignmentFileId, "report.unsupported_fixture_key"]),
+          error => error.code === "23514" && error.constraint === constraint);
+      } finally {
+        await client.query("ROLLBACK TO SAVEPOINT invalid_subject_receipt_key");
+        await client.query("RELEASE SAVEPOINT invalid_subject_receipt_key");
+      }
+    }
+    const publicAccount = await client.query("SELECT address FROM core.accounts WHERE account_id = $1", [accountId]);
+    assert.equal(publicAccount.rows[0].address, "100 Example Dr", "report application must not edit public account data");
+  } finally {
+    if (client) {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
+    await pool.end();
+  }
+});
 
 test("scheduled legacy migration leaves signed Custom document bytes and metadata untouched", {
   skip: !databaseUrl,

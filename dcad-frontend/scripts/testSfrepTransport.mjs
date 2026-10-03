@@ -28,6 +28,53 @@ const formatted = (sourceField, fieldId, sourceValue, value, formattingRule = 'u
   provenance: { kind: 'reviewed_document', sourceField, documentId: 21, candidateId: null, documentType: 'other' },
 });
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
+const savedPreview = () => ({ ...preview(), savedReport: { assignmentFileId: 12, assignmentRevision: 3, subjectRevision: 2, sourceDocumentIds: [21, 22] },
+  fields: [{ sourceField: 'borrower_name', fieldId: 'BorrowerName', value: 'Saved Borrower', type: 'TextField', documentId: null, candidateId: null,
+    provenance: { kind: 'saved_report', sourceField: 'borrower_name', documentId: null, candidateId: null,
+      assignmentFileId: 12, sectionKey: 'report.subject_identification', revision: 2, origin: 'reviewed_document', sourceDocumentId: 22, sourceCandidateId: 88 } }] });
+
+test('saved HomeNode values validate with scoped revisions and source evidence independent of PDF addenda selection', () => {
+  const result = checkSfrepPreview(savedPreview(), [21]);
+  assert.match(sfrepProvenanceText(result.fields[0]), /Applied from reviewed document 22.*Subject revision 2/);
+  const manual = savedPreview();
+  manual.fields[0].provenance.origin = 'appraiser_edit';
+  delete manual.fields[0].provenance.sourceDocumentId;
+  delete manual.fields[0].provenance.sourceCandidateId;
+  assert.match(sfrepProvenanceText(checkSfrepPreview(manual).fields[0]), /Saved appraiser entry\/correction/);
+});
+
+test('saved report provenance rejects mixed revisions, scopes and invented document proof', () => {
+  for (const change of [
+    value => { delete value.savedReport; },
+    value => { value.fields[0].provenance.assignmentFileId = 13; },
+    value => { value.fields[0].provenance.revision = 3; },
+    value => { value.fields[0].provenance.sourceDocumentId = 99; },
+    value => { value.fields[0].provenance.origin = 'appraiser_edit'; },
+    value => { value.fields[0].provenance.sectionKey = 'other_file'; },
+    value => { value.savedReport.subjectRevision = -1; },
+    value => { value.savedReport.sourceDocumentIds = [21, 21]; },
+    value => { value.fields[0].provenance.sql = 'untrusted'; },
+  ]) {
+    const value = savedPreview(); change(value);
+    assert.throws(() => checkSfrepPreview(value, [21]), /invalid|does not match/);
+  }
+});
+
+test('saved value formatting is recomputed rather than trusted', () => {
+  const value = savedPreview();
+  Object.assign(value.fields[0], { sourceField: 'tax_amount', fieldId: 'RealEstateTaxAmount', sourceValue: '1234.50', value: '1235', formattingRule: 'uad_whole_dollars_half_up' });
+  value.fields[0].provenance.sourceField = 'tax_amount';
+  assert.match(sfrepProvenanceText(checkSfrepPreview(value).fields[0]), /Original saved value.*1234\.50/);
+  value.fields[0].value = '1234';
+  assert.throws(() => checkSfrepPreview(value), /invalid/);
+});
+
+test('transport rejects an otherwise coherent saved preview from another assignment', async () => {
+  const value = savedPreview();
+  value.savedReport.assignmentFileId = value.fields[0].provenance.assignmentFileId = 13;
+  const h = harness(async () => json(value));
+  await assert.rejects(h.api.preview(selection, h.io), /selected HomeNode file/);
+});
 function harness(request = async () => json(preview())) {
   const calls = [], controller = new AbortController();
   const api = createSfrepTransport({ urlFor: path => `https://example.invalid${path}`, request: (url, init) => { calls.push({ url, init }); return request(url, init); } });
@@ -157,6 +204,16 @@ test('formatted tax, HOA, and legal values disclose their exact reviewed source 
   assert.equal(accepted.fields[0].sourceValue, sourceValue);
   assert.ok(sfrepProvenanceText(item).includes(JSON.stringify(sourceValue)));
   assert.match(sfrepProvenanceText(item), /line breaks and tabs replaced by spaces/);
+});
+
+test('owner line display preserves and verifies the entire original owner identity', () => {
+  const source = 'EXAMPLE OWNER ONE &\r\nEXAMPLE OWNER TWO';
+  const item = formatted('owner_name', 'OwnerName', source, 'EXAMPLE OWNER ONE & EXAMPLE OWNER TWO', 'single_line_owner_name');
+  assert.equal(checkSfrepPreview({ ...preview(), fields: [item] }, [21]).fields[0].sourceValue, source);
+  for (const value of ['EXAMPLE OWNER ONE', source]) {
+    assert.throws(() => checkSfrepPreview({ ...preview(), fields: [{ ...item, value }] }, [21]), /invalid/);
+  }
+  assert.throws(() => checkSfrepPreview({ ...preview(), fields: [{ ...item, fieldId: 'BorrowerName' }] }, [21]), /invalid/);
 });
 
 test('formatting metadata is paired, rule-specific, source-bound, and recomputed before accepting a preview', () => {

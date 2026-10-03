@@ -85,7 +85,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       <button type="button" autoFocus className={secondary} onClick={onClose}>Close</button>
     </header>
     <div className="space-y-4 p-5 text-sm" aria-busy={Boolean(busy)}>
-      <p>Choose source documents, then review the mapped report fields before downloading. Document-derived fields require appraiser confirmation; any user-requested defaults are identified separately. This export does not support UAD 3.6.</p>
+      <p>Save and review the HomeNode Subject and Assignment fields, then preview the export. Selected documents supply supporting PDF addenda. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
       <fieldset disabled={Boolean(busy)} className="space-y-2">
         <legend className="mb-2 font-semibold text-violet-950">1. Select documents ({selectedIds.length}/10)</legend>
         <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-violet-200 p-3">
@@ -109,6 +109,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       {error && <p role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-rose-900">{error}</p>}
       {preview && <section className="space-y-3 rounded-xl border border-violet-200 p-4" aria-label="SFREP export preview">
         <h4 className="font-semibold text-violet-950">2. Review export</h4>
+        {preview.savedReport && <p className="text-xs text-slate-600">Saved HomeNode file {preview.savedReport.assignmentFileId} · Subject revision {preview.savedReport.subjectRevision} · Assignment revision {preview.savedReport.assignmentRevision}</p>}
         <p>{preview.fields.length} mapped field(s) · {includeDocuments ? preview.documents.length : 0} original PDF(s) included</p>
         <section aria-label="Effective-date context" className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
           <h5 className="font-semibold">Effective-date context</h5>
@@ -145,7 +146,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
           <tbody>{preview.fields.map((field, index) => <tr key={`${field.fieldId}:${index}`} className="border-b border-slate-100 align-top">
             <th scope="row" className="p-2 font-medium">{field.sourceField.replace(/_/g, ' ')}<span className="block text-slate-500">{field.fieldId}</span></th>
             <td className="max-w-sm whitespace-pre-wrap break-words p-2">{field.value}</td>
-            <td className="max-w-sm break-words p-2" title={field.candidateId !== null ? `Candidate ${field.candidateId}` : undefined}>{documentTitle(field.documentId)}<span className="mt-1 block text-slate-600">{sfrepProvenanceText(field)}</span></td>
+            <td className="max-w-sm break-words p-2" title={field.candidateId !== null ? `Candidate ${field.candidateId}` : undefined}>{field.provenance.kind === 'saved_report' ? 'Saved HomeNode report' : documentTitle(field.documentId)}<span className="mt-1 block text-slate-600">{sfrepProvenanceText(field)}</span></td>
           </tr>)}</tbody>
         </table></div></details> : <p className="rounded-lg bg-amber-50 p-3 text-amber-900">No supported confirmed fields are available. {includeDocuments ? 'This export contains reference PDFs only.' : 'No report fields or PDFs would be included. Select original PDFs or review document candidates first.'}</p>}
         {([['Conflicting fields (not exported)', preview.conflicts], ['Omitted fields', preview.omitted], ['Warnings', preview.warnings]] as const).map(([label, notices]) => notices.length > 0 && <details key={label} open={label === 'Conflicting fields (not exported)'} className="rounded-lg border border-amber-200 bg-amber-50 p-3">

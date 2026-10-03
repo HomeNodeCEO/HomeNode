@@ -1398,6 +1398,7 @@ test("approving assignment-scoped engagement evidence updates the exact file and
           account_id: "26355500170360000",
           assignment_file_id: 91,
           document_type: "engagement_letter",
+          processing_status: "review_required",
           extraction_summary: {},
         }] };
       }
@@ -1426,6 +1427,19 @@ test("approving assignment-scoped engagement evidence updates the exact file and
       if (/UPDATE app\.assignment_files/.test(sql)) return { rows: [] };
       if (/INSERT INTO app\.assignment_file_history/.test(sql)) return { rows: [] };
       if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (/FROM app\.assignment_documents document/.test(sql)) return { rows: [{
+        id: 47, account_id: "26355500170360000", assignment_file_id: 91,
+        document_type: "engagement_letter", processing_status: "review_required",
+        subject_context: { accountId: "26355500170360000", address: "100 Example Dr", city: "Garland", postalCode: "75041" },
+        candidates: [{ ...candidate, review_status: "confirmed", confirmed_value: candidate.normalized_value },
+          { id: 611, document_id: 47, field_key: "subject_street_address", confirmed_value: "100 Example Dr", review_status: "confirmed" },
+          { id: 612, document_id: 47, field_key: "subject_zip", confirmed_value: "75041", review_status: "confirmed" }],
+      }] };
+      if (/FROM app\.custom_appraisal_sections/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app\.custom_appraisal_sections/.test(sql)) return { rows: [{
+        section_key: values[1], section_value: JSON.parse(values[2]), revision: 1, updated_at: "2026-10-02T00:00:00Z",
+      }] };
+      if (/INSERT INTO app\.custom_appraisal_section_history/.test(sql)) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },
     release() {},

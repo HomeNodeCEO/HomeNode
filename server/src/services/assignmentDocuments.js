@@ -7,7 +7,7 @@ import {
   normalizeDocumentType,
 } from "./documentIntelligence.js";
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
-import { validateAssignmentDetails } from "../util/reportManualValues.js";
+import { persistCustomSubjectApplication } from "./customSubjectApplication.js";
 import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
 import { canonicalCustomAppraisalFileName } from "./customAppraisalWorkfiles.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
@@ -125,7 +125,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
   if (!assignmentFileId) return;
   const { rows: assignments } = await client.query(
     `SELECT id, file_number FROM app.assignment_files
-      WHERE id = $1 AND account_id = $2`,
+      WHERE id = $1 AND account_id = $2 FOR UPDATE`,
     [assignmentFileId, document.account_id],
   );
   if (!assignments[0]) throw new Error("assignment_file_not_found");
@@ -151,7 +151,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
 }
 
 async function lockMutableAssignmentDocument(client, documentId) {
-  // Upload takes the Custom workfile lock before updating an existing document.
+  // Assignment -> workfile -> document -> sections is the shared write order.
   // Read the immutable document scope first, then take locks in that same order
   // so review/deletion cannot deadlock with a concurrent duplicate upload.
   const { rows: scopedRows } = await client.query(
@@ -530,6 +530,7 @@ async function persistConfirmedDocumentCandidates(client, {
   sourceDocument,
   candidates,
   reviewerName,
+  actorUserId = null,
 }) {
   const assignmentFileId = positiveInteger(sourceDocument?.assignment_file_id);
   if (!assignmentFileId) return { applied: false, reason: "document_not_assignment_scoped" };
@@ -549,30 +550,12 @@ async function persistConfirmedDocumentCandidates(client, {
   if (assignmentFile.workfile_status === "signed") {
     return { applied: false, reason: "custom_appraisal_workfile_signed" };
   }
-  const merged = assignmentDetailsFromConfirmedDocument(
-    assignmentFile.assignment_details,
-    candidates,
-    sourceDocument.document_type,
-  );
-  if (!merged.changed) {
-    return { applied: false, reason: "assignment_fields_unchanged", revision: Number(assignmentFile.revision) };
-  }
-  validateAssignmentDetails(merged.assignmentDetails, { requireCompletion: false });
-  const revision = Number(assignmentFile.revision) + 1;
-  await client.query(
-    `UPDATE app.assignment_files
-        SET assignment_details = $1::jsonb, reviewer = $2, revision = $3, updated_at = now()
-      WHERE id = $4`,
-    [JSON.stringify(merged.assignmentDetails), reviewerName, revision, assignmentFileId],
-  );
-  await client.query(
-    `INSERT INTO app.assignment_file_history (
-       assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
-     ) VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-    [assignmentFileId, assignmentFile.account_id, assignmentFile.file_number,
-      JSON.stringify(merged.assignmentDetails), reviewerName, revision],
-  );
-  return { applied: true, revision, assignment_details: merged.assignmentDetails };
+  const legacy = sourceDocument.document_type === "purchase_contract"
+    ? assignmentDetailsFromConfirmedDocument(assignmentFile.assignment_details, candidates, sourceDocument.document_type)
+    : null;
+  return persistCustomSubjectApplication(client, { assignmentFile, sourceDocument,
+    legacyAssignmentDetails: legacy?.changed ? legacy.assignmentDetails : null,
+    actorUserId, reviewer: reviewerName });
 }
 
 function publicDocument(row, candidates = undefined) {
@@ -1722,6 +1705,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   reviewStatus,
   confirmedValue,
   reviewer,
+  actorUserId = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const document = positiveInteger(documentId);
@@ -1781,7 +1765,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
       );
     }
     let assignmentApplication = { applied: false, reason: "candidate_rejected" };
-    if (status === "confirmed") {
+    if (status === "confirmed" || positiveInteger(sourceDocument.assignment_file_id)) {
       const { rows: documentCandidates } = await client.query(
         `SELECT * FROM app.assignment_document_field_candidates
          WHERE document_id = $1
@@ -1792,6 +1776,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
         sourceDocument,
         candidates: documentCandidates,
         reviewerName,
+        actorUserId,
       });
     }
     await client.query("COMMIT");
@@ -1854,6 +1839,7 @@ async function confirmSuggestedAssignmentDocumentCandidates(client, {
 export async function confirmAssignmentDocumentCandidates(pool, {
   documentId,
   reviewer,
+  actorUserId = null,
   candidateValues = {},
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
@@ -1914,6 +1900,7 @@ export async function confirmAssignmentDocumentCandidates(pool, {
       sourceDocument,
       candidates: [...confirmedById.values()],
       reviewerName,
+      actorUserId,
     });
     await client.query(
       `UPDATE app.assignment_documents
@@ -1996,6 +1983,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       sourceDocument,
       candidates: [...confirmedById.values()],
       reviewerName,
+      actorUserId,
     });
     const acknowledgedAt = new Date().toISOString();
     const confirmedCandidateIds = [

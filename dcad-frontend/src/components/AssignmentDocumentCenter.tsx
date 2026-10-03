@@ -2,6 +2,7 @@ import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useStat
 
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import SfrepExportDialog from '@/features/sfrep/SfrepExportDialog';
+import { documentApplicationMessage } from '@/lib/propertyReportDocumentApplication';
 import AssignmentDocumentUploadQueue from './documents/AssignmentDocumentUploadQueue';
 import {
   confirmAllAssignmentDocumentCandidates,
@@ -598,9 +599,7 @@ export default function AssignmentDocumentCenter({
       if (reviewStatus === 'rejected') {
         setMessage('Candidate rejected; the source PDF remains unchanged.');
       } else if (!isUad) {
-        setMessage(customApplication?.applied
-          ? 'Candidate confirmed and synchronized with Assignment Details and Contract Analysis.'
-          : 'Candidate confirmed with its exact source page retained.');
+        setMessage(documentApplicationMessage('Candidate confirmed with its exact source page retained.', customApplication));
       }
     } catch (error) {
       if (!reviewOperationIsCurrent(operation)) return;
@@ -820,10 +819,10 @@ export default function AssignmentDocumentCenter({
       refreshCandidateValues(document);
       await loadDocuments(operation);
       if (!reviewCanContinue(operation)) return;
-      setMessage(
-        `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved`
-          + ' and synchronized with Assignment Details and Contract Analysis.',
-      );
+      setMessage(documentApplicationMessage(
+        `${suggestedCandidates.length} extracted field${suggestedCandidates.length === 1 ? '' : 's'} approved.`,
+        response.assignmentApplication,
+      ));
     } catch (error) {
       if (!reviewOperationIsCurrent(operation)) return;
       const errorMessage = error instanceof Error ? error.message : 'The extracted fields could not be approved.';

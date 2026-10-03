@@ -495,6 +495,7 @@ test("document review routes preserve exact appraiser decisions", async (context
   const serviceInput = {
     documentId: "5",
     reviewer: "Appraiser One",
+    actorUserId: "appraiser-1",
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
@@ -508,6 +509,7 @@ test("document review routes preserve exact appraiser decisions", async (context
       reviewStatus: "confirmed",
       confirmedValue: "Client",
       reviewer: "Appraiser One",
+      actorUserId: "appraiser-1",
     }],
   ]);
 });

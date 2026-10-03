@@ -248,6 +248,20 @@ test("legal-description display folds line controls without truncating or changi
   assert.equal(unchanged.warnings.some((warning) => /line breaks\/tabs/.test(warning)), false);
 });
 
+test("owner line folding retains both names and the exact source without changing conflict decisions", () => {
+  const source = "EXAMPLE OWNER ONE &\r\nEXAMPLE OWNER TWO";
+  const documents = [doc(1, [candidate("owner_name", source)])];
+  const result = buildSfrepReportExport({ documents });
+  assert.equal(result.fields[0].value, "EXAMPLE OWNER ONE & EXAMPLE OWNER TWO");
+  assert.equal(result.fields[0].sourceValue, source);
+  assert.equal(result.fields[0].formattingRule, "single_line_owner_name");
+  assert.equal(documents[0].candidates[0].confirmed_value, source);
+  assert.match(result.warnings.join("\n"), /OwnerName.*line breaks\/tabs.*not truncated/);
+  const conflict = buildSfrepReportExport({ documents: [...documents, doc(2, [candidate("record_owner_name", "EXAMPLE OWNER ONE & EXAMPLE OWNER TWO")])] });
+  assert.equal(conflict.fields.length, 0);
+  assert.equal(conflict.conflicts.length, 1);
+});
+
 test("legal line folding cannot merge distinct reviewed legal descriptions before conflict detection", () => {
   const documents = [doc(1, [candidate("legal_description", "EXAMPLE PARK 4\nBLK 17 LT 36")]), doc(2, [candidate("legal_description", "EXAMPLE PARK 4 BLK 17 LT 36")])];
   const result = buildSfrepReportExport({ documents });

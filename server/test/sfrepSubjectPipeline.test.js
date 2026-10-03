@@ -128,7 +128,9 @@ test('printed CAD, tabular Property Details, and Matrix PDFs populate the same r
   const fields = Object.fromEntries(preview.fields.map(field => [field.fieldId, field.value]));
   assert.equal(fields.StreetAddress, '100 Example Dr');
   assert.equal(fields.ZipCode, '75041-1234');
-  assert.equal(fields.OwnerName, 'MORGAN PUBLICRECORD &\nALEX PUBLICRECORD');
+  assert.equal(fields.OwnerName, 'MORGAN PUBLICRECORD & ALEX PUBLICRECORD');
+  assert.equal(preview.fields.find(field => field.fieldId === 'OwnerName').sourceValue, 'MORGAN PUBLICRECORD &\nALEX PUBLICRECORD');
+  assert.equal(preview.fields.find(field => field.fieldId === 'OwnerName').formattingRule, 'single_line_owner_name');
   assert.equal(fields.AssessorsParcelNumber, '00001234567890000');
   assert.equal(fields.County, 'Dallas');
   assert.equal(fields.NeighborhoodName, 'EXAMPLE PARK 4');

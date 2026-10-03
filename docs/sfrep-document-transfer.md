@@ -1,7 +1,8 @@
 # SFREP document and report-field transfer
 
 The Custom Appraisal Document Evidence Center has an **Export to SFREP** action.
-Choose up to ten documents, preview their confirmed fields, then download an RPTI
+Review documents to populate and save the HomeNode Subject and Assignment fields.
+Then choose up to ten supporting documents, preview the saved fields, and download an RPTI
 package. Appraise-It Pro can open the package as a new report or import it into an
 existing compatible report. Original PDFs are included as named PDF addenda when
 the source-copy option is selected. This can include engagement letters, contracts,
@@ -14,8 +15,9 @@ The first field profile is the legacy FNMA 1004 (09/2011),
 profiles; this package must not be presented as a UAD 3.6 delivery package.
 No SFREP runtime, desktop client, or SDK is required on the HomeNode server.
 
-`sfrepReportExport.js` is a pure mapper. Each mapped value must be individually
-confirmed and belong to an extraction ready for review. Its field IDs were checked
+`sfrepReportExport.js` is a pure mapper. Document-derived values must be individually
+confirmed and belong to an extraction ready for review; saved appraiser corrections
+are separately identified and take precedence. Its field IDs were checked
 against the installed Appraise-It Pro 3.7.9 conversion dictionary and SFREP's sample.
 The page-one Subject profile extracts address components, borrower, public-record
 owner, county, APN, tax year and taxes, CAD subdivision/legal description,
@@ -78,9 +80,10 @@ For legacy UAD, tax and HOA amounts export in whole dollars using half-up roundi
 value and formatting rule remain visible in the preview and the source evidence
 is unchanged. Conflicts are evaluated before rounding, so different cents values
 cannot become apparent agreement merely because they round to the same dollar.
-Legal-description line breaks and tabs are folded into spaces for the single-line
-destination, with the original text retained. No legal text is truncated; unusually
-long descriptions still need a native layout review. Contract prices and other
+Legal-description and owner-name line breaks and tabs are folded into spaces for
+their single-line destinations, with the original text retained. Neither recorded
+description nor owner identity is truncated; unusually long text still needs a
+native layout review. Contract prices and other
 amount mappings are not changed by these Subject-specific formatting rules.
 
 The exporter emits no blank field values: empty, unknown, and unconfirmed values
@@ -97,6 +100,44 @@ rehab, and DSCR export the Other checkbox and description as one coherent choice
 Conflicting purposes suppress both parts until resolved.
 
 ## Server boundary
+
+### Saved report ownership
+
+Custom document confirmation writes the reviewed Subject projection to
+`app.custom_appraisal_sections` under `report.subject_identification`. Existing
+`assignment_files.assignment_details` owns lender/client, assignment purpose and
+PUD/HOA choices. These are the same values displayed/edited in Subject and Assignment;
+export does not re-populate cleared report fields directly from older PDFs or CAD.
+The `urar_subject` object holds borrower, assessor parcel number, tax year/amount,
+rights and the prior-12-month listing answer. The account identity itself is not edited.
+
+`report.subject_evidence` is server-owned receipt metadata, stored separately from
+editable report values. The manual-section route and validator cannot write it.
+The additive `20261028_custom_subject_evidence.sql` permits this key in both section
+and section-history CHECK constraints, retaining every prior key. It is registered
+in the shared application migration runner; do not deploy writers before migrations.
+
+Candidate review, Subject, Assignment, receipts and history commit in one transaction
+under assignment -> workfile -> document -> section locks. Locked/signed workfiles
+remain protected. Existing appraiser values and explicit saved Subject blanks are
+preserved. Missing Subject fields and initial empty Assignment draft defaults can
+fill from reviewed evidence. Contract terms retain their existing path but cannot
+override the engagement/appraiser's lender or purpose.
+
+Export reads the saved values and revisions plus all current same-file source
+records in one SQL snapshot (50 documents / 200 candidates each / 8 MiB maximum).
+Every automatic value is re-proved against its current reviewed source; changed,
+rejected, reprocessing, deleted or conflicting evidence cannot authorize an old
+receipt. Stale values remain in HomeNode for review but are omitted from export.
+Saved manual corrections are identified as appraiser edits, not source-PDF facts.
+Unchanged receipts cannot authorize derived listing answers after the effective
+date changes. The preview digest binds the saved revisions and the source snapshot.
+
+Document-review responses hydrate only the matching active account/file and newer
+section revisions. Manual drafts, navigation, read-only transitions and queued state
+updates have independent lifecycle guards. Unsaved edits are not exported; save
+them in HomeNode and preview again. Selecting PDF addenda does not choose a different
+canonical report value or bypass unresolved source conflicts.
 
 `POST /api/accounts/:id/sfrep/preview` and `/sfrep/export` use authenticated Custom
 Appraisal workflow and exact assignment read access. Their input is
@@ -248,6 +289,34 @@ tax value and its rounding rule. Private local seven-PDF packaging/schema checks
 passed again with byte-identical originals; nothing was uploaded or applied to a
 production appraisal. Final-head remote checks are required after publication.
 
+### Actual-document saved-Subject QA (October 2, 2026)
+
+The seven user-provided test PDFs were re-extracted locally, given explicitly
+simulated QA confirmations, projected into the saved Subject/Assignment model,
+serialized/reloaded, and exported through the canonical saved-report path. This
+produced 17 fields without conflicts and preserved all seven original byte streams.
+The resulting RPTI validates against the official AIXML 1.5 schema. No production
+review state or appraisal file was changed; simulated confirmations are not
+appraiser approval, and this local harness is not a live PostgreSQL test.
+
+The actual-document package opened in a separate Appraise-It Pro 3.7.9 report.
+Street/locality, borrower, public-record owner, APN, tax year/amount, neighborhood,
+legal description, lender/address, Purchase, Fee Simple and offered-for-sale Yes
+were visually inspected. The initial owner-name line break caused a native Overflow
+warning. The subsequent single-line display correction retained both names and
+the exact original source, and a fresh import displayed the complete owner text
+without that overflow warning. Seven named original-PDF addenda were present.
+The corrected report was saved as a separate private local QA `.rptx`.
+
+Independent review also reproduced and fixed two canonical-boundary errors:
+the `property_type=PUD` alias can no longer override a cleared/negative saved PUD,
+and saved street text cannot refill or conflict with independently edited locality
+fields. Explicit saved owner parties and intentional Subject blanks now follow
+the same precedence in the frontend and exporter. A rollback-only PostgreSQL
+regression covers the new receipt key, actual writer SQL, section/history/assignment
+rows, prior allowed keys, and unknown-key denial. It runs in database CI and skips
+locally when no test database is configured.
+
 ### Remaining manual checks
 
 Before describing this as fully end-to-end verified, complete these checks in
@@ -282,7 +351,7 @@ The feature and coordinated document-preview/batch-upload integration remain on
 the feature branch until the final combined head passes protected checks. The
 Python dependency repair pins `pypdf==6.19.0` (the isolated change coordinated from
 security PR #1084); it does not import that PR's separate mobile Forge patch or
-approve an audit exception. The mobile Forge advisory still requires resolution
+approve an audit exception. The mobile Forge and braces advisories still require resolution
 under the existing release process. Do not disable audits or claim production
 availability while that gate fails.
 

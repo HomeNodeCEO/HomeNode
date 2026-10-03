@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
+import * as documentApplications from '../src/lib/propertyReportDocumentApplication.ts';
 
 const source = new URL('../src/components/AssignmentDocumentCenter.tsx', import.meta.url);
 const ACCOUNT = 'SYNTHETIC-ACCOUNT';
@@ -94,6 +95,7 @@ function harness({ props: initialProps = {}, api: overrides = {}, presentation =
     '@/features/sfrep/SfrepExportDialog': { default: 'SfrepExportDialog', __esModule: true },
     './documents/AssignmentDocumentUploadQueue': { default: 'AssignmentDocumentUploadQueue', __esModule: true },
     '@/lib/api': api,
+    '@/lib/propertyReportDocumentApplication': documentApplications,
     '@/features/uad/api': api,
     '@/lib/propertyReportPresentation': {
       assignmentDocumentConfirmationBlocked: () => false,
@@ -184,6 +186,26 @@ test('upload queue and SFREP export coexist with exact assignment, evidence, and
   h.sfrep.props.onClose(); h.flush();
   assert.equal(h.sfrep, null); assert.equal(h.queue.key, queueKey);
 });
+
+for (const applied of [true, false]) {
+  test(`Custom approve-all reports ${applied ? 'saved supported fields' : 'evidence-only approval'} and surfaces partial-application warnings`, async t => {
+    const applications = [];
+    const metadata = document(7, { candidates: [candidate(701, 'Reviewed county')] });
+    const application = { applied, account_id: ACCOUNT, assignment_file_id: 14,
+      custom_appraisal_sections: { 'report.subject_identification': { value: { property_location: { county: 'Reviewed county' } }, revision: 1 } },
+      warnings: ['Borrower conflict requires review.', 'Tax amount was not applied.'] };
+    const h = harness({ props: { onCustomAssignmentApplied: value => applications.push(value) }, documents: [metadata], api: {
+      getAssignmentDocument: async () => metadata,
+      confirmAllAssignmentDocumentCandidates: async () => ({ document: metadata, assignmentApplication: application }),
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Approve All (1)'); await h.settle();
+    assert.equal(applications[0], application);
+    assert.match(h.text, /1 extracted field approved/);
+    assert.match(h.text, /Borrower conflict requires review.*Tax amount was not applied/);
+    assert.doesNotMatch(h.text, /and synchronized with Assignment Details and Contract Analysis/);
+    assert.match(h.text, applied ? /Supported report fields were saved/ : /report fields may be unchanged/);
+  });
+}
 
 test('locked Custom assignment keeps read-only SFREP export while disabling document mutations', async t => {
   const h = harness({ props: { readOnly: true }, documents: [document(7)] });

@@ -3,6 +3,7 @@ import { loadAssignmentDocumentContent } from './assignmentDocuments.js';
 import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
 import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExport.js';
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
+import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
 const digest = value => createHash('sha256').update(value).digest('hex');
@@ -35,11 +36,20 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
              'city', subject.city, 'postalCode', subject.postal_code,
              'effectiveDate', appraisal_case.effective_date::text,
              'inspectionDate', appraisal_case.inspection_date::text) AS subject_context,
+           jsonb_build_object('accountId', assignment.account_id, 'assignmentFileId', assignment.id,
+             'assignmentRevision', assignment.revision, 'assignmentDetails', assignment.assignment_details,
+             'subject', jsonb_build_object('value', saved_subject.section_value, 'revision', saved_subject.revision),
+             'evidence', jsonb_build_object('value', saved_evidence.section_value, 'revision', saved_evidence.revision),
+             'documents', COALESCE(all_sources.documents, '[]'::json)) AS saved_report,
            COALESCE(evidence.candidates, '[]'::json) AS candidates
       FROM app.assignment_documents document
       JOIN app.assignment_files assignment
         ON assignment.id = document.assignment_file_id AND assignment.account_id = document.account_id
       JOIN core.accounts subject ON subject.account_id = assignment.account_id
+      LEFT JOIN app.custom_appraisal_sections saved_subject
+        ON saved_subject.assignment_file_id = assignment.id AND saved_subject.section_key = 'report.subject_identification'
+      LEFT JOIN app.custom_appraisal_sections saved_evidence
+        ON saved_evidence.assignment_file_id = assignment.id AND saved_evidence.section_key = 'report.subject_evidence'
       LEFT JOIN app.report_files report_file
         ON report_file.custom_assignment_file_id = assignment.id
        AND report_file.account_id = assignment.account_id
@@ -49,6 +59,21 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         ON appraisal_case.id = report_file.appraisal_case_id
        AND appraisal_case.account_id = assignment.account_id
        AND appraisal_case.organization_id IS NOT DISTINCT FROM assignment.organization_id
+      LEFT JOIN LATERAL (
+        SELECT json_agg(source ORDER BY source.id) AS documents FROM (
+          SELECT d.id, d.account_id, d.assignment_file_id, d.document_type, d.processing_status,
+                 d.extraction_summary, (d.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
+                 COALESCE((SELECT json_agg(c ORDER BY c.id) FROM (
+                   SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
+                          review_status, page_number, reviewer, reviewed_at
+                     FROM app.assignment_document_field_candidates WHERE document_id = d.id ORDER BY id LIMIT $4
+                 ) c), '[]'::json) AS candidates
+            FROM app.assignment_documents d
+           WHERE d.account_id = assignment.account_id AND d.assignment_file_id = assignment.id
+             AND d.uad_workfile_id IS NULL AND d.tax_protest_file_id IS NULL
+           ORDER BY d.id LIMIT 51
+        ) source
+      ) all_sources ON true
       LEFT JOIN LATERAL (
         SELECT json_agg(candidate ORDER BY candidate.id) AS candidates FROM (
           SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
@@ -73,6 +98,24 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
       || document.content_type !== 'application/pdf' || !/^[a-f0-9]{64}$/.test(document.checksum_sha256)) fail('sfrep_document_integrity_failed');
     document.property_role = sfrepDocumentPropertyRole(document);
   }
+  // One statement binds canonical report revisions, current evidence, dates and
+  // selected PDF metadata. Keep its shared report snapshot once, not per PDF.
+  const saved = documents[0]?.saved_report;
+  if (!saved) fail('sfrep_invalid_saved_report');
+  {
+    if (!Array.isArray(saved.documents) || saved.documents.length > 50) fail('sfrep_evidence_limit');
+    for (const source of saved.documents) {
+      source.id = Number(source.id);
+      source.assignment_file_id = Number(source.assignment_file_id);
+      if (source.account_id !== accountId || source.assignment_file_id !== assignmentFileId
+        || !Number.isSafeInteger(source.id) || source.id < 1) fail('sfrep_document_not_found');
+      if (!Array.isArray(source.candidates) || source.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
+      source.subject_context = documents[0].subject_context;
+      source.property_role = sfrepDocumentPropertyRole(source);
+    }
+    for (const document of documents) delete document.saved_report;
+    documents[0].saved_report = saved;
+  }
   if (Buffer.byteLength(JSON.stringify(documents)) > 8 * 1024 * 1024) fail('sfrep_evidence_limit');
   return documents;
 }
@@ -83,12 +126,21 @@ export function previewSfrepDocuments(documents, input) {
   const pdfAddenda = input.includeDocuments ? documents.map(document => ({
     documentId: document.id, fileName: `document-${document.id}.pdf`, title: document.title || document.file_name,
   })) : [];
-  const subjectContext = sfrepSubjectContext(documents);
-  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext });
+  const saved = documents[0]?.saved_report;
+  const subjectContext = sfrepSubjectContext(saved?.documents || documents);
+  const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
+  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext,
+    ...(canonical ? { savedReportFields: canonical.fields } : {}) });
+  if (canonical) {
+    mapped.warnings.push(...canonical.warnings);
+    mapped.knownMissing.push(...canonical.knownMissing);
+  }
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
     documents, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
   return { ...mapped, preview_digest: previewDigest, filename: `HomeNode-SFREP-file-${input.assignmentFileId}.rpti`,
+    ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
+      subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) =>
       ({ id, title, file_name, file_size_bytes, processing_status })) };
 }

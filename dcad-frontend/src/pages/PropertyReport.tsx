@@ -1,7 +1,7 @@
 import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "react-router-dom";
-import { customAssignmentHref, parseCustomAssignmentFileId } from "@/lib/customAssignmentNavigation";
+import { customAssignmentFileMatches, customAssignmentHref, parseCustomAssignmentFileId } from "@/lib/customAssignmentNavigation";
 import {
   editorCredentialForRequest,
   forgetEditorCredential,
@@ -66,6 +66,7 @@ import Workfile from "@/components/AppraisalWorkfileLauncher";
 import PreviousAppraisalFilesContent from "@/components/PreviousAppraisalFiles";
 import ReportTypeChooser from "@/components/ReportTypeChooser";
 import ReportSectionEditor from "@/components/ReportSectionEditor";
+import PropertyReportSubjectSummary from "@/components/PropertyReportSubjectSummary";
 import {
   CheckboxChoice,
   SummaryField,
@@ -111,11 +112,9 @@ type SubjectCarouselPhoto = { id:string; url:string; label:string; detail:string
 import {
   displayValue,
   formatBaths,
-  formatCensusTract,
   formatDate,
   formatMoney,
   formatNumber,
-  formatOwnershipPercent,
   formatReportedBoolean,
   hasValue,
   listingTimelineRows,
@@ -142,6 +141,8 @@ import {
   type CensusProfilesLoaded,
 } from "@/hooks/useCensusProfile";
 import { useZoningEvidence } from "@/hooks/useZoningEvidence";
+import { documentApplicationWarnings, mergeDocumentApplication, preserveNewerReportSections } from "@/lib/propertyReportDocumentApplication";
+import { propertyReportOwnerPresentation } from "@/lib/propertyReportSubject";
 
 type AssignmentDetails = AssignmentDetailsPayload;
 function AddressHero({
@@ -338,6 +339,7 @@ function AddressHero({
   const {
     detail: scopedDetail,
     editingSection,
+    editingSessionKey,
     savingSection,
     editSection,
     cancelEditingSection,
@@ -351,6 +353,8 @@ function AddressHero({
     getEditorKey: editorKeyForSave,
     onReload,
     onCredentialRejected: forgetEditorCredential,
+    readOnly: activeAssignmentFile?.workfile?.status === "signed" || activeAssignmentFile?.workfile?.status === "archived",
+    selectionGenerationRef,
   });
   const detail = scopedDetail as DcadDetail | null;
   useEffect(() => {
@@ -522,22 +526,10 @@ function AddressHero({
     onCredentialRejected: forgetEditorCredential,
   });
   const neighborhood = displayValue(detail?.property_location?.neighborhood);
-  const subdivision = displayValue(detail?.property_location?.subdivision);
   const county = displayValue(detail?.property_location?.county);
-  const ownerParties = (detail?.owner?.parties || []).filter((party) =>
-    hasValue(party.owner_name),
-  );
-  const ownerName = displayValue(
-    ownerParties.length
-      ? ownerParties.map((party) => party.owner_name).join(" / ")
-      : detail?.owner?.owner_name,
-  );
-  const ownerMailing = displayValue(detail?.owner?.mailing_address);
-  const legalLines = detail?.legal_description?.lines?.filter((line) => Boolean(line?.trim())) || [];
-  const legalDescription = legalLines.length
-    ? legalLines.join("\n")
-    : "No legal description is available for this parcel.";
-  const deedTransferDate = detail?.legal_description?.deed_transfer_date;
+  const savedSubject = activeAssignmentFile?.custom_appraisal_sections?.["report.subject_identification"]?.value;
+  const { ownerParties, ownerName: reportedOwnerName } = propertyReportOwnerPresentation(detail?.owner, savedSubject?.owner);
+  const ownerName = displayValue(reportedOwnerName);
   const assignmentPropertyCharacteristics = activeAssignmentFile
     ?.custom_appraisal_sections?.["report.property_characteristics"]?.value;
   const assignmentMainImprovement = assignmentPropertyCharacteristics?.main_improvement;
@@ -832,8 +824,25 @@ function AddressHero({
 
   const applyConfirmedDocumentApplication = useCallback((application: AssignmentDocumentApplication) => {
     const currentFile = activeAssignmentFileRef.current;
-    if (!currentFile || !application.assignment_details || !application.revision) return;
-    const remoteDraft = assignmentDraftFromDetail(application.assignment_details);
+    if (!currentFile || !customAssignmentFileMatches(currentFile, accountId || "")) return;
+    const merged = mergeDocumentApplication(currentFile, application);
+    if (!merged) return;
+    const updatedFile = merged.file;
+    const generation = selectionGenerationRef.current;
+    const canApply = () => selectionGenerationRef.current === generation;
+    activeAssignmentFileRef.current = updatedFile;
+    setActiveAssignmentFile((current) => {
+      if (!canApply() || !current) return current;
+      const next = mergeDocumentApplication(current, application)?.file || current;
+      activeAssignmentFileRef.current = next;
+      return next;
+    });
+    setAssignmentFiles((files) => canApply() ? files.map((file) => mergeDocumentApplication(file, application)?.file || file) : files);
+    if (!merged.assignmentUpdated) {
+      setAssignmentSaveMessage(`Supported Subject fields saved to this appraisal file.${documentApplicationWarnings(application)}`);
+      return;
+    }
+    const remoteDraft = assignmentDraftFromDetail(updatedFile.assignment_details);
     const reconciliation = reconcileCustomAppraisalDraft(
       assignmentSavedDraftRef.current,
       assignmentDraftRef.current,
@@ -841,25 +850,17 @@ function AddressHero({
       assignmentConflictKeysRef.current,
     );
     const nextDraft = cloneEditorValue(reconciliation.rebased);
-    const updatedFile = {
-      ...currentFile,
-      assignment_details: application.assignment_details,
-      revision: application.revision,
-    };
-    activeAssignmentFileRef.current = updatedFile;
     assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
     assignmentDraftRef.current = nextDraft;
     assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
-    setActiveAssignmentFile(updatedFile);
-    setAssignmentFiles((files) => files.map((file) => file.id === updatedFile.id ? updatedFile : file));
     setAssignmentDraft(nextDraft);
     setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
     setAssignmentConflictKeys(reconciliation.conflictKeys);
     setAssignmentAutosaveState(reconciliation.conflictKeys.length ? "conflict" : reconciliation.localChangedKeys.length ? "pending" : "saved");
-    setAssignmentSaveMessage(reconciliation.conflictKeys.length
+    setAssignmentSaveMessage((reconciliation.conflictKeys.length
       ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentConflict
-      : CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentSaved);
-  }, [assignmentConflictKeysRef, setAssignmentConflictKeys, setActiveAssignmentFile, setAssignmentFiles]);
+      : "Supported report fields were saved to this appraisal file.") + documentApplicationWarnings(application));
+  }, [accountId, assignmentConflictKeysRef, setAssignmentConflictKeys, setActiveAssignmentFile, setAssignmentFiles, selectionGenerationRef]);
 
   const importCustomMarketArea = useCallback(() => {
     if (!legacyNeighborhoodAllowedRef.current) return;
@@ -1021,16 +1022,19 @@ function AddressHero({
         if (!selectionIsCurrent()) return true;
         const updatedFile: AppraisalAssignmentFile = {
           ...response.assignment_file,
-          custom_appraisal_sections: fileAtStart.custom_appraisal_sections,
+          custom_appraisal_sections: activeAssignmentFileRef.current?.custom_appraisal_sections || fileAtStart.custom_appraisal_sections,
           mobile_inspection_sketch: fileAtStart.mobile_inspection_sketch,
           mobile_inspection_photos: fileAtStart.mobile_inspection_photos,
         };
         activeAssignmentFileRef.current = updatedFile;
         assignmentSavedDraftRef.current = cloneEditorValue(draftSnapshot);
-        setActiveAssignmentFile(updatedFile);
-        setAssignmentFiles((current) => current.map((file) =>
-          file.id === updatedFile.id ? updatedFile : file
-        ));
+        setActiveAssignmentFile((current) => {
+          if (!selectionIsCurrent() || !current) return current;
+          const next = preserveNewerReportSections(current, updatedFile);
+          activeAssignmentFileRef.current = next;
+          return next;
+        });
+        setAssignmentFiles((current) => selectionIsCurrent() ? current.map((file) => preserveNewerReportSections(file, updatedFile)) : current);
         const newerEditsRemain = !customAppraisalDraftsMatch(
           assignmentDraftRef.current,
           draftSnapshot,
@@ -2256,6 +2260,7 @@ function AddressHero({
               subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
               onCustomAssignmentApplied={applyConfirmedDocumentApplication}
+              readOnly={activeAssignmentFile?.workfile?.status === "signed" || activeAssignmentFile?.workfile?.status === "archived"}
             />
           </Suspense>
 
@@ -2266,94 +2271,11 @@ function AddressHero({
             compact
             className="order-1"
           >
-            <div className="grid grid-cols-1 gap-x-4 gap-y-2.5 sm:grid-cols-2 lg:grid-cols-4">
-              <SummaryField label="Parcel / Account Number" value={displayValue(accountId)} />
-              <SummaryField label="County" value={county} />
-              <SummaryField label="Subdivision" value={subdivision} />
-              <SummaryField
-                label="Ownership Percentage"
-                value={
-                  ownerParties.length ? (
-                    <div className="space-y-0.5">
-                      {ownerParties.map((party, index) => (
-                        <div key={`${party.owner_name}-share-${index}`}>
-                          {formatOwnershipPercent(party.ownership_pct)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : "Share not reported"
-                }
-              />
-              <SummaryField
-                label="Zoning Classification"
-                value={primaryZoningDisplay}
-              />
-              <SummaryField
-                label="Latest Deed Transfer"
-                value={formatDate(deedTransferDate)}
-              />
-              <SummaryField
-                label={ownerParties.length > 1 ? "Owner Names" : "Owner Name"}
-                value={
-                  ownerParties.length ? (
-                    <div className="space-y-0.5">
-                      {ownerParties.map((party, index) => (
-                        <div key={`${party.owner_name}-${index}`}>
-                          {displayValue(party.owner_name)}
-                        </div>
-                      ))}
-                    </div>
-                  ) : ownerName
-                }
-              />
-              <SummaryField
-                label="Census Tract"
-                value={
-                  <div>
-                    <span>{formatCensusTract(detail?.property_location?.census_tract)}</span>
-                    {detail?.property_location?.census_tract_geoid ? (
-                      <span className="mt-0.5 block font-mono text-[11px] font-normal text-slate-500">
-                        GEOID {detail.property_location.census_tract_geoid}
-                      </span>
-                    ) : null}
-                    {detail?.property_location?.census_tract_status === "review_required" ? (
-                      <span className="mt-1 block text-[11px] font-medium text-amber-700">
-                        Coordinate/county match needs review
-                      </span>
-                    ) : null}
-                    <button
-                      type="button"
-                      className="btn btn-ghost btn-xs -ml-2 mt-1 normal-case"
-                      onClick={() => void lookUpCensusTractNow()}
-                      disabled={censusLookupLoading || !accountId}
-                    >
-                      {censusLookupLoading
-                        ? "Looking up..."
-                        : detail?.property_location?.census_tract
-                          ? "Refresh tract"
-                          : "Look Up Now"}
-                    </button>
-                    {censusLookupMessage ? (
-                      <span className={`mt-1 block text-[11px] font-medium ${
-                        /added/i.test(censusLookupMessage) ? "text-emerald-700" : "text-amber-700"
-                      }`}>
-                        {censusLookupMessage}
-                      </span>
-                    ) : null}
-                  </div>
-                }
-              />
-              <SummaryField
-                label="Owner Mailing Address"
-                value={ownerMailing}
-                className="sm:col-span-2"
-              />
-              <SummaryField
-                label="Legal Description"
-                value={<span className="whitespace-pre-line">{legalDescription}</span>}
-                className="sm:col-span-2"
-              />
-            </div>
+            <PropertyReportSubjectSummary
+              detail={detail} accountId={accountId} ownerParties={ownerParties} ownerName={ownerName}
+              primaryZoningDisplay={primaryZoningDisplay} censusLookupLoading={censusLookupLoading}
+              censusLookupMessage={censusLookupMessage} onLookUpCensusTract={() => void lookUpCensusTractNow()}
+            />
 
             <div className={`mt-3 rounded-xl border p-3 ${
               zoningEvidence?.review_required
@@ -3405,9 +3327,11 @@ function AddressHero({
       </div>
       {editingSection ? (
         <ReportSectionEditor
+          key={editingSessionKey}
           section={editingSection}
           initialValue={editableSectionValue(editingSection.key)}
           saving={savingSection}
+          readOnly={activeAssignmentFile?.workfile?.status === "signed" || activeAssignmentFile?.workfile?.status === "archived"}
           onCancel={cancelEditingSection}
           onSave={saveEditedSection}
         />

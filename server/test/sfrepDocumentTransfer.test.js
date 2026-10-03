@@ -2,6 +2,7 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import test from 'node:test';
 import { sfrepTransferInput, readSfrepDocuments, previewSfrepDocuments, packageSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
+import { mergeCustomSubjectApplication, projectCustomSubjectDocuments } from '../src/services/customSubjectApplication.js';
 
 const content = Buffer.from('%PDF-1.7\nSynthetic SFREP transfer fixture\n%%EOF');
 const checksum = createHash('sha256').update(content).digest('hex');
@@ -11,6 +12,13 @@ const source = () => ({ id: 2, account_id: 'account-1', assignment_file_id: 14, 
     field_key: 'lender_client_name', confirmed_value: 'Example & Bank', review_status: 'confirmed' }] });
 const input = () => ({ accountId: 'account-1', assignmentFileId: 14, documentIds: [2], includeDocuments: true, formId: 'FNMA-1004-0911' });
 const body = () => ({ assignment_file_id: 14, document_ids: [2], include_documents: true, form_id: 'FNMA-1004-0911' });
+function savedRow(row = source()) {
+  const documents = [structuredClone(row)];
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
+  return { ...row, saved_report: { accountId: 'account-1', assignmentFileId: 14, assignmentRevision: 1,
+    assignmentDetails: applied.assignmentDetails, subject: { value: applied.subject, revision: 1 },
+    evidence: { value: applied.evidence, revision: 1 }, documents } };
+}
 
 test('transfer input rejects unbounded, duplicate, coerced and extra document selection', () => {
   assert.deepEqual(sfrepTransferInput(body()).documentIds, [2]);
@@ -24,13 +32,16 @@ test('transfer input rejects unbounded, duplicate, coerced and extra document se
 
 test('source read binds account, assignment and document IDs and rejects a partial result', async () => {
   let query;
-  const pool = { query: async value => { query = value; return { rows: [source()] }; } };
+  const pool = { query: async value => { query = value; return { rows: [savedRow()] }; } };
   assert.equal((await readSfrepDocuments(pool, input()))[0].id, 2);
   assert.deepEqual(query.values, ['account-1', 14, [2], 201]);
   assert.match(query.text, /document\.assignment_file_id = \$2/);
   assert.match(query.text, /uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL/);
   assert.match(query.text, /report_file\.custom_assignment_file_id = assignment\.id/);
   assert.match(query.text, /appraisal_case\.organization_id IS NOT DISTINCT FROM assignment\.organization_id/);
+  assert.match(query.text, /saved_subject\.section_key = 'report.subject_identification'/);
+  assert.match(query.text, /saved_evidence\.section_key = 'report.subject_evidence'/);
+  assert.match(query.text, /LIMIT 51/);
   await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [] }) }, input()), /sfrep_document_not_found/);
   await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [{ ...source(), assignment_file_id: 15 }] }) }, input()), /sfrep_document_not_found/);
 });
@@ -38,7 +49,8 @@ test('source read binds account, assignment and document IDs and rejects a parti
 test('production preview binds subject identity and effective date into the reviewed digest', async () => {
   const row = { ...source(), subject_context: { accountId: 'account-1', address: '100 Example Dr', city: 'Garland', postalCode: '75041', effectiveDate: '2026-08-31', inspectionDate: null },
     upload_date: '2026-10-02', candidates: [...source().candidates, { id: 21, document_id: 2, field_key: 'subject_property_address', confirmed_value: '100 Example Dr, Garland, TX 75041', review_status: 'confirmed' }] };
-  const read = () => readSfrepDocuments({ query: async () => ({ rows: [row] }) }, input());
+  const stored = savedRow(row);
+  const read = () => readSfrepDocuments({ query: async () => ({ rows: [{ ...row, saved_report: structuredClone(stored.saved_report) }] }) }, input());
   let docs = await read();
   assert.equal(docs[0].property_role, 'subject');
   const preview = previewSfrepDocuments(docs, input());
@@ -50,6 +62,19 @@ test('production preview binds subject identity and effective date into the revi
   docs = await read();
   assert.equal(docs[0].property_role, 'comparable');
   assert.doesNotMatch(previewSfrepDocuments(docs, input()).reportXml, /Example &amp; Bank/);
+});
+
+test('source read fails closed without saved report data or with oversized/foreign evidence', async () => {
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [source()] }) }, input()), /invalid_saved_report/);
+  for (const [change, expected] of [
+    [row => { row.saved_report.documents = Array(51).fill(source()); }, /evidence_limit/],
+    [row => { row.saved_report.documents[0].account_id = 'other'; }, /document_not_found/],
+    [row => { row.saved_report.documents[0].assignment_file_id = 15; }, /document_not_found/],
+    [row => { row.saved_report.documents[0].candidates = Array(201).fill({}); }, /evidence_limit/],
+  ]) {
+    const row = savedRow(); change(row);
+    await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [row] }) }, input()), expected);
+  }
 });
 
 test('preview changes when evidence, assignment or source-copy choice changes', () => {

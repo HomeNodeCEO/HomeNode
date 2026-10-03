@@ -152,6 +152,8 @@ test("same-day prices use the printed change time; irreconcilable chains and mal
     "ListPrice 05/20/26 05/20/26 09:00 AM $300,000 $290,000 20",
   ])]);
   assert.equal(summary(result).final_list_price, "285000.00");
+  assert.deepEqual(summary(result).price_changes.map(row => row.recorded_at), ["2026-05-20T09:00", "2026-05-20T14:00"]);
+  assert.deepEqual(summary(result).reductions.map(row => row.recorded_at), ["2026-05-20T09:00", "2026-05-20T14:00"]);
   for (const row of ["ListPrice 02/30/26 03/01/26 01:00 PM $300,000 $290,000 20",
     "ListPrice 05/20/26 05/20/26 01:00 PM Unknown $290,000 20",
     "UnknownPrice 05/20/26 05/20/26 01:00 PM $300,000 $290,000 20",

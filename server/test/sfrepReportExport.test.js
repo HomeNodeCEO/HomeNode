@@ -906,6 +906,75 @@ test("ZIP5 cannot bridge conflicting ZIP+4 destinations or different base ZIPs",
   }
 });
 
+test("both reviewed ZIP aliases accept contiguous ZIP9 and retain exact source digits before ZIP5 display", () => {
+  for (const sourceField of ['subject_zip', 'subject_zip_code']) {
+    for (const forReportPersistence of [false, true]) {
+      for (const [source, expected] of [['750601234', '75060'], ['001234567', '00123']]) {
+        const documents = [subjectDoc(1, [candidate(sourceField, source, { id: 11 })])];
+        const before = structuredClone(documents);
+        const result = buildSfrepReportExport({ documents, forReportPersistence });
+        assert.deepEqual(values(result), { ZipCode: expected });
+        assert.equal(result.fields[0].sourceValue, source);
+        assert.equal(result.fields[0].formattingRule, 'zip5_display');
+        assert.deepEqual(result.fields[0].provenance, { kind: 'reviewed_document', sourceField,
+          documentId: 1, candidateId: 11, documentType: null });
+        assert.deepEqual(result.conflicts, []);
+        assert.deepEqual(result.omitted, []);
+        assert.deepEqual(documents, before);
+      }
+    }
+    const saved = buildSfrepReportExport({ savedReportFields: [{ sourceField, value: '750601234',
+      provenance: { kind: 'saved_report' } }] });
+    assert.deepEqual(values(saved), { ZipCode: '75060' });
+    assert.equal(saved.fields[0].sourceValue, '750601234');
+    const identity = doc(1, [candidate('subject_street_address', '100 Example Dr'),
+      candidate(sourceField, '750601234')], {
+      subject_context: { address: '100 Example Drive', postalCode: '75060' },
+    });
+    assert.equal(sfrepDocumentPropertyRole(identity), 'subject');
+    identity.candidates[1].confirmed_value = '750611234';
+    assert.equal(sfrepDocumentPropertyRole(identity), 'comparable');
+  }
+});
+
+test("equivalent ZIP9 and ZIP+4 preserve full chosen evidence and ZIP5 cannot hide differing suffixes", () => {
+  for (const forReportPersistence of [false, true]) {
+    const documents = [
+      subjectDoc(1, [candidate('subject_zip', '75060', { id: 11 })]),
+      subjectDoc(2, [candidate('subject_zip_code', '750601234', { id: 22 })]),
+      subjectDoc(3, [candidate('subject_zip', '75060-1234', { id: 33 })]),
+    ];
+    const result = buildSfrepReportExport({ documents, forReportPersistence });
+    assert.deepEqual(values(result), { ZipCode: '75060' });
+    assert.deepEqual(result.conflicts, []);
+    assert.equal(result.fields[0].sourceValue, '750601234');
+    assert.equal(result.fields[0].documentId, 2);
+    assert.equal(result.fields[0].candidateId, 22);
+    assert.deepEqual(result, buildSfrepReportExport({ documents: [...documents].reverse(), forReportPersistence }));
+    for (const conflictingZip of ['750605678', '75060-5678', '750611234', '75061']) {
+      const conflicting = [...documents, subjectDoc(4, [candidate('subject_zip', conflictingZip)])];
+      const conflict = buildSfrepReportExport({ documents: conflicting, forReportPersistence });
+      assert.equal(values(conflict).ZipCode, undefined);
+      assert.equal(conflict.conflicts.length, 1);
+      assert.deepEqual(conflict.conflicts[0].documentIds, [1, 2, 3, 4]);
+      assert.ok(conflict.conflicts[0].values.includes('750601234'));
+      assert.ok(conflict.conflicts[0].values.includes(conflictingZip));
+    }
+  }
+});
+
+test("ZIP9 support does not accept malformed or partially specified postal evidence", () => {
+  for (const sourceField of ['subject_zip', 'subject_zip_code']) {
+    for (const invalid of ['7506', '750601', '75060123', '7506012345', '75060-123', '75060-12345',
+      '75060 1234', '75060--1234', '75060/1234', '75060123A', 'A750601234']) {
+      const result = buildSfrepReportExport({ documents: [subjectDoc(1, [candidate(sourceField, invalid)])] });
+      assert.equal(result.fields.length, 0, `${sourceField}: ${invalid}`);
+      assert.equal(result.omitted.length, 1);
+      assert.match(result.omitted[0].reason, /verified destination field's format/);
+    }
+  }
+});
+
 test("old confirmed street fields with full localities split into verified address destinations", () => {
   const document = doc(1, [candidate("subject_street_address", "100 Example Dr, Garland, TX 75041")], {
     subject_context: { address: "100 Example Dr", city: "Garland", postalCode: "75041" },

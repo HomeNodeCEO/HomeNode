@@ -23,6 +23,14 @@ function calendarDate(value) {
     ? `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}` : null;
 }
 
+function recordedTimestamp(value) {
+  // Matrix prints a local calendar date and minute, not a timezone. Preserve
+  // that precision without guessing a timezone or allowing Date rollover.
+  if (typeof value !== 'string') return null;
+  const match = value.match(/^(\d{4}-\d{2}-\d{2})T(\d{2}):(\d{2})$/);
+  return match && calendarDate(match[1]) === match[1] && Number(match[2]) <= 23 && Number(match[3]) <= 59 ? value : null;
+}
+
 function money(value) {
   const match = scalar(value)?.match(/^\$?\s*(\d{1,10}|\d{1,3}(?:,\d{3}){1,3})(?:\.(\d{1,2}))?$/);
   if (!match) return null;
@@ -72,13 +80,25 @@ function parseHistory(entry) {
     if (!ownRecord(row)) return null;
     const date = calendarDate(row.date), previous = money(row.previous_price), next = money(row.new_price);
     if (!date || !previous || !next) return null;
-    changes.push({ date, previous_price: previous, new_price: next });
+    const recordedAt = Object.hasOwn(row, 'recorded_at') ? recordedTimestamp(row.recorded_at) : null;
+    const changeDate = Object.hasOwn(row, 'change_date') ? calendarDate(row.change_date) : null;
+    if ((Object.hasOwn(row, 'recorded_at') && !recordedAt) || (Object.hasOwn(row, 'change_date') && !changeDate)
+      || (recordedAt && changeDate && recordedAt.slice(0, 10) !== changeDate)) return null;
+    changes.push({ date, previous_price: previous, new_price: next, recordedAt });
   }
-  changes.sort((a, b) => compare(a.date, b.date));
-  // An ordering within one calendar day is not inferred from the array order.
-  if (new Set(changes.map(row => row.date)).size !== changes.length) return null;
+  changes.sort((a, b) => compare(a.date, b.date) || compare(a.recordedAt || '', b.recordedAt || ''));
+  for (let index = 1; index < changes.length; index += 1) {
+    const previous = changes[index - 1], current = changes[index];
+    // Older payloads remain usable on distinct effective dates. On the same
+    // date, every change needs a distinct, validated printed timestamp; array
+    // position and even an apparently connected price chain cannot prove order.
+    if (previous.date === current.date && (!previous.recordedAt || !current.recordedAt || previous.recordedAt === current.recordedAt)) return null;
+  }
   return { listingId: mlsId(source.listing_id), listDate: calendarDate(source.list_date), coverage: source.coverage,
-    propertyAddress: typeof source.property_address === 'string' ? source.property_address : null, changes };
+    propertyAddress: typeof source.property_address === 'string' ? source.property_address : null,
+    // Timestamp proof stays in sourceEvidence's untouched reviewed JSON. Compare
+    // the proven ordered price facts so equivalent old/new histories can agree.
+    changes: changes.map(({ recordedAt, ...row }) => row) };
 }
 
 function historyAddressMatchesSubject(history, document, subjectSheets) {

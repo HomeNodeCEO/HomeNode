@@ -279,7 +279,7 @@ export function editablePropertyReportSectionValue(
       };
     case "report.assignment_details":
       return {
-        pud: Boolean(detail?.assignment_details?.pud),
+        pud: typeof detail?.assignment_details?.pud === "boolean" ? detail.assignment_details.pud : undefined,
         hoa_dues_amount: detail?.assignment_details?.hoa_dues_amount || "",
         hoa_frequency: detail?.assignment_details?.hoa_frequency || "",
         hoa_explanation: detail?.assignment_details?.hoa_explanation || "",
@@ -288,7 +288,7 @@ export function editablePropertyReportSectionValue(
         assignment_types: cloneEditorValue(detail?.assignment_details?.assignment_types || []),
         assignment_explanation: detail?.assignment_details?.assignment_explanation || "",
         lender_client_name: detail?.assignment_details?.lender_client_name || "",
-        lender_client_address: reportAddress(detail?.assignment_details?.lender_client_address),
+        lender_client_address: detail?.assignment_details?.lender_client_address || "",
         subject_under_contract: Boolean(detail?.assignment_details?.subject_under_contract),
         contract_arms_length: typeof detail?.assignment_details?.contract_arms_length === "boolean"
           ? detail.assignment_details.contract_arms_length

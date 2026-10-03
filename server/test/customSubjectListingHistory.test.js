@@ -40,6 +40,42 @@ test('reduction template counts only reductions and uses the first and final pri
   assert.match(once.field.value, /the price was reduced 1 times between 06\/10\/2026 and 06\/10\/2026 to \$340,000\.25,/);
 });
 
+test('same-effective-day changes use distinct validated printed timestamps, never JSON array order', () => {
+  const early = { ...change('2026-06-10', '345000', '340000'), change_date: '2026-06-10', recorded_at: '2026-06-10T09:05' };
+  const late = { ...change('2026-06-10', '340000', '335000'), change_date: '2026-06-10', recorded_at: '2026-06-10T14:30' };
+  const result = summarize(sources([late, early]));
+  assert.equal(result.field.value, 'Subject was listed on 05/29/2026 for $345,000, the price was reduced 2 times between 06/10/2026 and 06/10/2026 to $335,000, on the market for 77 days, under current contract on 08/25/2026');
+  assert.equal(result.field.value, summarize(sources([early, late])).field.value);
+  assert.equal(result.field.provenance.sourceEvidence.at(-1).value, history([late, early]));
+  const recordedLater = { ...late, change_date: '2026-06-11', recorded_at: '2026-06-11T08:00' };
+  assert.equal(summarize(sources([recordedLater, early])).field.value, result.field.value);
+});
+
+test('missing, tied, malformed, rolled-over, or contradictory change timestamps remain review-required', () => {
+  const early = { ...change('2026-06-10', '345000', '340000'), change_date: '2026-06-10', recorded_at: '2026-06-10T09:05' };
+  const late = { ...change('2026-06-10', '340000', '335000'), change_date: '2026-06-10', recorded_at: '2026-06-10T14:30' };
+  omit(summarize(sources([early, change('2026-06-10', '340000', '335000')])));
+  omit(summarize(sources([early, { ...late, recorded_at: early.recorded_at }])));
+  for (const recorded_at of [null, 123, '', '2026-02-30T09:05', '2025-02-29T09:05', '2026-13-01T09:05',
+    '2026-06-10T24:00', '2026-06-10T14:60', '2026-06-10T9:05', '2026-06-10T14:30Z', '2026-06-10T14:30:00']) {
+    omit(summarize(sources([early, { ...late, recorded_at }])));
+  }
+  for (const change_date of ['2026-02-30', '2026-06-11', null, 'unknown']) {
+    omit(summarize(sources([early, { ...late, change_date }])));
+  }
+});
+
+test('distinct-date legacy histories remain compatible with equivalent timestamp-bearing histories', () => {
+  const changes = [change('2026-06-10', '345000', '340000'), change('2026-07-20', '340000', '335000')];
+  const documents = sources(changes);
+  documents.push(document(4, 'mls_sheet', [candidate(41, 'listing_price_history', history(changes.map(row => ({
+    ...row, change_date: row.date, recorded_at: `${row.date}T09:05`,
+  }))))]));
+  const result = summarize(documents);
+  assert.equal(result.field.value, summarize(sources(changes)).field.value);
+  assert.ok(result.field.provenance.sourceEvidence.some(entry => entry.documentId === 4));
+});
+
 test('post-contract and post-effective price events do not rewrite retrospective listing facts', () => {
   const before = change('2026-07-10', '345000', '340000');
   const after = change('2026-08-26', '340000', '325000');

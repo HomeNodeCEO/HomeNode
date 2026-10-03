@@ -143,7 +143,8 @@ export function extractMlsListingPriceHistory(pages = []) {
     }
     const reductions = prices.filter(row => Number(row.next) < Number(row.previous));
     const complete = numberedPagesComplete && origins.length === 1 && rows[0] === origins[0];
-    const projectPrice = row => ({ date: row.date, change_date: row.change_date, previous_price: row.previous, new_price: row.next, page_number: row.page_number });
+    const projectPrice = row => ({ date: row.date, change_date: row.change_date, recorded_at: row.recorded_at,
+      previous_price: row.previous, new_price: row.next, page_number: row.page_number });
     const summary = {
       schema_version: 1, listing_id: group.id, property_address: group.address,
       list_date: origins[0]?.date || null, coverage: complete ? "complete" : "partial",

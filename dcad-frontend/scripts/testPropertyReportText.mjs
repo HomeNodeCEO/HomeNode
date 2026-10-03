@@ -60,10 +60,12 @@ test('Subject editor displays formatted values without mutating retained CAD and
   assert.equal(context.documentReviewSubjectAddress, '100 EXAMPLE DR, IRVING, TX, 75060-1234');
 });
 
-test('lender address hydration is formatted and explicit PUD None stays false', () => {
-  const source = { lender_client_address: '400 TEST AVENUE, AUSTIN TX 78701', pud: false, hoa_dues_amount: '' };
+test('lender address stays literal in edit drafts while display formatting and explicit PUD None are retained', () => {
+  const source = { lender_client_address: '400 TEST AVENUE, AUSTIN TX 78701-1234', pud: false, hoa_dues_amount: '' };
   const copy = structuredClone(source);
-  assert.equal(assignmentDraftFromDetail(source).lender_client_address, '400 Test Avenue, Austin TX 78701');
+  const draft = assignmentDraftFromDetail(source);
+  assert.equal(draft.lender_client_address, source.lender_client_address);
+  assert.equal(reportAddress(draft.lender_client_address), '400 Test Avenue, Austin TX 78701');
   assert.equal(assignmentDraftFromDetail(source).pud, false);
   assert.deepEqual(source, copy);
 });

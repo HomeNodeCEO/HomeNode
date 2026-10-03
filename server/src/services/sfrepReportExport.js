@@ -129,6 +129,12 @@ function area(value) {
   return result !== null && Number(result) > 0 ? `${result} sf` : null;
 }
 
+function zipCode(value) {
+  // Validate the full reviewed ZIP before the later ZIP5 display transform.
+  // Contiguous ZIP9 and ZIP+4 retain every digit for conflict comparisons.
+  return /^\d{5}(?:-?\d{4})?$/.test(value) ? value : null;
+}
+
 const identity = (value) => value;
 
 // Deliberately exclude seller_name -> OwnerName and buyer_name -> BorrowerName.
@@ -140,8 +146,8 @@ const MAPPINGS = Object.freeze({
   subject_street_address: ["StreetAddress", identity],
   subject_city: ["City", identity],
   subject_state: ["State", (value) => isUrarStateCode(value) ? value.toUpperCase() : null],
-  subject_zip: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
-  subject_zip_code: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
+  subject_zip: ["ZipCode", zipCode],
+  subject_zip_code: ["ZipCode", zipCode],
   borrower_name: ["BorrowerName", identity],
   owner_name: ["OwnerName", identity],
   record_owner_name: ["OwnerName", identity],
@@ -377,9 +383,9 @@ function destinationComparisonKey(entry) {
 
 function compatibleZipGroup(entries) {
   return entries[0]?.fieldId === "ZipCode"
-    && entries.every((entry) => /^\d{5}(?:-\d{4})?$/.test(entry.value))
+    && entries.every((entry) => zipCode(entry.value) !== null)
     && new Set(entries.map((entry) => entry.value.slice(0, 5))).size === 1
-    && new Set(entries.filter((entry) => entry.value.length === 10).map((entry) => entry.value)).size <= 1;
+    && new Set(entries.filter((entry) => entry.value.length > 5).map((entry) => entry.value.replace('-', ''))).size <= 1;
 }
 
 function selectedDocuments(documents, selectedDocumentIds) {
@@ -685,7 +691,7 @@ export function buildSfrepReportExport({
     }
     const chosenEntries = entries[0].group === "assignment_type"
       ? entries.filter((entry, index) => entries.findIndex((other) => other.fieldId === entry.fieldId) === index)
-      : [compatibleZip ? entries.find((entry) => entry.value.length === 10) || entries[0] : entries[0]];
+      : [compatibleZip ? entries.find((entry) => entry.value.length > 5) || entries[0] : entries[0]];
     for (const entry of chosenEntries) {
       const { group: _group, suppress: _suppress, assignmentType: _assignmentType, ...field } = entry;
       // HomeNode and SFREP share the requested capitalization, ZIP5, and

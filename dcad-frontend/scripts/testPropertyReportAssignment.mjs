@@ -4,6 +4,7 @@ import test from "node:test";
 
 import {
   assignmentDraftFromDetail,
+  assignmentPudSummary,
   assignmentValidationErrors,
 } from "../src/lib/propertyReportAssignment.ts";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "../src/lib/propertyReportHydration.ts";
@@ -71,6 +72,34 @@ test("assignment hydration preserves explicit values and clones arrays", () => {
   assert.equal(draft.contract_closing_date, "2026-09-24");
   assert.equal(draft.contract_property_condition, "as_is");
   assert.equal(draft.lender_revision_count, 0);
+});
+
+test('unrelated assignment edits retain the exact saved lender address, including case, whitespace and ZIP+4', () => {
+  const source = Object.freeze({ lender_client_address: ' 400 TEST AVENUE\nCHARLOTTE, NC 28255-1234 ', occupancy: 'vacant' });
+  const draft = assignmentDraftFromDetail(source);
+  draft.occupancy = 'owner';
+  assert.equal(JSON.parse(JSON.stringify(draft)).lender_client_address, source.lender_client_address);
+});
+
+test('PUD summary follows explicit draft choices without promoting missing values to No', async () => {
+  for (const value of [undefined, null, '', 'false', 'true', 0, 1]) {
+    const draft = assignmentDraftFromDetail({ pud: value });
+    draft.occupancy = 'owner';
+    assert.equal(draft.pud, undefined);
+    assert.equal(assignmentPudSummary(draft.pud), 'Not reported');
+    assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(draft)), 'pud'), false);
+  }
+  for (const saved of [undefined, false, true]) {
+    const draft = assignmentDraftFromDetail({ pud: saved });
+    draft.pud = true;
+    assert.equal(assignmentPudSummary(draft.pud), 'PUD / HOA review');
+    draft.pud = false;
+    assert.equal(assignmentPudSummary(draft.pud), 'PUD: No');
+    assert.equal(JSON.parse(JSON.stringify(draft)).pud, false);
+  }
+  assert.equal(assignmentPudSummary(assignmentDraftFromDetail({ pud: false }).pud), 'PUD: No');
+  const source = await readFile(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
+  assert.match(source, /assignmentPudSummary\(assignmentDraft\.pud\)/);
 });
 
 test("assignment validation retains established PUD and explanation rules", () => {

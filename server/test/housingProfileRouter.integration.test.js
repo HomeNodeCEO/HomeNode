@@ -54,15 +54,97 @@ function patchProfile(baseUrl, accountId = "123", body = { housing_type: "SFD" }
   });
 }
 
+const transactionStages = ["BEGIN", "ACCOUNT", "UPSERT", "PROFILE", "COMMIT"];
+
+function transactionFixture({
+  failAt,
+  missingAccount = false,
+  rollbackFailures = [],
+  releaseFailure,
+  loggerThrows = false,
+} = {}) {
+  const calls = [];
+  const releases = [];
+  const logs = [];
+  const primaryError = Object.assign(new Error("private_primary_database_password"), { code: "40001" });
+  const rollbackErrors = rollbackFailures.map(() => (
+    Object.assign(new Error("private_rollback_database_password"), { code: "08006" })
+  ));
+  const releaseError = Object.assign(new Error("private_release_database_password"), { code: "ECONNRESET" });
+  const profile = { housing_type: "Single Family Detached", profile_source: "verified" };
+  let rollbackIndex = 0;
+  const client = {
+    async query(sql, params) {
+      const stage = ["BEGIN", "COMMIT", "ROLLBACK"].includes(sql) ? sql
+        : /SELECT 1 FROM core\.accounts/.test(sql) ? "ACCOUNT"
+          : /INSERT INTO core\.account_housing_profiles/.test(sql) ? "UPSERT"
+            : /FROM core\.v_account_housing_profiles/.test(sql) ? "PROFILE" : "UNKNOWN";
+      calls.push({ stage, sql, params });
+      if (stage === "ROLLBACK") {
+        const index = rollbackIndex++;
+        if (rollbackFailures[index]) throw rollbackErrors[index];
+        return { rows: [], rowCount: 0 };
+      }
+      if (stage === failAt) throw primaryError;
+      if (stage === "ACCOUNT") return { rows: missingAccount ? [] : [{}], rowCount: missingAccount ? 0 : 1 };
+      if (stage === "PROFILE") return { rows: [profile], rowCount: 1 };
+      if (["BEGIN", "UPSERT", "COMMIT"].includes(stage)) return { rows: [], rowCount: 0 };
+      throw new Error("unexpected_query");
+    },
+    release(...args) {
+      releases.push(args);
+      if (releaseFailure === "throw") throw releaseError;
+      if (releaseFailure === "reject") return Promise.reject(releaseError);
+      return undefined;
+    },
+  };
+  return {
+    calls, releases, logs, primaryError, rollbackErrors, releaseError, profile,
+    options: baseOptions({
+      pool: { connect: async () => client },
+      logger: {
+        error(...args) {
+          logs.push(args);
+          if (loggerThrows) throw new Error("private_logger_password");
+        },
+      },
+    }),
+  };
+}
+
+function assertReusableRelease(releases) {
+  assert.equal(releases.length, 1, "the owned client is released exactly once");
+  assert.ok(releases[0].length <= 1);
+  assert.equal(releases[0][0], undefined, "a confirmed transaction exit leaves the client reusable");
+}
+
+function assertDiscardRelease(releases, rawErrors) {
+  assert.equal(releases.length, 1, "the owned client is released exactly once");
+  assert.equal(releases[0].length, 1);
+  const marker = releases[0][0];
+  assert.equal(Object.getPrototypeOf(marker), Error.prototype);
+  assert.equal(marker.message, "housing_profile_rollback_failed");
+  assert.equal(Object.hasOwn(marker, "cause"), false);
+  assert.deepEqual(Object.keys(marker), []);
+  for (const rawError of rawErrors) assert.notEqual(marker, rawError);
+  assert.doesNotMatch(String(marker.stack), /private_|password/);
+  return marker;
+}
+
 test("housing profile rejects invalid identifiers, authorization denial, and invalid input before connecting", async (context) => {
   let connectCalls = 0;
+  let releaseCalls = 0;
   let authorizationCalls = 0;
+  const pool = {
+    connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); },
+    release: () => { releaseCalls += 1; },
+  };
   const invalidId = await startRouter(baseOptions({
-    pool: { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } },
+    pool,
     requireWorkflowAccess: () => { authorizationCalls += 1; return true; },
   }));
   const denied = await startRouter(baseOptions({
-    pool: { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } },
+    pool,
     requireWorkflowAccess(req, res, workflow, permission) {
       authorizationCalls += 1;
       assert.equal(workflow, "custom_appraisal");
@@ -72,7 +154,7 @@ test("housing profile rejects invalid identifiers, authorization denial, and inv
     },
   }));
   const invalidBody = await startRouter(baseOptions({
-    pool: { connect: async () => { connectCalls += 1; throw new Error("unexpected_connect"); } },
+    pool,
     requireWorkflowAccess: () => { authorizationCalls += 1; return true; },
     normalizeUpdate: () => { throw new Error("invalid_housing_type"); },
   }));
@@ -90,6 +172,7 @@ test("housing profile rejects invalid identifiers, authorization denial, and inv
   assert.equal(invalidBodyResponse.status, 400);
   assert.deepEqual(await invalidBodyResponse.json(), { error: "invalid_housing_type" });
   assert.equal(connectCalls, 0);
+  assert.equal(releaseCalls, 0);
   assert.equal(authorizationCalls, 2);
 });
 
@@ -142,7 +225,7 @@ test("housing profile keeps real input codes while bounding unexpected validator
 
 test("housing profile preserves transaction order, upsert values, canonical view, and response", async (context) => {
   const calls = [];
-  let releases = 0;
+  const releases = [];
   const profile = {
     structural_style: "One Story",
     housing_type: "Single Family Detached",
@@ -160,7 +243,7 @@ test("housing profile preserves transaction order, upsert values, canonical view
       if (/FROM core\.v_account_housing_profiles/.test(sql)) return { rows: [profile], rowCount: 1 };
       throw new Error(`unexpected_query:${sql}`);
     },
-    release() { releases += 1; },
+    release(...args) { releases.push(args); },
   };
   const server = await startRouter(baseOptions({
     pool: { connect: async () => client },
@@ -170,7 +253,7 @@ test("housing profile preserves transaction order, upsert values, canonical view
   const response = await patchProfile(server.baseUrl);
   assert.equal(response.status, 200);
   assert.deepEqual(await response.json(), { ok: true, housing_profile: profile });
-  assert.equal(releases, 1);
+  assertReusableRelease(releases);
   assert.deepEqual(calls.map(({ sql }) => {
     if (["BEGIN", "COMMIT"].includes(sql)) return sql;
     if (/SELECT 1 FROM core\.accounts/.test(sql)) return "ACCOUNT";
@@ -195,7 +278,7 @@ test("housing profile preserves transaction order, upsert values, canonical view
 
 test("housing profile missing accounts roll back and release without writing", async (context) => {
   const calls = [];
-  let releases = 0;
+  const releases = [];
   const client = {
     async query(sql) {
       calls.push(sql);
@@ -203,7 +286,7 @@ test("housing profile missing accounts roll back and release without writing", a
       if (/SELECT 1 FROM core\.accounts/.test(sql)) return { rows: [], rowCount: 0 };
       throw new Error("unexpected_write");
     },
-    release() { releases += 1; },
+    release(...args) { releases.push(args); },
   };
   const server = await startRouter(baseOptions({ pool: { connect: async () => client } }));
   context.after(server.close);
@@ -212,8 +295,101 @@ test("housing profile missing accounts roll back and release without writing", a
   assert.equal(response.status, 404);
   assert.deepEqual(await response.json(), { error: "account_not_found" });
   assert.deepEqual(calls, ["BEGIN", "SELECT 1 FROM core.accounts WHERE account_id = $1", "ROLLBACK"]);
-  assert.equal(releases, 1);
+  assertReusableRelease(releases);
 });
+
+for (const failAt of transactionStages) {
+  for (const rollbackFails of [false, true]) {
+    test(`housing profile ${failAt} failure with ${rollbackFails ? "failed" : "successful"} rollback bounds the response and release`, async (context) => {
+      const fixture = transactionFixture({ failAt, rollbackFailures: [rollbackFails] });
+      const server = await startRouter(fixture.options);
+      context.after(server.close);
+
+      const response = await patchProfile(server.baseUrl);
+      const body = await response.json();
+      assert.equal(response.status, 500);
+      assert.deepEqual(body, { error: "housing_profile_update_failed" });
+      assert.deepEqual(fixture.calls.map(({ stage }) => stage), [
+        ...transactionStages.slice(0, transactionStages.indexOf(failAt) + 1), "ROLLBACK",
+      ], "no following write or COMMIT retry is issued after failure");
+      assert.deepEqual(fixture.logs, [["/api/accounts/:id/housing-profile failed", "40001"]]);
+      assert.doesNotMatch(JSON.stringify({ body, logs: fixture.logs }), /private_|password|08006/);
+      if (rollbackFails) {
+        assertDiscardRelease(fixture.releases, [fixture.primaryError, ...fixture.rollbackErrors]);
+      } else {
+        assertReusableRelease(fixture.releases);
+      }
+    });
+  }
+}
+
+for (const finalRollbackFails of [false, true]) {
+  test(`housing profile missing-account rollback failure followed by ${finalRollbackFails ? "failed" : "successful"} retry remains a bounded 500`, async (context) => {
+    const fixture = transactionFixture({ missingAccount: true, rollbackFailures: [true, finalRollbackFails] });
+    const server = await startRouter(fixture.options);
+    context.after(server.close);
+
+    const response = await patchProfile(server.baseUrl);
+    const body = await response.json();
+    assert.equal(response.status, 500);
+    assert.deepEqual(body, { error: "housing_profile_update_failed" });
+    assert.deepEqual(fixture.calls.map(({ stage }) => stage), ["BEGIN", "ACCOUNT", "ROLLBACK", "ROLLBACK"]);
+    assert.deepEqual(fixture.logs, [["/api/accounts/:id/housing-profile failed", "08006"]]);
+    assert.doesNotMatch(JSON.stringify({ body, logs: fixture.logs }), /private_|password/);
+    if (finalRollbackFails) {
+      assertDiscardRelease(fixture.releases, fixture.rollbackErrors);
+    } else {
+      assertReusableRelease(fixture.releases);
+    }
+  });
+}
+
+test("housing profile uses a fresh bounded discard marker for each failed transaction", async (context) => {
+  const fixture = transactionFixture({ failAt: "UPSERT", rollbackFailures: [true, true] });
+  const server = await startRouter(fixture.options);
+  context.after(server.close);
+  const markers = [];
+  for (let index = 0; index < 2; index += 1) {
+    const response = await patchProfile(server.baseUrl);
+    assert.equal(response.status, 500);
+    assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
+    assert.equal(fixture.releases.length, index + 1);
+    markers.push(assertDiscardRelease([fixture.releases[index]], [fixture.primaryError, ...fixture.rollbackErrors]));
+  }
+  assert.notEqual(markers[0], markers[1]);
+});
+
+for (const outcome of [
+  { name: "committed update", status: 200, stages: transactionStages },
+  { name: "missing account", status: 404, missingAccount: true, stages: ["BEGIN", "ACCOUNT", "ROLLBACK"] },
+  { name: "rolled-back failure", status: 500, failAt: "UPSERT", stages: ["BEGIN", "ACCOUNT", "UPSERT", "ROLLBACK"] },
+  { name: "failed rollback", status: 500, failAt: "UPSERT", rollbackFailures: [true], stages: ["BEGIN", "ACCOUNT", "UPSERT", "ROLLBACK"] },
+]) {
+  for (const releaseFailure of ["throw", "reject"]) {
+    test(`housing profile ${outcome.name} preserves its response when release ${releaseFailure}s and logging throws`, async (context) => {
+      const fixture = transactionFixture({ ...outcome, releaseFailure, loggerThrows: true });
+      const server = await startRouter(fixture.options);
+      context.after(server.close);
+
+      const response = await patchProfile(server.baseUrl);
+      const body = await response.json();
+      assert.equal(response.status, outcome.status);
+      assert.deepEqual(body, outcome.status === 200 ? { ok: true, housing_profile: fixture.profile }
+        : { error: outcome.status === 404 ? "account_not_found" : "housing_profile_update_failed" });
+      assert.deepEqual(fixture.calls.map(({ stage }) => stage), outcome.stages);
+      assert.deepEqual(fixture.logs, [
+        ...(outcome.status === 500 ? [["/api/accounts/:id/housing-profile failed", "40001"]] : []),
+        ["housing profile client release failed", "ECONNRESET"],
+      ]);
+      assert.doesNotMatch(JSON.stringify({ body, logs: fixture.logs }), /private_|password/);
+      if (outcome.rollbackFailures?.[0]) {
+        assertDiscardRelease(fixture.releases, [fixture.primaryError, fixture.releaseError, ...fixture.rollbackErrors]);
+      } else {
+        assertReusableRelease(fixture.releases);
+      }
+    });
+  }
+}
 
 test("housing profile transaction failures roll back, release, and stay bounded", async (context) => {
   const calls = [];
@@ -264,8 +440,12 @@ test("throwing housing-profile logger cannot replace fixed write-failure respons
 
 test("housing-profile connection failure returns a fixed response and bounded diagnostic", async (context) => {
   const logs = [];
+  let releaseCalls = 0;
   const server = await startRouter(baseOptions({
-    pool: { connect: async () => { throw new Error("private_connection_password"); } },
+    pool: {
+      connect: async () => { throw new Error("private_connection_password"); },
+      release: () => { releaseCalls += 1; },
+    },
     logger: { error: (...args) => logs.push(args) },
   }));
   context.after(server.close);
@@ -274,6 +454,7 @@ test("housing-profile connection failure returns a fixed response and bounded di
   assert.deepEqual(await response.json(), { error: "housing_profile_update_failed" });
   assert.deepEqual(logs, [["/api/accounts/:id/housing-profile failed", "unknown"]]);
   assert.doesNotMatch(JSON.stringify(logs), /private_connection_password/);
+  assert.equal(releaseCalls, 0);
 });
 
 test("synchronous rollback and release failures cannot replace the fixed response", async (context) => {

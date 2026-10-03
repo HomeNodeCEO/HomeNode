@@ -71,6 +71,7 @@ export function createHousingProfileRouter({
     }
 
     let client;
+    let rollbackFailure;
     try {
       client = await pool.connect();
       await client.query("BEGIN");
@@ -150,12 +151,12 @@ export function createHousingProfileRouter({
     } catch (error) {
       if (client) {
         try { await client.query("ROLLBACK"); }
-        catch { /* The fixed response still wins if rollback also fails. */ }
+        catch { rollbackFailure = new Error("housing_profile_rollback_failed"); }
       }
       logHousingProfileFailure(logger, "/api/accounts/:id/housing-profile failed", error);
       return res.status(500).json({ error: "housing_profile_update_failed" });
     } finally {
-      try { await client?.release(); }
+      try { await client?.release(rollbackFailure); }
       catch (error) {
         logHousingProfileFailure(logger, "housing profile client release failed", error);
       }

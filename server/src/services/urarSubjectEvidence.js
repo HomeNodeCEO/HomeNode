@@ -1,4 +1,5 @@
 import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarReferenceLayouts.js";
+import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 
 /**
  * Conservative, page-cited Subject suggestions from already-extracted PDF text.
@@ -9,13 +10,11 @@ export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-02-v1";
 const LIMITS = Object.freeze({ pages: 250, pageChars: 500_000, totalChars: 4_000_000, lineChars: 4_000, lines: 50_000, candidates: 2_000, issues: 500 });
 const SOURCES = new Set(["engagement_letter", "mls_sheet", "cad", "realist"]);
 const NON_SUBJECT_DOCUMENT_TYPES = new Set(["purchase_contract", "district_evidence", "zoning_map", "zoning_ordinance", "map"]);
-const EMPTY = /^(?:unknown|unavailable|not available|not provided|not applicable|not disclosed|undisclosed|unassigned|pending|tbd|tba|to be determined|to be assigned|to be confirmed|to be announced|n\/?a|null|undefined|[-_?]+)[.!]?$/i;
-const STATES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR VI".split(" "));
 const compact = value => typeof value === "string" ? value.replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F]/g, "").replace(/\s+/g, " ").trim() : "";
 const labelKey = value => compact(value).toLowerCase().replace(/\(s\)/g, "s").replace(/[.#]/g, "").replace(/\s*\/\s*/g, "/").trim();
 const textValue = value => {
   const result = compact(value);
-  return result && result.length <= 2_000 && !EMPTY.test(result) && !/[\uFFFD]/u.test(result) ? result : null;
+  return result && result.length <= 2_000 && !isUrarPlaceholder(result) && !/[\uFFFD]/u.test(result) ? result : null;
 };
 const shortText = value => { const result = textValue(value); return result && result.length <= 300 ? result : null; };
 function subjectAddress(value) {
@@ -26,12 +25,12 @@ function subjectAddress(value) {
   // a placeholder, table heading, or missing-value message. Unsupported rural
   // descriptions remain available in the PDF for explicit manual review.
   const numbered = street.match(/^\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?(?:\s+1\/2)?\s+(.+)$/);
-  return numbered && /[A-Za-z]/.test(numbered[1]) && !EMPTY.test(numbered[1]) ? result : null;
+  return numbered && /[A-Za-z]/.test(numbered[1]) && !isUrarPlaceholder(numbered[1]) ? result : null;
 }
 const issue = (items, value) => { if (items.length < LIMITS.issues) items.push(value); };
 const legalText = value => {
   const result = typeof value === "string" ? value.split("\n").map(compact).filter(Boolean).join("\n") : "";
-  return result && result.length <= 2_000 && !EMPTY.test(result) && !/\uFFFD/u.test(result) ? result : null;
+  return result && result.length <= 2_000 && !isUrarPlaceholder(result) && !/\uFFFD/u.test(result) ? result : null;
 };
 
 function amount(value) {
@@ -73,7 +72,7 @@ function explicitPud(value) {
   if (["no", "n", "false"].includes(source)) return "false";
   return null;
 }
-function state(value) { const result = compact(value).toUpperCase(); return STATES.has(result) ? result : null; }
+function state(value) { const result = compact(value).toUpperCase(); return isUrarStateCode(result) ? result : null; }
 function zip(value) { const result = compact(value); return /^\d{5}(?:-\d{4})?$/.test(result) ? result : null; }
 function year(value) { const result = compact(value); return /^[12]\d{3}$/.test(result) ? result : null; }
 function parcel(value) {
@@ -232,7 +231,7 @@ function mlsListingIdentityIssue(entries) {
         raw = next.line;
       }
       const token = raw.match(/^([A-Z0-9][A-Z0-9-]{2,44})(?=$|[\s|;])/i)?.[1];
-      if (!token || EMPTY.test(token) || EMPTY.test(raw)
+      if (!token || isUrarPlaceholder(token) || isUrarPlaceholder(raw)
         || /^(?:not\s+(?:available|provided|disclosed|applicable)|to\s+be\s+(?:determined|assigned|confirmed|announced))(?=$|[\s|;])/i.test(raw)) {
         return "ambiguous_mls_listing_identity";
       }

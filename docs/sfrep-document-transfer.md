@@ -306,7 +306,9 @@ were visually inspected. The initial owner-name line break caused a native Overf
 warning. The subsequent single-line display correction retained both names and
 the exact original source, and a fresh import displayed the complete owner text
 without that overflow warning. Seven named original-PDF addenda were present.
-The corrected report was saved as a separate private local QA `.rptx`.
+The corrected report was saved as a separate private local QA `.rptx`, closed,
+and reopened. The Subject values, selected checkboxes, complete owner text and
+all seven original-PDF addenda survived the native save/reopen cycle.
 
 Independent review also reproduced and fixed two canonical-boundary errors:
 the `property_type=PUD` alias can no longer override a cleared/negative saved PUD,
@@ -336,16 +338,38 @@ Forms** chooser exposed import options, but automation could not reliably select
 RPTI because nested-modal focus/actions reset. No successful existing-report import
 was observed; this automation limitation does not establish an SFREP defect.
 
-The full Subject sample's initial import and APN display are now verified above.
-Its Save As picker and populated-report Import Forms picker remain unreliable
-under automation; a manual import into the existing synthetic QA report has been
-requested. Save/reopen and preservation of omitted fields/alternative checkboxes
-for this newer sample remain separate uncompleted checks. The installed MISMO
+Initial import, APN display and native save/reopen are verified above. Preservation
+of omitted fields and alternative checkboxes during import into an existing
+populated report remains a separate uncompleted check. The installed MISMO
 dictionary's specialized internal `UadAssessorsParcelNumberField` is not an RPTI
 XML element: the public RPTI schema uses `TextField` for static text, and its native
 APN rendering was verified without changing that public element type.
 
 ### Release gate
+
+Review follow-up keeps only genuinely shared scalar rules in
+`util/urarScalarValidation.js`: exact placeholder recognition and the supported
+US state/district/territory codes. Extraction and export now agree on dash-only
+placeholders and invalid state codes. Extraction's input bounds and whitespace
+cleanup, reviewed-source preservation, destination date/money formatting, strict
+decimal IDs and XML attribute validation remain separate intentional boundaries.
+Do not substitute a generic XML text escaper: RPTI attributes need control-character
+rejection and numeric references for tabs/newlines. A broader parser/serializer
+consolidation needs parity tests before replacing these policies.
+
+Single-candidate approval now defaults to the normalized value, matching batch
+approval, while an explicitly supplied appraiser value wins and a missing/blank
+normalized value falls back to the raw source. The actual PostgreSQL lock-order
+regression covers all three outcomes without relaxing its lock assertions. Its
+reviewable fixture explicitly uses `review_required`; an upload that has not
+finished extraction must still be rejected by the production writer.
+
+The integrated implementation at `df7cefcc` passed 9,157 server tests (47 skipped),
+3,559 frontend tests, TypeScript, lint, source budgets and the production build.
+Server/frontend npm audits reported zero vulnerabilities. The new PostgreSQL
+receipt writer/constraint/history test passed on GitHub; the pre-existing
+lock-order fixture required the readiness correction above. These scalar/fixture
+follow-ups require their own final-head CI run.
 
 The feature and coordinated document-preview/batch-upload integration remain on
 the feature branch until the final combined head passes protected checks. The

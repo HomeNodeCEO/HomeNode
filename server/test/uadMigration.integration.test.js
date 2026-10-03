@@ -390,16 +390,16 @@ test("Custom document review waits on the workfile before locking the document r
     const checksum = createHash("sha256").update(content).digest("hex");
     const document = await pool.query(
       `INSERT INTO app.assignment_documents
-         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content)
-       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', $3, $4, $5)
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content, processing_status)
+       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', $3, $4, $5, 'review_required')
        RETURNING id`,
       [accountId, assignmentFileId, checksum, content.length, content],
     );
     documentId = document.rows[0].id;
     const candidate = await pool.query(
       `INSERT INTO app.assignment_document_field_candidates
-         (document_id, field_key, raw_value)
-       VALUES ($1, 'lender_client_name', 'Fixture lender') RETURNING id`,
+         (document_id, field_key, raw_value, normalized_value)
+       VALUES ($1, 'lender_client_name', 'Lender: Fixture lender', 'Fixture lender') RETURNING id`,
       [documentId],
     );
 
@@ -459,6 +459,18 @@ test("Custom document review waits on the workfile before locking the document r
     holder = null;
     const reviewed = await reviewPromise;
     assert.equal(reviewed.review_status, "rejected");
+    // Single-field approval must use the same normalized default as batch approval.
+    const confirm = (confirmedValue) => reviewAssignmentDocumentCandidate(pool, {
+      documentId, candidateId: candidate.rows[0].id, reviewStatus: "confirmed",
+      reviewer: "Fixture appraiser", confirmedValue,
+    });
+    assert.equal((await confirm()).confirmed_value, "Fixture lender");
+    assert.equal((await confirm("Appraiser correction")).confirmed_value, "Appraiser correction");
+    await pool.query(
+      "UPDATE app.assignment_document_field_candidates SET normalized_value = ' ' WHERE id = $1 AND document_id = $2",
+      [candidate.rows[0].id, documentId],
+    );
+    assert.equal((await confirm()).confirmed_value, "Lender: Fixture lender");
   } finally {
     if (holder) {
       await holder.query("ROLLBACK").catch(() => {});
@@ -467,6 +479,8 @@ test("Custom document review waits on the workfile before locking the document r
     if (reviewPromise) await reviewPromise.catch(() => {});
     if (documentId) await pool.query("DELETE FROM app.assignment_documents WHERE id = $1", [documentId]);
     if (assignmentFileId) {
+      await pool.query("DELETE FROM app.custom_appraisal_section_history WHERE assignment_file_id = $1", [assignmentFileId]);
+      await pool.query("DELETE FROM app.custom_appraisal_sections WHERE assignment_file_id = $1", [assignmentFileId]);
       await pool.query("DELETE FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1", [assignmentFileId]);
       await pool.query("DELETE FROM app.assignment_files WHERE id = $1", [assignmentFileId]);
     }

@@ -1723,7 +1723,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
            confirmed_value = CASE WHEN $3 = 'confirmed'
-             THEN COALESCE(NULLIF($4, ''), raw_value)
+             THEN COALESCE(NULLIF($4, ''), NULLIF(BTRIM(normalized_value), ''), raw_value)
              ELSE NULL
            END,
            reviewer = $5,

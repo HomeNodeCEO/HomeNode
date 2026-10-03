@@ -1,8 +1,8 @@
+import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
+
 /** Bounded, read-only adapters for verified DCAD and CoreLogic Property Details
  * text layouts. These are suggestions, never confirmation or subject identity. */
 const LIMITS = { pages: 250, pageChars: 500_000, totalChars: 4_000_000, lines: 50_000, lineChars: 4_000 };
-const STATES = new Set("AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR VI".split(" "));
-const EMPTY = /^(?:unknown|unavailable|not available|not provided|not disclosed|undisclosed|pending|tbd|n\/?a|null|undefined|[-_?]+)[.!]?$/i;
 const compact = value => value.replace(/\s+/g, " ").trim();
 const accountPattern = /^Residential Account\s*#\s*(\d{5,30})$/i;
 const urlPattern = /^https:\/\/(?:www\.)?dallascad\.org\/AcctDetailRes\.aspx\?ID=(\d{5,30})(?:\s+\d+\/\d+)?$/i;
@@ -89,12 +89,12 @@ function section(pages, pattern, unresolved, fieldKey) {
 
 function isStreet(value) {
   const match = value.match(/^\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?(?:\s+1\/2)?\s+(.+)$/);
-  return value.length <= 300 && match && /[A-Za-z]/.test(match[1]) && !EMPTY.test(match[1]);
+  return value.length <= 300 && match && /[A-Za-z]/.test(match[1]) && !isUrarPlaceholder(match[1]);
 }
 
 function addCandidate(result, sourceKind, fieldKey, raw, normalized, pageNumber, evidence, method, confidence = 0.9) {
   if (!raw || !normalized || raw.length > 2_000 || normalized.length > 2_000 || evidence.length > 2_000
-    || EMPTY.test(normalized)) {
+    || isUrarPlaceholder(normalized)) {
     result.unresolved.push({ field_key: fieldKey, page_number: pageNumber, reason: "reference_value_missing_or_unsafe" }); return;
   }
   result.candidates.push({ field_key: fieldKey, raw_value: raw, normalized_value: normalized, page_number: pageNumber,
@@ -132,7 +132,7 @@ function extractCad(pages, result) {
   if (owner) {
     const mailingStart = owner.lines.findIndex(line => /^\d+[A-Za-z]?(?:[-/]\d+)?\s+\S|^P\.?\s*O\.?\s*BOX\b|^(?:C\/O|CARE OF|ATTN[:.]?)\s|^(?:(?:Owner\s+)?Mailing|Tax Billing)\s+(?:Address|City|State|Zip)(?:\s*[:=].*)?$|^Address(?:\s*[:=].*)?$/i.test(line));
     const names = mailingStart > 0 ? owner.lines.slice(0, mailingStart) : [];
-    if (names.length >= 1 && names.length <= 4 && names.every(name => !EMPTY.test(name)
+    if (names.length >= 1 && names.length <= 4 && names.every(name => !isUrarPlaceholder(name)
       && /^[\p{L}][\p{L}\p{M} .,'&()/-]{1,199}$/u.test(name))) {
       addCandidate(result, "cad", "owner_name", names.join("\n"), names.join("\n"), owner.page_number,
         [owner.title, ...names].join("\n"), "dcad_current_owner");
@@ -150,7 +150,7 @@ function extractCad(pages, result) {
     addCandidate(result, "cad", "legal_description", raw, raw, legal.page_number, evidence, "dcad_numbered_legal");
     const name = rows[0][2], lotBlock = rows[1][2];
     if (/\b(?:BLK|BLOCK)\s+[A-Za-z0-9-]+\b/i.test(lotBlock) && /\b(?:LT|LOT)\s+[A-Za-z0-9-]+\b/i.test(lotBlock)
-      && /^[A-Za-z][A-Za-z0-9 .,'&()/-]{2,199}$/.test(name) && !EMPTY.test(name)
+      && /^[A-Za-z][A-Za-z0-9 .,'&()/-]{2,199}$/.test(name) && !isUrarPlaceholder(name)
       && !/\b(?:ABSTRACT|TRACT|SURVEY|ACRES?|BEING|BEGINNING|THENCE|METES|BOUNDS|OWNER|ADDRESS|ACCOUNT|PARCEL)\b/i.test(name)) {
       addCandidate(result, "cad", "neighborhood_name", name, name, legal.page_number, evidence, "dcad_legal_subdivision_lot_block", 0.8);
     } else result.unresolved.push({ field_key: "neighborhood_name", page_number: legal.page_number, reason: "cad_legal_subdivision_not_explicit" });
@@ -159,7 +159,7 @@ function extractCad(pages, result) {
 
 function fullPropertyHeader(line) {
   const match = line.match(/^(.+),\s*([A-Za-z][A-Za-z .'-]*),\s*([A-Z]{2})\s+(\d{5}(?:-\d{4})?),\s*([A-Za-z][A-Za-z .'-]*?)\s+County(?:\s+(?:Active|Pending|Sold|Off Market|Inactive|Expired|Withdrawn|Cancelled)\s+Listing)?$/i);
-  return match && isStreet(match[1]) && STATES.has(match[3].toUpperCase()) ? match : null;
+  return match && isStreet(match[1]) && isUrarStateCode(match[3]) ? match : null;
 }
 
 function taxAmount(value) {

@@ -1,4 +1,5 @@
 import { parseStructuredAddress } from "../util/structuredAddress.js";
+import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -22,8 +23,6 @@ export const SFREP_MAX_DOCUMENTS = 50;
 
 const SPEC_URL = "https://api.sfrep.com/rpti/aixml_spec.html";
 const INVALID_XML = /[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
-// Exact markers only: meaningful names such as "TBD Holdings" stay untouched.
-const EMPTY_MARKERS = /^(?:xsi:nil|null|undefined|unknown|unavailable|n\/?a|not available|not provided|not applicable|not disclosed|undisclosed|unassigned|pending|tbd|tba|to be determined|to be assigned|to be confirmed|to be announced|[-–—_?]+)[.!]?$/i;
 
 function fail(code) {
   const error = new Error(code);
@@ -41,7 +40,7 @@ function positiveId(value) {
 function textValue(value) {
   if (typeof value !== "string" && (typeof value !== "number" || !Number.isFinite(value))) return null;
   const result = String(value).trim();
-  if (!result || EMPTY_MARKERS.test(result)) return null;
+  if (!result || isUrarPlaceholder(result)) return null;
   return result;
 }
 
@@ -125,7 +124,7 @@ const MAPPINGS = Object.freeze({
   case_number: ["CaseNumber", identity],
   subject_street_address: ["StreetAddress", identity],
   subject_city: ["City", identity],
-  subject_state: ["State", (value) => /^[A-Za-z]{2}$/.test(value) ? value.toUpperCase() : null],
+  subject_state: ["State", (value) => isUrarStateCode(value) ? value.toUpperCase() : null],
   subject_zip: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
   subject_zip_code: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
   borrower_name: ["BorrowerName", identity],
@@ -274,7 +273,7 @@ function projectValue(sourceField, value) {
     if (full) {
       // Legacy/manual confirmations bypass extraction guards. Splitting must
       // not turn a composite value into an exported exact placeholder.
-      if (full.slice(1).some((component) => textValue(component) === null)) return [];
+      if (!isUrarStateCode(full[3]) || full.slice(1).some((component) => textValue(component) === null)) return [];
       return ["StreetAddress", "City", "State", "ZipCode"].map((fieldId, index) => ({
         fieldId, value: index === 2 ? full[index + 1].trim().toUpperCase() : full[index + 1].trim(), type: "TextField",
       }));

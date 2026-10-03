@@ -358,6 +358,7 @@ async function claimLocationBackfillBatch(
 ) {
   const safeBatchSize = boundedInteger(batchSize, 50, 1, 100);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     await client.query(`
@@ -403,10 +404,14 @@ async function claimLocationBackfillBatch(
     await client.query("COMMIT");
     return rows;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("location_backfill_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

@@ -164,6 +164,19 @@ test('queued document and assignment completions retain a newer manual Subject r
   assert.match(source, /preserveNewerReportSections\(current, updatedFile\)/);
 });
 
+test('assignment revision and section revisions reconcile independently without rewinding either owner', () => {
+  const newerAssignment = { ...file(), revision: 4, assignment_details: { lender_client_name: 'Newer Bank' } };
+  const newerSection = { ...file(), revision: 3, custom_appraisal_sections: {
+    [sectionKey]: { value: subject(), revision: 5 },
+  } };
+  const merged = preserveNewerReportSections(newerAssignment, newerSection);
+  assert.equal(merged.revision, 4); assert.deepEqual(merged.assignment_details, newerAssignment.assignment_details);
+  assert.equal(merged.custom_appraisal_sections[sectionKey].revision, 5);
+  const reverse = preserveNewerReportSections(newerSection, newerAssignment);
+  assert.equal(reverse.revision, 4); assert.deepEqual(reverse.assignment_details, newerAssignment.assignment_details);
+  assert.equal(reverse.custom_appraisal_sections[sectionKey].revision, 5);
+});
+
 function editorHarness(initialValue = subject()) {
   let cursor = 0, tree;
   const states = [];

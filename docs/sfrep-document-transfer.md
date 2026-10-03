@@ -388,6 +388,31 @@ approve an audit exception. The mobile Forge and braces advisories still require
 under the existing release process. Do not disable audits or claim production
 availability while that gate fails.
 
+### Assignment acknowledgement follow-up (October 3, 2026)
+
+Lender revision requests, document confirmations, and assignment conflict reloads
+now use one shared acknowledgement helper. Acknowledgements preserve newer
+manual-section and assignment revisions independently. Local edits made while a
+request is in flight remain dirty and queued; unresolved conflicts remain blocked
+after failed saves/reloads. The response-time committed draft baseline prevents
+an older document callback from inventing a conflict with an already-saved value.
+Both draft refs synchronize at layout commit, before passive effects.
+
+Regression tests execute the actual page callbacks as well as the helper. They
+cover queued edits, committed edits, stale responses/callbacks, retained lender
+revision metadata, same-file section revisions, and selection changes. The full
+frontend suite passes 3,598 tests, with TypeScript, zero-error/warning lint,
+unchanged source budgets, and production build/bundle budgets passing. Independent
+review exercised updater replay without finding a value-change or render-loop
+failure; this is not a claim of a full ReactDOM client StrictMode test.
+
+The native dependency mitigations are preserved separately in draft PR #1097;
+their temporary inclusion in this web feature branch was explicitly reverted.
+The existing required raw mobile audit still blocks release. Product-specific
+gate design is a separate unpublished review draft, not an activated exception
+or permission to merge/deploy this feature. Remaining live/native UI checks above
+are still required; no production availability is claimed by these local results.
+
 Field mapping evidence and format references:
 
 - <https://api.sfrep.com/rpti/aixml_spec.html>

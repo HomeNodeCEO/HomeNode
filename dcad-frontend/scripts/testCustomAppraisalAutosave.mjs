@@ -98,12 +98,12 @@ test("assignment selection changes invalidate every asynchronous save completion
     propertyReportSource.indexOf('const saveAssignmentDetails ='),
     propertyReportSource.indexOf('const resolveAssignmentAutosaveConflict ='),
   );
-  assert.equal(assignmentSaveSource.match(/selectionIsCurrent\(\)/gu)?.length, 9);
+  assert.equal(assignmentSaveSource.match(/selectionIsCurrent\(\)/gu)?.length, 10);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\) \|\| !current\) return current;/u);
   assert.match(propertyReportSource, /preserveNewerReportSections\(current, updatedFile\)/u);
   assert.match(propertyReportSource, /preserveNewerReportSections\(current, refreshedFile\)/u);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\)\) return true;/u);
-  assert.match(propertyReportSource, /if \(selectionIsCurrent\(\)\) void saveAssignmentDetailsRef\.current/u);
+  assert.match(propertyReportSource, /if \(selectionIsCurrent\(\) && !assignmentConflictKeysRef\.current\.length\) void saveAssignmentDetailsRef\.current/u);
 });
 
 test("unrelated server changes are retained while local edits are rebased", () => {

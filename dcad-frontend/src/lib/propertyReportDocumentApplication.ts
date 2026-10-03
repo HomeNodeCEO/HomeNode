@@ -1,14 +1,14 @@
 import type { AppraisalAssignmentFile, AssignmentDocumentApplication } from './api';
 
-/** Assignment-details saves do not own manual-section revisions. Reconcile at
- * setter execution time, including a manual save queued in the same React batch. */
+/** Assignment and manual-section revisions advance independently. Reconcile at
+ * setter execution time, including a newer document application in the same batch. */
 export function preserveNewerReportSections(current: AppraisalAssignmentFile, saved: AppraisalAssignmentFile): AppraisalAssignmentFile {
   if (current.id !== saved.id || current.account_id !== saved.account_id) return current;
   const sections = { ...saved.custom_appraisal_sections };
   for (const [key, section] of Object.entries(current.custom_appraisal_sections || {})) {
     if (!sections[key] || section.revision >= sections[key].revision) sections[key] = section;
   }
-  return { ...saved, custom_appraisal_sections: sections };
+  return { ...(current.revision > saved.revision ? current : saved), custom_appraisal_sections: sections };
 }
 
 /** Apply only the exact selected file's server-saved state, never source receipts

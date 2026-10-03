@@ -1,4 +1,4 @@
-import { lazy, memo, Suspense, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { lazy, memo, Suspense, useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useLocation, useParams } from "react-router-dom";
 import { customAssignmentFileMatches, customAssignmentHref, parseCustomAssignmentFileId } from "@/lib/customAssignmentNavigation";
@@ -82,7 +82,6 @@ import {
   captureAssignmentSaveSelection,
   customAppraisalDraftsMatch,
   isVisibleManualAssignmentSave,
-  reconcileCustomAppraisalDraft,
   applyCustomAppraisalRemoteConflicts,
   retainCurrentDraftWhenUnchanged,
   type CustomAppraisalAutosaveState,
@@ -142,6 +141,7 @@ import {
 } from "@/hooks/useCensusProfile";
 import { useZoningEvidence } from "@/hooks/useZoningEvidence";
 import { documentApplicationWarnings, mergeDocumentApplication, preserveNewerReportSections } from "@/lib/propertyReportDocumentApplication";
+import { createAssignmentDraftAcknowledgement } from "@/lib/assignmentDraftAcknowledgement";
 import { propertyReportOwnerPresentation } from "@/lib/propertyReportSubject";
 
 type AssignmentDetails = AssignmentDetailsPayload;
@@ -180,11 +180,21 @@ function AddressHero({
   const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
+  const assignmentRenderedDraftRef = useRef(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
   const assignmentDirtyRef = useRef(false);
   const activeAssignmentFileRef = useRef<AppraisalAssignmentFile | null>(null);
   const assignmentFirstDirtyAtRef = useRef<number | null>(null);
   const assignmentSaveInFlightRef = useRef<Promise<boolean> | null>(null);
+  useLayoutEffect(() => {
+    assignmentRenderedDraftRef.current = assignmentDraft;
+    assignmentDraftRef.current = assignmentDraft;
+  }, [assignmentDraft]);
+  const acknowledgeAssignmentDraft = useMemo(() => createAssignmentDraftAcknowledgement({
+    assignmentDraftRef, assignmentRenderedDraftRef, assignmentSavedDraftRef, assignmentDirtyRef,
+    assignmentFirstDirtyAtRef, assignmentConflictKeysRef, setAssignmentDraft, setAssignmentDirty,
+    setAssignmentConflictKeys, setAssignmentAutosaveState, setAssignmentSaveMessage,
+  }), [assignmentConflictKeysRef, setAssignmentConflictKeys]);
   const saveAssignmentDetailsRef = useRef<(
     options?: {
       requireCompletion?: boolean;
@@ -358,7 +368,6 @@ function AddressHero({
   });
   const detail = scopedDetail as DcadDetail | null;
   useEffect(() => {
-    assignmentDraftRef.current = assignmentDraft;
     const draftChanged = !customAppraisalDraftsMatch(
       assignmentDraft,
       assignmentSavedDraftRef.current,
@@ -842,25 +851,15 @@ function AddressHero({
       setAssignmentSaveMessage(`Supported Subject fields saved to this appraisal file.${documentApplicationWarnings(application)}`);
       return;
     }
-    const remoteDraft = assignmentDraftFromDetail(updatedFile.assignment_details);
-    const reconciliation = reconcileCustomAppraisalDraft(
-      assignmentSavedDraftRef.current,
-      assignmentDraftRef.current,
-      remoteDraft,
-      assignmentConflictKeysRef.current,
-    );
-    const nextDraft = cloneEditorValue(reconciliation.rebased);
-    assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
-    assignmentDraftRef.current = nextDraft;
-    assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
-    setAssignmentDraft(nextDraft);
-    setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
-    setAssignmentConflictKeys(reconciliation.conflictKeys);
-    setAssignmentAutosaveState(reconciliation.conflictKeys.length ? "conflict" : reconciliation.localChangedKeys.length ? "pending" : "saved");
-    setAssignmentSaveMessage((reconciliation.conflictKeys.length
-      ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentConflict
-      : "Supported report fields were saved to this appraisal file.") + documentApplicationWarnings(application));
-  }, [accountId, assignmentConflictKeysRef, setAssignmentConflictKeys, setActiveAssignmentFile, setAssignmentFiles, selectionGenerationRef]);
+    acknowledgeAssignmentDraft({
+      baseDraft: assignmentSavedDraftRef.current,
+      remoteDraft: assignmentDraftFromDetail(updatedFile.assignment_details),
+      canApply: () => canApply() && activeAssignmentFileRef.current?.id === updatedFile.id
+        && activeAssignmentFileRef.current.revision <= updatedFile.revision,
+      message: (conflicted) => (conflicted ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.documentConflict
+        : "Supported report fields were saved to this appraisal file.") + documentApplicationWarnings(application),
+    });
+  }, [accountId, acknowledgeAssignmentDraft, setActiveAssignmentFile, setAssignmentFiles, selectionGenerationRef]);
 
   const importCustomMarketArea = useCallback(() => {
     if (!legacyNeighborhoodAllowedRef.current) return;
@@ -1020,6 +1019,9 @@ function AddressHero({
           editorKey,
         );
         if (!selectionIsCurrent()) return true;
+        // A document confirmation can acknowledge a later assignment revision
+        // before this response arrives; retain its reconciled draft and conflicts.
+        if (activeAssignmentFileRef.current!.revision > response.assignment_file.revision) return true;
         const updatedFile: AppraisalAssignmentFile = {
           ...response.assignment_file,
           custom_appraisal_sections: activeAssignmentFileRef.current?.custom_appraisal_sections || fileAtStart.custom_appraisal_sections,
@@ -1069,13 +1071,7 @@ function AddressHero({
             const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id && customAssignmentFileMatches(file, accountId));
             if (latestFile && typeof latestResponse.account_id === "string"
               && latestResponse.account_id.trim().toUpperCase() === accountId.trim().toUpperCase()) {
-              const remoteDraft = assignmentDraftFromDetail(latestFile.assignment_details);
-              const reconciliation = reconcileCustomAppraisalDraft(
-                assignmentSavedDraftRef.current,
-                assignmentDraftRef.current,
-                remoteDraft,
-              );
-              const rebasedDraft = cloneEditorValue(reconciliation.rebased);
+              if (activeAssignmentFileRef.current!.revision > latestFile.revision) return false;
               const refreshedFile = preserveNewerReportSections(activeAssignmentFileRef.current || fileAtStart, {
                 ...latestFile,
                 custom_appraisal_sections:
@@ -1086,9 +1082,6 @@ function AddressHero({
                   latestFile.mobile_inspection_photos || fileAtStart.mobile_inspection_photos,
               });
               activeAssignmentFileRef.current = refreshedFile;
-              assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
-              assignmentDraftRef.current = rebasedDraft;
-              assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
               setActiveAssignmentFile((current) => {
                 if (!selectionIsCurrent() || !current) return current;
                 const next = preserveNewerReportSections(current, refreshedFile);
@@ -1096,36 +1089,35 @@ function AddressHero({
                 return next;
               });
               setAssignmentFiles((current) => selectionIsCurrent() ? current.map((file) => preserveNewerReportSections(file, refreshedFile)) : current);
-              setAssignmentDraft(rebasedDraft);
-              setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
-              setAssignmentConflictKeys(reconciliation.conflictKeys);
-              if (reconciliation.conflictKeys.length) {
-                setAssignmentAutosaveState("conflict");
-                setAssignmentSaveMessage(CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.conflict);
-              } else if (reconciliation.localChangedKeys.length) {
-                setAssignmentAutosaveState("pending");
-                setAssignmentSaveMessage(CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.rebased);
+              const reconciliation = acknowledgeAssignmentDraft({
+                baseDraft: assignmentSavedDraftRef.current,
+                remoteDraft: assignmentDraftFromDetail(refreshedFile.assignment_details),
+                canApply: () => selectionIsCurrent() && activeAssignmentFileRef.current!.revision <= refreshedFile.revision,
+                message: (conflicted, dirty) => conflicted ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.conflict
+                  : dirty ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.rebased : "The newer saved file is already current.",
+              });
+              if (!reconciliation.conflictKeys.length && reconciliation.dirty) {
                 window.setTimeout(() => {
-                  if (selectionIsCurrent()) void saveAssignmentDetailsRef.current({
+                  if (selectionIsCurrent() && !assignmentConflictKeysRef.current.length) void saveAssignmentDetailsRef.current({
                     requireCompletion: false,
                     saveReason,
                     promptForCredential: false,
                     allowConflictRetry: false,
                   });
                 }, 0);
-              } else {
-                setAssignmentAutosaveState("saved");
-                setAssignmentSaveMessage("The newer saved file is already current.");
               }
-              return reconciliation.localChangedKeys.length === 0;
+              return !reconciliation.dirty;
             }
           } catch {
             // Report the conflict below.
           }
         }
-        setAssignmentAutosaveState("error");
+        const unresolvedConflictsRemain = assignmentConflictKeysRef.current.length > 0;
+        setAssignmentAutosaveState(unresolvedConflictsRemain ? "conflict" : "error");
         setAssignmentSaveMessage(
-          message === "assignment_file_revision_conflict"
+          unresolvedConflictsRemain
+            ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.conflict
+            : message === "assignment_file_revision_conflict"
             ? CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES.retry
             : message,
         );
@@ -1339,12 +1331,13 @@ function AddressHero({
     if (note === null) return;
     const editorKey = editorKeyForSave();
     if (!editorKey) return;
+    const draftAtStart = cloneEditorValue(assignmentDraftRef.current);
     const nextRevisionCount = Math.max(
       0,
-      Number(assignmentDraft.lender_revision_count) || 0,
+      Number(draftAtStart.lender_revision_count) || 0,
     ) + 1;
     const updatedDetails: AssignmentDetails = {
-      ...cloneEditorValue(assignmentDraft),
+      ...draftAtStart,
       lender_revision_count: nextRevisionCount,
       lender_revision_last_requested_at: new Date().toISOString(),
       lender_revision_note: note.trim(),
@@ -1361,17 +1354,22 @@ function AddressHero({
         editorKey,
       );
       if (!selectionIsCurrent()) return;
+      if (activeAssignmentFileRef.current!.revision > response.assignment_file.revision) return;
       const updatedFile = preserveNewerReportSections(activeAssignmentFileRef.current || fileAtStart, {
         ...response.assignment_file,
         mobile_inspection_sketch: fileAtStart.mobile_inspection_sketch,
         mobile_inspection_photos: fileAtStart.mobile_inspection_photos,
       });
-      const savedDraft = assignmentDraftFromDetail(updatedFile.assignment_details);
-      assignmentDraftRef.current = savedDraft;
-      assignmentSavedDraftRef.current = cloneEditorValue(savedDraft);
-      assignmentDirtyRef.current = false;
       activeAssignmentFileRef.current = updatedFile;
-      setAssignmentDraft(savedDraft);
+      acknowledgeAssignmentDraft({
+        baseDraft: draftAtStart,
+        remoteDraft: assignmentDraftFromDetail(updatedFile.assignment_details),
+        canApply: () => selectionIsCurrent() && activeAssignmentFileRef.current!.revision <= updatedFile.revision,
+        message: (conflicted, dirty) =>
+          `Recorded lender/client revision request ${nextRevisionCount} for file ${response.assignment_file.file_number}.`
+            + (conflicted ? " Resolve the concurrent-edit choice before saving the remaining edits."
+              : dirty ? " Newer edits remain queued for saving." : ""),
+      });
       setActiveAssignmentFile((current) => {
         if (!selectionIsCurrent() || !current) return current;
         const next = preserveNewerReportSections(current, updatedFile);
@@ -1379,13 +1377,7 @@ function AddressHero({
         return next;
       });
       setAssignmentFiles((current) => selectionIsCurrent() ? current.map((file) => preserveNewerReportSections(file, updatedFile)) : current);
-      setAssignmentDirty(false);
-      setAssignmentConflictKeys([]);
-      setAssignmentAutosaveState("saved");
       setLastAssignmentSavedAt(updatedFile.updated_at || new Date().toISOString());
-      setAssignmentSaveMessage(
-        `Recorded lender/client revision request ${nextRevisionCount} for file ${response.assignment_file.file_number}.`,
-      );
     } catch (error) {
       if (!selectionIsCurrent()) return;
       const message = error instanceof Error

@@ -7,6 +7,7 @@ import { CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES, captureAssignmentSaveSelection, cus
   isVisibleManualAssignmentSave, reconcileCustomAppraisalDraft } from '../src/lib/customAppraisalAutosave.ts';
 import { preserveNewerReportSections } from '../src/lib/propertyReportDocumentApplication.ts';
 import { customAssignmentFileMatches } from '../src/lib/customAssignmentNavigation.ts';
+import { createAssignmentDraftAcknowledgement } from '../src/lib/assignmentDraftAcknowledgement.ts';
 
 const { ast } = readTrustedRepositoryTypeScript(new URL('../src/pages/PropertyReport.tsx', import.meta.url));
 let saveExpression;
@@ -28,11 +29,14 @@ function harness() {
   let active = file(), files = [active, file(8)], conflictKeys = [], message = '';
   const reload = deferred(), queue = [], calls = [];
   const fileRef = { current: active }, generation = { current: 1 };
+  const conflictKeysRef = { current: conflictKeys };
   const savedDraft = { current: assignmentDraftFromDetail(active.assignment_details) };
   const draft = { current: { ...savedDraft.current, lender_client_name: 'Local Bank' } };
   const environment = {
-    accountId: 'SYNTHETIC', assignmentSaveInFlightRef: { current: null }, assignmentDraftRef: draft,
+    accountId: 'SYNTHETIC', assignmentDraft: draft.current, assignmentSaveInFlightRef: { current: null }, assignmentDraftRef: draft,
+    assignmentRenderedDraftRef: { current: draft.current },
     assignmentSavedDraftRef: savedDraft, activeAssignmentFileRef: fileRef, selectionGenerationRef: generation,
+    assignmentConflictKeysRef: conflictKeysRef,
     assignmentDirtyRef: { current: true }, assignmentFirstDirtyAtRef: { current: null },
     saveAssignmentDetailsRef: { current: () => assert.fail('conflicting lender edits must not auto-retry') },
     cloneEditorValue, assignmentDraftFromDetail, captureAssignmentSaveSelection, customAppraisalDraftsMatch,
@@ -40,14 +44,15 @@ function harness() {
     customAssignmentFileMatches, CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES,
     assignmentValidationErrors: () => [], editorKeyForSave: () => 'test-key', editorCredentialForRequest: () => 'test-key',
     forgetEditorCredential: () => assert.fail('no auth failure'), setSavingAssignmentFile() {}, setAssignmentAutosaveState() {},
-    setAssignmentDirty() {}, setLastAssignmentSavedAt() {}, setAssignmentDraft(value) { draft.current = value; },
-    setAssignmentSaveMessage(value) { message = value; }, setAssignmentConflictKeys(value) { conflictKeys = value; },
+    setAssignmentDirty() {}, setLastAssignmentSavedAt() {}, setAssignmentDraft(value) { draft.current = typeof value === 'function' ? value(draft.current) : value; },
+    setAssignmentSaveMessage(value) { message = value; }, setAssignmentConflictKeys(value) { conflictKeys = value; conflictKeysRef.current = value; },
     setActiveAssignmentFile(update) { queue.push(() => { active = typeof update === 'function' ? update(active) : update; }); },
     setAssignmentFiles(update) { queue.push(() => { files = typeof update === 'function' ? update(files) : update; }); },
     updateAssignmentFile: async () => { calls.push('save'); throw new Error('assignment_file_revision_conflict'); },
     getAssignmentFiles: async () => { calls.push('reload'); return reload.promise; },
     window: { setTimeout: () => assert.fail('conflicting edits must remain under review') },
   };
+  environment.acknowledgeAssignmentDraft = createAssignmentDraftAcknowledgement(environment);
   const save = executeTrustedRepositoryExpression(saveExpression, environment);
   return { save, reload, calls, generation, fileRef, draft,
     get active() { return active; }, get files() { return files; }, get conflictKeys() { return conflictKeys; }, get message() { return message; },

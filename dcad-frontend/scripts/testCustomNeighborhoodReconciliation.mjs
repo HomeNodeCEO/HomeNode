@@ -97,7 +97,10 @@ test('independent market, land-use, and client conflicts retain existing field-l
 test('document approval cannot queue autosave while a reconciliation conflict is unresolved', () => {
   const source = readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
   const body = source.slice(source.indexOf('const applyConfirmedDocumentApplication ='), source.indexOf('const importCustomMarketArea ='));
-  assert.match(body, /setAssignmentAutosaveState\(reconciliation\.conflictKeys\.length\s*\?\s*"conflict"\s*:\s*reconciliation\.localChangedKeys\.length\s*\?\s*"pending"\s*:\s*"saved"\)/u);
+  assert.match(body, /acknowledgeAssignmentDraft\(\{\s*baseDraft: assignmentSavedDraftRef\.current,\s*remoteDraft: assignmentDraftFromDetail\(updatedFile\.assignment_details\),/u);
+  const helper = readFileSync(new URL('../src/lib/assignmentDraftAcknowledgement.ts', import.meta.url), 'utf8');
+  assert.match(helper, /const conflicted = reconciliation\.conflictKeys\.length > 0;/u);
+  assert.match(helper, /editor\.setAssignmentAutosaveState\(conflicted \? 'conflict' : dirty \? 'pending' : 'saved'\)/u);
 });
 
 test('Keep Mine retains the local group; Use Newer Saved Values replaces it as a whole', () => {
@@ -185,5 +188,12 @@ test('pending-choice state is visible to asynchronous approval before the next r
   assert.deepEqual(queued, [pending, []]);
   const page = readFileSync(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
   const approval = page.slice(page.indexOf('const applyConfirmedDocumentApplication ='), page.indexOf('const importCustomMarketArea ='));
-  assert.match(approval, /remoteDraft,\s*assignmentConflictKeysRef\.current,/u);
+  assert.match(approval, /acknowledgeAssignmentDraft\(\{/u);
+  const wiring = page.slice(page.indexOf('const acknowledgeAssignmentDraft ='), page.indexOf('const saveAssignmentDetailsRef ='));
+  assert.match(wiring, /createAssignmentDraftAcknowledgement\(\{/u);
+  assert.match(wiring, /\bassignmentConflictKeysRef\b/u);
+  assert.match(wiring, /\bsetAssignmentConflictKeys\b/u);
+  const helper = readFileSync(new URL('../src/lib/assignmentDraftAcknowledgement.ts', import.meta.url), 'utf8');
+  assert.match(helper, /reconcileCustomAppraisalDraft\(baseDraft, editor\.assignmentDraftRef\.current,\s*remoteDraft, editor\.assignmentConflictKeysRef\.current\)/u);
+  assert.match(helper, /reconcileCustomAppraisalDraft\(renderedDraft, current, result\.rebased, editor\.assignmentConflictKeysRef\.current\)/u);
 });

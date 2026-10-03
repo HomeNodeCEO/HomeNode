@@ -894,10 +894,6 @@ export async function createAssignmentDocument(pool, {
         "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
         [lockKey],
       );
-      existing = await findAssignmentDocumentByIdentity(
-        transactionClient,
-        identity,
-      );
       if (customAssignmentFileId) {
         // The same workfile lock is held by signing until its snapshot and PDF
         // commit, so neither new bytes nor duplicate metadata can drift after it.
@@ -906,6 +902,12 @@ export async function createAssignmentDocument(pool, {
           account_id: accountId,
         });
       }
+      // The identity lookup locks any duplicate document. Match review/delete's
+      // assignment -> workfile -> document order to avoid opposing row locks.
+      existing = await findAssignmentDocumentByIdentity(
+        transactionClient,
+        identity,
+      );
       if (existing?.storage_provider === "r2" && existing.object_key) {
         const { rows } = await transactionClient.query(
           `UPDATE app.assignment_documents

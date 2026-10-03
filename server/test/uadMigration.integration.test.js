@@ -393,15 +393,19 @@ test("signed Custom document deletion, upload, and candidate review are denied a
   }
 });
 
-test("Custom document review waits on the workfile before locking the document row", {
-  skip: !databaseUrl,
-}, async () => {
+for (const operation of ["review", "duplicate upload"]) {
+  test(`Custom document ${operation} waits on the workfile before locking the document row`, {
+    skip: !databaseUrl,
+  }, () => assertCustomDocumentLockOrder(operation));
+}
+
+async function assertCustomDocumentLockOrder(operation) {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 3, statement_timeout: 10_000 });
   let holder;
   let assignmentFileId;
   let documentId;
   let accountId;
-  let reviewPromise;
+  let operationPromise;
   try {
     const identity = await pool.query("SELECT current_database() AS database_name");
     assert.match(identity.rows[0].database_name, /_test$/);
@@ -438,17 +442,18 @@ test("Custom document review waits on the workfile before locking the document r
       [documentId],
     );
 
-    let preliminaryRead;
-    const readStarted = new Promise((resolve) => { preliminaryRead = resolve; });
+    let workfileLockAttempt;
+    const workfileLockStarted = new Promise((resolve) => { workfileLockAttempt = resolve; });
     const observedPool = {
       query: (...args) => pool.query(...args),
       connect: async () => {
         const client = await pool.connect();
         return {
           query: async (sql, ...args) => {
-            const result = await client.query(sql, ...args);
-            if (/SELECT account_id, assignment_file_id/.test(String(sql))) preliminaryRead();
-            return result;
+            // Signal only after any earlier document lookup has completed, so
+            // an inverted duplicate-upload lock order fails deterministically.
+            if (/FOR UPDATE OF workfile/.test(String(sql))) workfileLockAttempt();
+            return client.query(sql, ...args);
           },
           release: () => client.release(),
         };
@@ -462,7 +467,9 @@ test("Custom document review waits on the workfile before locking the document r
       "SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
       [assignmentFileId],
     );
-    reviewPromise = reviewAssignmentDocumentCandidate(observedPool, {
+    operationPromise = operation === "duplicate upload" ? createAssignmentDocument(observedPool, {
+      accountId, assignmentFileId, fileName: "duplicate.pdf", content,
+    }) : reviewAssignmentDocumentCandidate(observedPool, {
       documentId,
       candidateId: candidate.rows[0].id,
       reviewStatus: "rejected",
@@ -471,19 +478,19 @@ test("Custom document review waits on the workfile before locking the document r
     let waitTimer;
     try {
       await Promise.race([
-        readStarted,
-        reviewPromise.then(
-          () => { throw new Error("document_review_finished_before_scope_read"); },
+        workfileLockStarted,
+        operationPromise.then(
+          () => { throw new Error("document_operation_finished_before_workfile_lock"); },
           (error) => { throw error; },
         ),
         new Promise((_, reject) => {
-          waitTimer = setTimeout(() => reject(new Error("document_scope_read_timeout")), 5_000);
+          waitTimer = setTimeout(() => reject(new Error("document_workfile_lock_timeout")), 5_000);
         }),
       ]);
     } finally {
       clearTimeout(waitTimer);
     }
-    // If review locked the document first, this opposing workfile/document
+    // If the operation locked the document first, this opposing workfile/document
     // transaction would hit lock_timeout instead of acquiring the row.
     await holder.query(
       "SELECT id FROM app.assignment_documents WHERE id = $1 FOR UPDATE",
@@ -492,7 +499,18 @@ test("Custom document review waits on the workfile before locking the document r
     await holder.query("COMMIT");
     holder.release();
     holder = null;
-    const reviewed = await reviewPromise;
+    const reviewed = await operationPromise;
+    if (operation === "duplicate upload") {
+      assert.equal(reviewed.id, Number(documentId));
+      assert.equal(reviewed.file_name, "duplicate.pdf");
+      assert.equal(reviewed.processing_status, "review_required");
+      const duplicates = await pool.query(
+        "SELECT count(*)::integer AS count FROM app.assignment_documents WHERE assignment_file_id = $1",
+        [assignmentFileId],
+      );
+      assert.equal(duplicates.rows[0].count, 1);
+      return;
+    }
     assert.equal(reviewed.review_status, "rejected");
     // Single-field approval must use the same normalized default as batch approval.
     const confirm = (confirmedValue) => reviewAssignmentDocumentCandidate(pool, {
@@ -511,7 +529,7 @@ test("Custom document review waits on the workfile before locking the document r
       await holder.query("ROLLBACK").catch(() => {});
       holder.release();
     }
-    if (reviewPromise) await reviewPromise.catch(() => {});
+    if (operationPromise) await operationPromise.catch(() => {});
     if (documentId) await pool.query("DELETE FROM app.assignment_documents WHERE id = $1", [documentId]);
     if (assignmentFileId) {
       await pool.query("DELETE FROM app.custom_appraisal_section_history WHERE assignment_file_id = $1", [assignmentFileId]);
@@ -522,7 +540,7 @@ test("Custom document review waits on the workfile before locking the document r
     if (accountId) await pool.query("DELETE FROM core.accounts WHERE account_id = $1", [accountId]);
     await pool.end();
   }
-});
+}
 
 test("custom signed-photo coverage audit runs against migrated PostgreSQL without writes", {
   skip: !databaseUrl,

@@ -336,8 +336,35 @@ test("signed Custom duplicate upload cannot change existing document metadata", 
     storage: { configured: true, async putObject() { events.push("PUT_OBJECT"); } },
   }), /custom_appraisal_workfile_signed/);
   assert.equal(events.some((sql) => /UPDATE app\.assignment_documents\s+SET title/.test(sql)), false);
+  assert.equal(events.some((sql) => /SELECT \*\s+FROM app\.assignment_documents/.test(sql)), false);
   assert.equal(events.includes("PUT_OBJECT"), false);
 });
+
+for (const storageProvider of [null, "postgres", "r2"]) {
+  test(`Custom ${storageProvider || "new"} upload locks assignment and workfile before duplicate document lookup`, async () => {
+    const existing = storageProvider ? {
+      id: 90, account_id: "account-91", assignment_file_id: 91,
+      storage_provider: storageProvider, object_key: storageProvider === "r2" ? "documents/original.pdf" : null,
+    } : null;
+    const { pool, events } = customDocumentUploadPool({ existing });
+    await createAssignmentDocument(pool, {
+      accountId: "account-91", assignmentFileId: 91,
+      fileName: "duplicate.pdf", content: Buffer.from("%PDF-lock-order"),
+      ...(storageProvider === "r2" ? { storage: { configured: true,
+        async putObject() { assert.fail("a stored duplicate must not upload new bytes"); },
+      } } : {}),
+    });
+    const assignmentLock = events.findIndex(sql => /SELECT id, file_number FROM app\.assignment_files/.test(sql));
+    const workfileLock = events.findIndex(sql => /FOR UPDATE OF workfile/.test(sql));
+    const documentLock = events.findIndex(sql => /SELECT \*\s+FROM app\.assignment_documents/.test(sql));
+    const documentWrite = events.findIndex(sql => /(?:UPDATE|INSERT INTO) app\.assignment_documents/.test(sql));
+    assert.ok(assignmentLock >= 0 && assignmentLock < workfileLock);
+    assert.ok(workfileLock < documentLock, "duplicate row lock must follow assignment/workfile locks");
+    assert.match(events[documentLock], /FOR UPDATE/);
+    assert.ok(documentLock < documentWrite);
+    assert.ok(events.includes("COMMIT"));
+  });
+}
 
 test("Custom uploads without R2 still lock the workfile before PostgreSQL persistence", async () => {
   const { pool, events } = customDocumentUploadPool();

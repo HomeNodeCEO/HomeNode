@@ -456,7 +456,7 @@ export function validateReportManualSection(key, value) {
     for (const name of ["property_location", "owner", "legal_description", "urar_subject"]) {
       if (value[name] !== undefined && !object(value[name])) invalid();
     }
-    for (const name of ["address", "city", "state", "postal_code", "county", "subdivision"]) {
+    for (const name of ["address", "city", "state", "postal_code", "county", "subdivision", "census_tract"]) {
       checkText(value.property_location?.[name]);
     }
     checkText(value.owner?.owner_name);
@@ -466,7 +466,7 @@ export function validateReportManualSection(key, value) {
       || value.legal_description.lines.join("\n").length > 20_000)) invalid();
     const urar = value.urar_subject;
     if (urar) {
-      const keys = ["borrower_name", "assessor_parcel_number", "tax_year", "tax_amount", "property_rights", "offered_for_sale_prior_12_months"];
+      const keys = ["borrower_name", "assessor_parcel_number", "tax_year", "tax_amount", "property_rights", "listing_history_summary", "offered_for_sale_prior_12_months"];
       if (Object.keys(urar).some(name => !keys.includes(name))) invalid();
       for (const name of keys.slice(0, -1)) checkText(urar[name]);
       if (urar.tax_year && !/^\d{4}$/.test(urar.tax_year)) invalid();

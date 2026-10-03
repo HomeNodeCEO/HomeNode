@@ -102,6 +102,18 @@ function addCandidate(result, sourceKind, fieldKey, raw, normalized, pageNumber,
     review_status: "suggested", confidence });
 }
 
+function extractCensusTract(result, sourceKind, lines, pageNumber, heading) {
+  const labeled = lines.filter(line => /\bCensus Tract\b/i.test(line));
+  if (!labeled.length) return;
+  const values = labeled.map(line => ({ line, match: line.match(/\bCensus Tract(?: Number)?\s*:?\s+(\d{1,4}(?:\.\d{1,2})?)(?=$|\s+[A-Za-z])/i) }));
+  if (values.some(item => !item.match) || new Set(values.map(item => item.match?.[1])).size !== 1) {
+    result.unresolved.push({ field_key: "census_tract", page_number: pageNumber, reason: "reference_census_tract_missing_or_ambiguous" }); return;
+  }
+  const first = values[0];
+  addCandidate(result, sourceKind, "census_tract", first.match[1], first.match[1], pageNumber,
+    `${heading}\n${first.line}`, "property_location_census_tract");
+}
+
 function extractCad(pages, result) {
   const accounts = matches(pages, accountPattern), urls = matches(pages, urlPattern);
   const ids = new Set([...accounts, ...urls].map(item => item.match[1]));
@@ -115,6 +127,7 @@ function extractCad(pages, result) {
     account.line, "dcad_account_layout");
   const location = section(pages, locationTitle, result.unresolved, "subject_property_address");
   if (location) {
+    extractCensusTract(result, "cad", location.lines, location.page_number, location.title);
     const addresses = location.lines.map(line => ({ line, match: line.match(/^Address:\s*(.+)$/i) })).filter(item => item.match);
     if (addresses.length === 1 && isStreet(addresses[0].match[1])) {
       const item = addresses[0];
@@ -232,6 +245,11 @@ function extractRealist(pages, result) {
     addCandidate(result, "realist", field, value, value, header.page_number, header.line, "property_details_subject_header");
   }
   addCandidate(result, "realist", "assessor_parcel_number", apn.match[1], apn.match[1], apn.page_number, apn.line, "property_details_apn");
+  const locationStart = header.lines.findIndex(line => line === "LOCATION INFORMATION");
+  const locationEnd = header.lines.findIndex((line, index) => index > locationStart && line === "TAX INFORMATION");
+  if (locationStart >= 0 && locationEnd > locationStart && locationEnd - locationStart <= 80) {
+    extractCensusTract(result, "realist", header.lines.slice(locationStart + 1, locationEnd), header.page_number, "LOCATION INFORMATION");
+  }
   extractRealistTaxes(pages, result, header.page_number);
 }
 

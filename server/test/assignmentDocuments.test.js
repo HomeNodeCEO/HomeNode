@@ -1454,6 +1454,7 @@ test("approving assignment-scoped engagement evidence updates the exact file and
       if (/UPDATE app\.assignment_files/.test(sql)) return { rows: [] };
       if (/INSERT INTO app\.assignment_file_history/.test(sql)) return { rows: [] };
       if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (/SELECT to_regclass/.test(sql)) return { rows: [{ census_available: false }] };
       if (/FROM app\.assignment_documents document/.test(sql)) return { rows: [{
         id: 47, account_id: "26355500170360000", assignment_file_id: 91,
         document_type: "engagement_letter", processing_status: "review_required",

@@ -149,3 +149,68 @@ test('multiple assignment choices and unsupported HOA frequency are not guessed'
   const result = exportSaved(saved);
   assert.doesNotMatch(result.reportXml, /AssignmentTypePurchaseCheckBox|AssignmentTypeRefinanceCheckBox|AssessmentAmount/);
 });
+
+test('presentation-only normalization preserves an exact older source receipt without concealing source changes', () => {
+  const { saved } = fixture();
+  const owner = saved.documents[0].candidates.find(candidate => candidate.field_key === 'owner_name');
+  owner.confirmed_value = 'EXAMPLE OWNER';
+  const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'owner_name');
+  saved.subject.value.owner.owner_name = 'EXAMPLE OWNER';
+  saved.evidence.value.fields.owner_name = { ...proposal.provenance, reviewedSourceValue: proposal.sourceValue, value: 'EXAMPLE OWNER', status: 'current' };
+  const exported = exportSaved(saved).fields.find(field => field.fieldId === 'OwnerName');
+  assert.equal(exported.value, 'Example Owner');
+  assert.equal(exported.provenance.origin, 'reviewed_document');
+  owner.confirmed_value = 'DIFFERENT OWNER';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'OwnerName'), false);
+});
+
+test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {
+  const { saved } = fixture();
+  saved.documents[0].subject_context.censusGeography = { tractCode: '001234', status: 'matched',
+    geoid: '48113001234', vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' };
+  const applied = mergeCustomSubjectApplication({ subject: saved.subject.value, assignmentDetails: saved.assignmentDetails,
+    evidence: saved.evidence.value, projection: projectCustomSubjectDocuments(saved.documents), reviewedDocumentId: 1 });
+  saved.subject.value = applied.subject;
+  saved.evidence.value = applied.evidence;
+  const result = exportSaved(saved).fields.find(field => field.fieldId === 'CensusTract');
+  assert.equal(result.value, '12.34');
+  assert.equal(result.provenance.origin, 'account_reference');
+  assert.equal(result.provenance.sourceEvidence[0].accountId, '000123');
+  saved.documents[0].subject_context.censusGeography.updatedAt = '2026-10-04T00:00:00Z';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'CensusTract'), false);
+  saved.subject.value.property_location.census_tract = '';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'CensusTract'), false);
+});
+
+test('saved HOA workflow defaults remain identified as assumptions, not eligibility proof', () => {
+  const { saved } = fixture();
+  const pud = saved.documents[0].candidates.find(candidate => candidate.field_key === 'pud');
+  saved.documents[0].document_type = 'mls_sheet';
+  Object.assign(pud, { raw_value: 'Yes', normalized_value: 'true', confirmed_value: 'true',
+    extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+  const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'pud');
+  saved.assignmentDetails.pud = true;
+  saved.evidence.value.fields.pud = { ...proposal.provenance, reviewedSourceValue: proposal.sourceValue, value: true, status: 'current' };
+  const result = exportSaved(saved);
+  assert.equal(result.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox').provenance.rule, 'user_requested_hoa_workflow_proxy_v1');
+  assert.ok(result.assumptions.some(assumption => assumption.rule === 'user_requested_hoa_workflow_proxy_v1'));
+});
+
+test('phase and ZIP suffix presentation cannot hide a changed raw reviewed source', () => {
+  for (const [key, original, replacement, fieldId] of [
+    ['neighborhood_name', 'EXAMPLE PARK 4', 'EXAMPLE PARK 5', 'NeighborhoodName'],
+    ['subject_zip', '75041-1234', '75041-5678', 'ZipCode'],
+  ]) {
+    const { saved } = fixture();
+    saved.documents[0].candidates = saved.documents[0].candidates.filter(item => item.field_key !== key);
+    const source = candidate(key, original, 199);
+    saved.documents[0].candidates.push(source);
+    const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
+    saved.subject.value = applied.subject;
+    saved.assignmentDetails = applied.assignmentDetails;
+    saved.evidence.value = applied.evidence;
+    assert.ok(exportSaved(saved).fields.some(field => field.fieldId === fieldId));
+    source.confirmed_value = replacement;
+    assert.equal(exportSaved(saved).fields.some(field => field.fieldId === fieldId), false);
+  }
+});

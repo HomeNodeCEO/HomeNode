@@ -294,7 +294,8 @@ test("single-listing MLS print heading supplies exact subject identity without u
   assert.equal(value(result, "subject_state"), "TX");
   assert.equal(value(result, "subject_zip"), "75041");
   assert.equal(value(result, "assessor_parcel_number"), "00001234567890000");
-  assert.equal(value(result, "pud"), undefined);
+  assert.equal(value(result, "pud"), "false");
+  assert.match(field(result, "pud").extraction_method, /hoa_workflow_proxy$/);
   assert.equal(value(result, "hoa_dues_amount"), undefined);
   assert.ok(field(result, "subject_property_address").evidence_excerpt.includes("MLS#: 12345678"));
   assert.ok(result.candidates.every(candidate => candidate.page_number === 1 && candidate.review_status === "suggested"));

@@ -1,12 +1,16 @@
 import {
   CUSTOM_SUBJECT_FIELD_DESCRIPTORS, readCustomSubjectValue, projectCustomSubjectDocuments,
 } from './customSubjectApplication.js';
+import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
+import { isDeepStrictEqual } from 'node:util';
 
-const same = (left, right) => JSON.stringify(left) === JSON.stringify(right);
+// PostgreSQL jsonb reorders object keys. Evidence equality is structural, while
+// ordered arrays and exact scalar values still remain part of the receipt.
+const same = isDeepStrictEqual;
 const positive = value => Number.isSafeInteger(value) && value > 0;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const PROOF_KEYS = ['kind', 'sourceField', 'documentId', 'candidateId', 'documentType', 'rule',
-  'sourceValue', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'];
+  'sourceValue', 'sourceEvidence', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'];
 
 /** Resolve only persisted report values. Evidence receipts cannot authorize
  * themselves: exact source/value/derivation are checked against the current,
@@ -36,7 +40,11 @@ export function savedSfrepSubjectFields(saved, input) {
     if (receipt && same(receipt.value, value)) {
       const proposal = proposals.get(descriptor.key);
       const proof = proposal?.provenance;
-      const valid = receipt.status === 'current' && proposal && same(proposal.value, value) && proof
+      // Older receipts retain their exact capitals/ZIP+4/phase suffix. A pure
+      // presentation update does not invalidate otherwise identical evidence.
+      const valid = receipt.status === 'current' && proposal
+        && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value)) && proof
+        && same(receipt.reviewedSourceValue, proposal.sourceValue)
         && PROOF_KEYS.every(key => same(receipt[key], proof[key]));
       if (!valid) {
         const reason = `${descriptor.key}: saved document-derived value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
@@ -54,6 +62,8 @@ export function savedSfrepSubjectFields(saved, input) {
       ...(source?.documentId ? { sourceDocumentId: source.documentId } : {}),
       ...(source?.candidateId ? { sourceCandidateId: source.candidateId } : {}),
       ...(source?.rule ? { rule: source.rule } : {}),
+      ...(source?.rule === 'user_requested_hoa_workflow_proxy_v1' ? { sourceValue: source.sourceValue } : {}),
+      ...(source?.sourceEvidence ? { sourceEvidence: source.sourceEvidence } : {}),
       ...(source?.kind === 'derived_reviewed_document' ? Object.fromEntries(
         ['sourceValue', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd']
           .map(key => [key, source[key]])) : {}),

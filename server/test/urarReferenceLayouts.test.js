@@ -302,3 +302,20 @@ test("reference adapters are deterministic and do not mutate supplied pages", ()
   assert.deepEqual(extract("realist", pages), extract("realist", pages));
   assert.equal(pages[0], REALIST);
 });
+
+test("verified reference layouts extract Census Tract only from the subject location section", () => {
+  const cad = extract("cad", CAD.replace("Neighborhood: CODE-99", "Neighborhood: CODE-99\nCensus Tract: 0123.45"));
+  assert.equal(values(cad).census_tract, "0123.45");
+  const realist = extract("realist", REALIST.replace("TAX INFORMATION", "School District Example ISD Census Tract 123.45\nTAX INFORMATION"));
+  assert.equal(values(realist).census_tract, "123.45");
+  const candidate = realist.candidates.find(item => item.field_key === "census_tract");
+  assert.equal(candidate.page_number, 1);
+  assert.match(candidate.evidence_excerpt, /^LOCATION INFORMATION\nSchool District/);
+  for (const content of ["Census Tract", "Census Tract 123.45.77", "Census Tract Unknown",
+    "Census Tract 123.45\nCensus Tract 124.46", "Census Tract\nSchool District Code 1234"]) {
+    const result = extract("realist", REALIST.replace("TAX INFORMATION", `${content}\nTAX INFORMATION`));
+    assert.equal(values(result).census_tract, undefined, content);
+    assert.ok(result.unresolved.some(item => item.reason === "reference_census_tract_missing_or_ambiguous"));
+  }
+  assert.equal(values(extract("realist", REALIST.replace("OWNER INFORMATION", "Census Tract 9999.99\nOWNER INFORMATION"))).census_tract, undefined);
+});

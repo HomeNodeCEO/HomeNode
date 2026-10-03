@@ -1,6 +1,8 @@
 import { buildSfrepReportExport, canonicalSfrepAssignmentType } from './sfrepReportExport.js';
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 import { validateAssignmentDetails, validateReportManualSection } from '../util/reportManualValues.js';
+import { buildCustomSubjectListingHistory } from './customSubjectListingHistory.js';
+import { buildCustomSubjectCensus, customSubjectCensusSql } from './customSubjectCensus.js';
 
 export const CUSTOM_SUBJECT_SECTION = 'report.subject_identification';
 export const CUSTOM_SUBJECT_EVIDENCE_SECTION = 'report.subject_evidence';
@@ -12,6 +14,7 @@ export const CUSTOM_SUBJECT_FIELD_DESCRIPTORS = Object.freeze([
   descriptor('subject_zip', 'subject', ['property_location', 'postal_code'], 'ZipCode'),
   descriptor('county', 'subject', ['property_location', 'county'], 'County'),
   descriptor('neighborhood_name', 'subject', ['property_location', 'subdivision'], 'NeighborhoodName'),
+  descriptor('census_tract', 'subject', ['property_location', 'census_tract'], 'CensusTract'),
   descriptor('owner_name', 'subject', ['owner', 'owner_name'], 'OwnerName'),
   descriptor('legal_description', 'subject', ['legal_description', 'lines'], 'LegalDescription'),
   descriptor('borrower_name', 'subject', ['urar_subject', 'borrower_name'], 'BorrowerName'),
@@ -20,6 +23,7 @@ export const CUSTOM_SUBJECT_FIELD_DESCRIPTORS = Object.freeze([
   descriptor('tax_amount', 'subject', ['urar_subject', 'tax_amount'], 'RealEstateTaxAmount'),
   descriptor('property_rights', 'subject', ['urar_subject', 'property_rights'], 'PropertyRightsAppraisedFeeSimpleCheckBox', 'PropertyRightsAppraisedLeaseholdCheckBox'),
   descriptor('offered_for_sale_prior_12_months', 'subject', ['urar_subject', 'offered_for_sale_prior_12_months'], 'CurrentPriorListingYesCheckBox', 'CurrentPriorListingNoCheckBox'),
+  descriptor('listing_history_summary', 'subject', ['urar_subject', 'listing_history_summary'], 'CurrentPriorListingDataSources'),
   descriptor('lender_client_name', 'assignment', ['lender_client_name'], 'LenderClientCompanyName'),
   descriptor('lender_client_address', 'assignment', ['lender_client_address'], 'LenderClientCompanyUnparsedAddress'),
   descriptor('assignment_type', 'assignment', ['assignment_types'], 'AssignmentTypePurchaseCheckBox', 'AssignmentTypeRefinanceCheckBox', 'AssignmentTypeOtherCheckBox', 'AssignmentTypeOtherDescription'),
@@ -94,7 +98,59 @@ export function projectCustomSubjectDocuments(documents = []) {
     fields.push({ key: definition.key, value, provenance: field.provenance,
       sourceValue: field.sourceValue ?? candidate?.confirmed_value ?? candidate?.normalized_value ?? candidate?.raw_value ?? null });
   }
-  return { fields, warnings: [...mapped.warnings.slice(2),
+  const listing = buildCustomSubjectListingHistory(scoped, subjectContext);
+  const derivedWarnings = [...listing.warnings];
+  let noHoa = fields.find(field => field.key === 'pud' && field.value === false
+    && field.provenance.rule === 'user_requested_hoa_workflow_proxy_v1'
+    && /^(none|no)$/i.test(field.provenance.sourceValue));
+  // Equivalent PUD=false sources can deduplicate to an explicit PUD field first.
+  // Still honor a separately reviewed, identity-proven MLS "None" observation.
+  // Keep the exporter's readiness gate explicit here as well: reprocessing can
+  // retain confirmed rows, but those stale rows cannot clear dues or conflict.
+  if (!noHoa && fields.some(field => field.key === 'pud' && field.value === false)) {
+    for (const source of scoped.filter(document => document.property_role === 'subject' && document.document_type === 'mls_sheet'
+      && ['reviewed', 'review_required'].includes(document.processing_status))) {
+      const candidate = source.candidates.find(item => item.field_key === 'pud' && item.review_status === 'confirmed'
+        && (item.document_id == null || Number(item.document_id) === source.id)
+        && item.extraction_method === 'urar_subject_mls_sheet_hoa_workflow_proxy'
+        && String(item.confirmed_value ?? item.normalized_value) === 'false'
+        && String(item.normalized_value) === 'false' && /^(none|no)$/i.test(item.raw_value));
+      if (candidate) {
+        noHoa = { sourceValue: candidate.raw_value, provenance: { kind: 'reviewed_document', sourceField: 'pud',
+          documentId: source.id, candidateId: Number(candidate.id), documentType: source.document_type,
+          rule: 'user_requested_hoa_workflow_proxy_v1', sourceValue: candidate.raw_value } };
+        break;
+      }
+    }
+  }
+  if (noHoa) {
+    if (fields.some(field => ['hoa_dues_amount', 'hoa_frequency'].includes(field.key))) {
+      for (let index = fields.length - 1; index >= 0; index--) {
+        if (['pud', 'hoa_dues_amount', 'hoa_frequency'].includes(fields[index].key)) fields.splice(index, 1);
+      }
+      mapped.conflicts.push({ sourceField: 'pud', values: ['No HOA', 'Reviewed HOA dues'] });
+      derivedWarnings.push('MLS reports no HOA but other reviewed evidence contains dues; review the conflicting sources.');
+    } else {
+      // Clear only untouched automatic dues through the ordinary merge. A
+      // manually entered/corrected amount remains an appraiser decision.
+      for (const key of ['hoa_dues_amount', 'hoa_frequency']) fields.push({ key, value: null,
+        provenance: { ...noHoa.provenance, sourceField: key, rule: 'reviewed_no_hoa_clears_automatic_dues_v1' },
+        sourceValue: noHoa.sourceValue });
+    }
+  }
+  // A reviewed explicit narrative remains authoritative; don't silently replace
+  // it with a second, derived proposal for the same saved report leaf.
+  if (listing.field && !fields.some(field => field.key === listing.field.key)) fields.push(listing.field);
+  const census = buildCustomSubjectCensus(scoped[0]?.subject_context);
+  const existingCensus = fields.find(field => field.key === 'census_tract');
+  if (census.field && existingCensus && Number(census.field.value) !== Number(existingCensus.value)) {
+    fields.splice(fields.indexOf(existingCensus), 1);
+    mapped.conflicts.push({ sourceField: 'census_tract', values: [existingCensus.value, census.field.value] });
+    derivedWarnings.push('Census tract: reviewed document and matched account lookup disagree; review before applying.');
+  } else if (census.field && !existingCensus && !mapped.conflicts.some(conflict => conflict.sourceField === 'census_tract')) {
+    fields.push(census.field);
+  }
+  return { fields, warnings: [...mapped.warnings.slice(2), ...derivedWarnings,
     ...new Set(mapped.omitted.map(item => `${item.sourceField} (document ${item.documentId}): ${item.reason}`))],
   conflicts: mapped.conflicts, omitted: mapped.omitted };
 }
@@ -132,7 +188,9 @@ export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails 
     // apply another source or revalidate any previously stale receipt.
     if (invalidateOnly) continue;
     const explicitlyReviewed = Number.isSafeInteger(reviewedDocumentId) && reviewedDocumentId > 0
-      && (proposal.provenance.documentId === reviewedDocumentId || proposal.provenance.kind === 'user_default');
+      && (proposal.provenance.documentId === reviewedDocumentId || proposal.provenance.kind === 'user_default'
+        || proposal.provenance.kind === 'account_reference'
+        || proposal.provenance.sourceEvidence?.some(source => source.documentId === reviewedDocumentId));
     if (prior?.status === 'needs_review' && !explicitlyReviewed) {
       warnings.push(`${key}: re-review the source document to refresh the previously stale evidence receipt.`);
       continue;
@@ -158,6 +216,7 @@ export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails 
 }
 
 export async function readCustomSubjectDocuments(client, { accountId, assignmentFileId }) {
+  const census = await customSubjectCensusSql(client);
   const { rows } = await client.query(
     `SELECT document.id, document.account_id, document.assignment_file_id, document.document_type,
             document.processing_status, document.extraction_summary,
@@ -165,12 +224,14 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
             jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
               'city', subject.city, 'postalCode', subject.postal_code,
               'effectiveDate', appraisal_case.effective_date::text,
-              'inspectionDate', appraisal_case.inspection_date::text) AS subject_context,
+              'inspectionDate', appraisal_case.inspection_date::text,
+              'censusGeography', ${census.value}) AS subject_context,
             COALESCE(evidence.candidates, '[]'::json) AS candidates
        FROM app.assignment_documents document
        JOIN app.assignment_files assignment
          ON assignment.id = document.assignment_file_id AND assignment.account_id = document.account_id
        JOIN core.accounts subject ON subject.account_id = assignment.account_id
+       ${census.join}
        LEFT JOIN app.report_files report_file
          ON report_file.custom_assignment_file_id = assignment.id
         AND report_file.account_id = assignment.account_id
@@ -182,7 +243,7 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
        LEFT JOIN LATERAL (
          SELECT json_agg(candidate ORDER BY candidate.id) AS candidates FROM (
            SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
-                  review_status, page_number, reviewer, reviewed_at
+                  review_status, page_number, reviewer, reviewed_at, extraction_method
              FROM app.assignment_document_field_candidates
             WHERE document_id = document.id ORDER BY id LIMIT 201
          ) candidate

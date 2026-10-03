@@ -11,6 +11,10 @@ export function cloneEditorValue<T>(value: T): T {
   return JSON.parse(JSON.stringify(value ?? {})) as T;
 }
 
+export function assignmentPudSummary(value: unknown): string {
+  return value === true ? "PUD / HOA review" : value === false ? "PUD: No" : "Not reported";
+}
+
 export function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
   return {
     subject_neighborhood_summary: value?.subject_neighborhood_summary ?? "",
@@ -26,7 +30,7 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
         : null,
     subject_nonconformity_type: value?.subject_nonconformity_type || "",
     subject_nonconformity_explanation: value?.subject_nonconformity_explanation || "",
-    pud: Boolean(value?.pud),
+    pud: typeof value?.pud === "boolean" ? value.pud : undefined,
     hoa_dues_amount: value?.hoa_dues_amount || "",
     hoa_frequency: value?.hoa_frequency || "",
     hoa_explanation: value?.hoa_explanation || "",

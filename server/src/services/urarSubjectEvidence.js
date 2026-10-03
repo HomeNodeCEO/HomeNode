@@ -1,12 +1,13 @@
 import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarReferenceLayouts.js";
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
+import { extractMlsListingPriceHistory, isMlsListingHistory } from "./mlsListingPriceHistory.js";
 
 /**
  * Conservative, page-cited Subject suggestions from already-extracted PDF text.
  * No OCR, network, model, report writes, or automatic confirmation occurs here.
  * The caller owns document authorization, identity, and source-role selection.
  */
-export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-02-v1";
+export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-03-v2";
 const LIMITS = Object.freeze({ pages: 250, pageChars: 500_000, totalChars: 4_000_000, lineChars: 4_000, lines: 50_000, candidates: 2_000, issues: 500 });
 const SOURCES = new Set(["engagement_letter", "mls_sheet", "cad", "realist"]);
 const NON_SUBJECT_DOCUMENT_TYPES = new Set(["purchase_contract", "district_evidence", "zoning_map", "zoning_ordinance", "map"]);
@@ -75,6 +76,7 @@ function explicitPud(value) {
 function state(value) { const result = compact(value).toUpperCase(); return isUrarStateCode(result) ? result : null; }
 function zip(value) { const result = compact(value); return /^\d{5}(?:-\d{4})?$/.test(result) ? result : null; }
 function year(value) { const result = compact(value); return /^[12]\d{3}$/.test(result) ? result : null; }
+function censusTract(value) { const result = compact(value); return /^\d{1,4}(?:\.\d{1,2})?$/.test(result) ? result : null; }
 function parcel(value) {
   const result = compact(value);
   return /^(?=[A-Za-z0-9. -]*\d)[A-Za-z0-9][A-Za-z0-9. -]{1,78}$/.test(result) ? result : null;
@@ -108,7 +110,7 @@ const RULES = {
     ...addressFields,
     ["list_date", ["list date", "listing date", "original list date", "original listing date", "ld"], date],
     ["hoa_dues_amount", ["hoa dues", "hoa fee", "hoa fees", "hoa dues amount", "association fee", "association dues"], amount],
-    ["hoa_frequency", ["hoa frequency", "hoa fee frequency", "hoa dues frequency", "association fee frequency"], frequency],
+    ["hoa_frequency", ["hoa frequency", "hoa fee frequency", "hoa dues frequency", "hoa dues freq", "hoa fee freq", "association fee frequency"], frequency],
     ["pud", ["pud", "planned unit development", "planned unit development pud"], explicitPud],
   ],
   cad: [
@@ -117,6 +119,7 @@ const RULES = {
     ["assessor_parcel_number", [...parcelLabels, "account number", "account no", "account id"], parcel],
     ["county", ["county", "property county"], shortText],
     ["legal_description", ["legal description", "legal", "property legal description"], legalText],
+    ["census_tract", ["census tract", "census tract number"], censusTract],
   ],
   realist: [
     ...referenceAddressFields,
@@ -124,10 +127,11 @@ const RULES = {
     ["county", ["property county", "situs county"], shortText],
     ["tax_year", ["tax year", "property tax year", "real estate tax year"], year],
     ["tax_amount", ["tax amount", "total tax amount", "total taxes", "annual taxes", "property taxes", "real estate taxes", "real estate tax", "real estate tax amount"], amount],
+    ["census_tract", ["census tract", "census tract number"], censusTract],
   ],
 };
 export const URAR_SUBJECT_FIELD_KEYS = Object.freeze([...new Set([
-  ...Object.values(RULES).flatMap(rules => rules.map(([key]) => key)), "neighborhood_name",
+  ...Object.values(RULES).flatMap(rules => rules.map(([key]) => key)), "neighborhood_name", "listing_price_history",
 ])]);
 const FIELD_BOUNDARIES = new Set([
   ...Object.values(RULES).flatMap(rules => rules.flatMap(([, labels]) => labels)),
@@ -172,7 +176,75 @@ function sourceFor(documentType, sourceKind, entries, referenceLayout = null) {
   const realist = referenceLayout === "realist" || headings.some(line => /^(?:(?:corelogic|cotality)\s+)?realist\b/i.test(line));
   const cad = referenceLayout === "cad" || headings.some(line => /^(?:[A-Za-z .'-]+\s+)?(?:central\s+)?appraisal\s+district(?:\s+(?:property|account|record|search|detail|summary|report)[\w -]*)?$/i.test(line)
     || /^(?:DALLAS|COLLIN|DENTON|TARRANT)\s+CAD(?:\s+(?:PROPERTY|ACCOUNT|RECORD|REPORT))?$/i.test(line));
-  return realist && cad ? null : realist ? "realist" : cad ? "cad" : null;
+  const history = isMlsListingHistory(entries.map(entry => entry.line).join("\n"));
+  return Number(realist) + Number(cad) + Number(history) > 1 ? null : realist ? "realist" : cad ? "cad" : history ? "mls_sheet" : null;
+}
+
+function addMlsHoaEvidence(entries, candidates, unresolved, add) {
+  const observations = [];
+  const label = /(?:^|\s)(HOA(?:\s+(?:Dues(?:\s+(?:Frequency|Freq))?|Fees?(?:\s+(?:Frequency|Freq))?|Frequency))?)\s*:\s*/gi;
+  const boundary = /\s+(?:HOA(?:\s+[A-Za-z /.'-]{1,40})?|PUD|Association(?:\s+[A-Za-z /.'-]{1,40})?|School Dist|SubType|Property Type)\s*[:=]/i;
+  for (const entry of entries) {
+    for (const match of entry.line.matchAll(label)) {
+      const tail = entry.line.slice(match.index + match[0].length);
+      const nextLabel = tail.search(boundary);
+      const raw = compact(nextLabel < 0 ? tail : tail.slice(0, nextLabel));
+      const key = labelKey(match[1]);
+      if (key === "hoa") {
+        observations.push({ entry, raw, status: /^(?:none|no)$/i.test(raw) ? "none" : /^voluntary$/i.test(raw) ? "voluntary" : /^(?:mandatory|yes|required)$/i.test(raw) ? "yes" : null });
+        continue;
+      }
+      if (/(?:frequency|freq)$/.test(key)) {
+        const normalized = frequency(raw);
+        if (normalized) add("hoa_frequency", raw, normalized, entry, entry.line, "hoa_labeled_value");
+        continue;
+      }
+      const dues = raw.match(/^(\$?\s*[\d,]+(?:\.\d{1,2})?)(?:\s*(?:\/|per\s+)?(monthly|month|mo|quarterly|quarter|qtr|annually|annual|yearly|year|yr))?$/i);
+      if (dues && amount(dues[1])) {
+        add("hoa_dues_amount", raw, amount(dues[1]), entry, entry.line, "hoa_labeled_value");
+        if (dues[2]) add("hoa_frequency", dues[2], frequency(dues[2]), entry, entry.line, "hoa_labeled_value");
+      }
+    }
+  }
+  if (!observations.length) {
+    // An explicitly labeled positive HOA amount and supported period establish
+    // the user's requested HOA-exists assumption even when its separate status
+    // label is omitted. Never override an actual Unknown/Voluntary/None label.
+    const dues = candidates.filter(item => item.field_key === "hoa_dues_amount");
+    const periods = new Set(candidates.filter(item => item.field_key === "hoa_frequency").map(item => item.normalized_value));
+    const values = new Set(dues.map(item => item.normalized_value));
+    if (values.size !== 1 || !dues.length || Number([...values][0]) <= 0
+      || periods.size !== 1 || !["per_month", "per_quarter", "per_year"].includes([...periods][0])) return;
+    observations.push({ entry: { page_number: dues[0].page_number, line: dues[0].evidence_excerpt }, raw: dues[0].raw_value, status: "yes" });
+  }
+  // This is an explicitly requested review workflow assumption, not a legal
+  // finding that HOA existence alone establishes PUD status. Actual PUD labels
+  // take precedence, and unknown/voluntary HOA wording never becomes Yes.
+  const statuses = new Set(observations.map(item => item.status));
+  const amounts = new Set(candidates.filter(item => item.field_key === "hoa_dues_amount").map(item => item.normalized_value));
+  const affirmativeDues = amounts.size === 1 && Number([...amounts][0]) > 0;
+  const selected = observations[0];
+  if (entries.some(entry => /(?:^|\s)(?:PUD|Planned Unit Development(?: PUD)?)\s*(?:[:=]|$)/i.test(entry.line))) {
+    const explicit = candidates.filter(candidate => candidate.field_key === "pud").map(candidate => candidate.normalized_value);
+    const expected = selected.status === "yes" ? "true" : ["none", "voluntary"].includes(selected.status) ? "false" : null;
+    if (expected && explicit.some(value => value !== expected)) issue(unresolved,
+      { field_key: "pud", page_number: selected.entry.page_number, reason: "hoa_status_conflicts_with_explicit_pud" });
+    return;
+  }
+  if (entries.some(entry => /(?:^|\s)(?:Property Type|SubType|Housing Type)\s*:\s*[^:]*\b(?:condo(?:minium)?|co-?op(?:erative)?)\b/i.test(entry.line))) {
+    issue(unresolved, { field_key: "pud", page_number: selected.entry.page_number, reason: "hoa_workflow_proxy_ineligible_property_type" }); return;
+  }
+  if (statuses.size !== 1 || statuses.has(null) || amounts.size > 1
+    || (selected.status === "none" && affirmativeDues)) {
+    issue(unresolved, { field_key: "pud", page_number: selected.entry.page_number, reason: "hoa_workflow_proxy_requires_unambiguous_status_and_dues" });
+    return;
+  }
+  if (selected.status === "voluntary") issue(unresolved,
+    { field_key: "pud", page_number: selected.entry.page_number, reason: "voluntary_hoa_defaults_non_pud_review_required" });
+  if (selected.status === "yes" && !affirmativeDues) issue(unresolved,
+    { field_key: "hoa_dues_amount", page_number: selected.entry.page_number, reason: "affirmative_hoa_dues_not_reported" });
+  add("pud", selected.raw, selected.status === "yes" ? "true" : "false", selected.entry,
+    `${selected.entry.line}\nUser-requested HOA workflow assumption; requires appraiser review and is not legal proof of PUD status.`, "hoa_workflow_proxy");
 }
 
 /** Use before the general classifier for Other uploads: an incidental MLS #
@@ -311,6 +383,16 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
     return result;
   }
   if (!source) { issue(unresolved, { reason: entries.length ? "source_not_identified" : "no_readable_text" }); return result; }
+  if (source === "mls_sheet" && isMlsListingHistory(entries.map(entry => entry.line).join("\n"))) {
+    // History PDFs deliberately contain older MLS records. Their adapter binds
+    // each summary to one ID; do not run the single-listing-sheet parser or
+    // collapse independent histories into a first-match MLS field.
+    const history = extractMlsListingPriceHistory(pages);
+    result.source_layout = "matrix_listing_history";
+    candidates.push(...history.candidates);
+    history.unresolved.forEach(item => issue(unresolved, item));
+    return result;
+  }
   const listingIdentityIssue = source === "mls_sheet" ? mlsListingIdentityIssue(entries) : null;
   if (listingIdentityIssue) {
     issue(unresolved, { reason: listingIdentityIssue }); return result;
@@ -412,6 +494,10 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
       if (subdivision) add("neighborhood_name", subdivision.name, subdivision.name, entry, evidence.join("\n"), subdivision.method);
       else issue(unresolved, { field_key: "neighborhood_name", page_number: entry.page_number, reason: "legal_subdivision_not_explicit" });
     }
+  }
+  if (source === "mls_sheet") {
+    addMlsHoaEvidence(entries, candidates, unresolved, add);
+    for (const candidate of candidates) found.add(candidate.field_key);
   }
   for (const fieldKey of new Set(RULES[source].map(([key]) => key))) {
     if (!found.has(fieldKey)) issue(unresolved, { field_key: fieldKey, reason: "label_not_found" });

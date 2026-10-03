@@ -28,9 +28,12 @@ test('exact placeholders do not become suggestions that disappear only after con
     assert.equal(extractBorrower(value).candidates.some(candidate => candidate.field_key === 'borrower_name'), false, value);
     assert.equal(exportValue('borrower_name', value).fields.length, 0, value);
   }
-  for (const value of ['TBD Holdings', 'N/A Partners', 'Example — Trust', 'Pending Ventures']) {
+  for (const [value, presentation] of [['TBD Holdings', 'Tbd Holdings'], ['N/A Partners', 'N/A Partners'],
+    ['Example — Trust', 'Example — Trust'], ['Pending Ventures', 'Pending Ventures']]) {
     assert.equal(extractBorrower(value).candidates.find(candidate => candidate.field_key === 'borrower_name')?.normalized_value, value);
-    assert.equal(exportValue('borrower_name', value).fields.find(field => field.fieldId === 'BorrowerName')?.value, value);
+    const field = exportValue('borrower_name', value).fields.find(field => field.fieldId === 'BorrowerName');
+    assert.equal(field?.value, presentation);
+    assert.equal(field?.sourceValue, value);
   }
 });
 

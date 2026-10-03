@@ -1,5 +1,6 @@
 import type { AssignmentDetailsPayload } from './api';
 import { displayValue, hasValue } from './propertyReportPresentation.ts';
+import { reportAddress, reportTitleCase, reportZip5 } from './propertyReportText.ts';
 
 /** Preserve only previously loaded ZIP/city comparisons during assignment
  * hydration. This is the existing display merge, not new source authority. */
@@ -32,10 +33,10 @@ export function propertyReportLocationContext(location?: {
   const street = String(location?.address || '').trim();
   const address = displayValue(location?.address, 'Property address unavailable');
   return {
-    streetAddress: address.split(',')[0].trim() || address,
-    city: displayValue(location?.city),
+    streetAddress: reportAddress(address.split(',')[0].trim() || address),
+    city: displayValue(reportTitleCase(location?.city)),
     state: displayValue(location?.state, 'TX'),
-    postalCode: displayValue(location?.postal_code),
+    postalCode: displayValue(reportZip5(location?.postal_code)),
     documentReviewSubjectAddress: street
       ? [street, location?.city, location?.state || 'TX', location?.postal_code]
         .map(value => String(value || '').trim()).filter(Boolean).join(', ')

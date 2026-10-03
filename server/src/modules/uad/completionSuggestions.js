@@ -405,7 +405,7 @@ function occupancy(value) {
   return null;
 }
 
-function normalizedMonthlyHoaDues(project) {
+export function normalizedMonthlyHoaDues(project) {
   const amount = number(project?.hoa_dues_amount);
   if (amount === null || amount < 0) return null;
   const frequency = normalizedToken(project?.hoa_frequency);

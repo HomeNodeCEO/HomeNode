@@ -82,6 +82,7 @@ function editorLabel(key: string): string {
     tax_amount: "Real Estate Taxes (exact amount)",
     property_rights: "Property Rights Appraised",
     offered_for_sale_prior_12_months: "Offered for Sale in Prior 12 Months",
+    listing_history_summary: "Listing History",
   };
   return overrides[key] || key
     .replace(/_/g, " ")
@@ -412,7 +413,7 @@ export default function ReportSectionEditor({
             {Object.entries(value as Record<string, unknown>).map(([childKey, childValue]) => (
               <div
                 key={childKey}
-                className={Array.isArray(childValue) || (childValue && typeof childValue === "object")
+                className={childKey === "listing_history_summary" || Array.isArray(childValue) || (childValue && typeof childValue === "object")
                   ? "sm:col-span-2"
                   : ""}
               >
@@ -459,7 +460,7 @@ export default function ReportSectionEditor({
         </label>
       );
     }
-    const isLongText = ["legal_text", "mailing_address", "notes"].includes(key);
+    const isLongText = ["legal_text", "mailing_address", "notes", "listing_history_summary"].includes(key);
     return (
       <label className="block">
         <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">

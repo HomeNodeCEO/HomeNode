@@ -6,6 +6,7 @@ export interface UrarSubjectDetails {
   tax_amount?: string;
   property_rights?: '' | 'fee_simple' | 'leasehold';
   offered_for_sale_prior_12_months?: boolean | null;
+  listing_history_summary?: string;
 }
 
 type OwnerParty = { owner_name?: string; ownership_pct?: string | number };

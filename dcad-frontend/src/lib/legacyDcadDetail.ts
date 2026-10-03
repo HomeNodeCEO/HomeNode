@@ -449,7 +449,7 @@ export function applyReportManualValues(
     const subject = record(subjectOverride.urar_subject);
     if (subject) {
       const reportSubject: UrarSubjectDetails = {};
-      for (const key of ['borrower_name', 'assessor_parcel_number', 'tax_year', 'tax_amount'] as const) {
+      for (const key of ['borrower_name', 'assessor_parcel_number', 'tax_year', 'tax_amount', 'listing_history_summary'] as const) {
         if (typeof subject[key] === 'string') reportSubject[key] = subject[key];
       }
       if (subject.property_rights === '' || subject.property_rights === 'fee_simple' || subject.property_rights === 'leasehold') reportSubject.property_rights = subject.property_rights;

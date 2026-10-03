@@ -94,7 +94,7 @@ test('ten selected PDFs use one shared report snapshot and do not attach it to e
   let reads = 0;
   const documents = await readSfrepDocuments({ query: async () => { reads++; return { rows: [row] }; } },
     { ...input(), documentIds: row.snapshot.documents.map(document => document.id) });
-  assert.equal(reads, 1);
+  assert.equal(reads, 2); // Optional-relation probe, then one bounded shared snapshot.
   assert.equal(documents.length, 10);
   assert.equal(documents.filter(document => Object.hasOwn(document, 'saved_report')).length, 1);
   assert.equal(documents[0].saved_report.documents.length, 10);
@@ -132,6 +132,21 @@ test('preview changes when evidence, assignment or source-copy choice changes', 
   assert.notEqual(preview.preview_digest, previewSfrepDocuments(documents, { ...input(), includeDocuments: false }).preview_digest);
   documents[0].candidates[0].confirmed_value = 'Corrected Bank';
   assert.notEqual(preview.preview_digest, previewSfrepDocuments(documents, input()).preview_digest);
+});
+
+test('Subject-phase transfer retains contract PDF but cannot export raw Contract fields', async () => {
+  const document = { ...source(), document_type: 'purchase_contract', property_role: 'subject', candidates: [
+    { id: 20, document_id: 2, field_key: 'contract_price', confirmed_value: '300000', review_status: 'confirmed' },
+    { id: 21, document_id: 2, field_key: 'contract_date', confirmed_value: '2026-08-25', review_status: 'confirmed' },
+  ] };
+  const preview = previewSfrepDocuments([document], input());
+  assert.doesNotMatch(preview.reportXml, /SalePriceAmount|ContractDate/);
+  assert.equal(preview.pdfAddenda.length, 1);
+  assert.equal(preview.omitted.filter(item => /Outside the current Subject-section/.test(item.reason)).length, 2);
+  const packaged = await packageSfrepDocuments({}, {}, [document], preview, { ...input(), previewDigest: preview.preview_digest }, {
+    loadContent: async () => ({ ...document, content }),
+  });
+  assert.deepEqual(unzipStored(packaged.content).get('Pdf/document-2.pdf'), content);
 });
 
 function unzipStored(buffer) {

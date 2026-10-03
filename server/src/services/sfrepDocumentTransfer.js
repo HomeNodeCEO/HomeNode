@@ -4,6 +4,7 @@ import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
 import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExport.js';
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
+import { customSubjectCensusSql } from './customSubjectCensus.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -28,18 +29,21 @@ export function sfrepTransferInput(body, { exporting = false } = {}) {
 // One statement and one shared snapshot: reject oversized evidence in PostgreSQL
 // before pg receives/parses JSON, rather than repeating it for each selected PDF.
 export async function readSfrepDocuments(pool, { accountId, assignmentFileId, documentIds }) {
+  const census = await customSubjectCensusSql(pool);
   const { rows } = await pool.query({ text: `
     WITH assignment_scope AS MATERIALIZED (
       SELECT jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
              'city', subject.city, 'postalCode', subject.postal_code,
              'effectiveDate', appraisal_case.effective_date::text,
-             'inspectionDate', appraisal_case.inspection_date::text) AS subject_context,
+             'inspectionDate', appraisal_case.inspection_date::text,
+             'censusGeography', ${census.value}) AS subject_context,
            jsonb_build_object('accountId', assignment.account_id, 'assignmentFileId', assignment.id,
              'assignmentRevision', assignment.revision, 'assignmentDetails', assignment.assignment_details,
              'subject', jsonb_build_object('value', saved_subject.section_value, 'revision', saved_subject.revision),
              'evidence', jsonb_build_object('value', saved_evidence.section_value, 'revision', saved_evidence.revision)) AS saved_report
       FROM app.assignment_files assignment
       JOIN core.accounts subject ON subject.account_id = assignment.account_id
+      ${census.join}
       LEFT JOIN app.custom_appraisal_sections saved_subject
         ON saved_subject.assignment_file_id = assignment.id AND saved_subject.section_key = 'report.subject_identification'
       LEFT JOIN app.custom_appraisal_sections saved_evidence
@@ -64,7 +68,7 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
              (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
              COALESCE((SELECT jsonb_agg(candidate ORDER BY candidate.id) FROM (
           SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
-                 review_status, page_number, reviewer, reviewed_at
+                 review_status, page_number, reviewer, reviewed_at, extraction_method
             FROM app.assignment_document_field_candidates
            WHERE document_id = document.id ORDER BY id LIMIT $4
              ) candidate), '[]'::jsonb) AS candidates
@@ -140,7 +144,7 @@ export function previewSfrepDocuments(documents, input) {
   const saved = documents[0]?.saved_report;
   const subjectContext = sfrepSubjectContext(saved?.documents || documents);
   const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
-  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext,
+  const mapped = buildSfrepReportExport({ documents, pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });
   if (canonical) {
     mapped.warnings.push(...canonical.warnings);

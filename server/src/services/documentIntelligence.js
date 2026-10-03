@@ -1,5 +1,6 @@
 import { extractText, getDocumentProxy } from "unpdf";
 import { buildUrarSubjectEvidence, identifyUrarSubjectSource } from "./urarSubjectEvidence.js";
+import { trecContractSubjectIdentityCandidate } from "./trecContractSubjectIdentity.js";
 
 export const DOCUMENT_TYPES = Object.freeze([
   "zoning_map",
@@ -631,6 +632,7 @@ function contractPersonalPropertyCandidates(pages, exclusionsCandidate = null) {
 
 function buildPurchaseContractCandidates(pages) {
   const candidates = [
+    trecContractSubjectIdentityCandidate(pages),
     firstContractPatternCandidate(pages, {
       fieldKey: "down_payment",
       pattern: /Cash portion of (?:the )?Sales Price payable by Buyer at closing[\s\S]{0,160}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
@@ -962,6 +964,7 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
   if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
+  if (subjectEvidence.source_layout === "matrix_listing_history") return [...subjectEvidence.candidates];
   if (subjectEvidence.unresolved.some(item => ["multiple_mls_listing_identities", "ambiguous_mls_listing_identity"].includes(item.reason))) return [];
   const entries = pageLines(pages);
   const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;

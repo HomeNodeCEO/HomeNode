@@ -1,5 +1,6 @@
 import { parseStructuredAddress } from "../util/structuredAddress.js";
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
+import { formatSubjectPresentationValue } from "../util/subjectPresentation.js";
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -61,14 +62,28 @@ function money(value) {
 }
 
 const WHOLE_DOLLAR_FIELDS = new Set(["RealEstateTaxAmount", "AssessmentAmount"]);
-const DISPLAY_FORMAT_FIELDS = new Set([...WHOLE_DOLLAR_FIELDS, "LegalDescription", "OwnerName"]);
+const PRESENTATION_SOURCE_FIELDS = Object.freeze({
+  StreetAddress: "subject_street_address", City: "subject_city", ZipCode: "subject_zip",
+  BorrowerName: "borrower_name", OwnerName: "owner_name", NeighborhoodName: "neighborhood_name",
+  LenderClientCompanyUnparsedAddress: "lender_client_address",
+});
+const DISPLAY_FORMAT_FIELDS = new Set([...WHOLE_DOLLAR_FIELDS, "LegalDescription", ...Object.keys(PRESENTATION_SOURCE_FIELDS)]);
+
+function formatPresentationField(field) {
+  const sourceField = PRESENTATION_SOURCE_FIELDS[field.fieldId];
+  if (!sourceField) return field;
+  const value = formatSubjectPresentationValue(sourceField, field.value);
+  return { ...field, value, formattingRule: field.fieldId === "ZipCode" ? "zip5_display"
+    : field.fieldId === "NeighborhoodName" ? "title_case_subdivision_without_numeric_phase" : "subject_title_case" };
+}
 
 // Legacy UAD Appendix D (taxes p9, HOA p11) and the installed 1004 NumberRules
 // require zero decimal places for these two amounts. Apply display formatting
 // only AFTER exact reviewed-value conflict resolution; it cannot approve or
 // merge evidence. Keep the original input and direct provenance for review.
 // https://singlefamily.fanniemae.com/media/document/pdf/uad-specification-appendix-d-field-specific-standardization-requirements
-function formatSelectedField(field, warnings) {
+function formatSelectedField(rawField, warnings) {
+  const field = formatPresentationField(rawField);
   const sourceLabel = field.provenance?.kind === "saved_report" ? "the saved HomeNode report" : `document ${field.documentId}`;
   if (WHOLE_DOLLAR_FIELDS.has(field.fieldId)) {
     const [whole, cents] = field.value.split("."); // Already validated by money().
@@ -83,7 +98,7 @@ function formatSelectedField(field, warnings) {
     if (value !== field.value) {
       warnings.push(`${field.fieldId} from ${sourceLabel}: line breaks/tabs folded into spaces for the native single-line field. The exact reviewed source is retained and the text is not truncated; check fit in Appraise-It Pro.`);
     }
-    return { ...field, value, formattingRule: field.fieldId === "OwnerName" ? "single_line_owner_name" : "single_line_legal_description" };
+    return { ...field, value, formattingRule: field.fieldId === "OwnerName" ? "title_case_single_line_owner_name" : "single_line_legal_description" };
   }
   return field;
 }
@@ -114,6 +129,12 @@ function area(value) {
   return result !== null && Number(result) > 0 ? `${result} sf` : null;
 }
 
+function zipCode(value) {
+  // Validate the full reviewed ZIP before the later ZIP5 display transform.
+  // Contiguous ZIP9 and ZIP+4 retain every digit for conflict comparisons.
+  return /^\d{5}(?:-?\d{4})?$/.test(value) ? value : null;
+}
+
 const identity = (value) => value;
 
 // Deliberately exclude seller_name -> OwnerName and buyer_name -> BorrowerName.
@@ -125,8 +146,8 @@ const MAPPINGS = Object.freeze({
   subject_street_address: ["StreetAddress", identity],
   subject_city: ["City", identity],
   subject_state: ["State", (value) => isUrarStateCode(value) ? value.toUpperCase() : null],
-  subject_zip: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
-  subject_zip_code: ["ZipCode", (value) => /^\d{5}(?:-\d{4})?$/.test(value) ? value : null],
+  subject_zip: ["ZipCode", zipCode],
+  subject_zip_code: ["ZipCode", zipCode],
   borrower_name: ["BorrowerName", identity],
   owner_name: ["OwnerName", identity],
   record_owner_name: ["OwnerName", identity],
@@ -140,6 +161,16 @@ const MAPPINGS = Object.freeze({
   real_estate_tax_amount: ["RealEstateTaxAmount", money],
   neighborhood_name: ["NeighborhoodName", identity],
   subdivision_name: ["NeighborhoodName", identity],
+  // Verified TextField and CensusTractIdentifier mapping in the installed
+  // FNMA-1004-0911 dictionary. Keep leading zeros; never confuse a full GEOID
+  // with the displayed tract identifier.
+  census_tract: ["CensusTract", (value) => /^\d{6}$/.test(value)
+    ? `${Number(value.slice(0, 4))}.${value.slice(4)}`
+    : /^\d{1,4}(?:\.\d{1,2})?$/.test(value) ? value : null],
+  // Plain TextField data was visually verified in Appraise-It Pro 3.7.9's
+  // Subject listing area in an isolated RPTI import (2026-10-03). This maps
+  // reviewed narrative, not undocumented internal GSE DOM members.
+  listing_history_summary: ["CurrentPriorListingDataSources", (value) => value.length <= 4_000 ? value : null],
   hoa_dues_amount: ["AssessmentAmount", money],
   lender_client_name: ["LenderClientCompanyName", identity],
   lender_client_address: ["LenderClientCompanyUnparsedAddress", identity],
@@ -352,9 +383,9 @@ function destinationComparisonKey(entry) {
 
 function compatibleZipGroup(entries) {
   return entries[0]?.fieldId === "ZipCode"
-    && entries.every((entry) => /^\d{5}(?:-\d{4})?$/.test(entry.value))
+    && entries.every((entry) => zipCode(entry.value) !== null)
     && new Set(entries.map((entry) => entry.value.slice(0, 5))).size === 1
-    && new Set(entries.filter((entry) => entry.value.length === 10).map((entry) => entry.value)).size <= 1;
+    && new Set(entries.filter((entry) => entry.value.length > 5).map((entry) => entry.value.replace('-', ''))).size <= 1;
 }
 
 function selectedDocuments(documents, selectedDocumentIds) {
@@ -411,7 +442,7 @@ function validatePdfAddenda(addenda, documents) {
 export function buildSfrepReportExport({
   documents = [], selectedDocumentIds, fieldSelections = {}, pdfAddenda = [],
   formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext, forReportPersistence = false,
-  savedReportFields,
+  savedReportFields, subjectOnly = false,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
@@ -441,7 +472,7 @@ export function buildSfrepReportExport({
     'tax_amount', 'real_estate_tax_year', 'real_estate_tax_amount', 'neighborhood_name', 'subdivision_name',
     'pud', 'is_pud', 'property_type', 'property_rights', 'property_rights_appraised', 'assignment_type', 'lender_client_name',
     'lender_client_address', 'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months',
-    'list_date', 'hoa_dues_amount', 'hoa_frequency']);
+    'list_date', 'hoa_dues_amount', 'hoa_frequency', 'census_tract', 'listing_history_summary']);
   if (savedReportFields !== undefined) {
     if (!Array.isArray(savedReportFields) || savedReportFields.length > 30) fail('sfrep_invalid_saved_report');
     for (const saved of savedReportFields) {
@@ -453,7 +484,7 @@ export function buildSfrepReportExport({
       // parsing must not refill a city/state/ZIP the appraiser cleared or changed.
       const savedProjection = saved.sourceField === 'subject_street_address'
         ? [{ fieldId: 'StreetAddress', value, type: 'TextField' }]
-        : projectValue(saved.sourceField, value);
+        : projectValue(saved.sourceField, value, { forReportPersistence });
       for (const projectedField of savedProjection) {
         if (projectedField.suppress) continue;
         projected.push({ ...projectedField, sourceField: saved.sourceField, documentId: null, candidateId: null,
@@ -464,6 +495,11 @@ export function buildSfrepReportExport({
       if (saved.provenance.origin === 'user_default' && saved.sourceField === 'property_rights' && value === 'fee_simple') {
         assumptions.push({ fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', value: 'true',
           rule: 'user_requested_fee_simple_default', reason: 'Fee simple is the saved user-requested default, not document evidence. Confirm the appraised property rights.' });
+      }
+      if (saved.sourceField === 'pud' && saved.provenance.rule === 'user_requested_hoa_workflow_proxy_v1') {
+        assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,
+          rule: saved.provenance.rule,
+          reason: 'The saved PUD default came from reviewed MLS HOA status, not independent verification of project eligibility. The appraiser may override it.' });
       }
     }
   }
@@ -479,6 +515,13 @@ export function buildSfrepReportExport({
       const sourceField = typeof candidate.field_key === "string" ? candidate.field_key : "";
       if (savedReportFields !== undefined && subjectSources.has(sourceField)) continue;
       const entry = { sourceField, documentId, candidateId: positiveId(candidate.id) };
+      // The production integration is currently the Subject-section phase.
+      // Contract evidence may support its listing narrative, but raw contract
+      // scalars must not bypass saved report values into a different section.
+      if (subjectOnly && !subjectSources.has(sourceField)) {
+        omit(entry, 'Outside the current Subject-section export; retained in the workfile and attached source document.');
+        continue;
+      }
       if (!["reviewed", "review_required"].includes(document.processing_status)) {
         omit(entry, "Document extraction is not ready for review; stale confirmed values are not exported.");
         continue;
@@ -518,13 +561,21 @@ export function buildSfrepReportExport({
         kind: "reviewed_document", sourceField, documentId, candidateId: entry.candidateId,
         documentType: textValue(document.document_type),
       };
+      if (sourceField === 'pud' && candidate.extraction_method === 'urar_subject_mls_sheet_hoa_workflow_proxy'
+        && String(candidate.normalized_value) === value) {
+        provenance.rule = 'user_requested_hoa_workflow_proxy_v1';
+        provenance.sourceValue = candidate.raw_value;
+        assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,
+          rule: provenance.rule,
+          reason: 'Reviewed MLS HOA status supplies the user-requested PUD default. This is not independent verification of project eligibility; the appraiser may override it.' });
+      }
       if (["hoa_dues_amount", "hoa_frequency"].includes(sourceField)) hasReviewedHoa = true;
       if (sourceField === "hoa_dues_amount" && (hoaFrequencies.size !== 1
         || !["per_month", "per_year"].includes([...hoaFrequencies][0]))) {
         omit(entry, "HOA amount needs one reviewed monthly or annual frequency from the same source; unsupported or ambiguous periods are not prorated.");
         continue;
       }
-      if (["mls_number", "listing_status", "list_price", "original_list_price", "list_date", "listing_end_date", "days_on_market"].includes(sourceField)) hasReviewedListing = true;
+      if (["mls_number", "listing_status", "list_price", "original_list_price", "list_date", "listing_end_date", "days_on_market", "listing_history_summary"].includes(sourceField)) hasReviewedListing = true;
       if (sourceField === "list_date") {
         if (document.document_type !== "mls_sheet" || document.property_role !== "subject") {
           omit(entry, "A listing date can establish offered-for-sale Yes only on a verified subject MLS sheet.");
@@ -542,7 +593,7 @@ export function buildSfrepReportExport({
         omit(entry, "An explicit offered-for-sale assertion must be verified as subject-property evidence.");
         continue;
       }
-      const fields = projectValue(sourceField, value);
+      const fields = projectValue(sourceField, value, { forReportPersistence });
       if (!fields.length) {
         omit(entry, ["subject_property_address", "subject_street_address"].includes(sourceField)
           ? "Address locality cannot be safely split; review separate street, city, state, and ZIP fields."
@@ -604,7 +655,7 @@ export function buildSfrepReportExport({
   }
   if (hasReviewedHoa) supplementalWarnings.push("HOA dues or a mandatory HOA do not establish PUD status. PUD is checked only from an explicit reviewed PUD assertion.");
   if (dateContext.isPlaceholder) supplementalWarnings.push("The effective date is provisionally a document upload date, not an inspection date. Confirm the effective date before relying on the listing determination.");
-  if (hasReviewedListing) knownMissing.push({
+  if (hasReviewedListing && !projected.some(field => field.fieldId === 'CurrentPriorListingDataSources')) knownMissing.push({
     fieldId: "CurrentPriorListingDataSources",
     reason: "The composite UAD listing-data encoding is not verified. MLS scalar details are not concatenated into this field; any derived checkbox is a separate determination.",
   });
@@ -640,13 +691,15 @@ export function buildSfrepReportExport({
     }
     const chosenEntries = entries[0].group === "assignment_type"
       ? entries.filter((entry, index) => entries.findIndex((other) => other.fieldId === entry.fieldId) === index)
-      : [compatibleZip ? entries.find((entry) => entry.value.length === 10) || entries[0] : entries[0]];
+      : [compatibleZip ? entries.find((entry) => entry.value.length > 5) || entries[0] : entries[0]];
     for (const entry of chosenEntries) {
       const { group: _group, suppress: _suppress, assignmentType: _assignmentType, ...field } = entry;
-      // HomeNode stores exact reviewed amounts/text and explicit negative PUD
-      // evidence. Destination-only rounding and unchecked-field omission belong
-      // to the SFREP export, never the persisted appraisal record.
-      fields.push(forReportPersistence ? field : formatSelectedField(field, supplementalWarnings));
+      // HomeNode and SFREP share the requested capitalization, ZIP5, and
+      // subdivision display. The exact source remains attached, and conflicts
+      // were resolved above BEFORE any potentially lossy presentation change.
+      // Destination-only monetary rounding and legal-text folding never modify
+      // the persisted appraisal record.
+      fields.push(forReportPersistence ? formatPresentationField(field) : formatSelectedField(field, supplementalWarnings));
     }
   }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));

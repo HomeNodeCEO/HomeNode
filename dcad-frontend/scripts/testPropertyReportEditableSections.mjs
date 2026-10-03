@@ -11,7 +11,7 @@ const read = (section, values) => editablePropertyReportSectionValue('report.' +
 
 test('empty subject and exemptions preserve existing manual-editor defaults', () => {
   assert.deepEqual(read('subject_identification'), {
-    urar_subject: { borrower_name: '', assessor_parcel_number: '', tax_year: '', tax_amount: '', property_rights: '', offered_for_sale_prior_12_months: null },
+    urar_subject: { borrower_name: '', assessor_parcel_number: '', tax_year: '', tax_amount: '', property_rights: '', offered_for_sale_prior_12_months: null, listing_history_summary: '' },
     property_location: { address: '', neighborhood: '', city: '', state: 'TX', postal_code: '',
       county: '', subdivision: '', census_tract: '' },
     owner: { owner_name: '', mailing_address: '', parties: [] },
@@ -93,7 +93,7 @@ test('appraisal and assignment projection keep existing defaults, booleans and e
     certified_year: 2024, market_value: 0, capped_value: '0', improvement_value: '100', land_value: '20',
   } } }), { value_summary: { certified_year: 2024, market_value: '', capped_value: '0', improvement_value: '100', land_value: '20' } });
   const defaults = read('assignment_details');
-  assert.equal(defaults.pud, false); assert.equal(defaults.subject_under_contract, false);
+  assert.equal(defaults.pud, undefined); assert.equal(defaults.subject_under_contract, false);
   assert.equal(defaults.contract_arms_length, true); assert.equal(defaults.seller_matches_public_records, null);
   assert.deepEqual(defaults.assignment_types, []);
   const detail = { assignment_details: { pud: true, hoa_dues_amount: '0', occupancy: 'owner',
@@ -106,6 +106,20 @@ test('appraisal and assignment projection keep existing defaults, booleans and e
   assert.notEqual(value.assignment_types, detail.assignment_details.assignment_types);
   for (const key of ['neighborhood_sale_count', 'neighborhood_boundary_geometry', 'client_name']) {
     assert.equal(Object.hasOwn(value, key), false);
+  }
+});
+
+test('assignment section edits preserve literal lender addresses and unknown PUD without inventing No', () => {
+  const address = ' 400 TEST AVENUE\nCHARLOTTE, NC 28255-1234 ';
+  for (const pud of [true, false, undefined, null]) {
+    const detail = { assignment_details: { lender_client_address: address, pud } };
+    const draft = read('assignment_details', { detail });
+    draft.occupancy = 'owner';
+    const saved = JSON.parse(JSON.stringify(draft));
+    assert.equal(saved.lender_client_address, address);
+    if (typeof pud === 'boolean') assert.equal(saved.pud, pud);
+    else assert.equal(Object.hasOwn(saved, 'pud'), false);
+    assert.equal(detail.assignment_details.lender_client_address, address);
   }
 });
 

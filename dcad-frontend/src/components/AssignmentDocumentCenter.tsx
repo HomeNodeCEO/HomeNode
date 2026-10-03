@@ -50,6 +50,7 @@ type DocumentReviewOperation = {
 
 const AssignmentPdfPreview = lazy(() => import('./documents/AssignmentPdfPreview'));
 const EMPTY_EDITOR_KEY = () => '';
+const UAD_PROJECT_DOCUMENT_FIELDS = new Set(['pud', 'hoa_dues_amount', 'hoa_frequency']);
 
 const FIELD_LABELS: Record<string, string> = {
   zoning_code: 'Zoning Code',
@@ -100,6 +101,7 @@ const FIELD_LABELS: Record<string, string> = {
 function uadSectionLabel(section: UadDocumentApplicationResult['section']) {
   if (section === 'subject_listing_information') return 'Subject Listing Information (Section 19)';
   if (section === 'sales_contract') return 'Sales Contract';
+  if (section === 'project_information') return 'Subject and Project Information';
   return 'Assignment Information';
 }
 
@@ -200,6 +202,7 @@ export default function AssignmentDocumentCenter({
   const selectionEpochRef = useRef(0);
   const renderedSelectionEpoch = selectionEpochRef.current;
   const [message, setMessage] = useState('');
+  const [uadProjectNotes, setUadProjectNotes] = useState<{ scope: string; documentId: number; notes: string[] } | null>(null);
   const discrepancyDocumentCount = isUad
     ? documents.filter((document) => (document.uad_discrepancies?.length || 0) > 0).length
     : 0;
@@ -242,7 +245,16 @@ export default function AssignmentDocumentCenter({
     pendingReviewRef.current = operation;
     reviewLocksRef.current.add(operation);
     setReviewLocks([...reviewLocksRef.current]);
+    setUadProjectNotes(null);
     return operation;
+  };
+  const retainUadProjectNotes = (result: UadDocumentApplicationResult, documentId: number) => {
+    if (!UAD_PROJECT_DOCUMENT_FIELDS.has(result.field_key)) return;
+    // Replace intermediate approve-all notes with the latest coherent group;
+    // never leave an earlier missing-dues warning after frequency is confirmed.
+    const notes = [...new Set([...(result.warnings || []),
+      ...(result.conflicts?.length ? ['Existing PUD / HOA values were kept. Review them before making changes.'] : [])])];
+    setUadProjectNotes({ scope: scopeKey, documentId, notes });
   };
   const finishReview = (operation: DocumentReviewOperation) => {
     // Navigation invalidates completion effects, not an already-sent write.
@@ -583,10 +595,13 @@ export default function AssignmentDocumentCenter({
         if (isUad && uadWorkfileId) {
           const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
           if (!reviewCanContinue(operation)) return;
+          retainUadProjectNotes(result, selectedDocument.id);
           onUadApplied?.(result);
           setMessage(result.applied
             ? `Candidate confirmed and applied to UAD ${uadSectionLabel(result.section)}.`
-            : 'Candidate confirmed with its source page retained. This evidence has no direct UAD form mapping.');
+            : result.reason === 'existing_values_preserved_or_review_required'
+              ? 'Candidate confirmed. Existing decisions were preserved; review the PUD / HOA notes below.'
+              : 'Candidate confirmed with its source page retained. This evidence has no direct UAD form mapping.');
         } else if (!customApplication) {
           onApplyConfirmedCandidate?.(candidate.field_key, confirmedValue, selectedDocument.document_type);
         }
@@ -698,6 +713,7 @@ export default function AssignmentDocumentCenter({
     if (!uadWorkfileId || !selectedDocument || !candidate.id) return null;
     const result = await applyUadDocumentCandidate(uadWorkfileId, selectedDocument.id, candidate.id);
     if (readOnlyRef.current || (operation && !reviewOperationIsCurrent(operation))) return null;
+    retainUadProjectNotes(result, selectedDocument.id);
     onUadApplied?.(result);
     return result;
   };
@@ -771,6 +787,11 @@ export default function AssignmentDocumentCenter({
           return;
         }
         let applied = 0;
+        // Resume any HOA confirmation retained by an earlier interrupted batch.
+        // Only this group waits for identity evidence from later PDF pages;
+        // ordinary fields retain their per-candidate confirm/apply behavior.
+        let hoaCandidate = selectedDocument.candidates?.find(candidate => candidate.id
+          && candidate.review_status === 'confirmed' && UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key));
         for (const candidate of suggestedCandidates) {
           if (!reviewCanContinue(operation)) return;
           if (!candidate.id) continue;
@@ -786,7 +807,18 @@ export default function AssignmentDocumentCenter({
           );
           if (!reviewCanContinue(operation)) return;
           clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
+          if (UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key)) {
+            hoaCandidate ??= candidate;
+            continue;
+          }
           const result = await applyConfirmedCandidateToUad(candidate, operation);
+          if (!reviewCanContinue(operation)) return;
+          if (result?.applied) applied += 1;
+        }
+        if (hoaCandidate) {
+          if (!reviewCanContinue(operation)) return;
+          // One request applies the latest confirmed HOA/PUD group atomically.
+          const result = await applyConfirmedCandidateToUad(hoaCandidate, operation);
           if (!reviewCanContinue(operation)) return;
           if (result?.applied) applied += 1;
         }
@@ -1206,7 +1238,9 @@ export default function AssignmentDocumentCenter({
                                 if (!reviewCanContinue(operation)) return;
                                 setMessage(result?.applied
                                   ? `Confirmed evidence applied to UAD ${uadSectionLabel(result.section)}.`
-                                  : 'This evidence is retained for review but has no direct UAD form mapping.');
+                                  : result?.reason === 'existing_values_preserved_or_review_required'
+                                    ? 'Existing decisions were preserved; review the PUD / HOA notes below.'
+                                    : 'This evidence is retained for review but has no direct UAD form mapping.');
                               } catch (error) {
                                 if (!reviewCanContinue(operation)) return;
                                 setMessage(error instanceof Error ? error.message : 'The confirmed evidence could not be applied to UAD.');
@@ -1289,6 +1323,11 @@ export default function AssignmentDocumentCenter({
             </div>
           </div>
           {message ? <p className="mt-4 text-xs font-medium text-slate-700">{message}</p> : null}
+          {isUad && uadProjectNotes?.scope === scopeKey && uadProjectNotes.documentId === selectedDocument?.id && uadProjectNotes.notes.length ? (
+            <ul aria-label="HOA / PUD review notes" className="mt-2 list-disc space-y-1 pl-4 text-xs text-amber-800">
+              {uadProjectNotes.notes.map(note => <li key={note}>{note}</li>)}
+            </ul>
+          ) : null}
         </div>
       ) : null}
       {sfrepOpen && !isUad && assignmentFileId ? <SfrepExportDialog key={scopeKey}

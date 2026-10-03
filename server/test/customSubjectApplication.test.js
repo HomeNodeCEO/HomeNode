@@ -16,7 +16,7 @@ function document(id = 1, values = {}, options = {}) {
 }
 function fullDocument() {
   return document(1, { subject_state: 'TX', subject_zip: '75041', borrower_name: 'Example Borrower',
-    owner_name: 'Example Owner', county: 'Dallas', assessor_parcel_number: '000123', tax_year: '2025',
+    owner_name: 'Example Owner', county: 'Dallas', census_tract: '182.06', listing_history_summary: 'Reviewed listing narrative.', assessor_parcel_number: '000123', tax_year: '2025',
     tax_amount: '$4,321.50', neighborhood_name: 'Example Park', legal_description: 'EXAMPLE PARK\r\nBLK 1\tLOT 2',
     property_rights: 'leasehold', offered_for_sale_prior_12_months: 'false', pud: 'false',
     assignment_type: 'refinance', lender_client_name: 'Example Bank', lender_client_address: '20 Example Ave',
@@ -26,7 +26,7 @@ const merge = (documents, rest = {}) => mergeCustomSubjectApplication({ projecti
 
 test('every canonical Subject/assignment descriptor round-trips exact reviewed values', () => {
   const result = merge([fullDocument()], { actorUserId: 'appraiser-1', reviewer: 'Example Appraiser' });
-  assert.equal(CUSTOM_SUBJECT_FIELD_DESCRIPTORS.length, 20);
+  assert.equal(CUSTOM_SUBJECT_FIELD_DESCRIPTORS.length, 22);
   assert.deepEqual(result.subject.legal_description.lines, ['EXAMPLE PARK\r', 'BLK 1\tLOT 2']);
   assert.equal(readCustomSubjectValue(result, 'legal_description'), 'EXAMPLE PARK\r\nBLK 1\tLOT 2');
   assert.equal(result.subject.urar_subject.tax_amount, '4321.50');
@@ -242,6 +242,7 @@ function database({ documents = [fullDocument()], assignmentDetails = {}, sectio
       return { rows: [structuredClone(candidate)] };
     }
     if (/INSERT INTO app.assignment_document_candidate_reviews/.test(sql)) { state.history.push(['candidate', ...values]); return { rows: [] }; }
+    if (/SELECT to_regclass/.test(sql)) return { rows: [{ census_available: false }] };
     if (/SELECT COUNT/.test(sql)) return { rows: [{ count: state.documents.find(item => item.id === values[0]).candidates.filter(item => item.review_status === 'suggested').length }] };
     if (/FROM app.assignment_files assignment_file/.test(sql)) return { rows: [structuredClone(state.assignment)] };
     if (/FROM app.assignment_documents document/.test(sql)) return { rows: structuredClone(state.documents) };
@@ -496,6 +497,101 @@ test('scoped read has bounded candidates, exact file/account and organization-qu
   assert.match(query.sql, /document.uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL/);
   await assert.rejects(readCustomSubjectDocuments({ query: async () => ({ rows: [{ account_id: 'other', assignment_file_id: 4 }] }) },
     { accountId: '000123', assignmentFileId: 4 }), /document_scope_changed/);
+});
+
+test('matched account Census fills absent tract and conflicts with differing reviewed PDF evidence', () => {
+  const source = document();
+  source.subject_context = { ...context, censusGeography: { tractCode: '001234', status: 'matched',
+    geoid: '48113001234', vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
+  const initial = merge([source]);
+  assert.equal(initial.subject.property_location.census_tract, '12.34');
+  assert.equal(initial.evidence.fields.census_tract.kind, 'account_reference');
+  source.candidates.push({ id: 190, document_id: source.id, field_key: 'census_tract', review_status: 'confirmed', confirmed_value: '99.99' });
+  const conflict = merge([source], initial);
+  assert.equal(conflict.subject.property_location.census_tract, '12.34');
+  assert.equal(conflict.evidence.fields.census_tract.status, 'needs_review');
+  assert.ok(conflict.warnings.some(warning => /lookup disagree/.test(warning)));
+  source.candidates.pop();
+  assert.equal(merge([source], conflict).evidence.fields.census_tract.status, 'needs_review');
+  assert.equal(merge([source], { ...conflict, reviewedDocumentId: source.id }).evidence.fields.census_tract.status, 'current');
+});
+
+test('reviewed MLS None clears only untouched automatic dues and retains proxy proof', () => {
+  const initial = merge([fullDocument()]);
+  const source = document(2, { pud: 'false' }, { document_type: 'mls_sheet' });
+  Object.assign(source.candidates.find(candidate => candidate.field_key === 'pud'), {
+    raw_value: 'None', normalized_value: 'false', extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+  const next = merge([source], { ...initial, reviewedDocumentId: 2 });
+  assert.equal(next.assignmentDetails.pud, false);
+  assert.equal(next.assignmentDetails.hoa_dues_amount, null);
+  assert.equal(next.assignmentDetails.hoa_frequency, null);
+  assert.equal(next.evidence.fields.pud.rule, 'user_requested_hoa_workflow_proxy_v1');
+  assert.equal(next.evidence.fields.pud.sourceValue, 'None');
+  const manual = merge([source], { ...initial, reviewedDocumentId: 2,
+    assignmentDetails: { ...initial.assignmentDetails, hoa_dues_amount: '777', hoa_frequency: 'per_month' } });
+  assert.equal(manual.assignmentDetails.hoa_dues_amount, '777');
+  assert.equal(manual.assignmentDetails.hoa_frequency, 'per_month');
+  const conflicting = merge([source, fullDocument()]);
+  assert.equal(conflicting.assignmentDetails.pud, undefined);
+  assert.equal(conflicting.assignmentDetails.hoa_dues_amount, undefined);
+});
+
+for (const processingStatus of ['uploaded', 'processing', 'ocr_required', 'extraction_failed']) {
+  test(`mixed-source ${processingStatus} MLS None cannot clear automatic dues or manufacture a conflict`, () => {
+    const initial = merge([fullDocument()]);
+    const explicitPud = document(2, { pud: 'false' }, { document_type: 'mls_sheet' });
+    const staleNone = document(3, { pud: 'false' }, { document_type: 'mls_sheet',
+      processing_status: processingStatus, property_role: 'subject' });
+    Object.assign(staleNone.candidates.find(candidate => candidate.field_key === 'pud'), {
+      raw_value: 'None', normalized_value: 'false', extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+    const projection = projectCustomSubjectDocuments([explicitPud, staleNone]);
+    assert.equal(projection.fields.find(field => field.key === 'pud')?.value, false);
+    assert.equal(projection.fields.some(field => ['hoa_dues_amount', 'hoa_frequency'].includes(field.key)), false);
+    const next = mergeCustomSubjectApplication({ ...initial, reviewedDocumentId: explicitPud.id, projection });
+    assert.equal(next.assignmentDetails.hoa_dues_amount, initial.assignmentDetails.hoa_dues_amount);
+    assert.equal(next.assignmentDetails.hoa_frequency, initial.assignmentDetails.hoa_frequency);
+    assert.equal(next.evidence.fields.hoa_dues_amount.status, 'needs_review');
+    assert.equal(next.evidence.fields.hoa_frequency.status, 'needs_review');
+
+    const currentDues = document(4, { hoa_dues_amount: '240', hoa_frequency: 'per_year' }, { document_type: 'mls_sheet' });
+    const withCurrentDues = projectCustomSubjectDocuments([explicitPud, staleNone, currentDues]);
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'pud')?.value, false);
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'hoa_dues_amount')?.value, '240.00');
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'hoa_frequency')?.value, 'per_year');
+    assert.deepEqual(withCurrentDues.conflicts, []);
+    assert.equal(withCurrentDues.warnings.some(warning => warning.includes('MLS reports no HOA')), false);
+  });
+}
+
+for (const processingStatus of ['reviewed', 'review_required']) {
+  test(`separately ${processingStatus} MLS None still supplies clearing evidence behind equivalent explicit PUD false`, () => {
+    const explicitPud = document(2, { pud: 'false' }, { document_type: 'mls_sheet' });
+    const noHoa = document(3, { pud: 'false' }, { document_type: 'mls_sheet', processing_status: processingStatus });
+    Object.assign(noHoa.candidates.find(candidate => candidate.field_key === 'pud'), {
+      raw_value: 'None', normalized_value: 'false', extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+    const projection = projectCustomSubjectDocuments([explicitPud, noHoa]);
+    assert.equal(projection.fields.find(field => field.key === 'pud')?.provenance.documentId, explicitPud.id);
+    for (const key of ['hoa_dues_amount', 'hoa_frequency']) {
+      const clearing = projection.fields.find(field => field.key === key);
+      assert.equal(clearing?.value, null);
+      assert.equal(clearing.provenance.documentId, noHoa.id);
+      assert.equal(clearing.provenance.rule, 'reviewed_no_hoa_clears_automatic_dues_v1');
+    }
+  });
+}
+
+test('reviewing a contributing document refreshes a stale multi-source narrative without overwriting a manual edit', () => {
+  const field = { key: 'listing_history_summary', value: 'Synthetic listing narrative', sourceValue: 'evidence',
+    provenance: { kind: 'derived_reviewed_document', documentId: 1, sourceEvidence: [{ documentId: 1 }, { documentId: 2 }] } };
+  const projection = { fields: [field], warnings: [], conflicts: [] };
+  const initial = mergeCustomSubjectApplication({ projection });
+  initial.evidence.fields.listing_history_summary.status = 'needs_review';
+  const unrelated = mergeCustomSubjectApplication({ ...initial, projection, reviewedDocumentId: 3 });
+  assert.equal(unrelated.evidence.fields.listing_history_summary.status, 'needs_review');
+  const refreshed = mergeCustomSubjectApplication({ ...initial, projection, reviewedDocumentId: 2 });
+  assert.equal(refreshed.evidence.fields.listing_history_summary.status, 'current');
+  initial.subject.urar_subject.listing_history_summary = 'Appraiser correction';
+  assert.equal(mergeCustomSubjectApplication({ ...initial, projection, reviewedDocumentId: 2 }).subject.urar_subject.listing_history_summary, 'Appraiser correction');
 });
 
 test('persistence rejects signed and cross-scope sources before reading or writing sections', async () => {

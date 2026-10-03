@@ -2,6 +2,7 @@ import { createUadEntityWithClient, deleteUadEntityWithClient } from "./entities
 import { saveUadSection } from "./editor.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
+import { UAD_HOA_DOCUMENT_FIELDS, synchronizeUadDocumentHoa } from './documentHoa.js';
 import {
   buildPurchaseContractAnalysis,
   confirmedPurchaseContractCandidates,
@@ -34,6 +35,7 @@ const SUPPORTED_DOCUMENT_FIELDS = new Set([
   "days_on_market",
   "original_list_price",
   "list_price",
+  ...UAD_HOA_DOCUMENT_FIELDS,
 ]);
 
 const MLS_DOCUMENT_FIELDS = new Set([
@@ -655,6 +657,10 @@ export async function applyConfirmedUadDocumentCandidate(
   if (candidate.review_status !== "confirmed") throw new Error("uad_document_candidate_confirmation_required");
   if (!uadDocumentCandidateIsApplicable(candidate.field_key)) {
     return { applied: false, reason: "no_direct_uad_mapping", field_key: candidate.field_key };
+  }
+
+  if (UAD_HOA_DOCUMENT_FIELDS.has(candidate.field_key)) {
+    return synchronizeUadDocumentHoa(pool, workfileId, documentId, candidateId, actorUserId);
   }
 
   const value = cleanText(candidate.confirmed_value || candidate.normalized_value || candidate.raw_value);

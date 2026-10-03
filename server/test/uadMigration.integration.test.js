@@ -20,6 +20,7 @@ import {
   CUSTOM_SUBJECT_EVIDENCE_SECTION,
   persistCustomSubjectApplication,
 } from "../src/services/customSubjectApplication.js";
+import { readSfrepDocuments } from "../src/services/sfrepDocumentTransfer.js";
 
 const databaseUrl = process.env.DATABASE_URL;
 
@@ -157,6 +158,40 @@ test("reviewed Custom Subject and server-only receipts persist with migrated con
     }
     const publicAccount = await client.query("SELECT address FROM core.accounts WHERE account_id = $1", [accountId]);
     assert.equal(publicAccount.rows[0].address, "100 Example Dr", "report application must not edit public account data");
+
+    // Exercise the actual transfer SQL: multiple selected PDFs share one report
+    // envelope, and oversized JSON never crosses the PostgreSQL client boundary.
+    const secondContent = Buffer.from("%PDF-SYNTHETIC-SECOND-REFERENCE");
+    const secondDocument = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'Synthetic second reference', 'second.pdf', $3, $4, $5) RETURNING id`,
+      [accountId, assignmentFileId, createHash("sha256").update(secondContent).digest("hex"), secondContent.length, secondContent],
+    );
+    const documentIds = [documentId, Number(secondDocument.rows[0].id)];
+    let wireRows;
+    const observedClient = { query: async query => {
+      const response = await client.query(query);
+      wireRows = structuredClone(response.rows);
+      return response;
+    } };
+    const selected = await readSfrepDocuments(observedClient, { accountId, assignmentFileId, documentIds });
+    assert.equal(wireRows.length, 1);
+    assert.equal(wireRows[0].evidence_limit, false);
+    assert.equal(wireRows[0].snapshot.documents.length, 2);
+    assert.equal(wireRows[0].snapshot.saved_report.documents.length, 2);
+    assert.equal(wireRows[0].snapshot.saved_report.subject.value.urar_subject.borrower_name, "Synthetic Borrower");
+    assert.equal((JSON.stringify(wireRows).match(/"saved_report":/g) || []).length, 1);
+    assert.ok(wireRows[0].snapshot.documents.every(row => !Object.hasOwn(row, "saved_report") && !Object.hasOwn(row, "content")));
+    assert.ok(wireRows[0].snapshot.saved_report.documents.every(row => !Object.hasOwn(row, "content")));
+    assert.deepEqual(selected.map(row => row.id), documentIds);
+    assert.equal(selected.filter(row => Object.hasOwn(row, "saved_report")).length, 1);
+    await client.query(
+      "UPDATE app.assignment_document_field_candidates SET raw_value = repeat('x', $2) WHERE id = $1 AND document_id = $3",
+      [candidateIds.get("borrower_name"), 8 * 1024 * 1024 + 1, documentId],
+    );
+    await assert.rejects(readSfrepDocuments(observedClient, { accountId, assignmentFileId, documentIds }), /sfrep_evidence_limit/);
+    assert.deepEqual(wireRows, [{ snapshot: null, evidence_limit: true }]);
   } finally {
     if (client) {
       await client.query("ROLLBACK").catch(() => {});

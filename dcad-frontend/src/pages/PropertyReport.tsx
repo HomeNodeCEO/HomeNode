@@ -1066,8 +1066,9 @@ function AddressHero({
           try {
             const latestResponse = await getAssignmentFiles(accountId, fileAtStart.id);
             if (!selectionIsCurrent()) return false;
-            const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id);
-            if (latestFile) {
+            const latestFile = latestResponse.files.find((file) => file.id === fileAtStart.id && customAssignmentFileMatches(file, accountId));
+            if (latestFile && typeof latestResponse.account_id === "string"
+              && latestResponse.account_id.trim().toUpperCase() === accountId.trim().toUpperCase()) {
               const remoteDraft = assignmentDraftFromDetail(latestFile.assignment_details);
               const reconciliation = reconcileCustomAppraisalDraft(
                 assignmentSavedDraftRef.current,
@@ -1075,7 +1076,7 @@ function AddressHero({
                 remoteDraft,
               );
               const rebasedDraft = cloneEditorValue(reconciliation.rebased);
-              const refreshedFile: AppraisalAssignmentFile = {
+              const refreshedFile = preserveNewerReportSections(activeAssignmentFileRef.current || fileAtStart, {
                 ...latestFile,
                 custom_appraisal_sections:
                   latestFile.custom_appraisal_sections || fileAtStart.custom_appraisal_sections,
@@ -1083,15 +1084,18 @@ function AddressHero({
                   latestFile.mobile_inspection_sketch || fileAtStart.mobile_inspection_sketch,
                 mobile_inspection_photos:
                   latestFile.mobile_inspection_photos || fileAtStart.mobile_inspection_photos,
-              };
+              });
               activeAssignmentFileRef.current = refreshedFile;
               assignmentSavedDraftRef.current = cloneEditorValue(remoteDraft);
               assignmentDraftRef.current = rebasedDraft;
               assignmentDirtyRef.current = reconciliation.localChangedKeys.length > 0;
-              setActiveAssignmentFile(refreshedFile);
-              setAssignmentFiles((current) => current.map((file) =>
-                file.id === refreshedFile.id ? refreshedFile : file
-              ));
+              setActiveAssignmentFile((current) => {
+                if (!selectionIsCurrent() || !current) return current;
+                const next = preserveNewerReportSections(current, refreshedFile);
+                activeAssignmentFileRef.current = next;
+                return next;
+              });
+              setAssignmentFiles((current) => selectionIsCurrent() ? current.map((file) => preserveNewerReportSections(file, refreshedFile)) : current);
               setAssignmentDraft(rebasedDraft);
               setAssignmentDirty(reconciliation.localChangedKeys.length > 0);
               setAssignmentConflictKeys(reconciliation.conflictKeys);

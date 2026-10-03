@@ -19,6 +19,10 @@ function savedRow(row = source()) {
     assignmentDetails: applied.assignmentDetails, subject: { value: applied.subject, revision: 1 },
     evidence: { value: applied.evidence, revision: 1 }, documents } };
 }
+function snapshotRow(row = savedRow()) {
+  const { saved_report, subject_context, ...document } = row;
+  return { snapshot: { documents: [document], subject_context, saved_report }, evidence_limit: false };
+}
 
 test('transfer input rejects unbounded, duplicate, coerced and extra document selection', () => {
   assert.deepEqual(sfrepTransferInput(body()).documentIds, [2]);
@@ -32,9 +36,9 @@ test('transfer input rejects unbounded, duplicate, coerced and extra document se
 
 test('source read binds account, assignment and document IDs and rejects a partial result', async () => {
   let query;
-  const pool = { query: async value => { query = value; return { rows: [savedRow()] }; } };
+  const pool = { query: async value => { query = value; return { rows: [snapshotRow()] }; } };
   assert.equal((await readSfrepDocuments(pool, input()))[0].id, 2);
-  assert.deepEqual(query.values, ['account-1', 14, [2], 201]);
+  assert.deepEqual(query.values, ['account-1', 14, [2], 201, 8 * 1024 * 1024]);
   assert.match(query.text, /document\.assignment_file_id = \$2/);
   assert.match(query.text, /uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL/);
   assert.match(query.text, /report_file\.custom_assignment_file_id = assignment\.id/);
@@ -42,15 +46,20 @@ test('source read binds account, assignment and document IDs and rejects a parti
   assert.match(query.text, /saved_subject\.section_key = 'report.subject_identification'/);
   assert.match(query.text, /saved_evidence\.section_key = 'report.subject_evidence'/);
   assert.match(query.text, /LIMIT 51/);
+  assert.match(query.text, /source_rows AS MATERIALIZED/);
+  assert.match(query.text, /payload AS MATERIALIZED/);
+  assert.match(query.text, /octet_length\(snapshot::text\) > \$5/);
+  assert.match(query.text, /CASE WHEN evidence_limit THEN NULL ELSE snapshot END AS snapshot/);
+  assert.doesNotMatch(query.text, /document\.content\b/);
   await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [] }) }, input()), /sfrep_document_not_found/);
-  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [{ ...source(), assignment_file_id: 15 }] }) }, input()), /sfrep_document_not_found/);
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [snapshotRow({ ...savedRow(), assignment_file_id: 15 })] }) }, input()), /sfrep_document_not_found/);
 });
 
 test('production preview binds subject identity and effective date into the reviewed digest', async () => {
   const row = { ...source(), subject_context: { accountId: 'account-1', address: '100 Example Dr', city: 'Garland', postalCode: '75041', effectiveDate: '2026-08-31', inspectionDate: null },
     upload_date: '2026-10-02', candidates: [...source().candidates, { id: 21, document_id: 2, field_key: 'subject_property_address', confirmed_value: '100 Example Dr, Garland, TX 75041', review_status: 'confirmed' }] };
   const stored = savedRow(row);
-  const read = () => readSfrepDocuments({ query: async () => ({ rows: [{ ...row, saved_report: structuredClone(stored.saved_report) }] }) }, input());
+  const read = () => readSfrepDocuments({ query: async () => ({ rows: [snapshotRow({ ...row, saved_report: structuredClone(stored.saved_report) })] }) }, input());
   let docs = await read();
   assert.equal(docs[0].property_role, 'subject');
   const preview = previewSfrepDocuments(docs, input());
@@ -65,7 +74,7 @@ test('production preview binds subject identity and effective date into the revi
 });
 
 test('source read fails closed without saved report data or with oversized/foreign evidence', async () => {
-  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [source()] }) }, input()), /invalid_saved_report/);
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [snapshotRow(source())] }) }, input()), /invalid_saved_report/);
   for (const [change, expected] of [
     [row => { row.saved_report.documents = Array(51).fill(source()); }, /evidence_limit/],
     [row => { row.saved_report.documents[0].account_id = 'other'; }, /document_not_found/],
@@ -73,8 +82,46 @@ test('source read fails closed without saved report data or with oversized/forei
     [row => { row.saved_report.documents[0].candidates = Array(201).fill({}); }, /evidence_limit/],
   ]) {
     const row = savedRow(); change(row);
+    await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [snapshotRow(row)] }) }, input()), expected);
+  }
+});
+
+test('ten selected PDFs use one shared report snapshot and do not attach it to every document', async () => {
+  const row = snapshotRow();
+  row.snapshot.documents = Array.from({ length: 10 }, (_, index) => ({ ...source(), id: index + 2,
+    candidates: [{ ...source().candidates[0], id: 20 + index, document_id: index + 2 }] }));
+  row.snapshot.saved_report.documents = structuredClone(row.snapshot.documents);
+  let reads = 0;
+  const documents = await readSfrepDocuments({ query: async () => { reads++; return { rows: [row] }; } },
+    { ...input(), documentIds: row.snapshot.documents.map(document => document.id) });
+  assert.equal(reads, 1);
+  assert.equal(documents.length, 10);
+  assert.equal(documents.filter(document => Object.hasOwn(document, 'saved_report')).length, 1);
+  assert.equal(documents[0].saved_report.documents.length, 10);
+  assert.equal(documents[0].saved_report, row.snapshot.saved_report);
+});
+
+test('SQL evidence-limit flag refuses the suppressed payload before accessing snapshot data', async () => {
+  const row = { evidence_limit: true, get snapshot() { assert.fail('oversized snapshot must not be accessed'); } };
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [row] }) }, input()), /sfrep_evidence_limit/);
+});
+
+test('snapshot shape, selected IDs, candidate caps and defense-in-depth byte cap fail closed', async () => {
+  for (const [change, expected] of [
+    [row => { delete row.evidence_limit; }, /invalid_saved_report/],
+    [row => { row.snapshot = null; }, /invalid_saved_report/],
+    [row => { row.snapshot.documents = []; }, /document_not_found/],
+    [row => { row.snapshot.documents[0].id = 9; }, /document_not_found/],
+    [row => { row.snapshot.documents[0].candidates = Array(201).fill({}); }, /evidence_limit/],
+    [row => { row.snapshot.saved_report.subject.value.notes = 'x'.repeat(8 * 1024 * 1024); }, /evidence_limit/],
+  ]) {
+    const row = snapshotRow(); change(row);
     await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [row] }) }, input()), expected);
   }
+  const row = snapshotRow();
+  row.snapshot.documents.push(structuredClone(row.snapshot.documents[0]));
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [row] }) }, { ...input(), documentIds: [2, 3] }), /document_not_found/);
+  await assert.rejects(readSfrepDocuments({ query: async () => ({ rows: [snapshotRow(), snapshotRow()] }) }, input()), /document_not_found/);
 });
 
 test('preview changes when evidence, assignment or source-copy choice changes', () => {

@@ -1,4 +1,4 @@
-import { buildSfrepReportExport } from './sfrepReportExport.js';
+import { buildSfrepReportExport, canonicalSfrepAssignmentType } from './sfrepReportExport.js';
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 import { validateAssignmentDetails, validateReportManualSection } from '../util/reportManualValues.js';
 
@@ -88,7 +88,7 @@ export function projectCustomSubjectDocuments(documents = []) {
     if (definition.key === 'assignment_type') {
       value = field.fieldId === 'AssignmentTypePurchaseCheckBox' ? 'purchase_transaction'
         : field.fieldId === 'AssignmentTypeRefinanceCheckBox' ? 'refinance'
-          : String(candidate?.confirmed_value ?? candidate?.normalized_value ?? candidate?.raw_value ?? '').trim().toLowerCase();
+          : canonicalSfrepAssignmentType(candidate?.confirmed_value ?? candidate?.normalized_value ?? candidate?.raw_value);
       if (!value) continue;
     }
     fields.push({ key: definition.key, value, provenance: field.provenance,

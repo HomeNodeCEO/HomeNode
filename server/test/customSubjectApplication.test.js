@@ -283,6 +283,47 @@ test('public confirmation atomically persists scoped report, assignment and rece
   assert.equal(db.calls.some(item => /UPDATE core.accounts/.test(item.sql)), false);
 });
 
+for (const [reviewedValue, canonical] of [
+  ['Bridge Loan', 'bridge_loan'], ['bridge-loan', 'bridge_loan'],
+  ['New Construction', 'new_construction'], ['new-construction', 'new_construction'],
+]) {
+  test(`approving edited Other purpose ${reviewedValue} persists its supported canonical value`, async () => {
+    const source = document(1, { assignment_type: 'refinance', lender_client_name: 'Example Bank' });
+    const purpose = source.candidates.find(item => item.field_key === 'assignment_type');
+    purpose.review_status = 'suggested'; purpose.confirmed_value = null;
+    const db = database({ documents: [source] });
+    const result = await confirmAssignmentDocumentCandidates(db.pool, { documentId: 1, reviewer: 'Example Appraiser',
+      candidateValues: { [purpose.id]: reviewedValue } });
+    assert.deepEqual(result.assignment_application.assignment_details.assignment_types, [canonical]);
+    assert.deepEqual(db.state.assignment.assignment_details.assignment_types, [canonical]);
+    assert.equal(db.state.documents[0].processing_status, 'reviewed');
+    const receipt = result.assignment_application.custom_appraisal_sections[CUSTOM_SUBJECT_EVIDENCE_SECTION].value.fields.assignment_type;
+    assert.equal(receipt.value, canonical);
+    assert.equal(receipt.reviewedSourceValue, reviewedValue);
+    assert.equal(receipt.candidateId, purpose.id);
+    assert.equal(receipt.status, 'current');
+    assert.ok(db.calls.some(item => item.sql === 'COMMIT'));
+    assert.equal(db.calls.some(item => item.sql === 'ROLLBACK'), false);
+  });
+}
+
+test('Other purpose normalization does not invent unsupported purposes or pick a conflicting source', () => {
+  for (const value of ['Other', 'Bridge Finance', 'New Construction Maybe', 'New\tConstruction', '']) {
+    const projected = projectCustomSubjectDocuments([document(1, { assignment_type: value })]);
+    assert.equal(projected.fields.some(field => field.key === 'assignment_type'), false, value);
+  }
+  const equivalent = projectCustomSubjectDocuments([
+    document(1, { assignment_type: 'Bridge Loan' }), document(2, { assignment_type: 'bridge-loan' }),
+  ]);
+  assert.equal(equivalent.fields.find(field => field.key === 'assignment_type')?.value, 'bridge_loan');
+  assert.equal(equivalent.conflicts.length, 0);
+  const conflicting = projectCustomSubjectDocuments([
+    document(1, { assignment_type: 'Bridge Loan' }), document(2, { assignment_type: 'New Construction' }),
+  ]);
+  assert.equal(conflicting.fields.some(field => field.key === 'assignment_type'), false);
+  assert.ok(conflicting.conflicts.some(conflict => conflict.sourceField === 'assignment_type'));
+});
+
 for (const failure of [CUSTOM_SUBJECT_SECTION, CUSTOM_SUBJECT_EVIDENCE_SECTION]) {
   test(`history failure for ${failure} rolls back candidate, assignment and all report writes`, async () => {
     const source = fullDocument();

@@ -59,7 +59,7 @@ ZIP+4 is retained with its source. Different ZIP+4 values remain a conflict.
 
 The exact assignment's saved effective date takes precedence, including
 retrospective appraisals, then its inspection date. If neither exists, the earliest
-selected, review-ready subject document's UTC upload date is a visible placeholder.
+same-file, review-ready subject document's UTC upload date is a visible placeholder.
 This does not write or change the report's effective date. Processing/failed uploads
 cannot establish identity or supply the placeholder from stale confirmations.
 
@@ -363,6 +363,15 @@ normalized value falls back to the raw source. The actual PostgreSQL lock-order
 regression covers all three outcomes without relaxing its lock assertions. Its
 reviewable fixture explicitly uses `review_required`; an upload that has not
 finished extraction must still be rejected by the production writer.
+
+The supported assignment-purpose vocabulary is shared between field mapping and
+report persistence, so reviewed space/hyphen variants of Other purposes save the
+same canonical value while retaining the exact reviewed wording. The Assignment
+conflict-reload path reconciles same-file Subject section revisions again when
+React executes each setter, preventing a delayed reload from replacing a newer
+acknowledged Subject save. SFREP's database reader returns the shared source
+snapshot once, using a single-statement serialized-byte/count gate that suppresses
+oversized JSON before the PostgreSQL client receives it.
 
 The integrated implementation at `df7cefcc` passed 9,157 server tests (47 skipped),
 3,559 frontend tests, TypeScript, lint, source budgets and the production build.

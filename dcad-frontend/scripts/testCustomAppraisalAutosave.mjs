@@ -94,9 +94,10 @@ test("assignment selection changes invalidate every asynchronous save completion
     assignmentFilesHookSource,
     /useLayoutEffect\(\(\) => \{\s*selectionGenerationRef\.current \+= 1;\s*setActiveAssignmentFile\(null\);\s*setAssignmentFileNumber\(""\);\s*\}, \[accountId, enabled, requestedAssignmentFileId\]\);/u,
   );
-  assert.equal(propertyReportSource.match(/selectionIsCurrent\(\)/gu)?.length, 7);
+  assert.equal(propertyReportSource.match(/selectionIsCurrent\(\)/gu)?.length, 9);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\) \|\| !current\) return current;/u);
   assert.match(propertyReportSource, /preserveNewerReportSections\(current, updatedFile\)/u);
+  assert.match(propertyReportSource, /preserveNewerReportSections\(current, refreshedFile\)/u);
   assert.match(propertyReportSource, /if \(!selectionIsCurrent\(\)\) return true;/u);
   assert.match(propertyReportSource, /if \(selectionIsCurrent\(\)\) void saveAssignmentDetailsRef\.current/u);
 });

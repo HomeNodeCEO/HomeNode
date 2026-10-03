@@ -186,6 +186,15 @@ const OTHER_ASSIGNMENT_DESCRIPTIONS = Object.freeze({
   dscr: "DSCR",
 });
 
+/** One supported purpose vocabulary for both field projection and persistence.
+ * Canonicalize presentation separators only; do not infer new loan purposes. */
+export function canonicalSfrepAssignmentType(value) {
+  if (typeof value !== "string") return null;
+  const canonical = value.trim().toLowerCase().replace(/[ -]+/g, "_");
+  return canonical === "purchase_transaction" || canonical === "refinance"
+    || Object.hasOwn(OTHER_ASSIGNMENT_DESCRIPTIONS, canonical) ? canonical : null;
+}
+
 function booleanValue(value) {
   return /^(?:true|yes)$/i.test(value) ? true : /^(?:false|no)$/i.test(value) ? false : null;
 }
@@ -255,7 +264,8 @@ function projectValue(sourceField, value) {
     return fieldId ? [{ fieldId, value: "true", type: "CheckBoxField", group: "hoa_frequency" }] : [];
   }
   if (sourceField === "assignment_type") {
-    const assignmentType = value.toLowerCase().replace(/[ -]+/g, "_");
+    const assignmentType = canonicalSfrepAssignmentType(value);
+    if (!assignmentType) return [];
     const fieldId = assignmentType === "purchase_transaction" ? "AssignmentTypePurchaseCheckBox"
       : assignmentType === "refinance" ? "AssignmentTypeRefinanceCheckBox" : null;
     const choice = { group: "assignment_type", assignmentType };

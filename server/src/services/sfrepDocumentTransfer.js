@@ -6,8 +6,10 @@ import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectCo
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
+const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
 const digest = value => createHash('sha256').update(value).digest('hex');
 const fail = message => { throw new Error(message); };
+const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 
 export function sfrepTransferInput(body, { exporting = false } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('invalid_sfrep_request');
@@ -23,28 +25,20 @@ export function sfrepTransferInput(body, { exporting = false } = {}) {
     includeDocuments: body.include_documents, formId: body.form_id, previewDigest: body.preview_digest };
 }
 
-// Read metadata and candidates in one statement so the preview cannot combine
-// document versions from separate requests. Every source belongs to this file.
+// One statement and one shared snapshot: reject oversized evidence in PostgreSQL
+// before pg receives/parses JSON, rather than repeating it for each selected PDF.
 export async function readSfrepDocuments(pool, { accountId, assignmentFileId, documentIds }) {
   const { rows } = await pool.query({ text: `
-    SELECT document.id, document.account_id, document.assignment_file_id,
-           document.document_type, document.title, document.file_name, document.content_type,
-           document.file_size_bytes, document.checksum_sha256, document.processing_status,
-           document.extraction_summary, document.updated_at,
-           (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
-           jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
+    WITH assignment_scope AS MATERIALIZED (
+      SELECT jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
              'city', subject.city, 'postalCode', subject.postal_code,
              'effectiveDate', appraisal_case.effective_date::text,
              'inspectionDate', appraisal_case.inspection_date::text) AS subject_context,
            jsonb_build_object('accountId', assignment.account_id, 'assignmentFileId', assignment.id,
              'assignmentRevision', assignment.revision, 'assignmentDetails', assignment.assignment_details,
              'subject', jsonb_build_object('value', saved_subject.section_value, 'revision', saved_subject.revision),
-             'evidence', jsonb_build_object('value', saved_evidence.section_value, 'revision', saved_evidence.revision),
-             'documents', COALESCE(all_sources.documents, '[]'::json)) AS saved_report,
-           COALESCE(evidence.candidates, '[]'::json) AS candidates
-      FROM app.assignment_documents document
-      JOIN app.assignment_files assignment
-        ON assignment.id = document.assignment_file_id AND assignment.account_id = document.account_id
+             'evidence', jsonb_build_object('value', saved_evidence.section_value, 'revision', saved_evidence.revision)) AS saved_report
+      FROM app.assignment_files assignment
       JOIN core.accounts subject ON subject.account_id = assignment.account_id
       LEFT JOIN app.custom_appraisal_sections saved_subject
         ON saved_subject.assignment_file_id = assignment.id AND saved_subject.section_key = 'report.subject_identification'
@@ -59,37 +53,55 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         ON appraisal_case.id = report_file.appraisal_case_id
        AND appraisal_case.account_id = assignment.account_id
        AND appraisal_case.organization_id IS NOT DISTINCT FROM assignment.organization_id
-      LEFT JOIN LATERAL (
-        SELECT json_agg(source ORDER BY source.id) AS documents FROM (
-          SELECT d.id, d.account_id, d.assignment_file_id, d.document_type, d.processing_status,
-                 d.extraction_summary, (d.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
-                 COALESCE((SELECT json_agg(c ORDER BY c.id) FROM (
-                   SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
-                          review_status, page_number, reviewer, reviewed_at
-                     FROM app.assignment_document_field_candidates WHERE document_id = d.id ORDER BY id LIMIT $4
-                 ) c), '[]'::json) AS candidates
-            FROM app.assignment_documents d
-           WHERE d.account_id = assignment.account_id AND d.assignment_file_id = assignment.id
-             AND d.uad_workfile_id IS NULL AND d.tax_protest_file_id IS NULL
-           ORDER BY d.id LIMIT 51
-        ) source
-      ) all_sources ON true
-      LEFT JOIN LATERAL (
-        SELECT json_agg(candidate ORDER BY candidate.id) AS candidates FROM (
+      WHERE assignment.account_id = $1 AND assignment.id = $2
+    ), scope AS MATERIALIZED (
+      SELECT * FROM assignment_scope WHERE (SELECT count(*) FROM assignment_scope) = 1
+    ), source_rows AS MATERIALIZED (
+      SELECT document.id, document.account_id, document.assignment_file_id,
+             document.document_type, document.title, document.file_name, document.content_type,
+             document.file_size_bytes, document.checksum_sha256, document.processing_status,
+             document.extraction_summary, document.updated_at,
+             (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
+             COALESCE((SELECT jsonb_agg(candidate ORDER BY candidate.id) FROM (
           SELECT id, document_id, field_key, raw_value, normalized_value, confirmed_value,
                  review_status, page_number, reviewer, reviewed_at
             FROM app.assignment_document_field_candidates
            WHERE document_id = document.id ORDER BY id LIMIT $4
-        ) candidate
-      ) evidence ON true
-     WHERE document.account_id = $1 AND document.assignment_file_id = $2
-       AND document.uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL
-       AND document.id = ANY($3::bigint[]) ORDER BY document.id`,
-    values: [accountId, assignmentFileId, documentIds, SFREP_TRANSFER_LIMITS.candidatesPerDocument + 1],
+             ) candidate), '[]'::jsonb) AS candidates
+        FROM app.assignment_documents document
+       WHERE document.account_id = $1 AND document.assignment_file_id = $2
+         AND document.uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL
+         AND EXISTS (SELECT 1 FROM scope)
+       ORDER BY document.id LIMIT 51
+    ), selected_rows AS MATERIALIZED (
+      SELECT * FROM source_rows WHERE id = ANY($3::bigint[])
+    ), payload AS MATERIALIZED (
+      SELECT jsonb_build_object(
+        'documents', COALESCE((SELECT jsonb_agg(selected_rows ORDER BY id) FROM selected_rows), '[]'::jsonb),
+        'subject_context', scope.subject_context,
+        'saved_report', scope.saved_report || jsonb_build_object('documents', COALESCE((
+          SELECT jsonb_agg(jsonb_build_object('id', id, 'account_id', account_id, 'assignment_file_id', assignment_file_id,
+            'document_type', document_type, 'processing_status', processing_status,
+            'extraction_summary', extraction_summary, 'upload_date', upload_date, 'candidates', candidates) ORDER BY id)
+          FROM source_rows), '[]'::jsonb))) AS snapshot,
+        (SELECT count(*) FROM source_rows) > 50
+          OR EXISTS (SELECT 1 FROM source_rows WHERE jsonb_array_length(candidates) >= $4) AS count_limit
+      FROM scope
+    ), bounded_payload AS MATERIALIZED (
+      SELECT snapshot, count_limit OR octet_length(snapshot::text) > $5 AS evidence_limit FROM payload
+    )
+    SELECT CASE WHEN evidence_limit THEN NULL ELSE snapshot END AS snapshot, evidence_limit FROM bounded_payload`,
+    values: [accountId, assignmentFileId, documentIds, SFREP_TRANSFER_LIMITS.candidatesPerDocument + 1, MAX_EVIDENCE_BYTES],
   });
-  if (rows.length !== documentIds.length) fail('sfrep_document_not_found');
-  const documents = rows.map(row => ({ ...row, id: Number(row.id), assignment_file_id: Number(row.assignment_file_id),
-    file_size_bytes: Number(row.file_size_bytes) }));
+  if (rows.length !== 1) fail('sfrep_document_not_found');
+  if (rows[0].evidence_limit === true) fail('sfrep_evidence_limit');
+  const snapshot = rows[0].snapshot;
+  if (rows[0].evidence_limit !== false || !record(snapshot)) fail('sfrep_invalid_saved_report');
+  if (!Array.isArray(snapshot.documents) || snapshot.documents.length !== documentIds.length
+    || snapshot.documents.some(document => !record(document))) fail('sfrep_document_not_found');
+  const documents = snapshot.documents.map(row => ({ ...row, id: Number(row.id), assignment_file_id: Number(row.assignment_file_id),
+    file_size_bytes: Number(row.file_size_bytes), subject_context: snapshot.subject_context }));
+  if (new Set(documents.map(document => document.id)).size !== documentIds.length) fail('sfrep_document_not_found');
   for (const document of documents) {
     if (document.account_id !== accountId || document.assignment_file_id !== assignmentFileId
       || !documentIds.includes(document.id)) fail('sfrep_document_not_found');
@@ -100,8 +112,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
   }
   // One statement binds canonical report revisions, current evidence, dates and
   // selected PDF metadata. Keep its shared report snapshot once, not per PDF.
-  const saved = documents[0]?.saved_report;
-  if (!saved) fail('sfrep_invalid_saved_report');
+  const saved = snapshot.saved_report;
+  if (!record(saved)) fail('sfrep_invalid_saved_report');
   {
     if (!Array.isArray(saved.documents) || saved.documents.length > 50) fail('sfrep_evidence_limit');
     for (const source of saved.documents) {
@@ -113,10 +125,9 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
       source.subject_context = documents[0].subject_context;
       source.property_role = sfrepDocumentPropertyRole(source);
     }
-    for (const document of documents) delete document.saved_report;
     documents[0].saved_report = saved;
   }
-  if (Buffer.byteLength(JSON.stringify(documents)) > 8 * 1024 * 1024) fail('sfrep_evidence_limit');
+  if (Buffer.byteLength(JSON.stringify(documents)) > MAX_EVIDENCE_BYTES) fail('sfrep_evidence_limit');
   return documents;
 }
 

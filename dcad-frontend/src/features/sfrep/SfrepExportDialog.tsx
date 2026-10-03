@@ -21,7 +21,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const [preview, setPreview] = useState<SfrepPreview | null>(null);
   const [busy, setBusy] = useState<'preview' | 'export' | null>(null);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('');
+  const [preparedDownload, setPreparedDownload] = useState<{ url: string; filename: string } | null>(null);
 
   useEffect(() => {
     const dialog = dialogRef.current, previousFocus = document.activeElement;
@@ -29,12 +29,17 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
     return () => {
       requestRef.current?.abort(); requestRef.current = null;
       if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+      downloadUrlRef.current = null;
       dialog?.close();
       if (previousFocus instanceof HTMLElement && previousFocus.isConnected) previousFocus.focus();
     };
   }, []);
 
-  const invalidate = () => { setPreview(null); setError(''); setMessage(''); };
+  const clearDownload = () => {
+    if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
+    downloadUrlRef.current = null; setPreparedDownload(null);
+  };
+  const invalidate = () => { clearDownload(); setPreview(null); setError(''); };
   const selectDocument = (id: number, checked: boolean) => {
     if (requestRef.current) return;
     if (checked && (selectedIds.length >= 10 || selectedIds.includes(id))) return;
@@ -45,7 +50,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       || (!preview.fields.length && (!includeDocuments || !preview.documents.length))))) return;
     const controller = new AbortController(); requestRef.current = controller;
     const timer = window.setTimeout(() => controller.abort(), 120_000);
-    setBusy(operation); setError(''); setMessage('');
+    clearDownload(); setBusy(operation); setError('');
     if (operation === 'preview') setPreview(null);
     try {
       const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments };
@@ -56,17 +61,22 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       } else if (preview) {
         const blob = await sfrepApi.export(selection, preview.preview_digest, io);
         if (controller.signal.aborted || requestRef.current !== controller) return;
-        if (downloadUrlRef.current) URL.revokeObjectURL(downloadUrlRef.current);
         const url = URL.createObjectURL(blob); downloadUrlRef.current = url;
-        const link = document.createElement('a');
-        link.href = url; link.download = sfrepDownloadFilename(preview.filename);
-        document.body.appendChild(link); link.click(); link.remove();
-        // Retain one URL until replacement/unmount: click() does not acknowledge
-        // that the browser has consumed the blob, so immediate revocation can race it.
-        setMessage('Download started. Import the .rpti file into SFREP, then verify the imported fields and attached documents.');
+        const filename = sfrepDownloadFilename(preview.filename);
+        setPreparedDownload({ url, filename });
+        try {
+          const link = document.createElement('a');
+          link.href = url; link.download = filename;
+          document.body.appendChild(link);
+          try { link.click(); } finally { link.remove(); }
+        } catch {
+          // The visible link remains available if the automatic attempt is blocked.
+        }
+        // Keep the URL usable for a direct user gesture; click() does not confirm a download.
       }
     } catch (failure) {
       if (requestRef.current !== controller) return;
+      clearDownload();
       setPreview(null);
       setError(controller.signal.aborted ? 'The SFREP request timed out. Preview again to retry.'
         : failure instanceof Error ? failure.message : 'The SFREP request failed. No export was downloaded.');
@@ -162,7 +172,11 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         <button type="button" className="hn-action-gold btn btn-sm rounded-lg normal-case" disabled={Boolean(busy) || (!preview.fields.length && (!includeDocuments || !preview.documents.length))}
           onClick={() => void run('export')}>{busy === 'export' ? 'Preparing download…' : 'Download SFREP .rpti'}</button>
       </section>}
-      {message && <p role="status" className="rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">{message}</p>}
+      {preparedDownload && <div role="status" className="space-y-2 rounded-lg border border-emerald-200 bg-emerald-50 p-3 text-emerald-900">
+        <p>RPTI prepared. If no download appeared, use the save link below. Import the saved .rpti file into SFREP, then verify the imported fields and attached documents.</p>
+        <a className={`${secondary} inline-flex`} href={preparedDownload.url} download={preparedDownload.filename}>Save prepared RPTI</a>
+        <p className="text-xs">Keep this dialog open until you have saved the file.</p>
+      </div>}
       <p className="text-xs text-slate-500">The download does not change HomeNode report fields or send data directly to SFREP. Keep the RPTI file private; it may contain borrower and assignment information.</p>
     </div>
   </dialog>;

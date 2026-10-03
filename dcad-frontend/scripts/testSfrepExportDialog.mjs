@@ -22,9 +22,12 @@ const response = () => ({ ok: true, preview_digest: 'a'.repeat(64), formId: help
 
 function harness(api = {}) {
   let cursor = 0, tree, opens = 0, closes = 0, restores = 0, clicks = 0, closeRequests = 0, urlCount = 0;
-  const cells = [], effects = [], cleanups = [], calls = [], revoked = [], timers = new Map();
+  const cells = [], effects = [], cleanups = [], calls = [], revoked = [], anchors = [], timers = new Map();
   class Element { isConnected = true; focus() { restores++; } }
-  const document = { activeElement: new Element(), body: { appendChild() {} }, createElement() { return { click() { clicks++; }, remove() {} }; } };
+  const document = { activeElement: new Element(), body: { appendChild() {} }, createElement() {
+    const anchor = { click() { clicks++; api.click?.(); }, remove() { anchor.removed = true; } };
+    anchors.push(anchor); return anchor;
+  } };
   const react = {
     useRef(value) { const i = cursor++; return cells[i] ??= { current: value }; },
     useState(initial) { const i = cursor++; cells[i] ??= { value: initial }; return [cells[i].value, next => { cells[i].value = typeof next === 'function' ? next(cells[i].value) : next; }]; },
@@ -49,10 +52,11 @@ function harness(api = {}) {
     effects.splice(0).forEach(fn => cleanups.push(fn()));
   };
   const button = label => walk(tree).find(node => node.type === 'button' && text(node) === label);
+  const link = label => walk(tree).find(node => node.type === 'a' && text(node) === label);
   const checkbox = label => walk(tree).filter(node => node.type === 'label').find(node => text(node).includes(label))?.props.children.flat(Infinity).find(node => node?.type === 'input');
-  return { props, calls, revoked, timers, render, get tree() { return tree; }, get text() { return text(tree); },
+  return { props, calls, revoked, anchors, timers, render, get tree() { return tree; }, get text() { return text(tree); }, get urlCount() { return urlCount; },
     get opens() { return opens; }, get closes() { return closes; }, get restores() { return restores; }, get clicks() { return clicks; }, get closeRequests() { return closeRequests; },
-    button, checkbox,
+    button, link, checkbox,
     click(label) { const node = button(label); assert.ok(node, label); node.props.onClick(); render(); },
     check(label, checked) { const node = checkbox(label); assert.ok(node, label); node.props.onChange({ target: { checked } }); render(); },
     async drain() { for (let i = 0; i < 10; i++) await Promise.resolve(); render(); },
@@ -85,28 +89,89 @@ test('preview shows fields and exclusions; only explicit download sends the revi
   assert.equal(h.button('Download SFREP .rpti').props.disabled, false);
   h.click('Download SFREP .rpti'); await h.drain();
   assert.equal(h.calls[1][0], 'export'); assert.equal(h.calls[1][2], 'a'.repeat(64));
-  assert.equal(h.clicks, 1); assert.match(h.text, /Download started/);
+  assert.equal(h.clicks, 1); assert.match(h.text, /RPTI prepared/); assert.doesNotMatch(h.text, /Download started/);
+  assert.equal(h.link('Save prepared RPTI').props.href, 'blob:test');
+  assert.equal(h.link('Save prepared RPTI').props.download, 'HomeNode-test.rpti');
+  assert.equal(h.link('Save prepared RPTI').props.onClick, undefined, 'direct browser save needs no new API request');
+  assert.match(h.text, /Keep this dialog open until you have saved the file/);
   h.close(); assert.deepEqual(h.revoked, ['blob:test']);
 });
 
-test('downloads retain only the latest blob URL until replacement or modal close', async () => {
+test('prepared links retain only the latest blob URL until replacement or modal close', async () => {
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   h.click('Download SFREP .rpti'); await h.drain();
   assert.equal(h.clicks, 1); assert.deepEqual(h.revoked, [], 'do not revoke before the browser can acquire the download');
+  h.render(); h.render();
+  assert.equal(h.link('Save prepared RPTI').props.href, 'blob:test', 'rerenders keep the direct save link usable');
   h.click('Download SFREP .rpti'); await h.drain();
   assert.equal(h.clicks, 2); assert.deepEqual(h.revoked, ['blob:test']);
+  assert.equal(h.link('Save prepared RPTI').props.href, 'blob:test-2');
   h.close(); assert.deepEqual(h.revoked, ['blob:test', 'blob:test-2']);
   h.close(); assert.deepEqual(h.revoked, ['blob:test', 'blob:test-2']);
 });
 
-test('a failed repeat download creates no new URL and still cleans the previous URL on close', async () => {
+test('a failed repeat download revokes and removes the previous prepared link', async () => {
   let attempts = 0;
   const h = harness({ export: async () => { if (++attempts > 1) throw new Error('Export unavailable'); return new Blob(['rpti']); } });
   h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   h.click('Download SFREP .rpti'); await h.drain();
   h.click('Download SFREP .rpti'); await h.drain();
-  assert.equal(h.clicks, 1); assert.deepEqual(h.revoked, []); assert.match(h.text, /Export unavailable/);
+  assert.equal(h.clicks, 1); assert.deepEqual(h.revoked, ['blob:test']); assert.match(h.text, /Export unavailable/);
+  assert.equal(h.urlCount, 1); assert.equal(h.link('Save prepared RPTI'), undefined); assert.doesNotMatch(h.text, /RPTI prepared/);
   h.close(); assert.deepEqual(h.revoked, ['blob:test']);
+});
+
+test('automatic click failure leaves the sanitized direct save link available', async () => {
+  const h = harness({ preview: async () => ({ ...response(), filename: '../unsafe\\Hardy:<QA>?\u0001.rpti' }),
+    click() { throw new Error('Automatic download blocked'); } });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  h.click('Download SFREP .rpti'); await h.drain();
+  const link = h.link('Save prepared RPTI');
+  assert.equal(link.props.href, 'blob:test'); assert.equal(link.props.download, 'Hardy__QA___.rpti');
+  assert.equal(h.anchors[0].href, link.props.href); assert.equal(h.anchors[0].download, link.props.download);
+  assert.equal(h.anchors[0].removed, true); assert.deepEqual(h.revoked, []);
+  assert.match(h.text, /RPTI prepared/); assert.doesNotMatch(h.text, /Download started|Automatic download blocked/);
+  assert.equal(h.button('Download SFREP .rpti').props.disabled, false);
+  h.close(); assert.deepEqual(h.revoked, ['blob:test']);
+});
+
+for (const [label, checked] of [['Contract', false], ['Realist reference', true], ['Include original', false]]) {
+  test(`${label} change revokes the prepared URL and requires a fresh preview`, async () => {
+    const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+    h.click('Download SFREP .rpti'); await h.drain();
+    h.check(label, checked);
+    assert.deepEqual(h.revoked, ['blob:test']); assert.equal(h.link('Save prepared RPTI'), undefined);
+    assert.equal(h.button('Download SFREP .rpti'), undefined); assert.doesNotMatch(h.text, /RPTI prepared/);
+    h.close(); assert.deepEqual(h.revoked, ['blob:test']);
+  });
+}
+
+for (const operation of ['preview', 'export']) {
+  test(`starting a new ${operation} removes the previous link before its response arrives`, async () => {
+    let attempts = 0, resolve;
+    const next = operation === 'preview' ? response : () => new Blob(['rpti']);
+    const h = harness({ [operation]: () => ++attempts === 1 ? next() : new Promise(done => { resolve = done; }) });
+    h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+    h.click('Download SFREP .rpti'); await h.drain();
+    h.click(operation === 'preview' ? 'Preview SFREP export' : 'Download SFREP .rpti');
+    assert.deepEqual(h.revoked, ['blob:test']); assert.equal(h.link('Save prepared RPTI'), undefined);
+    assert.doesNotMatch(h.text, /RPTI prepared/);
+    resolve(next()); await h.drain();
+    if (operation === 'preview') assert.equal(h.link('Save prepared RPTI'), undefined);
+    else assert.equal(h.link('Save prepared RPTI').props.href, 'blob:test-2');
+    h.close();
+  });
+}
+
+test('a failed refresh cannot restore the previous prepared package or preview', async () => {
+  let attempts = 0;
+  const h = harness({ preview: async () => { if (++attempts > 1) throw new Error('Preview unavailable'); return response(); } });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  h.click('Download SFREP .rpti'); await h.drain();
+  h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Preview unavailable/); assert.equal(h.link('Save prepared RPTI'), undefined);
+  assert.equal(h.button('Download SFREP .rpti'), undefined); assert.deepEqual(h.revoked, ['blob:test']);
+  h.close();
 });
 
 test('Subject checklist exposes gaps and rerun guidance without claiming a completed report', async () => {
@@ -213,6 +278,41 @@ test('duplicate requests are blocked synchronously; unmount aborts and late succ
   h.check('Realist reference', true); assert.equal(h.checkbox('Realist reference').props.checked, false);
   const signal = h.calls.at(-1)[3].signal; h.close(); assert.equal(signal.aborted, true);
   resolve(new Blob(['late'])); await h.drain(); assert.equal(h.clicks, 0);
+  assert.equal(h.urlCount, 0); assert.equal(h.link('Save prepared RPTI'), undefined);
+});
+
+for (const operation of ['preview', 'export']) {
+  test(`a late ${operation} rejection after close cannot revive a prepared link or error`, async () => {
+    let attempts = 0, reject;
+    const next = operation === 'preview' ? response : () => new Blob(['rpti']);
+    const h = harness({ [operation]: () => ++attempts === 1 ? next() : new Promise((_done, fail) => { reject = fail; }) });
+    h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+    h.click('Download SFREP .rpti'); await h.drain();
+    h.click(operation === 'preview' ? 'Preview SFREP export' : 'Download SFREP .rpti');
+    h.close(); reject(new Error('Late rejection')); await h.drain();
+    assert.equal(h.link('Save prepared RPTI'), undefined); assert.doesNotMatch(h.text, /RPTI prepared|Late rejection/);
+    assert.deepEqual(h.revoked, ['blob:test']); assert.equal(h.urlCount, 1);
+  });
+}
+
+test('a late preview success after close cannot publish obsolete download controls', async () => {
+  let resolve;
+  const h = harness({ preview: () => new Promise(done => { resolve = done; }) });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export');
+  h.close(); resolve(response()); await h.drain();
+  assert.equal(h.button('Download SFREP .rpti'), undefined); assert.equal(h.link('Save prepared RPTI'), undefined);
+  assert.equal(h.urlCount, 0);
+});
+
+test('a timed-out export that ignores abort cannot publish a late prepared package', async () => {
+  let resolve;
+  const h = harness({ export: () => new Promise(done => { resolve = done; }) });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  h.click('Download SFREP .rpti');
+  for (const timeout of h.timers.values()) timeout();
+  resolve(new Blob(['late'])); await h.drain();
+  assert.equal(h.link('Save prepared RPTI'), undefined); assert.equal(h.urlCount, 0); assert.equal(h.clicks, 0);
+  assert.doesNotMatch(h.text, /RPTI prepared|Download started/); assert.equal(h.timers.size, 0); h.close();
 });
 
 test('server refusals clear reviewed previews and never show download success', async () => {

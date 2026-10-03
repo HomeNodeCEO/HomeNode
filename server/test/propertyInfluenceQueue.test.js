@@ -185,3 +185,109 @@ test("influence connection acquisition failure does not run refresh", async () =
     async refresh() { assert.fail("refresh must not run without a client"); },
   }), error => error === primaryError);
 });
+
+function influenceCleanupFixture({
+  refreshFails = false, rollbackFails = false, releaseError,
+  beforeRollback = async () => undefined,
+} = {}) {
+  const events = [];
+  const releases = [];
+  const primaryError = new Error("private influence refresh detail");
+  const rollbackError = new Error("private rollback connection detail");
+  let connections = 0;
+  const client = {
+    async query(sql) {
+      events.push(sql.includes("set_config") ? "timeout" : sql);
+      if (sql === "ROLLBACK") {
+        await beforeRollback();
+        if (rollbackFails) throw rollbackError;
+      }
+      return { rows: [] };
+    },
+    release(...args) {
+      events.push("release");
+      releases.push(args);
+      if (releaseError !== undefined) throw releaseError;
+    },
+  };
+  return {
+    events, releases, primaryError, rollbackError,
+    get connections() { return connections; },
+    run: () => refreshInfluenceQueueItem({
+      async connect() { connections += 1; return client; },
+    }, {
+      accountId: "26272500060150000",
+      async refresh(queryable) {
+        assert.equal(queryable, client);
+        events.push("refresh");
+        if (refreshFails) throw primaryError;
+        return { updated: true };
+      },
+    }),
+  };
+}
+
+function assertInfluenceCleanupRelease(fixture, discarded) {
+  assert.equal(fixture.connections, 1);
+  assert.equal(fixture.releases.length, 1);
+  assert.equal(fixture.releases[0].length, 1);
+  const [reason] = fixture.releases[0];
+  if (!discarded) return assert.equal(reason, undefined);
+  assert.ok(reason instanceof Error);
+  assert.equal(reason.message, "property_influence_rollback_failed");
+  assert.equal(Object.hasOwn(reason, "cause"), false);
+  assert.equal(reason.cause, undefined);
+  assert.deepEqual(Object.keys(reason), []);
+  assert.equal(reason.stack.includes("private"), false);
+  assert.notEqual(reason, fixture.primaryError);
+  assert.notEqual(reason, fixture.rollbackError);
+}
+
+for (const outcome of [
+  { name: "commit", refreshFails: false, rollbackFails: false },
+  { name: "primary failure and successful rollback", refreshFails: true, rollbackFails: false },
+  { name: "primary failure and failed rollback", refreshFails: true, rollbackFails: true },
+]) {
+  for (const [kind, releaseError] of [
+    ["Error", new Error("release failed")],
+    ["Symbol", Symbol("release failed")],
+    ["object", Object.freeze({ release: "failed" })],
+  ]) {
+    test(`influence release-thrown ${kind} retains precedence after ${outcome.name}`, async () => {
+      const fixture = influenceCleanupFixture({ ...outcome, releaseError });
+      await assert.rejects(fixture.run(), error => error === releaseError);
+      assert.deepEqual(fixture.events, [
+        "BEGIN", "timeout", "refresh", outcome.refreshFails ? "ROLLBACK" : "COMMIT", "release",
+      ]);
+      assertInfluenceCleanupRelease(fixture, outcome.rollbackFails);
+    });
+  }
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`influence waits for rollback ${rollbackFails ? "failure" : "success"} before releasing and rejecting`, async () => {
+    let finishRollback;
+    const gate = new Promise((resolve) => { finishRollback = resolve; });
+    const fixture = influenceCleanupFixture({
+      refreshFails: true, rollbackFails, beforeRollback: () => gate,
+    });
+    let settled = false;
+    const pending = fixture.run().then(
+      value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; },
+    );
+    try {
+      await new Promise((resolve) => setImmediate(resolve));
+      assert.deepEqual(fixture.events, ["BEGIN", "timeout", "refresh", "ROLLBACK"]);
+      assert.deepEqual(fixture.releases, []);
+      assert.equal(settled, false);
+      finishRollback();
+      assert.equal((await pending).error, fixture.primaryError);
+      assert.deepEqual(fixture.events, ["BEGIN", "timeout", "refresh", "ROLLBACK", "release"]);
+      assertInfluenceCleanupRelease(fixture, rollbackFails);
+    } finally {
+      finishRollback();
+      await pending;
+    }
+  });
+}

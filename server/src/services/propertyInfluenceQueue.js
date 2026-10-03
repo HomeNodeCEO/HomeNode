@@ -1,3 +1,4 @@
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import { refreshStoredPropertyInfluenceContext } from "./propertyContext.js";
 import {
   ensurePropertyContextSchema,
@@ -64,11 +65,7 @@ export async function refreshInfluenceQueueItem(pool, {
     await client.query("COMMIT");
     return result;
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      rollbackFailure = new Error("property_influence_rollback_failed");
-    }
+    rollbackFailure = await rollbackWithDiscardReason(client, "property_influence_rollback_failed");
     throw error;
   } finally {
     client.release(rollbackFailure || undefined);

@@ -13,8 +13,10 @@ const raw = candidate => candidate.confirmed_value ?? candidate.normalized_value
 const fieldKey = row => `${row.field_context}:${row.uad_uid}`;
 const PUD = 'subject:0100.0026', DUES = 'project_association_dues:2500.0007';
 
-/** One reviewed document supplies a coherent group. Dues never imply PUD, and
- * unknown is never false. Existing appraiser fields (even null) are preserved;
+/** One reviewed document supplies a coherent group. This application layer
+ * requires an explicitly reviewed PUD candidate, including an extraction-stage
+ * HOA workflow assumption; it never infers PUD from dues alone or unknown.
+ * Existing appraiser fields (even null) are preserved;
  * only this same PDF's prior automatic group may be refreshed or cleared. */
 export function buildUadDocumentHoaPlan(document, subjectContext, existing = []) {
   if (document?.document_type !== 'mls_sheet') throw new Error('uad_document_project_mls_requires_manual_entry');

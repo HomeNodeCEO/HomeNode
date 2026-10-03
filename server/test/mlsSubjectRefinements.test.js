@@ -61,6 +61,25 @@ test("Matrix HOA amount and frequency stay bounded to their own labels", () => {
   assert.equal(value(unrelated, "hoa_dues_amount"), undefined);
 });
 
+test("quarterly dues without a separate status create a reviewable HOA-exists default without changing the source period", () => {
+  for (const text of ["HOA Dues: $150 quarterly", "HOA Fee: $150/qtr", "Association Fee: $150\nAssociation Fee Frequency: Quarterly"]) {
+    const result = evidence(text);
+    assert.equal(value(result, "pud"), "true", text);
+    assert.equal(value(result, "hoa_dues_amount"), "150.00", text);
+    assert.equal(value(result, "hoa_frequency"), "per_quarter", text);
+    const candidate = result.candidates.find(item => item.field_key === "pud");
+    assert.equal(candidate.review_status, "suggested");
+    assert.match(candidate.extraction_method, /hoa_workflow_proxy$/);
+    assert.match(candidate.evidence_excerpt, /not legal proof/);
+  }
+  for (const extra of ["HOA: Unknown", "HOA: None", "SubType: Condominium", "HOA Frequency: Annually"]) {
+    assert.equal(value(evidence(`HOA Dues: $150 quarterly\n${extra}`), "pud"), undefined, extra);
+  }
+  assert.equal(value(evidence("HOA Dues: $150 quarterly\nHOA: Voluntary"), "pud"), "false");
+  assert.equal(value(evidence("HOA Dues: $150 quarterly\nPUD: No"), "pud"), "false");
+  assert.equal(value(evidence("HOA Dues: $0 quarterly"), "pud"), undefined);
+});
+
 test("voluntary HOA defaults false with a review flag; unknown HOA remains unknown", () => {
   const voluntary = evidence("HOA: Voluntary\nHOA Dues: $100 per year");
   assert.equal(value(voluntary, "pud"), "false");

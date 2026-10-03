@@ -50,6 +50,7 @@ type DocumentReviewOperation = {
 
 const AssignmentPdfPreview = lazy(() => import('./documents/AssignmentPdfPreview'));
 const EMPTY_EDITOR_KEY = () => '';
+const UAD_PROJECT_DOCUMENT_FIELDS = new Set(['pud', 'hoa_dues_amount', 'hoa_frequency']);
 
 const FIELD_LABELS: Record<string, string> = {
   zoning_code: 'Zoning Code',
@@ -248,7 +249,7 @@ export default function AssignmentDocumentCenter({
     return operation;
   };
   const retainUadProjectNotes = (result: UadDocumentApplicationResult, documentId: number) => {
-    if (!['pud', 'hoa_dues_amount', 'hoa_frequency'].includes(result.field_key)) return;
+    if (!UAD_PROJECT_DOCUMENT_FIELDS.has(result.field_key)) return;
     // Replace intermediate approve-all notes with the latest coherent group;
     // never leave an earlier missing-dues warning after frequency is confirmed.
     const notes = [...new Set([...(result.warnings || []),
@@ -785,7 +786,9 @@ export default function AssignmentDocumentCenter({
           );
           return;
         }
-        let applied = 0;
+        // Confirm the full chosen batch before applying anything. PDF order is
+        // not dependency order: page-one HOA fields may precede the subject
+        // identity that the server requires to safely apply this document.
         for (const candidate of suggestedCandidates) {
           if (!reviewCanContinue(operation)) return;
           if (!candidate.id) continue;
@@ -801,6 +804,23 @@ export default function AssignmentDocumentCenter({
           );
           if (!reviewCanContinue(operation)) return;
           clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
+        }
+        let applied = 0;
+        let hoaGroupRequested = false;
+        const applicationCandidates = [...suggestedCandidates];
+        // A prior partial confirmation may already have approved HOA before
+        // identity failed. Resume that same-document group after this batch.
+        const previouslyConfirmedHoa = selectedDocument.candidates?.find(candidate => candidate.id
+          && candidate.review_status === 'confirmed' && UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key));
+        if (previouslyConfirmedHoa) applicationCandidates.unshift(previouslyConfirmedHoa);
+        for (const candidate of applicationCandidates) {
+          if (!reviewCanContinue(operation)) return;
+          if (!candidate.id) continue;
+          if (UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key)) {
+            if (hoaGroupRequested) continue;
+            // One request applies the latest confirmed HOA/PUD group atomically.
+            hoaGroupRequested = true;
+          }
           const result = await applyConfirmedCandidateToUad(candidate, operation);
           if (!reviewCanContinue(operation)) return;
           if (result?.applied) applied += 1;

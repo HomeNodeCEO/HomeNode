@@ -214,7 +214,7 @@ function addMlsHoaEvidence(entries, candidates, unresolved, add) {
     const periods = new Set(candidates.filter(item => item.field_key === "hoa_frequency").map(item => item.normalized_value));
     const values = new Set(dues.map(item => item.normalized_value));
     if (values.size !== 1 || !dues.length || Number([...values][0]) <= 0
-      || periods.size !== 1 || !["per_month", "per_year"].includes([...periods][0])) return;
+      || periods.size !== 1 || !["per_month", "per_quarter", "per_year"].includes([...periods][0])) return;
     observations.push({ entry: { page_number: dues[0].page_number, line: dues[0].evidence_excerpt }, raw: dues[0].raw_value, status: "yes" });
   }
   // This is an explicitly requested review workflow assumption, not a legal

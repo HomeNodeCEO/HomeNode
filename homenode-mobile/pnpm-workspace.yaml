@@ -33,5 +33,6 @@ overrides:
   image-size: 2.0.4
 patchedDependencies:
   metro@0.84.4: patches/metro@0.84.4.patch
+  node-forge@1.4.0: patches/node-forge@1.4.0.patch
   yargs@17.7.3: patches/yargs@17.7.3.patch
   zod@3.25.76: patches/zod@3.25.76.patch

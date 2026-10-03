@@ -1,6 +1,166 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { checkSfrepPreview, createSfrepTransport, SFREP_FORM_ID, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist } from '../src/features/sfrep/sfrepTransport.ts';
+import { projectCustomSubjectDocuments, mergeCustomSubjectApplication } from '../../server/src/services/customSubjectApplication.js';
+import { buildSfrepReportExport } from '../../server/src/services/sfrepReportExport.js';
+import { savedSfrepSubjectFields } from '../../server/src/services/sfrepSavedReport.js';
+import { sfrepDocumentPropertyRole, sfrepSubjectContext } from '../../server/src/services/sfrepSubjectContext.js';
+
+// Use the real pure server field producers, without requiring backend-only
+// PDF dependencies in a frontend-only install. The server integration suite
+// separately exercises the full previewSfrepDocuments public response.
+function serverPreview({ saved = true, hoa = 'true' } = {}) {
+  const subject = { accountId: 'SYNTHETIC-SFREP', address: '100 Example Dr', city: 'Garland', postalCode: '75041',
+    effectiveDate: '2026-08-31', censusGeography: { tractCode: '018206', status: 'matched', geoid: '48113018206',
+      vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
+  const history = JSON.stringify({ schema_version: 1, listing_id: '77700001', list_date: '2026-05-29',
+    coverage: 'complete', price_changes: [] });
+  const data = [
+    ['mls_sheet', { subject_property_address: '100 EXAMPLE DR, GARLAND, TX 75041-1234', borrower_name: 'EXAMPLE BORROWER',
+      owner_name: 'EXAMPLE OWNER LLC\nSECOND OWNER', neighborhood_name: 'EXAMPLE PARK 4',
+      legal_description: 'EXAMPLE PARK\nBLK 1 LOT 2', tax_amount: '4321.50',
+      mls_number: '77700001', list_date: '2026-05-29', original_list_price: '345000.00', days_on_market: '77', pud: hoa }],
+    ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', contract_date: '2026-08-25' }],
+    ['mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041', mls_number: '77700001', listing_price_history: history }],
+  ];
+  const documents = data.map(([document_type, values], index) => ({ id: index + 1, account_id: subject.accountId,
+    assignment_file_id: 4, document_type, processing_status: 'reviewed', upload_date: '2026-10-02',
+    title: 'Synthetic source', file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100, subject_context: subject,
+    candidates: Object.entries(values).map(([field_key, confirmed_value], offset) => ({ id: (index + 1) * 100 + offset,
+      document_id: index + 1, field_key, confirmed_value, review_status: 'confirmed',
+      ...(field_key === 'pud' ? { normalized_value: hoa, raw_value: hoa === 'true' ? 'Mandatory' : 'None',
+        extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' } : {}) })) }));
+  if (saved) {
+    const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
+    documents[0].saved_report = { accountId: subject.accountId, assignmentFileId: 4, assignmentRevision: 2,
+      assignmentDetails: { ...applied.assignmentDetails, lender_client_address: '20 EXAMPLE AVE, AUSTIN TX 78701-1234' },
+      subject: { revision: 1, value: applied.subject }, evidence: { revision: 1, value: applied.evidence },
+      documents: structuredClone(documents) };
+  }
+  const input = { accountId: subject.accountId, assignmentFileId: 4 };
+  const canonical = documents[0].saved_report;
+  const { reportXml: _xml, pdfAddenda: _pdfs, ...result } = buildSfrepReportExport({
+    documents: documents.map(document => ({ ...document, property_role: sfrepDocumentPropertyRole(document) })), subjectOnly: true,
+    subjectContext: sfrepSubjectContext(documents), ...(canonical ? { savedReportFields: savedSfrepSubjectFields(canonical, input).fields } : {}) });
+  return JSON.parse(JSON.stringify({ ok: true, ...result, preview_digest: 'a'.repeat(64), filename: 'HomeNode-SFREP-file-4.rpti',
+    documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) => ({ id, title, file_name, file_size_bytes, processing_status })),
+    ...(canonical ? { savedReport: { assignmentFileId: 4, assignmentRevision: 2, subjectRevision: 1, sourceDocumentIds: [1, 2, 3] } } : {}) }));
+}
+
+test('actual canonical server preview accepts current presentation, Census, listing and HOA contracts', () => {
+  for (const hoa of ['true', 'false']) {
+    const value = serverPreview({ hoa });
+    assert.equal(value.fields.find(field => field.fieldId === 'CensusTract')?.value, '182.06');
+    assert.equal(value.fields.find(field => field.fieldId === 'CurrentPriorListingDataSources')?.provenance.rule,
+      'reviewed_subject_listing_history_template_v1');
+    assert.equal(checkSfrepPreview(value, [1, 2, 3]), value);
+  }
+});
+
+test('actual reviewed-document server preview accepts transformed composite addresses and HOA proof', () => {
+  const value = serverPreview({ saved: false });
+  assert.equal(checkSfrepPreview(value, [1, 2, 3]), value);
+});
+
+test('new presentation rules are recomputed and remain bound to exact source and destination fields', () => {
+  for (const saved of [true, false]) {
+    const source = serverPreview({ saved });
+    for (const field of source.fields.filter(field => ['subject_title_case', 'zip5_display',
+      'title_case_subdivision_without_numeric_phase', 'title_case_single_line_owner_name'].includes(field.formattingRule))) {
+      assert.ok(sfrepProvenanceText(field).includes(JSON.stringify(field.sourceValue)));
+      for (const change of [
+        field => { field.value += ' forged'; }, field => { field.formattingRule = 'future_unknown_rule'; },
+        field => { field.sourceField = field.provenance.sourceField = 'contract_price'; },
+        field => { field.fieldId = 'UnrelatedDestination'; }, field => { field.type = 'CheckBoxField'; },
+        field => { delete field.sourceValue; }, field => { delete field.formattingRule; },
+      ]) {
+        const invalid = structuredClone(source);
+        change(invalid.fields.find(item => item.fieldId === field.fieldId));
+        assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid/, `${field.fieldId}: ${change}`);
+      }
+    }
+  }
+});
+
+test('canonical Census proof rejects invented rules, malformed receipts, wrong tract and non-account origins', () => {
+  for (const change of [
+    field => { field.value = '999.99'; }, field => { field.fieldId = 'County'; },
+    field => { field.provenance.rule = 'future_census_rule'; }, field => { field.provenance.origin = 'reviewed_document'; },
+    field => { field.provenance.sectionKey = 'report.assignment_details'; },
+    field => { field.provenance.sourceDocumentId = 1; }, field => { field.provenance.sourceValue = '018206'; },
+    field => { field.provenance.extra = true; }, field => { field.provenance.sourceEvidence = []; },
+    field => { field.provenance.sourceEvidence.push(structuredClone(field.provenance.sourceEvidence[0])); },
+    ...[
+      ['sourceTable', 'other.table'], ['tractCode', '000000'], ['geoid', '48113000000'], ['status', 'review_required'],
+      ['accountId', ''], ['vintage', ''], ['updatedAt', '2026-02-30T00:00:00Z'], ['updatedAt', 'not-a-time'], ['extra', true],
+    ].map(([key, value]) => field => { field.provenance.sourceEvidence[0][key] = value; }),
+  ]) {
+    const invalid = serverPreview();
+    change(invalid.fields.find(field => field.fieldId === 'CensusTract'));
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/);
+  }
+});
+
+test('listing-history provenance is rule-specific, date-bound and scoped to saved source documents', () => {
+  for (const change of [
+    field => { field.provenance.rule = 'subject_mls_list_date_within_preceding_12_calendar_months'; },
+    field => { field.provenance.rule = 'unknown'; }, field => { field.provenance.origin = 'reviewed_document'; },
+    field => { field.provenance.sectionKey = 'report.assignment_details'; }, field => { field.value = 'x'.repeat(4001); },
+    field => { field.provenance.sourceEvidence = []; }, field => { field.provenance.sourceEvidence.pop(); },
+    field => { field.provenance.sourceEvidence.push(structuredClone(field.provenance.sourceEvidence[0])); },
+    field => { field.provenance.sourceEvidence[0].documentId = 99; },
+    field => { field.provenance.sourceEvidence[0].candidateId = 0; },
+    field => { field.provenance.sourceEvidence[0].sourceField = 'unreviewed_note'; },
+    field => { field.provenance.sourceEvidence[0].value = { unsafe: true }; },
+    field => { field.provenance.sourceEvidence[0].extra = true; },
+    field => { field.provenance.sourceCandidateId = 999999; }, field => { field.provenance.windowStart = '2025-08-31'; },
+    field => { field.provenance.effectiveDate = '2026-08-30'; }, field => { field.provenance.effectiveDate = '2026-02-30'; },
+    field => { field.provenance.effectiveDateSource = 'inspection_date'; },
+    field => { field.provenance.effectiveDateSourceDocumentId = 1; }, field => { field.provenance.extra = true; },
+  ]) {
+    const invalid = serverPreview();
+    change(invalid.fields.find(field => field.fieldId === 'CurrentPriorListingDataSources'));
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/);
+  }
+  // Evidence can belong to saved sources that were not selected as PDF addenda.
+  const subset = serverPreview();
+  subset.documents = subset.documents.filter(document => document.id === 1);
+  subset.omitted = subset.omitted.filter(item => item.documentId === 1);
+  subset.conflicts = subset.conflicts.filter(item => item.documentIds.every(id => id === 1));
+  assert.equal(checkSfrepPreview(subset, [1]), subset);
+});
+
+test('HOA assumptions remain narrowly identified and cannot masquerade as verified PUD proof', () => {
+  for (const saved of [true, false]) {
+    for (const change of [
+      value => { value.assumptions = value.assumptions.filter(item => item.rule !== 'user_requested_hoa_workflow_proxy_v1'); },
+      value => { value.assumptions.find(item => item.fieldId === 'PropertyTypePUDCheckBox').value = 'false'; },
+      ...[true, false, 1, { value: 'true' }].map(assumed => value => { value.assumptions.find(item => item.fieldId === 'PropertyTypePUDCheckBox').value = assumed; }),
+      value => { value.assumptions.find(item => item.fieldId === 'PropertyTypePUDCheckBox').rule = 'unknown'; },
+      value => { value.assumptions.find(item => item.fieldId === 'PropertyTypePUDCheckBox').extra = true; },
+      value => { value.fields.find(item => item.fieldId === 'PropertyTypePUDCheckBox').provenance.sourceValue = 'None'; },
+      ...['Not specified', '$0 yearly', '$-25 monthly', '$100 weekly', '1,23 per month', '$1000000000000 yearly']
+        .map(raw => value => { value.fields.find(item => item.fieldId === 'PropertyTypePUDCheckBox').provenance.sourceValue = raw; }),
+      value => { value.fields.find(item => item.fieldId === 'PropertyTypePUDCheckBox').provenance.rule = 'unknown'; },
+      value => { value.fields.find(item => item.fieldId === 'PropertyTypePUDCheckBox').provenance.extra = true; },
+    ]) {
+      const invalid = serverPreview({ saved }); change(invalid);
+      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid/);
+    }
+  }
+  const value = serverPreview({ hoa: 'false' });
+  const rows = sfrepSubjectChecklist(checkSfrepPreview(value, [1, 2, 3]));
+  assert.deepEqual(rows.find(item => item.key === 'census').values, ['182.06']);
+  assert.match(rows.find(item => item.key === 'census').notes.join(' '), /not PDF evidence/);
+  assert.equal(rows.find(item => item.key === 'listing-history').statusLabel, 'Derived — review');
+  assert.equal(rows.find(item => item.key === 'pud').statusLabel, 'User default — confirm');
+  assert.deepEqual(rows.find(item => item.key === 'pud').values, []);
+  for (const rule of ['user_requested_fee_simple_default', 'user_requested_hoa_workflow_proxy_v1']) {
+    const duplicate = serverPreview();
+    duplicate.assumptions.push(structuredClone(duplicate.assumptions.find(item => item.rule === rule)));
+    assert.throws(() => checkSfrepPreview(duplicate, [1, 2, 3]), /invalid/);
+  }
+});
 
 const selection = { accountId: 'R-1/#', assignmentFileId: 12, documentIds: [21], includeDocuments: true };
 const digest = 'a'.repeat(64);
@@ -291,7 +451,7 @@ test('Subject checklist distinguishes coverage, defaults, missing narrative, and
   value.omitted = [{ sourceField: 'is_pud', documentId: 21, candidateId: null, reason: 'An unchecked PUD checkbox is not exported.' }];
   const rows = sfrepSubjectChecklist(checkSfrepPreview(value, [21]));
   const row = key => rows.find(item => item.key === key);
-  assert.equal(rows.length, 17);
+  assert.equal(rows.length, 19);
   assert.equal(row('city').status, 'included'); assert.deepEqual(row('city').values, ['Dallas']);
   assert.equal(row('property-rights').status, 'review'); assert.match(row('property-rights').statusLabel, /User default/);
   assert.equal(row('pud').status, 'review'); assert.deepEqual(row('pud').values, []);
@@ -302,7 +462,8 @@ test('Subject checklist distinguishes coverage, defaults, missing narrative, and
   assert.equal(row('borrower').status, 'missing'); assert.equal(row('owner').status, 'missing');
   const listing = sfrepSubjectChecklist(checkSfrepPreview(listingPreview(), [21])).find(item => item.key === 'listing');
   assert.equal(listing.status, 'review'); assert.deepEqual(listing.values, ['Yes']);
-  assert.match(listing.notes.join(' '), /Complete the prior-listing data-source narrative/);
+  const history = sfrepSubjectChecklist(checkSfrepPreview(listingPreview(), [21])).find(item => item.key === 'listing-history');
+  assert.match(history.notes.join(' '), /Complete the prior-listing data-source narrative/);
 });
 
 test('Subject checklist includes the reviewed Other assignment checkbox and its description', () => {

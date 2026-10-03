@@ -178,14 +178,14 @@ test('Subject checklist exposes gaps and rerun guidance without claiming a compl
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   const checklist = walk(h.tree).find(node => node.props?.['aria-label'] === '1004 Subject export checklist');
   const rows = walk(checklist).filter(node => node.type === 'tr');
-  assert.equal(rows.length, 18); // Header plus all 17 Subject items.
+  assert.equal(rows.length, 20); // Header plus all 19 Subject items.
   for (const expected of ['Street address', 'City', 'State', 'ZIP code', 'Borrower', 'Public-record owner', 'County',
     'Assessor parcel number', 'Tax year', 'Real estate taxes', 'Neighborhood', 'PUD status', 'Property rights / fee simple',
-    'Assignment type', 'Lender / client', 'Lender / client address', 'Offered for sale in prior 12 months']) assert.ok(text(checklist).includes(expected), expected);
+    'Assignment type', 'Lender / client', 'Lender / client address', 'Offered for sale in prior 12 months', 'Census tract', 'Listing history']) assert.ok(text(checklist).includes(expected), expected);
   assert.match(text(checklist), /Missing — not exported/); assert.match(text(checklist), /Review conflict/);
   assert.match(h.text, /Effective date unavailable — review needed/);
   assert.match(h.text, /not a completed appraisal/); assert.match(h.text, /existing SFREP values may remain/);
-  assert.match(h.text, /HOA dues or membership do not establish PUD status/);
+  assert.match(h.text, /HOA dues or membership do not establish PUD eligibility/);
   assert.match(h.text, /No MLS evidence is not a No answer/);
   assert.match(h.text, /For documents uploaded before this update, use Re-run extraction and review the new suggestions\./);
   assert.match(h.text, /Reviewed document evidence/);

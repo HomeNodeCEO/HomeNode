@@ -12,7 +12,9 @@ overrides:
   image-size: 2.0.4
 
 patchedDependencies:
+  braces@3.0.3: a763d92ca7f78feb16ed90a4c265f17125f6ee32db24bbf52ebb21f05590dc2e
   metro@0.84.4: 22fc17f9740055efc9dfc4214a3b79db845deabd8f171d71ece3260cb74ed2d7
+  node-forge@1.4.0: 24dc33330fa468076b320863930007878a729a8cb3a8dabff2c56e3ba238e5e6
   yargs@17.7.3: 81b157a77f0dde1493630463c4088b8300498c49f5b8bd0f896400a19a64f843
   zod@3.25.76: 783243785d58621251bd363b1130f7026fe982f55b5a349f844a7f6d44e17429
 
@@ -2904,7 +2906,7 @@ snapshots:
       glob: 13.0.6
       lan-network: 0.2.1
       multitars: 1.0.2
-      node-forge: 1.4.0
+      node-forge: 1.4.0(patch_hash=24dc33330fa468076b320863930007878a729a8cb3a8dabff2c56e3ba238e5e6)
       npm-package-arg: 11.0.3
       ora: 3.4.0
       picomatch: 4.0.5
@@ -2940,7 +2942,7 @@ snapshots:
 
   '@expo/code-signing-certificates@0.0.6':
     dependencies:
-      node-forge: 1.4.0
+      node-forge: 1.4.0(patch_hash=24dc33330fa468076b320863930007878a729a8cb3a8dabff2c56e3ba238e5e6)
 
   '@expo/config-plugins@57.0.8(supports-color@8.1.1)(typescript@6.0.3)':
     dependencies:
@@ -3566,7 +3568,7 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  braces@3.0.3:
+  braces@3.0.3(patch_hash=a763d92ca7f78feb16ed90a4c265f17125f6ee32db24bbf52ebb21f05590dc2e):
     dependencies:
       fill-range: 7.1.1
 
@@ -4396,7 +4398,7 @@ snapshots:
 
   micromatch@4.0.8:
     dependencies:
-      braces: 3.0.3
+      braces: 3.0.3(patch_hash=a763d92ca7f78feb16ed90a4c265f17125f6ee32db24bbf52ebb21f05590dc2e)
       picomatch: 2.3.2
 
   mime-db@1.52.0: {}
@@ -4437,7 +4439,7 @@ snapshots:
 
   negotiator@1.0.0: {}
 
-  node-forge@1.4.0: {}
+  node-forge@1.4.0(patch_hash=24dc33330fa468076b320863930007878a729a8cb3a8dabff2c56e3ba238e5e6): {}
 
   node-int64@0.4.0: {}
 

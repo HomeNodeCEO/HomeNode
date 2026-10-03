@@ -493,6 +493,7 @@ export async function runFuzzySalesAddressReconciliationBatch(pool, {
   }
 
   const client = await pool.connect();
+  let rollbackFailure;
   try {
     await client.query("BEGIN");
     const resolved = await applySalesAutoResolutions(client, decisions.eligible);
@@ -506,9 +507,13 @@ export async function runFuzzySalesAddressReconciliationBatch(pool, {
       resolved,
     };
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    try {
+      await client.query("ROLLBACK");
+    } catch {
+      rollbackFailure = new Error("sales_fuzzy_reconciliation_rollback_failed");
+    }
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure);
   }
 }

@@ -1,6 +1,7 @@
 import { createHash, randomUUID } from "node:crypto";
 import sharp from "sharp";
 
+import { rollbackWithDiscardReason } from "../../database/transactionCleanup.js";
 import { sanitizeUadFileName } from "../uad/r2Storage.js";
 import {
   MAX_UAD_IMAGE_DIMENSION,
@@ -74,12 +75,7 @@ const SHARP_FORMATS_BY_CONTENT_TYPE = new Map([
 ]);
 
 async function rollbackMobilePhotoTransaction(client) {
-  try {
-    await client.query("ROLLBACK");
-    return null;
-  } catch {
-    return new Error("mobile_photo_rollback_failed");
-  }
+  return rollbackWithDiscardReason(client, "mobile_photo_rollback_failed");
 }
 
 function plainObject(value) {

@@ -10,6 +10,8 @@ export interface SfrepField {
   sourceField: string; fieldId: string; value: string; documentId: number | null; candidateId: number | null;
   type: 'TextField' | 'CheckBoxField';
   provenance: SfrepProvenance;
+  sourceValue?: string;
+  formattingRule?: 'uad_whole_dollars_half_up' | 'single_line_legal_description';
 }
 export type SfrepEffectiveDateSource = 'inspection_date' | 'assignment_effective_date' | 'document_upload_date_placeholder';
 export interface SfrepEffectiveDateContext {
@@ -81,13 +83,29 @@ function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
   const lastDay = new Date(Date.UTC(year - 1, month, 0)).getUTCDate();
   return value.windowStart === `${year - 1}-${String(month).padStart(2, '0')}-${String(Math.min(day, lastDay)).padStart(2, '0')}`;
 }
+function validFormatting(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
+  if (!Object.hasOwn(value, 'sourceValue') && !Object.hasOwn(value, 'formattingRule')) return true;
+  if (provenance.kind !== 'reviewed_document' || value.type !== 'TextField' || !validText(value.sourceValue)) return false;
+  const source = value.sourceValue.trim();
+  if (value.formattingRule === 'single_line_legal_description') return value.sourceField === 'legal_description'
+    && value.fieldId === 'LegalDescription' && source.length > 0
+    && value.value === source.replace(/[ \t\r\n]*[\t\r\n][ \t\r\n]*/g, ' ').trim();
+  if (value.formattingRule !== 'uad_whole_dollars_half_up'
+    || !((value.fieldId === 'RealEstateTaxAmount' && ['tax_amount', 'real_estate_tax_amount'].includes(String(value.sourceField)))
+      || (value.fieldId === 'AssessmentAmount' && value.sourceField === 'hoa_dues_amount'))
+    || !/^\$?\s*(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(source)) return false;
+  const [whole, fraction = ''] = source.replace(/[$,\s]/g, '').split('.');
+  const significantWhole = whole.replace(/^0+(?=\d)/, '');
+  if (significantWhole.length > 12) return false;
+  return value.value === String(BigInt(significantWhole) + (Number(fraction.padEnd(2, '0')) >= 50 ? 1n : 0n));
+}
 function validField(value: unknown): value is SfrepField {
   if (!record(value) || !validText(value.sourceField) || !validText(value.fieldId) || !validText(value.value)
     || (value.candidateId !== null && !positiveId(value.candidateId))
     || (value.type !== 'TextField' && value.type !== 'CheckBoxField') || !record(value.provenance)) return false;
   const provenance = value.provenance;
   if (provenance.sourceField !== value.sourceField || provenance.documentId !== value.documentId
-    || provenance.candidateId !== value.candidateId) return false;
+    || provenance.candidateId !== value.candidateId || !validFormatting(value, provenance)) return false;
   if (provenance.kind === 'user_default') return value.sourceField === 'property_rights'
     && value.fieldId === feeSimpleField && value.type === 'CheckBoxField' && value.value === 'true'
     && value.documentId === null && value.candidateId === null && provenance.rule === feeSimpleRule
@@ -172,6 +190,11 @@ export function sfrepProvenanceText(field: SfrepField): string {
   const source = field.provenance;
   if (source.kind === 'user_default') return 'User-requested default — not document evidence; confirm property rights.';
   if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
+  if (field.formattingRule) {
+    const rule = field.formattingRule === 'uad_whole_dollars_half_up'
+      ? 'whole dollars, half up (50 cents rounds up)' : 'line breaks and tabs replaced by spaces';
+    return `Reviewed document evidence. Original reviewed value: ${JSON.stringify(field.sourceValue)}. Export formatting: ${rule}. Source evidence is unchanged.`;
+  }
   return 'Reviewed document evidence';
 }
 
@@ -216,13 +239,15 @@ export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectCheckl
     const knownMissing = preview.knownMissing.filter(entry => item.fieldIds.includes(entry.fieldId));
     const hasDefault = fields.some(field => field.provenance.kind === 'user_default');
     const hasDerived = fields.some(field => field.provenance.kind === 'derived_reviewed_document');
-    const needsReview = conflict || omissions.length > 0 || knownMissing.length > 0 || hasDefault || hasDerived;
+    const formattedFields = fields.filter(field => field.formattingRule);
+    const needsReview = conflict || omissions.length > 0 || knownMissing.length > 0 || hasDefault || hasDerived || formattedFields.length > 0;
     const status = needsReview ? 'review' : fields.length ? 'included' : 'missing';
     const statusLabel = conflict ? 'Review conflict — not fully exported' : hasDefault ? 'User default — confirm'
-      : hasDerived ? 'Derived — review' : needsReview ? 'Review needed' : fields.length ? 'Included — reviewed' : 'Missing — not exported';
+      : hasDerived ? 'Derived — review' : formattedFields.length ? 'Formatted — review' : needsReview ? 'Review needed' : fields.length ? 'Included — reviewed' : 'Missing — not exported';
     return { key: item.key, label: item.label, status, statusLabel,
       values: fields.map(field => field.type === 'CheckBoxField' ? CHECKBOX_LABELS[field.fieldId] || field.value : field.value),
       notes: [...new Set([...(item.note ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
+        ...formattedFields.map(sfrepProvenanceText),
         ...(omissions.length ? [omissions[0].reason] : []), ...(conflict ? ['Resolve the conflicting source evidence before relying on this item.'] : [])])] };
   });
 }

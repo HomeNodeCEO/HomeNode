@@ -23,6 +23,10 @@ const listingPreview = () => ({ ...preview(),
       rule: 'subject_mls_list_date_within_preceding_12_calendar_months', sourceValue: '2026-09-15', effectiveDate: '2026-10-01',
       effectiveDateSource: 'document_upload_date_placeholder', effectiveDateSourceDocumentId: 21, windowStart: '2025-10-01', windowEnd: '2026-10-01' } }],
   knownMissing: [{ fieldId: 'CurrentPriorListingDataSources', reason: 'Complete the prior-listing data-source narrative in SFREP.' }] });
+const formatted = (sourceField, fieldId, sourceValue, value, formattingRule = 'uad_whole_dollars_half_up') => field(sourceField, fieldId, value, {
+  sourceValue, formattingRule,
+  provenance: { kind: 'reviewed_document', sourceField, documentId: 21, candidateId: null, documentType: 'other' },
+});
 const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });
 function harness(request = async () => json(preview())) {
   const calls = [], controller = new AbortController();
@@ -130,6 +134,65 @@ test('document provenance cannot spoof scope, source, or candidate identity', ()
     const invalid = preview(); change(invalid);
     assert.throws(() => checkSfrepPreview(invalid, [21]), /invalid/);
   }
+});
+
+test('formatted tax, HOA, and legal values disclose their exact reviewed source without mutating it', () => {
+  for (const [sourceValue, value] of [[' $4,119.00 ', '4119'], ['4119.49', '4119'], ['4119.50', '4120'],
+    ['0.50', '1'], ['00000025.5', '26'], ['999999999999.99', '1000000000000']]) {
+    for (const [sourceField, fieldId] of [['tax_amount', 'RealEstateTaxAmount'], ['real_estate_tax_amount', 'RealEstateTaxAmount'], ['hoa_dues_amount', 'AssessmentAmount']]) {
+      const item = formatted(sourceField, fieldId, sourceValue, value);
+      const accepted = checkSfrepPreview({ ...preview(), fields: [item] }, [21]);
+      assert.equal(accepted.fields[0].sourceValue, sourceValue);
+      assert.equal(accepted.fields[0].value, value);
+      assert.equal(accepted.fields[0].provenance.kind, 'reviewed_document');
+      const note = sfrepProvenanceText(accepted.fields[0]);
+      assert.ok(note.includes(JSON.stringify(sourceValue)));
+      assert.match(note, /whole dollars.*half up/);
+      assert.match(note, /Source evidence is unchanged/);
+    }
+  }
+  const sourceValue = '  EXAMPLE  PARK 4 \r\n BLK 7\t LOT 9  ';
+  const item = formatted('legal_description', 'LegalDescription', sourceValue, 'EXAMPLE  PARK 4 BLK 7 LOT 9', 'single_line_legal_description');
+  const accepted = checkSfrepPreview({ ...preview(), fields: [item] }, [21]);
+  assert.equal(accepted.fields[0].sourceValue, sourceValue);
+  assert.ok(sfrepProvenanceText(item).includes(JSON.stringify(sourceValue)));
+  assert.match(sfrepProvenanceText(item), /line breaks and tabs replaced by spaces/);
+});
+
+test('formatting metadata is paired, rule-specific, source-bound, and recomputed before accepting a preview', () => {
+  const accepted = { ...preview(), fields: [formatted('tax_amount', 'RealEstateTaxAmount', '123.50', '124')] };
+  for (const change of [
+    item => { delete item.sourceValue; }, item => { delete item.formattingRule; },
+    item => { item.sourceValue = null; }, item => { item.sourceValue = ''; },
+    item => { item.sourceValue = '-123.50'; }, item => { item.sourceValue = '1,23.50'; },
+    item => { item.sourceValue = '123.500'; }, item => { item.sourceValue = '1000000000000.00'; },
+    item => { item.value = '123'; }, item => { item.value = '124.00'; },
+    item => { item.formattingRule = 'unknown_rule'; }, item => { item.type = 'CheckBoxField'; },
+    item => { item.fieldId = 'SalePriceAmount'; }, item => { item.fieldId = 'AssessmentAmount'; },
+    item => { item.sourceField = item.provenance.sourceField = 'borrower_name'; },
+    item => { item.provenance.kind = 'derived_reviewed_document'; },
+    item => { item.provenance.sourceValue = item.sourceValue; },
+    item => { item.provenance.documentId = 22; },
+  ]) {
+    const invalid = structuredClone(accepted); change(invalid.fields[0]);
+    assert.throws(() => checkSfrepPreview(invalid, [21]), /invalid/);
+  }
+  for (const value of ['EXAMPLE PARK\nBLK 7', 'EXAMPLE PARK', 'EXAMPLE PARK  BLK 7']) {
+    const invalid = { ...preview(), fields: [formatted('legal_description', 'LegalDescription', 'EXAMPLE PARK\nBLK 7', value, 'single_line_legal_description')] };
+    assert.throws(() => checkSfrepPreview(invalid, [21]), /invalid/);
+  }
+  const foreign = structuredClone(accepted);
+  foreign.fields[0].documentId = foreign.fields[0].provenance.documentId = 22;
+  assert.throws(() => checkSfrepPreview(foreign, [21]), /does not match/);
+});
+
+test('Subject checklist identifies formatted taxes and shows the source plus formatting rule separately', () => {
+  const value = { ...preview(), fields: [formatted('tax_amount', 'RealEstateTaxAmount', '$1,234.50', '1235')] };
+  const row = sfrepSubjectChecklist(checkSfrepPreview(value, [21])).find(item => item.key === 'taxes');
+  assert.equal(row.status, 'review'); assert.equal(row.statusLabel, 'Formatted — review');
+  assert.deepEqual(row.values, ['1235']);
+  assert.ok(row.notes.join(' ').includes('"$1,234.50"'));
+  assert.match(row.notes.join(' '), /whole dollars.*half up/);
 });
 
 test('listing derivation is bound to a valid calendar window and its selected date source', () => {

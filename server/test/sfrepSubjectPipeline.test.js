@@ -35,7 +35,7 @@ test('four uploaded PDF families -> reviewed Subject evidence -> complete 1004 S
   const fields = Object.fromEntries(preview.fields.map(field => [field.fieldId, field.value]));
   for (const [fieldId, value] of Object.entries({ StreetAddress: '100 Example Dr', City: 'Garland', State: 'TX', ZipCode: '75041',
     BorrowerName: 'Taylor Example', OwnerName: 'Morgan Publicrecord', County: 'Dallas', AssessorsParcelNumber: '00001234567890000',
-    RealEstateTaxYear: '2025', RealEstateTaxAmount: '4321.50', NeighborhoodName: 'EXAMPLE PARK 4', PropertyTypePUDCheckBox: 'true',
+    RealEstateTaxYear: '2025', RealEstateTaxAmount: '4322', NeighborhoodName: 'EXAMPLE PARK 4', PropertyTypePUDCheckBox: 'true',
     PropertyRightsAppraisedFeeSimpleCheckBox: 'true', AssignmentTypePurchaseCheckBox: 'true',
     LenderClientCompanyName: 'Example QA Bank', LenderClientCompanyUnparsedAddress: '20 Finance Road, Austin, TX 78701',
     CurrentPriorListingYesCheckBox: 'true' })) assert.equal(fields[fieldId], value, fieldId);
@@ -133,7 +133,7 @@ test('printed CAD, tabular Property Details, and Matrix PDFs populate the same r
   assert.equal(fields.County, 'Dallas');
   assert.equal(fields.NeighborhoodName, 'EXAMPLE PARK 4');
   assert.equal(fields.RealEstateTaxYear, '2025');
-  assert.equal(fields.RealEstateTaxAmount, '4321.50');
+  assert.equal(fields.RealEstateTaxAmount, '4322');
   assert.equal(fields.CurrentPriorListingYesCheckBox, 'true');
   assert.equal(fields.AssignmentTypePurchaseCheckBox, 'true');
   assert.equal(fields.PropertyTypePUDCheckBox, undefined);

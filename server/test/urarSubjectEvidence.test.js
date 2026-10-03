@@ -274,7 +274,8 @@ test("standalone Realist identity permits confirmed taxes but matching APN never
     document.property_role = sfrepDocumentPropertyRole(document);
     assert.equal(document.property_role, "subject");
     const preview = previewSfrepDocuments([document], { accountId: context.accountId, assignmentFileId: 1, includeDocuments: false, formId: "FNMA-1004-0911" });
-    assert.equal(preview.fields.find(item => item.fieldId === "RealEstateTaxAmount")?.value, "4321.50");
+    assert.equal(preview.fields.find(item => item.fieldId === "RealEstateTaxAmount")?.value, "4322");
+    assert.equal(preview.fields.find(item => item.fieldId === "RealEstateTaxAmount")?.sourceValue, "4321.50");
     assert.equal(preview.fields.find(item => item.fieldId === "StreetAddress")?.value, address.endsWith("TBD") ? undefined : "100 Example Dr");
   }
 });

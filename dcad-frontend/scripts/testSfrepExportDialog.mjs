@@ -136,6 +136,45 @@ test('placeholder dates, fee-simple defaults, and derived listing provenance are
   assert.equal(h.button('Download SFREP .rpti').props.disabled, false); h.close();
 });
 
+test('formatted money and legal fields show the export value, original source, and rule as separate review text', async () => {
+  const result = response(); result.conflicts = []; result.omitted = [];
+  result.fields = [
+    ['tax_amount', 'RealEstateTaxAmount', '$1,234.50', '1235', 'uad_whole_dollars_half_up'],
+    ['hoa_dues_amount', 'AssessmentAmount', '75.49', '75', 'uad_whole_dollars_half_up'],
+    ['legal_description', 'LegalDescription', 'EXAMPLE PARK\nBLK 7\tLOT 9', 'EXAMPLE PARK BLK 7 LOT 9', 'single_line_legal_description'],
+  ].map(([sourceField, fieldId, sourceValue, value, formattingRule], index) => ({
+    sourceField, fieldId, sourceValue, value, formattingRule, documentId: 21, candidateId: 41 + index, type: 'TextField',
+    provenance: { kind: 'reviewed_document', sourceField, documentId: 21, candidateId: 41 + index, documentType: 'other' },
+  }));
+  const h = harness({ preview: async () => helpers.checkSfrepPreview(result, [21]) });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  const checklist = walk(h.tree).find(node => node.props?.['aria-label'] === '1004 Subject export checklist');
+  assert.match(text(checklist), /Formatted — review/);
+  assert.match(text(checklist), /Original reviewed value: "\$1,234\.50"/);
+  assert.match(text(checklist), /whole dollars, half up/);
+  const mapped = walk(h.tree).find(node => node.type === 'details' && text(node).startsWith('Mapped fields and provenance'));
+  for (const item of result.fields) {
+    const row = walk(mapped).find(node => node.type === 'tr' && text(node).includes(item.fieldId));
+    const cells = walk(row).filter(node => node.type === 'td');
+    assert.equal(text(cells[0]), item.value);
+    assert.ok(text(cells[1]).includes(JSON.stringify(item.sourceValue)));
+    assert.match(text(cells[1]), /Source evidence is unchanged/);
+  }
+  assert.match(text(mapped), /line breaks and tabs replaced by spaces/);
+  assert.equal(h.button('Download SFREP .rpti').props.disabled, false); h.close();
+});
+
+test('a formatted value inconsistent with the reviewed source never becomes a downloadable preview', async () => {
+  const result = response(); result.conflicts = []; result.omitted = [];
+  result.fields = [{ sourceField: 'tax_amount', fieldId: 'RealEstateTaxAmount', value: '1234', sourceValue: '1234.50',
+    formattingRule: 'uad_whole_dollars_half_up', documentId: 21, candidateId: 41, type: 'TextField',
+    provenance: { kind: 'reviewed_document', sourceField: 'tax_amount', documentId: 21, candidateId: 41, documentType: 'other' } }];
+  const h = harness({ preview: async () => helpers.checkSfrepPreview(result, [21]) });
+  h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /preview response is invalid/);
+  assert.equal(h.button('Download SFREP .rpti'), undefined); assert.equal(h.clicks, 0); h.close();
+});
+
 test('selection and original-PDF choices invalidate previews before another download', async () => {
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   h.check('Realist reference', true); assert.equal(h.button('Download SFREP .rpti'), undefined);

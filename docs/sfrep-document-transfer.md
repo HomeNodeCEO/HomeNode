@@ -73,6 +73,16 @@ HOA dues alone do not establish PUD status: the PUD checkbox needs explicit evid
 Monthly/annual dues keep their reviewed frequency; quarterly dues are not silently
 annualized. Unknown or negative PUD evidence emits no affirmative checkbox.
 
+For legacy UAD, tax and HOA amounts export in whole dollars using half-up rounding
+(50 cents rounds up). This is destination formatting only: the original reviewed
+value and formatting rule remain visible in the preview and the source evidence
+is unchanged. Conflicts are evaluated before rounding, so different cents values
+cannot become apparent agreement merely because they round to the same dollar.
+Legal-description line breaks and tabs are folded into spaces for the single-line
+destination, with the original text retained. No legal text is truncated; unusually
+long descriptions still need a native layout review. Contract prices and other
+amount mappings are not changed by these Subject-specific formatting rules.
+
 The exporter emits no blank field values: empty, unknown, and unconfirmed values
 are omitted. Preservation of existing fields during native import into a populated
 report has not yet been verified. Conflicting confirmed values targeting the same
@@ -197,7 +207,8 @@ so the clock hour cannot be mistaken for a two-digit year. Three cross-timezone
 regression groups reproduced the issue before the fix, then passed; 231 related
 extraction, reference-source, mapping, and Subject-pipeline tests passed. Calendar,
 suffix, and explicit-zone validation remain enforced. This follow-up has no frontend
-or stored-data changes and awaits its own final-head CI checks.
+or stored-data changes. That head passed all five non-dependency CI workflows;
+the separate Forge dependency gate remained failing.
 
 ### Verified native synthetic QA
 
@@ -215,6 +226,27 @@ SFREP displayed a file-number overflow warning in **UAD Sales Comps Adjustments*
 for the long synthetic value `HOMENODE-SFREP-QA`. The value was not truncated.
 Do not silently shorten or otherwise alter file numbers to suppress layout warnings;
 review their presentation in SFREP.
+
+On October 2, 2026, opening the full four-PDF Subject sample through the Windows
+file association succeeded, without relying on the inaccessible nested picker.
+All 17 Subject checklist values rendered, including the APN's leading zeroes.
+The first import exposed native Number warnings for tax/HOA decimal places and
+an Overflow warning that hid the second line of the legal description. These
+warnings were reproduced before the destination-formatting correction above.
+
+The corrected package was opened in another isolated Appraise-It Pro 3.7.9 window.
+Visual and accessibility inspection confirmed APN `00001234567890000`, legal text
+`EXAMPLE PARK 4 BLK 17 LT 36`, real-estate taxes `4,322` from source `4321.50`, and
+annual HOA dues `120`. Those Number/Overflow warnings no longer appeared. This
+sample deliberately leaves the rest of the appraisal incomplete; this is not a
+claim that a complete appraisal passed UCDP validation.
+
+The follow-up passed 9,108 server tests (46 skipped, zero failures), 3,480 frontend
+tests, TypeScript, lint, source budgets, and the production build/bundle budgets.
+The actual browser dialog displays the exact original value alongside the formatted
+tax value and its rounding rule. Private local seven-PDF packaging/schema checks
+passed again with byte-identical originals; nothing was uploaded or applied to a
+production appraisal. Final-head remote checks are required after publication.
 
 ### Remaining manual checks
 
@@ -235,15 +267,14 @@ Forms** chooser exposed import options, but automation could not reliably select
 RPTI because nested-modal focus/actions reset. No successful existing-report import
 was observed; this automation limitation does not establish an SFREP defect.
 
-The newer four-PDF Subject sample is generated from the extraction pipeline, but
-its full native import remains unverified: the Windows file-picker automation
-again failed to accept input reliably. The earlier smaller native sample's success
-does not prove all newly added fields render correctly. XML schema/sample validation,
-automated tests, and a production build do not substitute for this remaining check.
-In particular, the installed MISMO dictionary's specialized internal
-`UadAssessorsParcelNumberField` is not an RPTI XML element: the public RPTI schema
-uses `TextField` for static text. Verify APN display in that native Subject check;
-dictionary field-ID agreement alone does not establish correct native rendering.
+The full Subject sample's initial import and APN display are now verified above.
+Its Save As picker and populated-report Import Forms picker remain unreliable
+under automation; a manual import into the existing synthetic QA report has been
+requested. Save/reopen and preservation of omitted fields/alternative checkboxes
+for this newer sample remain separate uncompleted checks. The installed MISMO
+dictionary's specialized internal `UadAssessorsParcelNumberField` is not an RPTI
+XML element: the public RPTI schema uses `TextField` for static text, and its native
+APN rendering was verified without changing that public element type.
 
 ### Release gate
 

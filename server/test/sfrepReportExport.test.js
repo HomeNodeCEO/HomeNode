@@ -56,7 +56,7 @@ test("explicit blank confirmation never falls back to extracted text; unknowns c
     assert.doesNotMatch(result.reportXml, /Data=""|Old Extraction/);
   }
   const result = buildSfrepReportExport({ documents: [doc(1, [candidate("tax_amount", 0), candidate("bedrooms", 0)])] });
-  assert.equal(values(result).RealEstateTaxAmount, "0.00");
+  assert.equal(values(result).RealEstateTaxAmount, "0");
   assert.equal(values(result).RoomCountBedrooms, "0");
 });
 
@@ -118,10 +118,10 @@ test("stale candidates from processing, failed, or unknown-status documents neve
 });
 
 test("XML attributes escape markup, quotes, apostrophes and retain line breaks", () => {
-  const result = buildSfrepReportExport({ documents: [doc(1, [candidate("legal_description", `A&B <Lot> "2" O'Neil\nBlock\t3 😃`)])], application: { vendorName: "<Vendor>" } });
+  const result = buildSfrepReportExport({ documents: [doc(1, [candidate("lender_client_name", `A&B <Lot> "2" O'Neil\nBlock\t3 😃`)])], application: { vendorName: "<Vendor>" } });
   assert.ok(result.reportXml.includes('Data="A&amp;B &lt;Lot&gt; &quot;2&quot; O&apos;Neil&#10;Block&#9;3 😃"'));
   assert.ok(result.reportXml.includes('VendorName="&lt;Vendor&gt;"'));
-  assert.equal(values(result).LegalDescription, `A&B <Lot> "2" O'Neil\nBlock\t3 😃`);
+  assert.equal(values(result).LenderClientCompanyName, `A&B <Lot> "2" O'Neil\nBlock\t3 😃`);
 });
 
 test("invalid XML controls and lone surrogates are omitted, never silently altered", () => {
@@ -162,6 +162,98 @@ test("destination aliases conflict instead of producing duplicate SFREP fields",
   assert.equal(result.fields.length, 0);
   assert.equal(result.conflicts.length, 1);
   assert.deepEqual(result.conflicts[0].values, ["100.00", "200.00"]);
+});
+
+test("legacy UAD tax and HOA amounts project to whole dollars with exact reviewed source retained", () => {
+  for (const [source, expected] of [["$4,321.49", "4321"], ["$4,321.50", "4322"], ["$4,321.51", "4322"], ["4321.00", "4321"], [" 00120.5 ", "121"], ["0", "0"], ["0.01", "0"], ["999999999999.49", "999999999999"], ["999999999999.50", "1000000000000"]]) {
+    const documents = [doc(1, [candidate("tax_amount", source, { id: 11 }), candidate("hoa_dues_amount", source, { id: 12 }), candidate("hoa_frequency", "per_month")], { document_type: "public_record" })];
+    const before = structuredClone(documents);
+    const result = buildSfrepReportExport({ documents });
+    for (const fieldId of ["RealEstateTaxAmount", "AssessmentAmount"]) {
+      const field = result.fields.find((entry) => entry.fieldId === fieldId);
+      assert.equal(field.value, expected, `${fieldId}: ${source}`);
+      assert.equal(field.sourceValue, source);
+      assert.equal(field.formattingRule, "uad_whole_dollars_half_up");
+      assert.equal(field.provenance.kind, "reviewed_document");
+      assert.equal(field.provenance.documentId, 1);
+      assert.equal(field.provenance.candidateId, fieldId === "RealEstateTaxAmount" ? 11 : 12);
+      assert.ok(result.reportXml.includes(`<TextField Id="${fieldId}" Data="${expected}" />`));
+    }
+    assert.equal(values(result).AssessmentPerMonthCheckBox, "true");
+    assert.equal(values(result).AssessmentPerYearCheckBox, undefined);
+    assert.equal(result.warnings.filter((warning) => /rounded half up/.test(warning)).length, /\.(?:00)$/.test(source) || source === "0" ? 0 : 2);
+    assert.deepEqual(documents, before);
+  }
+  const contract = buildSfrepReportExport({ documents: [doc(1, [candidate("contract_price", "$4,321.50")])] });
+  assert.equal(values(contract).SalePriceAmount, "4321.50");
+  assert.equal(contract.fields[0].sourceValue, undefined);
+  assert.equal(contract.fields[0].formattingRule, undefined);
+});
+
+test("pre-rounding tax and HOA amounts remain conflicting even when their report dollars would match", () => {
+  for (const keys of [["tax_amount", "tax_amount"], ["tax_amount", "real_estate_tax_amount"], ["hoa_dues_amount", "hoa_dues_amount"]]) {
+    const documents = keys.map((key, index) => doc(index + 1, [candidate(key, index ? "4321.40" : "4321.49"), candidate("hoa_frequency", "per_year")]));
+    const result = buildSfrepReportExport({ documents });
+    const fieldId = keys[0] === "hoa_dues_amount" ? "AssessmentAmount" : "RealEstateTaxAmount";
+    assert.equal(values(result)[fieldId], undefined);
+    assert.deepEqual(result.conflicts[0].values, ["4321.40", "4321.49"]);
+    assert.equal(result.warnings.some((warning) => /rounded half up/.test(warning)), false);
+    assert.deepEqual(result, buildSfrepReportExport({ documents: [...documents].reverse() }));
+    const selected = buildSfrepReportExport({ documents, selectedDocumentIds: [1] });
+    assert.equal(values(selected)[fieldId], "4321");
+    assert.equal(selected.fields.find((field) => field.fieldId === fieldId).sourceValue, "4321.49");
+  }
+});
+
+test("equivalent tax aliases retain the deterministically selected exact source after formatting", () => {
+  const result = buildSfrepReportExport({ documents: [
+    doc(2, [candidate("real_estate_tax_amount", "4321.50", { id: 22 })]),
+    doc(1, [candidate("tax_amount", "$4,321.50", { id: 11 })]),
+  ] });
+  assert.equal(result.conflicts.length, 0);
+  assert.equal(result.fields.length, 1);
+  assert.equal(result.fields[0].value, "4322");
+  assert.equal(result.fields[0].sourceValue, "$4,321.50");
+  assert.equal(result.fields[0].documentId, 1);
+  assert.equal(result.fields[0].candidateId, 11);
+});
+
+test("whole-dollar display never revives invalid money or prorates an unsupported HOA period", () => {
+  for (const source of ["unknown", "", "12,34.50", "4321.501", "-1.50", "1e3", "1/2", "1000000000000"]) {
+    const result = buildSfrepReportExport({ documents: [doc(1, [candidate("tax_amount", source), candidate("hoa_dues_amount", source), candidate("hoa_frequency", "per_month")])] });
+    assert.equal(values(result).RealEstateTaxAmount, undefined);
+    assert.equal(values(result).AssessmentAmount, undefined);
+    assert.equal(result.warnings.some((warning) => /rounded half up/.test(warning)), false);
+  }
+  const result = buildSfrepReportExport({ documents: [doc(1, [candidate("hoa_dues_amount", "120.50"), candidate("hoa_frequency", "per_quarter")])] });
+  assert.equal(values(result).AssessmentAmount, undefined);
+  assert.match(result.omitted.find((entry) => entry.sourceField === "hoa_dues_amount").reason, /not prorated/);
+});
+
+test("legal-description display folds line controls without truncating or changing original evidence", () => {
+  const source = '  EXAMPLE  PARK 4\r\n  BLK 17\tLT 36\rSECTION B\n' + 'LONG LEGAL '.repeat(20) + 'END  ';
+  const documents = [doc(1, [candidate("legal_description", source, { id: 10 })])];
+  const result = buildSfrepReportExport({ documents });
+  const field = result.fields[0];
+  assert.equal(field.value, 'EXAMPLE  PARK 4 BLK 17 LT 36 SECTION B ' + 'LONG LEGAL '.repeat(20) + 'END');
+  assert.equal(field.sourceValue, source);
+  assert.equal(field.formattingRule, "single_line_legal_description");
+  assert.deepEqual(field.provenance, { kind: "reviewed_document", sourceField: "legal_description", documentId: 1, candidateId: 10, documentType: null });
+  assert.equal(documents[0].candidates[0].confirmed_value, source);
+  assert.match(result.warnings.join("\n"), /LegalDescription.*line breaks\/tabs.*single-line.*not truncated/);
+  assert.doesNotMatch(result.reportXml, /&#10;|&#13;|&#9;/);
+  const unchanged = buildSfrepReportExport({ documents: [doc(1, [candidate("legal_description", "EXAMPLE  PARK 4")])] });
+  assert.equal(unchanged.fields[0].value, "EXAMPLE  PARK 4");
+  assert.equal(unchanged.fields[0].sourceValue, "EXAMPLE  PARK 4");
+  assert.equal(unchanged.warnings.some((warning) => /line breaks\/tabs/.test(warning)), false);
+});
+
+test("legal line folding cannot merge distinct reviewed legal descriptions before conflict detection", () => {
+  const documents = [doc(1, [candidate("legal_description", "EXAMPLE PARK 4\nBLK 17 LT 36")]), doc(2, [candidate("legal_description", "EXAMPLE PARK 4 BLK 17 LT 36")])];
+  const result = buildSfrepReportExport({ documents });
+  assert.equal(values(result).LegalDescription, undefined);
+  assert.equal(result.conflicts.length, 1);
+  assert.equal(result.warnings.some((warning) => /line breaks\/tabs/.test(warning)), false);
 });
 
 test("assignment types use reviewed engagement evidence, not purchase-contract document classification", () => {
@@ -246,7 +338,7 @@ test("reviewed public-record facts target verified fields without treating value
   assert.equal(values(result).AssessorsParcelNumber, "000012340000");
   assert.equal(values(result).Area, "7500 sf");
   assert.equal(values(result).YearBuiltDescription, "1998");
-  assert.equal(values(result).RealEstateTaxAmount, "8500.31");
+  assert.equal(values(result).RealEstateTaxAmount, "8500");
   assert.equal(values(result).SpecificZoningClassification, "R-7.5");
   assert.equal(values(result).GrossLivingArea, "2000");
   assert.ok(result.omitted.some((entry) => entry.sourceField === "market_value"));
@@ -333,7 +425,7 @@ test("Subject aliases have verified destinations and retain reviewed-document pr
   assert.equal(values(result).NeighborhoodName, "Oak Creek Addition");
   assert.equal(values(result).OwnerName, "Explicit Record Owner");
   assert.equal(values(result).State, "TX");
-  assert.equal(values(result).RealEstateTaxAmount, "1234.00");
+  assert.equal(values(result).RealEstateTaxAmount, "1234");
   assert.equal(values(result).AssignmentTypeRefinanceCheckBox, "true");
   assert.deepEqual(result.fields.find((field) => field.fieldId === "NeighborhoodName").provenance, {
     kind: "reviewed_document", sourceField: "neighborhood_name", documentId: 1, candidateId: 12, documentType: "public_record",
@@ -370,7 +462,7 @@ test("explicit comparable and unknown property roles cannot populate any Subject
 
 test("PUD requires explicit reviewed evidence; HOA dues never infer it", () => {
   const onlyHoa = buildSfrepReportExport({ documents: [subjectDoc(1, [candidate("hoa_dues_amount", "75"), candidate("hoa_frequency", "per_month")])] });
-  assert.equal(values(onlyHoa).AssessmentAmount, "75.00");
+  assert.equal(values(onlyHoa).AssessmentAmount, "75");
   assert.equal(values(onlyHoa).AssessmentPerMonthCheckBox, "true");
   assert.equal(values(onlyHoa).PropertyTypePUDCheckBox, undefined);
   assert.ok(onlyHoa.warnings.some((warning) => /HOA dues.*do not establish PUD/.test(warning)));

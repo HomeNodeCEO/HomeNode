@@ -61,6 +61,33 @@ function money(value) {
   return `${normalizedWhole}.${fraction.padEnd(2, "0")}`;
 }
 
+const WHOLE_DOLLAR_FIELDS = new Set(["RealEstateTaxAmount", "AssessmentAmount"]);
+const DISPLAY_FORMAT_FIELDS = new Set([...WHOLE_DOLLAR_FIELDS, "LegalDescription"]);
+
+// Legacy UAD Appendix D (taxes p9, HOA p11) and the installed 1004 NumberRules
+// require zero decimal places for these two amounts. Apply display formatting
+// only AFTER exact reviewed-value conflict resolution; it cannot approve or
+// merge evidence. Keep the original input and direct provenance for review.
+// https://singlefamily.fanniemae.com/media/document/pdf/uad-specification-appendix-d-field-specific-standardization-requirements
+function formatSelectedField(field, warnings) {
+  if (WHOLE_DOLLAR_FIELDS.has(field.fieldId)) {
+    const [whole, cents] = field.value.split("."); // Already validated by money().
+    const value = String(BigInt(whole) + (Number(cents) >= 50 ? 1n : 0n));
+    if (Number(cents) !== 0) {
+      warnings.push(`${field.fieldId} from document ${field.documentId}: reviewed amount ${field.sourceValue} rounded half up to ${value} whole dollars for legacy UAD. The exact reviewed source is retained; review the formatted amount.`);
+    }
+    return { ...field, value, formattingRule: "uad_whole_dollars_half_up" };
+  }
+  if (field.fieldId === "LegalDescription") {
+    const value = field.value.replace(/[ \t\r\n]*[\t\r\n][ \t\r\n]*/g, " ").trim();
+    if (value !== field.value) {
+      warnings.push(`LegalDescription from document ${field.documentId}: line breaks/tabs folded into spaces for the native single-line field. The exact reviewed source is retained and the text is not truncated; check fit in Appraise-It Pro.`);
+    }
+    return { ...field, value, formattingRule: "single_line_legal_description" };
+  }
+  return field;
+}
+
 function date(value) {
   const iso = value.match(/^(\d{4})-(\d{2})-(\d{2})$/);
   const us = value.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
@@ -478,7 +505,10 @@ export function buildSfrepReportExport({
             : unmappedReason(sourceField));
         continue;
       }
-      projected.push(...fields.map((field) => ({ ...entry, ...field, provenance })));
+      projected.push(...fields.map((field) => ({
+        ...entry, ...field, provenance,
+        ...(DISPLAY_FORMAT_FIELDS.has(field.fieldId) ? { sourceValue: String(rawValue) } : {}),
+      })));
     }
   }
 
@@ -567,7 +597,7 @@ export function buildSfrepReportExport({
       : [compatibleZip ? entries.find((entry) => entry.value.length === 10) || entries[0] : entries[0]];
     for (const entry of chosenEntries) {
       const { group: _group, suppress: _suppress, assignmentType: _assignmentType, ...field } = entry;
-      fields.push(field);
+      fields.push(formatSelectedField(field, supplementalWarnings));
     }
   }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));

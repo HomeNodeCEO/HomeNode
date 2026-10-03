@@ -205,7 +205,10 @@ their published versions or suppressing audit findings:
   a practical forgery without the key or universal cryptographic correctness.
 - Braces: cap brace/parenthesis nesting at 100, validate direct AST child
   graphs before recursive compile/expand/stringify walks, reject cyclic or
-  reused container nodes, and bound expansion's ancestor searches. Caller
+  reused container nodes and object/function-valued nodes, and bound
+  expansion's ancestor searches. Primitive values retain their existing
+  behavior; getters/proxies and arbitrary executable JavaScript objects are
+  not an attested untrusted-input boundary. Caller
   options cannot disable these guards. Tests cover both Metro resolution
   paths, normal globs, escapes, exact bounds, malformed ASTs and bounded
   child-process rejection. Direct AST container sharing is intentionally

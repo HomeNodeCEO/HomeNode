@@ -8,6 +8,7 @@ const expoRequire = createRequire(require.resolve('expo/package.json'));
 const cliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
 const depthError = { name: 'SyntaxError', message: 'Nesting depth exceeds maximum of 100' };
 const treeError = { name: 'SyntaxError', message: 'AST nodes must form a tree' };
+const valueError = { name: 'TypeError', message: 'AST node values must be primitive' };
 const nested = (depth, open = '{', close = '}') => open.repeat(depth) + 'x' + close.repeat(depth);
 
 // Build independently of parse() and do not trust the caller's depth field.
@@ -38,6 +39,17 @@ function probe(bracesPath) {
   const braces = require(bracesPath);
   const depthError = { name: 'SyntaxError', message: 'Nesting depth exceeds maximum of 100' };
   const treeError = { name: 'SyntaxError', message: 'AST nodes must form a tree' };
+  const valueError = { name: 'TypeError', message: 'AST node values must be primitive' };
+  let deepArray = 'x';
+  let deepObject = { toString() { return 'x'; } };
+  for (let i = 0; i < 5_000; i++) {
+    deepArray = [deepArray];
+    deepObject = { child: deepObject, toString() { return String(this.child); } };
+  }
+  const functionValue = () => 'x';
+  functionValue.toString = () => String(deepArray);
+  const cyclicArray = [];
+  cyclicArray.push(cyclicArray);
   const patterns = [
     '{'.repeat(4_500) + 'x' + '}'.repeat(4_500),
     '('.repeat(4_500) + 'x' + ')'.repeat(4_500),
@@ -68,6 +80,11 @@ function probe(bracesPath) {
       let dag = { type: 'paren', nodes: [{ type: 'text', value: 'x' }] };
       for (let i = 0; i < 40; i++) dag = { type: 'paren', nodes: [dag, dag] };
       assert.throws(() => run({ type: 'root', nodes: [dag] }), treeError);
+      for (const value of [deepArray, deepObject, functionValue, cyclicArray]) {
+        // Check the leaf fast path and coercion/append under a shallow root.
+        assert.throws(() => run({ type: 'text', value }), valueError);
+        assert.throws(() => run({ type: 'root', nodes: [{ type: 'text', value }] }), valueError);
+      }
     }
   }
   // Parent links are not recursive children, but expand follows them in loops.
@@ -183,6 +200,53 @@ for (const fileMap of ['@expo/metro-file-map', 'metro-file-map']) {
       const output = braces[method]({ type: 'root', nodes: [leaf, leaf] });
       assert.deepEqual(output, method === 'expand' ? ['xx'] : 'xx');
     }
+  });
+
+  test(`${fileMap} preserves primitive AST values and existing coercion behavior`, () => {
+    const cases = [
+      ['text', 'text'], ['', ''], [17, '17'], [0, ''], [true, 'true'], [false, ''],
+      [null, ''], [undefined, ''], [NaN, ''], [Infinity, 'Infinity'], [1n, '1'], [0n, ''],
+    ];
+    for (const [value, expected] of cases) {
+      const ast = () => ({ type: 'root', nodes: [{ type: 'text', value }] });
+      assert.equal(braces.compile(ast()), expected);
+      assert.equal(braces.stringify(ast()), expected);
+      assert.deepEqual(braces.expand(ast()), expected === '' ? [] : [expected]);
+      // Standalone compile/stringify leaves return truthy primitives directly.
+      for (const method of ['compile', 'stringify']) {
+        assert.equal(braces[method]({ type: 'text', value }), value || '');
+      }
+    }
+    const symbol = Symbol('text');
+    for (const method of ['compile', 'stringify']) {
+      assert.equal(braces[method]({ type: 'text', value: symbol }), symbol);
+    }
+    for (const method of ['compile', 'expand', 'stringify']) {
+      assert.throws(() => braces[method]({ type: 'root', nodes: [{ type: 'text', value: symbol }] }),
+        { name: 'TypeError', message: 'Cannot convert a Symbol value to a string' });
+    }
+  });
+
+  test(`${fileMap} rejects object and function values before coercion, including leaves`, () => {
+    let coercions = 0;
+    const customValue = {
+      toString() { coercions++; return 'text'; },
+      valueOf() { coercions++; return 'text'; },
+      [Symbol.toPrimitive]() { coercions++; return 'text'; },
+    };
+    const functionValue = () => 'text';
+    functionValue.toString = () => { coercions++; return 'text'; };
+    for (const method of ['compile', 'expand', 'stringify']) {
+      for (const value of [[], ['text'], {}, Object.create(null), new String('text'), customValue, functionValue]) {
+        const inputs = [
+          { type: 'text', value },
+          { type: 'root', value, nodes: [] },
+          { type: 'root', nodes: [{ type: 'text', value }] },
+        ];
+        for (const input of inputs) assert.throws(() => braces[method](input), valueError);
+      }
+    }
+    assert.equal(coercions, 0);
   });
 
   test(`${fileMap} malicious inputs terminate within a bounded subprocess`, () => {

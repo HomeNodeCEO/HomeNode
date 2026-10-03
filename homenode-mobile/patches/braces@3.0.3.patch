@@ -111,7 +111,7 @@ diff --git a/lib/stringify.js b/lib/stringify.js
 diff --git a/lib/utils.js b/lib/utils.js
 --- a/lib/utils.js
 +++ b/lib/utils.js
-@@ -1,5 +1,28 @@
+@@ -1,5 +1,33 @@
  'use strict';
  
 +const { MAX_DEPTH } = require('./constants');
@@ -123,6 +123,11 @@ diff --git a/lib/utils.js b/lib/utils.js
 +  const seen = new WeakSet();
 +  while (stack.length > 0) {
 +    const { node, depth } = stack.pop();
++    // Arrays and custom coercions can recurse even on otherwise shallow ASTs.
++    const value = node.value;
++    if ((value !== null && typeof value === 'object') || typeof value === 'function') {
++      throw new TypeError('AST node values must be primitive');
++    }
 +    if (!node.nodes) continue;
 +    if (seen.has(node)) {
 +      throw new SyntaxError('AST nodes must form a tree');

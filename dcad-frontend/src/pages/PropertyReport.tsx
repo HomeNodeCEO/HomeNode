@@ -2515,7 +2515,7 @@ function AddressHero({
                     <p className="mt-0.5 text-xs text-slate-500">Association and dues details</p>
                   </div>
                   <span className="rounded-full border border-violet-200 bg-violet-50 px-2.5 py-1 text-xs font-semibold text-violet-950">
-                    {assignmentDraft.pud ? "PUD / HOA review" : "Not marked PUD"}
+                    {assignmentDraft.pud ? "PUD / HOA review" : detail?.assignment_details?.pud === false ? "PUD: No" : "Not reported"}
                   </span>
                 </summary>
                 <div className="border-t border-slate-200 p-3">

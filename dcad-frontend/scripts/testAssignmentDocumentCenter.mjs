@@ -1144,6 +1144,48 @@ test('partially failed UAD approve-all acknowledges only successfully reviewed c
   assert.equal(h.candidateInput(702).props.value, '');
 });
 
+test('UAD HOA review flags and preserved decisions are shown only for the active document', async t => {
+  const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77' }, documents: [document(7), document(8)], api: {
+    getUadDocument: async (_workfile, id) => document(id, { candidates: [{ ...candidate(id * 100 + 1, 'false'), field_key: 'pud' }] }),
+    reviewUadDocumentCandidate: async () => ({}),
+    applyUadDocumentCandidate: async () => ({ applied: false, field_key: 'pud',
+      reason: 'existing_values_preserved_or_review_required', warnings: ['Voluntary HOA: appraiser review required.'],
+      conflicts: [{ field_key: 'subject:0100.0026', reason: 'existing_value_preserved' }] }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Confirm', 701); await h.settle();
+  assert.match(h.text, /Voluntary HOA: appraiser review required/);
+  assert.match(h.text, /Existing PUD \/ HOA values were kept/);
+  assert.doesNotMatch(h.text, /no direct UAD form mapping/);
+  h.select(8); await h.settle();
+  assert.doesNotMatch(h.text, /Voluntary HOA|Existing PUD \/ HOA values were kept/);
+});
+
+test('UAD approve-all replaces intermediate incomplete HOA notes with the final group review', async t => {
+  const candidates = ['pud', 'hoa_dues_amount', 'hoa_frequency'].map((field_key, index) => ({ ...candidate(701 + index, 'value'), field_key }));
+  const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77' }, documents: [document(7)], api: {
+    getUadDocument: async (_workfile, id) => document(id, { candidates }),
+    reviewUadDocumentCandidate: async () => ({}),
+    applyUadDocumentCandidate: async (_workfile, _document, id) => ({ applied: true, field_key: candidates[id - 701].field_key,
+      section: 'project_information', warnings: id === 703 ? ['HOA-based PUD selection requires appraiser review.'] : ['Missing HOA frequency.'] }),
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Approve All (3)'); await h.settle();
+  assert.match(h.text, /HOA-based PUD selection requires appraiser review/);
+  assert.doesNotMatch(h.text, /Missing HOA frequency/);
+});
+
+test('late UAD HOA responses cannot place source warnings on another document', async t => {
+  const pending = deferred();
+  const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77' }, documents: [document(7), document(8)], api: {
+    getUadDocument: async (_workfile, id) => document(id, { candidates: [{ ...candidate(id * 100 + 1, 'false'), field_key: 'pud' }] }),
+    reviewUadDocumentCandidate: async () => ({}),
+    applyUadDocumentCandidate: () => pending.promise,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Confirm', 701); await h.settle();
+  h.select(8); await h.settle();
+  pending.resolve({ applied: false, field_key: 'pud', warnings: ['Voluntary HOA: stale source note.'] }); await h.settle();
+  assert.doesNotMatch(h.text, /stale source note/);
+});
+
 for (const route of saveRoutes.filter(route => !route.single)) {
   test(`${route.name} does not acknowledge a dirty candidate already reviewed by the server`, async t => {
     let stage = 0;

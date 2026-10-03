@@ -4,6 +4,7 @@ import {
   neighborhoodLandUseTotal,
 } from "./neighborhoodCharacteristics.ts";
 import { parseNumber } from "./propertyReportPresentation.ts";
+import { reportAddress } from "./propertyReportText.ts";
 
 type AssignmentDetails = AssignmentDetailsPayload;
 
@@ -35,7 +36,7 @@ export function assignmentDraftFromDetail(value?: AssignmentDetails): Assignment
     assignment_types: cloneEditorValue(value?.assignment_types || []),
     assignment_explanation: value?.assignment_explanation || "",
     lender_client_name: value?.lender_client_name || "",
-    lender_client_address: value?.lender_client_address || "",
+    lender_client_address: reportAddress(value?.lender_client_address),
     subject_under_contract: Boolean(value?.subject_under_contract),
     contract_arms_length: typeof value?.contract_arms_length === "boolean"
       ? value.contract_arms_length

@@ -2,6 +2,8 @@ import type { AssignmentDetailsPayload, PropertyComplexityAssessment, ReportManu
 import type { UrarSubjectDetails } from "./propertyReportSubject";
 import type { PropertyActivityRow } from "../components/ListingsContractsSalesContent";
 import { cloneEditorValue } from "./propertyReportAssignment.ts";
+import { reportTitleCase, reportAddress, reportZip5, reportNeighborhoodName } from "./propertyReportText.ts";
+import { formatCensusTract } from "./propertyReportPresentation.ts";
 
 type DcadOwner = {
   owner_name?: string;
@@ -169,27 +171,28 @@ export function editablePropertyReportSectionValue(
     case "report.subject_identification":
       return {
         urar_subject: {
-          borrower_name: detail?.urar_subject?.borrower_name ?? "",
+          borrower_name: reportTitleCase(detail?.urar_subject?.borrower_name),
           assessor_parcel_number: detail?.urar_subject?.assessor_parcel_number ?? "",
           tax_year: detail?.urar_subject?.tax_year ?? "",
           tax_amount: detail?.urar_subject?.tax_amount ?? "",
           property_rights: detail?.urar_subject?.property_rights ?? "",
           offered_for_sale_prior_12_months: detail?.urar_subject?.offered_for_sale_prior_12_months ?? null,
+          listing_history_summary: detail?.urar_subject?.listing_history_summary ?? "",
         },
         property_location: {
-          address: detail?.property_location?.address || "",
+          address: reportAddress(detail?.property_location?.address),
           neighborhood: detail?.property_location?.neighborhood || "",
-          city: detail?.property_location?.city || "",
+          city: reportTitleCase(detail?.property_location?.city),
           state: detail?.property_location?.state ?? "TX",
-          postal_code: detail?.property_location?.postal_code || "",
+          postal_code: reportZip5(detail?.property_location?.postal_code),
           county: detail?.property_location?.county || "",
-          subdivision: detail?.property_location?.subdivision || "",
-          census_tract: detail?.property_location?.census_tract || "",
+          subdivision: reportNeighborhoodName(detail?.property_location?.subdivision),
+          census_tract: detail?.property_location?.census_tract ? formatCensusTract(detail.property_location.census_tract) : "",
         },
         owner: {
-          owner_name: detail?.owner?.owner_name || "",
-          mailing_address: detail?.owner?.mailing_address || "",
-          parties: cloneEditorValue(detail?.owner?.parties || []),
+          owner_name: reportTitleCase(detail?.owner?.owner_name),
+          mailing_address: reportAddress(detail?.owner?.mailing_address),
+          parties: cloneEditorValue(detail?.owner?.parties || []).map(party => ({ ...party, owner_name: reportTitleCase(party.owner_name) })),
         },
         legal_description: {
           lines: detail?.legal_description?.lines || [],
@@ -285,7 +288,7 @@ export function editablePropertyReportSectionValue(
         assignment_types: cloneEditorValue(detail?.assignment_details?.assignment_types || []),
         assignment_explanation: detail?.assignment_details?.assignment_explanation || "",
         lender_client_name: detail?.assignment_details?.lender_client_name || "",
-        lender_client_address: detail?.assignment_details?.lender_client_address || "",
+        lender_client_address: reportAddress(detail?.assignment_details?.lender_client_address),
         subject_under_contract: Boolean(detail?.assignment_details?.subject_under_contract),
         contract_arms_length: typeof detail?.assignment_details?.contract_arms_length === "boolean"
           ? detail.assignment_details.contract_arms_length

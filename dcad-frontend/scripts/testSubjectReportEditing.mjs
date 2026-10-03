@@ -14,7 +14,7 @@ const subject = () => ({
   property_location: { address: '100 Reviewed Rd', city: 'Example', state: 'TX', postal_code: '75001', county: 'Example County', subdivision: 'EXAMPLE PARK' },
   owner: { owner_name: 'Reviewed Owner', parties: [] },
   legal_description: { lines: ['EXAMPLE PARK', 'BLK 1 LOT 2'] },
-  urar_subject: { borrower_name: 'Reviewed Borrower', assessor_parcel_number: '0000001234', tax_year: '2025', tax_amount: '1234.50', property_rights: 'fee_simple', offered_for_sale_prior_12_months: false },
+  urar_subject: { borrower_name: 'Reviewed Borrower', assessor_parcel_number: '0000001234', tax_year: '2025', tax_amount: '1234.50', property_rights: 'fee_simple', offered_for_sale_prior_12_months: false, listing_history_summary: '' },
 });
 const base = () => ({
   property_location: { address: '1 CAD Rd', city: 'CAD City', state: 'TX', county: 'CAD County' },
@@ -59,6 +59,20 @@ test('new owner-name-only evidence drops obsolete CAD parties; unknown fields ar
   assert.deepEqual(detail.urar_subject, { borrower_name: 'Borrower' });
 });
 
+test('saved listing history hydrates exact template wording and remains editable without re-generation', () => {
+  const summary = 'Subject was listed on 05/29/2026 for $295,000, no reductions in list price, on the market for 77 days, under current contract on 08/25/2026';
+  const value = { urar_subject: { listing_history_summary: summary } };
+  const detail = applyReportManualValues(base(), { [sectionKey]: { value } }, { explicitSubjectValues: true });
+  assert.equal(detail.urar_subject.listing_history_summary, summary);
+  const editor = editablePropertyReportSectionValue(sectionKey, { detail, inspectionDetails: {}, additionalImprovements: [] });
+  const h = editorHarness(editor);
+  assert.equal(h.input('Listing History').type, 'textarea');
+  assert.equal(h.input('Listing History').props.value, summary);
+  h.input('Listing History').props.onChange({ target: { value: `${summary}\nEarlier listing reviewed separately.` } });
+  h.render({}); h.save();
+  assert.equal(h.props.saved.urar_subject.listing_history_summary, `${summary}\nEarlier listing reviewed separately.`);
+});
+
 test('explicit saved ownership parties govern the report while remaining editable and preserving their source values', () => {
   const owner = { owner_name: 'Alternate Name', parties: [
     { owner_name: ' First Reviewed Owner ', ownership_pct: '60' },
@@ -73,7 +87,7 @@ test('explicit saved ownership parties govern the report while remaining editabl
     { owner_name: 'Second Reviewed Owner', ownership_pct: 40 },
   ]);
   const editor = editablePropertyReportSectionValue(sectionKey, { detail, improvement: undefined, housing: undefined, inspectionDetails: {}, additionalImprovements: [] });
-  assert.deepEqual(editor.owner.parties, owner.parties);
+  assert.deepEqual(editor.owner.parties, owner.parties.map(party => ({ ...party, owner_name: party.owner_name.trim() })));
   assert.equal(editor.owner.owner_name, 'Alternate Name');
   assert.equal(owner.parties[0].owner_name, ' First Reviewed Owner ');
   assert.equal(propertyReportOwnerPresentation(base().owner, { parties: [{ owner_name: 'Repeated' }, { owner_name: 'Repeated' }] }).ownerName, 'Repeated / Repeated');

@@ -499,6 +499,8 @@ export interface UadDocumentApplicationResult {
   source_reference?: string;
   current_revision?: number;
   changed_field_count?: number;
+  warnings?: string[];
+  conflicts?: Array<{ field_key: string; reason: string }>;
   applied_fields?: Array<{
     uid: string;
     context_key: string;

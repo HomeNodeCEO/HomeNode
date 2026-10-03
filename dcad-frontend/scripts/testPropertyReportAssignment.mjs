@@ -7,6 +7,7 @@ import {
   assignmentValidationErrors,
 } from "../src/lib/propertyReportAssignment.ts";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "../src/lib/propertyReportHydration.ts";
+import { reportAddress, reportTitleCase, reportZip5 } from '../src/lib/propertyReportText.ts';
 
 test("Property Report refreshes only the active assignment's mobile evidence and conflict revision", async () => {
   const source = await readFile(new URL("../src/pages/PropertyReport.tsx", import.meta.url), "utf8");
@@ -37,7 +38,7 @@ for (const observed of [false, true]) for (const zip of [undefined, null, '', ' 
     });
   }
 
-test('location hydration retains literal address/default state and ZIP-only digits exactly', () => {
+test('location hydration formats report display but retains literal matching address and ZIP lookup digits', () => {
   const fixtures = [undefined, null, {}, { address: '  ', city: 'City', postal_code: '75001-1234' },
     { address: ' 123 Main ', city: ' City ', state: '', postal_code: '75001-1234' },
     { address: 0, state: null, postal_code: 75001 }, { address: 'Main', state: ' ', postal_code: 'abc12-34567' }];
@@ -48,7 +49,7 @@ test('location hydration retains literal address/default state and ZIP-only digi
     const expected = { documentReviewSubjectAddress: street
       ? [street, value?.city, value?.state || 'TX', value?.postal_code].map(item => String(item || '').trim()).filter(Boolean).join(', ')
       : '', censusZip: String(value?.postal_code || '').replace(/\D/g, '').slice(0, 5),
-      streetAddress: address.split(',')[0].trim() || address, city: display(value?.city), state: display(value?.state, 'TX'), postalCode: display(value?.postal_code) };
+      streetAddress: reportAddress(address.split(',')[0].trim() || address), city: display(reportTitleCase(value?.city)), state: display(value?.state, 'TX'), postalCode: display(reportZip5(value?.postal_code)) };
     assert.deepEqual(propertyReportLocationContext(value), expected); assert.deepEqual(value, before);
   }
 });

@@ -185,6 +185,44 @@ suppressed for these advisories. HomeNode does not run Metro or `image-size` in
 the deployed API; untrusted appraisal images must not be processed through the
 mobile build toolchain.
 
+### Mobile Forge and braces backports (release hold)
+
+As checked on October 2, 2026, the official registry has no fixed release for
+`node-forge` 1.4.0 (`GHSA-86w9-cpqp-85rv`) or `braces` 3.0.3
+(`GHSA-vfj7-8cjw-p6xm`). The advisory audit's suggested version ranges are not
+proof that those releases exist. Updating Expo or Metro does not remove the
+affected signing and file-watching dependency paths.
+
+The frozen mobile lockfile registers two local mitigations, without changing
+their published versions or suppressing audit findings:
+
+- Forge: validate the nested DigestAlgorithm element count and reject nonempty
+  ASN.1 NULL parameters in the Node RSA verifier. This preserves the proposed
+  upstream PR 1152 approach plus the reviewed NULL-content guard from PR 1084.
+  Tests exercise both Expo resolution paths, malformed encodings, valid
+  SHA-256 and RSA-PSS signatures, certificate verification, CSRs and signing.
+  Generated test private keys demonstrate malformed-encoding rejection, not
+  a practical forgery without the key or universal cryptographic correctness.
+- Braces: cap brace/parenthesis nesting at 100, validate direct AST child
+  graphs before recursive compile/expand/stringify walks, reject cyclic or
+  reused container nodes, and bound expansion's ancestor searches. Caller
+  options cannot disable these guards. Tests cover both Metro resolution
+  paths, normal globs, escapes, exact bounds, malformed ASTs and bounded
+  child-process rejection. Direct AST container sharing is intentionally
+  rejected; parsed AST parent/previous links and repeated leaves remain valid.
+
+These patches only attest the tested repository-controlled Node toolchain.
+Forge's browser distribution bundles, globally installed tools, external EAS
+workers and native/OTA publishing are not covered. Local Android/iOS JavaScript
+exports are compatibility evidence, not signed native build approval. No
+authentication, photo synchronization or server signing policy is changed.
+
+The ordinary dependency audit still reports both high advisories and blocks
+release. Neither a successful test nor this documentation grants a release
+exception. Keep raw findings visible. Replace these backports with official
+fixed versions when available, rerun all compatibility/security checks, and
+remove the patches; do not fake versions or disable the existing gate.
+
 ## Finding lifecycle
 
 Each finding records a stable identifier, control reference, severity,

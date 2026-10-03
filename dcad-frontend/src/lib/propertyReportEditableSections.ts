@@ -1,4 +1,5 @@
 import type { AssignmentDetailsPayload, PropertyComplexityAssessment, ReportManualSectionKey } from "./api";
+import type { UrarSubjectDetails } from "./propertyReportSubject";
 import type { PropertyActivityRow } from "../components/ListingsContractsSalesContent";
 import { cloneEditorValue } from "./propertyReportAssignment.ts";
 
@@ -109,6 +110,7 @@ export type DcadHousingProfile = {
 type AssignmentDetails = AssignmentDetailsPayload;
 
 export type DcadDetail = {
+  urar_subject?: UrarSubjectDetails;
   tax_year?: number;
   property_location?: {
     address?: string;
@@ -166,11 +168,19 @@ export function editablePropertyReportSectionValue(
   switch (sectionKey) {
     case "report.subject_identification":
       return {
+        urar_subject: {
+          borrower_name: detail?.urar_subject?.borrower_name ?? "",
+          assessor_parcel_number: detail?.urar_subject?.assessor_parcel_number ?? "",
+          tax_year: detail?.urar_subject?.tax_year ?? "",
+          tax_amount: detail?.urar_subject?.tax_amount ?? "",
+          property_rights: detail?.urar_subject?.property_rights ?? "",
+          offered_for_sale_prior_12_months: detail?.urar_subject?.offered_for_sale_prior_12_months ?? null,
+        },
         property_location: {
           address: detail?.property_location?.address || "",
           neighborhood: detail?.property_location?.neighborhood || "",
           city: detail?.property_location?.city || "",
-          state: detail?.property_location?.state || "TX",
+          state: detail?.property_location?.state ?? "TX",
           postal_code: detail?.property_location?.postal_code || "",
           county: detail?.property_location?.county || "",
           subdivision: detail?.property_location?.subdivision || "",

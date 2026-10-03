@@ -1,4 +1,5 @@
 import { hasSnapshotValue, mergeNonBlankSnapshot } from './reportSnapshotMerge.ts';
+import type { UrarSubjectDetails } from './propertyReportSubject';
 
 type NumericValue = string | number;
 type FieldValue = string | number | boolean;
@@ -117,6 +118,7 @@ export interface LegacyDcadExemption {
 }
 
 export interface LegacyDcadDetail {
+  urar_subject?: UrarSubjectDetails;
   tax_year?: number;
   total_living_area?: NumericValue;
   property_location: LegacyDcadLocation;
@@ -386,6 +388,7 @@ function manualValue(manualValues: JsonRecord, key: string): unknown {
 export function applyReportManualValues(
   sourceDetail: LegacyDcadDetail,
   value: unknown,
+  { explicitSubjectValues = false }: { explicitSubjectValues?: boolean } = {},
 ): LegacyDcadDetail {
   const manualValues = record(value) || {};
   const detail: LegacyDcadDetail = {
@@ -419,15 +422,40 @@ export function applyReportManualValues(
 
   const subjectOverride = record(manualValue(manualValues, 'report.subject_identification'));
   if (subjectOverride) {
-    detail.property_location = mergeNonBlankSnapshot(
+    // A selected file's saved Subject leaves are appraiser corrections, including
+    // explicit blank/empty values. Legacy account snapshots retain their older
+    // nonblank fallback behavior; absent leaves always keep source data.
+    const mergeSubject = <T extends object>(base: T, raw: unknown, normalized: T): T => explicitSubjectValues
+      ? { ...base, ...Object.fromEntries(Object.entries(normalized).filter(([key, entry]) => entry !== undefined && Object.hasOwn(record(raw) || {}, key))) }
+      : mergeNonBlankSnapshot(base, normalized);
+    detail.property_location = mergeSubject(
       detail.property_location,
+      subjectOverride.property_location,
       location(subjectOverride.property_location),
     );
-    detail.owner = mergeNonBlankSnapshot(detail.owner || { parties: [] }, owner(subjectOverride.owner));
-    detail.legal_description = mergeNonBlankSnapshot(
+    const rawOwner = record(subjectOverride.owner);
+    const normalizedOwner = owner(rawOwner) || (rawOwner ? { parties: [], owner_name: text(rawOwner.owner_name), mailing_address: text(rawOwner.mailing_address) } : undefined);
+    if (normalizedOwner) {
+      detail.owner = mergeSubject(detail.owner || { parties: [] }, rawOwner, normalizedOwner);
+      if (explicitSubjectValues && rawOwner && Object.hasOwn(rawOwner, 'owner_name') && !Object.hasOwn(rawOwner, 'parties')) {
+        detail.owner.parties = [];
+      }
+    }
+    detail.legal_description = mergeSubject(
       detail.legal_description,
+      subjectOverride.legal_description,
       legalDescription(subjectOverride.legal_description),
     );
+    const subject = record(subjectOverride.urar_subject);
+    if (subject) {
+      const reportSubject: UrarSubjectDetails = {};
+      for (const key of ['borrower_name', 'assessor_parcel_number', 'tax_year', 'tax_amount'] as const) {
+        if (typeof subject[key] === 'string') reportSubject[key] = subject[key];
+      }
+      if (subject.property_rights === '' || subject.property_rights === 'fee_simple' || subject.property_rights === 'leasehold') reportSubject.property_rights = subject.property_rights;
+      if (subject.offered_for_sale_prior_12_months === null || typeof subject.offered_for_sale_prior_12_months === 'boolean') reportSubject.offered_for_sale_prior_12_months = subject.offered_for_sale_prior_12_months;
+      detail.urar_subject = { ...sourceDetail.urar_subject, ...reportSubject };
+    }
   }
 
   const exemptionOverride = record(manualValue(manualValues, 'report.exemptions'));

@@ -333,6 +333,32 @@ test("document access fails closed before reads in enforced mode", async (contex
   assert.deepEqual(queryInputs, [[1], [2], [3]]);
 });
 
+test("candidate rejection still requires write access and records the authenticated reviewer", async (context) => {
+  const inputs = [];
+  const routerOptions = options({
+    decideAccess: (auth, _assignment, permission) => auth.userId === identity.userId && permission === "write",
+    reviewCandidate: async (_pool, input) => {
+      inputs.push(input);
+      return { id: 100, review_status: input.reviewStatus };
+    },
+  });
+  const body = { review_status: "rejected", reviewer: "Forged reviewer" };
+  for (const [mobileAuth, expectedStatus] of [[null, 401], [{ userId: "read-only-user" }, 403], [identity, 200]]) {
+    const server = await startRouter(createAssignmentDocumentRouter(routerOptions), { mobileAuth });
+    context.after(server.close);
+    const response = await fetch(`${server.baseUrl}/api/documents/1/candidates/100`, jsonRequest("PATCH", body));
+    assert.equal(response.status, expectedStatus);
+    if (expectedStatus !== 200) {
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.equal(inputs.length, 0);
+    }
+  }
+  assert.equal(inputs.length, 1);
+  assert.equal(inputs[0].reviewStatus, "rejected");
+  assert.equal(inputs[0].reviewer, identity.displayName);
+  assert.equal(inputs[0].actorUserId, identity.userId);
+});
+
 test("document content retains immutable PDF headers and private storage input", async (context) => {
   const inputs = [];
   const content = Buffer.from("%PDF-private-evidence");
@@ -495,6 +521,7 @@ test("document review routes preserve exact appraiser decisions", async (context
   const serviceInput = {
     documentId: "5",
     reviewer: "Appraiser One",
+    actorUserId: "appraiser-1",
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
@@ -508,6 +535,7 @@ test("document review routes preserve exact appraiser decisions", async (context
       reviewStatus: "confirmed",
       confirmedValue: "Client",
       reviewer: "Appraiser One",
+      actorUserId: "appraiser-1",
     }],
   ]);
 });

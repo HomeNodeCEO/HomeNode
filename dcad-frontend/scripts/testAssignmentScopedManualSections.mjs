@@ -68,11 +68,12 @@ test("browser saves send the selected assignment and hydrate its returned revisi
 
   assert.match(api, /assignment_file_id: assignmentFileId \|\| undefined/);
   assert.match(hook, /Choose or start a Custom Appraisal assignment file/);
-  assert.match(hook, /onSaved\?\.\(response\.manual_values\)/);
+  assert.match(hook, /onSaved\?\.\(manualReportValuesForUi\(response\.manual_values\), requestIsCurrent\)/);
   assert.match(hook, /This report section changed after you opened it/);
   assert.match(scopedHook, /applyReportManualValues/);
-  assert.match(scopedHook, /getAssignmentFiles\(accountId, activeAssignmentFile\.id\)/);
+  assert.match(scopedHook, /getAssignmentFiles\(accountId, assignmentFileId\)/);
   assert.match(scopedHook, /custom_appraisal_sections: sections/);
-  assert.match(scopedHook, /assignmentFileId: activeAssignmentFile\?\.id \|\| null/);
+  assert.match(scopedHook, /customAssignmentFileMatches\(activeAssignmentFile, accountId \|\| ""\)/);
+  assert.match(scopedHook, /assignmentFileId = selectedFile\?\.id \|\| null/);
   assert.match(report, /useAssignmentScopedReportSections/);
 });

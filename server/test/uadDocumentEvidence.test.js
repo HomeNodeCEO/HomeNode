@@ -441,23 +441,32 @@ test("opening UAD contract evidence is read-only and remains usable when the PDF
   );
   assert.match(loadDocumentSource, /Promise\.allSettled/);
   assert.match(loadDocumentSource, /setSelectedDocument\(document\)/);
-  assert.match(loadDocumentSource, /Contract information loaded for review/);
+  assert.match(loadDocumentSource, /Document information loaded for review/);
+  assert.match(loadDocumentSource, /cached\?\.scope === requestedScopeKey && cached\.documentId === documentId/);
+  assert.match(loadDocumentSource, /cachedBlob \? Promise\.resolve\(cachedBlob\)/);
   assert.doesNotMatch(loadDocumentSource, /synchronizeUadPurchaseContract/);
-  assert.match(centerSource, /The contract details are available below/);
+  assert.match(centerSource, /The document details are available below/);
+  assert.match(centerSource, /sourcePdf\?\.scope === scopeKey && sourcePdf\.documentId === selectedDocument\.id/);
+  assert.match(centerSource, /<AssignmentPdfPreview[^>]*blob=\{sourcePdf\.blob\}/);
+  assert.doesNotMatch(centerSource, /<iframe\b|pdfjs-viewer\.html/);
 });
 
 test("locked shared workfiles keep evidence visible while disabling document mutations", async () => {
   const { readFile } = await import("node:fs/promises");
-  const [modalSource, centerSource] = await Promise.all([
+  const [modalSource, centerSource, queueSource] = await Promise.all([
     readFile(new URL("../../dcad-frontend/src/components/AppraisalWorkfileModal.tsx", import.meta.url), "utf8"),
     readFile(new URL("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../../dcad-frontend/src/components/documents/AssignmentDocumentUploadQueue.tsx", import.meta.url), "utf8"),
   ]);
   assert.match(modalSource, /readOnly=\{scopeMutable !== true\}/);
   assert.match(modalSource, /const opener = useRef<HTMLElement \| null>\(null\)/);
   assert.match(modalSource, /elementToRestore\?\.isConnected/);
   assert.match(centerSource, /readOnly\?: boolean/);
   assert.match(centerSource, /const requireMutableWorkfile/);
-  assert.match(centerSource, /disabled=\{readOnly \|\| loading \|\| !selectedFile\}/);
+  assert.match(centerSource, /<AssignmentDocumentUploadQueue\s+key=\{scopeKey\}\s+disabled=\{readOnly \|\| !uploadScopeReady\}/);
+  assert.match(centerSource, /!mountedRef\.current \|\| readOnlyRef\.current \|\| !uploadScopeReady \|\| currentScopeKeyRef\.current !== requestedScopeKey/);
+  assert.match(queueSource, /blocked:\s*\(\) => disabledRef\.current \|\| !mountedRef\.current/);
+  assert.match(queueSource, /const controlsDisabled = disabled \|\| running/);
   assert.match(centerSource, /disabled=\{readOnly \|\| loading \|\| confirmationBlocked\}/);
   assert.match(centerSource, /Existing documents remain available for review and download/);
 });

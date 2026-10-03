@@ -83,7 +83,7 @@
         "repair:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js --apply",
         "backfill:account-address-aliases": "node scripts/runSalesAutoReconciliation.js --seed-only",
         "start": "node src/oldServer.js",
-        "dev": "nodemon src/oldServer.js"
+        "dev": "node --watch --watch-preserve-output src/oldServer.js"
     },
     "keywords": [],
     "author": "",
@@ -106,8 +106,5 @@
     "engines": {
         "node": ">=22.23.2 <23"
     },
-    "type": "module",
-    "devDependencies": {
-        "nodemon": "^3.1.10"
-    }
+    "type": "module"
 }

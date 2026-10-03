@@ -397,6 +397,7 @@ export function createAssignmentDocumentRouter({
       const result = await confirmCandidates(pool, {
         documentId: req.params.id,
         reviewer: authenticatedReviewer(req),
+        actorUserId: req.mobileAuth?.userId || null,
         candidateValues: req.body?.candidate_values,
       });
       const document = await getDocument(pool, result.document_id);
@@ -438,6 +439,7 @@ export function createAssignmentDocumentRouter({
         reviewStatus: req.body?.review_status,
         confirmedValue: req.body?.confirmed_value,
         reviewer: authenticatedReviewer(req),
+        actorUserId: req.mobileAuth?.userId || null,
       });
       return res.json({ ok: true, candidate });
     } catch (error) {

@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { ReactNode } from "react";
 import type {
   AssignmentDetailsPayload,
@@ -75,6 +75,13 @@ function editorLabel(key: string): string {
     baths_full: "Full Baths",
     baths_half: "Half Baths",
     homestead_yes: "Homestead",
+    urar_subject: "1004 Subject Fields",
+    borrower_name: "Borrower (not automatically the buyer)",
+    assessor_parcel_number: "Assessor Parcel Number (APN)",
+    tax_year: "Real Estate Tax Year",
+    tax_amount: "Real Estate Taxes (exact amount)",
+    property_rights: "Property Rights Appraised",
+    offered_for_sale_prior_12_months: "Offered for Sale in Prior 12 Months",
   };
   return overrides[key] || key
     .replace(/_/g, " ")
@@ -101,12 +108,14 @@ export default function ReportSectionEditor({
   section,
   initialValue,
   saving,
+  readOnly = false,
   onCancel,
   onSave,
 }: {
   section: EditableReportSection;
   initialValue: Record<string, unknown>;
   saving: boolean;
+  readOnly?: boolean;
   onCancel: () => void;
   onSave: (value: Record<string, unknown>) => void;
 }) {
@@ -114,9 +123,8 @@ export default function ReportSectionEditor({
     cloneEditorValue(initialValue),
   );
 
-  useEffect(() => {
-    setDraft(cloneEditorValue(initialValue));
-  }, [initialValue, section.key]);
+  // The caller keys each editing session. Background parent hydration must not
+  // replace a draft the appraiser is actively correcting.
 
   const updateAtPath = (path: Array<string | number>, nextValue: unknown) => {
     setDraft((current) => {
@@ -332,6 +340,19 @@ export default function ReportSectionEditor({
     path: Array<string | number>,
     key: string,
   ): ReactNode => {
+    if (key === "property_rights" || key === "offered_for_sale_prior_12_months") {
+      const rights = key === "property_rights";
+      return <label className="block">
+        <span className="text-xs font-semibold uppercase tracking-wide text-slate-600">{editorLabel(key)}</span>
+        <select className="select select-bordered mt-1 w-full bg-white"
+          value={value == null ? "" : String(value)}
+          onChange={(event) => updateAtPath(path, rights ? event.target.value : event.target.value === "" ? null : event.target.value === "true")}>
+          <option value="">Unknown / not reported</option>
+          {rights ? <><option value="fee_simple">Fee simple</option><option value="leasehold">Leasehold</option></>
+            : <><option value="true">Yes</option><option value="false">No</option></>}
+        </select>
+      </label>;
+    }
     if (Array.isArray(value)) {
       if (value.every((item) => typeof item === "string")) {
         return (
@@ -483,11 +504,11 @@ export default function ReportSectionEditor({
             Close
           </button>
         </div>
-        <div className="space-y-4 overflow-y-auto p-5">
+        <fieldset disabled={saving || readOnly} className="min-w-0 space-y-4 overflow-y-auto p-5">
           {assignmentEditor || Object.entries(draft).map(([key, value]) => (
             <div key={key}>{renderValue(value, [key], key)}</div>
           ))}
-        </div>
+        </fieldset>
         <div className="hn-subtle-panel flex justify-end gap-2 border-t px-5 py-4">
           <button type="button" onClick={onCancel} className="hn-action-secondary btn btn-ghost normal-case" disabled={saving}>
             Cancel
@@ -496,7 +517,7 @@ export default function ReportSectionEditor({
             type="button"
             onClick={() => onSave(draft)}
             className="hn-action-primary btn normal-case"
-            disabled={saving || assignmentErrors.length > 0}
+            disabled={readOnly || saving || assignmentErrors.length > 0}
           >
             {saving ? "Saving…" : "Save Changes"}
           </button>

@@ -11,6 +11,7 @@ const read = (section, values) => editablePropertyReportSectionValue('report.' +
 
 test('empty subject and exemptions preserve existing manual-editor defaults', () => {
   assert.deepEqual(read('subject_identification'), {
+    urar_subject: { borrower_name: '', assessor_parcel_number: '', tax_year: '', tax_amount: '', property_rights: '', offered_for_sale_prior_12_months: null },
     property_location: { address: '', neighborhood: '', city: '', state: 'TX', postal_code: '',
       county: '', subdivision: '', census_tract: '' },
     owner: { owner_name: '', mailing_address: '', parties: [] },

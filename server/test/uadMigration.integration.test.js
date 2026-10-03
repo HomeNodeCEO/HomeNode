@@ -15,8 +15,191 @@ import {
 import { auditCustomSignedArtifacts } from "../src/services/customSignedArtifactAudit.js";
 import { auditCustomSignedPdfContent } from "../src/services/customSignedPdfContentAudit.js";
 import { auditCustomSignedPhotoCoverage } from "../src/services/customSignedPhotoCoverageAudit.js";
+import {
+  CUSTOM_SUBJECT_SECTION,
+  CUSTOM_SUBJECT_EVIDENCE_SECTION,
+  persistCustomSubjectApplication,
+} from "../src/services/customSubjectApplication.js";
+import { readSfrepDocuments } from "../src/services/sfrepDocumentTransfer.js";
 
 const databaseUrl = process.env.DATABASE_URL;
+
+test("reviewed Custom Subject and server-only receipts persist with migrated constraints and histories", {
+  skip: !databaseUrl,
+}, async () => {
+  const pool = new pg.Pool({ connectionString: databaseUrl, max: 1 });
+  let client;
+  try {
+    client = await pool.connect();
+    const identity = await client.query("SELECT current_database() AS database_name");
+    assert.match(identity.rows[0].database_name, /_test$/);
+    await client.query("BEGIN");
+    const transactionClient = {
+      query: (sql, ...args) => {
+        assert.doesNotMatch(String(sql), /^\s*(?:BEGIN|COMMIT|END|ROLLBACK)\b/i,
+          "the production writer must not end the rollback-only fixture transaction");
+        return client.query(sql, ...args);
+      },
+    };
+    await ensureAssignmentDocumentsSchema(transactionClient);
+    const accountId = `subject-receipt-${randomUUID()}`;
+    await client.query(
+      `INSERT INTO core.accounts (account_id, address, city, postal_code)
+       VALUES ($1, '100 Example Dr', 'Garland', '75041')`,
+      [accountId],
+    );
+    const assignment = await client.query(
+      `INSERT INTO app.assignment_files (account_id, file_number)
+       VALUES ($1, $1) RETURNING *`,
+      [accountId],
+    );
+    const assignmentFileId = Number(assignment.rows[0].id);
+    await client.query(
+      `INSERT INTO app.custom_appraisal_workfiles (assignment_file_id, canonical_file_name, status)
+       VALUES ($1, $2, 'draft')`,
+      [assignmentFileId, `${accountId}.homenode-appraisal.json`],
+    );
+    const content = Buffer.from("%PDF-SYNTHETIC-SUBJECT-RECEIPT-NOT-AN-APPRAISAL");
+    const document = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, document_type, processing_status, title, file_name,
+          checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'engagement_letter', 'reviewed', 'Synthetic Subject evidence', 'synthetic.pdf', $3, $4, $5)
+       RETURNING *`,
+      [accountId, assignmentFileId, createHash("sha256").update(content).digest("hex"), content.length, content],
+    );
+    const documentId = Number(document.rows[0].id);
+    const candidateIds = new Map();
+    for (const [field, value] of Object.entries({
+      subject_property_address: "100 Example Dr, Garland, TX 75041",
+      borrower_name: "Synthetic Borrower",
+      tax_amount: "4321.50",
+      lender_client_name: "Synthetic QA Bank",
+    })) {
+      const inserted = await client.query(
+        `INSERT INTO app.assignment_document_field_candidates
+           (document_id, field_key, raw_value, confirmed_value, review_status, reviewer, reviewed_at)
+         VALUES ($1, $2, $3, $3, 'confirmed', 'Fixture appraiser', now()) RETURNING id`,
+        [documentId, field, value],
+      );
+      candidateIds.set(field, Number(inserted.rows[0].id));
+    }
+    // Match the writer's required assignment -> workfile -> source lock order.
+    await client.query("SELECT id FROM app.assignment_files WHERE id = $1 FOR UPDATE", [assignmentFileId]);
+    await client.query("SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE", [assignmentFileId]);
+    await client.query("SELECT id FROM app.assignment_documents WHERE id = $1 FOR UPDATE", [documentId]);
+    const applied = await persistCustomSubjectApplication(transactionClient, {
+      assignmentFile: { ...assignment.rows[0], workfile_status: "draft" },
+      sourceDocument: document.rows[0], reviewer: "Fixture appraiser",
+    });
+    assert.equal(applied.applied, true);
+    assert.equal(applied.account_id, accountId);
+    assert.equal(applied.assignment_file_id, assignmentFileId);
+    assert.equal(applied.revision, Number(assignment.rows[0].revision) + 1);
+    const stored = await client.query(
+      `SELECT section_key, section_value, revision FROM app.custom_appraisal_sections
+        WHERE assignment_file_id = $1 ORDER BY section_key`,
+      [assignmentFileId],
+    );
+    assert.deepEqual(stored.rows.map(row => row.section_key), [CUSTOM_SUBJECT_EVIDENCE_SECTION, CUSTOM_SUBJECT_SECTION]);
+    const subject = stored.rows.find(row => row.section_key === CUSTOM_SUBJECT_SECTION);
+    const evidence = stored.rows.find(row => row.section_key === CUSTOM_SUBJECT_EVIDENCE_SECTION);
+    assert.equal(subject.revision, 1);
+    assert.equal(subject.section_value.property_location.address, "100 Example Dr");
+    assert.equal(subject.section_value.urar_subject.borrower_name, "Synthetic Borrower");
+    assert.equal(subject.section_value.urar_subject.tax_amount, "4321.50");
+    assert.equal(evidence.revision, 1);
+    assert.equal(evidence.section_value.fields.borrower_name.status, "current");
+    assert.equal(evidence.section_value.fields.borrower_name.kind, "reviewed_document");
+    assert.equal(evidence.section_value.fields.borrower_name.documentId, documentId);
+    assert.equal(evidence.section_value.fields.borrower_name.candidateId, candidateIds.get("borrower_name"));
+    const histories = await client.query(
+      `SELECT section_key, section_value, revision, inspection_session_id, changed_path
+         FROM app.custom_appraisal_section_history WHERE assignment_file_id = $1 ORDER BY section_key`,
+      [assignmentFileId],
+    );
+    assert.equal(histories.rows.length, 2);
+    for (const row of histories.rows) {
+      assert.deepEqual(row.section_value, stored.rows.find(section => section.section_key === row.section_key).section_value);
+      assert.equal(row.revision, 1);
+      assert.equal(row.inspection_session_id, null);
+      assert.deepEqual(row.changed_path, [row.section_key]);
+    }
+    const assignmentHistory = await client.query(
+      `SELECT history.revision, history.assignment_details, assignment.assignment_details AS current_details
+         FROM app.assignment_file_history history JOIN app.assignment_files assignment ON assignment.id = history.assignment_file_id
+        WHERE history.assignment_file_id = $1`,
+      [assignmentFileId],
+    );
+    assert.equal(assignmentHistory.rows.length, 1);
+    assert.equal(assignmentHistory.rows[0].revision, applied.revision);
+    assert.deepEqual(assignmentHistory.rows[0].assignment_details, assignmentHistory.rows[0].current_details);
+    assert.equal(assignmentHistory.rows[0].assignment_details.lender_client_name, "Synthetic QA Bank");
+
+    // The migration adds one receipt key without losing prior keys or allowing arbitrary ones.
+    const insertSection = `INSERT INTO app.custom_appraisal_sections (assignment_file_id, section_key, section_value)
+      VALUES ($1, $2, '{}'::jsonb)`;
+    const insertHistory = `INSERT INTO app.custom_appraisal_section_history
+      (assignment_file_id, section_key, section_value, revision, inspection_session_id, changed_path)
+      VALUES ($1, $2, '{}'::jsonb, 1, NULL, ARRAY[$2]::text[])`;
+    for (const [sql, constraint] of [
+      [insertSection, "custom_appraisal_sections_section_key_check"],
+      [insertHistory, "custom_appraisal_section_history_section_key_check"],
+    ]) {
+      await client.query(sql, [assignmentFileId, "report.property_characteristics"]);
+      await client.query("SAVEPOINT invalid_subject_receipt_key");
+      try {
+        await assert.rejects(client.query(sql, [assignmentFileId, "report.unsupported_fixture_key"]),
+          error => error.code === "23514" && error.constraint === constraint);
+      } finally {
+        await client.query("ROLLBACK TO SAVEPOINT invalid_subject_receipt_key");
+        await client.query("RELEASE SAVEPOINT invalid_subject_receipt_key");
+      }
+    }
+    const publicAccount = await client.query("SELECT address FROM core.accounts WHERE account_id = $1", [accountId]);
+    assert.equal(publicAccount.rows[0].address, "100 Example Dr", "report application must not edit public account data");
+
+    // Exercise the actual transfer SQL: multiple selected PDFs share one report
+    // envelope, and oversized JSON never crosses the PostgreSQL client boundary.
+    const secondContent = Buffer.from("%PDF-SYNTHETIC-SECOND-REFERENCE");
+    const secondDocument = await client.query(
+      `INSERT INTO app.assignment_documents
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content)
+       VALUES ($1, $2, 'Synthetic second reference', 'second.pdf', $3, $4, $5) RETURNING id`,
+      [accountId, assignmentFileId, createHash("sha256").update(secondContent).digest("hex"), secondContent.length, secondContent],
+    );
+    const documentIds = [documentId, Number(secondDocument.rows[0].id)];
+    let wireRows;
+    const observedClient = { query: async query => {
+      const response = await client.query(query);
+      wireRows = structuredClone(response.rows);
+      return response;
+    } };
+    const selected = await readSfrepDocuments(observedClient, { accountId, assignmentFileId, documentIds });
+    assert.equal(wireRows.length, 1);
+    assert.equal(wireRows[0].evidence_limit, false);
+    assert.equal(wireRows[0].snapshot.documents.length, 2);
+    assert.equal(wireRows[0].snapshot.saved_report.documents.length, 2);
+    assert.equal(wireRows[0].snapshot.saved_report.subject.value.urar_subject.borrower_name, "Synthetic Borrower");
+    assert.equal((JSON.stringify(wireRows).match(/"saved_report":/g) || []).length, 1);
+    assert.ok(wireRows[0].snapshot.documents.every(row => !Object.hasOwn(row, "saved_report") && !Object.hasOwn(row, "content")));
+    assert.ok(wireRows[0].snapshot.saved_report.documents.every(row => !Object.hasOwn(row, "content")));
+    assert.deepEqual(selected.map(row => row.id), documentIds);
+    assert.equal(selected.filter(row => Object.hasOwn(row, "saved_report")).length, 1);
+    await client.query(
+      "UPDATE app.assignment_document_field_candidates SET raw_value = repeat('x', $2) WHERE id = $1 AND document_id = $3",
+      [candidateIds.get("borrower_name"), 8 * 1024 * 1024 + 1, documentId],
+    );
+    await assert.rejects(readSfrepDocuments(observedClient, { accountId, assignmentFileId, documentIds }), /sfrep_evidence_limit/);
+    assert.deepEqual(wireRows, [{ snapshot: null, evidence_limit: true }]);
+  } finally {
+    if (client) {
+      await client.query("ROLLBACK").catch(() => {});
+      client.release();
+    }
+    await pool.end();
+  }
+});
 
 test("scheduled legacy migration leaves signed Custom document bytes and metadata untouched", {
   skip: !databaseUrl,
@@ -210,15 +393,19 @@ test("signed Custom document deletion, upload, and candidate review are denied a
   }
 });
 
-test("Custom document review waits on the workfile before locking the document row", {
-  skip: !databaseUrl,
-}, async () => {
+for (const operation of ["review", "duplicate upload"]) {
+  test(`Custom document ${operation} waits on the workfile before locking the document row`, {
+    skip: !databaseUrl,
+  }, () => assertCustomDocumentLockOrder(operation));
+}
+
+async function assertCustomDocumentLockOrder(operation) {
   const pool = new pg.Pool({ connectionString: databaseUrl, max: 3, statement_timeout: 10_000 });
   let holder;
   let assignmentFileId;
   let documentId;
   let accountId;
-  let reviewPromise;
+  let operationPromise;
   try {
     const identity = await pool.query("SELECT current_database() AS database_name");
     assert.match(identity.rows[0].database_name, /_test$/);
@@ -242,30 +429,31 @@ test("Custom document review waits on the workfile before locking the document r
     const checksum = createHash("sha256").update(content).digest("hex");
     const document = await pool.query(
       `INSERT INTO app.assignment_documents
-         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content)
-       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', $3, $4, $5)
+         (account_id, assignment_file_id, title, file_name, checksum_sha256, file_size_bytes, content, processing_status)
+       VALUES ($1, $2, 'Draft evidence', 'evidence.pdf', $3, $4, $5, 'review_required')
        RETURNING id`,
       [accountId, assignmentFileId, checksum, content.length, content],
     );
     documentId = document.rows[0].id;
     const candidate = await pool.query(
       `INSERT INTO app.assignment_document_field_candidates
-         (document_id, field_key, raw_value)
-       VALUES ($1, 'lender_client_name', 'Fixture lender') RETURNING id`,
+         (document_id, field_key, raw_value, normalized_value)
+       VALUES ($1, 'lender_client_name', 'Lender: Fixture lender', 'Fixture lender') RETURNING id`,
       [documentId],
     );
 
-    let preliminaryRead;
-    const readStarted = new Promise((resolve) => { preliminaryRead = resolve; });
+    let workfileLockAttempt;
+    const workfileLockStarted = new Promise((resolve) => { workfileLockAttempt = resolve; });
     const observedPool = {
       query: (...args) => pool.query(...args),
       connect: async () => {
         const client = await pool.connect();
         return {
           query: async (sql, ...args) => {
-            const result = await client.query(sql, ...args);
-            if (/SELECT account_id, assignment_file_id/.test(String(sql))) preliminaryRead();
-            return result;
+            // Signal only after any earlier document lookup has completed, so
+            // an inverted duplicate-upload lock order fails deterministically.
+            if (/FOR UPDATE OF workfile/.test(String(sql))) workfileLockAttempt();
+            return client.query(sql, ...args);
           },
           release: () => client.release(),
         };
@@ -279,7 +467,9 @@ test("Custom document review waits on the workfile before locking the document r
       "SELECT assignment_file_id FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1 FOR UPDATE",
       [assignmentFileId],
     );
-    reviewPromise = reviewAssignmentDocumentCandidate(observedPool, {
+    operationPromise = operation === "duplicate upload" ? createAssignmentDocument(observedPool, {
+      accountId, assignmentFileId, fileName: "duplicate.pdf", content,
+    }) : reviewAssignmentDocumentCandidate(observedPool, {
       documentId,
       candidateId: candidate.rows[0].id,
       reviewStatus: "rejected",
@@ -288,19 +478,19 @@ test("Custom document review waits on the workfile before locking the document r
     let waitTimer;
     try {
       await Promise.race([
-        readStarted,
-        reviewPromise.then(
-          () => { throw new Error("document_review_finished_before_scope_read"); },
+        workfileLockStarted,
+        operationPromise.then(
+          () => { throw new Error("document_operation_finished_before_workfile_lock"); },
           (error) => { throw error; },
         ),
         new Promise((_, reject) => {
-          waitTimer = setTimeout(() => reject(new Error("document_scope_read_timeout")), 5_000);
+          waitTimer = setTimeout(() => reject(new Error("document_workfile_lock_timeout")), 5_000);
         }),
       ]);
     } finally {
       clearTimeout(waitTimer);
     }
-    // If review locked the document first, this opposing workfile/document
+    // If the operation locked the document first, this opposing workfile/document
     // transaction would hit lock_timeout instead of acquiring the row.
     await holder.query(
       "SELECT id FROM app.assignment_documents WHERE id = $1 FOR UPDATE",
@@ -309,23 +499,48 @@ test("Custom document review waits on the workfile before locking the document r
     await holder.query("COMMIT");
     holder.release();
     holder = null;
-    const reviewed = await reviewPromise;
+    const reviewed = await operationPromise;
+    if (operation === "duplicate upload") {
+      assert.equal(reviewed.id, Number(documentId));
+      assert.equal(reviewed.file_name, "duplicate.pdf");
+      assert.equal(reviewed.processing_status, "review_required");
+      const duplicates = await pool.query(
+        "SELECT count(*)::integer AS count FROM app.assignment_documents WHERE assignment_file_id = $1",
+        [assignmentFileId],
+      );
+      assert.equal(duplicates.rows[0].count, 1);
+      return;
+    }
     assert.equal(reviewed.review_status, "rejected");
+    // Single-field approval must use the same normalized default as batch approval.
+    const confirm = (confirmedValue) => reviewAssignmentDocumentCandidate(pool, {
+      documentId, candidateId: candidate.rows[0].id, reviewStatus: "confirmed",
+      reviewer: "Fixture appraiser", confirmedValue,
+    });
+    assert.equal((await confirm()).confirmed_value, "Fixture lender");
+    assert.equal((await confirm("Appraiser correction")).confirmed_value, "Appraiser correction");
+    await pool.query(
+      "UPDATE app.assignment_document_field_candidates SET normalized_value = ' ' WHERE id = $1 AND document_id = $2",
+      [candidate.rows[0].id, documentId],
+    );
+    assert.equal((await confirm()).confirmed_value, "Lender: Fixture lender");
   } finally {
     if (holder) {
       await holder.query("ROLLBACK").catch(() => {});
       holder.release();
     }
-    if (reviewPromise) await reviewPromise.catch(() => {});
+    if (operationPromise) await operationPromise.catch(() => {});
     if (documentId) await pool.query("DELETE FROM app.assignment_documents WHERE id = $1", [documentId]);
     if (assignmentFileId) {
+      await pool.query("DELETE FROM app.custom_appraisal_section_history WHERE assignment_file_id = $1", [assignmentFileId]);
+      await pool.query("DELETE FROM app.custom_appraisal_sections WHERE assignment_file_id = $1", [assignmentFileId]);
       await pool.query("DELETE FROM app.custom_appraisal_workfiles WHERE assignment_file_id = $1", [assignmentFileId]);
       await pool.query("DELETE FROM app.assignment_files WHERE id = $1", [assignmentFileId]);
     }
     if (accountId) await pool.query("DELETE FROM core.accounts WHERE account_id = $1", [accountId]);
     await pool.end();
   }
-});
+}
 
 test("custom signed-photo coverage audit runs against migrated PostgreSQL without writes", {
   skip: !databaseUrl,

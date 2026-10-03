@@ -17,6 +17,13 @@ UAD 3.6 XML export
 - Run services
   - Server: `cd server && npm install && npm run start`
   - Frontend: `cd dcad-frontend && npm install && npm run dev`
+  - Server development: with the Node version declared in `server/package.json`,
+    `npm run dev` uses Node's native watch mode and preserves console output.
+    Changes to imported/required JavaScript modules restart the server. Stop and
+    rerun it after changing files read directly from disk (for example,
+    `spec/appendix-h1-v1.5.json`) or environment configuration. The old nodemon
+    `rs` shortcut and optional polling configuration are no longer available.
+    Production `npm start` is unchanged and does not enable file watching.
 
 - Testing
   - Open `http://localhost:5173/signup`, draw a signature, enter owner name + telephone, click "Submit Enrollment".

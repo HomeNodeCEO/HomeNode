@@ -536,6 +536,50 @@ test('reviewed MLS None clears only untouched automatic dues and retains proxy p
   assert.equal(conflicting.assignmentDetails.hoa_dues_amount, undefined);
 });
 
+for (const processingStatus of ['uploaded', 'processing', 'ocr_required', 'extraction_failed']) {
+  test(`mixed-source ${processingStatus} MLS None cannot clear automatic dues or manufacture a conflict`, () => {
+    const initial = merge([fullDocument()]);
+    const explicitPud = document(2, { pud: 'false' }, { document_type: 'mls_sheet' });
+    const staleNone = document(3, { pud: 'false' }, { document_type: 'mls_sheet',
+      processing_status: processingStatus, property_role: 'subject' });
+    Object.assign(staleNone.candidates.find(candidate => candidate.field_key === 'pud'), {
+      raw_value: 'None', normalized_value: 'false', extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+    const projection = projectCustomSubjectDocuments([explicitPud, staleNone]);
+    assert.equal(projection.fields.find(field => field.key === 'pud')?.value, false);
+    assert.equal(projection.fields.some(field => ['hoa_dues_amount', 'hoa_frequency'].includes(field.key)), false);
+    const next = mergeCustomSubjectApplication({ ...initial, reviewedDocumentId: explicitPud.id, projection });
+    assert.equal(next.assignmentDetails.hoa_dues_amount, initial.assignmentDetails.hoa_dues_amount);
+    assert.equal(next.assignmentDetails.hoa_frequency, initial.assignmentDetails.hoa_frequency);
+    assert.equal(next.evidence.fields.hoa_dues_amount.status, 'needs_review');
+    assert.equal(next.evidence.fields.hoa_frequency.status, 'needs_review');
+
+    const currentDues = document(4, { hoa_dues_amount: '240', hoa_frequency: 'per_year' }, { document_type: 'mls_sheet' });
+    const withCurrentDues = projectCustomSubjectDocuments([explicitPud, staleNone, currentDues]);
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'pud')?.value, false);
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'hoa_dues_amount')?.value, '240.00');
+    assert.equal(withCurrentDues.fields.find(field => field.key === 'hoa_frequency')?.value, 'per_year');
+    assert.deepEqual(withCurrentDues.conflicts, []);
+    assert.equal(withCurrentDues.warnings.some(warning => warning.includes('MLS reports no HOA')), false);
+  });
+}
+
+for (const processingStatus of ['reviewed', 'review_required']) {
+  test(`separately ${processingStatus} MLS None still supplies clearing evidence behind equivalent explicit PUD false`, () => {
+    const explicitPud = document(2, { pud: 'false' }, { document_type: 'mls_sheet' });
+    const noHoa = document(3, { pud: 'false' }, { document_type: 'mls_sheet', processing_status: processingStatus });
+    Object.assign(noHoa.candidates.find(candidate => candidate.field_key === 'pud'), {
+      raw_value: 'None', normalized_value: 'false', extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
+    const projection = projectCustomSubjectDocuments([explicitPud, noHoa]);
+    assert.equal(projection.fields.find(field => field.key === 'pud')?.provenance.documentId, explicitPud.id);
+    for (const key of ['hoa_dues_amount', 'hoa_frequency']) {
+      const clearing = projection.fields.find(field => field.key === key);
+      assert.equal(clearing?.value, null);
+      assert.equal(clearing.provenance.documentId, noHoa.id);
+      assert.equal(clearing.provenance.rule, 'reviewed_no_hoa_clears_automatic_dues_v1');
+    }
+  });
+}
+
 test('reviewing a contributing document refreshes a stale multi-source narrative without overwriting a manual edit', () => {
   const field = { key: 'listing_history_summary', value: 'Synthetic listing narrative', sourceValue: 'evidence',
     provenance: { kind: 'derived_reviewed_document', documentId: 1, sourceEvidence: [{ documentId: 1 }, { documentId: 2 }] } };

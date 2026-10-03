@@ -786,9 +786,12 @@ export default function AssignmentDocumentCenter({
           );
           return;
         }
-        // Confirm the full chosen batch before applying anything. PDF order is
-        // not dependency order: page-one HOA fields may precede the subject
-        // identity that the server requires to safely apply this document.
+        let applied = 0;
+        // Resume any HOA confirmation retained by an earlier interrupted batch.
+        // Only this group waits for identity evidence from later PDF pages;
+        // ordinary fields retain their per-candidate confirm/apply behavior.
+        let hoaCandidate = selectedDocument.candidates?.find(candidate => candidate.id
+          && candidate.review_status === 'confirmed' && UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key));
         for (const candidate of suggestedCandidates) {
           if (!reviewCanContinue(operation)) return;
           if (!candidate.id) continue;
@@ -804,24 +807,18 @@ export default function AssignmentDocumentCenter({
           );
           if (!reviewCanContinue(operation)) return;
           clearSavedCandidateEdits(selectedDocument.id, submittedEdits, [candidate.id]);
-        }
-        let applied = 0;
-        let hoaGroupRequested = false;
-        const applicationCandidates = [...suggestedCandidates];
-        // A prior partial confirmation may already have approved HOA before
-        // identity failed. Resume that same-document group after this batch.
-        const previouslyConfirmedHoa = selectedDocument.candidates?.find(candidate => candidate.id
-          && candidate.review_status === 'confirmed' && UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key));
-        if (previouslyConfirmedHoa) applicationCandidates.unshift(previouslyConfirmedHoa);
-        for (const candidate of applicationCandidates) {
-          if (!reviewCanContinue(operation)) return;
-          if (!candidate.id) continue;
           if (UAD_PROJECT_DOCUMENT_FIELDS.has(candidate.field_key)) {
-            if (hoaGroupRequested) continue;
-            // One request applies the latest confirmed HOA/PUD group atomically.
-            hoaGroupRequested = true;
+            hoaCandidate ??= candidate;
+            continue;
           }
           const result = await applyConfirmedCandidateToUad(candidate, operation);
+          if (!reviewCanContinue(operation)) return;
+          if (result?.applied) applied += 1;
+        }
+        if (hoaCandidate) {
+          if (!reviewCanContinue(operation)) return;
+          // One request applies the latest confirmed HOA/PUD group atomically.
+          const result = await applyConfirmedCandidateToUad(hoaCandidate, operation);
           if (!reviewCanContinue(operation)) return;
           if (result?.applied) applied += 1;
         }

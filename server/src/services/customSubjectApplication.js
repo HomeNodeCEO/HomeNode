@@ -105,8 +105,11 @@ export function projectCustomSubjectDocuments(documents = []) {
     && /^(none|no)$/i.test(field.provenance.sourceValue));
   // Equivalent PUD=false sources can deduplicate to an explicit PUD field first.
   // Still honor a separately reviewed, identity-proven MLS "None" observation.
+  // Keep the exporter's readiness gate explicit here as well: reprocessing can
+  // retain confirmed rows, but those stale rows cannot clear dues or conflict.
   if (!noHoa && fields.some(field => field.key === 'pud' && field.value === false)) {
-    for (const source of scoped.filter(document => document.property_role === 'subject' && document.document_type === 'mls_sheet')) {
+    for (const source of scoped.filter(document => document.property_role === 'subject' && document.document_type === 'mls_sheet'
+      && ['reviewed', 'review_required'].includes(document.processing_status))) {
       const candidate = source.candidates.find(item => item.field_key === 'pud' && item.review_status === 'confirmed'
         && (item.document_id == null || Number(item.document_id) === source.id)
         && item.extraction_method === 'urar_subject_mls_sheet_hoa_workflow_proxy'

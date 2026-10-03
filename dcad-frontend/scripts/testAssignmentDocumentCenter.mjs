@@ -1139,7 +1139,7 @@ test('partially failed UAD approve-all acknowledges only successfully reviewed c
   h.candidateInput(702).props.onChange({ target: { value: '' } }); h.flush();
   h.click('Approve All (2)'); await h.settle(); assert.match(h.text, /synthetic second save failed/);
   assert.equal(h.requests('reviewUadDocumentCandidate')[1].args[3].confirmedValue, '');
-  assert.equal(h.requests('applyUadDocumentCandidate').length, 0, 'Incomplete confirmation must not apply a partial batch');
+  assert.equal(h.requests('applyUadDocumentCandidate').length, 1, 'An approved non-HOA candidate keeps its original immediate application');
   serverValue = 'C'; h.poll(); await h.settle();
   assert.equal(h.candidateInput(701).props.value, 'C');
   assert.equal(h.candidateInput(702).props.value, '');
@@ -1190,14 +1190,16 @@ for (const pudValue of ['false', 'true']) {
         getUadDocument: async (_workfile, id) => document(id, { candidates }),
         reviewUadDocumentCandidate: async (_workfile, _document, id) => { reviewed.add(id); return {}; },
         applyUadDocumentCandidate: async (_workfile, _document, id) => {
-          if (!reviewed.has(702) || !reviewed.has(703)) throw new Error('uad_document_project_subject_requires_manual_entry');
+          if (id === 701 && (!reviewed.has(702) || !reviewed.has(703))) throw new Error('uad_document_project_subject_requires_manual_entry');
           return { applied: id === 701, field_key: candidates[id - 701].field_key, section: 'project_information' };
         },
       } });
     t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Approve All (3)'); await h.settle();
     const calls = h.calls.filter(call => ['reviewUadDocumentCandidate', 'applyUadDocumentCandidate'].includes(call.name));
-    assert.deepEqual(calls.slice(0, 3).map(call => call.name), Array(3).fill('reviewUadDocumentCandidate'));
-    assert.deepEqual(calls.slice(3).map(call => call.name), Array(3).fill('applyUadDocumentCandidate'));
+    assert.deepEqual(calls.map(call => [call.name, call.args[2]]), [
+      ['reviewUadDocumentCandidate', 701], ['reviewUadDocumentCandidate', 702], ['applyUadDocumentCandidate', 702],
+      ['reviewUadDocumentCandidate', 703], ['applyUadDocumentCandidate', 703], ['applyUadDocumentCandidate', 701],
+    ]);
     assert.equal(applications.filter(result => result.applied && result.field_key === 'pud').length, 1);
     assert.doesNotMatch(h.text, /requires_manual_entry/);
     assert.match(h.text, /3 extracted fields approved and 1 supported value applied/);
@@ -1211,12 +1213,15 @@ test('UAD approve-all still surfaces the server subject-identity rejection after
   const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77', onUadApplied: result => applications.push(result) }, documents: [document(7)], api: {
     getUadDocument: async (_workfile, id) => document(id, { candidates }),
     reviewUadDocumentCandidate: async () => ({}),
-    applyUadDocumentCandidate: async () => { throw new Error('uad_document_project_subject_requires_manual_entry'); },
+    applyUadDocumentCandidate: async (_workfile, _document, id) => {
+      if (id === 701) throw new Error('uad_document_project_subject_requires_manual_entry');
+      return { applied: false, field_key: 'subject_street_address' };
+    },
   } });
   t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Approve All (2)'); await h.settle();
   assert.equal(h.requests('reviewUadDocumentCandidate').length, 2);
-  assert.equal(h.requests('applyUadDocumentCandidate').length, 1);
-  assert.equal(applications.length, 0);
+  assert.equal(h.requests('applyUadDocumentCandidate').length, 2);
+  assert.equal(applications.filter(result => result.applied).length, 0);
   assert.match(h.text, /uad_document_project_subject_requires_manual_entry/);
 });
 
@@ -1234,7 +1239,7 @@ test('UAD approve-all retry applies an earlier confirmed HOA group only after re
       confirmed.add(id); return {};
     },
     applyUadDocumentCandidate: async (_workfile, _document, id) => {
-      assert.equal(confirmed.size, 3, 'Both identity fields must be confirmed before applying');
+      if (id === 701) assert.equal(confirmed.size, 3, 'Both identity fields must be confirmed before applying HOA');
       return { applied: id === 701, field_key: candidates[id - 701].field_key, section: 'project_information' };
     },
   } });
@@ -1246,6 +1251,36 @@ test('UAD approve-all retry applies an earlier confirmed HOA group only after re
   assert.equal(h.requests('reviewUadDocumentCandidate').filter(call => call.args[2] === 701).length, 1, 'Earlier approval is not resubmitted');
   assert.equal(h.requests('applyUadDocumentCandidate').filter(call => call.args[2] === 701).length, 1, 'Earlier approved HOA group resumes once');
   assert.match(h.text, /2 extracted fields approved and 1 supported value applied/);
+});
+
+test('UAD approve-all preserves an applied lender name when address confirmation fails and only the remaining address is retried', async t => {
+  const candidates = [{ ...candidate(701, 'Synthetic Bank'), field_key: 'lender_client_name' },
+    { ...candidate(702, '100 Test Lane, Garland, TX 75044'), field_key: 'lender_client_address' }];
+  const confirmed = new Set();
+  const saved = {};
+  let failAddress = true;
+  const h = harness({ props: { uadWorkfileId: 'synthetic-uad-77' }, documents: [document(7)], api: {
+    getUadDocument: async (_workfile, id) => document(id, { processing_status: 'processing', candidates: candidates.map(item => ({ ...item,
+      review_status: confirmed.has(item.id) ? 'confirmed' : 'suggested' })) }),
+    reviewUadDocumentCandidate: async (_workfile, _document, id) => {
+      if (id === 702 && failAddress) throw new Error('synthetic lender-address confirmation interrupted');
+      confirmed.add(id); return {};
+    },
+    applyUadDocumentCandidate: async (_workfile, _document, id) => {
+      assert.equal(confirmed.has(id), true);
+      const item = candidates.find(candidate => candidate.id === id);
+      saved[item.field_key] = item.raw_value;
+      return { applied: true, field_key: item.field_key, section: 'assignment' };
+    },
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Approve All (2)'); await h.settle();
+  assert.deepEqual(saved, { lender_client_name: 'Synthetic Bank' });
+  assert.match(h.text, /synthetic lender-address confirmation interrupted/);
+  failAddress = false; h.poll(); await h.settle(); h.click('Approve All (1)'); await h.settle();
+  assert.deepEqual(saved, { lender_client_name: 'Synthetic Bank', lender_client_address: '100 Test Lane, Garland, TX 75044' });
+  assert.equal(h.requests('reviewUadDocumentCandidate').filter(call => call.args[2] === 701).length, 1);
+  assert.deepEqual(h.requests('applyUadDocumentCandidate').map(call => call.args[2]), [701, 702]);
+  assert.match(h.text, /1 extracted field approved and 1 supported value applied/);
 });
 
 test('late UAD HOA responses cannot place source warnings on another document', async t => {

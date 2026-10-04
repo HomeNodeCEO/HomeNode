@@ -363,7 +363,8 @@ const FUZZY_TRANSACTION_STEPS = ["BEGIN", "source_lock", ...FUZZY_APPLY_WRITES.m
 function fuzzyTransactionHarness({
   ids = [44], lockedIds = ids, eligible = true, failAt = null,
   primaryError = new Error("synthetic private primary failure"), rollbackFails = false,
-  auditFailureAt = null, checkoutError = null,
+  auditFailureAt = null, checkoutError = null, releaseThrows = false, releaseError,
+  rollbackThrows = false, beforeRollback = () => undefined, releaseReturn,
 } = {}) {
   const auditQueries = [], clientQueries = [], releases = [];
   let checkouts = 0;
@@ -377,20 +378,30 @@ function fuzzyTransactionHarness({
     parcel_number_raw: `BAD-${id}`, match_status: "unmatched",
   }));
   const client = {
-    async query(sql, params) {
+    query(sql, params) {
       const statement = String(sql).trim();
       const step = ["BEGIN", "COMMIT", "ROLLBACK"].includes(statement) ? statement
         : statement.includes("FOR UPDATE OF source") ? "source_lock"
           : FUZZY_APPLY_WRITES.find(([, fragment]) => statement.includes(fragment))?.[0];
       assert.ok(step, `unexpected owned-client query: ${statement.slice(0, 90)}`);
       clientQueries.push({ step, statement, params });
-      if (step === "ROLLBACK" && rollbackFails) throw rollbackError;
-      if (step === failAt) throw primaryError;
-      if (step === "source_lock") return { rows: lockedIds.map(id => ({ id })), rowCount: lockedIds.length };
-      if (step === "source_update") return { rows: lockedIds.map(id => ({ id })), rowCount: lockedIds.length };
-      return { rows: [], rowCount: 0 };
+      if (step === "ROLLBACK") {
+        if (rollbackThrows) throw rollbackError;
+        return Promise.resolve(beforeRollback()).then(() => {
+          if (rollbackFails) throw rollbackError;
+          return { rows: [], rowCount: 0 };
+        });
+      }
+      if (step === failAt) return Promise.reject(primaryError);
+      if (step === "source_lock") return Promise.resolve({ rows: lockedIds.map(id => ({ id })), rowCount: lockedIds.length });
+      if (step === "source_update") return Promise.resolve({ rows: lockedIds.map(id => ({ id })), rowCount: lockedIds.length });
+      return Promise.resolve({ rows: [], rowCount: 0 });
     },
-    release(...args) { releases.push(args); },
+    release(...args) {
+      releases.push(args);
+      if (releaseThrows) throw releaseError;
+      return releaseReturn;
+    },
   };
   const pool = {
     async query(sql, params) {
@@ -468,6 +479,39 @@ for (const failAt of FUZZY_TRANSACTION_STEPS) for (const rollbackFails of [false
     assert.equal(discard.message, "sales_fuzzy_reconciliation_rollback_failed");
     assert.equal(Object.hasOwn(discard, "cause"), false);
     assert.deepEqual(Object.keys(discard), [], "the retirement marker carries no SQL, connection details, or raw error fields");
+    assert.doesNotMatch(String(discard.stack), /synthetic private|sensitive-value|synthetic-private-sql|SYNTHETIC_PRIVATE_CODE/);
+  });
+}
+
+for (const { name, failAt, rollbackFails, releaseError } of [
+  { name: "successful commit", failAt: null, rollbackFails: false, releaseError: new Error("synthetic release failure") },
+  { name: "primary failure and successful rollback", failAt: "COMMIT", rollbackFails: false, releaseError: Symbol("synthetic release value") },
+  { name: "primary failure and failed rollback", failAt: "sale_update", rollbackFails: true, releaseError: Object.freeze({ release: "synthetic failure" }) },
+]) {
+  test(`fuzzy reconciliation preserves synchronous release throw after ${name}`, async () => {
+    const h = fuzzyTransactionHarness({ failAt, rollbackFails, releaseThrows: true, releaseError });
+    await assert.rejects(runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false }), error => {
+      assert.equal(error, releaseError, "the exact value thrown by release must escape the public wrapper");
+      return true;
+    });
+    assert.equal(h.checkouts, 1);
+    assert.deepEqual(h.steps, failAt
+      ? [...FUZZY_TRANSACTION_STEPS.slice(0, FUZZY_TRANSACTION_STEPS.indexOf(failAt) + 1), "ROLLBACK"]
+      : FUZZY_TRANSACTION_STEPS, "a release throw must not retry, roll back a committed transaction, or repeat cleanup");
+    assert.equal(h.releases.length, 1);
+    assert.equal(h.releases[0].length, 1);
+    if (!rollbackFails) {
+      assert.equal(h.releases[0][0], undefined);
+      return;
+    }
+    const discard = h.releases[0][0];
+    assert.ok(discard instanceof Error);
+    assert.equal(discard.message, "sales_fuzzy_reconciliation_rollback_failed");
+    assert.notEqual(discard, h.primaryError);
+    assert.notEqual(discard, h.rollbackError);
+    assert.notEqual(discard, releaseError);
+    assert.equal(Object.hasOwn(discard, "cause"), false);
+    assert.deepEqual(Object.keys(discard), []);
     assert.doesNotMatch(String(discard.stack), /synthetic private|sensitive-value|synthetic-private-sql|SYNTHETIC_PRIVATE_CODE/);
   });
 }
@@ -562,4 +606,75 @@ test("fuzzy checkout failure preserves the error without querying or releasing a
   const h = fuzzyTransactionHarness({ checkoutError });
   await assert.rejects(runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false }), error => error === checkoutError);
   assert.equal(h.checkouts, 1); assert.deepEqual(h.clientQueries, []); assert.deepEqual(h.releases, []);
+});
+
+function assertFuzzyDiscard(h) {
+  assert.equal(h.checkouts, 1);
+  assert.equal(h.releases.length, 1);
+  assert.equal(h.releases[0].length, 1);
+  const [marker] = h.releases[0];
+  assert.ok(marker instanceof Error);
+  assert.equal(marker.message, "sales_fuzzy_reconciliation_rollback_failed");
+  assert.notEqual(marker, h.primaryError);
+  assert.notEqual(marker, h.rollbackError);
+  assert.equal(Object.hasOwn(marker, "cause"), false);
+  assert.deepEqual(Object.keys(marker), []);
+  assert.doesNotMatch(marker.stack, /synthetic private|sensitive-value|synthetic-private-sql|SYNTHETIC_PRIVATE_CODE/);
+}
+
+for (const failAt of FUZZY_TRANSACTION_STEPS) {
+  test(`fuzzy reconciliation ${failAt} failure survives a synchronous rollback throw`, async () => {
+    const h = fuzzyTransactionHarness({ failAt, rollbackThrows: true });
+    await assert.rejects(runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false }), error => error === h.primaryError);
+    assert.deepEqual(h.steps, [...FUZZY_TRANSACTION_STEPS.slice(0, FUZZY_TRANSACTION_STEPS.indexOf(failAt) + 1), "ROLLBACK"]);
+    assertFuzzyDiscard(h);
+  });
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`fuzzy reconciliation awaits rollback ${rollbackFails ? "failure" : "success"} before releasing or rejecting`, async () => {
+    let finishRollback;
+    const gate = new Promise(resolve => { finishRollback = resolve; });
+    const h = fuzzyTransactionHarness({ failAt: "history_insert", rollbackFails, beforeRollback: () => gate });
+    let settled = false;
+    const pending = runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false }).then(
+      value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; },
+    );
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      const completedAudit = h.auditQueries.slice();
+      assert.equal(completedAudit.length, 5);
+      assert.equal(h.checkouts, 1);
+      assert.deepEqual(h.steps, [...FUZZY_TRANSACTION_STEPS.slice(0, -1), "ROLLBACK"]);
+      assert.deepEqual(h.releases, []);
+      assert.equal(settled, false);
+      finishRollback();
+      assert.equal((await pending).error, h.primaryError);
+      assert.deepEqual(h.auditQueries, completedAudit, "cleanup must not replay pre-checkout audit work");
+      assert.deepEqual(h.steps, [...FUZZY_TRANSACTION_STEPS.slice(0, -1), "ROLLBACK"]);
+      assert.equal(h.checkouts, 1);
+      if (rollbackFails) assertFuzzyDiscard(h);
+      else assertReusableClient(h);
+    } finally {
+      finishRollback();
+      await pending;
+    }
+  });
+}
+
+test("fuzzy reconciliation leaves synchronous release return values unobserved", async () => {
+  let thenReads = 0;
+  const releaseReturn = { get then() { thenReads += 1; throw new Error("release return must remain unobserved"); } };
+  for (const options of [{}, { failAt: "COMMIT" }, { failAt: "COMMIT", rollbackFails: true }]) {
+    const h = fuzzyTransactionHarness({ ...options, releaseReturn });
+    if (options.failAt) {
+      await assert.rejects(runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false }), error => error === h.primaryError);
+    } else assert.equal((await runFuzzySalesAddressReconciliationBatch(h.pool, { dryRun: false })).resolved, 1);
+    assert.equal(thenReads, 0);
+    assert.equal(h.checkouts, 1);
+    assert.deepEqual(h.steps, [...FUZZY_TRANSACTION_STEPS, ...(options.failAt ? ["ROLLBACK"] : [])]);
+    if (options.rollbackFails) assertFuzzyDiscard(h);
+    else assertReusableClient(h);
+  }
 });

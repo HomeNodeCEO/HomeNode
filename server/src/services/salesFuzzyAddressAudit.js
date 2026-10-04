@@ -1,3 +1,4 @@
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import {
   ensureAccountAddressAliasSchema,
 } from "./accountAddressAliases.js";
@@ -507,11 +508,9 @@ export async function runFuzzySalesAddressReconciliationBatch(pool, {
       resolved,
     };
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      rollbackFailure = new Error("sales_fuzzy_reconciliation_rollback_failed");
-    }
+    rollbackFailure = (await rollbackWithDiscardReason(
+      client, "sales_fuzzy_reconciliation_rollback_failed",
+    )) ?? undefined;
     throw error;
   } finally {
     client.release(rollbackFailure);

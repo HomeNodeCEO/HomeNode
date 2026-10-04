@@ -176,7 +176,10 @@ const ENTITY_INPUT = Object.freeze({ entity_type: "assignment_seller", label: "N
 
 // Stateful unit model, not PostgreSQL evidence. Accept both the old and new
 // lock/BEGIN forms so old-source RED means missing refusal, not missing SQL.
-function entityLifecycleFixture({ status = "ready", signedAt = null, signatureRevision = null, commitError = null } = {}) {
+function entityLifecycleFixture({
+  status = "ready", signedAt = null, signatureRevision = null, commitError = null,
+  rollbackError = null, beforeRollback, releaseThrows = false, releaseError,
+} = {}) {
   let state = {
     workfile: { id: WORKFILE_ID, status, signed_at: signedAt, current_revision: 2, updated_at: "before" },
     entities: [{ id: ENTITY_ID, workfile_id: WORKFILE_ID, parent_entity_id: null,
@@ -192,8 +195,8 @@ function entityLifecycleFixture({ status = "ready", signedAt = null, signatureRe
     validation: [{ revision_number: 2, status: "passed" }],
     artifacts: [{ revision_number: 2, generation_status: "ready" }],
   };
-  const before = structuredClone(state), trace = [], failures = [], isolations = [];
-  let snapshot = null, active = false, locked = false, connections = 0, releases = 0;
+  const before = structuredClone(state), trace = [], failures = [], isolations = [], releaseReasons = [];
+  let snapshot = null, active = false, locked = false, connections = 0, releases = 0, rollbackFailed = false;
   const client = {
     async query(sql, params = []) {
       const statement = String(sql).replace(/\s+/g, " ").trim();
@@ -212,6 +215,8 @@ function entityLifecycleFixture({ status = "ready", signedAt = null, signatureRe
         if (statement === "COMMIT" || statement === "ROLLBACK") {
           assert.deepEqual(params, []);
           if (statement === "COMMIT" && commitError) throw commitError;
+          if (statement === "ROLLBACK") await beforeRollback?.();
+          if (statement === "ROLLBACK" && rollbackError) { rollbackFailed = true; throw rollbackError; }
           if (statement === "ROLLBACK") state = structuredClone(snapshot);
           active = false; locked = false;
           return { rows: [] };
@@ -276,17 +281,23 @@ function entityLifecycleFixture({ status = "ready", signedAt = null, signatureRe
         }
         assert.fail(`unsupported entity lifecycle fixture SQL: ${statement}`);
       } catch (error) {
-        if (error !== commitError) failures.push(error);
+        if (error !== commitError && error !== rollbackError) failures.push(error);
         throw error;
       }
     },
-    release() {
-      try { assert.equal(this, client); assert.equal(active, false); assert.equal(++releases, 1); }
+    release(reason) {
+      try {
+        assert.equal(this, client);
+        assert.equal(active, rollbackFailed, "only an injected failed rollback can leave the modeled transaction active at release");
+        assert.equal(++releases, 1);
+        releaseReasons.push(reason);
+      }
       catch (error) { failures.push(error); throw error; }
+      if (releaseThrows) throw releaseError;
     },
   };
   return {
-    client, trace, isolations, before,
+    client, trace, isolations, before, releaseReasons,
     pool: {
       async connect() { assert.equal(++connections, 1); return client; },
       async query() { assert.fail("entity mutation escaped the checked-out client"); },
@@ -408,4 +419,185 @@ for (const operation of ["create", "delete"]) {
     assert.deepEqual(fixture.state(), fixture.before);
     assert.deepEqual(fixture.ownership(), { active: false, connections: 1, releases: 1 });
   });
+}
+
+for (const operation of ["create", "delete"]) {
+  for (const { name, primaryFails, rollbackFails, releaseError } of [
+    { name: "committed success", primaryFails: false, rollbackFails: false, releaseError: new Error("synthetic release failure") },
+    { name: "primary failure and successful rollback", primaryFails: true, rollbackFails: false, releaseError: Symbol("synthetic release value") },
+    { name: "primary failure and failed rollback", primaryFails: true, rollbackFails: true, releaseError: Object.freeze({ release: "synthetic failure" }) },
+  ]) {
+    test(`public entity lifecycle ${operation} preserves release exception precedence after ${name}`, async () => {
+      const commitError = primaryFails ? new Error("private entity commit detail") : null;
+      const rollbackError = rollbackFails ? new Error("private entity rollback detail") : null;
+      const fixture = entityLifecycleFixture({ commitError, rollbackError, releaseThrows: true, releaseError });
+      await assert.rejects(invokeEntityLifecycle(fixture, operation, false), error => {
+        assert.equal(error, releaseError, "the exact release-thrown Error, Symbol, or object must supersede the entity result or primary error");
+        return true;
+      });
+      fixture.assertSqlHealthy();
+      const trace = fixture.trace;
+      assert.deepEqual(trace.filter(sql => /^(BEGIN|COMMIT|ROLLBACK)\b/.test(sql)), [
+        ENTITY_BEGIN, "COMMIT", ...(primaryFails ? ["ROLLBACK"] : []),
+      ], "release failure must not start another transaction or retry cleanup");
+      assert.equal(trace.length, (operation === "create" ? 9 : 8) + (primaryFails ? 1 : 0));
+      assert.match(trace[1], /status, signed_at.*FOR UPDATE$/);
+      assert.equal(trace.filter(sql => sql.includes("FROM appraisal.uad_signatures")).length, 1);
+      assert.equal(trace.filter(sql => sql.startsWith(operation === "create"
+        ? "INSERT INTO appraisal.uad_entities" : "DELETE FROM appraisal.uad_entities")).length, 1);
+      assert.equal(trace.filter(sql => sql.startsWith("INSERT INTO appraisal.uad_audit_events")).length, 1);
+      assert.equal(trace.filter(sql => sql.startsWith("UPDATE appraisal.uad_workfiles")).length, 1);
+      assert.deepEqual(fixture.isolations, ["read committed"]);
+      assert.deepEqual(fixture.ownership(), { active: rollbackFails, connections: 1, releases: 1 });
+      assert.equal(fixture.releaseReasons.length, 1);
+      const marker = fixture.releaseReasons[0];
+      if (rollbackFails) {
+        assert.equal(Object.getPrototypeOf(marker), Error.prototype);
+        assert.equal(marker.message, "uad_entity_rollback_failed");
+        for (const rawError of [commitError, rollbackError, releaseError]) assert.notEqual(marker, rawError);
+        assert.equal(Object.hasOwn(marker, "cause"), false);
+        assert.deepEqual(Object.keys(marker), []);
+        assert.doesNotMatch(String(marker.stack), /private entity/);
+      } else {
+        assert.equal(marker, undefined);
+      }
+      const state = fixture.state();
+      for (const key of ["revisions", "signatures", "assets", "history", "validation", "artifacts"]) {
+        assert.deepEqual(state[key], fixture.before[key], `${key} must be unaffected by entity cleanup`);
+      }
+      if (primaryFails && !rollbackFails) assert.deepEqual(state, fixture.before);
+      if (!primaryFails) {
+        assert.equal(state.workfile.status, "draft");
+        assert.equal(state.workfile.current_revision, 2);
+        assert.equal(state.entities.length, operation === "create" ? 2 : 0);
+        assert.equal(state.audit.length, fixture.before.audit.length + 1);
+        assert.equal(state.audit.at(-1).actor_user_id, ENTITY_ACTOR_ID);
+        assert.deepEqual(state.values, operation === "create" ? fixture.before.values : []);
+      }
+    });
+  }
+}
+
+function deferredRollback() {
+  let resolve;
+  const promise = new Promise((done) => { resolve = done; });
+  return { promise, resolve };
+}
+
+async function withinRollbackTest(promise) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error("entity rollback test timed out")), 2_000);
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+for (const operation of ["create", "delete"]) {
+  test(`public entity ${operation} preserves the primary error after a genuinely synchronous rollback throw`, async () => {
+    const primary = new Error("private entity lock detail");
+    const rollbackError = new Error("private entity synchronous rollback detail");
+    const trace = [];
+    const releases = [];
+    let connections = 0;
+    const client = {
+      // This is deliberately not async: the rollback call itself throws.
+      query(statement, parameters = []) {
+        assert.equal(this, client);
+        const sql = String(statement).replace(/\s+/g, " ").trim();
+        trace.push(sql);
+        if (sql === ENTITY_BEGIN) {
+          assert.deepEqual(parameters, []);
+          return Promise.resolve({ rows: [] });
+        }
+        if (sql === "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE") {
+          assert.deepEqual(parameters, [WORKFILE_ID]);
+          return Promise.reject(primary);
+        }
+        if (sql === "ROLLBACK") {
+          assert.deepEqual(parameters, []);
+          throw rollbackError;
+        }
+        assert.fail(`unexpected synchronous rollback test SQL: ${sql}`);
+      },
+      release(reason) { releases.push(reason); },
+    };
+    const pool = { async connect() { connections += 1; return client; } };
+    await assert.rejects(
+      operation === "create"
+        ? createUadEntity(pool, WORKFILE_ID, ENTITY_INPUT, ENTITY_ACTOR_ID)
+        : deleteUadEntity(pool, WORKFILE_ID, ENTITY_ID, ENTITY_ACTOR_ID),
+      error => error === primary,
+    );
+    assert.deepEqual(trace, [ENTITY_BEGIN,
+      "SELECT id, status, signed_at FROM appraisal.uad_workfiles WHERE id = $1 FOR UPDATE", "ROLLBACK"]);
+    assert.equal(connections, 1);
+    assert.equal(releases.length, 1);
+    const marker = releases[0];
+    assert.equal(Object.getPrototypeOf(marker), Error.prototype);
+    assert.equal(marker.message, "uad_entity_rollback_failed");
+    assert.notEqual(marker, primary);
+    assert.notEqual(marker, rollbackError);
+    assert.equal(Object.hasOwn(marker, "cause"), false);
+    assert.doesNotMatch(marker.stack, /private entity/);
+  });
+
+  for (const rollbackFails of [false, true]) {
+    test(`public entity ${operation} awaits delayed rollback ${rollbackFails ? "failure" : "success"} before release and primary rejection`, { timeout: 5_000 }, async () => {
+      const started = deferredRollback();
+      const gate = deferredRollback();
+      const primary = new Error("private entity deferred commit detail");
+      const rollbackError = rollbackFails ? new Error("private entity deferred rollback detail") : null;
+      const fixture = entityLifecycleFixture({
+        commitError: primary, rollbackError,
+        async beforeRollback() { started.resolve(); await gate.promise; },
+      });
+      let settled = false;
+      const outcome = invokeEntityLifecycle(fixture, operation, false).then(
+        value => { settled = true; return { value }; },
+        error => { settled = true; return { error }; },
+      );
+      try {
+        await withinRollbackTest(started.promise);
+        assert.equal(settled, false);
+        assert.deepEqual(fixture.ownership(), { active: true, connections: 1, releases: 0 });
+        assert.deepEqual(fixture.releaseReasons, []);
+        assert.deepEqual(fixture.trace.slice(-2), ["COMMIT", "ROLLBACK"]);
+        const pendingState = fixture.state();
+        assert.equal(pendingState.workfile.status, "draft");
+        assert.equal(pendingState.entities.length, operation === "create" ? 2 : 0);
+        assert.equal(pendingState.audit.length, fixture.before.audit.length + 1);
+        for (const key of ["revisions", "signatures", "assets", "history", "validation", "artifacts"]) {
+          assert.deepEqual(pendingState[key], fixture.before[key]);
+        }
+        gate.resolve();
+        assert.equal((await withinRollbackTest(outcome)).error, primary);
+        fixture.assertSqlHealthy();
+        assert.deepEqual(fixture.ownership(), { active: rollbackFails, connections: 1, releases: 1 });
+        assert.deepEqual(fixture.isolations, ["read committed"]);
+        assert.deepEqual(fixture.trace.filter(sql => /^(BEGIN|COMMIT|ROLLBACK)\b/.test(sql)), [ENTITY_BEGIN, "COMMIT", "ROLLBACK"]);
+        assert.equal(fixture.trace.length, (operation === "create" ? 9 : 8) + 1);
+        assert.equal(fixture.releaseReasons.length, 1);
+        const marker = fixture.releaseReasons[0];
+        if (rollbackFails) {
+          assert.equal(Object.getPrototypeOf(marker), Error.prototype);
+          assert.equal(marker.message, "uad_entity_rollback_failed");
+          assert.notEqual(marker, primary);
+          assert.notEqual(marker, rollbackError);
+          assert.equal(Object.hasOwn(marker, "cause"), false);
+          assert.doesNotMatch(marker.stack, /private entity/);
+        } else assert.equal(marker, undefined);
+        // A failed rollback cannot be modeled as restored database state.
+        assert.deepEqual(fixture.state(), rollbackFails ? pendingState : fixture.before);
+      } finally {
+        gate.resolve();
+        await withinRollbackTest(outcome);
+      }
+    });
+  }
 }

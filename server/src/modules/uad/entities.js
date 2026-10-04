@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { rollbackWithDiscardReason } from "../../database/transactionCleanup.js";
 import { UAD_REPEATABLE_ENTITY_GROUPS } from "./fieldCatalog.js";
 import {
   UAD_SUBJECT_AMENITY_CATEGORIES,
@@ -11,12 +12,7 @@ import { normalizeUadWorkfileId } from "./workfiles.js";
 const EDITABLE_ENTITY_TYPES = new Set(Object.keys(UAD_REPEATABLE_ENTITY_GROUPS));
 
 async function rollbackUadEntityTransaction(client) {
-  try {
-    await client.query("ROLLBACK");
-    return null;
-  } catch {
-    return new Error("uad_entity_rollback_failed");
-  }
+  return rollbackWithDiscardReason(client, "uad_entity_rollback_failed");
 }
 
 function entityResponse(row) {

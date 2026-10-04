@@ -1247,33 +1247,59 @@ export async function extractPdfEvidence(buffer, {
     const pagesNeedingOcr = pages.flatMap((text, index) => text.length < 40 ? [index + 1] : []);
     const scannedPages = new Set();
     if (pagesNeedingOcr.length && ocrProvider?.configured) {
-      const ocrResult = await ocrProvider.analyzePdf(buffer, {
-        pageNumbers: pagesNeedingOcr,
-        pageCount: pdf.numPages,
-      });
-      const ocrPages = Array.isArray(ocrResult?.pages) ? ocrResult.pages : [];
-      pages = pages.map((text, index) => {
-        if (!pagesNeedingOcr.includes(index + 1)) return text;
-        const scanned = cleanText(ocrPages[index], 500_000);
-        if (scanned.length < 40) return text;
-        scannedPages.add(index + 1);
-        return scanned;
-      });
-      textLength = pages.reduce((sum, text) => sum + text.length, 0);
-      extractionMethod = textLength >= 40
-        ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
-        : "ocr_no_reliable_text";
-      ocrMetadata = {
-        provider: ocrResult?.provider || "configured_ocr",
-        model_id: ocrResult?.model_id || null,
-        api_version: ocrResult?.api_version || null,
-        operation_id: ocrResult?.operation_id || null,
-        scanned_page_numbers: pagesNeedingOcr,
-        text_recovered_page_numbers: [...scannedPages],
-        unresolved_page_numbers: pagesNeedingOcr.filter(pageNumber => !scannedPages.has(pageNumber)),
-        confidence_by_page: ocrResult?.confidence_by_page || null,
-        preprocessing_by_page: ocrResult?.preprocessing_by_page || null,
-      };
+      let ocrResult;
+      try {
+        ocrResult = await ocrProvider.analyzePdf(buffer, {
+          pageNumbers: pagesNeedingOcr,
+          pageCount: pdf.numPages,
+        });
+      } catch (error) {
+        let code;
+        try { code = error?.message; } catch { /* Never expose hostile provider diagnostics. */ }
+        // A busy scanner belongs in the durable queue. Image-only documents
+        // still need the existing explicit failure/retry path, not empty fields.
+        if (code === "document_ocr_busy" || textLength < 40) throw error;
+        const knownErrors = new Set([
+          "document_ocr_failed", "document_ocr_timeout", "document_ocr_not_configured",
+          "document_ocr_page_limit_exceeded", "document_ocr_pixel_limit_exceeded",
+          "document_ocr_text_limit_exceeded", "document_ocr_page_selection_invalid",
+          "document_ocr_submit_unavailable", "document_ocr_poll_unavailable",
+          "document_ocr_poll_timeout", "document_ocr_analysis_failed",
+        ]);
+        ocrMetadata = {
+          provider: ocrProvider.provider || "configured_ocr",
+          error: knownErrors.has(code) ? code : "document_ocr_failed",
+          attempted_page_numbers: pagesNeedingOcr,
+          scanned_page_numbers: [],
+          text_recovered_page_numbers: [],
+          unresolved_page_numbers: pagesNeedingOcr,
+        };
+      }
+      if (!ocrMetadata) {
+        const ocrPages = Array.isArray(ocrResult?.pages) ? ocrResult.pages : [];
+        pages = pages.map((text, index) => {
+          if (!pagesNeedingOcr.includes(index + 1)) return text;
+          const scanned = cleanText(ocrPages[index], 500_000);
+          if (scanned.length < 40) return text;
+          scannedPages.add(index + 1);
+          return scanned;
+        });
+        textLength = pages.reduce((sum, text) => sum + text.length, 0);
+        extractionMethod = textLength >= 40
+          ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
+          : "ocr_no_reliable_text";
+        ocrMetadata = {
+          provider: ocrResult?.provider || "configured_ocr",
+          model_id: ocrResult?.model_id || null,
+          api_version: ocrResult?.api_version || null,
+          operation_id: ocrResult?.operation_id || null,
+          scanned_page_numbers: pagesNeedingOcr,
+          text_recovered_page_numbers: [...scannedPages],
+          unresolved_page_numbers: pagesNeedingOcr.filter(pageNumber => !scannedPages.has(pageNumber)),
+          confidence_by_page: ocrResult?.confidence_by_page || null,
+          preprocessing_by_page: ocrResult?.preprocessing_by_page || null,
+        };
+      }
     }
     if (textLength > MAX_EXTRACTED_TEXT_LENGTH) throw new Error("document_text_limit_exceeded");
     const documentType = classifyDocument({ requestedType, fileName, pages });
@@ -1285,8 +1311,7 @@ export async function extractPdfEvidence(buffer, {
     return {
       document_type: documentType,
       page_count: extracted.totalPages,
-      extraction_status: textLength >= 40 && (!pagesNeedingOcr.length || ocrMetadata)
-        ? "review_required" : "ocr_required",
+      extraction_status: textLength >= 40 ? "review_required" : "ocr_required",
       extraction_method: extractionMethod,
       text_length: textLength,
       pages,
@@ -1296,7 +1321,9 @@ export async function extractPdfEvidence(buffer, {
         source_kind: subjectEvidence.source_kind, conflicts: subjectEvidence.conflicts,
         unresolved: subjectEvidence.unresolved },
       review_reason: pagesNeedingOcr.length && !ocrMetadata
-        ? "Some pages contain no reliable searchable text. Image scanning and appraiser review are required."
+        ? `Pages ${pagesNeedingOcr.join(", ")} contain no reliable searchable text and require visual review. Available text suggestions require appraiser confirmation.`
+        : ocrMetadata?.error
+          ? `Image scanning could not finish for pages ${ocrMetadata.unresolved_page_numbers.join(", ")}. Searchable text and its suggestions remain available for appraiser review; unresolved pages require visual review.`
         : ocrMetadata?.unresolved_page_numbers.length && textLength >= 40
           ? `Image scanning could not recover reliable text on pages ${ocrMetadata.unresolved_page_numbers.join(", ")}. All suggestions and unreadable pages require appraiser review.`
         : textLength >= 40

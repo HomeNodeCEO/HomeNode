@@ -102,6 +102,103 @@ test("mixed PDFs request only sparse pages, preserve native evidence, and retain
   assert.equal(extraction.extraction_status, "review_required");
 });
 
+async function mixedNativePdf(blankPages = 1) {
+  return pdfBytes(pdf => {
+    pdf.text("PURCHASE CONTRACT\nContract Price: $410,000\nNative contract terms retained for review.");
+    for (let index = 0; index < blankPages; index += 1) pdf.addPage();
+  });
+}
+
+test("mixed searchable PDFs stay reviewable with a blank page and no configured scanner", async () => {
+  const buffer = await mixedNativePdf();
+  for (const ocrProvider of [null, { configured: false, analyzePdf() { assert.fail("Disabled OCR was called"); } }]) {
+    const result = await extractPdfEvidence(buffer, { requestedType: "purchase_contract", ocrProvider });
+    assert.equal(result.extraction_status, "review_required");
+    assert.equal(result.extraction_method, "pdf_text");
+    assert.equal(result.ocr_metadata, null);
+    assert.equal(result.candidates.find(candidate => candidate.field_key === "contract_price")?.normalized_value, "410000.00");
+    assert.equal(result.candidates.find(candidate => candidate.field_key === "contract_price")?.page_number, 1);
+    assert.equal(result.pages[1], "");
+    assert.match(result.review_reason, /Pages 2.*visual review/);
+  }
+});
+
+for (const [message, expectedCode] of [
+  ["document_ocr_failed", "document_ocr_failed"],
+  ["document_ocr_timeout", "document_ocr_timeout"],
+  ["document_ocr_page_limit_exceeded", "document_ocr_page_limit_exceeded"],
+  ["document_ocr_pixel_limit_exceeded", "document_ocr_pixel_limit_exceeded"],
+  ["document_ocr_poll_timeout", "document_ocr_poll_timeout"],
+  ["private-url=https://private.example/secret-token", "document_ocr_failed"],
+]) {
+  test(`mixed native evidence survives sparse-page OCR failure (${expectedCode}, ${message === expectedCode ? "known" : "sanitized"})`, async () => {
+    const buffer = await mixedNativePdf();
+    const baseline = await extractPdfEvidence(buffer, { requestedType: "purchase_contract" });
+    const result = await extractPdfEvidence(buffer, { requestedType: "purchase_contract", ocrProvider: {
+      configured: true, provider: "synthetic_ocr",
+      async analyzePdf() { throw new Error(message); },
+    } });
+    assert.equal(result.extraction_status, "review_required");
+    assert.equal(result.extraction_method, "pdf_text");
+    assert.equal(result.text_length, baseline.text_length);
+    assert.deepEqual(result.pages, baseline.pages);
+    assert.deepEqual(result.candidates, baseline.candidates);
+    assert.equal(result.ocr_metadata.error, expectedCode);
+    assert.deepEqual(result.ocr_metadata.attempted_page_numbers, [2]);
+    assert.deepEqual(result.ocr_metadata.scanned_page_numbers, []);
+    assert.deepEqual(result.ocr_metadata.text_recovered_page_numbers, []);
+    assert.deepEqual(result.ocr_metadata.unresolved_page_numbers, [2]);
+    assert.match(result.review_reason, /could not finish for pages 2/);
+    assert.equal(JSON.stringify(result).includes("secret-token"), false);
+  });
+}
+
+test("mixed evidence survives the real local scanner's page bound without spawning a child", async () => {
+  const provider = createLocalDocumentOcrProvider({}, { workerFactory() { assert.fail("Page limit must precede spawning"); } });
+  const result = await extractPdfEvidence(await mixedNativePdf(65), { requestedType: "purchase_contract", ocrProvider: provider });
+  assert.equal(result.extraction_status, "review_required");
+  assert.equal(result.page_count, 66);
+  assert.equal(result.ocr_metadata.error, "document_ocr_page_limit_exceeded");
+  assert.equal(result.ocr_metadata.unresolved_page_numbers.length, 65);
+  assert.equal(result.candidates.find(candidate => candidate.field_key === "contract_price")?.normalized_value, "410000.00");
+});
+
+test("mixed OCR failure diagnostics tolerate a hostile message getter", async () => {
+  const failure = Object.defineProperty(new Error(), "message", { get() { throw new Error("private getter detail"); } });
+  const result = await extractPdfEvidence(await mixedNativePdf(), { ocrProvider: {
+    configured: true, async analyzePdf() { throw failure; },
+  } });
+  assert.equal(result.extraction_status, "review_required");
+  assert.equal(result.ocr_metadata.error, "document_ocr_failed");
+  assert.equal(JSON.stringify(result).includes("private getter"), false);
+});
+
+test("busy OCR propagates for both mixed and image-only PDFs so the durable queue can retry", async () => {
+  for (const buffer of [await mixedNativePdf(), await pdfBytes(() => {})]) {
+    await assert.rejects(extractPdfEvidence(buffer, { ocrProvider: {
+      configured: true, async analyzePdf() { throw new Error("document_ocr_busy"); },
+    } }), { message: "document_ocr_busy" });
+  }
+});
+
+test("image-only OCR failure, timeout and limit errors retain explicit failure semantics", async () => {
+  const buffer = await pdfBytes(() => {});
+  for (const message of ["document_ocr_failed", "document_ocr_timeout", "document_ocr_page_limit_exceeded"]) {
+    await assert.rejects(extractPdfEvidence(buffer, { requestedType: "purchase_contract", ocrProvider: {
+      configured: true, async analyzePdf() { throw new Error(message); },
+    } }), { message });
+  }
+});
+
+test("image-only OCR returning no text remains OCR-required without fabricated candidates", async () => {
+  const result = await extractPdfEvidence(await pdfBytes(() => {}), { requestedType: "purchase_contract", ocrProvider: {
+    configured: true, async analyzePdf() { return { pages: [""] }; },
+  } });
+  assert.equal(result.extraction_status, "ocr_required");
+  assert.equal(result.extraction_method, "ocr_no_reliable_text");
+  assert.deepEqual(result.candidates, []);
+});
+
 test("empty purchase contracts cannot invent default negative candidates without OCR", async () => {
   const extraction = await extractPdfEvidence(await pdfBytes(() => {}), { requestedType: "purchase_contract" });
   assert.equal(extraction.extraction_status, "ocr_required");

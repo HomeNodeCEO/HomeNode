@@ -79,6 +79,7 @@ function seedStage(sql) {
 function seedPool({
   failureStage = null, rollbackFails = false, rollbackErrors = null, lockAcquired = true,
   state = COMPLETED_STATE, accounts = [ACCOUNT], schemaError = null, connectError = null,
+  releaseThrows = false, releaseError, beforeRollback, rollbackThrows = false, releaseReturn,
 } = {}) {
   const primaryError = new Error("private alias seed operation detail");
   const rollbackError = new Error("private rollback connection detail");
@@ -96,20 +97,28 @@ function seedPool({
       connections += 1;
       if (connectError) throw connectError;
       return {
-        async query(sql, params) {
+        query(sql, params) {
           const stage = seedStage(sql);
           statements.push({ stage, sql, params });
           if (stage === "ROLLBACK") {
             const error = cleanupErrors[rollbacks++];
-            if (error) throw error;
+            if (rollbackThrows && error) throw error;
+            return Promise.resolve(beforeRollback?.()).then(() => {
+              if (error) throw error;
+              return { rows: [] };
+            });
           }
-          if (stage === failureStage) { injectedFailures += 1; throw primaryError; }
-          if (stage === "advisory lock") return { rows: [{ acquired: lockAcquired }] };
-          if (stage === "state read") return { rows: [state] };
-          if (stage === "account scan") return { rows: accounts };
-          return { rows: [] };
+          if (stage === failureStage) { injectedFailures += 1; return Promise.reject(primaryError); }
+          if (stage === "advisory lock") return Promise.resolve({ rows: [{ acquired: lockAcquired }] });
+          if (stage === "state read") return Promise.resolve({ rows: [state] });
+          if (stage === "account scan") return Promise.resolve({ rows: accounts });
+          return Promise.resolve({ rows: [] });
         },
-        release(error) { releases.push(error); },
+        release(error) {
+          releases.push(error);
+          if (releaseThrows) throw releaseError;
+          return releaseReturn;
+        },
       };
     },
   };
@@ -146,6 +155,76 @@ for (const failureStage of SEED_STAGES) {
       }
     });
   }
+}
+
+for (const { name, options, releaseError, stages } of [
+  { name: "committed success", options: {}, releaseError: new Error("synthetic release failure"), stages: SEED_STAGES },
+  { name: "busy-lock skip", options: { lockAcquired: false }, releaseError: Symbol("synthetic release value"), stages: ["BEGIN", "advisory lock", "ROLLBACK"] },
+  { name: "primary failure and successful rollback", options: { failureStage: "COMMIT" }, releaseError: Object.freeze({ release: "synthetic failure" }), stages: [...SEED_STAGES, "ROLLBACK"] },
+  { name: "primary failure and failed rollback", options: { failureStage: "COMMIT", rollbackFails: true }, releaseError: new Error("synthetic release overrides rollback"), stages: [...SEED_STAGES, "ROLLBACK"] },
+]) {
+  test(`alias seed preserves synchronous release exception after ${name}`, async () => {
+    const fixture = seedPool({ ...options, releaseThrows: true, releaseError });
+    await assert.rejects(seedAccountAddressAliasBatch(fixture.pool, REFRESH_OPTIONS), error => {
+      assert.equal(error, releaseError, "the original synchronous release-thrown value must win over any result or primary error");
+      return true;
+    });
+    assert.equal(fixture.schemaQueries, 1);
+    assert.equal(fixture.connections, 1);
+    assert.equal(fixture.injectedFailures, options.failureStage ? 1 : 0);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), stages, "release failure must not issue extra rollback, writes, or retries");
+    assert.equal(fixture.releases.length, 1);
+    if (!options.rollbackFails) {
+      assert.equal(fixture.releases[0], undefined);
+      return;
+    }
+    const marker = fixture.releases[0];
+    assert.equal(Object.getPrototypeOf(marker), Error.prototype);
+    assert.equal(marker.message, "account_address_alias_seed_rollback_failed");
+    for (const rawError of [fixture.primaryError, fixture.rollbackError, releaseError]) assert.notEqual(marker, rawError);
+    assert.equal(Object.hasOwn(marker, "cause"), false);
+    assert.deepEqual(Object.keys(marker), []);
+    assert.doesNotMatch(String(marker.stack), /private alias|private rollback/);
+  });
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`alias seed waits for deferred ${rollbackFails ? "failed" : "successful"} catch rollback before rejecting and releasing`, { timeout: 2_000 }, async () => {
+    let finishRollback, markRollbackStarted;
+    const rollbackPending = new Promise(resolve => { finishRollback = resolve; });
+    const rollbackStarted = new Promise(resolve => { markRollbackStarted = resolve; });
+    const fixture = seedPool({
+      failureStage: "alias upsert", rollbackFails,
+      beforeRollback: async () => { markRollbackStarted(); await rollbackPending; },
+    });
+    let settled = false;
+    const pending = seedAccountAddressAliasBatch(fixture.pool, REFRESH_OPTIONS).then(
+      () => { settled = true; assert.fail("failed alias upsert must reject"); },
+      error => { settled = true; return error; },
+    );
+    const stages = [...SEED_STAGES.slice(0, SEED_STAGES.indexOf("alias upsert") + 1), "ROLLBACK"];
+    await rollbackStarted;
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(settled, false);
+      assert.deepEqual(fixture.releases, [], "pending rollback must retain the owned client");
+      assert.deepEqual(fixture.statements.map(({ stage }) => stage), stages);
+    } finally {
+      finishRollback();
+    }
+    assert.equal(await pending, fixture.primaryError);
+    assert.equal(fixture.connections, 1);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), stages);
+    assert.equal(fixture.releases.length, 1);
+    if (rollbackFails) {
+      assert.ok(fixture.releases[0] instanceof Error);
+      assert.equal(fixture.releases[0].message, "account_address_alias_seed_rollback_failed");
+      assert.notEqual(fixture.releases[0], fixture.primaryError);
+      assert.notEqual(fixture.releases[0], fixture.rollbackError);
+    } else {
+      assert.equal(fixture.releases[0], undefined);
+    }
+  });
 }
 
 for (const retryFails of [false, true]) {
@@ -249,3 +328,90 @@ for (const failureStage of ["schema", "connection"]) {
   });
 }
 
+function assertAliasRetirement(fixture) {
+  assert.equal(fixture.connections, 1);
+  assert.equal(fixture.releases.length, 1);
+  const [marker] = fixture.releases;
+  assert.ok(marker instanceof Error);
+  assert.equal(marker.message, "account_address_alias_seed_rollback_failed");
+  assert.notEqual(marker, fixture.primaryError);
+  assert.notEqual(marker, fixture.rollbackError);
+  assert.equal(Object.hasOwn(marker, "cause"), false);
+  assert.deepEqual(Object.keys(marker), []);
+  assert.doesNotMatch(marker.stack, /private/);
+}
+
+for (const failureStage of SEED_STAGES) {
+  test(`alias seed ${failureStage} failure survives a synchronous rollback throw`, async () => {
+    const fixture = seedPool({ failureStage, rollbackFails: true, rollbackThrows: true });
+    await assert.rejects(seedAccountAddressAliasBatch(fixture.pool, REFRESH_OPTIONS), error => error === fixture.primaryError);
+    assert.equal(fixture.schemaQueries, 1);
+    assert.equal(fixture.injectedFailures, 1);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), [
+      ...SEED_STAGES.slice(0, SEED_STAGES.indexOf(failureStage) + 1), "ROLLBACK",
+    ]);
+    assertAliasRetirement(fixture);
+  });
+}
+
+for (const retryFails of [false, true]) {
+  test(`a synchronous busy-lock rollback throw preserves its error when cleanup retry ${retryFails ? "throws" : "succeeds"}`, async () => {
+    const firstError = new Error("private busy-lock rollback detail");
+    const retryError = new Error("private rollback retry detail");
+    const fixture = seedPool({
+      lockAcquired: false, rollbackThrows: true,
+      rollbackErrors: [firstError, ...(retryFails ? [retryError] : [])],
+    });
+    await assert.rejects(seedAccountAddressAliasBatch(fixture.pool, REFRESH_OPTIONS), error => error === firstError);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), ["BEGIN", "advisory lock", "ROLLBACK", "ROLLBACK"]);
+    assert.equal(fixture.connections, 1);
+    assert.equal(fixture.releases.length, 1);
+    if (retryFails) {
+      assertAliasRetirement(fixture);
+      assert.notEqual(fixture.releases[0], firstError);
+      assert.notEqual(fixture.releases[0], retryError);
+    } else assert.equal(fixture.releases[0], undefined);
+  });
+}
+
+test("current alias index commit failure survives a synchronous cleanup throw without returning skipped", async () => {
+  const fixture = seedPool({ failureStage: "COMMIT", rollbackFails: true, rollbackThrows: true });
+  await assert.rejects(seedAccountAddressAliasBatch(fixture.pool), error => error === fixture.primaryError);
+  assert.deepEqual(fixture.statements.map(({ stage }) => stage), [
+    "BEGIN", "advisory lock", "state insert", "state read", "COMMIT", "ROLLBACK",
+  ]);
+  assertAliasRetirement(fixture);
+});
+
+test("current alias index skip preserves Error, Symbol, and object release exception precedence", async () => {
+  for (const releaseError of [new Error("release failed"), Symbol("release failed"), Object.freeze({ release: "failed" })]) {
+    const fixture = seedPool({ releaseThrows: true, releaseError });
+    await assert.rejects(seedAccountAddressAliasBatch(fixture.pool), error => error === releaseError);
+    assert.equal(fixture.connections, 1);
+    assert.deepEqual(fixture.releases, [undefined]);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), ["BEGIN", "advisory lock", "state insert", "state read", "COMMIT"]);
+  }
+});
+
+test("alias seed never inspects or awaits a value returned by synchronous release", async () => {
+  let thenReads = 0;
+  const releaseReturn = { get then() { thenReads += 1; throw new Error("release return must remain unobserved"); } };
+  for (const { options = {}, seedOptions = REFRESH_OPTIONS, stages } of [
+    { stages: SEED_STAGES },
+    { options: { lockAcquired: false }, stages: ["BEGIN", "advisory lock", "ROLLBACK"] },
+    { seedOptions: {}, stages: ["BEGIN", "advisory lock", "state insert", "state read", "COMMIT"] },
+    { options: { failureStage: "COMMIT" }, stages: [...SEED_STAGES, "ROLLBACK"] },
+    { options: { failureStage: "COMMIT", rollbackFails: true }, stages: [...SEED_STAGES, "ROLLBACK"] },
+  ]) {
+    const fixture = seedPool({ ...options, releaseReturn });
+    if (options.failureStage) {
+      await assert.rejects(seedAccountAddressAliasBatch(fixture.pool, seedOptions), error => error === fixture.primaryError);
+    } else await seedAccountAddressAliasBatch(fixture.pool, seedOptions);
+    assert.equal(thenReads, 0);
+    assert.equal(fixture.connections, 1);
+    assert.equal(fixture.releases.length, 1);
+    assert.deepEqual(fixture.statements.map(({ stage }) => stage), stages);
+    if (options.rollbackFails) assertAliasRetirement(fixture);
+    else assert.equal(fixture.releases[0], undefined);
+  }
+});

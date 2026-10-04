@@ -15,6 +15,7 @@ function fixtureDocument(overrides = {}) {
     assignment_file_id: null,
     processing_attempts: 1,
     processing_status: "processing",
+    processing_claim_started_at: '2026-01-01 12:00:00.123456+00',
     content: null,
     storage_provider: "r2",
     object_key: "private/fixture.pdf",
@@ -29,6 +30,10 @@ function withNativeTransactions(pool, { exists = true } = {}) {
     if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
     if (/SELECT account_id, assignment_file_id/.test(sql)) return { rows: exists ? [fixtureDocument()] : [] };
     if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) return { rows: [fixtureDocument()] };
+    if (/AS owns_claim/.test(sql)) {
+      assert.deepEqual(values, [7, 1, '2026-01-01 12:00:00.123456+00']);
+      return { rows: [{ owns_claim: true }] };
+    }
     return pool.query(sql, values);
   } });
   return pool;

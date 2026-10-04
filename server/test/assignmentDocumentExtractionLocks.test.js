@@ -18,7 +18,7 @@ function fixture({ signed = false, historicalSnapshot = false, native = false, c
       document_type: 'purchase_contract', processing_status: 'reviewed', processing_attempts: 0,
       content, extraction_summary: { unchanged: true } }, pages: ['previous source text'],
     candidates: [{ id: 100, field_key: 'contract_price', normalized_value: '100000.00', review_status: 'confirmed' }],
-    mutations: [], locks: [], transactions: [] };
+    mutations: [], locks: [], transactions: [], claimSequence: 0 };
   const pool = {
     async query(sql) {
       if (/CREATE SCHEMA/.test(sql)) return { rows: [] };
@@ -45,6 +45,30 @@ function fixture({ signed = false, historicalSnapshot = false, native = false, c
         if (/SELECT \* FROM app.assignment_documents.*FOR UPDATE/.test(sql)) {
           transaction.push('document'); state.locks.push([...transaction]); return { rows: [{ ...state.document }] };
         }
+        if (/AS owns_claim/.test(sql)) {
+          assert.equal(transaction.at(-1), 'document', 'claim checks occur after the ordered locks');
+          assert.match(sql, /processing_status = 'processing'\s+AND processing_attempts = \$2\s+AND processing_started_at = \$3::timestamptz/);
+          const [id, attempt, timestamp] = values;
+          return { rows: [{ owns_claim: state.document.id === id
+            && state.document.processing_status === 'processing'
+            && state.document.processing_attempts === attempt
+            && state.document.processing_claim_started_at === timestamp }] };
+        }
+        if (/SELECT field_key, raw_value/.test(sql)) return { rows: state.candidates.map(candidate => ({ ...candidate })) };
+        if (/DELETE FROM app.assignment_document_pages/.test(sql)) {
+          state.pages = []; return { rows: [] };
+        }
+        if (/DELETE FROM app.assignment_document_field_candidates/.test(sql)) {
+          state.candidates = []; return { rows: [] };
+        }
+        if (/INSERT INTO app.assignment_document_pages/.test(sql)) {
+          state.pages.push(values[2]); return { rows: [] };
+        }
+        if (/INSERT INTO app.assignment_document_field_candidates/.test(sql)) {
+          const candidate = { id: 101 + state.candidates.length, field_key: values[1], raw_value: values[2],
+            normalized_value: values[3], review_status: values[8], confirmed_value: values[9], reviewer: values[10] };
+          state.candidates.push(candidate); return { rows: [candidate] };
+        }
         if (/UPDATE app.assignment_documents/.test(sql)) {
           if (/document_processing_interrupted_retry_exhausted/.test(sql)) {
             assert.match(sql, /WHERE id = \$1\s+AND processing_status = 'processing'\s+AND processing_attempts >= \$2/);
@@ -59,9 +83,23 @@ function fixture({ signed = false, historicalSnapshot = false, native = false, c
           }
           state.mutations.push(sql);
           assert.equal(state.signed || state.historicalSnapshot, false, 'no metadata update after signing');
-          if (/SET processing_status = 'uploaded'/.test(sql)) state.document.processing_status = 'uploaded';
+          if (/SET processing_status = 'uploaded'/.test(sql)) {
+            state.document.processing_status = 'uploaded';
+            state.document.processing_claim_started_at = null;
+          }
           if (/SET processing_status = 'processing'/.test(sql)) {
+            assert.match(sql, /RETURNING \*, processing_started_at::text AS processing_claim_started_at/);
             state.document.processing_status = 'processing'; state.document.processing_attempts += 1;
+            state.claimSequence += 1;
+            state.document.processing_claim_started_at = `2026-01-01 12:00:00.${String(state.claimSequence).padStart(6, '0')}+00`;
+            state.document.processing_started_at = new Date('2026-01-01T12:00:00.000Z');
+          }
+          if (/SET document_type = \$2/.test(sql)) {
+            state.document.document_type = values[1];
+            state.document.processing_status = values[3];
+            state.document.processing_claim_started_at = null;
+            state.document.processing_started_at = null;
+            state.document.extraction_summary = JSON.parse(values[5]);
           }
           return { rows: [{ ...state.document }] };
         }
@@ -126,6 +164,72 @@ test('native documents without a Custom assignment retain queue support and do n
   assert.equal((await queueAssignmentDocumentExtraction(pool, 7)).processing_status, 'uploaded');
   assert.deepEqual(state.locks, [['scope', 'document']]);
 });
+
+for (const outcome of ['success', 'busy', 'failure']) {
+  test(`late attempt N ${outcome} preserves attempt N+1's completed pages and subsequent reviews`, async () => {
+    const { pool, state } = fixture({ content: await blankPdf() });
+    const logs = [];
+    let afterNewerReview, newerMutationCount;
+    const newerProvider = { configured: true, async analyzePdf() {
+      return { pages: ['Newer recovered source text. Keep this newly extracted page.'] };
+    } };
+    const olderProvider = { configured: true, async analyzePdf() {
+      await processAssignmentDocument(pool, 7, { force: true, ocrProvider: newerProvider });
+      assert.equal(state.document.processing_attempts, 2);
+      assert.match(state.pages[0], /Newer recovered source text/);
+      // A reviewer can confirm the newer extraction before the old scanner finishes.
+      state.document.processing_status = 'reviewed';
+      state.candidates = [{ id: 202, field_key: 'contract_price', normalized_value: '150000.00',
+        review_status: 'confirmed', confirmed_value: '150000.00', reviewer: 'Synthetic Reviewer' }];
+      afterNewerReview = retained(state);
+      newerMutationCount = state.mutations.length;
+      if (outcome !== 'success') throw new Error(outcome === 'busy' ? 'document_ocr_busy' : 'document_ocr_failed');
+      return { pages: ['Obsolete attempt N page. This must never replace the newer page.'] };
+    } };
+    const result = await processAssignmentDocument(pool, 7, {
+      force: true, ocrProvider: olderProvider, logger: { warn: (...args) => logs.push(args) },
+    });
+    assert.equal(result.processing_status, 'reviewed');
+    assert.equal(result.processing_attempts, 2);
+    assert.equal(retained(state), afterNewerReview);
+    assert.equal(state.mutations.length, newerMutationCount);
+    assert.deepEqual(logs, []);
+    assert.equal(state.locks.length, 4, 'both claims and both completions use ordered locks');
+    for (const locks of state.locks) assert.deepEqual(locks, ['scope', 'assignment', 'workfile', 'document']);
+  });
+
+  for (const replacement of ['newer processing attempt', 'same-attempt microsecond reclaim', 'manual queue reset']) {
+    test(`late ${outcome} leaves ${replacement} untouched`, async () => {
+      const { pool, state } = fixture({ content: await blankPdf() });
+      let newerState;
+      const logs = [];
+      const provider = { configured: true, async analyzePdf() {
+        const oldTimestamp = state.document.processing_claim_started_at;
+        if (replacement === 'manual queue reset') {
+          await queueAssignmentDocumentExtraction(pool, 7);
+          state.document.processing_attempts = 0;
+          state.document.processing_started_at = null;
+        } else {
+          if (replacement === 'newer processing attempt') state.document.processing_attempts += 1;
+          state.document.processing_claim_started_at = '2026-01-01 12:00:00.000002+00';
+          // The two DB timestamps differ although the pg Date values are identical.
+          assert.equal(new Date(oldTimestamp).getTime(), new Date(state.document.processing_claim_started_at).getTime());
+          assert.notEqual(oldTimestamp, state.document.processing_claim_started_at);
+        }
+        newerState = retained(state);
+        if (outcome !== 'success') throw new Error(outcome === 'busy' ? 'document_ocr_busy' : 'document_ocr_failed');
+        return { pages: ['Outdated recovered source text.'] };
+      } };
+      const result = await processAssignmentDocument(pool, 7, {
+        force: true, ocrProvider: provider, logger: { warn: (...args) => logs.push(args) },
+      });
+      assert.equal(result.processing_status, replacement === 'manual queue reset' ? 'uploaded' : 'processing');
+      assert.equal(retained(state), newerState);
+      assert.equal(state.mutations.length, replacement === 'manual queue reset' ? 2 : 1);
+      assert.deepEqual(logs, []);
+    });
+  }
+}
 
 test('maintenance excludes signed status and historical snapshots without rewriting frozen queue states', async () => {
   const queries = [];

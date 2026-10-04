@@ -12,6 +12,9 @@ Tesseract model and PDF.js renderer. No document is sent to another service and
 no language assets are downloaded at scan time. Explicit `azure` and `disabled`
 settings retain their existing meanings. The worker receives only a minimal OS
 environment, not database, storage, or cloud-provider credentials.
+The child separates OCR/rendering crashes and CPU work from the HTTP process;
+native searchable-text extraction still runs in the parent. The child is not
+an OS sandbox and retains the service account's filesystem/network rights.
 
 Each API process permits one OCR child process. Limits are 25 MiB per PDF,
 250 total pages, 64 scanned pages, 6 million rendered pixels per page, 16 million

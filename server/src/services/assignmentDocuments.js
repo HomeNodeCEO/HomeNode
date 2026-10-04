@@ -1298,6 +1298,22 @@ async function mutateExtractionDocument(pool, id, mutate) {
   } finally { client.release(); }
 }
 
+async function ownsExtractionClaim(client, id, claim) {
+  if (!positiveInteger(claim.processing_attempts)
+    || typeof claim.processing_claim_started_at !== 'string'
+    || !claim.processing_claim_started_at) return false;
+  // Called only after the document lock. Compare the database timestamp itself:
+  // converting through a JavaScript Date would discard PostgreSQL microseconds.
+  const { rows } = await client.query(
+    `SELECT processing_status = 'processing'
+            AND processing_attempts = $2
+            AND processing_started_at = $3::timestamptz AS owns_claim
+       FROM app.assignment_documents WHERE id = $1`,
+    [id, claim.processing_attempts, claim.processing_claim_started_at],
+  );
+  return rows[0]?.owns_claim === true;
+}
+
 /** Reprocessing is asynchronous, just like initial upload. Returning the durable
  * queue state keeps a scanned contract from holding an HTTP request open. */
 export async function queueAssignmentDocumentExtraction(pool, documentId) {
@@ -1360,7 +1376,7 @@ export async function processAssignmentDocument(pool, documentId, {
              < now() - ($3::integer * interval '1 minute')
          )
        )
-       RETURNING *`,
+       RETURNING *, processing_started_at::text AS processing_claim_started_at`,
       [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
     );
     if (!rows[0]) {
@@ -1392,7 +1408,11 @@ export async function processAssignmentDocument(pool, documentId, {
       // OCR runs outside the transaction. A report may have been signed while
       // it ran; re-lock in the normal assignment/workfile/document order before
       // replacing any pages, candidates, receipts, or processing metadata.
-      await lockMutableAssignmentDocument(client, id);
+      const current = await lockMutableAssignmentDocument(client, id);
+      if (!await ownsExtractionClaim(client, id, document)) {
+        await client.query("COMMIT");
+        return publicDocument(current);
+      }
       const previousReviewResult = await client.query(
         `SELECT field_key, raw_value, normalized_value, review_status,
                 confirmed_value, reviewer, reviewed_at
@@ -1493,48 +1513,59 @@ export async function processAssignmentDocument(pool, documentId, {
     if (message === "document_ocr_busy") {
       // Waiting for another scan is not a failed extraction attempt. Keep the
       // original evidence intact and leave a durable, due-time-aware job.
-      const queued = await mutateExtractionDocument(pool, id, client => client.query(
-        `UPDATE app.assignment_documents
+      const queued = await mutateExtractionDocument(pool, id, async (client, current) => {
+        if (!await ownsExtractionClaim(client, id, document)) {
+          return { document: current, requeued: false };
+        }
+        const { rows } = await client.query(`UPDATE app.assignment_documents
          SET processing_status = 'uploaded',
              processing_attempts = GREATEST(processing_attempts - 1, 0),
              processing_started_at = NULL,
              next_processing_at = now() + interval '15 seconds',
              last_processing_error = 'document_ocr_busy', updated_at = now()
-         WHERE id = $1 RETURNING *`, [id],
-      ));
-      scheduleDocumentProcessingRetry(pool, id, { storage, ocrProvider, logger }, processAssignmentDocument);
-      return publicDocument(queued.rows[0]);
+         WHERE id = $1 RETURNING *`, [id]);
+        return { document: rows[0], requeued: true };
+      });
+      if (queued.requeued) {
+        scheduleDocumentProcessingRetry(pool, id, { storage, ocrProvider, logger }, processAssignmentDocument);
+      }
+      return publicDocument(queued.document);
     }
     const attempts = Number(document.processing_attempts || 1);
     const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
       ? null
       : new Date(Date.now() + assignmentDocumentRetryDelayMs(attempts));
+    const superseded = await mutateExtractionDocument(pool, id, async (client, current) => {
+      if (!await ownsExtractionClaim(client, id, document)) return current;
+      await client.query(
+        `UPDATE app.assignment_documents
+         SET processing_status = 'extraction_failed',
+             extraction_summary = jsonb_build_object(
+               'error', $2::text,
+               'processing_attempts', processing_attempts,
+               'automatic_retry_exhausted', $3::boolean,
+               'extraction_schema_version', $5::text
+             ),
+             processing_started_at = NULL,
+             next_processing_at = $4,
+             last_processing_error = $2,
+             processed_at = now(), updated_at = now()
+         WHERE id = $1`,
+        [
+          id,
+          message,
+          attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
+          nextProcessingAt,
+          DOCUMENT_EXTRACTION_SCHEMA_VERSION,
+        ],
+      );
+      return null;
+    });
+    if (superseded) return publicDocument(superseded);
     try {
       logger.warn?.(`[documents] extraction failed for document ${id}`,
         safeOperationalErrorCode(error));
     } catch { /* Logging must not prevent a bounded failure result. */ }
-    await mutateExtractionDocument(pool, id, client => client.query(
-      `UPDATE app.assignment_documents
-       SET processing_status = 'extraction_failed',
-           extraction_summary = jsonb_build_object(
-             'error', $2::text,
-             'processing_attempts', processing_attempts,
-             'automatic_retry_exhausted', $3::boolean,
-             'extraction_schema_version', $5::text
-           ),
-           processing_started_at = NULL,
-           next_processing_at = $4,
-           last_processing_error = $2,
-           processed_at = now(), updated_at = now()
-       WHERE id = $1`,
-      [
-        id,
-        message,
-        attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
-        nextProcessingAt,
-        DOCUMENT_EXTRACTION_SCHEMA_VERSION,
-      ],
-    ));
     throw error;
   }
 }

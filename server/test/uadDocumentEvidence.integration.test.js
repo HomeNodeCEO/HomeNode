@@ -81,6 +81,18 @@ test("confirmed purchase-contract sellers populate repeatable Section 2 parties 
       [documentId],
     );
 
+    const revisionBefore = (await pool.query('SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1', [workfile.id])).rows[0].current_revision;
+    for (const status of ['uploaded', 'processing', 'ocr_required', 'extraction_failed']) {
+      await pool.query('UPDATE app.assignment_documents SET processing_status = $2 WHERE id = $1', [documentId, status]);
+      assert.deepEqual(await synchronizeUadPurchaseContract(pool, workfile.id, documentId), {
+        applied: false, reason: 'document_not_ready', field_key: 'purchase_contract',
+      });
+      assert.equal((await pool.query('SELECT current_revision FROM appraisal.uad_workfiles WHERE id = $1', [workfile.id])).rows[0].current_revision,
+        revisionBefore, 'unready contract must not write a UAD revision');
+      assert.equal((await pool.query("SELECT id FROM appraisal.uad_entities WHERE workfile_id = $1 AND entity_type = 'assignment_seller'", [workfile.id])).rows.length,
+        0, 'retained seller confirmations must not create parties while extraction is unavailable');
+    }
+    await pool.query("UPDATE app.assignment_documents SET processing_status = 'review_required' WHERE id = $1", [documentId]);
     const first = await synchronizeUadPurchaseContract(pool, workfile.id, documentId);
     assert.equal(first.applied, true);
     const firstEntities = await pool.query(
@@ -105,6 +117,7 @@ test("confirmed purchase-contract sellers populate repeatable Section 2 parties 
     assert.equal(firstSellerValues.rows.filter((row) => row.uad_uid === "1000.0021" && row.value === "PropertySeller").length, 2);
     assert.equal(firstSellerValues.rows.filter((row) => row.uad_uid === "1000.0019" && ["Loredo", "Thompson"].includes(row.value)).length, 2);
 
+    await pool.query("UPDATE app.assignment_documents SET processing_status = 'reviewed' WHERE id = $1", [documentId]);
     const repeated = await synchronizeUadPurchaseContract(pool, workfile.id, documentId);
     assert.equal(repeated.changed_field_count, 0);
     const repeatedEntities = await pool.query(

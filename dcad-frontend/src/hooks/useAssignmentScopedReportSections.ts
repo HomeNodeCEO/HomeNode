@@ -1,7 +1,8 @@
-import { useCallback, useMemo } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef } from "react";
 import type { Dispatch, SetStateAction } from "react";
 
-import { useManualReportSections } from "@/hooks/useManualReportSections";
+import { manualReportValuesForUi, useManualReportSections, type ReportSectionSelectionRef } from "@/hooks/useManualReportSections";
+import { customAssignmentFileMatches } from "@/lib/customAssignmentNavigation";
 import {
   getAssignmentFiles,
   type AppraisalAssignmentFile,
@@ -12,6 +13,18 @@ import {
   applyReportManualValues,
   type LegacyDcadDetail,
 } from "@/lib/legacyDcadDetail";
+
+function retainNewerSections(current: AppraisalAssignmentFile, incoming: AppraisalAssignmentFile): AppraisalAssignmentFile {
+  const sections = { ...incoming.custom_appraisal_sections };
+  let retained = false;
+  for (const [key, section] of Object.entries(current.custom_appraisal_sections || {})) {
+    if (!sections[key] || section.revision >= sections[key].revision) {
+      sections[key] = section;
+      retained = true;
+    }
+  }
+  return retained ? { ...incoming, custom_appraisal_sections: sections } : incoming;
+}
 
 /*
  * The account response is deliberately public-data only in enforced mode. These
@@ -27,6 +40,8 @@ export function useAssignmentScopedReportSections({
   getEditorKey,
   onReload,
   onCredentialRejected,
+  readOnly = false,
+  selectionGenerationRef,
 }: {
   accountId?: string;
   baseDetail: LegacyDcadDetail | null;
@@ -36,11 +51,28 @@ export function useAssignmentScopedReportSections({
   getEditorKey: () => string;
   onReload: () => Promise<void>;
   onCredentialRejected: () => void;
+  readOnly?: boolean;
+  selectionGenerationRef?: ReportSectionSelectionRef;
 }) {
+  const selectedFile = customAssignmentFileMatches(activeAssignmentFile, accountId || "") ? activeAssignmentFile : null;
+  const assignmentFileId = selectedFile?.id || null;
+  const selectionGeneration = selectionGenerationRef?.current;
+  const owner = useMemo(() => ({ accountId, assignmentFileId, selectionGeneration }), [accountId, assignmentFileId, selectionGeneration]);
+  const ownerRef = useRef(owner);
+  ownerRef.current = owner;
+  const readOnlyRef = useRef(readOnly);
+  readOnlyRef.current = readOnly;
+  const mountedRef = useRef(true);
+  useLayoutEffect(() => {
+    mountedRef.current = true;
+    return () => { mountedRef.current = false; };
+  }, []);
+  const scopeIsCurrent = useCallback(() => mountedRef.current && ownerRef.current === owner && !readOnlyRef.current
+    && selectionGenerationRef?.current === owner.selectionGeneration, [owner, selectionGenerationRef]);
   const assignmentManualValues = useMemo(() => ({
-    ...(baseDetail?.report_manual_values || {}),
+    ...manualReportValuesForUi(baseDetail?.report_manual_values),
     ...Object.fromEntries(
-      Object.entries(activeAssignmentFile?.custom_appraisal_sections || {}).map(([key, section]) => [
+      Object.entries(manualReportValuesForUi(selectedFile?.custom_appraisal_sections)).map(([key, section]) => [
         key,
         {
           value: section.value,
@@ -51,18 +83,26 @@ export function useAssignmentScopedReportSections({
         },
       ]),
     ),
-  }), [activeAssignmentFile?.custom_appraisal_sections, baseDetail?.report_manual_values]);
+  }), [selectedFile?.custom_appraisal_sections, baseDetail?.report_manual_values]);
   const detail = useMemo(() => baseDetail
-    ? applyReportManualValues(baseDetail, assignmentManualValues)
-    : null, [assignmentManualValues, baseDetail]);
+    ? applyReportManualValues(baseDetail, assignmentManualValues, {
+      explicitSubjectValues: Object.hasOwn(selectedFile?.custom_appraisal_sections || {}, "report.subject_identification"),
+    })
+    : null, [assignmentManualValues, baseDetail, selectedFile?.custom_appraisal_sections]);
 
   const handleSaved = useCallback((
     values: Partial<Record<ReportManualSectionKey, ReportManualValue>>,
+    requestIsCurrent: () => boolean = () => true,
   ) => {
+    const canApply = () => scopeIsCurrent() && requestIsCurrent();
+    if (!canApply() || !accountId || !assignmentFileId) return;
     const updateFile = (file: AppraisalAssignmentFile): AppraisalAssignmentFile => {
+      if (file.id !== assignmentFileId || !customAssignmentFileMatches(file, accountId)) return file;
       const sections = { ...(file.custom_appraisal_sections || {}) };
-      for (const [key, saved] of Object.entries(values)) {
-        if (!saved || !saved.value || typeof saved.value !== "object" || Array.isArray(saved.value)) {
+      for (const [key, saved] of Object.entries(manualReportValuesForUi(values))) {
+        if (!saved || !saved.value || typeof saved.value !== "object" || Array.isArray(saved.value)
+          || !Number.isSafeInteger(saved.revision) || saved.revision < 1
+          || (sections[key] && saved.revision <= sections[key].revision)) {
           continue;
         }
         sections[key] = {
@@ -74,26 +114,35 @@ export function useAssignmentScopedReportSections({
       }
       return { ...file, custom_appraisal_sections: sections };
     };
-    setActiveAssignmentFile((current) => current ? updateFile(current) : current);
-    setAssignmentFiles((current) => current.map((file) => (
-      file.id === activeAssignmentFile?.id ? updateFile(file) : file
-    )));
-  }, [activeAssignmentFile?.id, setActiveAssignmentFile, setAssignmentFiles]);
+    // Acknowledged updates may commit after the editor closes, but never after selection changes.
+    setActiveAssignmentFile((current) => scopeIsCurrent() && current ? updateFile(current) : current);
+    setAssignmentFiles((current) => scopeIsCurrent() ? current.map(updateFile) : current);
+  }, [accountId, assignmentFileId, scopeIsCurrent, setActiveAssignmentFile, setAssignmentFiles]);
   const getRevision = useCallback((key: ReportManualSectionKey) => Number(
-    activeAssignmentFile?.custom_appraisal_sections?.[key]?.revision || 0,
-  ), [activeAssignmentFile?.custom_appraisal_sections]);
-  const handleConflict = useCallback(async () => {
-    if (!accountId || !activeAssignmentFile?.id) return;
-    const response = await getAssignmentFiles(accountId, activeAssignmentFile.id);
-    const refreshed = response.files.find((file) => file.id === activeAssignmentFile.id);
-    if (!refreshed) return;
-    setAssignmentFiles(response.files);
-    setActiveAssignmentFile(refreshed);
-  }, [accountId, activeAssignmentFile?.id, setActiveAssignmentFile, setAssignmentFiles]);
+    selectedFile?.custom_appraisal_sections?.[key]?.revision || 0,
+  ), [selectedFile?.custom_appraisal_sections]);
+  const handleConflict = useCallback(async (requestIsCurrent: () => boolean = () => true) => {
+    const canApply = () => scopeIsCurrent() && requestIsCurrent();
+    if (!canApply() || !accountId || !assignmentFileId) return;
+    const response = await getAssignmentFiles(accountId, assignmentFileId);
+    if (!canApply()) return;
+    const refreshed = response.files.find((file) => file.id === assignmentFileId && customAssignmentFileMatches(file, accountId));
+    if (!refreshed || typeof response.account_id !== "string" || response.account_id.trim().toUpperCase() !== accountId.trim().toUpperCase()) {
+      throw new Error("The selected assignment could not be reloaded.");
+    }
+    setAssignmentFiles((current) => scopeIsCurrent() ? response.files.filter(file => customAssignmentFileMatches(file, accountId)).map(file => {
+      const existing = current.find(item => item.id === file.id && customAssignmentFileMatches(item, accountId));
+      return existing ? retainNewerSections(existing, file) : file;
+    }) : current);
+    setActiveAssignmentFile((current) => scopeIsCurrent() && current?.id === assignmentFileId && customAssignmentFileMatches(current, accountId)
+      ? retainNewerSections(current, refreshed) : current);
+  }, [accountId, assignmentFileId, scopeIsCurrent, setActiveAssignmentFile, setAssignmentFiles]);
 
   const editor = useManualReportSections({
     accountId,
-    assignmentFileId: activeAssignmentFile?.id || null,
+    assignmentFileId,
+    readOnly,
+    selectionGenerationRef,
     getRevision,
     getEditorKey,
     onReload,

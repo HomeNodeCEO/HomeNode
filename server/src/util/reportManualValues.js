@@ -444,5 +444,36 @@ function validBoundaryGeometry(value) {
 export function validateReportManualSection(key, value) {
   if (key === "report.assignment_details") return validateAssignmentDetails(value);
   if (value === undefined) throw new Error("invalid_report_section_value");
+  // Evidence receipts are authored only inside audited server transactions.
+  if (key === "report.subject_evidence") throw new Error("invalid_report_section_value");
+  if (key === "report.subject_identification") {
+    const object = (item) => item !== null && typeof item === "object" && !Array.isArray(item);
+    const invalid = () => { throw new Error("invalid_report_section_value"); };
+    if (!object(value)) invalid();
+    const checkText = (item, maximum = 4_000) => {
+      if (item !== undefined && item !== null && (typeof item !== "string" || item.length > maximum)) invalid();
+    };
+    for (const name of ["property_location", "owner", "legal_description", "urar_subject"]) {
+      if (value[name] !== undefined && !object(value[name])) invalid();
+    }
+    for (const name of ["address", "city", "state", "postal_code", "county", "subdivision", "census_tract"]) {
+      checkText(value.property_location?.[name]);
+    }
+    checkText(value.owner?.owner_name);
+    if (value.legal_description?.lines !== undefined && (!Array.isArray(value.legal_description.lines)
+      || value.legal_description.lines.length > 200
+      || value.legal_description.lines.some(line => typeof line !== "string")
+      || value.legal_description.lines.join("\n").length > 20_000)) invalid();
+    const urar = value.urar_subject;
+    if (urar) {
+      const keys = ["borrower_name", "assessor_parcel_number", "tax_year", "tax_amount", "property_rights", "listing_history_summary", "offered_for_sale_prior_12_months"];
+      if (Object.keys(urar).some(name => !keys.includes(name))) invalid();
+      for (const name of keys.slice(0, -1)) checkText(urar[name]);
+      if (urar.tax_year && !/^\d{4}$/.test(urar.tax_year)) invalid();
+      if (urar.tax_amount && !/^\d+(?:\.\d{1,2})?$/.test(urar.tax_amount)) invalid();
+      if (urar.property_rights && !["fee_simple", "leasehold"].includes(urar.property_rights)) invalid();
+      if (urar.offered_for_sale_prior_12_months != null && typeof urar.offered_for_sale_prior_12_months !== "boolean") invalid();
+    }
+  }
   return true;
 }

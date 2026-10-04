@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DOCUMENT_EXTRACTION_SCHEMA_VERSION } from "../src/services/documentIntelligence.js";
 
 import {
   assignmentDetailsFromConfirmedDocument,
@@ -49,7 +50,7 @@ test("legacy reviewed purchase contracts receive one extraction-schema upgrade",
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "purchase_contract",
     processing_status: "review_required",
-    extraction_summary: { extraction_schema_version: "2026-09-02-v3" },
+    extraction_summary: { extraction_schema_version: DOCUMENT_EXTRACTION_SCHEMA_VERSION },
   }), false);
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "engagement_letter",
@@ -336,8 +337,35 @@ test("signed Custom duplicate upload cannot change existing document metadata", 
     storage: { configured: true, async putObject() { events.push("PUT_OBJECT"); } },
   }), /custom_appraisal_workfile_signed/);
   assert.equal(events.some((sql) => /UPDATE app\.assignment_documents\s+SET title/.test(sql)), false);
+  assert.equal(events.some((sql) => /SELECT \*\s+FROM app\.assignment_documents/.test(sql)), false);
   assert.equal(events.includes("PUT_OBJECT"), false);
 });
+
+for (const storageProvider of [null, "postgres", "r2"]) {
+  test(`Custom ${storageProvider || "new"} upload locks assignment and workfile before duplicate document lookup`, async () => {
+    const existing = storageProvider ? {
+      id: 90, account_id: "account-91", assignment_file_id: 91,
+      storage_provider: storageProvider, object_key: storageProvider === "r2" ? "documents/original.pdf" : null,
+    } : null;
+    const { pool, events } = customDocumentUploadPool({ existing });
+    await createAssignmentDocument(pool, {
+      accountId: "account-91", assignmentFileId: 91,
+      fileName: "duplicate.pdf", content: Buffer.from("%PDF-lock-order"),
+      ...(storageProvider === "r2" ? { storage: { configured: true,
+        async putObject() { assert.fail("a stored duplicate must not upload new bytes"); },
+      } } : {}),
+    });
+    const assignmentLock = events.findIndex(sql => /SELECT id, file_number FROM app\.assignment_files/.test(sql));
+    const workfileLock = events.findIndex(sql => /FOR UPDATE OF workfile/.test(sql));
+    const documentLock = events.findIndex(sql => /SELECT \*\s+FROM app\.assignment_documents/.test(sql));
+    const documentWrite = events.findIndex(sql => /(?:UPDATE|INSERT INTO) app\.assignment_documents/.test(sql));
+    assert.ok(assignmentLock >= 0 && assignmentLock < workfileLock);
+    assert.ok(workfileLock < documentLock, "duplicate row lock must follow assignment/workfile locks");
+    assert.match(events[documentLock], /FOR UPDATE/);
+    assert.ok(documentLock < documentWrite);
+    assert.ok(events.includes("COMMIT"));
+  });
+}
 
 test("Custom uploads without R2 still lock the workfile before PostgreSQL persistence", async () => {
   const { pool, events } = customDocumentUploadPool();
@@ -1398,6 +1426,7 @@ test("approving assignment-scoped engagement evidence updates the exact file and
           account_id: "26355500170360000",
           assignment_file_id: 91,
           document_type: "engagement_letter",
+          processing_status: "review_required",
           extraction_summary: {},
         }] };
       }
@@ -1426,6 +1455,20 @@ test("approving assignment-scoped engagement evidence updates the exact file and
       if (/UPDATE app\.assignment_files/.test(sql)) return { rows: [] };
       if (/INSERT INTO app\.assignment_file_history/.test(sql)) return { rows: [] };
       if (/UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+      if (/SELECT to_regclass/.test(sql)) return { rows: [{ census_available: false }] };
+      if (/FROM app\.assignment_documents document/.test(sql)) return { rows: [{
+        id: 47, account_id: "26355500170360000", assignment_file_id: 91,
+        document_type: "engagement_letter", processing_status: "review_required",
+        subject_context: { accountId: "26355500170360000", address: "100 Example Dr", city: "Garland", postalCode: "75041" },
+        candidates: [{ ...candidate, review_status: "confirmed", confirmed_value: candidate.normalized_value },
+          { id: 611, document_id: 47, field_key: "subject_street_address", confirmed_value: "100 Example Dr", review_status: "confirmed" },
+          { id: 612, document_id: 47, field_key: "subject_zip", confirmed_value: "75041", review_status: "confirmed" }],
+      }] };
+      if (/FROM app\.custom_appraisal_sections/.test(sql)) return { rows: [] };
+      if (/INSERT INTO app\.custom_appraisal_sections/.test(sql)) return { rows: [{
+        section_key: values[1], section_value: JSON.parse(values[2]), revision: 1, updated_at: "2026-10-02T00:00:00Z",
+      }] };
+      if (/INSERT INTO app\.custom_appraisal_section_history/.test(sql)) return { rows: [] };
       throw new Error(`unexpected query: ${sql}`);
     },
     release() {},

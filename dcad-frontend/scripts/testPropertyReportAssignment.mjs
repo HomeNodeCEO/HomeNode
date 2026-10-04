@@ -4,9 +4,11 @@ import test from "node:test";
 
 import {
   assignmentDraftFromDetail,
+  assignmentPudSummary,
   assignmentValidationErrors,
 } from "../src/lib/propertyReportAssignment.ts";
 import { propertyReportLocationContext, retainPropertyReportUnemploymentComparisons } from "../src/lib/propertyReportHydration.ts";
+import { reportAddress, reportTitleCase, reportZip5 } from '../src/lib/propertyReportText.ts';
 
 test("Property Report refreshes only the active assignment's mobile evidence and conflict revision", async () => {
   const source = await readFile(new URL("../src/pages/PropertyReport.tsx", import.meta.url), "utf8");
@@ -37,7 +39,7 @@ for (const observed of [false, true]) for (const zip of [undefined, null, '', ' 
     });
   }
 
-test('location hydration retains literal address/default state and ZIP-only digits exactly', () => {
+test('location hydration formats report display but retains literal matching address and ZIP lookup digits', () => {
   const fixtures = [undefined, null, {}, { address: '  ', city: 'City', postal_code: '75001-1234' },
     { address: ' 123 Main ', city: ' City ', state: '', postal_code: '75001-1234' },
     { address: 0, state: null, postal_code: 75001 }, { address: 'Main', state: ' ', postal_code: 'abc12-34567' }];
@@ -48,7 +50,7 @@ test('location hydration retains literal address/default state and ZIP-only digi
     const expected = { documentReviewSubjectAddress: street
       ? [street, value?.city, value?.state || 'TX', value?.postal_code].map(item => String(item || '').trim()).filter(Boolean).join(', ')
       : '', censusZip: String(value?.postal_code || '').replace(/\D/g, '').slice(0, 5),
-      streetAddress: address.split(',')[0].trim() || address, city: display(value?.city), state: display(value?.state, 'TX'), postalCode: display(value?.postal_code) };
+      streetAddress: reportAddress(address.split(',')[0].trim() || address), city: display(reportTitleCase(value?.city)), state: display(value?.state, 'TX'), postalCode: display(reportZip5(value?.postal_code)) };
     assert.deepEqual(propertyReportLocationContext(value), expected); assert.deepEqual(value, before);
   }
 });
@@ -70,6 +72,34 @@ test("assignment hydration preserves explicit values and clones arrays", () => {
   assert.equal(draft.contract_closing_date, "2026-09-24");
   assert.equal(draft.contract_property_condition, "as_is");
   assert.equal(draft.lender_revision_count, 0);
+});
+
+test('unrelated assignment edits retain the exact saved lender address, including case, whitespace and ZIP+4', () => {
+  const source = Object.freeze({ lender_client_address: ' 400 TEST AVENUE\nCHARLOTTE, NC 28255-1234 ', occupancy: 'vacant' });
+  const draft = assignmentDraftFromDetail(source);
+  draft.occupancy = 'owner';
+  assert.equal(JSON.parse(JSON.stringify(draft)).lender_client_address, source.lender_client_address);
+});
+
+test('PUD summary follows explicit draft choices without promoting missing values to No', async () => {
+  for (const value of [undefined, null, '', 'false', 'true', 0, 1]) {
+    const draft = assignmentDraftFromDetail({ pud: value });
+    draft.occupancy = 'owner';
+    assert.equal(draft.pud, undefined);
+    assert.equal(assignmentPudSummary(draft.pud), 'Not reported');
+    assert.equal(Object.hasOwn(JSON.parse(JSON.stringify(draft)), 'pud'), false);
+  }
+  for (const saved of [undefined, false, true]) {
+    const draft = assignmentDraftFromDetail({ pud: saved });
+    draft.pud = true;
+    assert.equal(assignmentPudSummary(draft.pud), 'PUD / HOA review');
+    draft.pud = false;
+    assert.equal(assignmentPudSummary(draft.pud), 'PUD: No');
+    assert.equal(JSON.parse(JSON.stringify(draft)).pud, false);
+  }
+  assert.equal(assignmentPudSummary(assignmentDraftFromDetail({ pud: false }).pud), 'PUD: No');
+  const source = await readFile(new URL('../src/pages/PropertyReport.tsx', import.meta.url), 'utf8');
+  assert.match(source, /assignmentPudSummary\(assignmentDraft\.pud\)/);
 });
 
 test("assignment validation retains established PUD and explanation rules", () => {

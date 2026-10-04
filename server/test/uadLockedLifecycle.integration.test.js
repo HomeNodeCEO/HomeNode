@@ -2758,6 +2758,55 @@ test("UAD canonical writers honor immutable lifecycle and signature state in a d
     };
 
     for (const action of ["create", "delete"]) {
+      await t.test(`public entity ${action} retains one committed mutation after simulated COMMIT acknowledgment loss`, async () => {
+        const fixture = await createEntityMutationFixture(action);
+        const before = await cleanupState(pool, fixture.workfileId);
+        const failure = new Error(`synthetic_entity_${action}_commit_acknowledgment_lost`);
+        let commitsCompleted = 0;
+        let checkouts = 0;
+        const observed = await hostileObservedPool({ after(statement, _client, result) {
+          if (statement === "COMMIT") {
+            // The real PostgreSQL COMMIT has returned before this observer
+            // simulates a lost reply. This is not a network-disconnection test.
+            assert.equal(result.command, "COMMIT");
+            commitsCompleted += 1;
+            throw failure;
+          }
+        } });
+        const ownerPool = { async connect() { checkouts += 1; return observed.pool.connect(); } };
+        try {
+          await assert.rejects(
+            () => entityMutation(ownerPool, fixture, action, fixture.entityId),
+            error => error === failure,
+          );
+          assert.equal(checkouts, 1);
+          assert.equal(commitsCompleted, 1);
+          assert.deepEqual(observed.isolation, ["read committed"]);
+          assert.deepEqual(observed.trace.filter(sql => /^(BEGIN|COMMIT|ROLLBACK)\b/.test(sql)),
+            [READ_COMMITTED_BEGIN, "COMMIT", "ROLLBACK"], "cleanup must not replay the transaction");
+          assert.match(observed.trace[1], /FROM appraisal\.uad_workfiles.*FOR UPDATE$/);
+          assert.match(observed.trace[2], /FROM appraisal\.uad_signatures/);
+          const writes = observed.trace.filter(sql => /^(INSERT|UPDATE|DELETE)\b/.test(sql));
+          assert.equal(writes.length, 3, "one entity mutation, actor audit and workfile touch only");
+          assert.equal(writes.filter(sql => sql.startsWith(action === "create"
+            ? "INSERT INTO appraisal.uad_entities" : "DELETE FROM appraisal.uad_entities")).length, 1);
+          assert.equal(writes.filter(sql => sql.startsWith("INSERT INTO appraisal.uad_audit_events")).length, 1);
+          assert.equal(writes.filter(sql => sql ===
+            "UPDATE appraisal.uad_workfiles SET status = 'draft', updated_at = now() WHERE id = $1").length, 1);
+          // Read committed state separately after rejection/release, never by
+          // repeating the owner to obtain its lost result. ROLLBACK cannot undo it.
+          const after = await cleanupState(pool, fixture.workfileId);
+          const priorEntityIds = new Set(before.canonical.entities.map(row => row.id));
+          const addedEntities = after.canonical.entities.filter(row => !priorEntityIds.has(row.id));
+          assert.equal(addedEntities.length, action === "create" ? 1 : 0);
+          const entityId = action === "create" ? addedEntities[0].id : fixture.entityId;
+          assert.equal(after.canonical.entities.some(row => row.id === entityId), action === "create");
+          assertCommittedEntityMutation(before, after, action, { id: entityId });
+        } finally {
+          observed.forceRelease();
+        }
+      });
+
       await t.test(`public entity ${action} waits for an in-flight signature and then preserves its committed evidence`, async () => {
         const fixture = await createEntityMutationFixture(action);
         const before = await cleanupState(pool, fixture.workfileId);

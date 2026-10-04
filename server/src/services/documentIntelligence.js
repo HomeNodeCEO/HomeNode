@@ -1,4 +1,7 @@
 import { extractText, getDocumentProxy } from "unpdf";
+import { buildUrarSubjectEvidence, identifyUrarSubjectSource } from "./urarSubjectEvidence.js";
+import { isDwellingBlocksAssignment } from './dwellingBlocksAssignment.js';
+import { trecContractSubjectIdentityCandidate } from "./trecContractSubjectIdentity.js";
 
 export const DOCUMENT_TYPES = Object.freeze([
   "zoning_map",
@@ -13,7 +16,7 @@ export const DOCUMENT_TYPES = Object.freeze([
 
 // Persist this with every extraction so documents created before a parser
 // improvement can be upgraded exactly once from their immutable source PDF.
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-09-02-v3";
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-04-v2";
 
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
@@ -40,6 +43,13 @@ function normalizedMoney(value) {
   return Number.isFinite(amount) ? amount.toFixed(2) : null;
 }
 
+function isCalendarDate(year, month, day) {
+  const verified = new Date(Date.UTC(year, month - 1, day));
+  return verified.getUTCFullYear() === year
+    && verified.getUTCMonth() + 1 === month
+    && verified.getUTCDate() === day;
+}
+
 function normalizedDate(value) {
   const source = cleanText(value, 200);
   if (!source) return null;
@@ -55,16 +65,44 @@ function normalizedDate(value) {
   } else {
     const parsed = new Date(source);
     if (Number.isNaN(parsed.getTime())) return null;
-    year = parsed.getUTCFullYear();
-    month = parsed.getUTCMonth() + 1;
-    day = parsed.getUTCDate();
+    // Validate the printed calendar components: Date can roll an impossible
+    // day into the next month, or interpret an unzoned date in the host's local
+    // timezone. Neither may change a document's printed calendar date.
+    const iso = source.match(/\b(\d{4})[./-](\d{1,2})[./-](\d{1,2})(?=\b|T)/);
+    const monthFirst = source.match(/\b([A-Za-z]+)\.?[\s-]*(\d{1,2})[,\s-]+(\d{4}|\d{2})\b/);
+    const dayFirst = source.match(/\b(\d{1,2})[\s-]+([A-Za-z]+)\.?[,\s-]+(\d{4}|\d{2})\b/);
+    const yearFirst = source.match(/\b(\d{4})[\s-]+([A-Za-z]+)\.?[\s-]+(\d{1,2})\b/);
+    // A year-first datetime can also contain a later month-first match that
+    // mistakes the clock hour for a two-digit year. Use the same earliest
+    // complete calendar match for both components and the remaining suffix.
+    const calendar = [iso, monthFirst, dayFirst, yearFirst]
+      .filter(Boolean).sort((left, right) => left.index - right.index)[0];
+    if (!calendar) return null; // No printed calendar components to verify safely.
+    if (calendar === iso) {
+      [year, month, day] = calendar.slice(1).map(Number);
+    } else {
+      const monthName = calendar === monthFirst ? calendar[1] : calendar[2];
+      month = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"].indexOf(monthName.slice(0, 3).toLowerCase()) + 1;
+      day = Number(calendar === monthFirst ? calendar[2] : calendar === dayFirst ? calendar[1] : calendar[3]);
+      year = Number(calendar === yearFirst ? calendar[1] : calendar[3]);
+      if (year < 100) year += year >= 50 ? 1900 : 2000;
+    }
+    if (!isCalendarDate(year, month, day)) return null;
+    // An optional time must have a complete, supported suffix. Unknown zone
+    // names must not silently become timezone-free calendar dates. Date's
+    // textual parser also accepts out-of-range offsets, so check those here.
+    const suffix = source.slice(calendar.index + calendar[0].length);
+    const time = suffix && suffix.match(/^(?:T|\s+)\d{1,2}:\d{2}(?::\d{2}(?:\.\d{1,9})?)?(?:\s*[AP]M)?(?:\s*(Z|(?:GMT|UTC)(?:[+-]\d{2}:?\d{2})?|[+-]\d{2}:?\d{2}))?$/i);
+    if (suffix && !time) return null;
+    if (time?.[1]) {
+      const offset = time[1].match(/[+-](\d{2}):?(\d{2})$/);
+      if (offset && (Number(offset[1]) > 23 || Number(offset[2]) > 59)) return null;
+      year = parsed.getUTCFullYear();
+      month = parsed.getUTCMonth() + 1;
+      day = parsed.getUTCDate();
+    }
   }
-  const verified = new Date(Date.UTC(year, month - 1, day));
-  if (
-    verified.getUTCFullYear() !== year ||
-    verified.getUTCMonth() + 1 !== month ||
-    verified.getUTCDate() !== day
-  ) return null;
+  if (!isCalendarDate(year, month, day)) return null;
   return `${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }
 
@@ -129,7 +167,7 @@ function pageLines(pages) {
     .filter((entry) => entry.line));
 }
 
-function firstMlsLabeledCandidate(entries, {
+function* mlsLabeledCandidates(entries, {
   fieldKey,
   labelSource,
   valueSource,
@@ -149,7 +187,7 @@ function firstMlsLabeledCandidate(entries, {
       const rawValue = cleanText(inline[2], 2_000);
       const normalizedValue = normalize(rawValue);
       if (rawValue && normalizedValue != null && normalizedValue !== "") {
-        return {
+        yield {
           field_key: fieldKey,
           raw_value: rawValue,
           normalized_value: String(normalizedValue),
@@ -166,7 +204,7 @@ function firstMlsLabeledCandidate(entries, {
     const rawValue = cleanText(nextEntry.line.match(new RegExp(`^(${valueSource})`, "i"))?.[1], 2_000);
     const normalizedValue = normalize(rawValue);
     if (!rawValue || normalizedValue == null || normalizedValue === "") continue;
-    return {
+    yield {
       field_key: fieldKey,
       raw_value: rawValue,
       normalized_value: String(normalizedValue),
@@ -176,7 +214,34 @@ function firstMlsLabeledCandidate(entries, {
       extraction_method: "mls_labeled_text",
     };
   }
-  return null;
+}
+
+function firstMlsLabeledCandidate(entries, options) {
+  return mlsLabeledCandidates(entries, options).next().value ?? null;
+}
+
+const MAX_MLS_LIST_DATES = 2_000;
+function allMlsListDates(entries) {
+  // Match complete printed dates, not an arbitrary numeric substring. Keep ISO
+  // timezone offsets intact before normalization; a date prefix can be a day off.
+  const year = "(?:\\d{4}|\\d{2})";
+  const month = "[A-Za-z]{3,9}\\.?";
+  const iso = "\\d{4}[-/.]\\d{1,2}[-/.]\\d{1,2}(?:T\\d{2}:\\d{2}(?::\\d{2}(?:\\.\\d{1,9})?)?(?:Z|[+-]\\d{2}:?\\d{2})?)?";
+  const formats = [iso, `\\d{1,2}[/-]\\d{1,2}[/-]${year}`,
+    `${month}[\\s-]*\\d{1,2}[,\\s-]+${year}`,
+    `\\d{1,2}[\\s-]+${month}[,\\s-]+${year}`, `\\d{4}\\s+${month}\\s+\\d{1,2}`].join("|");
+  const boundary = "(?=$|\\s*[|;]|\\s+[A-Za-z][A-Za-z /()#.'-]{0,55}[:=#]|\\s+(?:DOM|CDOM|LP|OLP|ST|STATUS|LD|CD|CTD|SD|XD)\\b)";
+  const dates = new Map();
+  for (const candidate of mlsLabeledCandidates(entries, {
+    fieldKey: "list_date", labelSource: "(?:ORIGINAL\\s+LIST(?:ING)?\\s+DATE|LIST(?:ING)?\\s+DATE|LD)",
+    valueSource: `(?:${formats})${boundary}`, normalize: normalizedDate,
+    reject: (entry, match) => /(?:last|most\s+recent)\s*$/i.test(entry.line.slice(0, match.index)),
+  })) {
+    if (!dates.has(candidate.normalized_value)) dates.set(candidate.normalized_value, candidate);
+    // Do not keep a truncated first winner when pathological input exceeds bounds.
+    if (dates.size > MAX_MLS_LIST_DATES) return null;
+  }
+  return [...dates.values()];
 }
 
 function buildMlsSheetCandidates(entries) {
@@ -190,24 +255,31 @@ function buildMlsSheetCandidates(entries) {
     "PENDING", "CLOSED", "ACTIVE", "SOLD", "AOC", "CONT", "PEND", "PND", "ACT",
     "TOM", "EXP", "WDN", "CAN", "CLS", "SLD", "UC", "CS", "A", "P", "S",
   ].join("|");
+  const explicitStatus = firstMlsLabeledCandidate(entries, {
+    fieldKey: "listing_status",
+    labelSource: "(?:(?:CURRENT|MLS|LIST(?:ING)?|LSTG|LST|PROPERTY)\\s+)?STATUS(?:\\s+CODE)?|(?:MLS\\s+)?ST|STAT",
+    // A whole token is required on each side: ST + A inside "States" must
+    // never become Active. Longer status phrases precede their short forms.
+    valueSource: `(?:${status})(?=$|[\\s|,;])`,
+    normalize: normalizedListingStatus,
+  });
+  const headerStatusPattern = new RegExp(`^MLS\\s*#\\s*:\\s*\\d{4,20}\\s+(${status})(?=\\s|$)`, "i");
+  const headerEntry = entries.find(entry => headerStatusPattern.test(entry.line));
+  const headerStatus = headerEntry?.line.match(headerStatusPattern)?.[1];
+  const listingDates = allMlsListDates(entries);
+  if (!listingDates) return { candidates: [], dateLimitExceeded: true };
   const candidates = [
-    firstMlsLabeledCandidate(entries, {
-      fieldKey: "listing_status",
-      labelSource: "(?:(?:CURRENT|MLS|LIST(?:ING)?|LSTG|LST|PROPERTY)\\s+)?STATUS(?:\\s+CODE)?|(?:MLS\\s+)?ST|STAT",
-      valueSource: `(?:${status})`,
-      normalize: normalizedListingStatus,
-    }),
+    explicitStatus || (headerStatus ? {
+      field_key: "listing_status", raw_value: headerStatus, normalized_value: normalizedListingStatus(headerStatus),
+      page_number: headerEntry.pageNumber, confidence: 0.94,
+      evidence_excerpt: headerEntry.line.slice(0, 2_000), extraction_method: "mls_print_header_status",
+    } : null),
     firstMlsLabeledCandidate(entries, {
       fieldKey: "mls_number",
       labelSource: "(?:MLS\\s*(?:#|NO\\.?|NUMBER|ID)|LISTING\\s*(?:#|NO\\.?|NUMBER|ID))",
       valueSource: "[A-Z0-9][A-Z0-9-]{2,44}",
     }),
-    firstMlsLabeledCandidate(entries, {
-      fieldKey: "list_date",
-      labelSource: "(?:ORIGINAL\\s+LIST(?:ING)?\\s+DATE|LIST(?:ING)?\\s+DATE|LD)",
-      valueSource: date,
-      normalize: normalizedDate,
-    }),
+    ...listingDates,
     firstMlsLabeledCandidate(entries, {
       fieldKey: "days_on_market",
       labelSource: "(?:DAYS\\s+ON\\s+MARKET|DOM)(?:\\s*[/&]\\s*CDOM)?",
@@ -262,7 +334,7 @@ function buildMlsSheetCandidates(entries) {
     || explicitEndDate;
   if (endDate) {
     candidates.splice(3, 0, endDate);
-  } else if (lifecycle === "active") {
+  } else if (lifecycle === "active" && listingDates.length === 1) {
     const start = candidates.find((candidate) => candidate.field_key === "list_date");
     const dom = candidates.find((candidate) => candidate.field_key === "days_on_market");
     const derivedEndDate = isoDateFromExposure(start?.normalized_value, dom?.normalized_value);
@@ -278,7 +350,7 @@ function buildMlsSheetCandidates(entries) {
       });
     }
   }
-  return candidates;
+  return { candidates, dateLimitExceeded: false };
 }
 
 function firstLabeledCandidate(entries, {
@@ -350,19 +422,121 @@ function firstContractPatternCandidate(pages, {
 function trecEffectiveDateCandidate(pages) {
   const numeric = firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
-    pattern: /EXECUTED[\s\S]{0,180}?(\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4}))[\s\S]{0,100}?\(Effective Date\)/i,
+    pattern: /EXECUTED[\s\S]{0,180}?(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))[\s\S]{0,100}?\(Effective Date\)/i,
     normalize: normalizedDate,
     confidence: 0.99,
     extractionMethod: "trec_effective_date",
   });
-  if (numeric) return numeric;
-  return firstContractPatternCandidate(pages, {
+  if (numeric) return laterOriginalSignatureDate(pages, numeric) || numeric;
+  const aboveLine = firstContractPatternCandidate(pages, {
+    fieldKey: "contract_date",
+    // Filled text can sit just above the printed execution-date baseline.
+    // Require the complete date immediately before this specific form block;
+    // signature dates and isolated OCR fragments are not an effective date.
+    pattern: /(?:^|\n)\s*(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))\s*\n\s*EXECUTED\s+the[^\n]{0,180}\(Effective Date\)\.[\s\n]*(?:\(BROKER:\s*FILL IN THE DATE OF FINAL ACCEPTANCE\.\))/i,
+    normalize: normalizedDate,
+    confidence: 0.96,
+    extractionMethod: "trec_effective_date_above_baseline",
+  });
+  if (aboveLine) return laterOriginalSignatureDate(pages, aboveLine) || aboveLine;
+  const written = firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
     pattern: /EXECUTED\s+the\s+(\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+[A-Za-z]+,?\s+\d{4})[\s\S]{0,100}?\(Effective Date\)/i,
     normalize: (value) => normalizedDate(value.replace(/(?:st|nd|rd|th)\b/i, "")),
     confidence: 0.98,
     extractionMethod: "trec_effective_date",
   });
+  return laterOriginalSignatureDate(pages, written) || written;
+}
+
+function laterOriginalSignatureDate(pages, effective) {
+  // Limit the comparison to the original execution block. Signature dates on
+  // later addenda or disclosures are not evidence of this contract's effective
+  // date, and unrelated dates elsewhere in the PDF must never override it.
+  const pageIndex = effective ? effective.page_number - 1 : pages.findIndex(page => /\bEXECUTED\b[\s\S]{0,220}\(Effective Date\)/i.test(page));
+  if (pageIndex < 0) return null;
+  const page = cleanText(pages[pageIndex], 500_000);
+  const execution = /\bEXECUTED\b[\s\S]{0,220}\(Effective Date\)/i.exec(page);
+  if (!execution) return null;
+  const addendum = /\b(?:ADDENDUM|AMENDMENT|DISCLOSURE|NON-REALTY ITEMS|THIRD PARTY FINANCING)\b/i;
+  const currentTail = page.slice(execution.index + execution[0].length, execution.index + execution[0].length + 2_000);
+  const currentBlock = page.slice(Math.max(0, execution.index - 2_000), execution.index + execution[0].length)
+    + '\n' + currentTail.split(addendum, 1)[0];
+  // A scanned original execution page can end before the signature lines.
+  // Inspect at most the next page's opening block, never later pages or a
+  // titled addendum/disclosure even when it contains Buyer/Seller dates.
+  const nearPageEnd = page.length - (execution.index + execution[0].length) < 1_500;
+  const nextHead = nearPageEnd ? cleanText(pages[pageIndex + 1] || '', 2_000) : '';
+  const nextBlock = nextHead.split(addendum, 1)[0];
+  const signaturePattern = /\b(Buyer|Seller)\s*(?:Signature)?[^\n]{0,100}?\b(?:Date Signed|Signed Date|Date)\s*[:#.-]?\s*(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))\b/gi;
+  const signatures = [[currentBlock, pageIndex + 1], [nextBlock, pageIndex + 2]]
+    .flatMap(([block, pageNumber]) => [...block.matchAll(signaturePattern)]
+      .map(match => ({ raw: match[2], normalized: normalizedDate(match[2]), evidence: compactEvidence(match[0]), pageNumber })))
+    .filter(item => item.normalized);
+  if (!signatures.length) return null;
+  const latest = signatures.sort((left, right) => right.normalized.localeCompare(left.normalized))[0];
+  if (effective && latest.normalized <= effective.normalized_value) return null;
+  return { field_key: 'contract_date', raw_value: latest.raw, normalized_value: latest.normalized,
+    page_number: latest.pageNumber, confidence: 0.94,
+    evidence_excerpt: `${latest.evidence}; original contract execution block effective date ${effective?.raw_value || 'not filled'}`,
+    extraction_method: 'trec_later_original_signature_date' };
+}
+
+function trecSalesPriceCandidate(pages) {
+  return firstContractPatternCandidate(pages, {
+    fieldKey: "contract_price",
+    pattern: /Sales Price\s*\(Sum of A and B\)[\s\S]{0,120}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+    normalize: normalizedMoney,
+  }) || firstContractPatternCandidate(pages, {
+    fieldKey: "contract_price",
+    // OCR sometimes reads "and" as "@nd" or drops the dollar sign. This
+    // fallback is confined to the complete Section 3C label and amount on its
+    // own line; it never borrows a blank field's value from another section.
+    pattern: /(?:^|\n)\s*C\.\s*Sales Price\s*\(Sum of A (?:and|@nd) B\)[^\d$\n]{0,120}\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d{4,10}(?:\.\d{2})?)(?=\s*(?:\n|$))/i,
+    normalize: normalizedMoney,
+    confidence: 0.93,
+    extractionMethod: "trec_sales_price_line_ocr",
+  });
+}
+
+function trecPrintedAddressReviewCandidate(pages) {
+  if (!Array.isArray(pages) || pages.length > 250 || !pages.length
+    || typeof pages[0] !== 'string' || !/ONE TO FOUR FAMILY RESIDENTIAL CONTRACT\s*\(RESALE\)/i.test(pages[0])) return null;
+  const findings = [];
+  const addressPattern = /^(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?(?:\s+1\/2)?\s+[^,]{1,200}),\s*([A-Za-z][A-Za-z .'-]{0,99}),\s*([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/;
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    if (typeof pages[pageIndex] !== 'string' || pages[pageIndex].length > 500_000) return null;
+    const lines = pages[pageIndex].split(/\r?\n/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 18);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      let address = line.match(/^Contract\s*Concerning\s*[~]*\s*(.*?)\s+Page\s*\d{1,3}\s*of\s*\d{1,3}(?:\s+\d{2}-\d{2}-\d{4})?(?:\s*[|. ]*)$/i)?.[1];
+      let source = 'Main contract';
+      if (!address && /^TO CONTRACT CONCERNING THE PROPERTY AT$/i.test(line)) {
+        address = lines[index + 1]; source = 'Addendum';
+      }
+      if (!address) {
+        address = line.match(/^Addendum for ["“]?Back-Up["”]? Contract\s+(.+?)\s+\d{2}-\d{2}-\d{4}$/i)?.[1];
+        if (address) source = 'Addendum';
+      }
+      if (!address || !addressPattern.test(address)) continue;
+      const key = `${source}:${address.toUpperCase()}`;
+      const existing = findings.find(finding => finding.key === key);
+      if (existing) existing.pages.push(pageIndex + 1);
+      else findings.push({ key, source, address, pages: [pageIndex + 1], evidence: source === 'Addendum' ? `${line}\n${address}` : line });
+      if (findings.length > 12) return null;
+    }
+  }
+  if (new Set(findings.map(finding => finding.address.toUpperCase())).size < 2) return null;
+  const raw = ['Review required: printed subject addresses differ.', ...findings.map(finding =>
+    `${finding.source} (pages ${finding.pages.join(', ')}): ${finding.address}`)].join('\n');
+  if (raw.length > 2_000) return null;
+  // This diagnostic is deliberately NOT subject_property_address. It exposes
+  // OCR-readable conflicting form/addendum addresses without promoting an
+  // addendum or relaxing the full-form identity gate used for Subject export.
+  return { field_key: 'contract_printed_subject_addresses', raw_value: raw, normalized_value: raw,
+    page_number: findings[0].pages[0], confidence: 0.9, review_status: 'suggested',
+    evidence_excerpt: findings.map(finding => `Page ${finding.pages[0]}: ${finding.evidence}`).join('\n').slice(0, 2_000),
+    extraction_method: 'trec_printed_address_discrepancy_review' };
 }
 
 function trecPartyCandidates(pages) {
@@ -561,6 +735,8 @@ function contractPersonalPropertyCandidates(pages, exclusionsCandidate = null) {
 
 function buildPurchaseContractCandidates(pages) {
   const candidates = [
+    trecContractSubjectIdentityCandidate(pages),
+    trecPrintedAddressReviewCandidate(pages),
     firstContractPatternCandidate(pages, {
       fieldKey: "down_payment",
       pattern: /Cash portion of (?:the )?Sales Price payable by Buyer at closing[\s\S]{0,160}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
@@ -571,11 +747,7 @@ function buildPurchaseContractCandidates(pages) {
       pattern: /Sum of all financing described[\s\S]{0,280}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
       normalize: normalizedMoney,
     }),
-    firstContractPatternCandidate(pages, {
-      fieldKey: "contract_price",
-      pattern: /Sales Price\s*\(Sum of A and B\)[\s\S]{0,120}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
-      normalize: normalizedMoney,
-    }),
+    trecSalesPriceCandidate(pages),
     firstContractPatternCandidate(pages, {
       fieldKey: "earnest_money",
       pattern: /\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s+as earnest money\b/i,
@@ -583,7 +755,7 @@ function buildPurchaseContractCandidates(pages) {
     }),
     firstContractPatternCandidate(pages, {
       fieldKey: "closing_date",
-      pattern: /closing of the sale will be on or before\s+((?:[A-Za-z]+\s+\d{1,2},?\s+\d{4})|(?:\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})))/i,
+      pattern: /closing of the sale will be on or before\s+((?:[A-Za-z]+\s+\d{1,2}\s*,?\s+\d{4})|(?:\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})))/i,
       normalize: normalizedDate,
       extractionMethod: "trec_closing_date",
     }),
@@ -838,12 +1010,15 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }
-  if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample)) {
+  if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample) || isDwellingBlocksAssignment(pages)) {
     return "engagement_letter";
   }
   if (/appraisal\s+district\s+evidence|arb\s+evidence|district\s+comparable\s+sales?/.test(sample)) {
     return "district_evidence";
   }
+  // Preserve contract, engagement, and district-packet precedence. A standalone
+  // Realist/CAD report can quote an MLS number without becoming a listing sheet.
+  if (["cad", "realist"].includes(identifyUrarSubjectSource({ documentType: "other", pages }))) return "other";
   const explicitMlsIdentity = /multiple\s+listing\s+service|\bmls\s*(?:#|number\b|no\.?)/.test(sample);
   const mlsSignals = [
     /\b(?:dom|days\s+on\s+market)\b/.test(sample),
@@ -887,8 +1062,13 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
   return null;
 }
 
-export function buildDocumentFieldCandidates({ documentType, pages }) {
+export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
+  if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
+  if (["matrix_listing_history", "dwelling_blocks_assignment"].includes(subjectEvidence.source_layout)) return [...subjectEvidence.candidates];
+  if (subjectEvidence.unresolved.some(item => ["multiple_mls_listing_identities", "ambiguous_mls_listing_identity"].includes(item.reason))) return [];
   const entries = pageLines(pages);
+  const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;
+  if (mls?.dateLimitExceeded) return [];
   const districtCandidates = documentType === "district_evidence"
     ? buildDistrictComparableCandidates(pages)
     : [];
@@ -899,7 +1079,7 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
       : documentType === "purchase_contract"
         ? buildPurchaseContractCandidates(pages)
         : documentType === "mls_sheet"
-          ? buildMlsSheetCandidates(entries)
+          ? mls.candidates
           : [];
   const specializedFields = new Set(specializedCandidates.map((candidate) => candidate.field_key));
   const definitions = [
@@ -1009,10 +1189,44 @@ export function buildDocumentFieldCandidates({ documentType, pages }) {
     .filter((definition) => (
       (!allowedFields || allowedFields.has(definition.fieldKey))
       && !specializedFields.has(definition.fieldKey)
+      && !(documentType === "mls_sheet" && definition.fieldKey === "list_date")
     ))
     .map((definition) => firstLabeledCandidate(entries, definition))
     .filter(Boolean);
   candidates.unshift(...specializedCandidates);
+
+  // Preserve the established engagement parser for repeated Client/Lender labels
+  // and multiline addresses. New Subject-only fields use strict source-specific
+  // rules. CAD/Realist have no legacy specialized parser, so use only their
+  // labeled evidence rather than treating incidental contract/MLS text as facts.
+  if (["cad", "realist"].includes(subjectEvidence.source_kind)) {
+    candidates.splice(0, candidates.length, ...subjectEvidence.candidates);
+  } else if (["engagement_letter", "mls_sheet"].includes(subjectEvidence.source_kind)) {
+    const established = new Set(candidates.map(candidate => candidate.field_key));
+    const strictKeys = new Set(subjectEvidence.conflicts.map(item => item.field_key));
+    const listingDates = new Map();
+    if (subjectEvidence.source_kind === "mls_sheet") {
+      for (const candidate of [...candidates, ...subjectEvidence.candidates]) {
+        if (candidate.field_key === "list_date" && normalizedDate(candidate.normalized_value) === candidate.normalized_value) {
+          listingDates.set(candidate.normalized_value, candidate);
+        }
+      }
+      if (listingDates.size > MAX_MLS_LIST_DATES) return [];
+      strictKeys.add("list_date");
+    }
+    // Conflicting alternatives must reach review/export together, not be reduced
+    // to the first legacy match. Preserve valid legacy date formats that the
+    // narrower Subject parser does not support, but require an exact ISO result.
+    for (let index = candidates.length - 1; index >= 0; index -= 1) {
+      const candidate = candidates[index];
+      const invalidListingDate = candidate.field_key === "list_date"
+        && normalizedDate(candidate.normalized_value) !== candidate.normalized_value;
+      if (strictKeys.has(candidate.field_key) || invalidListingDate
+        || (listingDates.size > 1 && candidate.extraction_method === "mls_list_date_dom_derivation")) candidates.splice(index, 1);
+    }
+    candidates.push(...subjectEvidence.candidates.filter(candidate => candidate.field_key !== "list_date"
+      && (!established.has(candidate.field_key) || strictKeys.has(candidate.field_key))), ...listingDates.values());
+  }
 
   if (documentType === "purchase_contract" && !candidates.some((candidate) => candidate.field_key === "assignment_type")) {
     const purchaseEvidence = entries.find((entry) => (
@@ -1049,8 +1263,11 @@ export async function extractPdfEvidence(buffer, {
   if (!Buffer.isBuffer(buffer) || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
     throw new Error("document_not_pdf");
   }
+  if (buffer.length > 25 * 1024 * 1024) throw new Error("document_too_large");
   const bytes = new Uint8Array(buffer);
-  const pdf = await getDocumentProxy(bytes);
+  const pdf = await getDocumentProxy(bytes, {
+    isEvalSupported: false, enableScripting: false, maxImageSize: 16_000_000,
+  });
   try {
     if (pdf.numPages > MAX_PDF_PAGES) throw new Error("document_page_limit_exceeded");
     const extracted = await extractText(pdf, { mergePages: false });
@@ -1059,28 +1276,72 @@ export async function extractPdfEvidence(buffer, {
     let textLength = pages.reduce((sum, text) => sum + text.length, 0);
     let extractionMethod = textLength >= 40 ? "pdf_text" : "none";
     let ocrMetadata = null;
-    if (textLength < 40 && ocrProvider?.configured) {
-      const ocrResult = await ocrProvider.analyzePdf(buffer);
-      pages = (Array.isArray(ocrResult?.pages) ? ocrResult.pages : [])
-        .slice(0, MAX_PDF_PAGES)
-        .map((text) => cleanText(text, 500_000));
-      textLength = pages.reduce((sum, text) => sum + text.length, 0);
-      extractionMethod = textLength >= 40
-        ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
-        : "ocr_no_reliable_text";
-      ocrMetadata = {
-        provider: ocrResult?.provider || "configured_ocr",
-        model_id: ocrResult?.model_id || null,
-        api_version: ocrResult?.api_version || null,
-        operation_id: ocrResult?.operation_id || null,
-      };
+    // A searchable cover sheet must not hide image-only pages later in a PDF.
+    // Preserve reliable native text and cite OCR against original page numbers.
+    const pagesNeedingOcr = pages.flatMap((text, index) => text.length < 40 ? [index + 1] : []);
+    const scannedPages = new Set();
+    if (pagesNeedingOcr.length && ocrProvider?.configured) {
+      let ocrResult;
+      try {
+        ocrResult = await ocrProvider.analyzePdf(buffer, {
+          pageNumbers: pagesNeedingOcr,
+          pageCount: pdf.numPages,
+        });
+      } catch (error) {
+        let code;
+        try { code = error?.message; } catch { /* Never expose hostile provider diagnostics. */ }
+        // A busy scanner belongs in the durable queue. Image-only documents
+        // still need the existing explicit failure/retry path, not empty fields.
+        if (code === "document_ocr_busy" || textLength < 40) throw error;
+        const knownErrors = new Set([
+          "document_ocr_failed", "document_ocr_timeout", "document_ocr_not_configured",
+          "document_ocr_page_limit_exceeded", "document_ocr_pixel_limit_exceeded",
+          "document_ocr_text_limit_exceeded", "document_ocr_page_selection_invalid",
+          "document_ocr_submit_unavailable", "document_ocr_poll_unavailable",
+          "document_ocr_poll_timeout", "document_ocr_analysis_failed",
+        ]);
+        ocrMetadata = {
+          provider: ocrProvider.provider || "configured_ocr",
+          error: knownErrors.has(code) ? code : "document_ocr_failed",
+          attempted_page_numbers: pagesNeedingOcr,
+          scanned_page_numbers: [],
+          text_recovered_page_numbers: [],
+          unresolved_page_numbers: pagesNeedingOcr,
+        };
+      }
+      if (!ocrMetadata) {
+        const ocrPages = Array.isArray(ocrResult?.pages) ? ocrResult.pages : [];
+        pages = pages.map((text, index) => {
+          if (!pagesNeedingOcr.includes(index + 1)) return text;
+          const scanned = cleanText(ocrPages[index], 500_000);
+          if (scanned.length < 40) return text;
+          scannedPages.add(index + 1);
+          return scanned;
+        });
+        textLength = pages.reduce((sum, text) => sum + text.length, 0);
+        extractionMethod = textLength >= 40
+          ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
+          : "ocr_no_reliable_text";
+        ocrMetadata = {
+          provider: ocrResult?.provider || "configured_ocr",
+          model_id: ocrResult?.model_id || null,
+          api_version: ocrResult?.api_version || null,
+          operation_id: ocrResult?.operation_id || null,
+          scanned_page_numbers: pagesNeedingOcr,
+          text_recovered_page_numbers: [...scannedPages],
+          unresolved_page_numbers: pagesNeedingOcr.filter(pageNumber => !scannedPages.has(pageNumber)),
+          confidence_by_page: ocrResult?.confidence_by_page || null,
+          preprocessing_by_page: ocrResult?.preprocessing_by_page || null,
+        };
+      }
     }
+    if (textLength > MAX_EXTRACTED_TEXT_LENGTH) throw new Error("document_text_limit_exceeded");
     const documentType = classifyDocument({ requestedType, fileName, pages });
-    const candidates = buildDocumentFieldCandidates({ documentType, pages })
-      .map((candidate) => (ocrMetadata ? {
-        ...candidate,
-        extraction_method: `${extractionMethod}:${candidate.extraction_method}`,
-      } : candidate));
+    const subjectEvidence = buildUrarSubjectEvidence({ documentType, pages });
+    // Keep parser-rule provenance stable: downstream safety gates identify exact
+    // specialized rules. OCR provenance belongs to the document/page metadata.
+    const candidates = textLength >= 40
+      ? buildDocumentFieldCandidates({ documentType, pages, subjectEvidence }) : [];
     return {
       document_type: documentType,
       page_count: extracted.totalPages,
@@ -1090,12 +1351,21 @@ export async function extractPdfEvidence(buffer, {
       pages,
       candidates,
       ocr_metadata: ocrMetadata,
-      review_reason: textLength >= 40
+      urar_subject_evidence: { schema_version: subjectEvidence.schema_version,
+        source_kind: subjectEvidence.source_kind, conflicts: subjectEvidence.conflicts,
+        unresolved: subjectEvidence.unresolved },
+      review_reason: pagesNeedingOcr.length && !ocrMetadata
+        ? `Pages ${pagesNeedingOcr.join(", ")} contain no reliable searchable text and require visual review. Available text suggestions require appraiser confirmation.`
+        : ocrMetadata?.error
+          ? `Image scanning could not finish for pages ${ocrMetadata.unresolved_page_numbers.join(", ")}. Searchable text and its suggestions remain available for appraiser review; unresolved pages require visual review.`
+        : ocrMetadata?.unresolved_page_numbers.length && textLength >= 40
+          ? `Image scanning could not recover reliable text on pages ${ocrMetadata.unresolved_page_numbers.join(", ")}. All suggestions and unreadable pages require appraiser review.`
+        : textLength >= 40
         ? `${ocrMetadata ? "OCR-extracted" : "Machine-extracted"} values are suggestions and require appraiser confirmation.`
         : "No reliable text was found after available extraction. Visual review is required.",
     };
   } finally {
     await pdf.cleanup?.();
-    await pdf.destroy?.();
+    await pdf.loadingTask?.destroy?.();
   }
 }

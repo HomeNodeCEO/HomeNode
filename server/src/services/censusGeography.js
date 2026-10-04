@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { TextDecoder } from "node:util";
 
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import { readBoundedResponseBuffer } from "../util/boundedResponse.js";
 
@@ -506,6 +507,7 @@ async function claimCensusGeographyBatch(
 ) {
   const safeBatchSize = boundedInteger(batchSize, 1000, 1, 10_000);
   const client = await pool.connect();
+  let rollbackFailure;
   try {
     await client.query("BEGIN");
     await client.query(`
@@ -547,10 +549,10 @@ async function claimCensusGeographyBatch(
     await client.query("COMMIT");
     return rows;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackWithDiscardReason(client, "census_geography_rollback_failed");
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

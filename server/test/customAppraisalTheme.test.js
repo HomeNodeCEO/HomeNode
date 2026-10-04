@@ -45,11 +45,14 @@ test("the Custom Appraisal shell, evidence panels, and prior files use the share
 
 test("the document center supports compact bulk review and a full-page viewer", () => {
   const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+  const preview = read("../../dcad-frontend/src/components/documents/AssignmentPdfPreview.tsx");
 
   assert.match(documents, /Approve All \(\$\{suggestedCandidates\.length\}\)/);
   assert.match(documents, /confirmAllAssignmentDocumentCandidates/);
   assert.match(documents, /'Review complete'/);
-  assert.match(documents, /h-\[80vh\]/);
+  assert.match(documents, /<AssignmentPdfPreview/);
+  assert.match(preview, /max-h-\[80vh\]/);
+  assert.match(preview, /overflow-auto/);
   assert.match(documents, /xl:grid-cols-\[16rem_minmax\(0,1fr\)\]/);
 });
 
@@ -71,9 +74,10 @@ test("loaded subject photos stay inside fixed frames without changing full-size 
 
 test("saved document choices, refresh, and document types use explicit readable themed states", () => {
   const documents = read("../../dcad-frontend/src/components/AssignmentDocumentCenter.tsx");
+  const uploads = read("../../dcad-frontend/src/components/documents/AssignmentDocumentUploadQueue.tsx");
   const css = read("../../dcad-frontend/src/index.css");
 
-  assert.match(documents, /className="hn-document-type select/);
+  assert.equal((uploads.match(/className="hn-document-type select/g) || []).length, 2);
   assert.match(documents, /hn-action-secondary btn btn-xs[^\n]+loadDocuments\(\)[^\n]+disabled=\{loading\}>Refresh/);
   assert.match(documents, /onClick=\{\(\) => void loadDocument\(document.id\)\} aria-pressed=\{selectedDocument\?\.id === document.id\}/);
   assert.match(css, /\.hn-document-choice\s*\{\s*display: block;\s*text-align: left;/);

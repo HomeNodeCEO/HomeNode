@@ -2,6 +2,7 @@ import { createUadEntityWithClient, deleteUadEntityWithClient } from "./entities
 import { saveUadSection } from "./editor.js";
 import { normalizeUadWorkfileId } from "./workfiles.js";
 import { assertLockedUadWorkfileMutable } from "./workfileLifecycle.js";
+import { UAD_HOA_DOCUMENT_FIELDS, synchronizeUadDocumentHoa } from './documentHoa.js';
 import {
   buildPurchaseContractAnalysis,
   confirmedPurchaseContractCandidates,
@@ -34,6 +35,7 @@ const SUPPORTED_DOCUMENT_FIELDS = new Set([
   "days_on_market",
   "original_list_price",
   "list_price",
+  ...UAD_HOA_DOCUMENT_FIELDS,
 ]);
 
 const MLS_DOCUMENT_FIELDS = new Set([
@@ -559,7 +561,7 @@ export async function synchronizeUadPurchaseContract(
   const documentId = positiveInteger(documentIdValue);
   if (!documentId) throw new Error("invalid_document_id");
   const documentResult = await pool.query(
-    `SELECT id, uad_workfile_id, document_type, checksum_sha256
+    `SELECT id, uad_workfile_id, document_type, checksum_sha256, processing_status
        FROM app.assignment_documents
       WHERE id = $1 AND uad_workfile_id = $2`,
     [documentId, workfileId],
@@ -572,6 +574,12 @@ export async function synchronizeUadPurchaseContract(
       reason: "purchase_contract_required",
       field_key: "purchase_contract",
     };
+  }
+  // OCR admission can return the durable uploaded state while retaining old
+  // confirmations. Pending/failed extraction cannot authorize seller or UAD
+  // section writes, regardless of which upload/reprocess/manual path calls us.
+  if (!["reviewed", "review_required"].includes(document.processing_status)) {
+    return { applied: false, reason: "document_not_ready", field_key: "purchase_contract" };
   }
   const candidateResult = await pool.query(
     `SELECT *
@@ -642,7 +650,7 @@ export async function applyConfirmedUadDocumentCandidate(
   if (!documentId || !candidateId) throw new Error("invalid_document_candidate");
   const { rows } = await pool.query(
     `SELECT candidate.*, document.uad_workfile_id, document.checksum_sha256,
-            document.document_type
+            document.document_type, document.processing_status
        FROM app.assignment_document_field_candidates candidate
        JOIN app.assignment_documents document ON document.id = candidate.document_id
       WHERE candidate.id = $2
@@ -653,8 +661,16 @@ export async function applyConfirmedUadDocumentCandidate(
   const candidate = rows[0];
   if (!candidate) throw new Error("document_candidate_not_found");
   if (candidate.review_status !== "confirmed") throw new Error("uad_document_candidate_confirmation_required");
+  if (candidate.document_type === "purchase_contract"
+    && !["reviewed", "review_required"].includes(candidate.processing_status)) {
+    return { applied: false, reason: "document_not_ready", field_key: candidate.field_key };
+  }
   if (!uadDocumentCandidateIsApplicable(candidate.field_key)) {
     return { applied: false, reason: "no_direct_uad_mapping", field_key: candidate.field_key };
+  }
+
+  if (UAD_HOA_DOCUMENT_FIELDS.has(candidate.field_key)) {
+    return synchronizeUadDocumentHoa(pool, workfileId, documentId, candidateId, actorUserId);
   }
 
   const value = cleanText(candidate.confirmed_value || candidate.normalized_value || candidate.raw_value);

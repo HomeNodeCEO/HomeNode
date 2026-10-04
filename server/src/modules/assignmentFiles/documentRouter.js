@@ -11,6 +11,7 @@ import {
   listAssignmentDocuments,
   MAX_ASSIGNMENT_DOCUMENT_BYTES,
   processAssignmentDocument,
+  queueAssignmentDocumentExtraction,
   reviewAssignmentDocumentCandidate,
 } from "../../services/assignmentDocuments.js";
 import { decideAssignmentAccess } from "../../security/assignmentAccess.js";
@@ -54,6 +55,7 @@ export function createAssignmentDocumentRouter({
   getDocument = getAssignmentDocument,
   deleteDocument = deleteAssignmentDocument,
   processDocument = processAssignmentDocument,
+  queueDocument = queueAssignmentDocumentExtraction,
   confirmDespiteMismatch = confirmAssignmentDocumentDespiteSubjectMismatch,
   confirmCandidates = confirmAssignmentDocumentCandidates,
   reviewCandidate = reviewAssignmentDocumentCandidate,
@@ -85,6 +87,7 @@ export function createAssignmentDocumentRouter({
     getDocument,
     deleteDocument,
     processDocument,
+    queueDocument,
     confirmDespiteMismatch,
     confirmCandidates,
     reviewCandidate,
@@ -238,7 +241,7 @@ export function createAssignmentDocumentRouter({
           storage: objectStorage,
         });
         if (document.processing_status === "uploaded") {
-          void processDocument(pool, document.id, { storage: objectStorage }).catch((error) => {
+          void processDocument(pool, document.id, { storage: objectStorage, ocrProvider }).catch((error) => {
             if (safeDocumentErrorMessage(error) !== "document_processing_in_progress") {
               try {
                 logger.warn?.("[documents] background extraction failed", safeOperationalErrorCode(error));
@@ -327,12 +330,14 @@ export function createAssignmentDocumentRouter({
     try {
       await ensureAvailable();
       if (!await requireDocumentAccess(req, res, req.params.id, "write")) return;
-      const document = await processDocument(pool, req.params.id, {
-        force: true,
-        storage: objectStorage,
-        ocrProvider,
+      const document = await queueDocument(pool, req.params.id);
+      void processDocument(pool, req.params.id, { storage: objectStorage, ocrProvider }).catch(error => {
+        if (safeDocumentErrorMessage(error) !== "document_processing_in_progress") {
+          try { logger.warn?.("[documents] background extraction failed", safeOperationalErrorCode(error)); }
+          catch { /* Diagnostics must not create an unhandled rejection. */ }
+        }
       });
-      return res.json({ ok: true, document });
+      return res.set("cache-control", "no-store").status(202).json({ ok: true, document });
     } catch (error) {
       const message = safeDocumentErrorMessage(error);
       const clientErrors = new Set([
@@ -340,6 +345,7 @@ export function createAssignmentDocumentRouter({
         "document_processing_in_progress",
         "document_retry_not_due",
         "document_not_processable",
+        "custom_appraisal_workfile_signed",
       ]);
       if (message === "document_not_found") return res.status(404).json({ error: message });
       if (clientErrors.has(message)) return res.status(409).json({ error: message });
@@ -348,7 +354,7 @@ export function createAssignmentDocumentRouter({
     }
   });
 
-  /** Record a subject mismatch override and confirm visible engagement suggestions. */
+  /** Explicit appraiser association; contract association never confirms fields. */
   router.post("/api/documents/:id/subject-address-override", async (req, res) => {
     if (!requireWorkflowAccess(req, res, "custom_appraisal", "sign")) return;
     if (!requireEditor(req, res)) return;
@@ -360,6 +366,7 @@ export function createAssignmentDocumentRouter({
         reviewer: authenticatedReviewer(req),
         actorUserId: req.mobileAuth?.userId || null,
         candidateValues: req.body?.candidate_values,
+        contractSubjectAssociation: req.body?.contract_subject_association,
       });
       const document = await getDocument(pool, result.document_id);
       return res.json({
@@ -379,6 +386,8 @@ export function createAssignmentDocumentRouter({
         "document_canonical_subject_address_required",
         "engagement_letter_required",
         "document_subject_address_candidate_required",
+        "contract_subject_association_review_required",
+        "contract_subject_association_stale",
       ]);
       if (message === "document_not_found") return res.status(404).json({ error: message });
       if (clientErrors.has(message)) return res.status(400).json({ error: message });
@@ -397,6 +406,7 @@ export function createAssignmentDocumentRouter({
       const result = await confirmCandidates(pool, {
         documentId: req.params.id,
         reviewer: authenticatedReviewer(req),
+        actorUserId: req.mobileAuth?.userId || null,
         candidateValues: req.body?.candidate_values,
       });
       const document = await getDocument(pool, result.document_id);
@@ -438,6 +448,7 @@ export function createAssignmentDocumentRouter({
         reviewStatus: req.body?.review_status,
         confirmedValue: req.body?.confirmed_value,
         reviewer: authenticatedReviewer(req),
+        actorUserId: req.mobileAuth?.userId || null,
       });
       return res.json({ ok: true, candidate });
     } catch (error) {

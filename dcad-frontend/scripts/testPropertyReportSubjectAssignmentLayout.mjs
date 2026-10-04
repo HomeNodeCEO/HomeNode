@@ -46,7 +46,10 @@ test('document evidence precedes one combined subject and assignment section', (
   assert.doesNotMatch(source, /title="Subject Identification"|title="Assignment Details"/);
 
   const section = source.slice(combined, following);
-  assert.match(section, /label="Parcel \/ Account Number"/);
+  assert.match(section, /<PropertyReportSubjectSummary/);
+  const summary = readFileSync(new URL('../src/components/PropertyReportSubjectSummary.tsx', import.meta.url), 'utf8');
+  assert.match(summary, /label="Assessor Parcel Number \(APN\)"/);
+  assert.match(summary, /label="HomeNode Account Number"/);
   assert.match(section, /<h3[^>]*>Assignment Scope<\/h3>/);
   assert.match(section, /<legend[^>]*>Assignment Type<\/legend>/);
   assert.match(section, /Save Assignment Details/);

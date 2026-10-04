@@ -2688,9 +2688,14 @@ export interface AssignmentDocumentCandidate {
 
 export interface AssignmentDocumentApplication {
   applied: boolean;
+  // Early non-applied responses (such as rejection or an unscoped document) omit scope.
+  account_id?: string;
+  assignment_file_id?: number;
   reason?: string;
   revision?: number;
   assignment_details?: AssignmentDetailsPayload;
+  custom_appraisal_sections?: AppraisalAssignmentFile['custom_appraisal_sections'];
+  warnings?: string[];
 }
 
 export interface AssignmentDocumentCandidateReview {

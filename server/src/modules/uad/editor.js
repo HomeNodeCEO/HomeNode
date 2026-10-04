@@ -5215,7 +5215,7 @@ export function validateCompleteSection(section, existingRows, submitted, entiti
   return errors;
 }
 
-const persistUadSectionWithClient = createUadSectionPersistence({
+export const persistUadSectionWithClient = createUadSectionPersistence({
   loadValues,
   calculatedSalesComparisonFields,
   valueLookup,

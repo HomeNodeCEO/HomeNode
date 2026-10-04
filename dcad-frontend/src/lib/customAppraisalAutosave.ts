@@ -38,8 +38,8 @@ export const CUSTOM_APPRAISAL_AUTOSAVE_MESSAGES = Object.freeze({
   conflict: "Another session changed the same report fields. Your edits are preserved; choose which values to keep.",
   rebased: "The file changed elsewhere. Your nonconflicting edits were preserved and rebased for autosave.",
   retry: "This file changed elsewhere and the latest revision could not be reconciled yet. Your edits remain on screen and autosave will retry.",
-  documentConflict: "Contract evidence was saved; your existing edits were preserved for conflict review.",
-  documentSaved: "Approved contract evidence and analysis were saved to this appraisal file.",
+  documentConflict: "Document evidence was saved; your existing edits were preserved for conflict review.",
+  documentSaved: "Supported report fields were saved to this appraisal file.",
 });
 
 export function captureAssignmentSaveSelection(

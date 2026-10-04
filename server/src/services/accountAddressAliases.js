@@ -1,3 +1,4 @@
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import {
   normalizePropertyAddress,
   normalizePropertyCity,
@@ -120,6 +121,7 @@ export async function seedAccountAddressAliasBatch(pool, {
   const safeRefreshDays = boundedInteger(refreshDays, 7, 1, 90);
   await ensureAccountAddressAliasSchema(pool);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     const lock = await client.query(
@@ -241,10 +243,12 @@ export async function seedAccountAddressAliasBatch(pool, {
       last_account_id: lastAccountId,
     };
   } catch (error) {
-    await client.query("ROLLBACK");
+    rollbackFailure = await rollbackWithDiscardReason(
+      client, "account_address_alias_seed_rollback_failed",
+    );
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

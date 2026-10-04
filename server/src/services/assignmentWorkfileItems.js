@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import { assertLockedUadWorkfileMutable } from "../modules/uad/workfileLifecycle.js";
 
 export const MAX_ASSIGNMENT_WORKFILE_ITEM_BYTES = 100 * 1024 * 1024;
@@ -101,16 +102,19 @@ async function assertMutableScope(client, normalized) {
 
 async function transact(pool, operation) {
   const client = typeof pool.connect === "function" ? await pool.connect() : pool;
+  let rollbackFailure;
   try {
     if (client !== pool) await client.query("BEGIN");
     const result = await operation(client);
     if (client !== pool) await client.query("COMMIT");
     return result;
   } catch (error) {
-    if (client !== pool) await client.query("ROLLBACK").catch(() => undefined);
+    if (client !== pool) {
+      rollbackFailure = await rollbackWithDiscardReason(client, "assignment_workfile_item_rollback_failed");
+    }
     throw error;
   } finally {
-    if (client !== pool) client.release();
+    if (client !== pool) client.release(rollbackFailure || undefined);
   }
 }
 

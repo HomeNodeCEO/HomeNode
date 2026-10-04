@@ -1,4 +1,5 @@
 import { readBoundedJsonResponse } from "../util/boundedResponse.js";
+import { createLocalDocumentOcrProvider } from "./localDocumentOcr.js";
 
 const AZURE_API_VERSION = "2024-11-30";
 const AZURE_MODEL_ID = "prebuilt-read";
@@ -133,13 +134,15 @@ function indexParagraphsByPage(paragraphs) {
   return byPage;
 }
 
-function pageTextFromResult(result = {}) {
+function pageTextFromResult(result = {}, pageCount = 0) {
   const analyzeResult = result.analyzeResult || {};
   const fullText = String(analyzeResult.content || "");
   const paragraphs = Array.isArray(analyzeResult.paragraphs) ? analyzeResult.paragraphs : [];
-  const pages = Array.isArray(analyzeResult.pages) ? analyzeResult.pages : [];
+  const pages = (Array.isArray(analyzeResult.pages) ? analyzeResult.pages : [])
+    .filter(page => Number.isInteger(Number(page?.pageNumber))
+      && Number(page.pageNumber) >= 1 && Number(page.pageNumber) <= 250);
   let paragraphsByPage;
-  return pages
+  const orderedPages = pages
     .slice()
     .sort((left, right) => Number(left?.pageNumber || 0) - Number(right?.pageNumber || 0))
     .map((page) => {
@@ -159,6 +162,17 @@ function pageTextFromResult(result = {}) {
         .filter(Boolean)
         .join("\n");
     });
+  const indexedPages = Array(Math.max(Math.min(250, Math.max(0, Math.trunc(Number(pageCount) || 0))),
+    ...pages.map(page => Number(page.pageNumber))))
+    .fill("");
+  pages.slice().sort((left, right) => Number(left?.pageNumber || 0) - Number(right?.pageNumber || 0))
+    .forEach((page, index) => {
+      const pageNumber = Number(page?.pageNumber);
+      if (Number.isInteger(pageNumber) && pageNumber >= 1 && pageNumber <= 250) {
+        indexedPages[pageNumber - 1] = orderedPages[index];
+      }
+    });
+  return indexedPages;
 }
 
 function operationId(operationLocation) {
@@ -167,7 +181,8 @@ function operationId(operationLocation) {
 }
 
 export function createDocumentOcrProvider(env = process.env) {
-  const provider = String(env.DOCUMENT_OCR_PROVIDER || "disabled").trim().toLowerCase();
+  const provider = String(env.DOCUMENT_OCR_PROVIDER || "local").trim().toLowerCase();
+  if (provider === "local") return createLocalDocumentOcrProvider(env);
   const endpoint = provider === "azure"
     ? cleanEndpoint(env.AZURE_DOCUMENT_INTELLIGENCE_ENDPOINT)
     : null;
@@ -182,10 +197,16 @@ export function createDocumentOcrProvider(env = process.env) {
     configured,
     model_id: configured ? AZURE_MODEL_ID : null,
     api_version: configured ? AZURE_API_VERSION : null,
-    async analyzePdf(content) {
+    async analyzePdf(content, { pageNumbers, pageCount = 0 } = {}) {
       if (!configured) throw new Error("document_ocr_not_configured");
       if (!Buffer.isBuffer(content) || content.subarray(0, 5).toString("ascii") !== "%PDF-") {
         throw new Error("document_not_pdf");
+      }
+      if (content.length > 25 * 1024 * 1024) throw new Error("document_too_large");
+      if (pageNumbers !== undefined && (!Array.isArray(pageNumbers) || !pageNumbers.length
+        || pageNumbers.some(page => !Number.isInteger(page) || page < 1 || page > 250)
+        || pageNumbers.length > 250 || new Set(pageNumbers).size !== pageNumbers.length)) {
+        throw new Error("document_ocr_page_selection_invalid");
       }
       const analyzeUrl = new URL(
         `/documentintelligence/documentModels/${AZURE_MODEL_ID}:analyze`,
@@ -193,6 +214,7 @@ export function createDocumentOcrProvider(env = process.env) {
       );
       analyzeUrl.searchParams.set("api-version", AZURE_API_VERSION);
       analyzeUrl.searchParams.set("stringIndexType", "utf16CodeUnit");
+      if (pageNumbers) analyzeUrl.searchParams.set("pages", pageNumbers.join(","));
       const submittedRequest = await fetchWithTimeout(analyzeUrl, {
         method: "POST",
         headers: {
@@ -265,7 +287,7 @@ export function createDocumentOcrProvider(env = process.env) {
         await sleep(Math.min(retryAfterMs, Math.max(0, deadline - Date.now())));
       }
       if (!result) throw new Error("document_ocr_poll_timeout");
-      const pages = pageTextFromResult(result);
+      const pages = pageTextFromResult(result, Math.min(250, Math.max(0, Number(pageCount) || 0)));
       return {
         provider: "azure_document_intelligence",
         extraction_method: "azure_document_intelligence_read",

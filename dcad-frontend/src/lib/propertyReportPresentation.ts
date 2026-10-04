@@ -1,4 +1,5 @@
 import type { DcadExemptionsMap } from './propertyReportEditableSections';
+export { reportTitleCase, reportAddress, reportZip5, reportNeighborhoodName } from './propertyReportText.ts';
 
 export function recordedExemptionRows(exemptions?: DcadExemptionsMap) {
   const order: Array<[keyof DcadExemptionsMap, string]> = [

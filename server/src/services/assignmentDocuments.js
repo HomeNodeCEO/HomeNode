@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from 'node:util';
 
 import {
   DOCUMENT_EXTRACTION_SCHEMA_VERSION,
@@ -7,10 +8,12 @@ import {
   normalizeDocumentType,
 } from "./documentIntelligence.js";
 import { sanitizeUadFileName } from "../modules/uad/r2Storage.js";
-import { validateAssignmentDetails } from "../util/reportManualValues.js";
+import { persistCustomSubjectApplication } from "./customSubjectApplication.js";
 import { buildPurchaseContractAnalysis } from "./purchaseContractAnalysis.js";
 import { canonicalCustomAppraisalFileName } from "./customAppraisalWorkfiles.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
+import { scheduleDocumentProcessingRetry } from "./documentProcessingRetry.js";
+import { buildContractSubjectAssociation } from './contractSubjectAssociation.js';
 
 export const MAX_ASSIGNMENT_DOCUMENT_BYTES = 25 * 1024 * 1024;
 export const MAX_AUTOMATIC_DOCUMENT_ATTEMPTS = 5;
@@ -95,6 +98,13 @@ const DOCUMENT_EXTRACTION_PUBLIC_ERRORS = new Set([
   "document_processing_in_progress",
   "document_retry_not_due",
   "document_not_processable",
+  "document_ocr_busy",
+  "document_ocr_timeout",
+  "document_ocr_failed",
+  "document_ocr_page_limit_exceeded",
+  "document_ocr_pixel_limit_exceeded",
+  "document_ocr_text_limit_exceeded",
+  "document_ocr_page_selection_invalid",
 ]);
 
 function documentExtractionFailureCode(error) {
@@ -125,7 +135,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
   if (!assignmentFileId) return;
   const { rows: assignments } = await client.query(
     `SELECT id, file_number FROM app.assignment_files
-      WHERE id = $1 AND account_id = $2`,
+      WHERE id = $1 AND account_id = $2 FOR UPDATE`,
     [assignmentFileId, document.account_id],
   );
   if (!assignments[0]) throw new Error("assignment_file_not_found");
@@ -151,7 +161,7 @@ async function lockMutableCustomDocumentWorkfile(client, document) {
 }
 
 async function lockMutableAssignmentDocument(client, documentId) {
-  // Upload takes the Custom workfile lock before updating an existing document.
+  // Assignment -> workfile -> document -> sections is the shared write order.
   // Read the immutable document scope first, then take locks in that same order
   // so review/deletion cannot deadlock with a concurrent duplicate upload.
   const { rows: scopedRows } = await client.query(
@@ -530,6 +540,9 @@ async function persistConfirmedDocumentCandidates(client, {
   sourceDocument,
   candidates,
   reviewerName,
+  actorUserId = null,
+  invalidateOnly = false,
+  contractAssociationOnly = false,
 }) {
   const assignmentFileId = positiveInteger(sourceDocument?.assignment_file_id);
   if (!assignmentFileId) return { applied: false, reason: "document_not_assignment_scoped" };
@@ -549,30 +562,12 @@ async function persistConfirmedDocumentCandidates(client, {
   if (assignmentFile.workfile_status === "signed") {
     return { applied: false, reason: "custom_appraisal_workfile_signed" };
   }
-  const merged = assignmentDetailsFromConfirmedDocument(
-    assignmentFile.assignment_details,
-    candidates,
-    sourceDocument.document_type,
-  );
-  if (!merged.changed) {
-    return { applied: false, reason: "assignment_fields_unchanged", revision: Number(assignmentFile.revision) };
-  }
-  validateAssignmentDetails(merged.assignmentDetails, { requireCompletion: false });
-  const revision = Number(assignmentFile.revision) + 1;
-  await client.query(
-    `UPDATE app.assignment_files
-        SET assignment_details = $1::jsonb, reviewer = $2, revision = $3, updated_at = now()
-      WHERE id = $4`,
-    [JSON.stringify(merged.assignmentDetails), reviewerName, revision, assignmentFileId],
-  );
-  await client.query(
-    `INSERT INTO app.assignment_file_history (
-       assignment_file_id, account_id, file_number, assignment_details, reviewer, revision
-     ) VALUES ($1, $2, $3, $4::jsonb, $5, $6)`,
-    [assignmentFileId, assignmentFile.account_id, assignmentFile.file_number,
-      JSON.stringify(merged.assignmentDetails), reviewerName, revision],
-  );
-  return { applied: true, revision, assignment_details: merged.assignmentDetails };
+  const legacy = !invalidateOnly && !contractAssociationOnly && sourceDocument.document_type === "purchase_contract"
+    ? assignmentDetailsFromConfirmedDocument(assignmentFile.assignment_details, candidates, sourceDocument.document_type)
+    : null;
+  return persistCustomSubjectApplication(client, { assignmentFile, sourceDocument,
+    legacyAssignmentDetails: legacy?.changed ? legacy.assignmentDetails : null,
+    actorUserId, reviewer: reviewerName, invalidateOnly, listingOnly: contractAssociationOnly });
 }
 
 function publicDocument(row, candidates = undefined) {
@@ -910,10 +905,6 @@ export async function createAssignmentDocument(pool, {
         "SELECT pg_advisory_xact_lock(hashtextextended($1::text, 0))",
         [lockKey],
       );
-      existing = await findAssignmentDocumentByIdentity(
-        transactionClient,
-        identity,
-      );
       if (customAssignmentFileId) {
         // The same workfile lock is held by signing until its snapshot and PDF
         // commit, so neither new bytes nor duplicate metadata can drift after it.
@@ -922,6 +913,12 @@ export async function createAssignmentDocument(pool, {
           account_id: accountId,
         });
       }
+      // The identity lookup locks any duplicate document. Match review/delete's
+      // assignment -> workfile -> document order to avoid opposing row locks.
+      existing = await findAssignmentDocumentByIdentity(
+        transactionClient,
+        identity,
+      );
       if (existing?.storage_provider === "r2" && existing.object_key) {
         const { rows } = await transactionClient.query(
           `UPDATE app.assignment_documents
@@ -1285,6 +1282,60 @@ export async function migrateAssignmentDocumentStorageBatch(pool, storage, {
   };
 }
 
+/** Every extraction-state write uses the same mutable-workfile lock order as
+ * review and deletion; scanning itself never holds the transaction open. */
+async function mutateExtractionDocument(pool, id, mutate) {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const document = await lockMutableAssignmentDocument(client, id);
+    const result = await mutate(client, document);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw error;
+  } finally { client.release(); }
+}
+
+async function ownsExtractionClaim(client, id, claim) {
+  if (!positiveInteger(claim.processing_attempts)
+    || typeof claim.processing_claim_started_at !== 'string'
+    || !claim.processing_claim_started_at) return false;
+  // Called only after the document lock. Compare the database timestamp itself:
+  // converting through a JavaScript Date would discard PostgreSQL microseconds.
+  const { rows } = await client.query(
+    `SELECT processing_status = 'processing'
+            AND processing_attempts = $2
+            AND processing_started_at = $3::timestamptz AS owns_claim
+       FROM app.assignment_documents WHERE id = $1`,
+    [id, claim.processing_attempts, claim.processing_claim_started_at],
+  );
+  return rows[0]?.owns_claim === true;
+}
+
+/** Reprocessing is asynchronous, just like initial upload. Returning the durable
+ * queue state keeps a scanned contract from holding an HTTP request open. */
+export async function queueAssignmentDocumentExtraction(pool, documentId) {
+  await ensureAssignmentDocumentsSchema(pool);
+  const id = positiveInteger(documentId);
+  if (!id) throw new Error("invalid_document_id");
+  return mutateExtractionDocument(pool, id, async client => {
+    const { rows } = await client.query(
+      `UPDATE app.assignment_documents
+       SET processing_status = 'uploaded', next_processing_at = NULL,
+           processing_started_at = NULL, last_processing_error = NULL,
+           processing_attempts = 0, updated_at = now()
+       WHERE id = $1 AND (processing_status <> 'processing'
+         OR COALESCE(processing_started_at, updated_at)
+           < now() - ($2::integer * interval '1 minute'))
+       RETURNING *`, [id, STALE_PROCESSING_MINUTES],
+    );
+    if (rows[0]) return publicDocument(rows[0]);
+    throw new Error('document_processing_in_progress');
+  });
+}
+
 export async function processAssignmentDocument(pool, documentId, {
   logger = console,
   force = false,
@@ -1294,52 +1345,49 @@ export async function processAssignmentDocument(pool, documentId, {
   await ensureAssignmentDocumentsSchema(pool);
   const id = positiveInteger(documentId);
   if (!id) throw new Error("invalid_document_id");
-  const { rows } = await pool.query(
-    `UPDATE app.assignment_documents
-     SET processing_status = 'processing',
-         processing_attempts = processing_attempts + 1,
-         processing_started_at = now(),
-         next_processing_at = NULL,
-         last_processing_error = NULL,
-         updated_at = now()
-     WHERE id = $1 AND (
-       (
-         $2::boolean
-         AND (
-           processing_status <> 'processing'
-           OR COALESCE(processing_started_at, updated_at)
+  const document = await mutateExtractionDocument(pool, id, async (client, current) => {
+    const { rows } = await client.query(
+      `UPDATE app.assignment_documents
+       SET processing_status = 'processing',
+           processing_attempts = processing_attempts + 1,
+           processing_started_at = now(),
+           next_processing_at = NULL,
+           last_processing_error = NULL,
+           updated_at = now()
+       WHERE id = $1 AND (
+         (
+           $2::boolean
+           AND (
+             processing_status <> 'processing'
+             OR COALESCE(processing_started_at, updated_at)
+               < now() - ($3::integer * interval '1 minute')
+           )
+         )
+         OR (processing_status = 'uploaded'
+           AND (next_processing_at IS NULL OR next_processing_at <= now()))
+         OR (processing_status = 'ocr_required' AND $4::boolean)
+         OR (
+           processing_status = 'extraction_failed'
+           AND (next_processing_at IS NULL OR next_processing_at <= now())
+         )
+         OR (
+           processing_status = 'processing'
+           AND COALESCE(processing_started_at, updated_at)
              < now() - ($3::integer * interval '1 minute')
          )
        )
-       OR processing_status = 'uploaded'
-       OR (processing_status = 'ocr_required' AND $4::boolean)
-       OR (
-         processing_status = 'extraction_failed'
-         AND (next_processing_at IS NULL OR next_processing_at <= now())
-       )
-       OR (
-         processing_status = 'processing'
-         AND COALESCE(processing_started_at, updated_at)
-           < now() - ($3::integer * interval '1 minute')
-       )
-     )
-     RETURNING *`,
-    [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
-  );
-  const document = rows[0];
-  if (!document) {
-    const current = await pool.query(
-      `SELECT processing_status, next_processing_at
-       FROM app.assignment_documents WHERE id = $1`,
-      [id],
+       RETURNING *, processing_started_at::text AS processing_claim_started_at`,
+      [id, force === true, STALE_PROCESSING_MINUTES, Boolean(ocrProvider?.configured)],
     );
-    if (!current.rows[0]) throw new Error("document_not_found");
-    if (current.rows[0].processing_status === "processing") {
-      throw new Error("document_processing_in_progress");
+    if (!rows[0]) {
+      if (current.processing_status === "processing") {
+        throw new Error("document_processing_in_progress");
+      }
+      if (current.next_processing_at) throw new Error("document_retry_not_due");
+      throw new Error("document_not_processable");
     }
-    if (current.rows[0].next_processing_at) throw new Error("document_retry_not_due");
-    throw new Error("document_not_processable");
-  }
+    return rows[0];
+  });
   try {
     const documentWithContent = Buffer.isBuffer(document.content) && document.content.length
       ? document
@@ -1357,6 +1405,14 @@ export async function processAssignmentDocument(pool, documentId, {
     const client = await pool.connect();
     try {
       await client.query("BEGIN");
+      // OCR runs outside the transaction. A report may have been signed while
+      // it ran; re-lock in the normal assignment/workfile/document order before
+      // replacing any pages, candidates, receipts, or processing metadata.
+      const current = await lockMutableAssignmentDocument(client, id);
+      if (!await ownsExtractionClaim(client, id, document)) {
+        await client.query("COMMIT");
+        return publicDocument(current);
+      }
       const previousReviewResult = await client.query(
         `SELECT field_key, raw_value, normalized_value, review_status,
                 confirmed_value, reviewer, reviewed_at
@@ -1437,6 +1493,7 @@ export async function processAssignmentDocument(pool, documentId, {
             review_reason: extraction.review_reason,
             requested_document_type: requestedDocumentType,
             ocr: extraction.ocr_metadata,
+            urar_subject_evidence: extraction.urar_subject_evidence,
             processing_attempts: Number(document.processing_attempts || 0),
           }),
         ],
@@ -1450,37 +1507,65 @@ export async function processAssignmentDocument(pool, documentId, {
       client.release();
     }
   } catch (error) {
+    if (["custom_appraisal_workfile_signed", "document_not_found", "document_scope_changed", "assignment_file_not_found"]
+      .includes(error?.message)) throw error;
     const message = documentExtractionFailureCode(error);
+    if (message === "document_ocr_busy") {
+      // Waiting for another scan is not a failed extraction attempt. Keep the
+      // original evidence intact and leave a durable, due-time-aware job.
+      const queued = await mutateExtractionDocument(pool, id, async (client, current) => {
+        if (!await ownsExtractionClaim(client, id, document)) {
+          return { document: current, requeued: false };
+        }
+        const { rows } = await client.query(`UPDATE app.assignment_documents
+         SET processing_status = 'uploaded',
+             processing_attempts = GREATEST(processing_attempts - 1, 0),
+             processing_started_at = NULL,
+             next_processing_at = now() + interval '15 seconds',
+             last_processing_error = 'document_ocr_busy', updated_at = now()
+         WHERE id = $1 RETURNING *`, [id]);
+        return { document: rows[0], requeued: true };
+      });
+      if (queued.requeued) {
+        scheduleDocumentProcessingRetry(pool, id, { storage, ocrProvider, logger }, processAssignmentDocument);
+      }
+      return publicDocument(queued.document);
+    }
     const attempts = Number(document.processing_attempts || 1);
     const nextProcessingAt = attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS
       ? null
       : new Date(Date.now() + assignmentDocumentRetryDelayMs(attempts));
+    const superseded = await mutateExtractionDocument(pool, id, async (client, current) => {
+      if (!await ownsExtractionClaim(client, id, document)) return current;
+      await client.query(
+        `UPDATE app.assignment_documents
+         SET processing_status = 'extraction_failed',
+             extraction_summary = jsonb_build_object(
+               'error', $2::text,
+               'processing_attempts', processing_attempts,
+               'automatic_retry_exhausted', $3::boolean,
+               'extraction_schema_version', $5::text
+             ),
+             processing_started_at = NULL,
+             next_processing_at = $4,
+             last_processing_error = $2,
+             processed_at = now(), updated_at = now()
+         WHERE id = $1`,
+        [
+          id,
+          message,
+          attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
+          nextProcessingAt,
+          DOCUMENT_EXTRACTION_SCHEMA_VERSION,
+        ],
+      );
+      return null;
+    });
+    if (superseded) return publicDocument(superseded);
     try {
       logger.warn?.(`[documents] extraction failed for document ${id}`,
         safeOperationalErrorCode(error));
     } catch { /* Logging must not prevent a bounded failure result. */ }
-    await pool.query(
-      `UPDATE app.assignment_documents
-       SET processing_status = 'extraction_failed',
-           extraction_summary = jsonb_build_object(
-             'error', $2::text,
-             'processing_attempts', processing_attempts,
-             'automatic_retry_exhausted', $3::boolean,
-             'extraction_schema_version', $5::text
-           ),
-           processing_started_at = NULL,
-           next_processing_at = $4,
-           last_processing_error = $2,
-           processed_at = now(), updated_at = now()
-       WHERE id = $1`,
-      [
-        id,
-        message,
-        attempts >= MAX_AUTOMATIC_DOCUMENT_ATTEMPTS,
-        nextProcessingAt,
-        DOCUMENT_EXTRACTION_SCHEMA_VERSION,
-      ],
-    );
     throw error;
   }
 }
@@ -1498,28 +1583,54 @@ export async function processPendingAssignmentDocuments(pool, {
     1,
     Math.min(Number(maximumAttempts) || MAX_AUTOMATIC_DOCUMENT_ATTEMPTS, 20),
   );
-  await pool.query(
-    `UPDATE app.assignment_documents
-     SET processing_status = 'extraction_failed',
-         processing_started_at = NULL,
-         next_processing_at = NULL,
-         last_processing_error = 'document_processing_interrupted_retry_exhausted',
-         extraction_summary = extraction_summary || jsonb_build_object(
-           'error', 'document_processing_interrupted_retry_exhausted',
-           'processing_attempts', processing_attempts,
-           'automatic_retry_exhausted', true
-         ),
-         updated_at = now()
+  const { rows: exhausted } = await pool.query(
+    `SELECT id
+     FROM app.assignment_documents AS pending_document
      WHERE processing_status = 'processing'
        AND processing_attempts >= $1
        AND COALESCE(processing_started_at, updated_at)
-         < now() - ($2::integer * interval '1 minute')`,
-    [boundedMaximumAttempts, STALE_PROCESSING_MINUTES],
+         < now() - ($2::integer * interval '1 minute')
+       AND NOT EXISTS (SELECT 1 FROM app.custom_appraisal_workfiles workfile
+         WHERE workfile.assignment_file_id = pending_document.assignment_file_id AND workfile.status = 'signed')
+       AND NOT EXISTS (SELECT 1 FROM app.custom_appraisal_signed_snapshots snapshot
+         WHERE snapshot.assignment_file_id = pending_document.assignment_file_id)
+     ORDER BY uploaded_at
+     LIMIT $3`,
+    [boundedMaximumAttempts, STALE_PROCESSING_MINUTES, boundedLimit],
   );
+  for (const row of exhausted) {
+    try {
+      // Selection is only a hint: signing and another worker can race it. Lock
+      // the workfile before the document and recheck exhaustion under that lock.
+      await mutateExtractionDocument(pool, row.id, (client) => client.query(
+        `UPDATE app.assignment_documents
+         SET processing_status = 'extraction_failed',
+             processing_started_at = NULL,
+             next_processing_at = NULL,
+             last_processing_error = 'document_processing_interrupted_retry_exhausted',
+             extraction_summary = extraction_summary || jsonb_build_object(
+               'error', 'document_processing_interrupted_retry_exhausted',
+               'processing_attempts', processing_attempts,
+               'automatic_retry_exhausted', true
+             ),
+             updated_at = now()
+         WHERE id = $1
+           AND processing_status = 'processing'
+           AND processing_attempts >= $2
+           AND COALESCE(processing_started_at, updated_at)
+             < now() - ($3::integer * interval '1 minute')`,
+        [row.id, boundedMaximumAttempts, STALE_PROCESSING_MINUTES],
+      ));
+    } catch (error) {
+      if (!['custom_appraisal_workfile_signed', 'document_not_found'].includes(error?.message)) throw error;
+      // A newly frozen or removed document is not a failed extraction attempt.
+    }
+  }
   const { rows } = await pool.query(
     `SELECT id
-     FROM app.assignment_documents
-     WHERE processing_status = 'uploaded'
+     FROM app.assignment_documents AS pending_document
+     WHERE ((processing_status = 'uploaded'
+          AND (next_processing_at IS NULL OR next_processing_at <= now()))
         OR (
           processing_status = 'ocr_required'
           AND $4::boolean
@@ -1535,7 +1646,11 @@ export async function processPendingAssignmentDocuments(pool, {
           AND processing_attempts < $2
           AND COALESCE(processing_started_at, updated_at)
             < now() - ($3::integer * interval '1 minute')
-        )
+        ))
+       AND NOT EXISTS (SELECT 1 FROM app.custom_appraisal_workfiles workfile
+         WHERE workfile.assignment_file_id = pending_document.assignment_file_id AND workfile.status = 'signed')
+       AND NOT EXISTS (SELECT 1 FROM app.custom_appraisal_signed_snapshots snapshot
+         WHERE snapshot.assignment_file_id = pending_document.assignment_file_id)
      ORDER BY uploaded_at
      LIMIT $1`,
     [
@@ -1721,6 +1836,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   reviewStatus,
   confirmedValue,
   reviewer,
+  actorUserId = null,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const document = positiveInteger(documentId);
@@ -1734,11 +1850,12 @@ export async function reviewAssignmentDocumentCandidate(pool, {
   try {
     await client.query("BEGIN");
     const sourceDocument = await lockMutableAssignmentDocument(client, document);
+    const sourceReady = ["reviewed", "review_required"].includes(sourceDocument.processing_status);
     const { rows } = await client.query(
       `UPDATE app.assignment_document_field_candidates
        SET review_status = $3,
            confirmed_value = CASE WHEN $3 = 'confirmed'
-             THEN COALESCE(NULLIF($4, ''), raw_value)
+             THEN COALESCE(NULLIF($4, ''), NULLIF(BTRIM(normalized_value), ''), raw_value)
              ELSE NULL
            END,
            reviewer = $5,
@@ -1771,7 +1888,9 @@ export async function reviewAssignmentDocumentCandidate(pool, {
        WHERE document_id = $1 AND review_status = 'suggested'`,
       [document],
     );
-    if (Number(remaining[0]?.count || 0) === 0) {
+    // A failed or running re-extraction may retain old candidates. Rejecting
+    // them must not turn that stale extraction into a reviewed source.
+    if (sourceReady && Number(remaining[0]?.count || 0) === 0) {
       await client.query(
         `UPDATE app.assignment_documents
          SET processing_status = 'reviewed', reviewed_at = now(), updated_at = now()
@@ -1780,7 +1899,7 @@ export async function reviewAssignmentDocumentCandidate(pool, {
       );
     }
     let assignmentApplication = { applied: false, reason: "candidate_rejected" };
-    if (status === "confirmed") {
+    if (status === "confirmed" || positiveInteger(sourceDocument.assignment_file_id)) {
       const { rows: documentCandidates } = await client.query(
         `SELECT * FROM app.assignment_document_field_candidates
          WHERE document_id = $1
@@ -1791,6 +1910,8 @@ export async function reviewAssignmentDocumentCandidate(pool, {
         sourceDocument,
         candidates: documentCandidates,
         reviewerName,
+        actorUserId,
+        invalidateOnly: status === "rejected" && !sourceReady,
       });
     }
     await client.query("COMMIT");
@@ -1853,6 +1974,7 @@ async function confirmSuggestedAssignmentDocumentCandidates(client, {
 export async function confirmAssignmentDocumentCandidates(pool, {
   documentId,
   reviewer,
+  actorUserId = null,
   candidateValues = {},
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
@@ -1913,6 +2035,7 @@ export async function confirmAssignmentDocumentCandidates(pool, {
       sourceDocument,
       candidates: [...confirmedById.values()],
       reviewerName,
+      actorUserId,
     });
     await client.query(
       `UPDATE app.assignment_documents
@@ -1953,6 +2076,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   reviewer,
   actorUserId,
   candidateValues = {},
+  contractSubjectAssociation = undefined,
 } = {}) {
   await ensureAssignmentDocumentsSchema(pool);
   const document = positiveInteger(documentId);
@@ -1966,6 +2090,38 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
   try {
     await client.query("BEGIN");
     const sourceDocument = await lockMutableAssignmentDocument(client, document);
+    if (sourceDocument.document_type === 'purchase_contract') {
+      if (Object.keys(suppliedValues).length) throw new Error('contract_subject_association_stale');
+      const { rows: identities } = await client.query(
+        `SELECT account_id, address, city, postal_code, county, to_jsonb(subject)->>'state' AS state
+           FROM core.accounts subject WHERE account_id = $1 FOR SHARE`, [sourceDocument.account_id]);
+      const county = identities[0];
+      const { rows: candidates } = await client.query(
+        `SELECT * FROM app.assignment_document_field_candidates WHERE document_id = $1 ORDER BY id FOR UPDATE`, [document]);
+      const snapshot = { ...sourceDocument, candidates, subject_context: { accountId: sourceDocument.account_id,
+        canonicalIdentity: county && { accountId: county.account_id, address: county.address, city: county.city,
+          postalCode: county.postal_code, county: county.county, state: county.state, assessorParcelNumber: county.account_id } } };
+      const association = buildContractSubjectAssociation(snapshot, { reviewer: reviewerName, actorUserId,
+        acknowledgedAt: new Date().toISOString() });
+      if (!association) throw new Error('contract_subject_association_review_required');
+      const expected = { accountId: association.accountId, assignmentFileId: association.assignmentFileId,
+        documentChecksumSha256: association.documentChecksumSha256, reviewedCandidates: association.reviewedCandidates };
+      if (!isDeepStrictEqual(contractSubjectAssociation, expected)) throw new Error('contract_subject_association_stale');
+      const extractionSummary = { ...(sourceDocument.extraction_summary || {}), contract_subject_association: association };
+      // Persist the association first: the same transaction's fresh source read
+      // must see it when deriving/persisting listing history. No candidate values
+      // or statuses are changed by this explicit association action.
+      await client.query(`UPDATE app.assignment_documents SET extraction_summary = $2::jsonb, updated_at = now()
+        WHERE id = $1`, [document, JSON.stringify(extractionSummary)]);
+      const assignmentApplication = await persistConfirmedDocumentCandidates(client, {
+        sourceDocument: { ...sourceDocument, extraction_summary: extractionSummary }, candidates,
+        reviewerName, actorUserId, contractAssociationOnly: true,
+      });
+      await client.query('COMMIT');
+      return { document_id: document, confirmed_candidates: [], subject_address_override: association,
+        assignment_application: assignmentApplication };
+    }
+    if (contractSubjectAssociation !== undefined) throw new Error('contract_subject_association_stale');
     if (sourceDocument.document_type !== "engagement_letter") {
       throw new Error("engagement_letter_required");
     }
@@ -1995,6 +2151,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
       sourceDocument,
       candidates: [...confirmedById.values()],
       reviewerName,
+      actorUserId,
     });
     const acknowledgedAt = new Date().toISOString();
     const confirmedCandidateIds = [

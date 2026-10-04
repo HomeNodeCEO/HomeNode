@@ -7,6 +7,7 @@ export interface SfrepSelection {
   assignmentFileId: number;
   documentIds: number[];
   includeDocuments: boolean;
+  includeDiscrepancyAddendum?: boolean;
 }
 export interface SfrepField {
   sourceField: string; fieldId: string; value: string; documentId: number | null; candidateId: number | null;
@@ -64,6 +65,8 @@ export interface SfrepPreview {
   effectiveDateContext: SfrepEffectiveDateContext;
   assumptions: SfrepAssumption[];
   knownMissing: { fieldId: string; reason: string }[];
+  wordProcessingAddendum?: { fileName: 'evidence-discrepancies.rtf'; title: 'Evidence Discrepancies';
+    sourceDocumentIds: number[]; text: string } | null;
   savedReport?: { assignmentFileId: number; assignmentRevision: number; subjectRevision: number; sourceDocumentIds: number[] };
 }
 interface TransportOptions {
@@ -249,7 +252,7 @@ function validContractNarrative(value: Record<string, unknown>, provenance: Reco
   if (value.sourceField !== 'contract_analysis_summary' || value.fieldId !== 'AnalyzedContractDescription'
     || value.type !== 'TextField' || provenance.documentType !== 'purchase_contract'
     || provenance.rule !== contractRule || !onlyKeys(provenance, [...documentKeys, 'rule', 'sourceEvidence'])
-    || !Array.isArray(provenance.sourceEvidence) || provenance.sourceEvidence.length !== 6) return false;
+    || !Array.isArray(provenance.sourceEvidence) || ![5, 6].includes(provenance.sourceEvidence.length)) return false;
   const terms = new Map<string, string>();
   for (const item of provenance.sourceEvidence) {
     if (!record(item) || !onlyKeys(item, ['documentId', 'candidateId', 'sourceField', 'value'])
@@ -258,15 +261,18 @@ function validContractNarrative(value: Record<string, unknown>, provenance: Reco
     terms.set(item.sourceField, item.value);
   }
   const keys = ['contract_date', 'contract_price', 'earnest_money', 'down_payment', 'loan_amount', 'seller_concessions'];
-  if (keys.some(key => !terms.has(key)) || provenance.candidateId !== provenance.sourceEvidence.find(item => item.sourceField === 'contract_date')?.candidateId) return false;
+  if (keys.slice(0, 5).some(key => !terms.has(key)) || [...terms.keys()].some(key => !keys.includes(key))
+    || terms.size !== provenance.sourceEvidence.length
+    || provenance.candidateId !== provenance.sourceEvidence.find(item => item.sourceField === 'contract_date')?.candidateId) return false;
   const date = terms.get('contract_date')!;
   if (!/^\d{2}\/\d{2}\/\d{4}$/.test(date) || !isoDate(`${date.slice(6)}-${date.slice(0, 2)}-${date.slice(3, 5)}`)) return false;
-  const amounts = keys.slice(1).map(key => terms.get(key)!);
+  const amounts = keys.slice(1).filter(key => terms.has(key)).map(key => terms.get(key)!);
   if (amounts.some(amount => !/^(?:0|[1-9]\d{0,8})\.\d{2}$/.test(amount))) return false;
-  const [price, earnest, cash, loan, concessions] = amounts.map(Number);
+  const [price, earnest, cash, loan] = amounts.map(Number);
+  const concessions = terms.has('seller_concessions') ? Number(terms.get('seller_concessions')) : null;
   if (Math.abs(cash + loan - price) > 0.01) return false;
   const dollars = (amount: number) => `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)}`;
-  const suffix = `;Contract dated ${date}, purchase price of ${dollars(price)}, earnest money ${dollars(earnest)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${concessions === 0 ? '0$' : dollars(concessions)} in concessions`;
+  const suffix = `;Contract dated ${date}, purchase price of ${dollars(price)}, earnest money ${dollars(earnest)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${concessions === null ? 'concessions not confirmed (review required)' : `${concessions === 0 ? '0$' : dollars(concessions)} in concessions`}`;
   return ['Arms length sale', 'Non-arms length sale', 'Sale type requires appraiser review']
     .some(prefix => value.value === prefix + suffix);
 }
@@ -347,11 +353,22 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     throw new Error('The SFREP preview response is invalid. No export was downloaded.');
   }
   const preview = value as unknown as SfrepPreview;
+  const addendum = preview.wordProcessingAddendum;
+  if (addendum !== undefined && addendum !== null && (!record(addendum)
+    || addendum.fileName !== 'evidence-discrepancies.rtf' || addendum.title !== 'Evidence Discrepancies'
+    || !validText(addendum.text) || addendum.text.length > 2_000
+    || !Array.isArray(addendum.sourceDocumentIds) || !addendum.sourceDocumentIds.every(positiveId)
+    || new Set(addendum.sourceDocumentIds).size !== addendum.sourceDocumentIds.length)) {
+    throw new Error('The SFREP discrepancy addendum preview is invalid. No export was downloaded.');
+  }
   const saved = preview.savedReport;
   if (saved !== undefined && (!record(saved) || !positiveId(saved.assignmentFileId) || !positiveId(saved.assignmentRevision)
     || !Number.isSafeInteger(saved.subjectRevision) || saved.subjectRevision < 0 || !Array.isArray(saved.sourceDocumentIds)
     || saved.sourceDocumentIds.length > 50 || !saved.sourceDocumentIds.every(positiveId)
     || new Set(saved.sourceDocumentIds).size !== saved.sourceDocumentIds.length)) throw new Error('The saved HomeNode report reference is invalid.');
+  if (addendum && saved && addendum.sourceDocumentIds.some(id => !saved.sourceDocumentIds.includes(id))) {
+    throw new Error('The discrepancy addendum does not match this saved HomeNode workfile.');
+  }
   if (preview.fields.some(({ provenance }) => (provenance.kind === 'saved_report' || provenance.kind === 'account_reference') && (!saved
     || provenance.assignmentFileId !== saved.assignmentFileId
     || provenance.revision !== (provenance.sectionKey === 'report.subject_identification' ? saved.subjectRevision : saved.assignmentRevision)
@@ -447,7 +464,7 @@ export function sfrepProvenanceText(field: SfrepField): string {
     return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
   }
   if (source.kind === 'account_reference') return `Canonical county-backed subject identity — not PDF evidence. HomeNode file ${source.assignmentFileId}, assignment revision ${source.revision}; used because this report leaf has not been saved.`;
-  if (source.rule === contractRule) return '1004 Contract narrative assembled from six individually reviewed terms in the subject purchase contract. Sale type follows the saved HomeNode appraiser selection, or is marked for review.';
+  if (source.rule === contractRule) return '1004 Contract narrative assembled from individually reviewed terms in the subject purchase contract. Any unconfirmed concessions remain explicitly flagged; sale type follows the saved HomeNode appraiser selection or is marked for review.';
   if (source.kind === 'user_default') return 'User-requested fee-simple default unless changed in HomeNode — not document evidence.';
   if (source.rule === hoaRule) return `Reviewed MLS HOA status ${JSON.stringify(source.sourceValue)} supplies a PUD workflow assumption, not independent proof of project eligibility. Confirm with the appraiser.`;
   if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
@@ -546,11 +563,13 @@ export function sfrepContractChecklist(preview: SfrepPreview): SfrepSubjectCheck
     const field = preview.fields.find(entry => entry.fieldId === item.fieldId
       || (item.key === 'contract-assistance' && entry.fieldId === 'BorrowerFinancialAssistanceYesCheckBox'));
     const missing = preview.knownMissing.filter(entry => entry.fieldId === item.fieldId);
-    const status = field ? item.key === 'contract-analysis' && field.value.startsWith('Sale type requires appraiser review;') ? 'review' : 'included' : 'missing';
-    return { key: item.key, label: item.label, status, statusLabel: status === 'included' ? 'Included — reviewed' : status === 'review' ? 'Review sale type' : 'Missing — not exported',
+    const reviewNarrative = item.key === 'contract-analysis' && Boolean(field)
+      && (field!.value.startsWith('Sale type requires appraiser review;') || field!.value.includes('concessions not confirmed (review required)'));
+    const status = field ? reviewNarrative ? 'review' : 'included' : 'missing';
+    return { key: item.key, label: item.label, status, statusLabel: status === 'included' ? 'Included — reviewed' : status === 'review' ? 'Included — review flagged terms' : 'Missing — not exported',
       values: field ? [field.type === 'CheckBoxField' ? field.fieldId === 'BorrowerFinancialAssistanceYesCheckBox'
         ? 'Yes — review amount in contract narrative' : field.fieldId === 'BorrowerFinancialAssistanceNoCheckBox' ? 'No' : 'Checked' : field.value] : [],
-      notes: [...missing.map(entry => entry.reason), ...(status === 'review' ? ['Select arms-length status in HomeNode before relying on this narrative.'] : [])] };
+      notes: [...missing.map(entry => entry.reason), ...(status === 'review' ? ['Review the flagged terms in HomeNode before relying on this narrative.'] : [])] };
   });
 }
 
@@ -614,7 +633,9 @@ export function createSfrepTransport(options: TransportOptions) {
       headers: { accept: operation === 'preview' ? 'application/json' : 'application/octet-stream',
         'content-type': 'application/json', 'x-homenode-editor-key': io.editorKey },
       body: JSON.stringify({ assignment_file_id: selection.assignmentFileId, document_ids: selection.documentIds,
-        include_documents: selection.includeDocuments, form_id: SFREP_FORM_ID,
+        include_documents: selection.includeDocuments,
+        include_discrepancy_addendum: selection.includeDiscrepancyAddendum === true,
+        form_id: SFREP_FORM_ID,
         ...(operation === 'export' ? { preview_digest: digest } : {}) }),
     }, io.signal);
     if (io.signal.aborted) { stop(response); throw cancelled(); }

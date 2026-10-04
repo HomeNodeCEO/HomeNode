@@ -26,10 +26,12 @@ function snapshotRow(row = savedRow()) {
 
 test('transfer input rejects unbounded, duplicate, coerced and extra document selection', () => {
   assert.deepEqual(sfrepTransferInput(body()).documentIds, [2]);
+  assert.equal(sfrepTransferInput({ ...body(), include_discrepancy_addendum: true }).includeDiscrepancyAddendum, true);
   assert.deepEqual(sfrepTransferInput({ ...body(), document_ids: [] }).documentIds, []);
   for (const change of [{ document_ids: [2, 2] }, { document_ids: ['2'] },
     { document_ids: Array.from({ length: 11 }, (_, index) => index + 1) }, { assignment_file_id: '14' },
-    { include_documents: 'false' }, { form_id: 'invented' }, { raw_xml: '<Report/>' }]) {
+    { include_documents: 'false' }, { include_discrepancy_addendum: 'true' },
+    { form_id: 'invented' }, { raw_xml: '<Report/>' }]) {
     assert.throws(() => sfrepTransferInput({ ...body(), ...change }));
   }
   assert.throws(() => sfrepTransferInput(body(), { exporting: true }), /sfrep_preview_required/);

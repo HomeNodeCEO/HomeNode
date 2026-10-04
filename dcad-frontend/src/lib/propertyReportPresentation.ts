@@ -215,6 +215,40 @@ export function documentSubjectAddressComparison(
   };
 }
 
+/** Review-only findings shared by Custom Appraisal and UAD 3.6. An explicit
+ * locality mismatch is not an automatic assertion that the document is wrong. */
+export function documentSubjectLocalityFlags(
+  candidates: Array<{ field_key?: string; review_status?: string | null; confirmed_value?: unknown;
+    normalized_value?: unknown; raw_value?: unknown }> | undefined,
+  reportAddress: unknown,
+): string[] {
+  const parse = (value: unknown) => String(value || '').trim().match(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas),?\s+(\d{5})(?:-\d{4})?\b/i);
+  const canonical = parse(reportAddress);
+  if (!canonical) return [];
+  const flags = new Set<string>();
+  for (const candidate of candidates || []) {
+    if (candidate.review_status === 'rejected') continue;
+    const source = String(candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value ?? '').trim();
+    if (!source) continue;
+    const location = ['subject_property_address', 'subject_street_address'].includes(candidate.field_key || '') ? parse(source) : null;
+    const city = candidate.field_key === 'subject_city' ? source : location?.[1];
+    const postal = ['subject_zip', 'subject_zip_code'].includes(candidate.field_key || '') ? source.match(/^\d{5}/)?.[0] : location?.[2];
+    if (city && city.toLowerCase() !== canonical[1].toLowerCase()) flags.add(`City: document says ${city}; HomeNode subject says ${canonical[1]}.`);
+    if (postal && postal !== canonical[2]) flags.add(`ZIP: document says ${postal}; HomeNode subject says ${canonical[2]}.`);
+  }
+  return [...flags];
+}
+
+/** Preserve appraiser-written commentary and keep all chosen discrepancy
+ * statements in one field instead of creating a separate addendum per source. */
+export function combineEvidenceDiscrepancyCommentary(existing: unknown, statements: string[], limit = 5_000): string | null {
+  const original = String(existing || '').trim();
+  const additions = [...new Set(statements.map(statement => statement.trim()).filter(Boolean))]
+    .filter(statement => !original.includes(statement));
+  const combined = [original, ...additions].filter(Boolean).join('\n\n');
+  return combined.length <= limit ? combined : null;
+}
+
 /**
  * A subject-address mismatch is a hard confirmation gate only for engagement
  * letters. Other evidence keeps its extracted address visible for review, but

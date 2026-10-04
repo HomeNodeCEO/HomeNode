@@ -22,11 +22,13 @@ import UadSignaturePanel from "./UadSignaturePanel";
 import UadValidationPanel from "./UadValidationPanel";
 import UadXmlPanel from "./UadXmlPanel";
 import UadSubmissionPackagePanel from "./UadSubmissionPackagePanel";
+import { combineEvidenceDiscrepancyCommentary } from '@/lib/propertyReportPresentation';
 
 interface Props {
   workfileId: string;
   onClose: () => void;
   initialSection?: UadSectionKey;
+  suggestedDiscrepancyStatements?: string[];
 }
 
 export interface UadWorkfileEditorHandle {
@@ -147,6 +149,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
   workfileId,
   onClose,
   initialSection = "assignment",
+  suggestedDiscrepancyStatements = [],
 }, ref) {
   const [editor, setEditor] = useState<UadEditorResponse | null>(null);
   const [activeSection, setActiveSection] = useState<UadSectionKey>(initialSection);
@@ -573,6 +576,17 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
     setSavedMessage(null);
   }
 
+  function addCombinedDiscrepancyCommentary() {
+    const field = allFields.find(candidate => candidate.contextKey === 'subject_commentary' && candidate.uid === '0100.0044');
+    if (!field || field.readOnly) return;
+    const key = fieldValueKey(field.contextKey, field.uid);
+    const combined = combineEvidenceDiscrepancyCommentary(draftRef.current[key], suggestedDiscrepancyStatements);
+    if (combined === null) { setError('The combined discrepancy commentary exceeds the UAD field limit. Shorten the draft before adding it.'); return; }
+    if (combined === draftRef.current[key]) { setActiveSection('subject'); return; }
+    setValue(field, null, combined);
+    setActiveSection('subject');
+  }
+
   function resolveAutosaveConflict(keepLocal: boolean) {
     const serverDraft = editor ? editorDraft(editor) : {};
     const nextDraft = { ...draftRef.current };
@@ -889,6 +903,14 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
         </nav>
 
         <div className="min-w-0 p-3 sm:p-4">
+          {suggestedDiscrepancyStatements.length > 0 && <section aria-label="Combined evidence discrepancy commentary" className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <h3 className="font-semibold">One combined UAD evidence-discrepancy comment</h3>
+            <p className="mt-1">Review the source documents and draft below. Add it to the existing Subject commentary only if appropriate; it will not replace what you already wrote.</p>
+            <p className="mt-2 whitespace-pre-wrap text-xs">{[...new Set(suggestedDiscrepancyStatements)].join('\n\n')}</p>
+            <button type="button" className="hn-action-secondary btn btn-sm mt-3 rounded-lg normal-case" onClick={addCombinedDiscrepancyCommentary}>
+              Add to Subject commentary
+            </button>
+          </section>}
           <details className="group mb-5 hn-subtle-panel overflow-hidden rounded-xl border shadow-sm">
             <summary className="hn-action-secondary cursor-pointer list-none px-4 py-3 transition [&::-webkit-details-marker]:hidden">
               <span className="flex flex-wrap items-center justify-between gap-3">

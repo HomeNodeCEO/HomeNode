@@ -1,4 +1,5 @@
 import { purchaseContractCurrency } from './purchaseContractAnalysis.js';
+import { hasCurrentContractSubjectAssociation } from './contractSubjectAssociation.js';
 
 const TERMS = ['contract_date', 'contract_price', 'earnest_money', 'down_payment', 'loan_amount', 'seller_concessions'];
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -17,8 +18,10 @@ function contractDate(value) {
 
 const dollars = amount => `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)}`;
 
-/** The legacy 1004 Contract section is deliberately assembled from one,
- * subject-matched, reviewed purchase contract. A PDF merely being uploaded never
+/** The legacy 1004 Contract section is deliberately assembled from one
+ * reviewed purchase contract with either verified subject identity or a
+ * current, appraiser-recorded association despite printed-address differences.
+ * A PDF merely being uploaded never
  * claims the appraiser analyzed it. Original terms and the source PDF remain in
  * the workfile; this concise narrative is an export-only presentation. */
 export function projectSfrepContractSection(documents, { assignmentDetails } = {}) {
@@ -30,10 +33,12 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
     return { fields, warnings, knownMissing };
   }
   const document = contracts[0];
-  if (document.property_role !== 'subject' || document.processing_status !== 'reviewed') {
+  const associatedDespiteAddress = document.property_role !== 'subject' && hasCurrentContractSubjectAssociation(document);
+  if ((document.property_role !== 'subject' && !associatedDespiteAddress) || document.processing_status !== 'reviewed') {
     warnings.push('The contract needs subject-property verification and completed document review before it can mark the 1004 Contract section analyzed.');
     return { fields, warnings, knownMissing };
   }
+  if (associatedDespiteAddress) warnings.push('Contract address discrepancy: the appraiser associated this reviewed contract with the subject despite conflicting printed locations. Verify the original PDF and county address before relying on the imported Contract section.');
   const documentId = Number(document.id);
   const candidates = new Map();
   for (const candidate of Array.isArray(document.candidates) ? document.candidates : []) {
@@ -66,7 +71,7 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
       const saved = key === 'contract_date' ? contractDate(String(raw ?? ''))
         : /^\$?\s*(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(String(raw ?? '').trim())
           ? purchaseContractCurrency(raw) : null;
-      return saved === null || saved !== candidates.get(key)?.value;
+      return !(saved === null && !candidates.has(key)) && saved !== candidates.get(key)?.value;
     });
     if (differences.length) {
       warnings.push(`Saved HomeNode contract terms differ from the selected reviewed PDF (${differences.join(', ')}). Resolve the saved values or review the contract again before export.`);
@@ -92,9 +97,10 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
     fieldId: 'BorrowerFinancialAssistanceYesCheckBox', value: 'true', type: 'CheckBoxField', documentId,
     candidateId: concessions.candidateId, provenance: proof('seller_concessions', concessions.candidateId) });
   const missing = TERMS.filter(key => !candidates.has(key));
-  if (missing.length) {
+  const missingCore = missing.filter(key => key !== 'seller_concessions');
+  if (missingCore.length) {
     knownMissing.push({ fieldId: 'AnalyzedContractDescription',
-      reason: `Contract narrative requires reviewed ${missing.join(', ')}. Missing terms are not guessed from the sales price or another document.` });
+      reason: `Contract narrative requires reviewed ${missingCore.join(', ')}. Missing terms are not guessed from the sales price or another document.` });
     return { fields, warnings, knownMissing };
   }
   const cash = candidates.get('down_payment').value, loan = candidates.get('loan_amount').value;
@@ -105,9 +111,13 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   const armsLength = record(assignmentDetails) ? assignmentDetails.contract_arms_length : null;
   const saleType = armsLength === true ? 'Arms length sale' : armsLength === false ? 'Non-arms length sale' : 'Sale type requires appraiser review';
   if (armsLength == null) warnings.push('Arms-length status was not established by uploading the contract. Select it in HomeNode before relying on the 1004 analysis.');
-  const amount = concessions.value === 0 ? '0$' : dollars(concessions.value);
-  const value = `${saleType};Contract dated ${date.value}, purchase price of ${dollars(price.value)}, earnest money ${dollars(candidates.get('earnest_money').value)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${amount} in concessions`;
-  const sourceEvidence = TERMS.map(sourceField => ({ documentId, candidateId: candidates.get(sourceField).candidateId,
+  const amount = concessions ? concessions.value === 0 ? '0$' : dollars(concessions.value) : null;
+  if (!concessions) {
+    warnings.push('Seller concessions are not confirmed in HomeNode. The Contract narrative is exported with an explicit review flag; no zero amount or assistance checkbox is asserted.');
+    knownMissing.push({ fieldId: 'BorrowerFinancialAssistanceNoCheckBox', reason: 'Seller concessions need appraiser review; neither Yes nor No is exported.' });
+  }
+  const value = `${saleType};Contract dated ${date.value}, purchase price of ${dollars(price.value)}, earnest money ${dollars(candidates.get('earnest_money').value)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${amount === null ? 'concessions not confirmed (review required)' : `${amount} in concessions`}`;
+  const sourceEvidence = TERMS.filter(sourceField => candidates.has(sourceField)).map(sourceField => ({ documentId, candidateId: candidates.get(sourceField).candidateId,
     sourceField, value: sourceField === 'contract_date' ? candidates.get(sourceField).value : candidates.get(sourceField).value.toFixed(2) }));
   fields.push({ sourceField: 'contract_analysis_summary', fieldId: 'AnalyzedContractDescription', value,
     type: 'TextField', documentId, candidateId: date.candidateId,

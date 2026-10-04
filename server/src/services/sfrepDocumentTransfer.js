@@ -5,6 +5,7 @@ import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExpo
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
 import { customSubjectCensusSql } from './customSubjectCensus.js';
+import { evidenceIdentityFlags, sfrepContractDiscrepancyAddendum, sfrepDiscrepancyRtf } from './sfrepDiscrepancyAddendum.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
 const MAX_EVIDENCE_BYTES = 8 * 1024 * 1024;
@@ -14,16 +15,18 @@ const record = value => value !== null && typeof value === 'object' && !Array.is
 
 export function sfrepTransferInput(body, { exporting = false } = {}) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) fail('invalid_sfrep_request');
-  const allowed = ['assignment_file_id', 'document_ids', 'include_documents', 'form_id', ...(exporting ? ['preview_digest'] : [])];
+  const allowed = ['assignment_file_id', 'document_ids', 'include_documents', 'include_discrepancy_addendum', 'form_id', ...(exporting ? ['preview_digest'] : [])];
   if (Object.keys(body).some(key => !allowed.includes(key))) fail('invalid_sfrep_request');
   if (!Number.isSafeInteger(body.assignment_file_id) || body.assignment_file_id < 1) fail('assignment_file_required');
   if (!Array.isArray(body.document_ids) || body.document_ids.length > SFREP_TRANSFER_LIMITS.documents
     || body.document_ids.some(id => !Number.isSafeInteger(id) || id < 1)
     || new Set(body.document_ids).size !== body.document_ids.length) fail('invalid_sfrep_document_selection');
   if (typeof body.include_documents !== 'boolean' || body.form_id !== SFREP_PRIMARY_FORM_ID) fail('invalid_sfrep_request');
+  if (body.include_discrepancy_addendum !== undefined && typeof body.include_discrepancy_addendum !== 'boolean') fail('invalid_sfrep_request');
   if (exporting && (typeof body.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(body.preview_digest))) fail('sfrep_preview_required');
   return { assignmentFileId: body.assignment_file_id, documentIds: [...body.document_ids].sort((a, b) => a - b),
-    includeDocuments: body.include_documents, formId: body.form_id, previewDigest: body.preview_digest };
+    includeDocuments: body.include_documents, includeDiscrepancyAddendum: body.include_discrepancy_addendum === true,
+    formId: body.form_id, previewDigest: body.preview_digest };
 }
 
 // One statement and one shared snapshot: reject oversized evidence in PostgreSQL
@@ -151,17 +154,22 @@ export function previewSfrepDocuments(documents, input) {
   const saved = documents.saved_report || documents[0]?.saved_report;
   const subjectContext = sfrepSubjectContext(saved?.documents || documents);
   const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
+  const wordProcessingAddendum = sfrepContractDiscrepancyAddendum(saved?.documents || documents, input.includeDiscrepancyAddendum);
   const mapped = buildSfrepReportExport({ documents: saved?.documents || documents, pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
     contractSection: true, savedAssignmentDetails: saved?.assignmentDetails,
     contractEvidenceDocuments: saved?.documents,
+    wordProcessingAddendum,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });
   if (canonical) {
     mapped.warnings.push(...canonical.warnings);
     mapped.knownMissing.push(...canonical.knownMissing);
   }
+  mapped.warnings.push(...evidenceIdentityFlags(saved?.documents || documents).map(flag => flag.message));
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    documents, saved, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
+    documents, saved, subjectContext, includeDocuments: input.includeDocuments,
+    includeDiscrepancyAddendum: input.includeDiscrepancyAddendum,
+    formId: input.formId, reportXml: mapped.reportXml }));
   return { ...mapped, preview_digest: previewDigest, filename: `HomeNode-SFREP-file-${input.assignmentFileId}.rpti`,
     ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
       subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
@@ -175,7 +183,9 @@ export async function packageSfrepDocuments(pool, storage, documents, preview, i
   if (preview.preview_digest !== input.previewDigest) fail('sfrep_preview_changed');
   // Keep the member encoding consistent with the mapper's UTF-8 XML prolog.
   const files = [{ path: 'Report.xml', body: Buffer.from(preview.reportXml, 'utf8') }];
-  let totalBytes = files[0].body.length;
+  if (preview.wordProcessingAddendum) files.push({ path: `Rtf/${preview.wordProcessingAddendum.fileName}`,
+    body: sfrepDiscrepancyRtf(preview.wordProcessingAddendum.text) });
+  let totalBytes = files.reduce((total, file) => total + file.body.length, 0);
   for (const addendum of preview.pdfAddenda) {
     signal.throwIfAborted();
     const expected = documents.find(document => document.id === addendum.documentId);

@@ -24,6 +24,7 @@ import {
   assignmentDocumentConfirmationBlocked,
   confirmedDocumentFieldApplications,
   documentSubjectAddressComparison,
+  documentSubjectLocalityFlags,
 } from '@/lib/propertyReportPresentation';
 import {
   applyUadDocumentCandidate,
@@ -150,6 +151,7 @@ interface AssignmentDocumentCenterProps {
   exportRequestId?: number;
   uadWorkfileId?: string | null;
   subjectAddress?: string;
+  onUadDiscrepancyDraft?: (documentId: number, statement: string) => void;
   getEditorKey?: () => string;
   onApplyConfirmedCandidate?: (
     fieldKey: string,
@@ -170,6 +172,7 @@ export default function AssignmentDocumentCenter({
   exportRequestId = 0,
   uadWorkfileId = null,
   subjectAddress = '',
+  onUadDiscrepancyDraft,
   getEditorKey = EMPTY_EDITOR_KEY,
   onApplyConfirmedCandidate,
   onCustomAssignmentApplied,
@@ -325,6 +328,8 @@ export default function AssignmentDocumentCenter({
       || documentSubjectCandidate?.raw_value,
     subjectAddress,
   ), [documentSubjectCandidate, subjectAddress]);
+  const localityFlags = useMemo(() => documentSubjectLocalityFlags(selectedDocument?.candidates, subjectAddress),
+    [selectedDocument, subjectAddress]);
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
   const contractPrintedAddresses = selectedDocument?.candidates?.find(candidate => candidate.field_key === 'contract_printed_subject_addresses');
   const contractAssociation = (selectedDocument?.extraction_summary as { contract_subject_association?: { acknowledged?: boolean; reviewer?: string } } | undefined)?.contract_subject_association;
@@ -1089,6 +1094,17 @@ export default function AssignmentDocumentCenter({
               </div>
               {selectedDocument ? (
                 <>
+                  {localityFlags.length > 0 && <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-950">
+                    <strong>Source location differs from this report</strong>
+                    <p>Check the original document before relying on its subject details. HomeNode has not changed the county-backed address or this document.</p>
+                    <ul className="mt-1 list-disc pl-5">{localityFlags.map(flag => <li key={flag}>{flag}</li>)}</ul>
+                    {isUad && selectedDocument.processing_status === 'reviewed' && onUadDiscrepancyDraft && <button type="button"
+                      className="hn-action-secondary btn btn-xs mt-2 rounded-lg normal-case"
+                      onClick={() => onUadDiscrepancyDraft(selectedDocument.id,
+                        `The reviewed ${selectedDocument.document_type.replaceAll('_', ' ')} contains a subject-location discrepancy: ${localityFlags.join(' ')} The county-backed subject address controls in this report. The original source remains in the workfile for review.`)}>
+                      Prepare one UAD commentary statement
+                    </button>}
+                  </div>}
                   {isUad && selectedDocument.uad_discrepancies?.length ? (
                     <div role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-xs leading-5 text-rose-950">
                       <strong>Document facts need appraiser review</strong>

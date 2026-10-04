@@ -16,7 +16,7 @@ export const DOCUMENT_TYPES = Object.freeze([
 
 // Persist this with every extraction so documents created before a parser
 // improvement can be upgraded exactly once from their immutable source PDF.
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-04-v1";
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-04-v2";
 
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
@@ -422,12 +422,12 @@ function firstContractPatternCandidate(pages, {
 function trecEffectiveDateCandidate(pages) {
   const numeric = firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
-    pattern: /EXECUTED[\s\S]{0,180}?(\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4}))[\s\S]{0,100}?\(Effective Date\)/i,
+    pattern: /EXECUTED[\s\S]{0,180}?(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))[\s\S]{0,100}?\(Effective Date\)/i,
     normalize: normalizedDate,
     confidence: 0.99,
     extractionMethod: "trec_effective_date",
   });
-  if (numeric) return numeric;
+  if (numeric) return laterOriginalSignatureDate(pages, numeric) || numeric;
   const aboveLine = firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
     // Filled text can sit just above the printed execution-date baseline.
@@ -438,14 +438,48 @@ function trecEffectiveDateCandidate(pages) {
     confidence: 0.96,
     extractionMethod: "trec_effective_date_above_baseline",
   });
-  if (aboveLine) return aboveLine;
-  return firstContractPatternCandidate(pages, {
+  if (aboveLine) return laterOriginalSignatureDate(pages, aboveLine) || aboveLine;
+  const written = firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
     pattern: /EXECUTED\s+the\s+(\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+[A-Za-z]+,?\s+\d{4})[\s\S]{0,100}?\(Effective Date\)/i,
     normalize: (value) => normalizedDate(value.replace(/(?:st|nd|rd|th)\b/i, "")),
     confidence: 0.98,
     extractionMethod: "trec_effective_date",
   });
+  return laterOriginalSignatureDate(pages, written) || written;
+}
+
+function laterOriginalSignatureDate(pages, effective) {
+  // Limit the comparison to the original execution block. Signature dates on
+  // later addenda or disclosures are not evidence of this contract's effective
+  // date, and unrelated dates elsewhere in the PDF must never override it.
+  const pageIndex = effective ? effective.page_number - 1 : pages.findIndex(page => /\bEXECUTED\b[\s\S]{0,220}\(Effective Date\)/i.test(page));
+  if (pageIndex < 0) return null;
+  const page = cleanText(pages[pageIndex], 500_000);
+  const execution = /\bEXECUTED\b[\s\S]{0,220}\(Effective Date\)/i.exec(page);
+  if (!execution) return null;
+  const addendum = /\b(?:ADDENDUM|AMENDMENT|DISCLOSURE|NON-REALTY ITEMS|THIRD PARTY FINANCING)\b/i;
+  const currentTail = page.slice(execution.index + execution[0].length, execution.index + execution[0].length + 2_000);
+  const currentBlock = page.slice(Math.max(0, execution.index - 2_000), execution.index + execution[0].length)
+    + '\n' + currentTail.split(addendum, 1)[0];
+  // A scanned original execution page can end before the signature lines.
+  // Inspect at most the next page's opening block, never later pages or a
+  // titled addendum/disclosure even when it contains Buyer/Seller dates.
+  const nearPageEnd = page.length - (execution.index + execution[0].length) < 1_500;
+  const nextHead = nearPageEnd ? cleanText(pages[pageIndex + 1] || '', 2_000) : '';
+  const nextBlock = nextHead.split(addendum, 1)[0];
+  const signaturePattern = /\b(Buyer|Seller)\s*(?:Signature)?[^\n]{0,100}?\b(?:Date Signed|Signed Date|Date)\s*[:#.-]?\s*(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))\b/gi;
+  const signatures = [[currentBlock, pageIndex + 1], [nextBlock, pageIndex + 2]]
+    .flatMap(([block, pageNumber]) => [...block.matchAll(signaturePattern)]
+      .map(match => ({ raw: match[2], normalized: normalizedDate(match[2]), evidence: compactEvidence(match[0]), pageNumber })))
+    .filter(item => item.normalized);
+  if (!signatures.length) return null;
+  const latest = signatures.sort((left, right) => right.normalized.localeCompare(left.normalized))[0];
+  if (effective && latest.normalized <= effective.normalized_value) return null;
+  return { field_key: 'contract_date', raw_value: latest.raw, normalized_value: latest.normalized,
+    page_number: latest.pageNumber, confidence: 0.94,
+    evidence_excerpt: `${latest.evidence}; original contract execution block effective date ${effective?.raw_value || 'not filled'}`,
+    extraction_method: 'trec_later_original_signature_date' };
 }
 
 function trecSalesPriceCandidate(pages) {

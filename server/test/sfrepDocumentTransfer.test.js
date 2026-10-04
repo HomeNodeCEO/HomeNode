@@ -26,12 +26,28 @@ function snapshotRow(row = savedRow()) {
 
 test('transfer input rejects unbounded, duplicate, coerced and extra document selection', () => {
   assert.deepEqual(sfrepTransferInput(body()).documentIds, [2]);
-  for (const change of [{ document_ids: [] }, { document_ids: [2, 2] }, { document_ids: ['2'] },
+  assert.deepEqual(sfrepTransferInput({ ...body(), document_ids: [] }).documentIds, []);
+  for (const change of [{ document_ids: [2, 2] }, { document_ids: ['2'] },
     { document_ids: Array.from({ length: 11 }, (_, index) => index + 1) }, { assignment_file_id: '14' },
     { include_documents: 'false' }, { form_id: 'invented' }, { raw_xml: '<Report/>' }]) {
     assert.throws(() => sfrepTransferInput({ ...body(), ...change }));
   }
   assert.throws(() => sfrepTransferInput(body(), { exporting: true }), /sfrep_preview_required/);
+});
+
+test('zero PDF attachments still maps saved workfile fields and prepares a fields-only RPTI', async () => {
+  const row = snapshotRow(); row.snapshot.documents = [];
+  row.snapshot.saved_report.assignmentDetails.lender_client_name = 'Example & Bank';
+  const selected = { ...input(), documentIds: [], includeDocuments: false };
+  const documents = await readSfrepDocuments({ query: async () => ({ rows: [row] }) }, selected);
+  assert.equal(documents.length, 0);
+  const preview = previewSfrepDocuments(documents, selected);
+  assert.deepEqual(preview.documents, []);
+  assert.deepEqual(preview.pdfAddenda, []);
+  assert.match(preview.reportXml, /Example &amp; Bank/);
+  const packageResult = await packageSfrepDocuments(null, null, documents, preview, { ...selected, previewDigest: preview.preview_digest },
+    { loadContent: () => assert.fail('no source PDF should be fetched') });
+  assert.deepEqual([...unzipStored(packageResult.content).keys()], ['Report.xml']);
 });
 
 test('source read binds account, assignment and document IDs and rejects a partial result', async () => {
@@ -137,15 +153,20 @@ test('preview changes when evidence, assignment or source-copy choice changes', 
   assert.notEqual(preview.preview_digest, previewSfrepDocuments(documents, input()).preview_digest);
 });
 
-test('Subject-phase transfer retains contract PDF but cannot export raw Contract fields', async () => {
+test('Subject and Contract transfer maps reviewed contract scalars while retaining the original PDF', async () => {
   const document = { ...source(), document_type: 'purchase_contract', property_role: 'subject', candidates: [
     { id: 20, document_id: 2, field_key: 'contract_price', confirmed_value: '300000', review_status: 'confirmed' },
     { id: 21, document_id: 2, field_key: 'contract_date', confirmed_value: '2026-08-25', review_status: 'confirmed' },
   ] };
   const preview = previewSfrepDocuments([document], input());
-  assert.doesNotMatch(preview.reportXml, /SalePriceAmount|ContractDate/);
+  assert.match(preview.reportXml, /<CheckBoxField Id="AnalyzedContractYesCheckBox" Data="true" \/>/);
+  assert.match(preview.reportXml, /<TextField Id="SalePriceAmount" Data="300000.00" \/>/);
+  assert.match(preview.reportXml, /<TextField Id="ContractDate" Data="08\/25\/2026" \/>/);
+  assert.doesNotMatch(preview.reportXml, /AnalyzedContractDescription/);
+  assert.ok(preview.knownMissing.some(item => item.fieldId === 'AnalyzedContractDescription'));
   assert.equal(preview.pdfAddenda.length, 1);
-  assert.equal(preview.omitted.filter(item => /Outside the current Subject-section/.test(item.reason)).length, 2);
+  assert.equal(preview.omitted.filter(item => /Outside the current Subject-section/.test(item.reason)).length, 0,
+    'contract terms are now handled as one section instead of reported as unsupported Subject fields');
   const packaged = await packageSfrepDocuments({}, {}, [document], preview, { ...input(), previewDigest: preview.preview_digest }, {
     loadContent: async () => ({ ...document, content }),
   });

@@ -23,6 +23,7 @@ function accessibleDocumentPool() {
   return createPool(async () => ({ rows: [{
     id: 1,
     assignment_file_id: 7,
+    document_account_id: "canonical-42",
     account_id: "canonical-42",
     organization_id: "org-1",
     assigned_appraiser_user_id: "appraiser-1",
@@ -292,7 +293,8 @@ test("document access fails closed before reads in enforced mode", async (contex
     queryInputs.push(params);
     if (params[0] === 1) return { rows: [] };
     if (params[0] === 2) return { rows: [{ id: 2, assignment_file_id: null }] };
-    return { rows: [{ id: 3, assignment_file_id: 7, organization_id: "org-1" }] };
+    return { rows: [{ id: 3, assignment_file_id: 7, document_account_id: "canonical-42",
+      account_id: "canonical-42", organization_id: "org-1" }] };
   });
   const routerOptions = options({
     pool,
@@ -332,6 +334,56 @@ test("document access fails closed before reads in enforced mode", async (contex
   assert.deepEqual(await allowed.json(), { ok: true, document: { id: 3 } });
   assert.equal(getCalls, 1);
   assert.deepEqual(queryInputs, [[1], [2], [3]]);
+});
+
+test("document routes reject mismatched or unjoined assignment accounts", async (context) => {
+  const queries = [];
+  let accessed = 0;
+  const pool = createPool(async (sql, params) => {
+    queries.push(sql);
+    return { rows: [{
+      id: Number(params[0]),
+      assignment_file_id: 7,
+      document_account_id: "canonical-other",
+      account_id: Number(params[0]) === 4 ? null : "canonical-42",
+      organization_id: "org-1",
+      assigned_appraiser_user_id: identity.userId,
+    }] };
+  });
+  const rejectUnexpectedAccess = async () => {
+    accessed += 1;
+    throw new Error("mismatched_document_service_called");
+  };
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    pool,
+    authenticationRequired: true,
+    decideAccess: () => true,
+    getDocument: rejectUnexpectedAccess,
+    deleteDocument: rejectUnexpectedAccess,
+    queueDocument: rejectUnexpectedAccess,
+    confirmCandidates: rejectUnexpectedAccess,
+    reviewCandidate: rejectUnexpectedAccess,
+  })));
+  context.after(server.close);
+
+  for (const documentId of [3, 4]) {
+    for (const [path, request] of [
+      [`/api/documents/${documentId}`, undefined],
+      [`/api/documents/${documentId}/content`, undefined],
+      [`/api/documents/${documentId}`, { method: "DELETE" }],
+      [`/api/documents/${documentId}/reprocess`, { method: "POST" }],
+      [`/api/documents/${documentId}/confirm-all`, jsonRequest("POST")],
+      [`/api/documents/${documentId}/candidates/5`, jsonRequest("PATCH", { review_status: "confirmed" })],
+    ]) {
+      const response = await fetch(`${server.baseUrl}${path}`, request);
+      assert.equal(response.status, 403, `${request?.method || "GET"} ${path}`);
+      assert.equal(response.headers.get("cache-control"), "no-store");
+      assert.deepEqual(await response.json(), { error: "assignment_document_access_denied" });
+    }
+  }
+  assert.equal(accessed, 0);
+  assert.equal(queries.length, 12);
+  assert.ok(queries.every((sql) => sql.includes("assignment.account_id = document.account_id")));
 });
 
 test("candidate rejection still requires write access and records the authenticated reviewer", async (context) => {
@@ -568,6 +620,8 @@ test("subject mismatch override requires signing authority and ignores a forged 
   const pool = createPool(async () => ({ rows: [{
     id: 5,
     assignment_file_id: 7,
+    document_account_id: "canonical-42",
+    account_id: "canonical-42",
     organization_id: "org-1",
     assigned_appraiser_user_id: "appraiser-1",
     supervisory_appraiser_user_id: null,

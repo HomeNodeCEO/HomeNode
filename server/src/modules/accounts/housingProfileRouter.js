@@ -1,5 +1,6 @@
 import express from "express";
 
+import { rollbackWithDiscardReason } from "../../database/transactionCleanup.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { normalizeHousingProfileUpdate } from "../../util/housingProfileEdit.js";
 
@@ -71,6 +72,7 @@ export function createHousingProfileRouter({
     }
 
     let client;
+    let rollbackFailure;
     try {
       client = await pool.connect();
       await client.query("BEGIN");
@@ -149,13 +151,14 @@ export function createHousingProfileRouter({
       return res.json({ ok: true, housing_profile: rows[0] });
     } catch (error) {
       if (client) {
-        try { await client.query("ROLLBACK"); }
-        catch { /* The fixed response still wins if rollback also fails. */ }
+        rollbackFailure = await rollbackWithDiscardReason(
+          client, "housing_profile_rollback_failed",
+        ) || undefined;
       }
       logHousingProfileFailure(logger, "/api/accounts/:id/housing-profile failed", error);
       return res.status(500).json({ error: "housing_profile_update_failed" });
     } finally {
-      try { await client?.release(); }
+      try { await client?.release(rollbackFailure); }
       catch (error) {
         logHousingProfileFailure(logger, "housing profile client release failed", error);
       }

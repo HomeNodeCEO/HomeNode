@@ -9,7 +9,11 @@ import {
   runNonDallasEnrichmentBatch,
 } from "../src/services/nonDallasEnrichmentWorker.js";
 
-function accountEnrichmentFixture({ failureStage = null, rollbackFails = false, providerError = null, connectError = null } = {}) {
+function accountEnrichmentFixture({
+  failureStage = null, rollbackFails = false, rollbackThrows = false, releaseError,
+  beforeRollback = () => undefined, beforeProvider = () => undefined,
+  providerError = null, connectError = null,
+} = {}) {
   const primaryError = new Error("private account write detail");
   const rollbackError = new Error("private rollback connection detail");
   const queries = [], statements = [], releases = [], events = [], providerCalls = [];
@@ -37,23 +41,31 @@ function accountEnrichmentFixture({ failureStage = null, rollbackFails = false, 
       events.push({ type: "connect", clientId });
       if (connectError) throw connectError;
       return {
-        async query(sql, values) {
+        query(sql, values) {
           let stage = sql;
           if (sql.includes("INSERT INTO app.property_attribute_observations")) stage = "observation insert";
           else if (sql.includes("INSERT INTO app.enrichment_review_queue")) stage = "review insert";
           else if (sql.includes("UPDATE app.enrichment_review_queue")) stage = "review resolution";
           assert.ok(["BEGIN", "COMMIT", "ROLLBACK", "observation insert", "review insert", "review resolution"].includes(stage));
           statements.push({ clientId, stage, sql, values });
-          if (clientId === 1 && stage === "ROLLBACK" && rollbackFails) throw rollbackError;
+          events.push({ type: "query", clientId, stage });
+          if (clientId === 1 && stage === "ROLLBACK") {
+            if (rollbackThrows) throw rollbackError;
+            return Promise.resolve(beforeRollback()).then(() => {
+              if (rollbackFails) throw rollbackError;
+              return { rows: [] };
+            });
+          }
           if (clientId === 1 && stage === failureStage) {
             injectedFailures += 1;
-            throw primaryError;
+            return Promise.reject(primaryError);
           }
-          return { rows: [] };
+          return Promise.resolve({ rows: [] });
         },
         release(error) {
           releases.push({ clientId, error });
           events.push({ type: "release", clientId, error });
+          if (releaseError !== undefined) throw releaseError;
         },
       };
     },
@@ -61,6 +73,8 @@ function accountEnrichmentFixture({ failureStage = null, rollbackFails = false, 
   const trestleClient = {
     async findProperty(input) {
       providerCalls.push(input);
+      events.push({ type: "provider", listingKey: input.listingKey });
+      await beforeProvider();
       if (providerError) throw providerError;
       return {
         attributes: { bedrooms: 4, bathrooms_full: 2, pool: false },
@@ -179,6 +193,129 @@ test("actual non-Dallas batch retires a rollback-failed client before checking o
   assert.equal(fixture.statements.filter(({ clientId, stage }) => clientId === 2 && stage === "COMMIT").length, 1);
   assert.deepEqual(fixture.queries.at(-1).values, [17, 1, 4, 20, 1]);
   assert.deepEqual(logs, [["[non-dallas-enrichment] A-1:", "non_dallas_enrichment_failed"]]);
+});
+
+function assertAccountCleanupRelease(fixture, discarded, expectedConnections = 1) {
+  assert.equal(fixture.connections, expectedConnections);
+  assert.equal(fixture.releases.length, expectedConnections);
+  const [{ error }] = fixture.releases;
+  if (!discarded) return assert.equal(error, undefined);
+  assert.ok(error instanceof Error);
+  assert.equal(error.message, "non_dallas_enrichment_rollback_failed");
+  assert.equal(Object.hasOwn(error, "cause"), false);
+  assert.deepEqual(Object.keys(error), []);
+  assert.equal(error.stack.includes("private"), false);
+  assert.notEqual(error, fixture.primaryError);
+  assert.notEqual(error, fixture.rollbackError);
+}
+
+for (const failureStage of ["BEGIN", "observation insert", "review insert", "review resolution", "COMMIT"]) {
+  test(`non-Dallas ${failureStage} failure survives a synchronous rollback throw`, async () => {
+    const fixture = accountEnrichmentFixture({ failureStage, rollbackThrows: true });
+    await assert.rejects(enrichNonDallasAccount({
+      pool: fixture.pool, trestleClient: fixture.trestleClient, accountId: "A-1",
+    }), error => error === fixture.primaryError);
+    assert.equal(fixture.injectedFailures, 1);
+    assert.equal(fixture.providerCalls.length, 1);
+    assert.deepEqual(fixture.statements.slice(-2).map(({ stage }) => stage), [failureStage, "ROLLBACK"]);
+    assert.equal(fixture.statements.filter(({ stage }) => stage === "ROLLBACK").length, 1);
+    assert.equal(fixture.events.at(-1).type, "release");
+    assertAccountCleanupRelease(fixture, true);
+  });
+}
+
+for (const outcome of [
+  { name: "COMMIT" },
+  { name: "primary failure and successful rollback", failureStage: "observation insert" },
+  { name: "primary failure and failed rollback", failureStage: "observation insert", rollbackFails: true },
+]) {
+  for (const [kind, releaseError] of [
+    ["Error", new Error("release failed")],
+    ["Symbol", Symbol("release failed")],
+    ["object", Object.freeze({ release: "failed" })],
+  ]) {
+    test(`non-Dallas release-thrown ${kind} retains precedence after ${outcome.name}`, async () => {
+      const fixture = accountEnrichmentFixture({ ...outcome, releaseError });
+      await assert.rejects(enrichNonDallasAccount({
+        pool: fixture.pool, trestleClient: fixture.trestleClient, accountId: "A-1",
+      }), error => error === releaseError);
+      assert.equal(fixture.injectedFailures, outcome.failureStage ? 1 : 0);
+      assert.equal(fixture.providerCalls.length, 1);
+      assert.equal(fixture.events[0].type, "provider");
+      assert.equal(fixture.events[1].type, "connect");
+      assert.equal(fixture.events.at(-1).type, "release");
+      assert.equal(fixture.statements.filter(({ stage }) => stage === "BEGIN").length, 1);
+      assert.equal(fixture.statements.filter(({ stage }) => stage === "ROLLBACK").length, outcome.failureStage ? 1 : 0);
+      assert.equal(fixture.statements.at(-1).stage, outcome.failureStage ? "ROLLBACK" : "COMMIT");
+      assertAccountCleanupRelease(fixture, Boolean(outcome.rollbackFails));
+    });
+  }
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`actual non-Dallas batch waits for rollback ${rollbackFails ? "failure" : "success"} and release before continuing`, async () => {
+    let finishRollback;
+    const gate = new Promise(resolve => { finishRollback = resolve; });
+    const fixture = accountEnrichmentFixture({
+      failureStage: "observation insert", rollbackFails, beforeRollback: () => gate,
+    });
+    const logs = [];
+    let settled = false;
+    const pending = runNonDallasEnrichmentBatch({
+      pool: fixture.pool, trestleClient: fixture.trestleClient, county: "COLLIN", limit: 2,
+      listCandidates: async () => ["A-1", "A-2"],
+      logger: { error: (...args) => logs.push(args) },
+    }).then(value => { settled = true; return value; });
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.equal(fixture.connections, 1);
+      assert.equal(fixture.queries.length, 3, "only run insertion and first account/manual reads happen before cleanup");
+      assert.deepEqual(fixture.providerCalls.map(({ listingKey }) => listingKey), ["listing-A-1"]);
+      assert.deepEqual(fixture.statements.map(({ stage }) => stage), ["BEGIN", "observation insert", "ROLLBACK"]);
+      assert.deepEqual(fixture.releases, []);
+      assert.deepEqual(logs, []);
+      assert.equal(settled, false);
+      finishRollback();
+      assert.deepEqual(await pending, { run_id: 17, county: "COLLIN", processed: 1, resolved: 4, review: 20, errors: 1 });
+      assert.equal(fixture.connections, 2);
+      assert.equal(fixture.releases.length, 2);
+      assert.equal(fixture.releases[0].clientId, 1);
+      assertAccountCleanupRelease(fixture, rollbackFails, 2);
+      assert.deepEqual(fixture.releases[1], { clientId: 2, error: undefined });
+      assert.equal(fixture.statements.filter(({ stage }) => stage === "ROLLBACK").length, 1);
+      const releasedAt = fixture.events.findIndex(event => event.type === "release" && event.clientId === 1);
+      const nextProviderAt = fixture.events.findIndex(event => event.type === "provider" && event.listingKey === "listing-A-2");
+      const nextCheckoutAt = fixture.events.findIndex(event => event.type === "connect" && event.clientId === 2);
+      assert.ok(releasedAt >= 0 && releasedAt < nextProviderAt && nextProviderAt < nextCheckoutAt);
+      assert.deepEqual(fixture.queries.at(-1).values, [17, 1, 4, 20, 1]);
+      assert.deepEqual(logs, [["[non-dallas-enrichment] A-1:", "non_dallas_enrichment_failed"]]);
+    } finally {
+      finishRollback();
+      await pending;
+    }
+  });
+}
+
+test("non-Dallas account waits for the provider before acquiring its transaction", async () => {
+  let finishProvider;
+  const gate = new Promise(resolve => { finishProvider = resolve; });
+  const fixture = accountEnrichmentFixture({ beforeProvider: () => gate });
+  const pending = enrichNonDallasAccount({ pool: fixture.pool, trestleClient: fixture.trestleClient, accountId: "A-1" });
+  try {
+    await new Promise(resolve => setImmediate(resolve));
+    assert.equal(fixture.providerCalls.length, 1);
+    assert.equal(fixture.connections, 0);
+    assert.deepEqual(fixture.statements, []);
+    assert.deepEqual(fixture.releases, []);
+    finishProvider();
+    assert.equal((await pending).account_id, "A-1");
+    assert.equal(fixture.providerCalls.length, 1);
+    assert.equal(fixture.statements.at(-1).stage, "COMMIT");
+    assertAccountCleanupRelease(fixture, false);
+  } finally {
+    finishProvider();
+    await pending;
+  }
 });
 
 function runPool(handler = async () => ({ rows: [] })) {

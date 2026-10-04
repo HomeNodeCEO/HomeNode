@@ -5,6 +5,7 @@ import {
   resolveNonDallasAttribute,
 } from "../util/nonDallasEnrichment.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 
 async function loadAccountInputs(pool, accountId) {
   const { rows } = await pool.query(
@@ -153,11 +154,7 @@ export async function enrichNonDallasAccount({ pool, trestleClient, accountId })
     }
     await client.query("COMMIT");
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      rollbackFailure = new Error("non_dallas_enrichment_rollback_failed");
-    }
+    rollbackFailure = await rollbackWithDiscardReason(client, "non_dallas_enrichment_rollback_failed");
     throw error;
   } finally {
     client.release(rollbackFailure || undefined);

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   ensureAccountLocationsTable,
@@ -404,11 +405,7 @@ async function claimLocationBackfillBatch(
     await client.query("COMMIT");
     return rows;
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      rollbackFailure = new Error("location_backfill_rollback_failed");
-    }
+    rollbackFailure = await rollbackWithDiscardReason(client, "location_backfill_rollback_failed");
     throw error;
   } finally {
     client.release(rollbackFailure || undefined);

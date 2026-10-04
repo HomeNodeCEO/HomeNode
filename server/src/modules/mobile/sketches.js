@@ -141,6 +141,15 @@ function normalizeDimensionLabels(input, segmentCount) {
   return Object.freeze(labels);
 }
 
+function normalizeAreaLabelOffset(input) {
+  if (input == null) return Object.freeze({ x: 0, y: 0 });
+  if (!plainObject(input)) throw new Error("invalid_sketch_area_label_offset");
+  return Object.freeze({
+    x: finiteCoordinate(input.x, "invalid_sketch_area_label_offset"),
+    y: finiteCoordinate(input.y, "invalid_sketch_area_label_offset"),
+  });
+}
+
 function normalizeArea(input, index) {
   if (!plainObject(input)) throw new Error("invalid_sketch_area");
   const id = normalizeUuid(input.id || input.client_area_id, "invalid_sketch_area_id");
@@ -169,6 +178,7 @@ function normalizeArea(input, index) {
     notes: input.notes == null ? null : boundedText(input.notes, "invalid_sketch_area_notes", 1000, { nullable: true }),
     vertices: calculation.vertices,
     dimension_labels: normalizeDimensionLabels(input.dimension_labels, Math.max(0, calculation.vertices.length - 1)),
+    area_label_offset: normalizeAreaLabelOffset(input.area_label_offset),
     calculation,
     position: boundedInteger(input.position ?? index + 1, "invalid_sketch_area_position", 1, MAX_AREAS),
   });

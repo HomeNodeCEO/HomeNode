@@ -541,6 +541,7 @@ test("normalizes ANSI review areas, classifications, and stable room references"
       level_label: "Level 1",
        classification: "above_grade_finished",
        dimension_labels: [{ segment_index: 0, offset: { x: 0, y: -3 } }],
+       area_label_offset: { x: 4, y: 6 },
        vertices: [
         { x: 0, y: 0 },
         { x: 40, y: 0 },
@@ -562,6 +563,7 @@ test("normalizes ANSI review areas, classifications, and stable room references"
   assert.equal(sketch.areas[0].calculation.segments[0].length_feet, 40);
   assert.equal(sketch.areas[0].calculation.reported_area_sqft, 1200);
   assert.deepEqual(sketch.areas[0].dimension_labels, [{ segment_index: 0, offset: { x: 0, y: -3 } }]);
+  assert.deepEqual(sketch.areas[0].area_label_offset, { x: 4, y: 6 });
   assert.equal(sketch.rooms[0].room_ref, `sketch-room:${roomId}`);
   assert.equal(sketch.ansi_review_required, false);
   assert.throws(() => normalizeManualSketchDocument({
@@ -573,6 +575,15 @@ test("normalizes ANSI review areas, classifications, and stable room references"
     }],
     rooms: [],
   }), /invalid_sketch_dimension_segment/);
+  assert.throws(() => normalizeManualSketchDocument({
+    areas: [{
+      id: areaId,
+      label: "Invalid area label offset",
+      vertices: [{ x: 0, y: 0 }, { x: 20, y: 0 }],
+      area_label_offset: { x: "sideways", y: 2 },
+    }],
+    rooms: [],
+  }), /invalid_sketch_area_label_offset/);
   assert.throws(() => normalizeManualSketchDocument({
     review_status: "appraiser_confirmed",
     areas: [{

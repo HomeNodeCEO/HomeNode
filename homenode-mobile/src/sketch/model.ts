@@ -67,6 +67,7 @@ export type SketchAreaDraft = Readonly<{
   notes: string;
   vertices: SketchPoint[];
   dimensionLabels: SketchDimensionLabel[];
+  labelOffset: SketchPoint;
   position: number;
 }>;
 
@@ -88,6 +89,20 @@ export type ManualSketchDraft = Readonly<{
   areas: SketchAreaDraft[];
   rooms: SketchRoomDraft[];
 }>;
+
+export function nextSketchRoomLabel(
+  rooms: SketchRoomDraft[],
+  roomType: SketchRoomType,
+  customLabel = "",
+) {
+  const configuredLabel = SKETCH_ROOM_TYPES.find(([value]) => value === roomType)?.[1] || "Room";
+  const baseLabel = customLabel.trim() || configuredLabel;
+  const existing = new Set(rooms.map((room) => room.label.trim().toLocaleLowerCase()));
+  if (!existing.has(baseLabel.toLocaleLowerCase())) return baseLabel;
+  let sequence = 2;
+  while (existing.has(`${baseLabel} ${sequence}`.toLocaleLowerCase())) sequence += 1;
+  return `${baseLabel} ${sequence}`;
+}
 
 export type ManualSketchApiDocument = Readonly<{
   schema_version?: string;
@@ -112,6 +127,7 @@ export type ManualSketchApiDocument = Readonly<{
       segment_index: number;
       offset: SketchPoint;
     }>;
+    area_label_offset?: SketchPoint;
     position: number;
   }>;
   rooms: Array<{
@@ -504,6 +520,7 @@ export function emptySketchDraft(areaId: string): ManualSketchDraft {
       notes: "",
       vertices: [],
       dimensionLabels: [],
+      labelOffset: { x: 0, y: 0 },
       position: 1,
     }],
     rooms: [],
@@ -530,6 +547,7 @@ export function toSketchApiDocument(draft: ManualSketchDraft): ManualSketchApiDo
         segment_index: label.segmentIndex,
         offset: label.offset,
       })),
+      area_label_offset: area.labelOffset,
       position: area.position,
     })),
     rooms: draft.rooms.map((room) => ({
@@ -563,6 +581,7 @@ export function draftFromApiDocument(document: ManualSketchApiDocument): ManualS
         segmentIndex: label.segment_index,
         offset: label.offset,
       })),
+      labelOffset: area.area_label_offset || { x: 0, y: 0 },
       position: area.position,
     })),
     rooms: document.rooms.map((room) => ({
@@ -572,6 +591,20 @@ export function draftFromApiDocument(document: ManualSketchApiDocument): ManualS
       roomType: room.room_type,
       anchor: room.anchor,
       position: room.position,
+    })),
+  };
+}
+
+export function preserveSketchAreaLabelOffsets(
+  document: ManualSketchApiDocument,
+  localDraft: ManualSketchDraft,
+): ManualSketchApiDocument {
+  const localAreas = new Map(localDraft.areas.map((area) => [area.id, area]));
+  return {
+    ...document,
+    areas: document.areas.map((area) => ({
+      ...area,
+      area_label_offset: area.area_label_offset || localAreas.get(area.id)?.labelOffset || { x: 0, y: 0 },
     })),
   };
 }

@@ -28,9 +28,17 @@ function baseOptions(overrides = {}) {
   };
 }
 
-async function startRouter(options) {
+async function startRouter(options, { onJson } = {}) {
   const app = express();
   app.use(express.json());
+  if (onJson) app.use((_req, res, next) => {
+    const originalJson = res.json;
+    res.json = function (body) {
+      onJson(this.statusCode, body);
+      return originalJson.call(this, body);
+    };
+    next();
+  });
   app.use(createHousingProfileRouter(options));
   const server = await new Promise((resolve, reject) => {
     const listener = app.listen(0, "127.0.0.1", () => resolve(listener));
@@ -60,6 +68,7 @@ function transactionFixture({
   failAt,
   missingAccount = false,
   rollbackFailures = [],
+  beforeRollback,
   releaseFailure,
   loggerThrows = false,
 } = {}) {
@@ -82,6 +91,7 @@ function transactionFixture({
       calls.push({ stage, sql, params });
       if (stage === "ROLLBACK") {
         const index = rollbackIndex++;
+        if (beforeRollback) await beforeRollback(index);
         if (rollbackFailures[index]) throw rollbackErrors[index];
         return { rows: [], rowCount: 0 };
       }
@@ -321,6 +331,60 @@ for (const failAt of transactionStages) {
       }
     });
   }
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`housing profile waits for deferred ${rollbackFails ? "failed" : "successful"} catch rollback before responding or releasing`, { timeout: 3_000 }, async (context) => {
+    let finishRollback, markRollbackStarted;
+    const rollbackPending = new Promise(resolve => { finishRollback = resolve; });
+    const rollbackStarted = new Promise(resolve => { markRollbackStarted = resolve; });
+    let rollbackSettled = false, responseReceived = false;
+    const sentResponses = [];
+    const fixture = transactionFixture({
+      failAt: "UPSERT", rollbackFailures: [rollbackFails],
+      beforeRollback: async index => {
+        assert.equal(index, 0, "catch rollback must not be retried");
+        markRollbackStarted();
+        await rollbackPending;
+        rollbackSettled = true;
+      },
+    });
+    const server = await startRouter(fixture.options, {
+      onJson: (status, body) => sentResponses.push({ status, body, rollbackSettled }),
+    });
+    context.after(server.close);
+    const responsePending = patchProfile(server.baseUrl).then(response => {
+      responseReceived = true;
+      return response;
+    });
+    const expectedStages = ["BEGIN", "ACCOUNT", "UPSERT", "ROLLBACK"];
+    await rollbackStarted;
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(fixture.calls.map(({ stage }) => stage), expectedStages);
+      assert.equal(rollbackSettled, false);
+      assert.deepEqual(fixture.releases, [], "the owned client must remain checked out while rollback is pending");
+      assert.deepEqual(sentResponses, [], "no fixed response may be emitted before rollback settles");
+      assert.equal(responseReceived, false);
+      assert.deepEqual(fixture.logs, []);
+    } finally {
+      finishRollback();
+    }
+    const response = await responsePending;
+    const body = await response.json();
+    assert.equal(response.status, 500);
+    assert.deepEqual(body, { error: "housing_profile_update_failed" });
+    assert.deepEqual(sentResponses, [{ status: 500, body, rollbackSettled: true }]);
+    assert.deepEqual(fixture.calls.map(({ stage }) => stage), expectedStages, "settlement must not retry rollback or issue further SQL");
+    assert.deepEqual(fixture.logs, [["/api/accounts/:id/housing-profile failed", "40001"]]);
+    assert.doesNotMatch(JSON.stringify({ body, logs: fixture.logs }), /private_|password|08006/);
+    if (rollbackFails) {
+      assertDiscardRelease(fixture.releases, [fixture.primaryError, ...fixture.rollbackErrors]);
+    } else {
+      assertReusableRelease(fixture.releases);
+      assert.deepEqual(fixture.releases, [[undefined]], "successful rollback maps to the original undefined release argument");
+    }
+  });
 }
 
 for (const finalRollbackFails of [false, true]) {

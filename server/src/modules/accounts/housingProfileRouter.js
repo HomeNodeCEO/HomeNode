@@ -1,5 +1,6 @@
 import express from "express";
 
+import { rollbackWithDiscardReason } from "../../database/transactionCleanup.js";
 import { safeOperationalErrorCode } from "../../security/safeOperationalErrorCode.js";
 import { normalizeHousingProfileUpdate } from "../../util/housingProfileEdit.js";
 
@@ -150,8 +151,9 @@ export function createHousingProfileRouter({
       return res.json({ ok: true, housing_profile: rows[0] });
     } catch (error) {
       if (client) {
-        try { await client.query("ROLLBACK"); }
-        catch { rollbackFailure = new Error("housing_profile_rollback_failed"); }
+        rollbackFailure = await rollbackWithDiscardReason(
+          client, "housing_profile_rollback_failed",
+        ) || undefined;
       }
       logHousingProfileFailure(logger, "/api/accounts/:id/housing-profile failed", error);
       return res.status(500).json({ error: "housing_profile_update_failed" });

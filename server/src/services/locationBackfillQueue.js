@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import { safeOperationalErrorCode } from "../security/safeOperationalErrorCode.js";
 import {
   ensureAccountLocationsTable,
@@ -358,6 +359,7 @@ async function claimLocationBackfillBatch(
 ) {
   const safeBatchSize = boundedInteger(batchSize, 50, 1, 100);
   const client = await pool.connect();
+  let rollbackFailure = null;
   try {
     await client.query("BEGIN");
     await client.query(`
@@ -403,10 +405,10 @@ async function claimLocationBackfillBatch(
     await client.query("COMMIT");
     return rows;
   } catch (error) {
-    await client.query("ROLLBACK").catch(() => {});
+    rollbackFailure = await rollbackWithDiscardReason(client, "location_backfill_rollback_failed");
     throw error;
   } finally {
-    client.release();
+    client.release(rollbackFailure || undefined);
   }
 }
 

@@ -33,6 +33,47 @@ test("UAD document evidence accepts only fields with reviewed canonical mappings
   assert.equal(uadDocumentCandidateIsApplicable("subject_property_address"), false);
 });
 
+test('queued, busy, failed and unknown contract extraction never synchronizes retained confirmations', async () => {
+  const workfileId = '10000000-0000-4000-8000-000000000001';
+  for (const processing_status of ['uploaded', 'processing', 'ocr_required', 'extraction_failed', 'busy', 'failed', '', null, undefined]) {
+    const queries = [];
+    const pool = { async query(sql, values) {
+      queries.push(sql);
+      if (sql.includes('FROM app.assignment_documents')) {
+        assert.deepEqual(values, [23, workfileId]);
+        return { rows: [{ id: 23, uad_workfile_id: workfileId, document_type: 'purchase_contract',
+          processing_status, checksum_sha256: 'a'.repeat(64), last_processing_error: 'document_ocr_busy' }] };
+      }
+      assert.fail('Unready extraction must not read retained confirmed contract candidates or start writes');
+    }, async connect() { assert.fail('Unready extraction must not create seller entities or write UAD sections'); } };
+    assert.deepEqual(await synchronizeUadPurchaseContract(pool, workfileId, 23), {
+      applied: false, reason: 'document_not_ready', field_key: 'purchase_contract',
+    }, String(processing_status));
+    assert.equal(queries.length, 1);
+    assert.match(queries[0], /processing_status/);
+  }
+});
+
+test('direct purchase-contract candidate application also blocks retained values before any mapping or write', async () => {
+  const workfileId = '10000000-0000-4000-8000-000000000001';
+  for (const processing_status of ['uploaded', 'processing', 'ocr_required', 'extraction_failed', null, undefined]) {
+    for (const field_key of ['contract_price', 'contract_date', 'seller_name', 'assignment_type', 'lender_client_name']) {
+      const queries = [];
+      const pool = { async query(sql, values) {
+        queries.push(sql);
+        assert.equal(queries.length, 1, 'readiness rejection must precede further reads/writes');
+        assert.deepEqual(values, [23, 29, workfileId]);
+        return { rows: [{ id: 29, document_id: 23, document_type: 'purchase_contract', processing_status,
+          field_key, review_status: 'confirmed', confirmed_value: 'Retained old confirmation' }] };
+      }, async connect() { assert.fail('No UAD mutation allowed while contract extraction is not ready'); } };
+      assert.deepEqual(await applyConfirmedUadDocumentCandidate(pool, workfileId, 23, 29), {
+        applied: false, reason: 'document_not_ready', field_key,
+      }, `${processing_status}: ${field_key}`);
+      assert.match(queries[0], /document\.processing_status/);
+    }
+  }
+});
+
 test("UAD document entity transactions retire clients only when rollback fails", async () => {
   const workfileId = "10000000-0000-4000-8000-000000000001";
   const documentId = 23;
@@ -40,6 +81,13 @@ test("UAD document entity transactions retire clients only when rollback fails",
   const cases = [
     {
       name: "seller",
+      run: (pool) => synchronizeUadPurchaseContract(pool, workfileId, documentId),
+      candidate: { field_key: "seller_name", review_status: "confirmed",
+        confirmed_value: "Jane Doe" },
+    },
+    {
+      name: "seller from partially reviewed extraction",
+      processing_status: "review_required",
       run: (pool) => synchronizeUadPurchaseContract(pool, workfileId, documentId),
       candidate: { field_key: "seller_name", review_status: "confirmed",
         confirmed_value: "Jane Doe" },
@@ -65,7 +113,8 @@ test("UAD document entity transactions retire clients only when rollback fails",
         async query(sql) {
           if (sql.includes("FROM app.assignment_documents")) {
             return { rows: [{ id: documentId, uad_workfile_id: workfileId,
-              document_type: "purchase_contract", checksum_sha256: "a".repeat(64) }] };
+              document_type: "purchase_contract", checksum_sha256: "a".repeat(64),
+              processing_status: item.processing_status || "reviewed" }] };
           }
           if (sql.includes("FROM app.assignment_document_field_candidates candidate")) {
             return { rows: [item.candidate] };

@@ -3,6 +3,8 @@ import {
 } from './customSubjectApplication.js';
 import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
 import { isDeepStrictEqual } from 'node:util';
+import { sfrepDocumentParcelMismatch, sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
+import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
 
 // PostgreSQL jsonb reorders object keys. Evidence equality is structural, while
 // ordered arrays and exact scalar values still remain part of the receipt.
@@ -25,9 +27,35 @@ export function savedSfrepSubjectFields(saved, input) {
   const projection = projectCustomSubjectDocuments(saved.documents);
   const proposals = new Map(projection.fields.map(field => [field.key, field]));
   const fields = [], warnings = [], knownMissing = [];
+  for (const document of saved.documents) {
+    if (hasCurrentContractSubjectAssociation(document)) warnings.push(contractAssociationWarning(document));
+    if (sfrepDocumentPropertyRole(document) === 'subject' && sfrepDocumentParcelMismatch(document)) {
+      warnings.push(`Assessor parcel number (document ${document.id}): reviewed PDF APN differs from the canonical county account. The PDF APN is quarantined; county-backed identity is retained. Review the discrepancy.`);
+    }
+  }
   for (const descriptor of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
     const value = readCustomSubjectValue({ subject, assignmentDetails: saved.assignmentDetails }, descriptor.key);
-    if (value == null || value === '') continue;
+    if (value == null || value === '') {
+      // Only absent leaves can use canonical account identity. An explicit
+      // saved blank/null remains an appraiser choice, never silently refilled.
+      const hasPath = (() => {
+        let container = descriptor.section === 'subject' ? subject : saved.assignmentDetails;
+        for (const key of descriptor.path) {
+          if (!record(container)) return true; // Explicitly cleared/invalid ancestor is not absence.
+          if (!Object.hasOwn(container, key)) return false;
+          container = container[key];
+        }
+        return true;
+      })();
+      const proposal = proposals.get(descriptor.key);
+      if (!hasPath && !receipts[descriptor.key] && proposal?.provenance.rule === 'canonical_county_subject_identity_v1') {
+        fields.push({ sourceField: descriptor.key, value: proposal.value,
+          provenance: { kind: 'account_reference', sourceField: descriptor.key, documentId: null, candidateId: null,
+            assignmentFileId: saved.assignmentFileId, revision: saved.assignmentRevision,
+            rule: proposal.provenance.rule, sourceEvidence: proposal.provenance.sourceEvidence } });
+      }
+      continue;
+    }
     const revision = descriptor.section === 'subject' ? Number(saved.subject?.revision) : saved.assignmentRevision;
     if (!positive(revision)) throw new Error('sfrep_invalid_saved_report');
     if (!['string', 'boolean', 'number'].includes(typeof value)) {
@@ -47,7 +75,7 @@ export function savedSfrepSubjectFields(saved, input) {
         && same(receipt.reviewedSourceValue, proposal.sourceValue)
         && PROOF_KEYS.every(key => same(receipt[key], proof[key]));
       if (!valid) {
-        const reason = `${descriptor.key}: saved document-derived value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
+        const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));
         continue;
@@ -62,7 +90,8 @@ export function savedSfrepSubjectFields(saved, input) {
       ...(source?.documentId ? { sourceDocumentId: source.documentId } : {}),
       ...(source?.candidateId ? { sourceCandidateId: source.candidateId } : {}),
       ...(source?.rule ? { rule: source.rule } : {}),
-      ...(source?.rule === 'user_requested_hoa_workflow_proxy_v1' ? { sourceValue: source.sourceValue } : {}),
+      ...(['user_requested_hoa_workflow_proxy_v1', 'user_requested_lender_address_v1'].includes(source?.rule)
+        ? { sourceValue: source.sourceValue } : {}),
       ...(source?.sourceEvidence ? { sourceEvidence: source.sourceEvidence } : {}),
       ...(source?.kind === 'derived_reviewed_document' ? Object.fromEntries(
         ['sourceValue', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd']

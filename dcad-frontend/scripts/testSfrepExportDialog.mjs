@@ -213,8 +213,9 @@ test('placeholder dates, fee-simple defaults, and derived listing provenance are
   assert.match(h.text, /Date source: Contract/);
   assert.match(h.text, /Prior 12-calendar-month window: 2025-10-01 through 2026-10-01/);
   const assumptions = walk(h.tree).find(node => node.props?.['aria-label'] === 'Assumptions requiring confirmation');
-  assert.match(text(assumptions), /User-requested fee simple default; confirm property rights/);
-  assert.match(h.text, /User default — confirm/); assert.match(h.text, /No source document \(user default\)/);
+  assert.equal(assumptions, undefined);
+  assert.doesNotMatch(h.text, /confirm property rights|User default — confirm/);
+  assert.match(h.text, /Included — user default/); assert.match(h.text, /No source document \(user default\)/);
   assert.match(h.text, /not document evidence/); assert.match(h.text, /Derived — review/);
   assert.match(h.text, /Derived from reviewed MLS listing date 2026-09-15/);
   assert.match(h.text, /Complete the prior-listing data-source narrative in SFREP/);

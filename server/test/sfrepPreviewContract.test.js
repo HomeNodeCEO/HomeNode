@@ -3,9 +3,85 @@ import test from 'node:test';
 import { projectCustomSubjectDocuments, mergeCustomSubjectApplication } from '../src/services/customSubjectApplication.js';
 import { previewSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
 import { buildUrarSubjectEvidence } from '../src/services/urarSubjectEvidence.js';
+import { buildContractSubjectAssociation } from '../src/services/contractSubjectAssociation.js';
 import { checkSfrepPreview, sfrepProvenanceText, sfrepSubjectChecklist } from '../../dcad-frontend/src/features/sfrep/sfrepTransport.ts';
 
-function actualPreview({ hoa = 'true', saved = true, hoaText, duplicateHoa = false } = {}) {
+function countyPreview({ blank = false, absent = false, mutateSaved = () => {} } = {}) {
+  const context = { accountId: '00001234567890000', address: '100 EXAMPLE DR', city: 'GARLAND', postalCode: '75041-1234',
+    effectiveDate: '2026-03-27' };
+  context.canonicalIdentity = { ...context, county: 'DALLAS COUNTY', state: 'TX', assessorParcelNumber: context.accountId };
+  const values = { subject_property_address: '100 Example Drive, Garland, TX 75041', assessor_parcel_number: '0001234567890000',
+    county: 'Rockwall', borrower_name: 'Example Borrower', owner_name: 'Example Owner', tax_year: '2025', tax_amount: '3210.50',
+    lender_client_name: 'United Wholesale Mortgage' };
+  const documents = [{ id: 1, account_id: context.accountId, assignment_file_id: 4, document_type: 'mls_sheet',
+    processing_status: 'reviewed', upload_date: '2026-10-02', subject_context: context,
+    title: 'Synthetic county identity discrepancy', file_name: 'county-identity.pdf', file_size_bytes: 100,
+    candidates: Object.entries(values).map(([field_key, confirmed_value], index) => ({ id: 100 + index, document_id: 1,
+      field_key, confirmed_value, review_status: 'confirmed' })) }];
+  const projection = projectCustomSubjectDocuments(documents);
+  assert.ok(projection.omitted.some(item => item.sourceField === 'assessor_parcel_number' && /quarantined/.test(item.reason)));
+  const applied = mergeCustomSubjectApplication({ projection });
+  const saved = { accountId: context.accountId, assignmentFileId: 4, assignmentRevision: 2,
+    subject: { revision: absent ? 0 : 1, value: absent ? {} : applied.subject },
+    evidence: { revision: 1, value: absent ? {} : applied.evidence }, assignmentDetails: applied.assignmentDetails,
+    documents: structuredClone(documents) };
+  if (blank) saved.subject.value.property_location.address = '';
+  mutateSaved(saved);
+  documents[0].saved_report = saved;
+  const { reportXml: _xml, pdfAddenda: _pdfs, ...preview } = previewSfrepDocuments(documents, {
+    accountId: context.accountId, assignmentFileId: 4, documentIds: [1], includeDocuments: false, formId: 'FNMA-1004-0911' });
+  return JSON.parse(JSON.stringify({ ok: true, ...preview }));
+}
+
+test('actual county-primary preview quarantines PDF APN discrepancy without losing reviewed subject facts', () => {
+  const preview = countyPreview();
+  assert.equal(checkSfrepPreview(preview, [1]), preview);
+  const expected = { StreetAddress: '100 Example Dr', City: 'Garland', State: 'TX', ZipCode: '75041', County: 'Dallas',
+    AssessorsParcelNumber: '00001234567890000', BorrowerName: 'Example Borrower', OwnerName: 'Example Owner',
+    RealEstateTaxYear: '2025', RealEstateTaxAmount: '3211', LenderClientCompanyUnparsedAddress: '585 S Blvd E, Pontiac, MI 48341' };
+  for (const [fieldId, value] of Object.entries(expected)) assert.equal(preview.fields.find(field => field.fieldId === fieldId)?.value, value, fieldId);
+  assert.equal(preview.fields.find(field => field.fieldId === 'AssessorsParcelNumber').provenance.origin, 'account_reference');
+  assert.equal(preview.fields.find(field => field.fieldId === 'BorrowerName').provenance.origin, 'reviewed_document');
+  assert.equal(preview.fields.find(field => field.fieldId === 'LenderClientCompanyUnparsedAddress').provenance.origin, 'user_default');
+  assert.ok(preview.warnings.some(warning => /PDF APN differs.*quarantined/.test(warning)));
+  assert.equal(preview.effectiveDateContext.effectiveDate, '2026-03-27');
+});
+
+test('canonical fallback remains distinct from saved data and never refills explicit blanks or manual corrections', () => {
+  const fallback = countyPreview({ absent: true });
+  assert.equal(checkSfrepPreview(fallback, [1]), fallback);
+  assert.equal(fallback.savedReport.subjectRevision, 0);
+  assert.equal(fallback.fields.find(field => field.fieldId === 'StreetAddress').provenance.kind, 'account_reference');
+  assert.equal(fallback.fields.find(field => field.fieldId === 'StreetAddress').provenance.revision, 2);
+  const blank = countyPreview({ blank: true });
+  assert.equal(checkSfrepPreview(blank, [1]), blank);
+  assert.equal(blank.fields.some(field => field.fieldId === 'StreetAddress'), false);
+  for (const value of [null, '', []]) {
+    const cleared = countyPreview({ mutateSaved: saved => { saved.subject.value.property_location = value; } });
+    assert.equal(checkSfrepPreview(cleared, [1]), cleared);
+    assert.equal(cleared.fields.some(field => ['StreetAddress', 'City', 'State', 'ZipCode', 'County'].includes(field.fieldId)), false);
+  }
+  const corrected = countyPreview({ mutateSaved: saved => { saved.subject.value.property_location.address = '100 Appraiser Correction Dr'; } });
+  assert.equal(checkSfrepPreview(corrected, [1]), corrected);
+  assert.equal(corrected.fields.find(field => field.fieldId === 'StreetAddress').value, '100 Appraiser Correction Dr');
+  assert.equal(corrected.fields.find(field => field.fieldId === 'StreetAddress').provenance.origin, 'appraiser_edit');
+});
+
+test('saved county and lender receipts revalidate current exact sources instead of becoming manual facts', () => {
+  for (const [fieldId, change] of [
+    ['StreetAddress', saved => { saved.documents[0].subject_context.canonicalIdentity.address = '102 Example Dr'; }],
+    ['StreetAddress', saved => { saved.evidence.value.fields.subject_street_address.sourceEvidence[0].value = '999 Forged Dr'; }],
+    ['LenderClientCompanyUnparsedAddress', saved => { saved.documents[0].candidates.find(item => item.field_key === 'lender_client_name').review_status = 'rejected'; }],
+    ['LenderClientCompanyUnparsedAddress', saved => { saved.evidence.value.fields.lender_client_address.sourceEvidence[0].candidateId = 999; }],
+  ]) {
+    const preview = countyPreview({ mutateSaved: change });
+    assert.equal(checkSfrepPreview(preview, [1]), preview);
+    assert.equal(preview.fields.some(field => field.fieldId === fieldId), false, fieldId);
+    assert.ok(preview.knownMissing.some(field => field.fieldId === fieldId), fieldId);
+  }
+});
+
+function actualPreview({ hoa = 'true', saved = true, hoaText, duplicateHoa = false, associatedContract = false, staleAssociation = false } = {}) {
   const context = { accountId: 'SYNTHETIC-CONTRACT', address: '100 Example Dr', city: 'Garland', postalCode: '75041',
     effectiveDate: '2026-08-31', censusGeography: { tractCode: '018206', status: 'matched', geoid: '48113018206',
       vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
@@ -32,12 +108,23 @@ function actualPreview({ hoa = 'true', saved = true, hoaText, duplicateHoa = fal
     assert.ok(evidence.candidates.some(candidate => candidate.field_key === 'pud'), hoaText);
   }
   if (duplicateHoa) documents[0].candidates.push({ ...documents[0].candidates.find(candidate => candidate.field_key === 'pud'), id: 999 });
+  if (associatedContract) {
+    context.canonicalIdentity = { ...context, county: 'Dallas', state: 'TX', assessorParcelNumber: context.accountId };
+    const contract = documents[1];
+    contract.checksum_sha256 = 'a'.repeat(64);
+    contract.candidates[0].field_key = 'contract_printed_subject_addresses';
+    contract.candidates[0].confirmed_value = 'Main: 100 Example, Dallas TX 75041. Addendum: 100 Example Dr, Garland TX 75041.';
+    contract.extraction_summary = { contract_subject_association: buildContractSubjectAssociation(contract,
+      { reviewer: 'Synthetic Appraiser', actorUserId: 'synthetic-appraiser', acknowledgedAt: '2026-10-04T12:00:00Z' }) };
+    assert.ok(contract.extraction_summary.contract_subject_association);
+  }
   if (saved) {
     const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
     documents[0].saved_report = { accountId: context.accountId, assignmentFileId: 4, assignmentRevision: 2,
       subject: { revision: 1, value: applied.subject }, evidence: { revision: 1, value: applied.evidence },
       assignmentDetails: { ...applied.assignmentDetails, lender_client_address: '20 EXAMPLE AVE, AUSTIN TX 78701-1234' },
       documents: structuredClone(documents) };
+    if (staleAssociation) documents[0].saved_report.documents[1].checksum_sha256 = 'b'.repeat(64);
   }
   const { reportXml: _xml, pdfAddenda: _pdfs, ...publicPreview } = previewSfrepDocuments(documents, {
     accountId: context.accountId, assignmentFileId: 4, documentIds: [1, 2, 3], includeDocuments: false, formId: 'FNMA-1004-0911' });
@@ -45,6 +132,20 @@ function actualPreview({ hoa = 'true', saved = true, hoaText, duplicateHoa = fal
   // survive serialization and must not be required by the browser validator.
   return JSON.parse(JSON.stringify({ ok: true, ...publicPreview }));
 }
+
+test('actual saved preview uses explicit contract-date association without promoting printed identity and rejects stale receipts', () => {
+  const preview = actualPreview({ associatedContract: true });
+  assert.equal(checkSfrepPreview(preview, [1, 2, 3]), preview);
+  assert.match(preview.fields.find(field => field.fieldId === 'CurrentPriorListingDataSources').value, /under current contract on 08\/25\/2026/);
+  assert.ok(preview.warnings.some(warning => /explicitly associated.*printed-address discrepancies/.test(warning)));
+  assert.equal(preview.fields.find(field => field.fieldId === 'StreetAddress').provenance.origin, 'account_reference');
+  assert.equal(preview.fields.some(field => field.sourceField === 'contract_printed_subject_addresses'), false);
+  const stale = actualPreview({ associatedContract: true, staleAssociation: true });
+  assert.equal(checkSfrepPreview(stale, [1, 2, 3]), stale);
+  assert.equal(stale.fields.some(field => field.fieldId === 'CurrentPriorListingDataSources'), false);
+  assert.ok(stale.knownMissing.some(item => item.fieldId === 'CurrentPriorListingDataSources'));
+  assert.notEqual(stale.preview_digest, preview.preview_digest);
+});
 
 test('full canonical preview JSON crosses the frontend boundary with Census, derived listing, formatting and HOA assumptions', () => {
   for (const hoa of ['true', 'false']) {

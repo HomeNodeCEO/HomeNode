@@ -3,6 +3,7 @@
 // narrative, guessed DOM, or a claim that equal LP/OLP proves no price changes.
 import { sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
 import { isUrarStateCode } from '../util/urarScalarValidation.js';
+import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
 
 const READY = new Set(['reviewed', 'review_required']);
 const SHEET_FIELDS = ['list_date', 'original_list_price', 'days_on_market'];
@@ -145,7 +146,9 @@ export function buildCustomSubjectListingHistory(documents = [], subjectContext 
   if (!sheets.length) return { warnings: [] };
   const effectiveDate = calendarDate(subjectContext?.effectiveDate);
   if (!effectiveDate) return warning('confirm the appraisal effective date before generating the listing summary.');
-  const contractEntries = ready.filter(document => document.document_type === 'purchase_contract')
+  const associatedContracts = documents.filter(document => document.document_type === 'purchase_contract'
+    && document.property_role !== 'subject' && hasCurrentContractSubjectAssociation(document));
+  const contractEntries = [...ready.filter(document => document.document_type === 'purchase_contract'), ...associatedContracts]
     .flatMap(document => entries(document, 'contract_date'));
   const contractDate = unique(contractEntries, calendarDate);
   if (!contractDate || contractDate > effectiveDate) return warning('one valid reviewed subject contract date on or before the effective date is required.');
@@ -226,5 +229,5 @@ export function buildCustomSubjectListingHistory(documents = [], subjectContext 
       effectiveDateSource: subjectContext.effectiveDateSource ?? null,
       effectiveDateSourceDocumentId: subjectContext.effectiveDateSourceDocumentId ?? null, sourceEvidence },
     sourceValue: JSON.stringify({ effectiveDate, sourceEvidence }),
-  }, warnings: [] };
+  }, warnings: associatedContracts.map(contractAssociationWarning) };
 }

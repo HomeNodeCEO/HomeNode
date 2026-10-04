@@ -22,7 +22,7 @@ export interface SfrepEffectiveDateContext {
   windowStart: string | null; windowEnd: string | null; calendarMonths: 12; isPlaceholder: boolean;
 }
 export interface SfrepProvenance {
-  kind: 'reviewed_document' | 'derived_reviewed_document' | 'user_default' | 'saved_report';
+  kind: 'reviewed_document' | 'derived_reviewed_document' | 'user_default' | 'saved_report' | 'account_reference';
   sourceField: string; documentId: number | null; candidateId: number | null;
   documentType?: string | null; rule?: string; sourceValue?: string;
   effectiveDate?: string; effectiveDateSource?: SfrepEffectiveDateSource;
@@ -30,9 +30,13 @@ export interface SfrepProvenance {
   assignmentFileId?: number; sectionKey?: 'report.subject_identification' | 'report.assignment_details'; revision?: number;
   origin?: 'appraiser_edit' | 'reviewed_document' | 'derived_reviewed_document' | 'user_default' | 'account_reference';
   sourceDocumentId?: number; sourceCandidateId?: number;
-  sourceEvidence?: Array<SfrepListingEvidence | SfrepCensusEvidence>;
+  sourceEvidence?: Array<SfrepListingEvidence | SfrepCensusEvidence | SfrepCountyEvidence>;
 }
 interface SfrepListingEvidence { documentId: number; candidateId: number; sourceField: string; value: string | number }
+interface SfrepCountyEvidence {
+  sourceTable: 'core.accounts'; accountId: string;
+  sourceField: 'address' | 'city' | 'postal_code' | 'county' | 'account_id' | 'state'; value: string;
+}
 interface SfrepCensusEvidence {
   sourceTable: 'core.account_census_geographies'; accountId: string; tractCode: string; status: 'matched';
   geoid: string; vintage: string; updatedAt: string;
@@ -78,13 +82,18 @@ const feeSimpleRule = 'user_requested_fee_simple_default';
 const listingRule = 'subject_mls_list_date_within_preceding_12_calendar_months';
 const historyRule = 'reviewed_subject_listing_history_template_v1';
 const censusRule = 'matched_account_census_tract_v1';
+const countyRule = 'canonical_county_subject_identity_v1';
+const lenderAddressRule = 'user_requested_lender_address_v1';
 const hoaRule = 'user_requested_hoa_workflow_proxy_v1';
 const pudField = 'PropertyTypePUDCheckBox';
 const onlyKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).every(key => keys.includes(key));
 const savedKeys = ['kind', 'sourceField', 'documentId', 'candidateId', 'assignmentFileId', 'sectionKey', 'revision', 'origin'];
+const countyFallbackKeys = ['kind', 'sourceField', 'documentId', 'candidateId', 'assignmentFileId', 'revision', 'rule', 'sourceEvidence'];
 const documentKeys = ['kind', 'sourceField', 'documentId', 'candidateId', 'documentType'];
 const listingKeys = ['rule', 'sourceValue', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'];
 const historyKeys = ['rule', 'sourceEvidence', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId'];
+const boundedText = (text: unknown, max: number): text is string => validText(text) && text.length <= max
+  && text.trim() === text && !Array.from(text).some(character => character.charCodeAt(0) < 32 || character.charCodeAt(0) === 127);
 const dateSource = (value: unknown): value is SfrepEffectiveDateSource =>
   value === 'inspection_date' || value === 'assignment_effective_date' || value === 'document_upload_date_placeholder';
 function isoDate(value: unknown): value is string {
@@ -107,7 +116,8 @@ function validDateContext(value: unknown): value is SfrepEffectiveDateContext {
 }
 function validFormatting(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
   if (!Object.hasOwn(value, 'sourceValue') && !Object.hasOwn(value, 'formattingRule')) return true;
-  if (!['reviewed_document', 'saved_report'].includes(String(provenance.kind)) || value.type !== 'TextField' || !validText(value.sourceValue)) return false;
+  if (!['reviewed_document', 'saved_report', 'account_reference'].includes(String(provenance.kind)) || value.type !== 'TextField' || !validText(value.sourceValue)) return false;
+  if (provenance.kind === 'account_reference' && (provenance.rule !== countyRule || value.sourceValue !== value.value)) return false;
   const source = value.sourceValue.trim();
   // Composite reviewed addresses retain the whole original source. Saved
   // components are independently editable and must never be split/refilled.
@@ -165,6 +175,45 @@ function validCensus(value: Record<string, unknown>, provenance: Record<string, 
     && /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,6})?(?:Z|[+-]\d{2}:\d{2})$/.test(source.updatedAt)
     && Number.isFinite(Date.parse(source.updatedAt)) && value.value === `${Number(source.tractCode.slice(0, 4))}.${source.tractCode.slice(4)}`;
 }
+function validCountyIdentity(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
+  const destinations = {
+    subject_street_address: ['StreetAddress', 'address'], subject_city: ['City', 'city'],
+    subject_zip: ['ZipCode', 'postal_code'], county: ['County', 'county'],
+    assessor_parcel_number: ['AssessorsParcelNumber', 'account_id'], subject_state: ['State', 'state'],
+  };
+  if (!Object.hasOwn(destinations, String(value.sourceField)) || value.type !== 'TextField'
+    || provenance.rule !== countyRule
+    || (provenance.kind === 'saved_report'
+      ? provenance.sectionKey !== 'report.subject_identification' || !onlyKeys(provenance, [...savedKeys, 'rule', 'sourceEvidence'])
+      : provenance.kind !== 'account_reference' || !onlyKeys(provenance, countyFallbackKeys))
+    || !Array.isArray(provenance.sourceEvidence) || provenance.sourceEvidence.length !== 1) return false;
+  const [fieldId, column] = destinations[value.sourceField as keyof typeof destinations];
+  const source = provenance.sourceEvidence[0];
+  if (value.fieldId !== fieldId || !record(source) || !onlyKeys(source, ['sourceTable', 'accountId', 'sourceField', 'value'])
+    || source.sourceTable !== 'core.accounts' || !boundedText(source.accountId, 32)
+    || source.sourceField !== column || !boundedText(source.value, 500)) return false;
+  const raw = source.value;
+  if (column === 'address') return value.value === reportAddress(raw);
+  if (column === 'city') return value.value === reportTitleCase(raw);
+  if (column === 'county') return value.value === reportTitleCase(raw.replace(/\s+county$/i, ''));
+  if (column === 'postal_code') return /^\d{5}(?:-?\d{4})?$/.test(raw) && value.value === reportZip5(raw);
+  if (column === 'state') return 'AL AK AZ AR CA CO CT DE DC FL GA HI ID IL IN IA KS KY LA ME MD MA MI MN MS MO MT NE NV NH NJ NM NY NC ND OH OK OR PA RI SC SD TN TX UT VT VA WA WV WI WY AS GU MP PR VI'.split(' ').includes(raw.toUpperCase())
+    && value.value === raw.toUpperCase();
+  return raw === source.accountId && value.value === raw;
+}
+function validLenderPreset(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
+  if (value.sourceField !== 'lender_client_address' || value.fieldId !== 'LenderClientCompanyUnparsedAddress'
+    || value.type !== 'TextField' || value.value !== '585 S Blvd E, Pontiac, MI 48341'
+    || provenance.sectionKey !== 'report.assignment_details' || provenance.rule !== lenderAddressRule
+    || !onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId', 'rule', 'sourceValue', 'sourceEvidence'])
+    || !positiveId(provenance.sourceDocumentId) || !positiveId(provenance.sourceCandidateId)
+    || !boundedText(provenance.sourceValue, 100) || !/^united\s+wholesale\s+mortgage$/i.test(provenance.sourceValue)
+    || !Array.isArray(provenance.sourceEvidence) || provenance.sourceEvidence.length !== 1) return false;
+  const source = provenance.sourceEvidence[0];
+  return record(source) && onlyKeys(source, ['documentId', 'candidateId', 'sourceField', 'value'])
+    && source.documentId === provenance.sourceDocumentId && source.candidateId === provenance.sourceCandidateId
+    && source.sourceField === 'lender_client_name' && source.value === provenance.sourceValue;
+}
 function validHistory(value: Record<string, unknown>, provenance: Record<string, unknown>): boolean {
   const sourceFields = ['mls_number', 'list_date', 'original_list_price', 'days_on_market', 'contract_date', 'listing_price_history'];
   const evidence = provenance.sourceEvidence;
@@ -202,6 +251,8 @@ function validField(value: unknown): value is SfrepField {
   const provenance = value.provenance;
   if (provenance.sourceField !== value.sourceField || provenance.documentId !== value.documentId
     || provenance.candidateId !== value.candidateId || !validFormatting(value, provenance)) return false;
+  if (provenance.kind === 'account_reference') return value.documentId === null && value.candidateId === null
+    && positiveId(provenance.assignmentFileId) && positiveId(provenance.revision) && validCountyIdentity(value, provenance);
   if (provenance.kind === 'saved_report') {
     if (value.documentId !== null || value.candidateId !== null || !positiveId(provenance.assignmentFileId)
       || !positiveId(provenance.revision) || !['report.subject_identification', 'report.assignment_details'].includes(String(provenance.sectionKey))
@@ -209,9 +260,9 @@ function validField(value: unknown): value is SfrepField {
       || (provenance.sourceDocumentId !== undefined && !positiveId(provenance.sourceDocumentId))
       || (provenance.sourceCandidateId !== undefined && !positiveId(provenance.sourceCandidateId))
       ) return false;
-    if (provenance.origin === 'account_reference') return validCensus(value, provenance);
+    if (provenance.origin === 'account_reference') return validCensus(value, provenance) || validCountyIdentity(value, provenance);
     if (provenance.origin === 'appraiser_edit') return onlyKeys(provenance, savedKeys);
-    if (provenance.origin === 'user_default') return value.sourceField === 'property_rights' && value.fieldId === feeSimpleField
+    if (provenance.origin === 'user_default') return validLenderPreset(value, provenance) || value.sourceField === 'property_rights' && value.fieldId === feeSimpleField
       && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === feeSimpleRule
       && onlyKeys(provenance, [...savedKeys, 'rule']);
     if (!positiveId(provenance.sourceDocumentId)) return false;
@@ -274,7 +325,7 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     || !Number.isSafeInteger(saved.subjectRevision) || saved.subjectRevision < 0 || !Array.isArray(saved.sourceDocumentIds)
     || saved.sourceDocumentIds.length > 50 || !saved.sourceDocumentIds.every(positiveId)
     || new Set(saved.sourceDocumentIds).size !== saved.sourceDocumentIds.length)) throw new Error('The saved HomeNode report reference is invalid.');
-  if (preview.fields.some(({ provenance }) => provenance.kind === 'saved_report' && (!saved
+  if (preview.fields.some(({ provenance }) => (provenance.kind === 'saved_report' || provenance.kind === 'account_reference') && (!saved
     || provenance.assignmentFileId !== saved.assignmentFileId
     || provenance.revision !== (provenance.sectionKey === 'report.subject_identification' ? saved.subjectRevision : saved.assignmentRevision)
     || (provenance.sourceDocumentId !== undefined && !saved.sourceDocumentIds.includes(provenance.sourceDocumentId))
@@ -282,7 +333,7 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     throw new Error('The SFREP preview does not match the saved HomeNode report.');
   }
   const date = preview.effectiveDateContext;
-  if (preview.fields.filter(field => field.provenance.kind === 'user_default' || field.provenance.origin === 'user_default').length
+  if (preview.fields.filter(field => field.provenance.rule === feeSimpleRule).length
       !== preview.assumptions.filter(item => item.rule === feeSimpleRule).length
     || (saved && new Set(preview.assumptions.map(item => item.rule)).size !== preview.assumptions.length)
     || preview.fields.some(field => field.provenance.rule === hoaRule && !preview.assumptions.some(item => item.rule === hoaRule && item.value === field.value))
@@ -349,8 +400,12 @@ export function sfrepProvenanceText(field: SfrepField): string {
             : 'line breaks and tabs replaced by spaces';
   if (source.kind === 'saved_report') {
     const origin = source.origin === 'appraiser_edit' ? 'Saved appraiser entry/correction'
-      : source.origin === 'user_default' ? 'Saved user-requested default — confirm property rights'
-        : source.origin === 'account_reference' ? 'Saved matched account Census reference — not PDF evidence'
+      : source.origin === 'user_default' ? source.rule === lenderAddressRule
+        ? 'Saved user-requested lender address preset — not PDF evidence'
+        : 'Saved user-requested fee-simple default unless changed in HomeNode — not document evidence'
+        : source.origin === 'account_reference' ? source.rule === countyRule
+          ? 'Saved canonical county-backed subject identity — not PDF evidence'
+          : 'Saved matched account Census reference — not PDF evidence'
           : source.rule === hoaRule ? 'Saved HOA-based PUD workflow assumption — not independent eligibility proof'
             : source.rule === historyRule ? 'Saved listing-history narrative derived from reviewed MLS and contract evidence'
               : source.origin === 'derived_reviewed_document' ? 'Saved MLS listing determination'
@@ -358,7 +413,8 @@ export function sfrepProvenanceText(field: SfrepField): string {
     const formatting = field.formattingRule ? ` Original saved value: ${JSON.stringify(field.sourceValue)}; export ${formattingDescription}.` : '';
     return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
   }
-  if (source.kind === 'user_default') return 'User-requested default — not document evidence; confirm property rights.';
+  if (source.kind === 'account_reference') return `Canonical county-backed subject identity — not PDF evidence. HomeNode file ${source.assignmentFileId}, assignment revision ${source.revision}; used because this report leaf has not been saved.`;
+  if (source.kind === 'user_default') return 'User-requested fee-simple default unless changed in HomeNode — not document evidence.';
   if (source.rule === hoaRule) return `Reviewed MLS HOA status ${JSON.stringify(source.sourceValue)} supplies a PUD workflow assumption, not independent proof of project eligibility. Confirm with the appraiser.`;
   if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
   if (field.formattingRule) {
@@ -401,6 +457,12 @@ export interface SfrepSubjectChecklistItem {
   key: string; label: string; status: 'included' | 'review' | 'missing'; statusLabel: string;
   values: string[]; notes: string[];
 }
+function formattingNeedsReview(field: SfrepField): boolean {
+  if (!field.formattingRule || ['subject_title_case', 'zip5_display'].includes(field.formattingRule)) return false;
+  if (field.formattingRule === 'title_case_single_line_owner_name') return /[\t\r\n]/.test(field.sourceValue?.trim() || '');
+  if (field.formattingRule === 'title_case_subdivision_without_numeric_phase') return /\s+\d+$/.test(field.sourceValue?.trim() || '');
+  return true;
+}
 /** Export coverage only: absence never asserts a negative answer or a complete report. */
 export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectChecklistItem[] {
   return SUBJECT_ITEMS.map(item => {
@@ -409,17 +471,22 @@ export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectCheckl
     const omissions = preview.omitted.filter(entry => item.sourceFields.includes(entry.sourceField));
     const knownMissing = preview.knownMissing.filter(entry => item.fieldIds.includes(entry.fieldId));
     const assumptions = preview.assumptions.filter(entry => item.fieldIds.includes(entry.fieldId));
-    const hasDefault = assumptions.length > 0 || fields.some(field => field.provenance.kind === 'user_default' || field.provenance.origin === 'user_default');
+    const requestedDefault = fields.some(field => [feeSimpleRule, lenderAddressRule].includes(field.provenance.rule || ''));
+    const countyIdentity = fields.some(field => field.provenance.rule === countyRule);
+    const hasDefault = assumptions.some(assumption => assumption.rule !== feeSimpleRule);
     const hasDerived = fields.some(field => field.provenance.kind === 'derived_reviewed_document' || field.provenance.origin === 'derived_reviewed_document');
-    const formattedFields = fields.filter(field => field.formattingRule);
+    const formattedFields = fields.filter(formattingNeedsReview);
     const needsReview = conflict || omissions.length > 0 || knownMissing.length > 0 || hasDefault || hasDerived || formattedFields.length > 0;
     const status = needsReview ? 'review' : fields.length ? 'included' : 'missing';
     const statusLabel = conflict ? 'Review conflict — not fully exported' : hasDefault ? 'User default — confirm'
-      : hasDerived ? 'Derived — review' : formattedFields.length ? 'Formatted — review' : needsReview ? 'Review needed' : fields.length ? 'Included — reviewed' : 'Missing — not exported';
+      : hasDerived ? 'Derived — review' : formattedFields.length ? 'Formatted — review' : needsReview ? 'Review needed'
+        : requestedDefault ? 'Included — user default' : countyIdentity ? 'Included — county record'
+          : fields.length ? 'Included — reviewed' : 'Missing — not exported';
     return { key: item.key, label: item.label, status, statusLabel,
       values: fields.map(field => field.type === 'CheckBoxField' ? CHECKBOX_LABELS[field.fieldId] || field.value : field.value),
       notes: [...new Set([...(item.note ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
-        ...assumptions.map(entry => entry.reason), ...fields.filter(field => field.formattingRule
+        ...assumptions.filter(entry => entry.rule !== feeSimpleRule).map(entry => entry.reason), ...fields.filter(field => field.formattingRule
+          || [feeSimpleRule, lenderAddressRule, countyRule].includes(field.provenance.rule || '')
           || field.provenance.origin === 'account_reference' || field.provenance.origin === 'derived_reviewed_document'
           || field.provenance.rule === hoaRule).map(sfrepProvenanceText),
         ...(omissions.length ? [omissions[0].reason] : []), ...(conflict ? ['Resolve the conflicting source evidence before relying on this item.'] : [])])] };
@@ -516,6 +583,8 @@ export function createSfrepTransport(options: TransportOptions) {
       if (checked.savedReport && checked.savedReport.assignmentFileId !== selection.assignmentFileId) {
         throw new Error('The SFREP preview does not match the selected HomeNode file.');
       }
+      if (checked.fields.some(field => field.provenance.sourceEvidence?.some(source => 'accountId' in source
+        && source.accountId !== selection.accountId))) throw new Error('The SFREP preview does not match the selected county account.');
       return checked;
     },
     async export(selection: SfrepSelection, previewDigest: string, io: RequestOptions): Promise<Blob> {

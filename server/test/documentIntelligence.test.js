@@ -608,7 +608,7 @@ test("a configured OCR provider turns a scanned PDF into page-cited review sugge
   );
   assert.equal(
     extraction.candidates.find((candidate) => candidate.field_key === "contract_price")?.extraction_method,
-    "test_ocr:labeled_text",
+    "labeled_text",
   );
 });
 

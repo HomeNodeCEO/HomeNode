@@ -3,6 +3,7 @@ import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectCo
 import { validateAssignmentDetails, validateReportManualSection } from '../util/reportManualValues.js';
 import { buildCustomSubjectListingHistory } from './customSubjectListingHistory.js';
 import { buildCustomSubjectCensus, customSubjectCensusSql } from './customSubjectCensus.js';
+import { buildCustomSubjectIdentity, customSubjectLenderPreset } from './customSubjectIdentity.js';
 
 export const CUSTOM_SUBJECT_SECTION = 'report.subject_identification';
 export const CUSTOM_SUBJECT_EVIDENCE_SECTION = 'report.subject_evidence';
@@ -150,6 +151,19 @@ export function projectCustomSubjectDocuments(documents = []) {
   } else if (census.field && !existingCensus && !mapped.conflicts.some(conflict => conflict.sourceField === 'census_tract')) {
     fields.push(census.field);
   }
+  // The county-backed subject identity is primary. PDF identity still gates
+  // document applicability; differences remain visible without replacing CAD.
+  for (const canonical of buildCustomSubjectIdentity(scoped[0]?.subject_context)) {
+    const index = fields.findIndex(field => field.key === canonical.key);
+    if (canonical.key === 'county' && index >= 0
+      && String(fields[index].value).trim().replace(/\s+county$/i, '').toLowerCase() !== canonical.value.toLowerCase()) {
+      derivedWarnings.push('County: the reviewed document differs from the county record; the county record was retained.');
+    }
+    if (index >= 0) fields.splice(index, 1);
+    fields.push(canonical);
+  }
+  const lenderPreset = customSubjectLenderPreset(fields);
+  if (lenderPreset && !mapped.conflicts.some(conflict => conflict.sourceField === 'lender_client_address')) fields.push(lenderPreset);
   return { fields, warnings: [...mapped.warnings.slice(2), ...derivedWarnings,
     ...new Set(mapped.omitted.map(item => `${item.sourceField} (document ${item.documentId}): ${item.reason}`))],
   conflicts: mapped.conflicts, omitted: mapped.omitted };
@@ -169,12 +183,13 @@ function writeValue(target, definition, value) {
 /** Preserve appraiser edits and retain stale receipts so an unavailable source
  * cannot silently turn an automatic value into an appraiser-authored fact. */
 export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails = {}, evidence = {}, projection,
-  actorUserId = null, reviewer = null, reviewedDocumentId = null, invalidateOnly = false } = {}) {
+  actorUserId = null, reviewer = null, reviewedDocumentId = null, invalidateOnly = false, listingOnly = false } = {}) {
   const result = { subject: structuredClone(subject), assignmentDetails: structuredClone(assignmentDetails),
     evidence: { version: 1, fields: record(evidence.fields) ? structuredClone(evidence.fields) : {}, warnings: [] } };
   const proposals = new Map(projection.fields.map(field => [field.key, field]));
   const warnings = [...projection.warnings];
   for (const definition of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
+    if (listingOnly && definition.key !== 'listing_history_summary') continue;
     const key = definition.key, proposal = proposals.get(key), prior = result.evidence.fields[key];
     const current = readCustomSubjectValue(result, key);
     if (!proposal || (invalidateOnly && prior?.documentId === reviewedDocumentId)) {
@@ -198,11 +213,14 @@ export function mergeCustomSubjectApplication({ subject = {}, assignmentDetails 
     // Owner parties are a separate user-editable representation that takes
     // precedence in the report. Do not destroy them on an automatic fill.
     const ownerParties = key === 'owner_name' && Array.isArray(result.subject.owner?.parties) && result.subject.owner.parties.length;
-    // Subject leaves are only present after a section save, so even an explicit
-    // blank is an appraiser choice. Assignment drafts, by contrast, initialize
-    // empty client/type fields before any review; keep those defaults fillable.
+    // A saved Subject blank remains protected during background refresh.
+    // Assignment drafts initialize blank client/type fields before any review.
     const savedSubjectPath = definition.section === 'subject' && hasSavedSubjectPath(result.subject, definition);
-    if (ownerParties || (prior && !same(current, prior.value)) || (!prior && (savedSubjectPath || !blank(current)))) {
+    // A whole-section save includes unfilled fields. Explicitly confirming new
+    // evidence may populate those blanks; background refresh must not. A
+    // nonblank edit or a deliberately cleared previously applied value wins.
+    const reviewedBlank = explicitlyReviewed && blank(current) && !prior;
+    if (ownerParties || (prior && !same(current, prior.value)) || (!prior && ((!reviewedBlank && savedSubjectPath) || !blank(current)))) {
       warnings.push(`${key}: the existing appraiser value was preserved; reviewed evidence did not overwrite it.`);
       continue;
     }
@@ -219,10 +237,14 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
   const census = await customSubjectCensusSql(client);
   const { rows } = await client.query(
     `SELECT document.id, document.account_id, document.assignment_file_id, document.document_type,
-            document.processing_status, document.extraction_summary,
+            document.processing_status, document.extraction_summary, document.checksum_sha256,
             (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
             jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
               'city', subject.city, 'postalCode', subject.postal_code,
+              'canonicalIdentity', jsonb_build_object('accountId', subject.account_id,
+                'address', subject.address, 'city', subject.city, 'postalCode', subject.postal_code,
+                'county', subject.county, 'assessorParcelNumber', subject.account_id,
+                'state', to_jsonb(subject)->>'state'),
               'effectiveDate', appraisal_case.effective_date::text,
               'inspectionDate', appraisal_case.inspection_date::text,
               'censusGeography', ${census.value}) AS subject_context,
@@ -262,7 +284,7 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
 /** Caller holds assignment -> workfile -> source document locks and owns the
  * transaction. This writer deliberately never commits or writes core.accounts. */
 export async function persistCustomSubjectApplication(client, { assignmentFile, sourceDocument,
-  legacyAssignmentDetails = null, actorUserId = null, reviewer = null, invalidateOnly = false }) {
+  legacyAssignmentDetails = null, actorUserId = null, reviewer = null, invalidateOnly = false, listingOnly = false }) {
   const assignmentFileId = Number(assignmentFile.id), accountId = assignmentFile.account_id;
   if (Number(sourceDocument.assignment_file_id) !== assignmentFileId || sourceDocument.account_id !== accountId
     || sourceDocument.uad_workfile_id || sourceDocument.tax_protest_file_id) fail('document_scope_changed');
@@ -282,10 +304,10 @@ export async function persistCustomSubjectApplication(client, { assignmentFile, 
   const oldEvidence = sections.get(CUSTOM_SUBJECT_EVIDENCE_SECTION)?.section_value || {};
   const merged = mergeCustomSubjectApplication({ subject: oldSubject,
     assignmentDetails: assignmentFile.assignment_details || {}, evidence: oldEvidence, projection, actorUserId, reviewer,
-    reviewedDocumentId: Number(sourceDocument.id), invalidateOnly });
+    reviewedDocumentId: Number(sourceDocument.id), invalidateOnly, listingOnly });
   // Preserve the pre-existing purchase-contract application path. Subject
   // proposals themselves still come exclusively from the reviewed projection.
-  if (!invalidateOnly && legacyAssignmentDetails) {
+  if (!invalidateOnly && !listingOnly && legacyAssignmentDetails) {
     for (const [key, value] of Object.entries(legacyAssignmentDetails)) {
       if (CONTRACT_FIELDS.has(key) && !same(value, assignmentFile.assignment_details?.[key])) merged.assignmentDetails[key] = value;
     }

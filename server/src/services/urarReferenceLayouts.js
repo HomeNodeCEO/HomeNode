@@ -114,6 +114,20 @@ function extractCensusTract(result, sourceKind, lines, pageNumber, heading) {
     `${heading}\n${first.line}`, "property_location_census_tract");
 }
 
+function dcadTaxCounty(pages) {
+  const starts = matches(pages, /^Estimated Taxes \(\d{4} Certified Values\)$/i);
+  if (starts.length !== 1) return null;
+  const start = starts[0];
+  const header = start.lines[start.index + 1], row = start.lines[start.index + 2];
+  // DCAD's flattened table has a named County column. Use the actual county
+  // jurisdiction printed there, not the CAD brand, Mapsco, owner mailing city,
+  // or the college/hospital names elsewhere in the account record.
+  if (!/^City\s+School\s+County\s+College\s+Hospital\s+Special District$/i.test(header || '')
+    || !/^Taxing Jurisdiction\s+.+\s+(?:ISD|SCHOOL DISTRICT)\s+DALLAS COUNTY\s+/i.test(row || '')
+    || (row.match(/\bCOUNTY\b/gi) || []).length !== 1) return null;
+  return { page_number: start.page_number, evidence: [start.line, header, row].join('\n') };
+}
+
 function extractCad(pages, result) {
   const accounts = matches(pages, accountPattern), urls = matches(pages, urlPattern);
   const ids = new Set([...accounts, ...urls].map(item => item.match[1]));
@@ -139,7 +153,12 @@ function extractCad(pages, result) {
       const item = counties[0];
       addCandidate(result, "cad", "county", item.match[1], compact(item.match[1]), location.page_number,
         `${location.title}\n${item.line}`, "dcad_property_county");
-    } else result.unresolved.push({ field_key: "county", page_number: location.page_number, reason: "cad_county_not_explicit_or_ambiguous" });
+    } else {
+      const taxCounty = counties.length === 0 ? dcadTaxCounty(pages) : null;
+      if (taxCounty) addCandidate(result, "cad", "county", "DALLAS COUNTY", "Dallas", taxCounty.page_number,
+        taxCounty.evidence, "dcad_tax_county_jurisdiction");
+      else result.unresolved.push({ field_key: "county", page_number: location.page_number, reason: "cad_county_not_explicit_or_ambiguous" });
+    }
   }
   const owner = section(pages, ownerTitle, result.unresolved, "owner_name");
   if (owner) {

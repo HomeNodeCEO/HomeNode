@@ -49,6 +49,7 @@ function options(overrides = {}) {
     getDocument: async () => null,
     deleteDocument: async () => ({ deleted: true }),
     processDocument: async () => ({ id: 1, processing_status: "complete" }),
+    queueDocument: async () => ({ id: 1, processing_status: "uploaded" }),
     confirmDespiteMismatch: async () => ({ document_id: 1 }),
     confirmCandidates: async () => ({ document_id: 1 }),
     reviewCandidate: async () => ({ id: 1 }),
@@ -222,7 +223,7 @@ test("PDF upload preserves organization scope, decoded headers, bytes, and extra
     storage: objectStorage,
   });
   assert.deepEqual([...calls[3][2].content], [...content]);
-  assert.deepEqual(calls[4], ["process", pool, 17, { storage: objectStorage }]);
+  assert.deepEqual(calls[4], ["process", pool, 17, { storage: objectStorage, ocrProvider }]);
   assert.equal(calls[3][2].uploadedBy, "user-1");
 });
 
@@ -400,6 +401,10 @@ test("delete and reprocess preserve storage, OCR, and no-store contracts", async
       calls.push(["delete", ...args]);
       return { document_id: 4 };
     },
+    queueDocument: async (...args) => {
+      calls.push(["queue", ...args]);
+      return { id: 4, processing_status: "uploaded" };
+    },
     processDocument: async (...args) => {
       calls.push(["process", ...args]);
       return { id: 4, processing_status: "complete" };
@@ -415,14 +420,16 @@ test("delete and reprocess preserve storage, OCR, and no-store contracts", async
     `${server.baseUrl}/api/documents/4/reprocess`,
     jsonRequest("POST"),
   );
-  assert.equal(reprocessed.status, 200);
+  assert.equal(reprocessed.status, 202);
+  assert.equal(reprocessed.headers.get("cache-control"), "no-store");
   assert.deepEqual((await reprocessed.json()).document, {
     id: 4,
-    processing_status: "complete",
+    processing_status: "uploaded",
   });
   assert.deepEqual(calls, [
     ["delete", pool, objectStorage, "4"],
-    ["process", pool, "4", { force: true, storage: objectStorage, ocrProvider }],
+    ["queue", pool, "4"],
+    ["process", pool, "4", { storage: objectStorage, ocrProvider }],
   ]);
 });
 
@@ -436,6 +443,21 @@ test("signed Custom document deletion returns a stable non-cacheable conflict", 
   assert.equal(response.status, 409);
   assert.equal(response.headers.get("cache-control"), "no-store");
   assert.deepEqual(await response.json(), { error: "custom_appraisal_workfile_signed" });
+});
+
+test("reprocessing acknowledges the durable queue without waiting for image scanning", async context => {
+  let processingStarted = false;
+  const server = await startRouter(createAssignmentDocumentRouter(options({
+    queueDocument: async () => ({ id: 4, processing_status: "uploaded" }),
+    processDocument: () => { processingStarted = true; return new Promise(() => {}); },
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/documents/4/reprocess`, {
+    ...jsonRequest("POST"), signal: AbortSignal.timeout(2000),
+  });
+  assert.equal(response.status, 202);
+  assert.equal((await response.json()).document.processing_status, "uploaded");
+  assert.equal(processingStarted, true);
 });
 
 for (const [name, path, method, serviceName] of [
@@ -525,7 +547,7 @@ test("document review routes preserve exact appraiser decisions", async (context
     candidateValues: { client_name: "Client" },
   };
   assert.deepEqual(calls, [
-    ["override", pool, { ...serviceInput, actorUserId: "appraiser-1" }],
+    ["override", pool, { ...serviceInput, actorUserId: "appraiser-1", contractSubjectAssociation: undefined }],
     ["get", pool, 5],
     ["confirm", pool, serviceInput],
     ["get", pool, 5],
@@ -601,11 +623,29 @@ test("subject mismatch override requires signing authority and ignores a forged 
     reviewer: "Authenticated Appraiser",
     actorUserId: "appraiser-1",
     candidateValues: undefined,
+    contractSubjectAssociation: undefined,
   }]);
   assert.deepEqual(accessChecks, [
     ["assistant-1", "sign"],
     ["appraiser-1", "sign"],
   ]);
+});
+
+test('contract association endpoint forwards the exact visible snapshot but takes its reviewer from authenticated authority', async context => {
+  const inputs = [];
+  const expected = { accountId: '123', assignmentFileId: 7, documentChecksumSha256: 'a'.repeat(64),
+    reviewedCandidates: [{ id: 21, fieldKey: 'contract_date', confirmedValue: '2026-03-20', reviewStatus: 'confirmed' }] };
+  const server = await startRouter(createAssignmentDocumentRouter(options({ pool: accessibleDocumentPool(),
+    confirmDespiteMismatch: async (_pool, input) => { inputs.push(input); return { document_id: 5 }; },
+    getDocument: async () => ({ id: 5 }),
+  })));
+  context.after(server.close);
+  const response = await fetch(`${server.baseUrl}/api/documents/5/subject-address-override`, jsonRequest('POST', {
+    reviewer: 'Forged Reviewer', contract_subject_association: expected,
+  }));
+  assert.equal(response.status, 200);
+  assert.deepEqual(inputs, [{ documentId: '5', reviewer: 'Appraiser One', actorUserId: 'appraiser-1',
+    candidateValues: undefined, contractSubjectAssociation: expected }]);
 });
 
 test("document routes retain stable client, conflict, unavailable, and bounded errors", async (context) => {
@@ -617,7 +657,7 @@ test("document routes retain stable client, conflict, unavailable, and bounded e
     deleteDocument: async () => {
       throw new Error("assignment_document_storage_not_configured");
     },
-    processDocument: async () => { throw new Error("document_not_processable"); },
+    queueDocument: async () => { throw new Error("document_not_processable"); },
     confirmCandidates: async () => { throw new Error("document_subject_address_mismatch"); },
     reviewCandidate: async () => { throw new Error("invalid_document_review_status"); },
     logger: { error: (...args) => logs.push(args), warn() {} },
@@ -665,6 +705,7 @@ test("Custom document routes never return unexpected provider diagnostics", asyn
     getDocument: fail,
     deleteDocument: fail,
     processDocument: fail,
+    queueDocument: fail,
     confirmDespiteMismatch: fail,
     confirmCandidates: fail,
     reviewCandidate: fail,
@@ -698,7 +739,7 @@ test("Custom reprocess contains a hostile exception message getter", async (cont
     get() { throw new Error("getter-secret"); },
   });
   const server = await startRouter(createAssignmentDocumentRouter(options({
-    processDocument: async () => { throw failure; },
+    queueDocument: async () => { throw failure; },
   })));
   context.after(server.close);
   const response = await fetch(`${server.baseUrl}/api/documents/5/reprocess`, jsonRequest("POST"));

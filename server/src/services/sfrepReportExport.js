@@ -1,6 +1,7 @@
 import { parseStructuredAddress } from "../util/structuredAddress.js";
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 import { formatSubjectPresentationValue } from "../util/subjectPresentation.js";
+import { sfrepDocumentParcelMismatch } from './sfrepSubjectContext.js';
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -476,7 +477,9 @@ export function buildSfrepReportExport({
   if (savedReportFields !== undefined) {
     if (!Array.isArray(savedReportFields) || savedReportFields.length > 30) fail('sfrep_invalid_saved_report');
     for (const saved of savedReportFields) {
-      if (!subjectSources.has(saved.sourceField) || saved.provenance?.kind !== 'saved_report') fail('sfrep_invalid_saved_report');
+      if (!subjectSources.has(saved.sourceField) || !(saved.provenance?.kind === 'saved_report'
+        || (saved.provenance?.kind === 'account_reference' && saved.provenance.rule === 'canonical_county_subject_identity_v1')))
+        fail('sfrep_invalid_saved_report');
       const value = textValue(typeof saved.value === 'boolean' ? String(saved.value) : saved.value);
       if (value === null) continue;
       if (INVALID_XML.test(value)) fail('sfrep_invalid_xml_character');
@@ -494,7 +497,7 @@ export function buildSfrepReportExport({
       }
       if (saved.provenance.origin === 'user_default' && saved.sourceField === 'property_rights' && value === 'fee_simple') {
         assumptions.push({ fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', value: 'true',
-          rule: 'user_requested_fee_simple_default', reason: 'Fee simple is the saved user-requested default, not document evidence. Confirm the appraised property rights.' });
+          rule: 'user_requested_fee_simple_default', reason: 'Fee simple is the saved user-requested default unless changed in HomeNode; it is not document evidence.' });
       }
       if (saved.sourceField === 'pud' && saved.provenance.rule === 'user_requested_hoa_workflow_proxy_v1') {
         assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,
@@ -536,6 +539,10 @@ export function buildSfrepReportExport({
       }
       if (document.property_role != null && document.property_role !== "subject") {
         omit(entry, "Document is not verified as subject-property evidence; comparable or unknown-property values are not exported to Subject fields.");
+        continue;
+      }
+      if (['assessor_parcel_number', 'assessors_parcel_number'].includes(sourceField) && sfrepDocumentParcelMismatch(document)) {
+        omit(entry, 'Reviewed PDF APN differs from the canonical county account; quarantined pending review. County-backed identity is retained.');
         continue;
       }
       if (sourceField === "assignment_type" && document.document_type !== "engagement_letter") {
@@ -641,7 +648,7 @@ export function buildSfrepReportExport({
     const assumption = {
       fieldId: "PropertyRightsAppraisedFeeSimpleCheckBox", value: "true",
       rule: "user_requested_fee_simple_default",
-      reason: "Fee simple is a user-requested default, not a fact extracted from the source documents. Confirm the appraised property rights.",
+      reason: "Fee simple is the user-requested default unless changed in HomeNode; it is not document evidence.",
     };
     assumptions.push(assumption);
     projected.push({
@@ -649,7 +656,6 @@ export function buildSfrepReportExport({
       fieldId: assumption.fieldId, value: "true", type: "CheckBoxField", group: "property_rights",
       provenance: { kind: "user_default", sourceField: "property_rights", documentId: null, candidateId: null, rule: assumption.rule },
     });
-    supplementalWarnings.push(assumption.reason);
   } else if (savedReportFields === undefined && subjectContext?.feeSimpleDefault === true && hasReviewedRights) {
     supplementalWarnings.push("The fee-simple default was not used because reviewed property-rights evidence is present; unresolved or conflicting rights remain omitted.");
   }

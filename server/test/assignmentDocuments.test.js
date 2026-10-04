@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { DOCUMENT_EXTRACTION_SCHEMA_VERSION } from "../src/services/documentIntelligence.js";
 
 import {
   assignmentDetailsFromConfirmedDocument,
@@ -49,7 +50,7 @@ test("legacy reviewed purchase contracts receive one extraction-schema upgrade",
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "purchase_contract",
     processing_status: "review_required",
-    extraction_summary: { extraction_schema_version: "2026-09-02-v3" },
+    extraction_summary: { extraction_schema_version: DOCUMENT_EXTRACTION_SCHEMA_VERSION },
   }), false);
   assert.equal(assignmentDocumentNeedsExtractionUpgrade({
     document_type: "engagement_letter",

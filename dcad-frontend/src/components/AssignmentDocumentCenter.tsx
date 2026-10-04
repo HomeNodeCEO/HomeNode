@@ -3,6 +3,7 @@ import { lazy, Suspense, useCallback, useEffect, useId, useMemo, useRef, useStat
 import { useApplicationAuth } from '@/features/auth/ApplicationAuth';
 import SfrepExportDialog from '@/features/sfrep/SfrepExportDialog';
 import { documentApplicationMessage } from '@/lib/propertyReportDocumentApplication';
+import { associateContractSubject, canAssociateContractSubject, contractAssociationReviewSnapshot } from '@/lib/contractSubjectAssociation';
 import AssignmentDocumentUploadQueue from './documents/AssignmentDocumentUploadQueue';
 import {
   confirmAllAssignmentDocumentCandidates,
@@ -67,6 +68,7 @@ const FIELD_LABELS: Record<string, string> = {
   contract_personal_property_included: 'Personal Property Conveyed',
   contract_personal_property_details: 'Personal Property Included in Sale',
   contract_exclusions: 'Contract Section 2D Exclusions',
+  contract_printed_subject_addresses: 'Check Contract Property Addresses',
   seller_name: 'Seller',
   buyer_name: 'Buyer / Borrower',
   borrower_name: 'Borrower',
@@ -113,6 +115,8 @@ function statusStyle(status: AssignmentDocument['processing_status']) {
 }
 
 function statusLabel(status: AssignmentDocument['processing_status']) {
+  if (status === 'ocr_required') return 'Image Scan Needed';
+  if (status === 'uploaded') return 'Waiting to Process';
   return status.replace(/_/g, ' ').replace(/\b\w/g, (value) => value.toUpperCase());
 }
 
@@ -123,8 +127,10 @@ function fileSize(bytes: number) {
 
 function processingDetail(document: AssignmentDocument) {
   if (document.processing_status === 'processing') {
-    return `Extraction attempt ${Math.max(1, document.processing_attempts || 1)} is in progress.`;
+    return 'Reading the document. Scanned pages take longer than searchable PDFs.';
   }
+  if (document.processing_status === 'uploaded') return 'Your document is saved and queued for processing.';
+  if (document.processing_status === 'ocr_required') return 'These pages are images, not searchable text. Retry extraction to scan them for text.';
   if (document.processing_status !== 'extraction_failed') return '';
   if (document.extraction_summary?.automatic_retry_exhausted) {
     return `Automatic retries stopped after ${document.processing_attempts} attempts. Review the PDF or retry manually.`;
@@ -315,6 +321,11 @@ export default function AssignmentDocumentCenter({
     subjectAddress,
   ), [documentSubjectCandidate, subjectAddress]);
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
+  const contractPrintedAddresses = selectedDocument?.candidates?.find(candidate => candidate.field_key === 'contract_printed_subject_addresses');
+  const contractAssociation = (selectedDocument?.extraction_summary as { contract_subject_association?: { acknowledged?: boolean; reviewer?: string } } | undefined)?.contract_subject_association;
+  const contractAssociationReady = selectedDocument ? canAssociateContractSubject(selectedDocument)
+    && contractAssociationReviewSnapshot(selectedDocument).every(candidate => !candidate.id || candidateValues[candidate.id] === undefined
+      || candidateValues[candidate.id] === (candidate.confirmedValue ?? candidate.normalizedValue ?? candidate.rawValue)) : false;
   const subjectAddressMismatch = subjectAddressComparison.matches === false;
   const confirmationBlocked = assignmentDocumentConfirmationBlocked(
     selectedDocument?.document_type,
@@ -482,6 +493,10 @@ export default function AssignmentDocumentCenter({
         ? { ...item, uad_discrepancies: document.uad_discrepancies,
             uad_comparison_incomplete: document.uad_comparison_incomplete }
         : item));
+      else setDocuments((current) => current.map((item) => item.id === document.id
+        ? { ...item, processing_status: document.processing_status, page_count: document.page_count,
+            extraction_summary: document.extraction_summary }
+        : item));
       // Explicit edit intent survives even when an intermediate server refresh
       // happens to match the draft. Only save/reset acknowledges that intent.
       refreshCandidateValues(document);
@@ -645,7 +660,9 @@ export default function AssignmentDocumentCenter({
       if (!reviewCanContinue(operation)) return;
       if (isUad) await loadDocument(document.id, undefined, operation);
       if (!reviewCanContinue(operation)) return;
-      setMessage('Extraction completed with the current document rules.');
+      setMessage(['uploaded', 'processing'].includes(document.processing_status)
+        ? 'Image scanning and text extraction are queued. Results will appear here when ready.'
+        : 'Extraction completed with the current document rules.');
     } catch (error) {
       if (!reviewCanContinue(operation)) return;
       setMessage(error instanceof Error ? error.message : 'The document could not be reprocessed.');
@@ -927,6 +944,33 @@ export default function AssignmentDocumentCenter({
     }
   };
 
+  const associateReviewedContract = async () => {
+    if (isUad || !requireMutableWorkfile() || !selectedDocument || !assignmentFileId || !contractAssociationReady) return;
+    if (!reviewer.trim()) { setMessage('Enter the appraiser or reviewer name before associating this contract.'); return; }
+    const editorKey = getEditorKey();
+    if (!editorKey) return;
+    const operation = beginReview(selectedDocument.candidates || []);
+    if (!operation) return;
+    setLoading(true); setMessage('');
+    try {
+      const document = await associateContractSubject(selectedDocument, accountId, assignmentFileId, editorKey);
+      if (!reviewCanContinue(operation)) return;
+      loadDocumentRequestRef.current += 1;
+      setSelectedDocument(document); refreshCandidateValues(document);
+      await loadDocuments(operation);
+      if (!reviewCanContinue(operation)) return;
+      setMessage('Contract association recorded. Its already-reviewed date may support saved listing history. Printed address discrepancies remain visible; county identity was not changed.');
+    } catch (error) {
+      if (!reviewOperationIsCurrent(operation)) return;
+      const message = error instanceof Error ? error.message : '';
+      setMessage(message === 'contract_subject_association_stale'
+        ? 'The contract evidence changed. Reload it, review the current addresses and date, then associate it again.'
+        : message === 'contract_subject_association_review_required'
+          ? 'Confirm the printed-address evidence and contract date before associating this contract.'
+          : message || 'The contract association could not be saved.');
+    } finally { finishReview(operation); }
+  };
+
   return (
     <section
       className={embedded
@@ -1166,6 +1210,20 @@ export default function AssignmentDocumentCenter({
                       </div>
                     )
                   ) : null}
+                  {!isUad && selectedDocument.document_type === 'purchase_contract' && (contractPrintedAddresses || documentSubjectCandidate) && (
+                    <div role="alert" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs leading-5 text-amber-900">
+                      <strong>{contractAssociation?.acknowledged ? 'Contract subject association recorded — verify any changed evidence' : 'Verify this contract belongs to the subject'}</strong>
+                      <p className="whitespace-pre-wrap">{contractPrintedAddresses?.raw_value || documentSubjectCandidate?.raw_value}</p>
+                      <p>The open report subject is <strong>{subjectAddress || 'missing its subject address'}</strong>.</p>
+                      <p>Only an explicit appraiser association allows its reviewed contract date to support listing history when printed addresses differ. This does not approve new fields or replace the county address.</p>
+                      {contractAssociation?.reviewer && <p>Association recorded by {contractAssociation.reviewer}. Current source bindings are checked again before use.</p>}
+                      {!contractAssociationReady && <p>First confirm the printed-address evidence and contract date, and save any edits to those candidates.</p>}
+                      <button type="button" className="hn-action-primary btn btn-primary btn-xs mt-2 normal-case rounded-lg"
+                        onClick={() => void associateReviewedContract()} disabled={readOnly || loading || !contractAssociationReady || !assignmentFileId}>
+                        {loading ? 'Recording Association...' : 'Use contract for this subject'}
+                      </button>
+                    </div>
+                  )}
                   {suggestedCandidates.length ? (
                     <div className="flex flex-col gap-2 rounded-lg border border-violet-200 bg-violet-50 p-3 sm:flex-row sm:items-center sm:justify-between">
                       <div className="text-xs leading-5 text-slate-700">

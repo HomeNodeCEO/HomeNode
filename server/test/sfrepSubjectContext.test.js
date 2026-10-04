@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { sfrepDocumentPropertyRole, sfrepSubjectContext } from '../src/services/sfrepSubjectContext.js';
+import { sfrepDocumentPropertyRole, sfrepSubjectContext, sfrepDocumentParcelMismatch } from '../src/services/sfrepSubjectContext.js';
 
 const context = () => ({ accountId: '00001234567890000', address: '100 Example Dr', city: 'Garland', postalCode: '75041', effectiveDate: null, inspectionDate: null });
 const candidate = (field_key, confirmed_value, change = {}) => ({ document_id: 2, field_key, confirmed_value, review_status: 'confirmed', ...change });
@@ -27,8 +27,49 @@ test('conflicting identity, units and comparable documents cannot populate the s
   assert.equal(sfrepDocumentPropertyRole(document([candidate('subject_property_address', '100 Example Drive Bldg 2 Suite 2, Garland, TX 75041')], { subject_context: condo })), 'comparable');
 });
 
+test('county parcel identity can differ from the routed account key without weakening mismatched evidence checks', () => {
+  const subject_context = { ...context(), accountId: 'COUNTY-ROUTE-123', assessorParcelNumber: '00001234567890000', state: 'TX' };
+  assert.equal(sfrepDocumentPropertyRole(document([candidate('assessor_parcel_number', '00001234567890000')], { subject_context })), 'subject');
+  for (const wrong of ['COUNTY-ROUTE-123', '00001234567890001']) {
+    assert.equal(sfrepDocumentPropertyRole(document([candidate('assessor_parcel_number', wrong),
+      candidate('subject_property_address', '100 Example Dr, Garland, TX 75041')], { subject_context })), 'comparable');
+  }
+  for (const address of ['102 Example Dr, Garland, TX 75041', '100 Example Dr #2, Garland, TX 75041', '100 Example Dr, Garland, OK 75041']) {
+    assert.equal(sfrepDocumentPropertyRole(document([candidate('assessor_parcel_number', '00001234567890000'),
+      candidate('subject_property_address', address)], { subject_context })), 'comparable');
+  }
+});
+
 test('blank confirmations never revert to a machine suggestion for identity', () => {
   assert.equal(sfrepDocumentPropertyRole(document([candidate('subject_property_address', '', { normalized_value: '100 Example Dr, Garland, TX 75041' })])), 'unknown');
+});
+
+test('canonical county identity can quarantine a PDF APN typo only with exact street/unit, city and ZIP', () => {
+  const canonical = { ...context(), state: 'TX' };
+  canonical.canonicalIdentity = { ...canonical, assessorParcelNumber: canonical.accountId };
+  const make = (address = '100 Example Dr, Garland, TX 75041') => document([
+    candidate('subject_property_address', address), candidate('assessor_parcel_number', '0001234567890000'),
+  ], { subject_context: structuredClone(canonical) });
+  assert.equal(sfrepDocumentPropertyRole(make()), 'subject');
+  assert.equal(sfrepDocumentParcelMismatch(make()), true);
+  for (const address of ['102 Example Dr, Garland, TX 75041', '100 Example Dr #2, Garland, TX 75041',
+    '100 Example Dr, Dallas, TX 75041', '100 Example Dr, Garland, OK 75041', '100 Example Dr, Garland, TX 75201']) {
+    assert.equal(sfrepDocumentPropertyRole(make(address)), 'comparable', address);
+  }
+  for (const change of [
+    doc => { delete doc.subject_context.canonicalIdentity; },
+    doc => { doc.subject_context.canonicalIdentity.accountId = 'other'; },
+    doc => { doc.subject_context.canonicalIdentity.address = '102 Example Dr'; },
+    doc => { doc.candidates[0].confirmed_value = '100 Example Dr'; doc.candidates.push(candidate('subject_city', 'Garland')); },
+    doc => { doc.candidates[0].confirmed_value = '100 Example Dr'; doc.candidates.push(candidate('subject_zip', '75041')); },
+  ]) {
+    const changed = make(); change(changed);
+    assert.equal(sfrepDocumentPropertyRole(changed), 'comparable', String(change));
+  }
+  const unreviewed = make(); unreviewed.candidates[0].review_status = 'suggested';
+  assert.equal(sfrepDocumentPropertyRole(unreviewed), 'comparable');
+  const stale = make(); stale.processing_status = 'processing';
+  assert.equal(sfrepDocumentPropertyRole(stale), 'unknown');
 });
 
 test('lossy secondary-identifier normalization cannot prove subject identity', () => {

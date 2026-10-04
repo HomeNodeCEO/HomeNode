@@ -1,13 +1,14 @@
 import { inspectUrarReferenceLayout, extractUrarReferenceLayout } from "./urarReferenceLayouts.js";
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 import { extractMlsListingPriceHistory, isMlsListingHistory } from "./mlsListingPriceHistory.js";
+import { extractDwellingBlocksAssignment, isDwellingBlocksAssignment } from "./dwellingBlocksAssignment.js";
 
 /**
  * Conservative, page-cited Subject suggestions from already-extracted PDF text.
  * No OCR, network, model, report writes, or automatic confirmation occurs here.
  * The caller owns document authorization, identity, and source-role selection.
  */
-export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-03-v2";
+export const URAR_SUBJECT_EVIDENCE_VERSION = "2026-10-04-v1";
 const LIMITS = Object.freeze({ pages: 250, pageChars: 500_000, totalChars: 4_000_000, lineChars: 4_000, lines: 50_000, candidates: 2_000, issues: 500 });
 const SOURCES = new Set(["engagement_letter", "mls_sheet", "cad", "realist"]);
 const NON_SUBJECT_DOCUMENT_TYPES = new Set(["purchase_contract", "district_evidence", "zoning_map", "zoning_ordinance", "map"]);
@@ -183,7 +184,7 @@ function sourceFor(documentType, sourceKind, entries, referenceLayout = null) {
 function addMlsHoaEvidence(entries, candidates, unresolved, add) {
   const observations = [];
   const label = /(?:^|\s)(HOA(?:\s+(?:Dues(?:\s+(?:Frequency|Freq))?|Fees?(?:\s+(?:Frequency|Freq))?|Frequency))?)\s*:\s*/gi;
-  const boundary = /\s+(?:HOA(?:\s+[A-Za-z /.'-]{1,40})?|PUD|Association(?:\s+[A-Za-z /.'-]{1,40})?|School Dist|SubType|Property Type)\s*[:=]/i;
+  const boundary = /\s+(?:HOA(?:\s+[A-Za-z /.'-]{1,40})?|PUD|Association(?:\s+[A-Za-z /.'-]{1,40})?|Phone|School Dist|SubType|Property Type)\s*[:=]/i;
   for (const entry of entries) {
     for (const match of entry.line.matchAll(label)) {
       const tail = entry.line.slice(match.index + match[0].length);
@@ -383,6 +384,14 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
     return result;
   }
   if (!source) { issue(unresolved, { reason: entries.length ? "source_not_identified" : "no_readable_text" }); return result; }
+  if (source === 'engagement_letter' && isDwellingBlocksAssignment(pages)) {
+    const assignmentPrint = extractDwellingBlocksAssignment(pages, assignment);
+    result.source_layout = 'dwelling_blocks_assignment';
+    candidates.push(...assignmentPrint.candidates);
+    assignmentPrint.unresolved.forEach(item => issue(unresolved, item));
+    collectConflicts(candidates, conflicts);
+    return result;
+  }
   if (source === "mls_sheet" && isMlsListingHistory(entries.map(entry => entry.line).join("\n"))) {
     // History PDFs deliberately contain older MLS records. Their adapter binds
     // each summary to one ID; do not run the single-listing-sheet parser or
@@ -445,6 +454,11 @@ export function buildUrarSubjectEvidence({ documentType = "other", pages = [], s
       // numeric date token before another explicit label belongs to LD.
       const dateToken = raw.match(/^(\d{4}-\d{2}-\d{2}|\d{1,2}[/-]\d{1,2}[/-]\d{4})(?=\s+[A-Za-z][A-Za-z /()#.'-]{0,55}[:=])/);
       if (dateToken) raw = dateToken[1];
+    }
+    if (source === "mls_sheet" && rule.key === "hoa_dues_amount") {
+      // Matrix prints the association phone beside its dues. The phone is an
+      // explicit adjacent label, never part of the monetary amount or period.
+      raw = raw.replace(/\s+Phone\s*[:=].*$/i, "");
     }
     if (/\b[A-Za-z][A-Za-z /()#.'-]{0,55}[:=]/.test(raw) && rule.key !== "legal_description") {
       issue(unresolved, { field_key: rule.key, page_number: entry.page_number, reason: "ambiguous_labeled_value" }); continue;

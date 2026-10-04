@@ -9,10 +9,12 @@ import { sfrepDocumentPropertyRole, sfrepSubjectContext } from '../../server/src
 // Use the real pure server field producers, without requiring backend-only
 // PDF dependencies in a frontend-only install. The server integration suite
 // separately exercises the full previewSfrepDocuments public response.
-function serverPreview({ saved = true, hoa = 'true' } = {}) {
+function serverPreview({ saved = true, hoa = 'true', county = false, lenderPreset = false, fallbackIdentity = false } = {}) {
   const subject = { accountId: 'SYNTHETIC-SFREP', address: '100 Example Dr', city: 'Garland', postalCode: '75041',
     effectiveDate: '2026-08-31', censusGeography: { tractCode: '018206', status: 'matched', geoid: '48113018206',
       vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
+  if (county) subject.canonicalIdentity = { accountId: subject.accountId, address: '100 EXAMPLE DR', city: 'GARLAND',
+    state: 'TX', postalCode: '75041-1234', county: 'DALLAS COUNTY', assessorParcelNumber: subject.accountId };
   const history = JSON.stringify({ schema_version: 1, listing_id: '77700001', list_date: '2026-05-29',
     coverage: 'complete', price_changes: [] });
   const data = [
@@ -23,6 +25,7 @@ function serverPreview({ saved = true, hoa = 'true' } = {}) {
     ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', contract_date: '2026-08-25' }],
     ['mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041', mls_number: '77700001', listing_price_history: history }],
   ];
+  if (lenderPreset) data[0][1].lender_client_name = 'United Wholesale Mortgage';
   const documents = data.map(([document_type, values], index) => ({ id: index + 1, account_id: subject.accountId,
     assignment_file_id: 4, document_type, processing_status: 'reviewed', upload_date: '2026-10-02',
     title: 'Synthetic source', file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100, subject_context: subject,
@@ -33,8 +36,9 @@ function serverPreview({ saved = true, hoa = 'true' } = {}) {
   if (saved) {
     const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
     documents[0].saved_report = { accountId: subject.accountId, assignmentFileId: 4, assignmentRevision: 2,
-      assignmentDetails: { ...applied.assignmentDetails, lender_client_address: '20 EXAMPLE AVE, AUSTIN TX 78701-1234' },
-      subject: { revision: 1, value: applied.subject }, evidence: { revision: 1, value: applied.evidence },
+      assignmentDetails: { ...applied.assignmentDetails, ...(!lenderPreset ? { lender_client_address: '20 EXAMPLE AVE, AUSTIN TX 78701-1234' } : {}) },
+      subject: { revision: fallbackIdentity ? 0 : 1, value: fallbackIdentity ? {} : applied.subject },
+      evidence: { revision: 1, value: fallbackIdentity ? {} : applied.evidence },
       documents: structuredClone(documents) };
   }
   const input = { accountId: subject.accountId, assignmentFileId: 4 };
@@ -44,8 +48,82 @@ function serverPreview({ saved = true, hoa = 'true' } = {}) {
     subjectContext: sfrepSubjectContext(documents), ...(canonical ? { savedReportFields: savedSfrepSubjectFields(canonical, input).fields } : {}) });
   return JSON.parse(JSON.stringify({ ok: true, ...result, preview_digest: 'a'.repeat(64), filename: 'HomeNode-SFREP-file-4.rpti',
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) => ({ id, title, file_name, file_size_bytes, processing_status })),
-    ...(canonical ? { savedReport: { assignmentFileId: 4, assignmentRevision: 2, subjectRevision: 1, sourceDocumentIds: [1, 2, 3] } } : {}) }));
+    ...(canonical ? { savedReport: { assignmentFileId: 4, assignmentRevision: 2, subjectRevision: fallbackIdentity ? 0 : 1, sourceDocumentIds: [1, 2, 3] } } : {}) }));
 }
+
+test('canonical county identity and user lender preset cross the strict producer boundary with honest labels', () => {
+  for (const fallbackIdentity of [false, true]) {
+    const preview = serverPreview({ county: true, lenderPreset: true, fallbackIdentity });
+    assert.equal(checkSfrepPreview(preview, [1, 2, 3]), preview);
+    const identity = preview.fields.filter(field => field.provenance.rule === 'canonical_county_subject_identity_v1');
+    assert.equal(identity.length, 6);
+    for (const field of identity) {
+      assert.equal(field.provenance.kind, fallbackIdentity ? 'account_reference' : 'saved_report');
+      assert.match(sfrepProvenanceText(field), /county-backed subject identity.*not PDF evidence/);
+    }
+    const lender = preview.fields.find(field => field.fieldId === 'LenderClientCompanyUnparsedAddress');
+    if (!fallbackIdentity) {
+      assert.equal(lender.provenance.rule, 'user_requested_lender_address_v1');
+      assert.match(sfrepProvenanceText(lender), /user-requested lender address preset.*not PDF evidence/);
+      assert.equal(sfrepSubjectChecklist(preview).find(item => item.key === 'lender-address').statusLabel, 'Included — user default');
+    }
+    assert.equal(sfrepSubjectChecklist(preview).find(item => item.key === 'street').statusLabel, 'Included — county record');
+  }
+});
+
+test('canonical county receipts reject altered destinations, values, sources and saved bindings', () => {
+  for (const fallbackIdentity of [false, true]) {
+    const preview = serverPreview({ county: true, fallbackIdentity });
+    for (const change of [
+      field => { field.value = '999 Forged Dr'; }, field => { field.fieldId = 'BorrowerName'; },
+      field => { field.provenance.rule = 'unknown_county_rule'; },
+      field => { field.provenance.sourceEvidence[0].sourceTable = 'core.untrusted'; },
+      field => { field.provenance.sourceEvidence[0].sourceField = 'city'; },
+      field => { field.provenance.sourceEvidence[0].value += '\u0000'; },
+      field => { field.provenance.sourceEvidence[0].unexpected = true; },
+      field => { field.provenance.sourceEvidence.push(field.provenance.sourceEvidence[0]); },
+      field => { field.provenance.sourceDocumentId = 1; },
+      field => { field.provenance.assignmentFileId = 9; }, field => { field.provenance.revision = 99; },
+      field => { field.provenance.sourceValue = field.value; },
+      field => { field.provenance.kind = 'reviewed_document'; },
+    ]) {
+      const invalid = structuredClone(preview);
+      change(invalid.fields.find(field => field.fieldId === 'StreetAddress'));
+      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/, String(change));
+    }
+    const apn = structuredClone(preview);
+    apn.fields.find(field => field.fieldId === 'AssessorsParcelNumber').provenance.sourceEvidence[0].accountId = 'OTHER';
+    assert.throws(() => checkSfrepPreview(apn, [1, 2, 3]), /invalid/);
+  }
+});
+
+test('lender preset receipts are exact, source-bound and cannot authorize other user defaults', () => {
+  const preview = serverPreview({ lenderPreset: true });
+  for (const change of [
+    field => { field.value = 'Other lender address'; }, field => { field.fieldId = 'StreetAddress'; },
+    field => { field.provenance.rule = 'user_requested_any_lender'; },
+    field => { field.provenance.sourceValue = 'Other Bank'; },
+    field => { field.provenance.sourceEvidence[0].value = 'Other Bank'; },
+    field => { field.provenance.sourceEvidence[0].documentId = 2; },
+    field => { field.provenance.sourceEvidence[0].candidateId = 999; },
+    field => { field.provenance.sourceEvidence[0].sourceField = 'borrower_name'; },
+    field => { field.provenance.sourceEvidence[0].extra = true; },
+    field => { field.provenance.sourceDocumentId = field.provenance.sourceEvidence[0].documentId = 99; },
+    field => { field.provenance.sectionKey = 'report.subject_identification'; field.provenance.revision = 1; },
+  ]) {
+    const invalid = structuredClone(preview);
+    change(invalid.fields.find(field => field.fieldId === 'LenderClientCompanyUnparsedAddress'));
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/, String(change));
+  }
+});
+
+test('transport binds canonical county evidence to the selected account before returning a preview', async () => {
+  const preview = serverPreview({ county: true });
+  const transport = createSfrepTransport({ urlFor: path => path,
+    request: async () => new Response(JSON.stringify(preview), { headers: { 'content-type': 'application/json' } }) });
+  await assert.rejects(transport.preview({ accountId: 'DIFFERENT-ACCOUNT', assignmentFileId: 4, documentIds: [1, 2, 3], includeDocuments: false },
+    { signal: new AbortController().signal, editorKey: 'key' }), /selected county account/);
+});
 
 test('actual canonical server preview accepts current presentation, Census, listing and HOA contracts', () => {
   for (const hoa of ['true', 'false']) {
@@ -412,6 +490,37 @@ test('Subject checklist identifies formatted taxes and shows the source plus for
   assert.match(row.notes.join(' '), /whole dollars.*half up/);
 });
 
+test('pure title case and ZIP presentation stay included while meaningful formatting and missing evidence still need review', () => {
+  const value = { ...preview(), fields: [
+    formatted('subject_street_address', 'StreetAddress', '100 EXAMPLE DR', '100 Example Dr', 'subject_title_case'),
+    formatted('subject_city', 'City', 'GARLAND', 'Garland', 'subject_title_case'),
+    formatted('subject_zip', 'ZipCode', '75041-1234', '75041', 'zip5_display'),
+    formatted('owner_name', 'OwnerName', 'EXAMPLE OWNER LLC', 'Example Owner LLC', 'title_case_single_line_owner_name'),
+    formatted('neighborhood_name', 'NeighborhoodName', 'EXAMPLE PARK', 'Example Park', 'title_case_subdivision_without_numeric_phase'),
+  ] };
+  const rows = sfrepSubjectChecklist(checkSfrepPreview(value, [21]));
+  for (const key of ['street', 'city', 'zip', 'owner', 'neighborhood']) assert.equal(rows.find(item => item.key === key).status, 'included', key);
+  assert.equal(rows.find(item => item.key === 'borrower').status, 'missing');
+  value.fields[3] = formatted('owner_name', 'OwnerName', 'EXAMPLE OWNER\nSECOND OWNER', 'Example Owner Second Owner', 'title_case_single_line_owner_name');
+  value.fields[4] = formatted('neighborhood_name', 'NeighborhoodName', 'EXAMPLE PARK 4', 'Example Park', 'title_case_subdivision_without_numeric_phase');
+  value.conflicts = [{ sourceField: 'subject_city', documentIds: [21], values: ['Garland', 'Other City'] }];
+  const reviewed = sfrepSubjectChecklist(checkSfrepPreview(value, [21]));
+  for (const key of ['owner', 'neighborhood', 'city']) assert.equal(reviewed.find(item => item.key === key).status, 'review', key);
+});
+
+test('saved and direct fee-simple defaults stay traceable without confirmation warnings', () => {
+  for (const saved of [false, true]) {
+    const value = saved ? serverPreview() : { ...preview(), fields: [feeSimple()], assumptions: [assumption()] };
+    const row = sfrepSubjectChecklist(checkSfrepPreview(value)).find(item => item.key === 'property-rights');
+    assert.equal(row.status, 'included');
+    assert.equal(row.statusLabel, 'Included — user default');
+    assert.match(row.notes.join(' '), /user-requested fee-simple default/i);
+    assert.doesNotMatch(row.notes.join(' '), /confirm property rights/i);
+    value.knownMissing.push({ fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', reason: 'A genuine unresolved rights issue.' });
+    assert.equal(sfrepSubjectChecklist(checkSfrepPreview(value)).find(item => item.key === 'property-rights').status, 'review');
+  }
+});
+
 test('listing derivation is bound to a valid calendar window and its selected date source', () => {
   const accepted = checkSfrepPreview(listingPreview(), [21]);
   assert.equal(accepted.effectiveDateContext.isPlaceholder, true);
@@ -453,7 +562,7 @@ test('Subject checklist distinguishes coverage, defaults, missing narrative, and
   const row = key => rows.find(item => item.key === key);
   assert.equal(rows.length, 19);
   assert.equal(row('city').status, 'included'); assert.deepEqual(row('city').values, ['Dallas']);
-  assert.equal(row('property-rights').status, 'review'); assert.match(row('property-rights').statusLabel, /User default/);
+  assert.equal(row('property-rights').status, 'included'); assert.equal(row('property-rights').statusLabel, 'Included — user default');
   assert.equal(row('pud').status, 'review'); assert.deepEqual(row('pud').values, []);
   assert.match(row('pud').notes.join(' '), /HOA dues or membership do not establish PUD/);
   assert.equal(row('listing').status, 'missing'); assert.deepEqual(row('listing').values, []);

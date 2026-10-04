@@ -72,8 +72,13 @@ function parseRow(entry) {
   const common = { date, change_date: changeDate, recorded_at: timestamp(changeDate, time), page_number: entry.page_number, evidence: entry.line };
   const fieldKey = field.toLowerCase().replace(/[ _/-]/g, "");
   if (fieldKey === "mlsstatus") {
-    const values = rawValues.match(/^(INC|CSN|ACT|AOC|PND|SLD|EXP|CAN|WDN|TOM|CON|P|A|S)\s+(INC|CSN|ACT|AOC|PND|SLD|EXP|CAN|WDN|TOM|CON|P|A|S)(?:\s+\(\$[\d,]+(?:\.\d{1,2})?\))?(?:\s+\d{1,4})?$/i);
-    return values ? { ...common, type: "status", previous: values[1].toUpperCase(), next: values[2].toUpperCase() } : null;
+    const values = rawValues.match(/^(INC|CSN|ACT|AOC|AC|HOLD|PND|SLD|EXP|CAN|WDN|TOM|CON|P|A|S)\s+(INC|CSN|ACT|AOC|AC|HOLD|PND|SLD|EXP|CAN|WDN|TOM|CON|P|A|S)(?:\s+\(\$[\d,]+(?:\.\d{1,2})?\))?(?:\s+\d{1,4})?$/i);
+    if (values) return { ...common, type: "status", previous: values[1].toUpperCase(), next: values[2].toUpperCase() };
+    // Some Matrix records print an empty Previous Value on the initial row,
+    // rather than INC. Only initial listing states qualify; a lone pending or
+    // sold state cannot prove that the beginning of the history is present.
+    const initial = rawValues.match(/^(CSN|ACT|A)(?:\s+0)?$/i);
+    return initial ? { ...common, type: "status", previous: null, next: initial[1].toUpperCase(), initial: true } : null;
   }
   if (["listprice", "listingprice", "originalprice", "originallistprice"].includes(fieldKey)) {
     const values = rawValues.match(/^(\$?[\d,]+(?:\.\d{1,2})?)\s+(\$?[\d,]+(?:\.\d{1,2})?)(?:\s+\d{1,4})?$/);
@@ -132,7 +137,8 @@ export function extractMlsListingPriceHistory(pages = []) {
   const numberedPagesComplete = pageCoverage(entries, pages.length);
   for (const group of groups.values()) {
     const rows = group.rows.sort((a, b) => a.date.localeCompare(b.date) || a.recorded_at.localeCompare(b.recorded_at));
-    const origins = rows.filter(row => row.type === "status" && row.previous === "INC" && ["CSN", "ACT", "A"].includes(row.next));
+    const origins = rows.filter(row => row.type === "status" && (row.previous === "INC" || row.initial === true)
+      && ["CSN", "ACT", "A"].includes(row.next));
     if (origins.length > 1 || !rows.length) return fail("listing_history_origin_ambiguous", group.entry.page_number);
     const prices = rows.filter(row => row.type === "price");
     for (let index = 1; index < prices.length; index += 1) {

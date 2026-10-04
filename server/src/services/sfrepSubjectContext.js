@@ -1,5 +1,6 @@
 import { parseStructuredAddress } from '../util/structuredAddress.js';
 import { normalizePropertyCity } from '../util/propertySearch.js';
+import { isUrarStateCode } from '../util/urarScalarValidation.js';
 
 const text = value => typeof value === 'string' ? value.trim() : '';
 const identifier = value => text(value).toUpperCase().replace(/[\s-]/g, '');
@@ -39,7 +40,9 @@ function exactStreetIdentity(value) {
 /** Confirm identity, not merely that a PDF was uploaded into this workfile.
  * Comparable MLS sheets can share the lender, city and neighborhood. Only exact
  * canonical street/unit plus locality, or the exact parcel ID, identifies subject.
- * Any contradictory confirmed identity blocks export rather than choosing a winner.
+ * Contradictory street/locality identity blocks export. A canonical county
+ * snapshot plus exact street/unit, city AND ZIP can quarantine a PDF APN typo
+ * without authorizing that contradictory APN as report evidence.
  */
 export function sfrepDocumentPropertyRole(document) {
   // Reprocessing and failed extraction can leave previously confirmed rows in
@@ -51,9 +54,11 @@ export function sfrepDocumentPropertyRole(document) {
   const canonical = exactStreetIdentity(canonicalAddress.street);
   if (canonical.ambiguous) return 'unknown';
   const parcelValues = confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number']);
-  const parcelId = identifier(context.accountId);
+  // A routed/canonical account key is not necessarily the county's printed
+  // parcel number. Prefer the separately supplied county APN when available.
+  const parcelId = identifier(context.assessorParcelNumber || context.accountId);
   const parcelMatch = Boolean(parcelId && parcelValues.some(value => identifier(value) === parcelId));
-  if (parcelValues.some(value => parcelId && identifier(value) !== parcelId)) return 'comparable';
+  const parcelMismatch = parcelValues.some(value => parcelId && identifier(value) !== parcelId);
 
   // Even a field labeled Street Address can contain a locality. Validate every
   // tail rather than letting the structured parser silently throw it away.
@@ -64,7 +69,8 @@ export function sfrepDocumentPropertyRole(document) {
     .map(value => text(value).toUpperCase());
   const postcodes = [...confirmed(document, ['subject_zip', 'subject_zip_code']), ...fullAddresses.map(value => value.postalCode).filter(Boolean)];
   const canonicalCity = normalizePropertyCity(context.city || canonicalAddress.city);
-  const canonicalState = text(context.state || canonicalAddress.state).toUpperCase();
+  const countyState = isUrarStateCode(context.canonicalIdentity?.state) ? context.canonicalIdentity.state : null;
+  const canonicalState = text(context.state || countyState || canonicalAddress.state).toUpperCase();
   const canonicalZip = zip(context.postalCode || canonicalAddress.postalCode);
   if (canonicalCity && cities.some(value => normalizePropertyCity(value) !== canonicalCity)) return 'comparable';
   if (canonicalState && states.some(value => value !== canonicalState)) return 'comparable';
@@ -81,7 +87,24 @@ export function sfrepDocumentPropertyRole(document) {
   }
   const localityMatch = (canonicalCity && cities.some(value => normalizePropertyCity(value) === canonicalCity))
     || (canonicalZip && postcodes.some(value => zip(value) === canonicalZip));
+  if (parcelMismatch) {
+    const county = context.canonicalIdentity;
+    const countyBound = county && county.accountId === context.accountId
+      && county.assessorParcelNumber === context.accountId
+      && county.address === context.address && county.city === context.city && county.postalCode === context.postalCode;
+    return countyBound && streetMatch && canonicalCity && canonicalZip
+      && cities.some(value => normalizePropertyCity(value) === canonicalCity)
+      && postcodes.some(value => zip(value) === canonicalZip) ? 'subject' : 'comparable';
+  }
   return parcelMatch || (streetMatch && localityMatch) ? 'subject' : 'unknown';
+}
+
+/** Diagnostic/quarantine only. This never proves document applicability. */
+export function sfrepDocumentParcelMismatch(document) {
+  const context = document?.subject_context;
+  const parcelId = identifier(context?.assessorParcelNumber || context?.accountId);
+  return Boolean(parcelId && confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number'])
+    .some(value => identifier(value) !== parcelId));
 }
 
 export function sfrepSubjectContext(documents) {

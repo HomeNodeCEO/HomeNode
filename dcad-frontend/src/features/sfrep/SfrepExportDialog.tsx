@@ -88,6 +88,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const documentTitle = (id: number | null) => id === null ? 'No source document (user default)'
     : documents.find(doc => doc.id === id)?.title || `Document ${id}`;
   const subjectChecklist = preview ? sfrepSubjectChecklist(preview) : [];
+  const reviewAssumptions = preview?.assumptions.filter(assumption => assumption.rule !== 'user_requested_fee_simple_default') || [];
 
   return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export documents to SFREP"
     className="m-auto max-h-[90vh] w-[min(1000px,95vw)] overflow-y-auto rounded-xl border border-amber-300 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 print:hidden">
@@ -133,9 +134,9 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
           </> : <p>Effective date unavailable — review needed. A date-based 12-month listing determination cannot be made.</p>}
           <p>This context evaluates listing history; it does not mark the Subject section complete.</p>
         </section>
-        {preview.assumptions.length > 0 && <section aria-label="Assumptions requiring confirmation" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+        {reviewAssumptions.length > 0 && <section aria-label="Assumptions requiring confirmation" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
           <h5 className="font-semibold">Assumptions requiring confirmation</h5>
-          <ul className="mt-1 list-disc space-y-1 pl-5">{preview.assumptions.map(assumption => <li key={assumption.fieldId}>{assumption.reason}</li>)}</ul>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{reviewAssumptions.map((assumption, index) => <li key={`${assumption.fieldId}:${index}`}>{assumption.reason}</li>)}</ul>
         </section>}
         <section aria-label="1004 Subject export checklist" className="space-y-2">
           <h5 className="font-semibold text-violet-950">1004 Subject export checklist</h5>
@@ -158,7 +159,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
           <tbody>{preview.fields.map((field, index) => <tr key={`${field.fieldId}:${index}`} className="border-b border-slate-100 align-top">
             <th scope="row" className="p-2 font-medium">{field.sourceField.replace(/_/g, ' ')}<span className="block text-slate-500">{field.fieldId}</span></th>
             <td className="max-w-sm whitespace-pre-wrap break-words p-2">{field.value}</td>
-            <td className="max-w-sm break-words p-2" title={field.candidateId !== null ? `Candidate ${field.candidateId}` : undefined}>{field.provenance.kind === 'saved_report' ? 'Saved HomeNode report' : documentTitle(field.documentId)}<span className="mt-1 block text-slate-600">{sfrepProvenanceText(field)}</span></td>
+            <td className="max-w-sm break-words p-2" title={field.candidateId !== null ? `Candidate ${field.candidateId}` : undefined}>{field.provenance.kind === 'saved_report' ? 'Saved HomeNode report' : field.provenance.kind === 'account_reference' ? 'Canonical county account' : documentTitle(field.documentId)}<span className="mt-1 block text-slate-600">{sfrepProvenanceText(field)}</span></td>
           </tr>)}</tbody>
         </table></div></details> : <p className="rounded-lg bg-amber-50 p-3 text-amber-900">No supported confirmed fields are available. {includeDocuments ? 'This export contains reference PDFs only.' : 'No report fields or PDFs would be included. Select original PDFs or review document candidates first.'}</p>}
         {([['Conflicting fields (not exported)', preview.conflicts], ['Omitted fields', preview.omitted], ['Warnings', preview.warnings]] as const).map(([label, notices]) => notices.length > 0 && <details key={label} open={label === 'Conflicting fields (not exported)'} className="rounded-lg border border-amber-200 bg-amber-50 p-3">

@@ -34,6 +34,10 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
     WITH assignment_scope AS MATERIALIZED (
       SELECT jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
              'city', subject.city, 'postalCode', subject.postal_code,
+             'canonicalIdentity', jsonb_build_object('accountId', subject.account_id,
+               'address', subject.address, 'city', subject.city, 'postalCode', subject.postal_code,
+               'county', subject.county, 'assessorParcelNumber', subject.account_id,
+               'state', to_jsonb(subject)->>'state'),
              'effectiveDate', appraisal_case.effective_date::text,
              'inspectionDate', appraisal_case.inspection_date::text,
              'censusGeography', ${census.value}) AS subject_context,
@@ -86,7 +90,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         'saved_report', scope.saved_report || jsonb_build_object('documents', COALESCE((
           SELECT jsonb_agg(jsonb_build_object('id', id, 'account_id', account_id, 'assignment_file_id', assignment_file_id,
             'document_type', document_type, 'processing_status', processing_status,
-            'extraction_summary', extraction_summary, 'upload_date', upload_date, 'candidates', candidates) ORDER BY id)
+            'extraction_summary', extraction_summary, 'checksum_sha256', checksum_sha256,
+            'upload_date', upload_date, 'candidates', candidates) ORDER BY id)
           FROM source_rows), '[]'::jsonb))) AS snapshot,
         (SELECT count(*) FROM source_rows) > 50
           OR EXISTS (SELECT 1 FROM source_rows WHERE jsonb_array_length(candidates) >= $4) AS count_limit

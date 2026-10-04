@@ -10,7 +10,7 @@ export const DOCUMENT_UPLOAD_TYPES: ReadonlyArray<readonly [AssignmentDocumentTy
   ['zoning_map', 'Zoning Map'],
   ['zoning_ordinance', 'Zoning Ordinance / Code'],
   ['purchase_contract', 'Purchase Contract'],
-  ['engagement_letter', 'Engagement Letter'],
+  ['engagement_letter', 'Engagement Letter / Assignment Page'],
   ['mls_sheet', 'MLS Sheet'],
   ['map', 'Other Map'],
   ['other', 'Other Appraisal Document'],

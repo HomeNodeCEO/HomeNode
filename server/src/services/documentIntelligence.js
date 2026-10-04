@@ -1,5 +1,6 @@
 import { extractText, getDocumentProxy } from "unpdf";
 import { buildUrarSubjectEvidence, identifyUrarSubjectSource } from "./urarSubjectEvidence.js";
+import { isDwellingBlocksAssignment } from './dwellingBlocksAssignment.js';
 import { trecContractSubjectIdentityCandidate } from "./trecContractSubjectIdentity.js";
 
 export const DOCUMENT_TYPES = Object.freeze([
@@ -15,7 +16,7 @@ export const DOCUMENT_TYPES = Object.freeze([
 
 // Persist this with every extraction so documents created before a parser
 // improvement can be upgraded exactly once from their immutable source PDF.
-export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-09-02-v3";
+export const DOCUMENT_EXTRACTION_SCHEMA_VERSION = "2026-10-04-v1";
 
 const DOCUMENT_TYPE_SET = new Set(DOCUMENT_TYPES);
 const MAX_PDF_PAGES = 250;
@@ -427,6 +428,17 @@ function trecEffectiveDateCandidate(pages) {
     extractionMethod: "trec_effective_date",
   });
   if (numeric) return numeric;
+  const aboveLine = firstContractPatternCandidate(pages, {
+    fieldKey: "contract_date",
+    // Filled text can sit just above the printed execution-date baseline.
+    // Require the complete date immediately before this specific form block;
+    // signature dates and isolated OCR fragments are not an effective date.
+    pattern: /(?:^|\n)\s*(\d{1,2}[/-]\d{1,2}[/-](?:\d{4}|\d{2}))\s*\n\s*EXECUTED\s+the[^\n]{0,180}\(Effective Date\)\.[\s\n]*(?:\(BROKER:\s*FILL IN THE DATE OF FINAL ACCEPTANCE\.\))/i,
+    normalize: normalizedDate,
+    confidence: 0.96,
+    extractionMethod: "trec_effective_date_above_baseline",
+  });
+  if (aboveLine) return aboveLine;
   return firstContractPatternCandidate(pages, {
     fieldKey: "contract_date",
     pattern: /EXECUTED\s+the\s+(\d{1,2}(?:st|nd|rd|th)?\s+day\s+of\s+[A-Za-z]+,?\s+\d{4})[\s\S]{0,100}?\(Effective Date\)/i,
@@ -434,6 +446,63 @@ function trecEffectiveDateCandidate(pages) {
     confidence: 0.98,
     extractionMethod: "trec_effective_date",
   });
+}
+
+function trecSalesPriceCandidate(pages) {
+  return firstContractPatternCandidate(pages, {
+    fieldKey: "contract_price",
+    pattern: /Sales Price\s*\(Sum of A and B\)[\s\S]{0,120}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
+    normalize: normalizedMoney,
+  }) || firstContractPatternCandidate(pages, {
+    fieldKey: "contract_price",
+    // OCR sometimes reads "and" as "@nd" or drops the dollar sign. This
+    // fallback is confined to the complete Section 3C label and amount on its
+    // own line; it never borrows a blank field's value from another section.
+    pattern: /(?:^|\n)\s*C\.\s*Sales Price\s*\(Sum of A (?:and|@nd) B\)[^\d$\n]{0,120}\$?\s*(\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\d{4,10}(?:\.\d{2})?)(?=\s*(?:\n|$))/i,
+    normalize: normalizedMoney,
+    confidence: 0.93,
+    extractionMethod: "trec_sales_price_line_ocr",
+  });
+}
+
+function trecPrintedAddressReviewCandidate(pages) {
+  if (!Array.isArray(pages) || pages.length > 250 || !pages.length
+    || typeof pages[0] !== 'string' || !/ONE TO FOUR FAMILY RESIDENTIAL CONTRACT\s*\(RESALE\)/i.test(pages[0])) return null;
+  const findings = [];
+  const addressPattern = /^(\d+[A-Za-z]?(?:-\d+[A-Za-z]?)?(?:\s+1\/2)?\s+[^,]{1,200}),\s*([A-Za-z][A-Za-z .'-]{0,99}),\s*([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)$/;
+  for (let pageIndex = 0; pageIndex < pages.length; pageIndex += 1) {
+    if (typeof pages[pageIndex] !== 'string' || pages[pageIndex].length > 500_000) return null;
+    const lines = pages[pageIndex].split(/\r?\n/).map(line => line.replace(/\s+/g, ' ').trim()).filter(Boolean).slice(0, 18);
+    for (let index = 0; index < lines.length; index += 1) {
+      const line = lines[index];
+      let address = line.match(/^Contract\s*Concerning\s*[~]*\s*(.*?)\s+Page\s*\d{1,3}\s*of\s*\d{1,3}(?:\s+\d{2}-\d{2}-\d{4})?(?:\s*[|. ]*)$/i)?.[1];
+      let source = 'Main contract';
+      if (!address && /^TO CONTRACT CONCERNING THE PROPERTY AT$/i.test(line)) {
+        address = lines[index + 1]; source = 'Addendum';
+      }
+      if (!address) {
+        address = line.match(/^Addendum for ["“]?Back-Up["”]? Contract\s+(.+?)\s+\d{2}-\d{2}-\d{4}$/i)?.[1];
+        if (address) source = 'Addendum';
+      }
+      if (!address || !addressPattern.test(address)) continue;
+      const key = `${source}:${address.toUpperCase()}`;
+      const existing = findings.find(finding => finding.key === key);
+      if (existing) existing.pages.push(pageIndex + 1);
+      else findings.push({ key, source, address, pages: [pageIndex + 1], evidence: source === 'Addendum' ? `${line}\n${address}` : line });
+      if (findings.length > 12) return null;
+    }
+  }
+  if (new Set(findings.map(finding => finding.address.toUpperCase())).size < 2) return null;
+  const raw = ['Review required: printed subject addresses differ.', ...findings.map(finding =>
+    `${finding.source} (pages ${finding.pages.join(', ')}): ${finding.address}`)].join('\n');
+  if (raw.length > 2_000) return null;
+  // This diagnostic is deliberately NOT subject_property_address. It exposes
+  // OCR-readable conflicting form/addendum addresses without promoting an
+  // addendum or relaxing the full-form identity gate used for Subject export.
+  return { field_key: 'contract_printed_subject_addresses', raw_value: raw, normalized_value: raw,
+    page_number: findings[0].pages[0], confidence: 0.9, review_status: 'suggested',
+    evidence_excerpt: findings.map(finding => `Page ${finding.pages[0]}: ${finding.evidence}`).join('\n').slice(0, 2_000),
+    extraction_method: 'trec_printed_address_discrepancy_review' };
 }
 
 function trecPartyCandidates(pages) {
@@ -633,6 +702,7 @@ function contractPersonalPropertyCandidates(pages, exclusionsCandidate = null) {
 function buildPurchaseContractCandidates(pages) {
   const candidates = [
     trecContractSubjectIdentityCandidate(pages),
+    trecPrintedAddressReviewCandidate(pages),
     firstContractPatternCandidate(pages, {
       fieldKey: "down_payment",
       pattern: /Cash portion of (?:the )?Sales Price payable by Buyer at closing[\s\S]{0,160}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
@@ -643,11 +713,7 @@ function buildPurchaseContractCandidates(pages) {
       pattern: /Sum of all financing described[\s\S]{0,280}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
       normalize: normalizedMoney,
     }),
-    firstContractPatternCandidate(pages, {
-      fieldKey: "contract_price",
-      pattern: /Sales Price\s*\(Sum of A and B\)[\s\S]{0,120}?\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)/i,
-      normalize: normalizedMoney,
-    }),
+    trecSalesPriceCandidate(pages),
     firstContractPatternCandidate(pages, {
       fieldKey: "earnest_money",
       pattern: /\$\s*([0-9][0-9,]*(?:\.\d{1,2})?)\s+as earnest money\b/i,
@@ -655,7 +721,7 @@ function buildPurchaseContractCandidates(pages) {
     }),
     firstContractPatternCandidate(pages, {
       fieldKey: "closing_date",
-      pattern: /closing of the sale will be on or before\s+((?:[A-Za-z]+\s+\d{1,2},?\s+\d{4})|(?:\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})))/i,
+      pattern: /closing of the sale will be on or before\s+((?:[A-Za-z]+\s+\d{1,2}\s*,?\s+\d{4})|(?:\d{1,2}[/-]\d{1,2}[/-](?:\d{2}|\d{4})))/i,
       normalize: normalizedDate,
       extractionMethod: "trec_closing_date",
     }),
@@ -910,7 +976,7 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }
-  if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample)) {
+  if (/engagement\s+letter|appraisal\s+assignment|scope\s+of\s+work/.test(sample) || isDwellingBlocksAssignment(pages)) {
     return "engagement_letter";
   }
   if (/appraisal\s+district\s+evidence|arb\s+evidence|district\s+comparable\s+sales?/.test(sample)) {
@@ -964,7 +1030,7 @@ export function findZoningDescriptionInPages(pages, zoningCode) {
 
 export function buildDocumentFieldCandidates({ documentType, pages, subjectEvidence = buildUrarSubjectEvidence({ documentType, pages }) }) {
   if (subjectEvidence.unresolved.some(item => item.reason === "source_input_incomplete")) return [];
-  if (subjectEvidence.source_layout === "matrix_listing_history") return [...subjectEvidence.candidates];
+  if (["matrix_listing_history", "dwelling_blocks_assignment"].includes(subjectEvidence.source_layout)) return [...subjectEvidence.candidates];
   if (subjectEvidence.unresolved.some(item => ["multiple_mls_listing_identities", "ambiguous_mls_listing_identity"].includes(item.reason))) return [];
   const entries = pageLines(pages);
   const mls = documentType === "mls_sheet" ? buildMlsSheetCandidates(entries) : null;
@@ -1163,8 +1229,11 @@ export async function extractPdfEvidence(buffer, {
   if (!Buffer.isBuffer(buffer) || buffer.subarray(0, 5).toString("ascii") !== "%PDF-") {
     throw new Error("document_not_pdf");
   }
+  if (buffer.length > 25 * 1024 * 1024) throw new Error("document_too_large");
   const bytes = new Uint8Array(buffer);
-  const pdf = await getDocumentProxy(bytes);
+  const pdf = await getDocumentProxy(bytes, {
+    isEvalSupported: false, enableScripting: false, maxImageSize: 16_000_000,
+  });
   try {
     if (pdf.numPages > MAX_PDF_PAGES) throw new Error("document_page_limit_exceeded");
     const extracted = await extractText(pdf, { mergePages: false });
@@ -1173,11 +1242,23 @@ export async function extractPdfEvidence(buffer, {
     let textLength = pages.reduce((sum, text) => sum + text.length, 0);
     let extractionMethod = textLength >= 40 ? "pdf_text" : "none";
     let ocrMetadata = null;
-    if (textLength < 40 && ocrProvider?.configured) {
-      const ocrResult = await ocrProvider.analyzePdf(buffer);
-      pages = (Array.isArray(ocrResult?.pages) ? ocrResult.pages : [])
-        .slice(0, MAX_PDF_PAGES)
-        .map((text) => cleanText(text, 500_000));
+    // A searchable cover sheet must not hide image-only pages later in a PDF.
+    // Preserve reliable native text and cite OCR against original page numbers.
+    const pagesNeedingOcr = pages.flatMap((text, index) => text.length < 40 ? [index + 1] : []);
+    const scannedPages = new Set();
+    if (pagesNeedingOcr.length && ocrProvider?.configured) {
+      const ocrResult = await ocrProvider.analyzePdf(buffer, {
+        pageNumbers: pagesNeedingOcr,
+        pageCount: pdf.numPages,
+      });
+      const ocrPages = Array.isArray(ocrResult?.pages) ? ocrResult.pages : [];
+      pages = pages.map((text, index) => {
+        if (!pagesNeedingOcr.includes(index + 1)) return text;
+        const scanned = cleanText(ocrPages[index], 500_000);
+        if (scanned.length < 40) return text;
+        scannedPages.add(index + 1);
+        return scanned;
+      });
       textLength = pages.reduce((sum, text) => sum + text.length, 0);
       extractionMethod = textLength >= 40
         ? cleanText(ocrResult?.extraction_method, 100) || "configured_ocr"
@@ -1187,19 +1268,25 @@ export async function extractPdfEvidence(buffer, {
         model_id: ocrResult?.model_id || null,
         api_version: ocrResult?.api_version || null,
         operation_id: ocrResult?.operation_id || null,
+        scanned_page_numbers: pagesNeedingOcr,
+        text_recovered_page_numbers: [...scannedPages],
+        unresolved_page_numbers: pagesNeedingOcr.filter(pageNumber => !scannedPages.has(pageNumber)),
+        confidence_by_page: ocrResult?.confidence_by_page || null,
+        preprocessing_by_page: ocrResult?.preprocessing_by_page || null,
       };
     }
+    if (textLength > MAX_EXTRACTED_TEXT_LENGTH) throw new Error("document_text_limit_exceeded");
     const documentType = classifyDocument({ requestedType, fileName, pages });
     const subjectEvidence = buildUrarSubjectEvidence({ documentType, pages });
-    const candidates = buildDocumentFieldCandidates({ documentType, pages, subjectEvidence })
-      .map((candidate) => (ocrMetadata ? {
-        ...candidate,
-        extraction_method: `${extractionMethod}:${candidate.extraction_method}`,
-      } : candidate));
+    // Keep parser-rule provenance stable: downstream safety gates identify exact
+    // specialized rules. OCR provenance belongs to the document/page metadata.
+    const candidates = textLength >= 40
+      ? buildDocumentFieldCandidates({ documentType, pages, subjectEvidence }) : [];
     return {
       document_type: documentType,
       page_count: extracted.totalPages,
-      extraction_status: textLength >= 40 ? "review_required" : "ocr_required",
+      extraction_status: textLength >= 40 && (!pagesNeedingOcr.length || ocrMetadata)
+        ? "review_required" : "ocr_required",
       extraction_method: extractionMethod,
       text_length: textLength,
       pages,
@@ -1208,12 +1295,16 @@ export async function extractPdfEvidence(buffer, {
       urar_subject_evidence: { schema_version: subjectEvidence.schema_version,
         source_kind: subjectEvidence.source_kind, conflicts: subjectEvidence.conflicts,
         unresolved: subjectEvidence.unresolved },
-      review_reason: textLength >= 40
+      review_reason: pagesNeedingOcr.length && !ocrMetadata
+        ? "Some pages contain no reliable searchable text. Image scanning and appraiser review are required."
+        : ocrMetadata?.unresolved_page_numbers.length && textLength >= 40
+          ? `Image scanning could not recover reliable text on pages ${ocrMetadata.unresolved_page_numbers.join(", ")}. All suggestions and unreadable pages require appraiser review.`
+        : textLength >= 40
         ? `${ocrMetadata ? "OCR-extracted" : "Machine-extracted"} values are suggestions and require appraiser confirmation.`
         : "No reliable text was found after available extraction. Visual review is required.",
     };
   } finally {
     await pdf.cleanup?.();
-    await pdf.destroy?.();
+    await pdf.loadingTask?.destroy?.();
   }
 }

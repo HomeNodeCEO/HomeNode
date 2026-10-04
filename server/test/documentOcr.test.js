@@ -6,8 +6,10 @@ import {
   documentOcrInternals,
 } from "../src/services/documentOcr.js";
 
-test("OCR remains disabled until an explicit provider, HTTPS endpoint, and key exist", () => {
-  assert.equal(createDocumentOcrProvider({}).configured, false);
+test("OCR defaults to local scanning and respects explicit disabled or Azure configuration", () => {
+  assert.equal(createDocumentOcrProvider({}).provider, "local");
+  assert.equal(createDocumentOcrProvider({}).configured, true);
+  assert.equal(createDocumentOcrProvider({ DOCUMENT_OCR_PROVIDER: "disabled" }).configured, false);
   assert.equal(createDocumentOcrProvider({ DOCUMENT_OCR_PROVIDER: "azure" }).configured, false);
   assert.throws(
     () => createDocumentOcrProvider({
@@ -102,6 +104,15 @@ test("OCR paragraph fallback indexes regions once and preserves multi-page order
   });
   assert.deepEqual(pages, ["Shared", "Shared\nSecond", ""]);
   assert.equal(regionReads, 1);
+});
+
+test("sparse Azure OCR results retain original page numbers and bound hostile page identifiers", () => {
+  const pages = documentOcrInternals.pageTextFromResult({ analyzeResult: { pages: [
+    { pageNumber: 3, lines: [{ content: "Third-page evidence" }] },
+    { pageNumber: 999999999, lines: [{ content: "Invalid" }] },
+    { pageNumber: -1, lines: [{ content: "Invalid" }] },
+  ] } }, 4);
+  assert.deepEqual(pages, ["", "", "Third-page evidence", ""]);
 });
 
 test("OCR rejects same-origin polling URLs outside the Azure result path", async () => {

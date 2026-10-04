@@ -645,8 +645,9 @@ test("fee-simple default is opt-in and has a traceable user-default assumption i
   });
   assert.equal(result.assumptions.length, 1);
   assert.equal(result.assumptions[0].fieldId, result.fields[0].fieldId);
-  assert.match(result.assumptions[0].reason, /not a fact extracted/);
-  assert.ok(result.warnings.includes(result.assumptions[0].reason));
+  assert.match(result.assumptions[0].reason, /user-requested default unless changed.*not document evidence/);
+  assert.equal(result.warnings.includes(result.assumptions[0].reason), false);
+  assert.doesNotMatch(result.warnings.join(' '), /Confirm the appraised property rights/);
 });
 
 test("reviewed property rights override or suppress the user default, including conflicts and unknown values", () => {

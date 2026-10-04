@@ -83,10 +83,13 @@ function harness({ props: initialProps = {}, api: overrides = {}, presentation =
     getUadDocumentContent: async () => pdf(),
     uploadAssignmentDocument: async () => document(20),
     uploadUadDocument: async () => document(20),
+    associateContractSubject: async document => document,
   };
   const api = Object.fromEntries(Object.entries({ ...defaults, ...overrides }).map(([name, fn]) => [name,
     (...args) => { calls.push({ name, args }); return fn(...args); },
   ]));
+  const associationHelpers = loadTrustedRepositoryCommonJs(new URL('../src/lib/contractSubjectAssociation.ts', import.meta.url),
+    name => { assert.equal(name, './api'); return api; });
   const imports = {
     react,
     'react/jsx-runtime': { jsx: (type, props, key) => ({ type, props, key }),
@@ -96,6 +99,7 @@ function harness({ props: initialProps = {}, api: overrides = {}, presentation =
     './documents/AssignmentDocumentUploadQueue': { default: 'AssignmentDocumentUploadQueue', __esModule: true },
     '@/lib/api': api,
     '@/lib/propertyReportDocumentApplication': documentApplications,
+    '@/lib/contractSubjectAssociation': { ...associationHelpers, associateContractSubject: api.associateContractSubject },
     '@/features/uad/api': api,
     '@/lib/propertyReportPresentation': {
       assignmentDocumentConfirmationBlocked: () => false,
@@ -978,6 +982,69 @@ const manualUadActions = [
   { name: 'contract synchronization', button: 'Sync Approved Contract to UAD 3.6', api: 'synchronizeUadPurchaseContract' },
   { name: 'confirmed-field application', button: 'Apply Confirmed Fields', api: 'applyUadDocumentCandidate' },
 ];
+function associationDocument(id = 7, patch = {}) {
+  return document(id, { document_type: 'purchase_contract', checksum_sha256: 'a'.repeat(64),
+    candidates: [
+      { ...candidate(id * 100 + 1, 'Main: Dallas; Addendum: Garland — printed addresses differ'),
+        field_key: 'contract_printed_subject_addresses', confirmed_value: 'Main: Dallas; Addendum: Garland — printed addresses differ', review_status: 'confirmed' },
+      { ...candidate(id * 100 + 2, '2026-03-20'), field_key: 'contract_date', confirmed_value: '2026-03-20', review_status: 'confirmed' },
+    ], ...patch });
+}
+
+test('contract subject association is explicit, shows printed discrepancies, and approves no suggestions', async t => {
+  const source = associationDocument(), returned = associationDocument(7, {
+    extraction_summary: { contract_subject_association: { acknowledged: true, reviewer: 'Authenticated Appraiser' } },
+  });
+  const h = harness({ props: { subjectAddress: '100 Canonical Dr, Garland TX 75041' }, documents: [source], api: {
+    getAssignmentDocument: async () => source, associateContractSubject: async () => returned,
+  } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  assert.match(h.text, /Main: Dallas; Addendum: Garland/);
+  assert.match(h.text, /100 Canonical Dr, Garland TX 75041/);
+  assert.equal(h.requests('associateContractSubject').length, 0);
+  h.click('Use contract for this subject'); await h.settle();
+  assert.deepEqual(h.requests('associateContractSubject')[0].args, [source, ACCOUNT, 14, EDITOR_KEY]);
+  assert.equal(h.requests('confirmAllAssignmentDocumentCandidates').length, 0);
+  assert.equal(h.requests('reviewAssignmentDocumentCandidate').length, 0);
+  assert.match(h.text, /Contract association recorded/);
+  assert.match(h.text, /Association recorded by\s+Authenticated Appraiser/);
+});
+
+test('contract association is unavailable for unreviewed date/address candidates and all UAD files', async t => {
+  for (const patch of [{ candidates: associationDocument().candidates.map(item => ({ ...item, review_status: 'suggested' })) },
+    { checksum_sha256: '' }, { processing_status: 'processing' }]) {
+    const source = associationDocument(7, patch);
+    const h = harness({ documents: [source], api: { getAssignmentDocument: async () => source } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+    const button = nodes(h.tree, node => node.type === 'button' && text(node) === 'Use contract for this subject')[0];
+    assert.equal(button?.props.disabled, true);
+    assert.equal(h.requests('associateContractSubject').length, 0);
+  }
+  const source = associationDocument();
+  const h = harness({ props: { uadWorkfileId: 'uad-77' }, documents: [source], api: { getUadDocument: async () => source } });
+  t.after(h.cleanup); await h.settle(); h.select(7); await h.settle();
+  assert.doesNotMatch(h.text, /Use contract for this subject/);
+});
+
+for (const transition of ['navigation', 'scope', 'read-only', 'unmount']) {
+  test(`contract association ignores stale completion after ${transition}`, async t => {
+    const pending = deferred();
+    const h = harness({ documents: [associationDocument(), associationDocument(8)], api: {
+      getAssignmentDocument: async id => associationDocument(id), associateContractSubject: () => pending.promise,
+    } });
+    t.after(h.cleanup); await h.settle(); h.select(7); await h.settle(); h.click('Use contract for this subject');
+    if (transition === 'unmount') h.cleanup();
+    else if (transition === 'read-only') { h.render({ readOnly: true }); h.flush(); }
+    else if (transition === 'scope') { h.render({ assignmentFileId: 15 }); await h.settle(); }
+    else { h.select(8); await h.settle(); }
+    const calls = h.calls.length;
+    pending.resolve(associationDocument()); await h.settle();
+    assert.equal(h.calls.length, calls);
+    assert.deepEqual(h.lateStateWrites, []);
+    if (transition !== 'unmount') assert.doesNotMatch(h.text, /Contract association recorded\./);
+  });
+}
+
 function manualUadDocument(action, id) {
   if (id !== 7) return document(id, { candidates: [candidate(id * 100 + 1, `Document ${id}`)] });
   return document(id, {

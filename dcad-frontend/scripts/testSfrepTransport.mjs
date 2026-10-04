@@ -9,7 +9,7 @@ import { sfrepDocumentPropertyRole, sfrepSubjectContext } from '../../server/src
 // Use the real pure server field producers, without requiring backend-only
 // PDF dependencies in a frontend-only install. The server integration suite
 // separately exercises the full previewSfrepDocuments public response.
-function serverPreview({ saved = true, hoa = 'true', county = false, lenderPreset = false, fallbackIdentity = false } = {}) {
+function serverPreview({ saved = true, hoa = 'true', county = false, lenderPreset = false, fallbackIdentity = false, partyRoles = false } = {}) {
   const subject = { accountId: 'SYNTHETIC-SFREP', address: '100 Example Dr', city: 'Garland', postalCode: '75041',
     effectiveDate: '2026-08-31', censusGeography: { tractCode: '018206', status: 'matched', geoid: '48113018206',
       vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
@@ -25,6 +25,10 @@ function serverPreview({ saved = true, hoa = 'true', county = false, lenderPrese
     ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', contract_date: '2026-08-25' }],
     ['mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041', mls_number: '77700001', listing_price_history: history }],
   ];
+  if (partyRoles) data.splice(0, data.length,
+    ['engagement_letter', { subject_property_address: '100 Example Dr, Garland, TX 75041', borrower_name: 'ALEX SAMPLE AND TAYLOR EXAMPLE' }],
+    ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', buyer_name: 'CONTRACT BUYER', seller_name: 'CONTRACT SELLER' }],
+    ['public_record', { subject_property_address: '100 Example Dr, Garland, TX 75041', record_owner_name: 'RECORD OWNER LLC' }]);
   if (lenderPreset) data[0][1].lender_client_name = 'United Wholesale Mortgage';
   const documents = data.map(([document_type, values], index) => ({ id: index + 1, account_id: subject.accountId,
     assignment_file_id: 4, document_type, processing_status: 'reviewed', upload_date: '2026-10-02',
@@ -550,6 +554,69 @@ test('listing derivation is bound to a valid calendar window and its selected da
   leap.effectiveDateContext = { effectiveDate: '2024-02-29', source: 'assignment_effective_date', sourceDocumentId: null,
     windowStart: '2023-02-28', windowEnd: '2024-02-29', calendarMonths: 12, isPlaceholder: false };
   assert.equal(checkSfrepPreview(leap, [21]).effectiveDateContext.windowStart, '2023-02-28');
+});
+
+test('Subject checklist keeps independently reviewed parties included despite unsupported contract-role omissions', () => {
+  for (const saved of [false, true]) {
+    const value = checkSfrepPreview(serverPreview({ saved, partyRoles: true }), [1, 2, 3]);
+    const unchanged = structuredClone(value);
+    for (const [key, fieldId, sourceId, unrelatedRole, caution] of [
+      ['borrower', 'BorrowerName', 1, 'buyer_name', /A buyer is not automatically/],
+      ['owner', 'OwnerName', 3, 'seller_name', /A seller is not automatically/],
+    ]) {
+      const mapped = value.fields.find(field => field.fieldId === fieldId);
+      assert.equal(mapped.provenance.kind, saved ? 'saved_report' : 'reviewed_document');
+      assert.equal(saved ? mapped.provenance.sourceDocumentId : mapped.documentId, sourceId);
+      assert.ok(value.omitted.some(entry => entry.sourceField === unrelatedRole && /Outside the current Subject/.test(entry.reason)));
+      const row = sfrepSubjectChecklist(value).find(item => item.key === key);
+      assert.equal(row.status, 'included', `${saved ? 'saved' : 'direct'} ${key}`);
+      assert.equal(row.statusLabel, 'Included — reviewed');
+      assert.deepEqual(row.values, [mapped.value]);
+      assert.doesNotMatch(row.notes.join(' '), caution);
+      assert.doesNotMatch(row.notes.join(' '), /Outside the current Subject/);
+    }
+    assert.deepEqual(value, unchanged, 'checklist must not remove the separately displayed omission evidence');
+  }
+});
+
+test('party checklist still exposes correct-role omissions, conflicts, missing evidence and unsupported-role-only gaps', () => {
+  for (const saved of [false, true]) {
+    const original = checkSfrepPreview(serverPreview({ saved, partyRoles: true }), [1, 2, 3]);
+    for (const [key, fieldId, sources, caution] of [
+      ['borrower', 'BorrowerName', ['borrower_name'], /A buyer is not automatically/],
+      ['owner', 'OwnerName', ['owner_name', 'record_owner_name'], /A seller is not automatically/],
+    ]) {
+      for (const sourceField of sources) {
+        const omitted = structuredClone(original);
+        omitted.omitted.push({ sourceField, documentId: 3, candidateId: null, reason: 'Correct-role evidence needs review.' });
+        const omittedRow = sfrepSubjectChecklist(checkSfrepPreview(omitted, [1, 2, 3])).find(item => item.key === key);
+        assert.equal(omittedRow.status, 'review');
+        assert.match(omittedRow.notes.join(' '), /Correct-role evidence needs review/);
+        const conflicting = structuredClone(original);
+        conflicting.conflicts.push({ sourceField, documentIds: [1, 3], values: ['First reviewed party', 'Second reviewed party'] });
+        const conflictRow = sfrepSubjectChecklist(checkSfrepPreview(conflicting, [1, 2, 3])).find(item => item.key === key);
+        assert.match(conflictRow.statusLabel, /Review conflict/);
+        assert.match(conflictRow.notes.join(' '), /Resolve the conflicting source evidence/);
+      }
+      const knownMissing = structuredClone(original);
+      knownMissing.knownMissing.push({ fieldId, reason: 'Correct-role evidence is incomplete.' });
+      const knownMissingRow = sfrepSubjectChecklist(checkSfrepPreview(knownMissing, [1, 2, 3])).find(item => item.key === key);
+      assert.equal(knownMissingRow.status, 'review');
+      assert.match(knownMissingRow.notes.join(' '), /Correct-role evidence is incomplete/);
+      const unsupportedOnly = structuredClone(original);
+      unsupportedOnly.fields = unsupportedOnly.fields.filter(field => field.fieldId !== fieldId);
+      const unsupportedRow = sfrepSubjectChecklist(checkSfrepPreview(unsupportedOnly, [1, 2, 3])).find(item => item.key === key);
+      assert.equal(unsupportedRow.status, 'review');
+      assert.deepEqual(unsupportedRow.values, []);
+      assert.match(unsupportedRow.notes.join(' '), caution);
+      assert.match(unsupportedRow.notes.join(' '), /Outside the current Subject/);
+      unsupportedOnly.omitted = [];
+      const missingRow = sfrepSubjectChecklist(checkSfrepPreview(unsupportedOnly, [1, 2, 3])).find(item => item.key === key);
+      assert.equal(missingRow.status, 'missing');
+      assert.deepEqual(missingRow.values, []);
+      assert.match(missingRow.notes.join(' '), caution);
+    }
+  }
 });
 
 test('Subject checklist distinguishes coverage, defaults, missing narrative, and unsafe inferences', () => {

@@ -424,15 +424,15 @@ export function sfrepProvenanceText(field: SfrepField): string {
 }
 
 interface SubjectItem {
-  key: string; label: string; fieldIds: string[]; sourceFields: string[]; note?: string;
+  key: string; label: string; fieldIds: string[]; sourceFields: string[]; unmappedPartyFields?: string[]; note?: string;
 }
 const SUBJECT_ITEMS: SubjectItem[] = [
   { key: 'street', label: 'Street address', fieldIds: ['StreetAddress'], sourceFields: ['subject_street_address', 'subject_property_address'] },
   { key: 'city', label: 'City', fieldIds: ['City'], sourceFields: ['subject_city', 'subject_property_address'] },
   { key: 'state', label: 'State', fieldIds: ['State'], sourceFields: ['subject_state', 'subject_property_address'] },
   { key: 'zip', label: 'ZIP code', fieldIds: ['ZipCode'], sourceFields: ['subject_zip', 'subject_zip_code', 'subject_property_address'] },
-  { key: 'borrower', label: 'Borrower', fieldIds: ['BorrowerName'], sourceFields: ['borrower_name', 'buyer_name'], note: 'A buyer is not automatically the borrower.' },
-  { key: 'owner', label: 'Public-record owner', fieldIds: ['OwnerName'], sourceFields: ['owner_name', 'seller_name'], note: 'A seller is not automatically the public-record owner.' },
+  { key: 'borrower', label: 'Borrower', fieldIds: ['BorrowerName'], sourceFields: ['borrower_name'], unmappedPartyFields: ['buyer_name'], note: 'A buyer is not automatically the borrower.' },
+  { key: 'owner', label: 'Public-record owner', fieldIds: ['OwnerName'], sourceFields: ['owner_name', 'record_owner_name'], unmappedPartyFields: ['seller_name'], note: 'A seller is not automatically the public-record owner.' },
   { key: 'county', label: 'County', fieldIds: ['County'], sourceFields: ['county'] },
   { key: 'apn', label: 'Assessor parcel number (APN)', fieldIds: ['AssessorsParcelNumber'], sourceFields: ['assessor_parcel_number', 'assessors_parcel_number'] },
   { key: 'tax-year', label: 'Tax year', fieldIds: ['RealEstateTaxYear'], sourceFields: ['tax_year', 'real_estate_tax_year'] },
@@ -467,8 +467,13 @@ function formattingNeedsReview(field: SfrepField): boolean {
 export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectChecklistItem[] {
   return SUBJECT_ITEMS.map(item => {
     const fields = preview.fields.filter(field => item.fieldIds.includes(field.fieldId));
-    const conflict = preview.conflicts.some(entry => item.sourceFields.includes(entry.sourceField));
-    const omissions = preview.omitted.filter(entry => item.sourceFields.includes(entry.sourceField));
+    const unmappedPartyFields = item.unmappedPartyFields || [];
+    const hasMappedParty = unmappedPartyFields.length > 0 && fields.some(field => item.sourceFields.includes(field.sourceField));
+    const conflict = preview.conflicts.some(entry => item.sourceFields.includes(entry.sourceField) || unmappedPartyFields.includes(entry.sourceField));
+    // Excluding buyer/seller evidence is not a gap in an independently mapped
+    // borrower/owner. Keep the raw omissions and all real role conflicts intact.
+    const omissions = preview.omitted.filter(entry => item.sourceFields.includes(entry.sourceField)
+      || (!hasMappedParty && unmappedPartyFields.includes(entry.sourceField)));
     const knownMissing = preview.knownMissing.filter(entry => item.fieldIds.includes(entry.fieldId));
     const assumptions = preview.assumptions.filter(entry => item.fieldIds.includes(entry.fieldId));
     const requestedDefault = fields.some(field => [feeSimpleRule, lenderAddressRule].includes(field.provenance.rule || ''));
@@ -484,7 +489,7 @@ export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectCheckl
           : fields.length ? 'Included — reviewed' : 'Missing — not exported';
     return { key: item.key, label: item.label, status, statusLabel,
       values: fields.map(field => field.type === 'CheckBoxField' ? CHECKBOX_LABELS[field.fieldId] || field.value : field.value),
-      notes: [...new Set([...(item.note ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
+      notes: [...new Set([...(item.note && !hasMappedParty ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
         ...assumptions.filter(entry => entry.rule !== feeSimpleRule).map(entry => entry.reason), ...fields.filter(field => field.formattingRule
           || [feeSimpleRule, lenderAddressRule, countyRule].includes(field.provenance.rule || '')
           || field.provenance.origin === 'account_reference' || field.provenance.origin === 'derived_reviewed_document'

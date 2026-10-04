@@ -5,7 +5,7 @@ import { createRequire } from 'node:module';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
-import { verifyInstalledPackage, verifyMobileToolchain } from '../scripts/verify-toolchain.mjs';
+import { resolveConsumer, verifyInstalledPackage, verifyMobileToolchain } from '../scripts/verify-toolchain.mjs';
 
 function fixture(t) {
   const root = mkdtempSync(path.join(os.tmpdir(), 'homenode-toolchain-'));
@@ -25,6 +25,12 @@ test('installed toolchain inspection reports all four real Expo/Metro dependency
   assert.equal(new Set(evidence.packages.map((entry) => entry.consumer)).size, 4);
   assert.equal(evidence.packages.filter((entry) => entry.name === 'braces').length, 2);
   assert.equal(evidence.packages.filter((entry) => entry.name === 'node-forge').length, 2);
+  assert.deepEqual(evidence.packages.map((entry) => entry.consumer), [
+    'expo > @expo/cli',
+    'expo > @expo/cli > @expo/code-signing-certificates',
+    'expo > @expo/cli > @expo/metro-file-map > micromatch',
+    'expo > @expo/cli > @expo/metro > metro > metro-file-map > micromatch',
+  ]);
   assert.equal(evidence.releaseApproved, false);
   assert.match(evidence.lockfileSha256, /^[a-f0-9]{64}$/);
 });
@@ -59,4 +65,25 @@ test('a nested unpatched copy cannot be hidden by a valid top-level dependency',
   writeFileSync(path.join(shadowRoot, 'index.js'), 'module.exports = "unpatched nested copy";\n');
   const consumer = createRequire(path.join(consumerRoot, 'package.json'));
   assert.throws(() => verifyInstalledPackage(consumer, 'fixture-dependency', integrity, root), /integrity mismatch/);
+});
+
+test('consumer chains follow the actual intermediate owner instead of a hoisted lookalike', (t) => {
+  const { root, integrity, consumer } = fixture(t);
+  // A top-level file-map lookalike would resolve the valid top-level dependency.
+  const hoistedMap = path.join(root, 'node_modules', 'fixture-file-map');
+  mkdirSync(hoistedMap, { recursive: true });
+  writeFileSync(path.join(hoistedMap, 'package.json'), JSON.stringify({ name: 'fixture-file-map' }));
+  assert.doesNotThrow(() => verifyInstalledPackage(resolveConsumer(consumer, ['fixture-file-map']),
+    'fixture-dependency', integrity, root));
+
+  const owner = path.join(root, 'node_modules', 'fixture-metro');
+  const realMap = path.join(owner, 'node_modules', 'fixture-file-map');
+  const nestedPackage = path.join(realMap, 'node_modules', 'fixture-dependency');
+  mkdirSync(nestedPackage, { recursive: true });
+  writeFileSync(path.join(owner, 'package.json'), JSON.stringify({ name: 'fixture-metro' }));
+  writeFileSync(path.join(realMap, 'package.json'), JSON.stringify({ name: 'fixture-file-map' }));
+  writeFileSync(path.join(nestedPackage, 'package.json'), JSON.stringify({ name: 'fixture-dependency', version: '1.0.0' }));
+  writeFileSync(path.join(nestedPackage, 'index.js'), 'module.exports = "unpatched actual owner copy";\n');
+  const actualConsumer = resolveConsumer(consumer, ['fixture-metro', 'fixture-file-map']);
+  assert.throws(() => verifyInstalledPackage(actualConsumer, 'fixture-dependency', integrity, root), /integrity mismatch/);
 });

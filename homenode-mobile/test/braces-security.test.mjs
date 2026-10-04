@@ -6,6 +6,8 @@ import test from 'node:test';
 const require = createRequire(import.meta.url);
 const expoRequire = createRequire(require.resolve('expo/package.json'));
 const cliRequire = createRequire(expoRequire.resolve('@expo/cli/package.json'));
+const expoMetroRequire = createRequire(cliRequire.resolve('@expo/metro/package.json'));
+const metroRequire = createRequire(expoMetroRequire.resolve('metro/package.json'));
 const depthError = { name: 'SyntaxError', message: 'Nesting depth exceeds maximum of 100' };
 const treeError = { name: 'SyntaxError', message: 'AST nodes must form a tree' };
 const valueError = { name: 'TypeError', message: 'AST node values must be primitive' };
@@ -100,7 +102,8 @@ function probe(bracesPath) {
 }
 
 for (const fileMap of ['@expo/metro-file-map', 'metro-file-map']) {
-  const fileMapRequire = createRequire(cliRequire.resolve(`${fileMap}/package.json`));
+  const owner = fileMap === 'metro-file-map' ? metroRequire : cliRequire;
+  const fileMapRequire = createRequire(owner.resolve(`${fileMap}/package.json`));
   const micromatchRequire = createRequire(fileMapRequire.resolve('micromatch/package.json'));
   const bracesPath = micromatchRequire.resolve('braces');
   const braces = micromatchRequire('braces');

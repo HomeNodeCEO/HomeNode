@@ -8,6 +8,11 @@ const mobileRoot = fileURLToPath(new URL('../', import.meta.url));
 const expected = JSON.parse(readFileSync(new URL('./toolchain-integrity.json', import.meta.url), 'utf8'));
 const sha256 = (content) => createHash('sha256').update(content).digest('hex');
 
+export function resolveConsumer(project, packages) {
+  return packages.reduce((consumer, name) =>
+    createRequire(consumer.resolve(`${name}/package.json`)), project);
+}
+
 // Resolve from each real consumer, not an unrelated top-level or stale store copy.
 // This verifies the reviewed patched files, not every file in these packages.
 export function verifyInstalledPackage(consumer, name, integrity, root = mobileRoot) {
@@ -40,10 +45,9 @@ export function verifyMobileToolchain() {
   const consumers = [
     ['expo > @expo/cli', cli, 'node-forge'],
     ['expo > @expo/cli > @expo/code-signing-certificates', signing, 'node-forge'],
-    ...['@expo/metro-file-map', 'metro-file-map'].map((name) => {
-      const fileMap = createRequire(cli.resolve(`${name}/package.json`));
-      return [`expo > @expo/cli > ${name} > micromatch`,
-        createRequire(fileMap.resolve('micromatch/package.json')), 'braces'];
+    ...[['@expo/metro-file-map'], ['@expo/metro', 'metro', 'metro-file-map']].map((chain) => {
+      return [`expo > @expo/cli > ${chain.join(' > ')} > micromatch`,
+        resolveConsumer(cli, [...chain, 'micromatch']), 'braces'];
     }),
   ];
   return {

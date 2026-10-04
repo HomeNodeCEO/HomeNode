@@ -180,6 +180,7 @@ function AddressHero({
   const [lastAssignmentSavedAt, setLastAssignmentSavedAt] = useState<string | null>(null);
   const [assignmentConflictKeys, setAssignmentConflictKeys, assignmentConflictKeysRef] = useAssignmentConflictKeys();
   const [assignmentChooserOpen, setAssignmentChooserOpen] = useState(false);
+  const [sfrepExportRequestId, setSfrepExportRequestId] = useState(0);
   const assignmentDraftRef = useRef<AssignmentDetails>(assignmentDraft);
   const assignmentRenderedDraftRef = useRef(assignmentDraft);
   const assignmentSavedDraftRef = useRef<AssignmentDetails>(assignmentDraftFromDetail());
@@ -1713,6 +1714,15 @@ function AddressHero({
           >
             {savingAssignmentFile ? "Saving Everything…" : "Save Everything"}
           </button>
+          <button
+            type="button"
+            className="hn-action-gold btn btn-sm normal-case rounded-lg shadow-sm"
+            onClick={() => setSfrepExportRequestId((requestId) => requestId + 1)}
+            disabled={!activeAssignmentFile?.id}
+            title={activeAssignmentFile?.id ? "Choose a report form and prepare its SFREP import file" : "Choose or start an assignment file first"}
+          >
+            Export to SFREP
+          </button>
           <Workfile accountId={accountId || ""} assignmentFile={activeAssignmentFile} getEditorKey={editorKeyForSave} onAssignmentApplied={applyConfirmedDocumentApplication} subjectAddress={documentReviewSubjectAddress} />
           <button
             type="button"
@@ -2262,6 +2272,7 @@ function AddressHero({
             <AssignmentDocumentCenter
               accountId={accountId || ""}
               assignmentFileId={activeAssignmentFile?.id || null}
+              exportRequestId={sfrepExportRequestId}
               subjectAddress={documentReviewSubjectAddress}
               getEditorKey={editorKeyForSave}
               onCustomAssignmentApplied={applyConfirmedDocumentApplication}

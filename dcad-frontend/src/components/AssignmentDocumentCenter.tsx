@@ -147,6 +147,7 @@ function processingDetail(document: AssignmentDocument) {
 interface AssignmentDocumentCenterProps {
   accountId: string;
   assignmentFileId?: number | null;
+  exportRequestId?: number;
   uadWorkfileId?: string | null;
   subjectAddress?: string;
   getEditorKey?: () => string;
@@ -166,6 +167,7 @@ interface AssignmentDocumentCenterProps {
 export default function AssignmentDocumentCenter({
   accountId,
   assignmentFileId = null,
+  exportRequestId = 0,
   uadWorkfileId = null,
   subjectAddress = '',
   getEditorKey = EMPTY_EDITOR_KEY,
@@ -183,6 +185,7 @@ export default function AssignmentDocumentCenter({
   const defaultReviewer = session?.display_name?.trim() || session?.email?.trim() || '';
   const [open, setOpen] = useState(defaultOpen);
   const [sfrepOpen, setSfrepOpen] = useState(false);
+  const handledExportRequestRef = useRef(0);
   const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
   const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
   const selectedDocumentRef = useRef(selectedDocument);
@@ -520,6 +523,13 @@ export default function AssignmentDocumentCenter({
   useEffect(() => {
     if (isUad || embedded || open) void loadDocuments();
   }, [embedded, isUad, open, loadDocuments]);
+
+  useEffect(() => {
+    if (isUad || !assignmentFileId || !exportRequestId || handledExportRequestRef.current === exportRequestId) return;
+    handledExportRequestRef.current = exportRequestId;
+    void loadDocuments();
+    setSfrepOpen(true);
+  }, [assignmentFileId, exportRequestId, isUad, loadDocuments]);
 
   useEffect(() => {
     if (!selectedDocument || !['uploaded', 'processing'].includes(selectedDocument.processing_status)) return;
@@ -1389,7 +1399,7 @@ export default function AssignmentDocumentCenter({
         </div>
       ) : null}
       {sfrepOpen && !isUad && assignmentFileId ? <SfrepExportDialog key={scopeKey}
-        accountId={accountId} assignmentFileId={assignmentFileId} documents={documents} getEditorKey={getEditorKey}
+        accountId={accountId} assignmentFileId={assignmentFileId} documents={documents} documentsLoading={documentLoading} getEditorKey={getEditorKey}
         onClose={() => setSfrepOpen(false)} /> : null}
     </section>
   );

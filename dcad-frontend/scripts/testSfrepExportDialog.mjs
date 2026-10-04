@@ -68,11 +68,24 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   assert.equal(h.opens, 1); assert.equal(h.calls.length, 0);
   assert.equal(h.checkbox('Contract').props.checked, false); assert.equal(h.checkbox('Include original').props.checked, true);
   assert.equal(h.button('Preview SFREP export').props.disabled, true); assert.equal(h.button('Download SFREP .rpti'), undefined);
+  assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior Only — coming next/);
+  assert.match(h.text, /1004 URAR export currently maps the Subject section/);
+  const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
+  assert.equal(formChoices.length, 2);
+  assert.equal(formChoices[0].props.checked, true);
+  assert.equal(formChoices[1].props.disabled, true);
   assert.match(h.text, /does not support UAD 3.6/); assert.match(h.text, /Other Appraisal Document/);
   assert.match(h.tree.props.className, /border-amber-300/);
   let prevented = false; h.tree.props.onCancel({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true); assert.equal(h.closeRequests, 1);
   h.close(); assert.equal(h.closes, 1); assert.equal(h.restores, 1);
+});
+
+test('report export waits for the active file document list', () => {
+  const h = harness(); h.props.documentsLoading = true; h.render();
+  assert.match(h.text, /Loading this file’s documents/);
+  assert.equal(h.button('Preview SFREP export').props.disabled, true);
+  h.close();
 });
 
 test('preview shows fields and exclusions; only explicit download sends the reviewed digest', async () => {

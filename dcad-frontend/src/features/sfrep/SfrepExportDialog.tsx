@@ -7,12 +7,15 @@ interface Props {
   accountId: string;
   assignmentFileId: number;
   documents: AssignmentDocument[];
+  documentsLoading?: boolean;
+  documentLoadError?: string;
+  onRetryDocuments?: () => void;
   getEditorKey: () => string;
   onClose: () => void;
 }
 const secondary = 'hn-action-secondary btn btn-sm rounded-lg normal-case';
 
-export default function SfrepExportDialog({ accountId, assignmentFileId, documents, getEditorKey, onClose }: Props) {
+export default function SfrepExportDialog({ accountId, assignmentFileId, documents, documentsLoading = false, documentLoadError = '', onRetryDocuments, getEditorKey, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
@@ -90,7 +93,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const subjectChecklist = preview ? sfrepSubjectChecklist(preview) : [];
   const reviewAssumptions = preview?.assumptions.filter(assumption => assumption.rule !== 'user_requested_fee_simple_default') || [];
 
-  return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export documents to SFREP"
+  return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export report to SFREP"
     className="m-auto max-h-[90vh] w-[min(1000px,95vw)] overflow-y-auto rounded-xl border border-amber-300 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 print:hidden">
     <header className="flex items-start justify-between gap-3 border-b border-amber-200 bg-gradient-to-r from-violet-100 to-amber-50 px-5 py-4">
       <div><h3 className="text-lg font-semibold text-violet-950">Export to SFREP</h3>
@@ -98,7 +101,12 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
       <button type="button" autoFocus className={secondary} onClick={onClose}>Close</button>
     </header>
     <div className="space-y-4 p-5 text-sm" aria-busy={Boolean(busy)}>
-      <p>Save and review the HomeNode Subject and Assignment fields, then preview the export. Selected documents supply supporting PDF addenda. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <p>Choose a report form, then preview the saved HomeNode data and supporting documents. The 1004 URAR export currently maps the Subject section; other report sections will be added as their mappings are completed. Unsaved edits are not exported. This export does not support UAD 3.6.</p>
+      <fieldset className="space-y-2 rounded-lg border border-violet-200 bg-violet-50/50 p-3">
+        <legend className="px-1 font-semibold text-violet-950">Report form</legend>
+        <label className="flex items-center gap-2"><input type="radio" name="sfrep-report-form" checked readOnly />1004 URAR — Subject section available</label>
+        <label className="flex items-center gap-2 text-slate-500"><input type="radio" name="sfrep-report-form" disabled />2055 Exterior Only — coming next</label>
+      </fieldset>
       <fieldset disabled={Boolean(busy)} className="space-y-2">
         <legend className="mb-2 font-semibold text-violet-950">1. Select documents ({selectedIds.length}/10)</legend>
         <div className="max-h-56 space-y-2 overflow-y-auto rounded-lg border border-violet-200 p-3">
@@ -109,14 +117,19 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
             <span className="min-w-0"><span className="block break-words font-medium">{doc.title || doc.file_name}</span>
               <span className="text-xs text-slate-600">{doc.document_type.replace(/_/g, ' ')} · {doc.processing_status.replace(/_/g, ' ')}</span></span>
           </label>)}
-          {!documents.length && <p>No source documents are available. Upload a PDF in the Document Evidence Center first.</p>}
+          {documentsLoading ? <p role="status">Loading this file’s documents…</p> : documentLoadError ? (
+            <div role="alert" className="space-y-2 text-rose-900">
+              <p>Documents could not be loaded: {documentLoadError}</p>
+              {onRetryDocuments && <button type="button" className={secondary} onClick={onRetryDocuments}>Retry loading documents</button>}
+            </div>
+          ) : !documents.length && <p>No source documents are available. Upload a PDF in the Document Evidence Center first.</p>}
         </div>
         <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDocuments}
           onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDocuments(event.target.checked); } }} />
           <span>Include original PDFs as report addenda</span></label>
         <p className="text-xs text-slate-600">Included PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
       </fieldset>
-      <button type="button" className={secondary} disabled={Boolean(busy) || !selectedIds.length} onClick={() => void run('preview')}>
+      <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || Boolean(documentLoadError) || !selectedIds.length} onClick={() => void run('preview')}>
         {busy === 'preview' ? 'Preparing preview…' : 'Preview SFREP export'}
       </button>
       {error && <p role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-rose-900">{error}</p>}

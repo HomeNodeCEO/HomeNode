@@ -41,6 +41,13 @@ test("the Custom Appraisal header no longer asks for a manually entered file num
   assert.match(report, /Choose or Start Another File/);
 });
 
+test("the Custom Appraisal toolbar opens form selection for its active file", () => {
+  const toolbar = report.slice(report.indexOf('className="hn-custom-report-toolbar'), report.indexOf('className="hn-custom-report-toolbar') + 3000);
+  assert.match(toolbar, /Export to SFREP/);
+  assert.match(toolbar, /disabled=\{!activeAssignmentFile\?\.id\}/);
+  assert.match(report, /exportRequestId=\{sfrepExportRequestId\}/);
+});
+
 test("the Custom Appraisal uses the same protected autosave pattern as UAD", () => {
   assert.match(report, /CUSTOM_APPRAISAL_AUTOSAVE_IDLE_MS/);
   assert.match(report, /CUSTOM_APPRAISAL_AUTOSAVE_MAX_WAIT_MS/);

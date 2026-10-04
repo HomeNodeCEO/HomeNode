@@ -191,6 +191,55 @@ test('upload queue and SFREP export coexist with exact assignment, evidence, and
   assert.equal(h.sfrep, null); assert.equal(h.queue.key, queueKey);
 });
 
+test('top-of-report export opens the same scoped dialog while document center is collapsed', async t => {
+  const evidence = [document(7)];
+  const h = harness({ props: { embedded: false }, documents: evidence });
+  t.after(h.cleanup);
+  assert.equal(h.sfrep, null);
+  h.render({ exportRequestId: 1 }); h.flush(); await h.settle();
+  assert.equal(h.sfrep.props.assignmentFileId, 14);
+  assert.deepEqual(h.sfrep.props.documents, evidence);
+  assert.ok(h.requests('getAssignmentDocuments').length >= 1);
+  h.sfrep.props.onClose(); h.flush();
+  h.render({ assignmentFileId: 15 }); h.flush(); await h.settle();
+  assert.equal(h.sfrep, null, 'switching files cannot replay a previous toolbar request');
+  h.render({ exportRequestId: 2 }); h.flush(); await h.settle();
+  assert.equal(h.sfrep.props.assignmentFileId, 15);
+});
+
+test('top-of-report export shows document load failure and recovers through retry', async t => {
+  let attempts = 0;
+  const evidence = [document(9)];
+  const h = harness({ props: { embedded: false }, api: {
+    getAssignmentDocuments: async () => {
+      if (++attempts === 1) throw new Error('Temporary document service failure');
+      return evidence;
+    },
+  } });
+  t.after(h.cleanup);
+  h.render({ exportRequestId: 1 }); h.flush(); await h.settle();
+  assert.match(h.sfrep.props.documentLoadError, /Temporary document service failure/);
+  assert.deepEqual(h.sfrep.props.documents, []);
+  h.sfrep.props.onRetryDocuments(); h.flush(); await h.settle();
+  assert.equal(h.sfrep.props.documentLoadError, '');
+  assert.deepEqual(h.sfrep.props.documents, evidence);
+});
+
+test('a slower document response cannot overwrite a newer list for the same file', async t => {
+  const first = deferred();
+  const current = [document(10)];
+  let attempts = 0;
+  const h = harness({ props: { embedded: false }, api: {
+    getAssignmentDocuments: () => ++attempts === 1 ? first.promise : Promise.resolve(current),
+  } });
+  t.after(h.cleanup);
+  h.render({ exportRequestId: 1 }); h.flush();
+  h.sfrep.props.onRetryDocuments(); h.flush(); await h.settle();
+  assert.deepEqual(h.sfrep.props.documents, current);
+  first.resolve([document(11)]); await h.settle();
+  assert.deepEqual(h.sfrep.props.documents, current);
+});
+
 for (const applied of [true, false]) {
   test(`Custom approve-all reports ${applied ? 'saved supported fields' : 'evidence-only approval'} and surfaces partial-application warnings`, async t => {
     const applications = [];

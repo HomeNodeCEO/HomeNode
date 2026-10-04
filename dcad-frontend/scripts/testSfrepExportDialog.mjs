@@ -88,6 +88,18 @@ test('report export waits for the active file document list', () => {
   h.close();
 });
 
+test('document load failure is actionable and is not presented as an empty workfile', () => {
+  const h = harness(); let retries = 0;
+  h.props.documents = []; h.props.documentLoadError = 'Temporary document service failure';
+  h.props.onRetryDocuments = () => { retries++; };
+  h.render();
+  assert.match(h.text, /Documents could not be loaded: Temporary document service failure/);
+  assert.doesNotMatch(h.text, /No source documents are available/);
+  assert.equal(h.button('Preview SFREP export').props.disabled, true);
+  h.click('Retry loading documents'); assert.equal(retries, 1);
+  h.close();
+});
+
 test('preview shows fields and exclusions; only explicit download sends the reviewed digest', async () => {
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], 'preview');

@@ -187,6 +187,7 @@ export default function AssignmentDocumentCenter({
   const [sfrepOpen, setSfrepOpen] = useState(false);
   const handledExportRequestRef = useRef(0);
   const [documents, setDocuments] = useState<EvidenceDocument[]>([]);
+  const [documentListError, setDocumentListError] = useState('');
   const [selectedDocument, setSelectedDocument] = useState<EvidenceDocument | null>(null);
   const selectedDocumentRef = useRef(selectedDocument);
   selectedDocumentRef.current = selectedDocument;
@@ -225,6 +226,7 @@ export default function AssignmentDocumentCenter({
   const mountedRef = useRef(true);
   const lastUploadedRef = useRef<{ scope: string; id: number } | null>(null);
   const loadDocumentRequestRef = useRef(0);
+  const documentListRequestRef = useRef(0);
   const reviewOperationIsCurrent = useCallback((operation: DocumentReviewOperation) => (
     mountedRef.current && pendingReviewRef.current === operation
     && currentScopeKeyRef.current === operation.scope
@@ -378,6 +380,7 @@ export default function AssignmentDocumentCenter({
       pendingReviewRef.current = null;
       selectionEpochRef.current += 1;
       loadDocumentRequestRef.current += 1;
+      documentListRequestRef.current += 1;
     };
   }, []);
 
@@ -389,9 +392,11 @@ export default function AssignmentDocumentCenter({
 
   useEffect(() => {
     loadDocumentRequestRef.current += 1;
+    documentListRequestRef.current += 1;
     invalidateReviewSelection();
     setSfrepOpen(false);
     setDocuments([]);
+    setDocumentListError('');
     setSelectedDocument(null);
     selectedDocumentScopeRef.current = null;
     candidateEditVersionsRef.current.clear();
@@ -405,14 +410,17 @@ export default function AssignmentDocumentCenter({
   const loadDocuments = useCallback(async (reviewOperation?: DocumentReviewOperation) => {
     if (!accountId) return;
     const requestedScopeKey = scopeKey;
+    const requestId = ++documentListRequestRef.current;
     const requestIsCurrent = () => mountedRef.current && currentScopeKeyRef.current === requestedScopeKey
+      && documentListRequestRef.current === requestId
       && (!reviewOperation || (reviewOperationIsCurrent(reviewOperation) && !readOnlyRef.current));
     if (!requestIsCurrent()) return;
     setLoading(true);
     setMessage('');
+    setDocumentListError('');
     try {
       const editorKey = getEditorKey();
-      if (!isUad && !editorKey) return;
+      if (!isUad && !editorKey) throw new Error('Sign in before loading assignment documents.');
       const loaded: EvidenceDocument[] = isUad && uadWorkfileId
         ? await listUadDocuments(uadWorkfileId)
         : await getAssignmentDocuments(accountId, editorKey, assignmentFileId);
@@ -435,7 +443,9 @@ export default function AssignmentDocumentCenter({
       }
     } catch (error) {
       if (!requestIsCurrent()) return;
-      setMessage(error instanceof Error ? error.message : 'Documents could not be loaded.');
+      const loadError = error instanceof Error ? error.message : 'Documents could not be loaded.';
+      setDocumentListError(loadError);
+      setMessage(loadError);
     } finally {
       if (requestIsCurrent()) setLoading(false);
     }
@@ -1399,7 +1409,8 @@ export default function AssignmentDocumentCenter({
         </div>
       ) : null}
       {sfrepOpen && !isUad && assignmentFileId ? <SfrepExportDialog key={scopeKey}
-        accountId={accountId} assignmentFileId={assignmentFileId} documents={documents} documentsLoading={documentLoading} getEditorKey={getEditorKey}
+        accountId={accountId} assignmentFileId={assignmentFileId} documents={documents} documentsLoading={documentLoading}
+        documentLoadError={documentListError} onRetryDocuments={() => void loadDocuments()} getEditorKey={getEditorKey}
         onClose={() => setSfrepOpen(false)} /> : null}
     </section>
   );

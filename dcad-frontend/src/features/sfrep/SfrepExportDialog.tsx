@@ -8,12 +8,14 @@ interface Props {
   assignmentFileId: number;
   documents: AssignmentDocument[];
   documentsLoading?: boolean;
+  documentLoadError?: string;
+  onRetryDocuments?: () => void;
   getEditorKey: () => string;
   onClose: () => void;
 }
 const secondary = 'hn-action-secondary btn btn-sm rounded-lg normal-case';
 
-export default function SfrepExportDialog({ accountId, assignmentFileId, documents, documentsLoading = false, getEditorKey, onClose }: Props) {
+export default function SfrepExportDialog({ accountId, assignmentFileId, documents, documentsLoading = false, documentLoadError = '', onRetryDocuments, getEditorKey, onClose }: Props) {
   const dialogRef = useRef<HTMLDialogElement>(null);
   const requestRef = useRef<AbortController | null>(null);
   const downloadUrlRef = useRef<string | null>(null);
@@ -115,14 +117,19 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
             <span className="min-w-0"><span className="block break-words font-medium">{doc.title || doc.file_name}</span>
               <span className="text-xs text-slate-600">{doc.document_type.replace(/_/g, ' ')} · {doc.processing_status.replace(/_/g, ' ')}</span></span>
           </label>)}
-          {documentsLoading ? <p role="status">Loading this file’s documents…</p> : !documents.length && <p>No source documents are available. Upload a PDF in the Document Evidence Center first.</p>}
+          {documentsLoading ? <p role="status">Loading this file’s documents…</p> : documentLoadError ? (
+            <div role="alert" className="space-y-2 text-rose-900">
+              <p>Documents could not be loaded: {documentLoadError}</p>
+              {onRetryDocuments && <button type="button" className={secondary} onClick={onRetryDocuments}>Retry loading documents</button>}
+            </div>
+          ) : !documents.length && <p>No source documents are available. Upload a PDF in the Document Evidence Center first.</p>}
         </div>
         <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDocuments}
           onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDocuments(event.target.checked); } }} />
           <span>Include original PDFs as report addenda</span></label>
         <p className="text-xs text-slate-600">Included PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
       </fieldset>
-      <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || !selectedIds.length} onClick={() => void run('preview')}>
+      <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || Boolean(documentLoadError) || !selectedIds.length} onClick={() => void run('preview')}>
         {busy === 'preview' ? 'Preparing preview…' : 'Preview SFREP export'}
       </button>
       {error && <p role="alert" className="rounded-lg border border-rose-300 bg-rose-50 p-3 text-rose-900">{error}</p>}

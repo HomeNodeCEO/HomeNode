@@ -294,7 +294,12 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
         && (field.provenance.rule === hoaRule || (!saved && field.provenance.kind === 'reviewed_document'
           && field.provenance.rule === undefined && ['pud', 'is_pud', 'property_type'].includes(field.sourceField))))
       && ![...preview.conflicts, ...preview.omitted].some(entry => ['pud', 'is_pud', 'property_type'].includes(entry.sourceField)))
-    || preview.assumptions.some(item => item.rule === hoaRule && item.value === 'false') && preview.fields.some(field => field.fieldId === pudField)
+    || (preview.assumptions.some(item => item.rule === hoaRule && item.value === 'false')
+      && (preview.fields.some(field => field.fieldId === pudField)
+        // Direct false candidates remain as omissions/conflicts. Saved false
+        // projection suppresses them before those lists are built; its retained
+        // advisory prompts review, not a negative PUD assertion or checkbox.
+        || (!saved && ![...preview.omitted, ...preview.conflicts].some(entry => entry.sourceField === 'pud'))))
     || preview.fields.some(({ provenance }) => (provenance.kind === 'derived_reviewed_document' || provenance.origin === 'derived_reviewed_document')
       && (provenance.effectiveDate !== date.effectiveDate || provenance.effectiveDateSource !== date.source
         || provenance.effectiveDateSourceDocumentId !== date.sourceDocumentId

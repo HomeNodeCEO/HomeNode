@@ -172,3 +172,39 @@ test('disagreeing explicit and proxy PUD evidence remains conflict-only in both 
     assert.throws(() => checkSfrepPreview(preview, [1, 2]), /invalid/);
   }
 });
+
+test('direct false HOA assumptions require PUD omission or conflict while saved suppression remains advisory only', () => {
+  for (const observations of [
+    [['HOA: None']], [['HOA: No']], [['HOA: Voluntary']], [['HOA: None', 'HOA: None']],
+    [['PUD: No'], ['HOA: None']], [['HOA: None'], ['PUD: No']],
+    [['PUD: Yes'], ['HOA: None']], [['HOA: None'], ['PUD: Yes']],
+  ]) {
+    const direct = mixedPudPreview(observations);
+    const ids = direct.documents.map(document => document.id);
+    assert.ok(direct.assumptions.some(item => item.rule === 'user_requested_hoa_workflow_proxy_v1' && item.value === 'false'));
+    assert.ok(direct.omitted.some(item => item.sourceField === 'pud'));
+    assert.equal(direct.fields.some(field => field.fieldId === 'PropertyTypePUDCheckBox'), false);
+    assert.equal(checkSfrepPreview(direct, ids), direct);
+    const altered = structuredClone(direct);
+    altered.omitted = altered.omitted.filter(item => item.sourceField !== 'pud');
+    altered.conflicts = altered.conflicts.filter(item => item.sourceField !== 'pud');
+    assert.throws(() => checkSfrepPreview(altered, ids), /provenance is invalid/);
+    altered.omitted.push({ sourceField: 'hoa_dues_amount', documentId: ids[0], candidateId: null, reason: 'Unrelated amount omission' });
+    assert.throws(() => checkSfrepPreview(altered, ids), /provenance is invalid/);
+    if (direct.conflicts.some(item => item.sourceField === 'pud')) {
+      altered.conflicts = direct.conflicts;
+      assert.equal(checkSfrepPreview(altered, ids), altered);
+    }
+  }
+  for (const hoaText of ['HOA: None', 'HOA: No', 'HOA: Voluntary']) {
+    const saved = actualPreview({ hoaText });
+    assert.ok(saved.assumptions.some(item => item.rule === 'user_requested_hoa_workflow_proxy_v1' && item.value === 'false'));
+    assert.equal(saved.omitted.some(item => item.sourceField === 'pud'), false);
+    assert.equal(saved.conflicts.some(item => item.sourceField === 'pud'), false);
+    assert.equal(checkSfrepPreview(saved, [1, 2, 3]), saved);
+    const row = sfrepSubjectChecklist(saved).find(item => item.key === 'pud');
+    assert.deepEqual(row.values, []);
+    assert.equal(row.statusLabel, 'User default — confirm');
+    assert.match(row.notes.join(' '), /An omitted checkbox is not No/);
+  }
+});

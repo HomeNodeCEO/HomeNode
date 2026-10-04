@@ -140,11 +140,12 @@ function writeStage(sql) {
 
 function transactionPool({
   failureStage = null, rollbackFails = false, lockedIds = [44], noCandidates = false, connectError = null,
+  rollbackThrows = false, beforeRollback = () => undefined, releaseError,
 } = {}) {
   const reads = auditPool();
   const primaryError = new Error("private reconciliation operation detail");
   const rollbackError = new Error("private rollback connection detail");
-  const statements = [], releases = [];
+  const statements = [], releases = [], events = [];
   let connections = 0, injectedFailures = 0;
   const pool = {
     async query(sql, params) {
@@ -154,25 +155,36 @@ function transactionPool({
     },
     async connect() {
       connections += 1;
+      events.push("connect");
       if (connectError) throw connectError;
       return {
-        async query(sql, params) {
+        query(sql, params) {
           const stage = writeStage(sql);
           statements.push({ stage, sql, params });
-          if (stage === "ROLLBACK" && rollbackFails) throw rollbackError;
+          events.push(stage);
+          if (stage === "ROLLBACK") {
+            if (rollbackThrows) throw rollbackError;
+            return Promise.resolve(beforeRollback()).then(() => {
+              if (rollbackFails) throw rollbackError;
+              return { rows: [] };
+            });
+          }
           if (stage === failureStage) {
             injectedFailures += 1;
-            throw primaryError;
+            return Promise.reject(primaryError);
           }
-          if (stage === "source lock") return { rows: lockedIds.map(id => ({ id })) };
-          return { rows: [], rowCount: stage === "source update" ? lockedIds.length : 0 };
+          if (stage === "source lock") return Promise.resolve({ rows: lockedIds.map(id => ({ id })) });
+          return Promise.resolve({ rows: [], rowCount: stage === "source update" ? lockedIds.length : 0 });
         },
-        release(error) { releases.push(error); },
+        release(error) {
+          releases.push(error); events.push("release");
+          if (releaseError !== undefined) throw releaseError;
+        },
       };
     },
   };
   return {
-    pool, primaryError, rollbackError, statements, releases,
+    pool, primaryError, rollbackError, statements, releases, events,
     get connections() { return connections; },
     get injectedFailures() { return injectedFailures; },
   };
@@ -270,3 +282,77 @@ test("sales batch checkout failure preserves its cause without transaction clean
   assert.deepEqual(fixture.releases, []);
 });
 
+function assertSalesCleanupRelease(fixture, discarded) {
+  assert.equal(fixture.connections, 1);
+  assert.equal(fixture.releases.length, 1);
+  const [error] = fixture.releases;
+  if (!discarded) return assert.equal(error, undefined);
+  assert.ok(error instanceof Error);
+  assert.equal(error.message, "sales_auto_reconciliation_rollback_failed");
+  assert.equal(Object.hasOwn(error, "cause"), false);
+  assert.deepEqual(Object.keys(error), []);
+  assert.equal(error.stack.includes("private"), false);
+  assert.notEqual(error, fixture.primaryError);
+  assert.notEqual(error, fixture.rollbackError);
+}
+
+for (const failureStage of TRANSACTION_STAGES) {
+  test(`sales auto-reconciliation ${failureStage} failure survives a synchronous rollback throw`, async () => {
+    const fixture = transactionPool({ failureStage, rollbackThrows: true });
+    await assert.rejects(runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 }), error => error === fixture.primaryError);
+    assert.equal(fixture.injectedFailures, 1);
+    assert.deepEqual(fixture.events, [
+      "connect", ...TRANSACTION_STAGES.slice(0, TRANSACTION_STAGES.indexOf(failureStage) + 1), "ROLLBACK", "release",
+    ]);
+    assertSalesCleanupRelease(fixture, true);
+  });
+}
+
+for (const outcome of [
+  { name: "COMMIT" },
+  { name: "primary failure and successful rollback", failureStage: "history insert" },
+  { name: "primary failure and failed rollback", failureStage: "history insert", rollbackFails: true },
+]) {
+  for (const [kind, releaseError] of [
+    ["Error", new Error("release failed")],
+    ["Symbol", Symbol("release failed")],
+    ["object", Object.freeze({ release: "failed" })],
+  ]) {
+    test(`sales auto-reconciliation release-thrown ${kind} retains precedence after ${outcome.name}`, async () => {
+      const fixture = transactionPool({ ...outcome, releaseError });
+      await assert.rejects(runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 }), error => error === releaseError);
+      assert.equal(fixture.injectedFailures, outcome.failureStage ? 1 : 0);
+      assert.deepEqual(fixture.events, [
+        "connect", ...TRANSACTION_STAGES.slice(0, -1), outcome.failureStage ? "ROLLBACK" : "COMMIT", "release",
+      ]);
+      assertSalesCleanupRelease(fixture, Boolean(outcome.rollbackFails));
+    });
+  }
+}
+
+for (const rollbackFails of [false, true]) {
+  test(`sales auto-reconciliation awaits rollback ${rollbackFails ? "failure" : "success"} before releasing or rejecting`, async () => {
+    let finishRollback;
+    const gate = new Promise(resolve => { finishRollback = resolve; });
+    const fixture = transactionPool({ failureStage: "history insert", rollbackFails, beforeRollback: () => gate });
+    let settled = false;
+    const pending = runSalesAutoReconciliationBatch(fixture.pool, { batchSize: 25 }).then(
+      value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; },
+    );
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(fixture.events, ["connect", ...TRANSACTION_STAGES.slice(0, -1), "ROLLBACK"]);
+      assert.deepEqual(fixture.releases, []);
+      assert.equal(fixture.connections, 1);
+      assert.equal(settled, false);
+      finishRollback();
+      assert.equal((await pending).error, fixture.primaryError);
+      assert.deepEqual(fixture.events, ["connect", ...TRANSACTION_STAGES.slice(0, -1), "ROLLBACK", "release"]);
+      assertSalesCleanupRelease(fixture, rollbackFails);
+    } finally {
+      finishRollback();
+      await pending;
+    }
+  });
+}

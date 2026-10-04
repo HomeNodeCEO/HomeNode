@@ -1,3 +1,4 @@
+import { rollbackWithDiscardReason } from "../database/transactionCleanup.js";
 import {
   normalizePropertyAddress,
   normalizePropertyCity,
@@ -537,11 +538,7 @@ export async function runSalesAutoReconciliationBatch(pool, {
       resolved,
     };
   } catch (error) {
-    try {
-      await client.query("ROLLBACK");
-    } catch {
-      rollbackFailure = new Error("sales_auto_reconciliation_rollback_failed");
-    }
+    rollbackFailure = await rollbackWithDiscardReason(client, "sales_auto_reconciliation_rollback_failed");
     throw error;
   } finally {
     client.release(rollbackFailure || undefined);

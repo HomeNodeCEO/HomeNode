@@ -337,9 +337,18 @@ test('preview and export use scoped authenticated POSTs with exact selections an
   assert.match(h.calls[1].url, /\/sfrep\/export$/); assert.equal(h.calls.length, 2);
 });
 
+test('fields-only preview accepts workfile evidence without selecting its source PDFs', async () => {
+  const value = serverPreview(); value.documents = [];
+  const choice = { accountId: 'SYNTHETIC-SFREP', assignmentFileId: 4, documentIds: [], includeDocuments: false };
+  const h = harness(async () => json(value));
+  const result = await h.api.preview(choice, h.io);
+  assert.equal(result.fields.some(field => field.fieldId === 'StreetAddress'), true);
+  assert.deepEqual(JSON.parse(h.calls[0].init.body).document_ids, []);
+});
+
 test('invalid selection, absent digest and already-aborted calls do not issue a request', async () => {
   const h = harness();
-  for (const documentIds of [[], [21, 21], [NaN], Array.from({ length: 11 }, (_, i) => i + 1)]) {
+  for (const documentIds of [[21, 21], [NaN], Array.from({ length: 11 }, (_, i) => i + 1)]) {
     await assert.rejects(h.api.preview({ ...selection, documentIds }, h.io));
   }
   await assert.rejects(h.api.export(selection, '', h.io));

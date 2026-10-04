@@ -2,6 +2,7 @@ import { parseStructuredAddress } from "../util/structuredAddress.js";
 import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation.js";
 import { formatSubjectPresentationValue } from "../util/subjectPresentation.js";
 import { sfrepDocumentParcelMismatch } from './sfrepSubjectContext.js';
+import { projectSfrepContractSection } from './sfrepContractSection.js';
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -22,6 +23,8 @@ import { sfrepDocumentParcelMismatch } from './sfrepSubjectContext.js';
 export const SFREP_PRIMARY_FORM_ID = "FNMA-1004-0911";
 export const SFREP_SUPPORTED_FORM_IDS = Object.freeze([SFREP_PRIMARY_FORM_ID]);
 export const SFREP_MAX_DOCUMENTS = 50;
+const CONTRACT_SECTION_TERMS = new Set(['contract_date', 'contract_price', 'earnest_money',
+  'down_payment', 'loan_amount', 'seller_concessions']);
 
 const SPEC_URL = "https://api.sfrep.com/rpti/aixml_spec.html";
 const INVALID_XML = /[^\u0009\u000A\u000D\u0020-\uD7FF\uE000-\uFFFD\u{10000}-\u{10FFFF}]/u;
@@ -443,7 +446,7 @@ function validatePdfAddenda(addenda, documents) {
 export function buildSfrepReportExport({
   documents = [], selectedDocumentIds, fieldSelections = {}, pdfAddenda = [],
   formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext, forReportPersistence = false,
-  savedReportFields, subjectOnly = false,
+  savedReportFields, subjectOnly = false, contractSection = false, savedAssignmentDetails, contractEvidenceDocuments,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
@@ -517,6 +520,9 @@ export function buildSfrepReportExport({
       if (candidate?.review_status !== "confirmed") continue;
       const sourceField = typeof candidate.field_key === "string" ? candidate.field_key : "";
       if (savedReportFields !== undefined && subjectSources.has(sourceField)) continue;
+      // These confirmed terms are projected together with a single contract
+      // receipt below; they are not unsupported Subject-section fields.
+      if (contractSection && document.document_type === 'purchase_contract' && CONTRACT_SECTION_TERMS.has(sourceField)) continue;
       const entry = { sourceField, documentId, candidateId: positiveId(candidate.id) };
       // The production integration is currently the Subject-section phase.
       // Contract evidence may support its listing narrative, but raw contract
@@ -707,6 +713,15 @@ export function buildSfrepReportExport({
       // the persisted appraisal record.
       fields.push(forReportPersistence ? formatPresentationField(field) : formatSelectedField(field, supplementalWarnings));
     }
+  }
+  if (contractSection) {
+    // Contract analysis belongs to the reviewed workfile, not the optional
+    // list of PDFs the appraiser elects to attach to the RPTI package.
+    const contract = projectSfrepContractSection(contractEvidenceDocuments || [...selected.values()],
+      { assignmentDetails: savedAssignmentDetails });
+    fields.push(...contract.fields);
+    supplementalWarnings.push(...contract.warnings);
+    knownMissing.push(...contract.knownMissing);
   }
   fields.sort((a, b) => compare(a.fieldId, b.fieldId));
   conflicts.sort((a, b) => compare(a.sourceField, b.sourceField));

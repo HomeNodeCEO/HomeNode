@@ -53,7 +53,9 @@ function harness(api = {}) {
   };
   const button = label => walk(tree).find(node => node.type === 'button' && text(node) === label);
   const link = label => walk(tree).find(node => node.type === 'a' && text(node) === label);
-  const checkbox = label => walk(tree).filter(node => node.type === 'label').find(node => text(node).includes(label))?.props.children.flat(Infinity).find(node => node?.type === 'input');
+  const checkbox = label => walk(tree).filter(node => node.type === 'label').find(node => text(node).includes(label)
+    && node?.props.children.flat(Infinity).some(child => child?.type === 'input' && child.props.type === 'checkbox'))
+    ?.props.children.flat(Infinity).find(node => node?.type === 'input' && node.props.type === 'checkbox');
   return { props, calls, revoked, anchors, timers, render, get tree() { return tree; }, get text() { return text(tree); }, get urlCount() { return urlCount; },
     get opens() { return opens; }, get closes() { return closes; }, get restores() { return restores; }, get clicks() { return clicks; }, get closeRequests() { return closeRequests; },
     button, link, checkbox,
@@ -67,9 +69,9 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   const h = harness(); h.render(); h.render();
   assert.equal(h.opens, 1); assert.equal(h.calls.length, 0);
   assert.equal(h.checkbox('Contract').props.checked, false); assert.equal(h.checkbox('Include original').props.checked, true);
-  assert.equal(h.button('Preview SFREP export').props.disabled, true); assert.equal(h.button('Download SFREP .rpti'), undefined);
+  assert.equal(h.button('Preview SFREP export').props.disabled, false); assert.equal(h.button('Download SFREP .rpti'), undefined);
   assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior Only — coming next/);
-  assert.match(h.text, /1004 URAR export currently maps the Subject section/);
+  assert.match(h.text, /1004 URAR export maps the Subject and Contract sections/);
   const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
   assert.equal(formChoices.length, 2);
   assert.equal(formChoices[0].props.checked, true);
@@ -79,6 +81,13 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   let prevented = false; h.tree.props.onCancel({ preventDefault() { prevented = true; } });
   assert.equal(prevented, true); assert.equal(h.closeRequests, 1);
   h.close(); assert.equal(h.closes, 1); assert.equal(h.restores, 1);
+});
+
+test('preview can run without attaching any source PDFs', async () => {
+  const h = harness(); h.render(); h.click('Preview SFREP export'); await h.drain();
+  assert.deepEqual(h.calls[0][1].documentIds, []);
+  assert.match(h.text, /Supported, reviewed evidence from this HomeNode workfile fills the form/);
+  h.close();
 });
 
 test('report export waits for the active file document list', () => {

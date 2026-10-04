@@ -132,6 +132,25 @@ test("TREC resale sections produce the complete Hardy contract analysis", () => 
   assert.equal(candidates.find((candidate) => candidate.field_key === "closing_date")?.page_number, 6);
 });
 
+test('a later buyer or seller signature in the original execution block controls the contract date', () => {
+  const candidates = buildDocumentFieldCandidates({ documentType: 'purchase_contract', pages: [
+    'ONE TO FOUR FAMILY RESIDENTIAL CONTRACT (RESALE)\nSeller Date: 03/14/2026\nBuyer Date Signed: 03/15/2026\nEXECUTED the day of 03/14/2026 (Effective Date).',
+    'THIRD PARTY FINANCING ADDENDUM\nBuyer Date: 03/20/2026',
+  ] });
+  const date = candidates.find(candidate => candidate.field_key === 'contract_date');
+  assert.equal(date?.normalized_value, '2026-03-15');
+  assert.equal(date?.extraction_method, 'trec_later_original_signature_date');
+  assert.equal(date?.page_number, 1);
+});
+
+test('earlier and addendum signature dates do not override the explicit effective date', () => {
+  const candidates = buildDocumentFieldCandidates({ documentType: 'purchase_contract', pages: [
+    'Seller Date: 03/13/2026\nBuyer Date: 03/14/2026\nEXECUTED the day of 03/15/2026 (Effective Date).',
+    'NON-REALTY ITEMS ADDENDUM\nBuyer Date: 03/21/2026',
+  ] });
+  assert.equal(candidates.find(candidate => candidate.field_key === 'contract_date')?.normalized_value, '2026-03-15');
+});
+
 test("a checked TREC seller-repair option extracts the specific repair narrative", () => {
   const candidates = buildDocumentFieldCandidates({
     documentType: "purchase_contract",

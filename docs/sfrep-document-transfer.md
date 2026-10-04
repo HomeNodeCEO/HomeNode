@@ -28,6 +28,25 @@ alone is not evidence. Unrecognized layouts remain available as PDF addenda.
 The preview includes a 17-item Subject checklist, sources, missing fields, and
 conflicts. Extraction is not confirmation: review the suggested values first.
 
+The legacy 1004 Contract profile uses one subject-matched, fully reviewed
+purchase contract. It maps the verified `AnalyzedContractYesCheckBox`, `ContractDate`,
+`SalePriceAmount`, `AnalyzedContractDescription`, and affirmative borrower-assistance
+Yes/No checkboxes from the installed `FNMA-1004-0911` dictionary. The concise
+analysis follows the requested fixed wording and uses six individually confirmed
+contract terms: date, price, earnest money, cash portion, financing and seller
+concessions. Missing or conflicting terms never become guessed dollar amounts.
+Cash plus financing must equal price before the narrative is emitted. The saved
+HomeNode terms may not disagree with the reviewed PDF. All supported fields come
+from the saved HomeNode workfile even if the source PDF is not chosen as an
+optional SFREP attachment; the appraiser controls PDF attachments separately.
+An uploaded but
+unreviewed contract cannot claim the appraiser analyzed it. Arms-length status is
+read from the saved appraiser selection; if absent the narrative says that the
+sale type requires review rather than claiming an unsupported arm's-length sale.
+Signature dates only supersede a printed effective date when a later buyer or
+seller signature is found in the original contract's execution block, never a
+later addendum. The appraiser still reviews the date and the native form after import.
+
 Recognized print layouts also include DCAD Residential Account pages whose logo
 is image-only, CoreLogic Property Details reports with assessment/tax tables, and
 single-listing Matrix headers. DCAD owner names stop before mailing information;
@@ -89,10 +108,11 @@ amount mappings are not changed by these Subject-specific formatting rules.
 The exporter emits no blank field values: empty, unknown, and unconfirmed values
 are omitted. Preservation of existing fields during native import into a populated
 report has not yet been verified. Conflicting confirmed values targeting the same
-SFREP field are omitted and displayed for source selection. A seller is not
+SFREP field are omitted and displayed for correction in HomeNode. A seller is not
 automatically treated as the public-record owner;
-a buyer is not automatically treated as the borrower. UAD composite listing and
-contract narrative fields are not populated with incomplete scalar encodings.
+a buyer is not automatically treated as the borrower. UAD composite listing fields
+are not populated with incomplete scalar encodings, and the Contract narrative is
+omitted until its complete reviewed term set is available.
 Assignment-type checkboxes export affirmative values only; review existing
 alternative selections in SFREP after importing into a populated report.
 Explicit reviewed engagement purposes HELOC, RTL, bridge loan, new construction,

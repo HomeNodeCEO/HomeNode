@@ -169,7 +169,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         </section>
         <section aria-label="1004 Contract export checklist" className="space-y-2">
           <h5 className="font-semibold text-violet-950">1004 Contract export checklist</h5>
-          <p className="text-xs text-slate-600">Select one purchase-contract PDF and confirm its extracted terms in the Document Evidence Center. Uploading alone does not certify that the appraiser analyzed the contract. Missing terms are left blank for review.</p>
+          <p className="text-xs text-slate-600">Keep one subject purchase contract in this workfile and confirm its extracted terms in the Document Evidence Center. Attaching its PDF is optional. Uploading alone does not certify that the appraiser analyzed the contract. Missing terms are left blank for review.</p>
           <div className="overflow-x-auto"><table className="w-full text-left text-xs">
             <caption className="sr-only">Contract-section export coverage and items requiring review</caption>
             <thead><tr className="border-b border-violet-200"><th scope="col" className="p-2">Contract item</th><th scope="col" className="p-2">Export status / value</th><th scope="col" className="p-2">Review notes</th></tr></thead>

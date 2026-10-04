@@ -72,6 +72,7 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   assert.equal(h.button('Preview SFREP export').props.disabled, false); assert.equal(h.button('Download SFREP .rpti'), undefined);
   assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior Only — coming next/);
   assert.match(h.text, /1004 URAR export maps the Subject and Contract sections/);
+  assert.match(h.text, /Attaching its PDF is optional/);
   const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
   assert.equal(formChoices.length, 2);
   assert.equal(formChoices[0].props.checked, true);

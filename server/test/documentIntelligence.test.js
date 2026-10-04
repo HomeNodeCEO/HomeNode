@@ -143,6 +143,25 @@ test('a later buyer or seller signature in the original execution block controls
   assert.equal(date?.page_number, 1);
 });
 
+test('an adjacent original-contract signature continuation supersedes the printed effective date, but not an addendum', () => {
+  const candidates = buildDocumentFieldCandidates({ documentType: 'purchase_contract', pages: [
+    'ONE TO FOUR FAMILY RESIDENTIAL CONTRACT (RESALE)\nEXECUTED the day of 03/14/2026 (Effective Date).',
+    'ONE TO FOUR FAMILY RESIDENTIAL CONTRACT (RESALE) - signature continuation\nBuyer Date: 03/15/2026\nSeller Date: 03/16/2026',
+    'THIRD PARTY FINANCING ADDENDUM\nBuyer Date: 03/25/2026',
+  ] });
+  const date = candidates.find(candidate => candidate.field_key === 'contract_date');
+  assert.equal(date?.normalized_value, '2026-03-16');
+  assert.equal(date?.page_number, 2);
+  assert.equal(date?.extraction_method, 'trec_later_original_signature_date');
+});
+
+test('a later original signature after the effective-date marker remains within the same execution page', () => {
+  const candidates = buildDocumentFieldCandidates({ documentType: 'purchase_contract', pages: [
+    'EXECUTED the day of 03/14/2026 (Effective Date).\nBuyer Date: 03/15/2026\nADDENDUM\nSeller Date: 03/27/2026',
+  ] });
+  assert.equal(candidates.find(candidate => candidate.field_key === 'contract_date')?.normalized_value, '2026-03-15');
+});
+
 test('earlier and addendum signature dates do not override the explicit effective date', () => {
   const candidates = buildDocumentFieldCandidates({ documentType: 'purchase_contract', pages: [
     'Seller Date: 03/13/2026\nBuyer Date: 03/14/2026\nEXECUTED the day of 03/15/2026 (Effective Date).',

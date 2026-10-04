@@ -287,7 +287,12 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     || (saved && new Set(preview.assumptions.map(item => item.rule)).size !== preview.assumptions.length)
     || preview.fields.some(field => field.provenance.rule === hoaRule && !preview.assumptions.some(item => item.rule === hoaRule && item.value === field.value))
     || preview.assumptions.some(item => item.rule === hoaRule && item.value === 'true'
-      && !preview.fields.some(field => field.fieldId === pudField && field.provenance.rule === hoaRule)
+      // Direct projection deduplicates equal PUD values but retains every HOA
+      // assumption. An earlier explicit source can own the surviving checkbox;
+      // canonical saved receipts still require their exact HOA rule.
+      && !preview.fields.some(field => field.fieldId === pudField && field.type === 'CheckBoxField' && field.value === item.value
+        && (field.provenance.rule === hoaRule || (!saved && field.provenance.kind === 'reviewed_document'
+          && field.provenance.rule === undefined && ['pud', 'is_pud', 'property_type'].includes(field.sourceField))))
       && ![...preview.conflicts, ...preview.omitted].some(entry => ['pud', 'is_pud', 'property_type'].includes(entry.sourceField)))
     || preview.assumptions.some(item => item.rule === hoaRule && item.value === 'false') && preview.fields.some(field => field.fieldId === pudField)
     || preview.fields.some(({ provenance }) => (provenance.kind === 'derived_reviewed_document' || provenance.origin === 'derived_reviewed_document')

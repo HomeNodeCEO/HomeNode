@@ -95,3 +95,80 @@ test('duplicate direct HOA observations keep actual producer assumptions, while 
     assert.equal(checkSfrepPreview(preview, [1, 2, 3]), preview);
   }
 });
+
+function mixedPudPreview(observations, saved = false) {
+  const context = { accountId: 'SYNTHETIC-PUD', address: '100 Example Dr', city: 'Garland', postalCode: '75041', effectiveDate: '2026-08-31' };
+  const documents = observations.map((texts, index) => {
+    const extracted = texts.flatMap(text => buildUrarSubjectEvidence({ documentType: 'mls_sheet',
+      pages: [`Subject Address: 100 Example Dr, Garland, TX 75041\n${text}`] }).candidates);
+    return { id: index + 1, account_id: context.accountId, assignment_file_id: 4, document_type: 'mls_sheet',
+      processing_status: 'reviewed', upload_date: '2026-10-02', subject_context: context,
+      title: 'Synthetic PUD source', file_name: `synthetic-pud-${index + 1}.pdf`, file_size_bytes: 100,
+      candidates: extracted.map((candidate, offset) => ({ ...candidate, id: (index + 1) * 100 + offset,
+        document_id: index + 1, review_status: 'confirmed', confirmed_value: candidate.normalized_value })) };
+  });
+  if (saved) {
+    const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents) });
+    documents[0].saved_report = { accountId: context.accountId, assignmentFileId: 4, assignmentRevision: 2,
+      subject: { revision: 1, value: applied.subject }, evidence: { revision: 1, value: applied.evidence },
+      assignmentDetails: applied.assignmentDetails, documents: structuredClone(documents) };
+  }
+  const { reportXml: _xml, pdfAddenda: _pdfs, ...publicPreview } = previewSfrepDocuments(documents, {
+    accountId: context.accountId, assignmentFileId: 4, documentIds: documents.map(document => document.id),
+    includeDocuments: false, formId: 'FNMA-1004-0911' });
+  return JSON.parse(JSON.stringify({ ok: true, ...publicPreview }));
+}
+
+test('equal explicit PUD and HOA proxy evidence accepts both source orders and repeated same-document observations', () => {
+  for (const observations of [
+    [['PUD: Yes'], ['HOA: Mandatory']], [['HOA: Mandatory'], ['PUD: Yes']],
+    [['PUD: Yes'], ['HOA: Mandatory', 'HOA: Mandatory']],
+    [['HOA: Mandatory', 'HOA: Mandatory'], ['PUD: Yes']],
+    [['PUD: Yes', 'HOA: Mandatory']], [['HOA: Mandatory', 'PUD: Yes']],
+  ]) {
+    for (const saved of [false, true]) {
+      const preview = mixedPudPreview(observations, saved);
+      const pud = preview.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox');
+      assert.equal(pud.value, 'true');
+      assert.deepEqual(preview.conflicts, []);
+      assert.equal(preview.omitted.some(item => item.sourceField === 'pud'), false);
+      if (!saved) assert.equal(preview.assumptions.filter(item => item.rule === 'user_requested_hoa_workflow_proxy_v1').length,
+        observations.flat().filter(text => text.startsWith('HOA:')).length);
+      assert.equal(checkSfrepPreview(preview, preview.documents.map(document => document.id)), preview);
+    }
+  }
+});
+
+test('mixed direct PUD allowance rejects wrong values, fields and orphan assumptions and never relaxes saved receipts', () => {
+  for (const change of [
+    preview => { preview.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox').value = 'false'; },
+    preview => { preview.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox').type = 'TextField'; },
+    preview => { const field = preview.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox'); field.sourceField = field.provenance.sourceField = 'unrelated'; },
+    preview => { preview.fields = preview.fields.filter(field => field.fieldId !== 'PropertyTypePUDCheckBox'); },
+    preview => { preview.assumptions.find(item => item.rule === 'user_requested_hoa_workflow_proxy_v1').value = 'false'; },
+  ]) {
+    const preview = mixedPudPreview([['PUD: Yes'], ['HOA: Mandatory']]);
+    change(preview);
+    assert.throws(() => checkSfrepPreview(preview, [1, 2]), /invalid/);
+  }
+  const direct = mixedPudPreview([['PUD: Yes'], ['HOA: Mandatory']]);
+  const saved = mixedPudPreview([['PUD: Yes'], ['HOA: Mandatory']], true);
+  assert.equal(saved.fields.find(field => field.fieldId === 'PropertyTypePUDCheckBox').provenance.rule, undefined);
+  assert.equal(saved.assumptions.some(item => item.rule === 'user_requested_hoa_workflow_proxy_v1'), false);
+  saved.assumptions.push(direct.assumptions.find(item => item.rule === 'user_requested_hoa_workflow_proxy_v1'));
+  assert.throws(() => checkSfrepPreview(saved, [1, 2]), /invalid/);
+});
+
+test('disagreeing explicit and proxy PUD evidence remains conflict-only in both source orders', () => {
+  for (const observations of [[['PUD: No'], ['HOA: Mandatory']], [['HOA: Mandatory'], ['PUD: No']]]) {
+    const preview = mixedPudPreview(observations);
+    assert.equal(preview.fields.some(field => field.fieldId === 'PropertyTypePUDCheckBox'), false);
+    assert.ok(preview.conflicts.some(item => item.sourceField === 'pud'));
+    assert.equal(checkSfrepPreview(preview, [1, 2]), preview);
+    // A true assumption without an exported checkbox requires a visible
+    // conflict/omission; it cannot become an unexplained affirmative claim.
+    preview.conflicts = [];
+    preview.omitted = preview.omitted.filter(item => item.sourceField !== 'pud');
+    assert.throws(() => checkSfrepPreview(preview, [1, 2]), /invalid/);
+  }
+});

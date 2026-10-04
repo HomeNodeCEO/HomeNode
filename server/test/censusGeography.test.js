@@ -171,6 +171,129 @@ test("Census connection failure preserves its cause without provider or settleme
   }), error => error === primaryError);
 });
 
+const claimStages = ["BEGIN", "lease recovery", "claim", "COMMIT"];
+
+function censusCleanupFixture({
+  failureStage, rollbackMode = "resolve", releaseError,
+  beforeRollback = () => undefined,
+} = {}) {
+  const events = [], releases = [];
+  const primaryError = new Error("private claim operation detail");
+  const rollbackError = new Error("private rollback connection detail");
+  let connections = 0;
+  const client = {
+    query(sql) {
+      const stage = ["BEGIN", "COMMIT", "ROLLBACK"].includes(sql) ? sql
+        : sql.includes("RETURNING geography.account_id") ? "claim"
+          : sql.includes("SET status = 'retry'") ? "lease recovery" : null;
+      assert.ok(stage, "unexpected claim statement");
+      events.push(stage);
+      if (stage === "ROLLBACK") {
+        if (rollbackMode === "throw") throw rollbackError;
+        return Promise.resolve(beforeRollback()).then(() => {
+          if (rollbackMode === "reject") throw rollbackError;
+          return { rows: [] };
+        });
+      }
+      if (stage === failureStage) return Promise.reject(primaryError);
+      return Promise.resolve({ rows: stage === "claim" ? [{
+        account_id: "26272500060150000", source_method: "coordinate",
+        source_longitude: -96.63, source_latitude: 32.92,
+        benchmark: "Public_AR_Current", vintage: "Current_Current",
+        county: "Dallas", attempts: 1, worker_id: "cleanup-test-worker",
+      }] : [] });
+    },
+    release(...args) {
+      events.push("release"); releases.push(args);
+      if (releaseError !== undefined) throw releaseError;
+    },
+  };
+  return {
+    events, releases, primaryError, rollbackError,
+    get connections() { return connections; },
+    run: () => runCensusGeographyBatch({
+      async connect() { connections += 1; events.push("connect"); return client; },
+      async query() { events.push("settlement"); assert.fail("failed claim cleanup must not settle items"); },
+    }, {
+      workerId: "cleanup-test-worker", batchSize: 1,
+      fetchImpl: async () => { events.push("provider"); assert.fail("failed claim cleanup must not call Census"); },
+    }),
+  };
+}
+
+function assertCensusCleanupRelease(fixture, discarded) {
+  assert.equal(fixture.connections, 1);
+  assert.equal(fixture.releases.length, 1);
+  assert.equal(fixture.releases[0].length, 1);
+  const [reason] = fixture.releases[0];
+  if (!discarded) return assert.equal(reason, undefined);
+  assert.ok(reason instanceof Error);
+  assert.equal(reason.message, "census_geography_rollback_failed");
+  assert.equal(Object.hasOwn(reason, "cause"), false);
+  assert.deepEqual(Object.keys(reason), []);
+  assert.equal(reason.stack.includes("private"), false);
+  assert.notEqual(reason, fixture.primaryError);
+  assert.notEqual(reason, fixture.rollbackError);
+}
+
+for (const failureStage of claimStages) {
+  test(`Census ${failureStage} failure survives a synchronous rollback throw`, async () => {
+    const fixture = censusCleanupFixture({ failureStage, rollbackMode: "throw" });
+    await assert.rejects(fixture.run(), error => error === fixture.primaryError);
+    assert.deepEqual(fixture.events, [
+      "connect", ...claimStages.slice(0, claimStages.indexOf(failureStage) + 1), "ROLLBACK", "release",
+    ]);
+    assertCensusCleanupRelease(fixture, true);
+  });
+}
+
+for (const outcome of [
+  { name: "COMMIT" },
+  { name: "primary failure and successful rollback", failureStage: "claim" },
+  { name: "primary failure and failed rollback", failureStage: "claim", rollbackMode: "reject" },
+]) {
+  for (const [kind, releaseError] of [
+    ["Error", new Error("release failed")],
+    ["Symbol", Symbol("release failed")],
+    ["object", Object.freeze({ release: "failed" })],
+  ]) {
+    test(`Census release-thrown ${kind} retains precedence after ${outcome.name}`, async () => {
+      const fixture = censusCleanupFixture({ ...outcome, releaseError });
+      await assert.rejects(fixture.run(), error => error === releaseError);
+      assert.deepEqual(fixture.events, [
+        "connect", "BEGIN", "lease recovery", "claim", outcome.failureStage ? "ROLLBACK" : "COMMIT", "release",
+      ]);
+      assertCensusCleanupRelease(fixture, outcome.rollbackMode === "reject");
+    });
+  }
+}
+
+for (const rollbackMode of ["resolve", "reject"]) {
+  test(`Census awaits rollback ${rollbackMode} before releasing or rejecting the batch`, async () => {
+    let finishRollback;
+    const gate = new Promise(resolve => { finishRollback = resolve; });
+    const fixture = censusCleanupFixture({ failureStage: "claim", rollbackMode, beforeRollback: () => gate });
+    let settled = false;
+    const pending = fixture.run().then(
+      value => { settled = true; return { value }; },
+      error => { settled = true; return { error }; },
+    );
+    try {
+      await new Promise(resolve => setImmediate(resolve));
+      assert.deepEqual(fixture.events, ["connect", "BEGIN", "lease recovery", "claim", "ROLLBACK"]);
+      assert.deepEqual(fixture.releases, []);
+      assert.equal(settled, false);
+      finishRollback();
+      assert.equal((await pending).error, fixture.primaryError);
+      assert.deepEqual(fixture.events, ["connect", "BEGIN", "lease recovery", "claim", "ROLLBACK", "release"]);
+      assertCensusCleanupRelease(fixture, rollbackMode === "reject");
+    } finally {
+      finishRollback();
+      await pending;
+    }
+  });
+}
+
 const coordinateRow = {
   account_id: "26272500060150000",
   source_longitude: -96.63,

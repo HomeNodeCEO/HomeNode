@@ -72,7 +72,7 @@ test('opens accessible native modal with explicit empty selection; Escape and un
   assert.equal(h.button('Preview SFREP export').props.disabled, false); assert.equal(h.button('Download SFREP .rpti'), undefined);
   assert.match(h.text, /Report form.*1004 URAR.*2055 Exterior Only — coming next/);
   assert.match(h.text, /1004 URAR export maps the Subject and Contract sections/);
-  assert.match(h.text, /Attaching its PDF is optional/);
+  assert.match(h.text, /These checkboxes only choose which original PDFs/);
   const formChoices = walk(h.tree).filter(node => node.type === 'input' && node.props.type === 'radio');
   assert.equal(formChoices.length, 2);
   assert.equal(formChoices[0].props.checked, true);
@@ -112,6 +112,7 @@ test('document load failure is actionable and is not presented as an empty workf
 
 test('preview shows fields and exclusions; only explicit download sends the reviewed digest', async () => {
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
+  assert.match(h.text, /Attaching its PDF is optional/);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], 'preview');
   assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true });
   assert.equal(h.calls[0][2].editorKey, 'editor');

@@ -226,6 +226,26 @@ exception. Keep raw findings visible. Replace these backports with official
 fixed versions when available, rerun all compatibility/security checks, and
 remove the patches; do not fake versions or disable the existing gate.
 
+`pnpm run verify:toolchain` first hashes the reviewed patched files resolved
+through the two Expo Forge consumers and both Metro/micromatch braces paths,
+then runs the existing Forge and braces regression tests using Node alone,
+without requiring development dependencies or files outside the mobile app.
+It fails for a
+missing file, unexpected version, modified patched source, or behavioral
+regression. The JSON output records those actual package paths, file hashes,
+Node version, and lockfile hash; it explicitly does not approve a release.
+The integrity manifest must be reviewed alongside any future package update,
+not regenerated automatically to accept changed installed bytes. These hashes
+cover the patched files only, not every file in either package.
+
+The `eas-build-post-install` hook runs the same command in standard EAS builds.
+Per Expo's lifecycle contract, it runs after prebuild (and CocoaPods on iOS),
+so it is evidence of the installed project graph at that point, not protection
+for earlier build steps or an attestation of global EAS tooling. Custom EAS
+workflows must invoke it explicitly. No remote EAS execution has been attested
+by the local checks. The raw audit and native/OTA release hold remain separate
+and unchanged; this command makes no network calls or audit exceptions.
+
 ## Finding lifecycle
 
 Each finding records a stable identifier, control reference, severity,

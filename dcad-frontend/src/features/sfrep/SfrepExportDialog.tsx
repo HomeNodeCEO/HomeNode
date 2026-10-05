@@ -21,6 +21,7 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const downloadUrlRef = useRef<string | null>(null);
   const [selectedIds, setSelectedIds] = useState<number[]>([]);
   const [includeDocuments, setIncludeDocuments] = useState(true);
+  const [includeDiscrepancyAddendum, setIncludeDiscrepancyAddendum] = useState(false);
   const [preview, setPreview] = useState<SfrepPreview | null>(null);
   const [busy, setBusy] = useState<'preview' | 'export' | null>(null);
   const [error, setError] = useState('');
@@ -56,7 +57,8 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
     clearDownload(); setBusy(operation); setError('');
     if (operation === 'preview') setPreview(null);
     try {
-      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments };
+      const selection = { accountId, assignmentFileId, documentIds: [...selectedIds], includeDocuments,
+        includeDiscrepancyAddendum };
       const io = { signal: controller.signal, editorKey: getEditorKey() };
       if (operation === 'preview') {
         const result = await sfrepApi.preview(selection, io);
@@ -93,6 +95,8 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
   const subjectChecklist = preview ? sfrepSubjectChecklist(preview) : [];
   const contractChecklist = preview ? sfrepContractChecklist(preview) : [];
   const reviewAssumptions = preview?.assumptions.filter(assumption => assumption.rule !== 'user_requested_fee_simple_default') || [];
+  const contractFlags = preview?.warnings.filter(warning => warning.startsWith('Contract address discrepancy:')
+    || warning.startsWith('Seller concessions are not confirmed')) || [];
 
   return <dialog ref={dialogRef} onCancel={event => { event.preventDefault(); onClose(); }} aria-label="Export report to SFREP"
     className="m-auto max-h-[90vh] w-[min(1000px,95vw)] overflow-y-auto rounded-xl border border-amber-300 bg-white p-0 text-slate-900 shadow-xl backdrop:bg-slate-950/50 print:hidden">
@@ -128,6 +132,10 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDocuments}
           onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDocuments(event.target.checked); } }} />
           <span>Include original PDFs as report addenda</span></label>
+        <label className="flex items-start gap-3 pt-2"><input type="checkbox" className="checkbox checkbox-sm" checked={includeDiscrepancyAddendum}
+          onChange={event => { if (!requestRef.current) { invalidate(); setIncludeDiscrepancyAddendum(event.target.checked); } }} />
+          <span>Include one combined evidence-discrepancy addendum when supported, reviewed conflicts are present</span></label>
+        <p className="text-xs text-slate-600">This optional page groups supported discrepancy statements together. Review its exact wording in the preview; original documents and HomeNode subject identity are unchanged.</p>
         <p className="text-xs text-slate-600">Supported, reviewed evidence from this HomeNode workfile fills the form whether or not its PDF is attached. These checkboxes only choose which original PDFs become visible report pages in SFREP. Upload CAD and Realist reference PDFs using “Other Appraisal Document.” Fields without a supported mapping remain in their source documents. Maximum: 10 documents and 50 MiB of original PDFs per export.</p>
       </fieldset>
       <button type="button" className={secondary} disabled={Boolean(busy) || documentsLoading || Boolean(documentLoadError)} onClick={() => void run('preview')}>
@@ -138,6 +146,11 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         <h4 className="font-semibold text-violet-950">2. Review export</h4>
         {preview.savedReport && <p className="text-xs text-slate-600">Saved HomeNode file {preview.savedReport.assignmentFileId} · Subject revision {preview.savedReport.subjectRevision} · Assignment revision {preview.savedReport.assignmentRevision}</p>}
         <p>{preview.fields.length} mapped field(s) · {includeDocuments ? preview.documents.length : 0} original PDF(s) included</p>
+        {preview.wordProcessingAddendum && <section aria-label="Evidence discrepancy addendum" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
+          <h5 className="font-semibold">One combined addendum page — review before export</h5>
+          <p className="mt-1 whitespace-pre-wrap">{preview.wordProcessingAddendum.text}</p>
+        </section>}
+        {includeDiscrepancyAddendum && !preview.wordProcessingAddendum && <p className="text-xs text-slate-600">No supported reviewed discrepancy statement was found; no addendum page will be added.</p>}
         <section aria-label="Effective-date context" className="space-y-1 rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-950">
           <h5 className="font-semibold">Effective-date context</h5>
           {preview.effectiveDateContext.effectiveDate ? <>
@@ -151,6 +164,10 @@ export default function SfrepExportDialog({ accountId, assignmentFileId, documen
         {reviewAssumptions.length > 0 && <section aria-label="Assumptions requiring confirmation" className="rounded-lg border border-amber-300 bg-amber-50 p-3 text-xs text-amber-950">
           <h5 className="font-semibold">Assumptions requiring confirmation</h5>
           <ul className="mt-1 list-disc space-y-1 pl-5">{reviewAssumptions.map((assumption, index) => <li key={`${assumption.fieldId}:${index}`}>{assumption.reason}</li>)}</ul>
+        </section>}
+        {contractFlags.length > 0 && <section role="alert" aria-label="Contract review flags" className="rounded-lg border border-amber-400 bg-amber-50 p-3 text-xs text-amber-950">
+          <h5 className="font-semibold">Contract review flags — check mapped fields below</h5>
+          <ul className="mt-1 list-disc space-y-1 pl-5">{contractFlags.map((flag, index) => <li key={index}>{flag}</li>)}</ul>
         </section>}
         <section aria-label="1004 Subject export checklist" className="space-y-2">
           <h5 className="font-semibold text-violet-950">1004 Subject export checklist</h5>

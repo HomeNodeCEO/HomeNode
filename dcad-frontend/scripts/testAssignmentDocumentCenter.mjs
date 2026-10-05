@@ -105,6 +105,8 @@ function harness({ props: initialProps = {}, api: overrides = {}, presentation =
       assignmentDocumentConfirmationBlocked: () => false,
       confirmedDocumentFieldApplications: () => [],
       documentSubjectAddressComparison: () => ({ matches: null }),
+      documentSubjectLocalityFlags: () => [],
+      reviewedDocumentSubjectDiscrepancyStatement: () => null,
       ...presentation,
     },
   };

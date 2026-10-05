@@ -22,11 +22,14 @@ import UadSignaturePanel from "./UadSignaturePanel";
 import UadValidationPanel from "./UadValidationPanel";
 import UadXmlPanel from "./UadXmlPanel";
 import UadSubmissionPackagePanel from "./UadSubmissionPackagePanel";
+import { combineEvidenceDiscrepancyCommentary } from '@/lib/propertyReportPresentation';
 
 interface Props {
   workfileId: string;
   onClose: () => void;
   initialSection?: UadSectionKey;
+  suggestedDiscrepancyStatements?: string[];
+  validateDiscrepancyStatements?: () => Promise<string[] | null>;
 }
 
 export interface UadWorkfileEditorHandle {
@@ -147,6 +150,8 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
   workfileId,
   onClose,
   initialSection = "assignment",
+  suggestedDiscrepancyStatements = [],
+  validateDiscrepancyStatements,
 }, ref) {
   const [editor, setEditor] = useState<UadEditorResponse | null>(null);
   const [activeSection, setActiveSection] = useState<UadSectionKey>(initialSection);
@@ -156,6 +161,7 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
   const [entityBusy, setEntityBusy] = useState(false);
   const [dirtyKeys, setDirtyKeys] = useState<Set<string>>(() => new Set());
   const [autosaveState, setAutosaveState] = useState<"idle" | "pending" | "saving" | "saved" | "error" | "conflict">("idle");
+  const [discrepancyBusy, setDiscrepancyBusy] = useState(false);
   const [lastAutosavedAt, setLastAutosavedAt] = useState<string | null>(null);
   const [conflictKeys, setConflictKeys] = useState<Set<string>>(() => new Set());
   const [error, setError] = useState<string | null>(null);
@@ -167,6 +173,12 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
   const saveInFlightRef = useRef<Promise<boolean> | null>(null);
   const firstDirtyAtRef = useRef<number | null>(null);
   const mountedRef = useRef(true);
+  const autosaveStateRef = useRef(autosaveState);
+  const savingRef = useRef(saving);
+  const conflictKeysRef = useRef(conflictKeys);
+  autosaveStateRef.current = autosaveState;
+  savingRef.current = saving;
+  conflictKeysRef.current = conflictKeys;
   const loadGenerationRef = useRef(0);
   const subjectPrefillRef = useRef<{ workfileId: string; request: Promise<void> } | null>(null);
   const dirty = dirtyKeys.size > 0;
@@ -573,6 +585,32 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
     setSavedMessage(null);
   }
 
+  async function addCombinedDiscrepancyCommentary() {
+    if (saving || autosaveState === 'conflict' || conflictKeys.size > 0 || discrepancyBusy) return;
+    setDiscrepancyBusy(true);
+    try {
+      const statements = validateDiscrepancyStatements
+        ? await validateDiscrepancyStatements() : suggestedDiscrepancyStatements;
+      if (!mountedRef.current || statements === null) return;
+      if (savingRef.current || autosaveStateRef.current === 'conflict' || conflictKeysRef.current.size > 0) {
+        setError('Resolve the pending save or commentary conflict before adding discrepancy text.');
+        return;
+      }
+      const field = (editorRef.current?.sections.flatMap(section => section.groups.flatMap(group => group.fields)) || [])
+        .find(candidate => candidate.contextKey === 'subject_commentary' && candidate.uid === '0100.0044');
+      if (!field || field.readOnly || !statements.length) return;
+      const key = fieldValueKey(field.contextKey, field.uid);
+      const combined = combineEvidenceDiscrepancyCommentary(draftRef.current[key], statements);
+      if (combined === null) { setError('The combined discrepancy commentary exceeds the UAD field limit. Shorten the draft before adding it.'); return; }
+      if (combined !== draftRef.current[key]) setValue(field, null, combined);
+      setActiveSection('subject');
+    } catch {
+      if (mountedRef.current) setError('The current evidence could not be checked. Retry before adding commentary.');
+    } finally {
+      if (mountedRef.current) setDiscrepancyBusy(false);
+    }
+  }
+
   function resolveAutosaveConflict(keepLocal: boolean) {
     const serverDraft = editor ? editorDraft(editor) : {};
     const nextDraft = { ...draftRef.current };
@@ -889,6 +927,15 @@ const UadWorkfileEditor = forwardRef<UadWorkfileEditorHandle, Props>(function Ua
         </nav>
 
         <div className="min-w-0 p-3 sm:p-4">
+          {suggestedDiscrepancyStatements.length > 0 && <section aria-label="Combined evidence discrepancy commentary" className="mb-5 rounded-xl border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
+            <h3 className="font-semibold">One combined UAD evidence-discrepancy comment</h3>
+            <p className="mt-1">Review the source documents and draft below. HomeNode rechecks the current evidence before adding this to the existing Subject commentary; it will not replace what you already wrote.</p>
+            <p className="mt-2 whitespace-pre-wrap text-xs">{[...new Set(suggestedDiscrepancyStatements)].join('\n\n')}</p>
+            <button type="button" className="hn-action-secondary btn btn-sm mt-3 rounded-lg normal-case" disabled={saving || autosaveState === 'conflict' || conflictKeys.size > 0 || discrepancyBusy}
+              onClick={() => void addCombinedDiscrepancyCommentary()}>
+              {discrepancyBusy ? 'Checking evidence…' : 'Add to Subject commentary'}
+            </button>
+          </section>}
           <details className="group mb-5 hn-subtle-panel overflow-hidden rounded-xl border shadow-sm">
             <summary className="hn-action-secondary cursor-pointer list-none px-4 py-3 transition [&::-webkit-details-marker]:hidden">
               <span className="flex flex-wrap items-center justify-between gap-3">

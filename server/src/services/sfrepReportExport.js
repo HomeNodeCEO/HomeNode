@@ -3,6 +3,7 @@ import { isUrarPlaceholder, isUrarStateCode } from "../util/urarScalarValidation
 import { formatSubjectPresentationValue } from "../util/subjectPresentation.js";
 import { sfrepDocumentParcelMismatch } from './sfrepSubjectContext.js';
 import { projectSfrepContractSection } from './sfrepContractSection.js';
+import { SFREP_DISCREPANCY_RTF_NAME } from './sfrepDiscrepancyAddendum.js';
 
 /**
  * Pure, deliberately conservative SFREP RPTI Report.xml projection.
@@ -447,10 +448,20 @@ export function buildSfrepReportExport({
   documents = [], selectedDocumentIds, fieldSelections = {}, pdfAddenda = [],
   formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext, forReportPersistence = false,
   savedReportFields, subjectOnly = false, contractSection = false, savedAssignmentDetails, contractEvidenceDocuments,
+  wordProcessingAddendum = null,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
+  if (wordProcessingAddendum !== null && (wordProcessingAddendum.fileName !== SFREP_DISCREPANCY_RTF_NAME
+    || wordProcessingAddendum.title !== 'Evidence Discrepancies'
+    || typeof wordProcessingAddendum.text !== 'string' || !wordProcessingAddendum.text.trim()
+    || wordProcessingAddendum.text.length > 2_000
+    || !Array.isArray(wordProcessingAddendum.sourceDocumentIds)
+    || !wordProcessingAddendum.sourceDocumentIds.length
+    || wordProcessingAddendum.sourceDocumentIds.some(id => !positiveId(id))
+    || new Set(wordProcessingAddendum.sourceDocumentIds).size !== wordProcessingAddendum.sourceDocumentIds.length)) fail('sfrep_invalid_addendum');
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
   const selected = selectedDocuments(documents, selectedDocumentIds);
+  if (wordProcessingAddendum?.sourceDocumentIds.some(id => !selected.has(id))) fail('sfrep_invalid_addendum');
   const dateContext = effectiveDateContext(subjectContext);
   for (const id of Object.values(fieldSelections)) {
     if (!positiveId(id) || !selected.has(positiveId(id))) fail("sfrep_invalid_field_selection");
@@ -758,10 +769,17 @@ export function buildSfrepReportExport({
       "      </Fields>",
       "    </Form>",
     ]),
+    ...(wordProcessingAddendum ? [
+      '    <Form Id="WordProcessingAddendum" CustomTitle="Evidence Discrepancies">',
+      '      <Fields>',
+      `        <WordProcessingField Id="WordProcessingPages" Data="${SFREP_DISCREPANCY_RTF_NAME}" />`,
+      '      </Fields>',
+      '    </Form>',
+    ] : []),
     "  </Forms>",
     "</Report>",
   ];
   return { formId, reportXml: `${lines.join("\n")}\n`, fields, conflicts, omitted, warnings,
-    pdfAddenda: validatedAddenda, specificationUrl: SPEC_URL,
+    pdfAddenda: validatedAddenda, wordProcessingAddendum, specificationUrl: SPEC_URL,
     effectiveDateContext: dateContext, assumptions, knownMissing };
 }

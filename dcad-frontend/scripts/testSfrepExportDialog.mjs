@@ -114,7 +114,8 @@ test('preview shows fields and exclusions; only explicit download sends the revi
   const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   assert.match(h.text, /Attaching its PDF is optional/);
   assert.equal(h.calls.length, 1); assert.equal(h.calls[0][0], 'preview');
-  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21], includeDocuments: true });
+  assert.deepEqual(h.calls[0][1], { accountId: 'R1', assignmentFileId: 12, documentIds: [21],
+    includeDocuments: true, includeDiscrepancyAddendum: false });
   assert.equal(h.calls[0][2].editorKey, 'editor');
   for (const expected of ['SalePriceAmount', '200000', 'No verified mapping', 'First bank / Second bank', 'Review imported fields.']) assert.ok(h.text.includes(expected));
   const diagnostics = walk(h.tree).filter(node => node.type === 'details');
@@ -158,12 +159,12 @@ test('a failed repeat download revokes and removes the previous prepared link', 
 });
 
 test('automatic click failure leaves the sanitized direct save link available', async () => {
-  const h = harness({ preview: async () => ({ ...response(), filename: '../unsafe\\Hardy:<QA>?\u0001.rpti' }),
+  const h = harness({ preview: async () => ({ ...response(), filename: '../unsafe\\Sample:<QA>?\u0001.rpti' }),
     click() { throw new Error('Automatic download blocked'); } });
   h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
   h.click('Download SFREP .rpti'); await h.drain();
   const link = h.link('Save prepared RPTI');
-  assert.equal(link.props.href, 'blob:test'); assert.equal(link.props.download, 'Hardy__QA___.rpti');
+  assert.equal(link.props.href, 'blob:test'); assert.equal(link.props.download, 'Sample__QA___.rpti');
   assert.equal(h.anchors[0].href, link.props.href); assert.equal(h.anchors[0].download, link.props.download);
   assert.equal(h.anchors[0].removed, true); assert.deepEqual(h.revoked, []);
   assert.match(h.text, /RPTI prepared/); assert.doesNotMatch(h.text, /Download started|Automatic download blocked/);
@@ -171,7 +172,8 @@ test('automatic click failure leaves the sanitized direct save link available', 
   h.close(); assert.deepEqual(h.revoked, ['blob:test']);
 });
 
-for (const [label, checked] of [['Contract', false], ['Realist reference', true], ['Include original', false]]) {
+for (const [label, checked] of [['Contract', false], ['Realist reference', true], ['Include original', false],
+  ['Include one combined evidence-discrepancy addendum', true]]) {
   test(`${label} change revokes the prepared URL and requires a fresh preview`, async () => {
     const h = harness(); h.render(); h.check('Contract', true); h.click('Preview SFREP export'); await h.drain();
     h.click('Download SFREP .rpti'); await h.drain();

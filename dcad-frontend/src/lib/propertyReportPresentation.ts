@@ -215,6 +215,87 @@ export function documentSubjectAddressComparison(
   };
 }
 
+/** Review-only findings shared by Custom Appraisal and UAD 3.6. An explicit
+ * locality mismatch is not an automatic assertion that the document is wrong. */
+export function documentSubjectLocalityFlags(
+  candidates: Array<{ field_key?: string; review_status?: string | null; confirmed_value?: unknown;
+    normalized_value?: unknown; raw_value?: unknown }> | undefined,
+  reportAddress: unknown,
+): string[] {
+  const parse = (value: unknown) => String(value || '').trim().match(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas),?\s+(\d{5})(?:-\d{4})?\b/i);
+  const canonical = parse(reportAddress);
+  if (!canonical) return [];
+  const flags = new Set<string>();
+  for (const candidate of candidates || []) {
+    if (candidate.review_status === 'rejected') continue;
+    const source = String(candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value ?? '').trim();
+    if (!source) continue;
+    if (candidate.field_key === 'contract_printed_subject_addresses') {
+      // A contract may state one address on its main form and another on an
+      // addendum. Keep every printed locality visible instead of checking only
+      // the first match or silently choosing one as the report identity.
+      for (const match of source.matchAll(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas),?\s+(\d{5})(?:-\d{4})?\b/gi)) {
+        if (match[1].toLowerCase() !== canonical[1].toLowerCase()) flags.add(`City: document says ${match[1]}; HomeNode subject says ${canonical[1]}.`);
+        if (match[2] !== canonical[2]) flags.add(`ZIP: document says ${match[2]}; HomeNode subject says ${canonical[2]}.`);
+      }
+      continue;
+    }
+    const location = ['subject_property_address', 'subject_street_address'].includes(candidate.field_key || '') ? parse(source) : null;
+    const city = candidate.field_key === 'subject_city' ? source : location?.[1];
+    const postal = ['subject_zip', 'subject_zip_code'].includes(candidate.field_key || '') ? source.match(/^\d{5}/)?.[0] : location?.[2];
+    if (city && city.toLowerCase() !== canonical[1].toLowerCase()) flags.add(`City: document says ${city}; HomeNode subject says ${canonical[1]}.`);
+    if (postal && postal !== canonical[2]) flags.add(`ZIP: document says ${postal}; HomeNode subject says ${canonical[2]}.`);
+  }
+  return [...flags];
+}
+
+/** Only confirmed, reviewed source facts may become suggested report text.
+ * Recompute this from the latest document before inserting it into any form. */
+export function reviewedDocumentSubjectDiscrepancyStatement(
+  document: { document_type: string; processing_status: string; candidates?: Array<{
+    field_key?: string; review_status?: string | null; confirmed_value?: unknown;
+    normalized_value?: unknown; raw_value?: unknown;
+  }> } | null | undefined,
+  reportAddress: unknown,
+): string | null {
+  if (!document || document.processing_status !== 'reviewed') return null;
+  const confirmed = document.candidates?.filter(candidate => candidate.review_status === 'confirmed');
+  const flags = documentSubjectLocalityFlags(confirmed, reportAddress);
+  if (!flags.length) return null;
+  return `The reviewed ${document.document_type.replaceAll('_', ' ')} contains a subject-location discrepancy: ${flags.join(' ')} The county-backed subject address controls in this report. The original source remains in the workfile for review.`;
+}
+
+/** Re-read source evidence at the point of insertion; a saved draft alone is
+ * never authority for report commentary after a document changes or vanishes. */
+export async function revalidateEvidenceDiscrepancyDrafts(
+  prepared: Record<number, string>,
+  loadDocument: (documentId: number) => Promise<Parameters<typeof reviewedDocumentSubjectDiscrepancyStatement>[0]>,
+  reportAddress: unknown,
+): Promise<{ statements: string[]; staleDocumentIds: number[] }> {
+  const current = await Promise.all(Object.entries(prepared).map(async ([id, statement]) => {
+    const documentId = Number(id);
+    const document = await loadDocument(documentId);
+    return { documentId, statement,
+      latest: reviewedDocumentSubjectDiscrepancyStatement(document, reportAddress) };
+  }));
+  return {
+    statements: current.filter(entry => entry.latest === entry.statement).map(entry => entry.statement),
+    staleDocumentIds: current.filter(entry => entry.latest !== entry.statement).map(entry => entry.documentId),
+  };
+}
+
+/** Preserve appraiser-written commentary and keep all chosen discrepancy
+ * statements in one field instead of creating a separate addendum per source. */
+export function combineEvidenceDiscrepancyCommentary(existing: unknown, statements: string[], limit = 5_000): string | null {
+  const original = String(existing || '');
+  const additions = [...new Set(statements.map(statement => statement.trim()).filter(Boolean))]
+    .filter(statement => !original.includes(statement));
+  const separator = !original || original.endsWith('\n\n') ? '' : original.endsWith('\n') ? '\n' : '\n\n';
+  const combined = original + (additions.length
+    ? `${separator}${additions.join('\n\n')}` : '');
+  return combined.length <= limit ? combined : null;
+}
+
 /**
  * A subject-address mismatch is a hard confirmation gate only for engagement
  * letters. Other evidence keeps its extracted address visible for review, but

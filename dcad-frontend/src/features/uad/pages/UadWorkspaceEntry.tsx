@@ -5,9 +5,11 @@ import PreviousAppraisalFiles from "@/components/PreviousAppraisalFiles";
 import AssignmentDocumentCenter from "@/components/AssignmentDocumentCenter";
 import AppraisalWorkfileModal from "@/components/AppraisalWorkfileModal";
 import { getAccount } from "@/lib/api";
+import { revalidateEvidenceDiscrepancyDrafts } from "@/lib/propertyReportPresentation";
 
 import {
   createUadWorkfile,
+  getUadDocument,
   getUadCapabilities,
   listUadWorkfiles,
   type UadCapabilities,
@@ -32,6 +34,8 @@ export default function UadWorkspaceEntry() {
   const [searchParams] = useSearchParams();
   const requestedWorkfileId = searchParams.get("workfileId");
   const [address, setAddress] = useState("");
+  const [documentReviewAddress, setDocumentReviewAddress] = useState("");
+  const [discrepancyDrafts, setDiscrepancyDrafts] = useState<Record<string, Record<number, string>>>({});
   const [loading, setLoading] = useState(Boolean(accountId));
   const [creating, setCreating] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +65,9 @@ export default function UadWorkspaceEntry() {
       .then(async ([subjectResponse, capabilityResponse]) => {
         if (cancelled) return;
         setAddress(subjectResponse.account.address || "");
+        setDocumentReviewAddress([subjectResponse.account.address, subjectResponse.account.city,
+          subjectResponse.account.state || 'TX', subjectResponse.account.postal_code]
+          .map(value => String(value || '').trim()).filter(Boolean).join(', '));
         setCapabilities(capabilityResponse);
         if (capabilityResponse.enabled) {
           const existingWorkfiles = await listUadWorkfiles(accountId);
@@ -132,6 +139,32 @@ export default function UadWorkspaceEntry() {
     )));
     setEditorInitialSection(result.section || "assignment");
     setEditorRefreshToken((current) => current + 1);
+  }
+
+  async function validateDiscrepancyDrafts(): Promise<string[] | null> {
+    const workfileId = activeWorkfileId;
+    if (!workfileId) return null;
+    const prepared = discrepancyDrafts[workfileId] || {};
+    if (!Object.keys(prepared).length) return [];
+    try {
+      const current = await revalidateEvidenceDiscrepancyDrafts(prepared,
+        documentId => getUadDocument(workfileId, documentId), documentReviewAddress);
+      if (current.staleDocumentIds.length) {
+        setDiscrepancyDrafts(drafts => {
+          const retained = { ...(drafts[workfileId] || {}) };
+          for (const id of current.staleDocumentIds) {
+            if (retained[id] === prepared[id]) delete retained[id];
+          }
+          return { ...drafts, [workfileId]: retained };
+        });
+        setError('Document evidence changed. Review its current flags and prepare the statement again.');
+        return null;
+      }
+      return current.statements;
+    } catch {
+      setError('The document evidence could not be checked. Retry before adding commentary.');
+      return null;
+    }
   }
 
   return (
@@ -284,13 +317,20 @@ export default function UadWorkspaceEntry() {
             accountId={accountId}
             className="mt-4"
             onUadApplied={handleUadDocumentApplied}
-            subjectAddress={address}
+            subjectAddress={documentReviewAddress}
+            onUadDiscrepancyDraft={(documentId, statement) => {
+              if (!activeWorkfileId) return;
+              setDiscrepancyDrafts(current => ({ ...current, [activeWorkfileId]: {
+                ...current[activeWorkfileId], [documentId]: statement } }));
+            }}
             uadWorkfileId={activeWorkfileId}
           />
         ) : null}
 
         {activeWorkfileId && (
           <UadWorkfileEditor
+            suggestedDiscrepancyStatements={Object.values(discrepancyDrafts[activeWorkfileId] || {})}
+            validateDiscrepancyStatements={validateDiscrepancyDrafts}
             initialSection={editorInitialSection}
             key={`${activeWorkfileId}:${editorRefreshToken}`}
             onClose={() => navigate("/")}

@@ -329,7 +329,8 @@ test('preview and export use scoped authenticated POSTs with exact selections an
   const result = await h.api.preview(selection, h.io);
   assert.equal(result.fields[0].candidateId, null);
   assert.equal(h.calls[0].url, 'https://example.invalid/api/accounts/R-1%2F%23/sfrep/preview');
-  assert.deepEqual(JSON.parse(h.calls[0].init.body), { assignment_file_id: 12, document_ids: [21], include_documents: true, form_id: SFREP_FORM_ID });
+  assert.deepEqual(JSON.parse(h.calls[0].init.body), { assignment_file_id: 12, document_ids: [21],
+    include_documents: true, include_discrepancy_addendum: false, form_id: SFREP_FORM_ID });
   assert.equal(h.calls[0].init.headers['x-homenode-editor-key'], 'test-editor');
   assert.equal(h.calls[0].init.signal, h.controller.signal); assert.equal(h.calls[0].init.cache, 'no-store');
   assert.equal(await (await h.api.export(selection, result.preview_digest, h.io)).text(), 'rpti-fixture');

@@ -2147,6 +2147,7 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
     });
     const confirmedById = new Map(candidateRows.map((candidate) => [Number(candidate.id), candidate]));
     for (const candidate of confirmedCandidates) confirmedById.set(Number(candidate.id), candidate);
+    const confirmedSubjectAddressCandidate = confirmedById.get(Number(subjectAddressCandidate.id));
     const assignmentApplication = await persistConfirmedDocumentCandidates(client, {
       sourceDocument,
       candidates: [...confirmedById.values()],
@@ -2170,8 +2171,9 @@ export async function confirmAssignmentDocumentDespiteSubjectMismatch(pool, {
         acknowledged_at: acknowledgedAt,
         reason: "Appraiser confirmed this engagement letter belongs to the open assignment despite the address comparison.",
         document_subject_address: cleanText(
-          subjectAddressCandidate.normalized_value
-            || subjectAddressCandidate.raw_value,
+          confirmedSubjectAddressCandidate.confirmed_value
+            || confirmedSubjectAddressCandidate.normalized_value
+            || confirmedSubjectAddressCandidate.raw_value,
           1_000,
         ),
         canonical_subject_address: canonicalAddress,

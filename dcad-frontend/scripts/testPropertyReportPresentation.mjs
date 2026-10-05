@@ -4,8 +4,11 @@ import test from 'node:test';
 import {
   activityTypeLabel,
   assignmentDocumentConfirmationBlocked,
+  combineEvidenceDiscrepancyCommentary,
   displayValue,
   documentSubjectAddressComparison,
+  documentSubjectLocalityFlags,
+  reviewedDocumentSubjectDiscrepancyStatement,
   formatBaths,
   formatCensusTract,
   formatDate,
@@ -16,8 +19,60 @@ import {
   listingTimelineRows,
   parseNumber,
   recordedExemptionRows,
+  revalidateEvidenceDiscrepancyDrafts,
   sellerComparisonSummary,
 } from '../src/lib/propertyReportPresentation.ts';
+
+test('explicit city and ZIP conflicts are visible in both document centers without changing street-match approval', () => {
+  const candidates = [{ field_key: 'subject_property_address', review_status: 'confirmed',
+    confirmed_value: '100 Sample Dr, Othercity, TX 75041' },
+  { field_key: 'subject_zip', review_status: 'rejected', raw_value: '99999' }];
+  assert.deepEqual(documentSubjectLocalityFlags(candidates, '100 Sample Dr, Exampleton, TX, 75041'),
+    ['City: document says Othercity; HomeNode subject says Exampleton.']);
+  assert.deepEqual(documentSubjectLocalityFlags(candidates, '100 Sample Dr'), []);
+});
+
+test('UAD review choice appends multiple source statements to one commentary without duplication or truncation', () => {
+  assert.equal(combineEvidenceDiscrepancyCommentary('Existing appraiser comment', ['City differs.', 'ZIP differs.', 'City differs.']),
+    'Existing appraiser comment\n\nCity differs.\n\nZIP differs.');
+  assert.equal(combineEvidenceDiscrepancyCommentary('Existing appraiser comment\n\nCity differs.', ['City differs.']),
+    'Existing appraiser comment\n\nCity differs.');
+  assert.equal(combineEvidenceDiscrepancyCommentary('Existing appraiser comment', ['Long statement'], 10), null);
+  assert.equal(combineEvidenceDiscrepancyCommentary('  Appraiser text  \n', ['City differs.']),
+    '  Appraiser text  \n\nCity differs.');
+});
+
+test('UAD discrepancy draft uses only current confirmed locality evidence', () => {
+  const document = { document_type: 'mls_sheet', processing_status: 'reviewed', candidates: [
+    { field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' },
+    { field_key: 'subject_zip', review_status: 'suggested', normalized_value: '99999' },
+  ] };
+  const address = '100 Sample Dr, Exampleton, TX 75041';
+  assert.match(reviewedDocumentSubjectDiscrepancyStatement(document, address), /Othercity/);
+  assert.doesNotMatch(reviewedDocumentSubjectDiscrepancyStatement(document, address), /99999/);
+  assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, processing_status: 'review_required' }, address), null);
+  assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, candidates: document.candidates
+    .map(candidate => ({ ...candidate, review_status: 'rejected' })) }, address), null);
+  const contract = { document_type: 'purchase_contract', processing_status: 'reviewed', candidates: [
+    { field_key: 'contract_printed_subject_addresses', review_status: 'confirmed',
+      confirmed_value: 'Main: 100 Sample Dr, Othercity TX 75041. Addendum: 100 Sample Dr, Exampleton TX 75041.' },
+  ] };
+  assert.match(reviewedDocumentSubjectDiscrepancyStatement(contract, address), /Othercity/);
+});
+
+test('changed or deleted UAD evidence invalidates its prepared statement before report insertion', async () => {
+  const address = '100 Sample Dr, Exampleton, TX 75041';
+  const reviewed = { document_type: 'mls_sheet', processing_status: 'reviewed', candidates: [
+    { field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' },
+  ] };
+  const statement = reviewedDocumentSubjectDiscrepancyStatement(reviewed, address);
+  const prepared = { 7: statement, 8: statement, 9: statement };
+  const result = await revalidateEvidenceDiscrepancyDrafts(prepared, async id => id === 7 ? reviewed
+    : id === 8 ? { ...reviewed, candidates: reviewed.candidates.map(candidate => ({ ...candidate, review_status: 'rejected' })) }
+      : null, address);
+  assert.deepEqual(result.statements, [statement]);
+  assert.deepEqual(result.staleDocumentIds, [8, 9]);
+});
 import { mergeNonBlankSnapshot } from '../src/lib/reportSnapshotMerge.ts';
 
 test('recorded exemption rows preserve display order and omit entirely blank jurisdictions', () => {
@@ -31,7 +86,7 @@ test('legacy blank report snapshots cannot erase repaired CAD values', () => {
   const merged = mergeNonBlankSnapshot(
     {
       owner_name: 'CURRENT OWNER',
-      mailing_address: '1402 AARON PL',
+      mailing_address: '100 SAMPLE LN',
       parties: [{ owner_name: 'CURRENT OWNER', ownership_percent: 100 }],
       building: { building_class: 'CLASS 17', gla: 1840 },
     },
@@ -44,7 +99,7 @@ test('legacy blank report snapshots cannot erase repaired CAD values', () => {
   );
 
   assert.equal(merged.owner_name, 'CURRENT OWNER');
-  assert.equal(merged.mailing_address, '1402 AARON PL');
+  assert.equal(merged.mailing_address, '100 SAMPLE LN');
   assert.equal(merged.parties.length, 1);
   assert.equal(merged.building.building_class, 'CLASS 17');
   assert.equal(merged.building.gla, 1840);
@@ -115,29 +170,29 @@ test('listing history merges matching source records and sorts newest first', ()
 
 test('seller comparison is order-insensitive but still flags real differences', () => {
   assert.equal(
-    sellerComparisonSummary('Freeman Appraisal Services LLC', 'FREEMAN APPRAISAL SERVICES, LLC').matches,
+    sellerComparisonSummary('Sample Appraisal Services LLC', 'SAMPLE APPRAISAL SERVICES, LLC').matches,
     true,
   );
-  const mismatch = sellerComparisonSummary('Jordan Freeman', 'Alex Freeman');
+  const mismatch = sellerComparisonSummary('Alex Sample', 'Taylor Sample');
   assert.equal(mismatch.matches, false);
   assert.match(mismatch.summary, /Review and explain/);
-  assert.equal(sellerComparisonSummary('', 'Jordan Freeman').matches, null);
+  assert.equal(sellerComparisonSummary('', 'Alex Sample').matches, null);
 });
 
 test('engagement addresses tolerate suffix formatting but block a different subject', () => {
   assert.equal(
     documentSubjectAddressComparison(
-      '1909 Snowmass Lane, Garland, TX 75044',
-      '1909 SNOWMASS LN, GARLAND, TX 75044',
+      '100 Sample Lane, Exampleton, TX 75041',
+      '100 SAMPLE LN, EXAMPLETON, TX 75041',
     ).matches,
     true,
   );
   const mismatch = documentSubjectAddressComparison(
-    '513 HARDY DR, Garland, TX 75041-3536',
-    '1909 SNOWMASS LN, Garland, TX 75044',
+    '200 OTHER DR, Exampleton, TX 75041-1234',
+    '100 SAMPLE LN, Exampleton, TX 75041',
   );
   assert.equal(mismatch.matches, false);
-  assert.equal(mismatch.documentAddress, '513 HARDY DR, Garland, TX 75041-3536');
+  assert.equal(mismatch.documentAddress, '200 OTHER DR, Exampleton, TX 75041-1234');
 });
 
 test('only engagement-letter mismatches block evidence confirmation', () => {

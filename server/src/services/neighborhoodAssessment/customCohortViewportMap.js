@@ -42,6 +42,8 @@ function boundsOf(geometry) {
   return bounds;
 }
 
+export function customCohortGeometryBounds(geometry) { return boundsOf(geometry); }
+
 function inViewport([x, y], box) {
   return x >= box.west && x <= box.east && y >= box.south && y <= box.north;
 }

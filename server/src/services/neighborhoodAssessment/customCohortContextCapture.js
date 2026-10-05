@@ -37,6 +37,7 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap,
   selectCustomCohortPreparedParcelViewportMap,
+  selectCustomCohortPreparedTileViewportMap,
   customCohortPreparedParcelMapJsonBytes } from './customCohortPreparedPreviewRepository.js';
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
@@ -923,9 +924,16 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         // Private supplemental sales still follow their exact retained-source
         // path. Never silently omit them from the selected preview.
         if (licensed.privateAuthorization) return null;
-        const prepared = await createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
-          .read({ includeMap, useVerifiedPreviewCache: true });
-        return prepared ? { target, scopeJson, licensed, prepared } : null;
+        const repository = createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef);
+        let prepared = await repository.read({ includeMap: includeMap && !mapViewport,
+          useVerifiedPreviewCache: true });
+        let tiled = false;
+        if (prepared && includeMap && mapViewport) {
+          const tileMap = await repository.readViewportTiles(mapViewport, prepared.preview);
+          if (tileMap) { prepared = { ...prepared, parcel_map: tileMap }; tiled = true; }
+          else prepared = await repository.read({ includeMap: true, useVerifiedPreviewCache: true });
+        }
+        return prepared ? { target, scopeJson, licensed, prepared, tiled } : null;
       });
       if (cached) {
         budget.check();
@@ -934,7 +942,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const preview = reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, input.selection);
         const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
         const selectedMap = includeMap
-          ? mapViewport
+          ? cached.tiled
+            ? selectCustomCohortPreparedTileViewportMap(cached.prepared.parcel_map,
+              preview.selected.account_ids, cached.prepared.preview.all.account_ids)
+            : mapViewport
             ? selectCustomCohortPreparedParcelViewportMap(cached.prepared.parcel_map,
               preview.selected.account_ids, mapViewport)
             : selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)

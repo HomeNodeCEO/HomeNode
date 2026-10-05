@@ -9,6 +9,8 @@ import { isCustomCohortObservationPreview,
   restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
 import { registerCustomCohortPreparedViewportMap,
   visibleCustomCohortPreparedFeatures } from './customCohortViewportMap.js';
+import { requestedCustomCohortPreparedTileKeys,
+  restoreCustomCohortPreparedTileFeatures } from './customCohortPreparedViewportTiles.js';
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
@@ -203,6 +205,56 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
   return Object.freeze({
     exists,
     read,
+    async readViewportTiles(viewport, preview) {
+      check(isCustomCohortObservationPreview(preview) && Array.isArray(preview.all?.account_ids),
+        'prepared_index_required');
+      const found = await query(`/* custom-cohort-prepared-tiles:read-manifest */
+        SELECT m.*, p.preview_sha256 AS current_preview_sha256,
+          p.map_sha256 AS current_map_sha256,
+          pg_catalog.encode(pg_catalog.sha256(p.compressed_map), 'hex') AS current_compressed_map_sha256
+        FROM app.neighborhood_custom_cohort_prepared_tile_manifests m
+        JOIN app.neighborhood_custom_cohort_prepared_previews p
+          ON p.organization_id=m.organization_id AND p.context_id=m.context_id
+          AND p.format_version=m.format_version
+        WHERE m.organization_id=$1::uuid AND m.context_id=$2::uuid
+          AND m.context_sha256=$3 AND m.format_version=1`, key);
+      if (found?.rowCount === 0) return null;
+      const manifest = one(found);
+      check(manifest.source_preview_sha256 === manifest.current_preview_sha256
+        && manifest.source_map_sha256 === manifest.current_map_sha256
+        && manifest.source_compressed_map_sha256 === manifest.current_compressed_map_sha256,
+      'storage_conflict');
+      if (manifest.status === 'unavailable') return null;
+      check(manifest.status === 'available' && Number.isSafeInteger(manifest.captured_parcels)
+        && manifest.captured_parcels > 0 && manifest.captured_parcels <= 100_000
+        && manifest.account_set_sha256 === hash(Buffer.from(JSON.stringify([...preview.all.account_ids].sort())))
+        && typeof manifest.map_shell_json === 'string'
+        && manifest.map_shell_sha256 === hash(Buffer.from(manifest.map_shell_json)), 'storage_conflict');
+      let shell;
+      try { shell = JSON.parse(manifest.map_shell_json); } catch { fail('storage_conflict'); }
+      check(shell?.status === 'available' && shell.geojson === null
+        && shell.counts?.parcels === manifest.captured_parcels, 'storage_conflict');
+      const keys = requestedCustomCohortPreparedTileKeys(manifest.cell_keys_json, viewport);
+      check(keys.length > 0, 'storage_conflict');
+      // One broad-geometry tile can accompany 32 ordinary viewport cells.
+      // A larger window retains the complete-map fallback instead of failing.
+      if (keys.length > 33) return null;
+      const placeholders = keys.map((_pair, index) => `($${3 + index * 2},$${4 + index * 2})`).join(',');
+      const rows = await query(`/* custom-cohort-prepared-tiles:read-cells */
+        SELECT cell_x, cell_y, tile_sha256, tile_utf8_bytes, compressed_tile
+        FROM app.neighborhood_custom_cohort_prepared_tiles
+        WHERE organization_id=$1::uuid AND context_id=$2::uuid AND format_version=1
+          AND (cell_x,cell_y) IN (${placeholders})`, [scope.organization_id, context.context_id,
+        ...keys.flat()]);
+      check(rows && Array.isArray(rows.rows) && rows.rowCount === rows.rows.length, 'storage_conflict');
+      const compressedBytes = rows.rows.reduce((total, row) => total + (row.compressed_tile?.length ?? 0), 0);
+      const expandedBytes = rows.rows.reduce((total, row) => total + (row.tile_utf8_bytes ?? 0), 0);
+      if (compressedBytes > 12_000_000 || expandedBytes > 32_000_000) return null;
+      const features = await restoreCustomCohortPreparedTileFeatures(rows.rows, keys, manifest.captured_parcels);
+      const allAccounts = new Set(preview.all.account_ids);
+      check(features.every(feature => allAccounts.has(feature.properties.account_id)), 'storage_conflict');
+      return freezeMap({ ...shell, geojson: { type: 'FeatureCollection', features } });
+    },
     async put(preview, parcelMap) {
       check(isCustomCohortObservationPreview(preview) && preview.preview_version === 2
         && canonicalAssessmentJson(preview.context_ref) === canonicalAssessmentJson(context)
@@ -290,6 +342,21 @@ export function selectCustomCohortPreparedParcelViewportMap(map, accountIds, vie
   check([...selected].every(account => represented.has(account)), 'map_membership_mismatch');
   const features = visibleCustomCohortPreparedFeatures(map, viewport, accountIds);
   const geojson = { type: 'FeatureCollection', features };
+  return freezeMap({ ...map, geojson, counts: { ...map.counts,
+    selected_accounts: selected.size, geojson_bytes: Buffer.byteLength(JSON.stringify(geojson)) } });
+}
+
+/** A complete, offline-published source-map identity has already established
+ * that every numeric member is represented. Only visible display flags change. */
+export function selectCustomCohortPreparedTileViewportMap(map, accountIds, allAccountIds) {
+  check(map?.status === 'available' && Array.isArray(map.geojson?.features)
+    && Array.isArray(allAccountIds), 'map_required');
+  const selected = new Set(accountIds), all = new Set(allAccountIds);
+  check([...selected].every(account => all.has(account)), 'map_membership_mismatch');
+  const geojson = { type: 'FeatureCollection', features: map.geojson.features.map(feature => ({
+    ...feature, properties: { ...feature.properties,
+      selected: selected.has(feature.properties.account_id) },
+  })) };
   return freezeMap({ ...map, geojson, counts: { ...map.counts,
     selected_accounts: selected.size, geojson_bytes: Buffer.byteLength(JSON.stringify(geojson)) } });
 }

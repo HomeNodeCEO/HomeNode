@@ -4,6 +4,10 @@ import { createHash } from 'node:crypto';
 import { canonicalAssessmentJson } from '../src/services/neighborhoodAssessment/contract.js';
 import { stageCohortPagedRosterV2, verifyCohortPagedRosterV2 }
   from '../src/services/neighborhoodAssessment/cohortPagedRosterV2.js';
+import { createCohortPagedRosterV2Store }
+  from '../src/services/neighborhoodAssessment/cohortPagedRosterV2Store.js';
+import { prepareNeighborhoodCohortBlob }
+  from '../src/services/neighborhoodAssessment/cohortEvidenceBlobRepository.js';
 import { createCohortLocalQueryEvidenceFixture }
   from './fixtures/neighborhoodCohortLocalQueryEvidenceFixture.js';
 
@@ -129,4 +133,40 @@ test('reopen rejects missing, changed, and reordered original pages', async () =
     await assert.rejects(verifyCohortPagedRosterV2({ ...input,
       manifestJson: result.manifest_json, readPage }), /page_conflict/);
   }
+});
+
+test('an organization-scoped immutable store retains every original page and re-verifies on reload', async () => {
+  const input = fixture(1_001), originals = new Map();
+  const repository = {
+    async put(value) {
+      const { content_sha256, canonical_utf8_bytes } = prepareNeighborhoodCohortBlob(value);
+      const previous = originals.get(content_sha256);
+      if (previous !== undefined && previous !== value) throw Error('storage_conflict');
+      originals.set(content_sha256, value);
+      return { content_sha256, canonical_utf8_bytes };
+    },
+    async get(content_sha256, canonical_utf8_bytes) {
+      const original = originals.get(content_sha256);
+      return original !== undefined && String(Buffer.byteLength(original)) === canonical_utf8_bytes
+        ? original : null;
+    },
+  };
+  const store = createCohortPagedRosterV2Store(repository);
+  const staged = await store.stage({ ...input, pages: pages(1_001), declaredAccountCount: 1_001 });
+  assert.equal(staged.pages.length, 2);
+  assert.equal(originals.size, 3);
+  const reloaded = await store.verify({ ...input, manifest: staged.manifest });
+  assert.equal(reloaded.manifest_sha256, staged.manifest_sha256);
+  originals.delete(staged.pages[1].content_sha256);
+  await assert.rejects(store.verify({ ...input, manifest: staged.manifest }), /page_conflict/);
+});
+
+test('storage acknowledgment mismatch cannot publish a directory', async () => {
+  const input = fixture(1);
+  const store = createCohortPagedRosterV2Store({
+    async put() { return { content_sha256: '0'.repeat(64), canonical_utf8_bytes: '1' }; },
+    async get() { return null; },
+  });
+  await assert.rejects(store.stage({ ...input, pages: pages(1), declaredAccountCount: 1 }),
+    /storage_conflict/);
 });

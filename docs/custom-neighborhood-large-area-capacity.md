@@ -79,8 +79,12 @@ selection and query digests as the retained v1 contract without building a
 single account-array preimage. It also verifies every original page and the
 directory on reload. A 60,000-account test exceeds the old whole-document
 ceiling, and tests reject missing, reordered, repeated, altered and cancelled
-pages. The caller must stage the pages in a transaction and commit only after
-the complete roster, source closure and authorization checks succeed. This
+pages. `cohortPagedRosterV2Store.js` binds that verifier to the existing
+organization-scoped immutable evidence-blob repository. It checks each storage
+acknowledgment and reloads every original by hash and byte length. The caller
+must supply a transaction-bound repository, roll back on any failure, and
+commit only after the complete roster, source closure and authorization checks
+succeed. This
 primitive alone does **not** raise the live 50,000-account ceiling or grant
 source access. The remaining capture, storage, statistics, map, and report
 budgets in the table above remain enforced until subsequent phases land.

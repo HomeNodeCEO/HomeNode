@@ -39,14 +39,26 @@ test('2055 Contract section preserves the same reviewed narrative in its own pri
   assert.match(exterior.reportXml, /<TextField Id="AnalyzedContractDescription" Data="Arms length sale;Contract dated 03\/15\/2026/);
 });
 
-test('upload alone, foreign property, conflicting versions, and unreviewed terms cannot claim analyzed contract', () => {
+test('upload alone, foreign property, conflicting base versions, and unconfirmed terms cannot claim analyzed contract', () => {
   for (const documents of [
-    [contract({ processing_status: 'review_required' })], [contract({ property_role: 'unknown' })],
+    [contract({ processing_status: 'processing' })], [contract({ property_role: 'unknown' })],
     [contract({ candidates: [] })], [contract(), contract({ id: 10 })],
   ]) {
     const result = projectSfrepContractSection(documents);
     assert.equal(result.fields.some(field => field.fieldId === 'AnalyzedContractYesCheckBox'), false);
   }
+  const partialReview = projectSfrepContractSection([contract({ processing_status: 'review_required' })]);
+  assert.equal(partialReview.fields.some(field => field.fieldId === 'AnalyzedContractDescription'), true);
+  assert.ok(partialReview.warnings.some(warning => /unreviewed suggestions/.test(warning)));
+});
+
+test('a document labeled Contract outranks financing and other addenda in both legacy forms', () => {
+  const main = contract({ title: 'Contract.pdf', file_name: 'Contract.pdf' });
+  const financing = contract({ id: 10, title: 'Thhird PArty Financing.pdf', file_name: 'Thhird PArty Financing.pdf',
+    processing_status: 'review_required', candidates: [] });
+  const result = projectSfrepContractSection([financing, main]);
+  assert.equal(result.fields.find(field => field.fieldId === 'AnalyzedContractDescription')?.documentId, 9);
+  assert.ok(result.warnings.some(warning => /did not replace the base contract/.test(warning)));
 });
 
 test('missing or inconsistent reviewed terms do not generate a complete 1004 narrative', () => {

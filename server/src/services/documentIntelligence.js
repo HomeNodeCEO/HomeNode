@@ -1007,6 +1007,10 @@ export function classifyDocument({ requestedType = "other", fileName = "", pages
   const normalizedRequested = normalizeDocumentType(requestedType);
   if (normalizedRequested !== "other") return normalizedRequested;
   const sample = `${fileName}\n${pages.join("\n").slice(0, 80_000)}`.toLowerCase();
+  // A financing/non-realty addendum can repeat the base contract's title and
+  // earnest-money language. Its own filename must not make it the main sale
+  // contract when the uploader left the type on Other.
+  if (/\b(?:th+ird[ -]?party financing|non[ -]?realty|addend(?:um|a)|amendment|rider)\b/i.test(fileName)) return "other";
   if (/one\s+to\s+four\s+family\s+residential\s+contract|earnest\s+money|purchase\s+contract/.test(sample)) {
     return "purchase_contract";
   }

@@ -127,12 +127,14 @@ test('printed CAD, tabular Property Details, and Matrix PDFs populate the same r
   assert.deepEqual(preview.conflicts, []);
   const fields = Object.fromEntries(preview.fields.map(field => [field.fieldId, field.value]));
   assert.equal(fields.StreetAddress, '100 Example Dr');
-  assert.equal(fields.ZipCode, '75041');
+  // This CAD page does not print ZIP. The MLS/Realist ZIP cannot become
+  // CAD-sourced identity in a direct (unsaved) export.
+  assert.equal(fields.ZipCode, undefined);
   assert.equal(fields.OwnerName, 'Morgan Publicrecord & Alex Publicrecord');
   assert.equal(preview.fields.find(field => field.fieldId === 'OwnerName').sourceValue, 'MORGAN PUBLICRECORD &\nALEX PUBLICRECORD');
   assert.equal(preview.fields.find(field => field.fieldId === 'OwnerName').formattingRule, 'title_case_single_line_owner_name');
   assert.equal(fields.AssessorsParcelNumber, '00001234567890000');
-  assert.equal(fields.County, 'Dallas');
+  assert.equal(fields.County, undefined); // Realist county does not replace a missing CAD county in direct export.
   assert.equal(fields.NeighborhoodName, 'Example Park');
   assert.equal(fields.RealEstateTaxYear, '2025');
   assert.equal(fields.RealEstateTaxAmount, '4322');

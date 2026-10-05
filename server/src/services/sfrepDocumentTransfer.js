@@ -2,8 +2,9 @@ import { createHash } from 'node:crypto';
 import { loadAssignmentDocumentContent } from './assignmentDocuments.js';
 import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
 import { buildSfrepReportExport, SFREP_SUPPORTED_FORM_IDS } from './sfrepReportExport.js';
-import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
+import { sfrepSubjectContext, sfrepWorkfileDocumentRoles } from './sfrepSubjectContext.js';
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
+import { filterSubjectEvidenceDocuments } from './customSubjectApplication.js';
 import { customSubjectCensusSql } from './customSubjectCensus.js';
 
 export const SFREP_TRANSFER_LIMITS = Object.freeze({ documents: 10, bytes: 50 * 1024 * 1024, candidatesPerDocument: 200 });
@@ -117,8 +118,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
     if (!Array.isArray(document.candidates) || document.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
     if (!Number.isSafeInteger(document.file_size_bytes) || document.file_size_bytes < 1
       || document.content_type !== 'application/pdf' || !/^[a-f0-9]{64}$/.test(document.checksum_sha256)) fail('sfrep_document_integrity_failed');
-    document.property_role = sfrepDocumentPropertyRole(document);
   }
+  sfrepWorkfileDocumentRoles(documents).forEach((source, index) => { documents[index].property_role = source.property_role; });
   // One statement binds canonical report revisions, current evidence, dates and
   // selected PDF metadata. Keep its shared report snapshot once, not per PDF.
   const saved = snapshot.saved_report;
@@ -132,8 +133,10 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         || !Number.isSafeInteger(source.id) || source.id < 1) fail('sfrep_document_not_found');
       if (!Array.isArray(source.candidates) || source.candidates.length > SFREP_TRANSFER_LIMITS.candidatesPerDocument) fail('sfrep_evidence_limit');
       source.subject_context = snapshot.subject_context;
-      source.property_role = sfrepDocumentPropertyRole(source);
     }
+    sfrepWorkfileDocumentRoles(saved.documents).forEach((source, index) => {
+      saved.documents[index].property_role = source.property_role;
+    });
     if (documents[0]) documents[0].saved_report = saved;
     // An empty attachment selection still exports the saved, reviewed workfile.
     documents.saved_report = saved;
@@ -151,7 +154,7 @@ export function previewSfrepDocuments(documents, input) {
   const saved = documents.saved_report || documents[0]?.saved_report;
   const subjectContext = sfrepSubjectContext(saved?.documents || documents);
   const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
-  const mapped = buildSfrepReportExport({ documents: saved?.documents || documents, pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
+  const mapped = buildSfrepReportExport({ documents: filterSubjectEvidenceDocuments(saved?.documents || documents), pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
     contractSection: true, savedAssignmentDetails: saved?.assignmentDetails,
     contractEvidenceDocuments: saved?.documents,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });

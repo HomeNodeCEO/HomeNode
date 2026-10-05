@@ -265,7 +265,7 @@ test("Realist county requires a property-qualified label and never consumes mail
   assert.equal(value(extract("other", "REALIST\nCounty\nCollin\nMailing County\nTarrant"), "county"), undefined);
 });
 
-test("standalone Realist identity permits confirmed taxes but matching APN never exports placeholder street", () => {
+test("standalone Realist identity permits confirmed taxes but never supplies CAD street identity", () => {
   const context = { accountId: "00001234567890000", address: "100 Example Dr", city: "Garland", postalCode: "75041" };
   for (const address of ["Property Address\n100 Example Dr, Garland, TX 75041", "Property Address: TBD"]) {
     const candidates = buildDocumentFieldCandidates({ documentType: "other", pages: [`REALIST\n${address}\nAPN\n00001234567890000\nTax Year\n2025\nTotal Taxes\n$4,321.50`] });
@@ -276,7 +276,7 @@ test("standalone Realist identity permits confirmed taxes but matching APN never
     const preview = previewSfrepDocuments([document], { accountId: context.accountId, assignmentFileId: 1, includeDocuments: false, formId: "FNMA-1004-0911" });
     assert.equal(preview.fields.find(item => item.fieldId === "RealEstateTaxAmount")?.value, "4322");
     assert.equal(preview.fields.find(item => item.fieldId === "RealEstateTaxAmount")?.sourceValue, "4321.50");
-    assert.equal(preview.fields.find(item => item.fieldId === "StreetAddress")?.value, address.endsWith("TBD") ? undefined : "100 Example Dr");
+    assert.equal(preview.fields.find(item => item.fieldId === "StreetAddress")?.value, undefined);
   }
 });
 

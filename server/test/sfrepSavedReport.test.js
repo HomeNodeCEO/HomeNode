@@ -6,7 +6,7 @@ import { buildSfrepReportExport } from '../src/services/sfrepReportExport.js';
 import { previewSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
 
 const input = { accountId: '000123', assignmentFileId: 4, documentIds: [1], formId: 'FNMA-1004-0911', includeDocuments: false };
-const candidate = (field_key, confirmed_value, index = 1) => ({ id: index, document_id: 1, field_key, confirmed_value, review_status: 'confirmed' });
+const candidate = (field_key, confirmed_value, index = 1, documentId = 1) => ({ id: index, document_id: documentId, field_key, confirmed_value, review_status: 'confirmed' });
 function fixture() {
   const documents = [{ id: 1, account_id: '000123', assignment_file_id: 4, document_type: 'engagement_letter',
     processing_status: 'reviewed', upload_date: '2026-10-02', file_size_bytes: 100, title: 'Synthetic Subject', file_name: 'subject.pdf',
@@ -17,6 +17,15 @@ function fixture() {
       assignment_type: 'purchase_transaction', lender_client_name: 'Example Bank', lender_client_address: '20 Example Ave, Austin TX 78701',
       hoa_dues_amount: '120.49', hoa_frequency: 'per_year', pud: 'false',
     }).map(([key, value], index) => candidate(key, value, index + 1)) }];
+  const copy = (id, type, values, sourceKind) => ({ ...documents[0], id, document_type: type,
+    extraction_summary: sourceKind ? { urar_subject_evidence: { source_kind: sourceKind } } : undefined,
+    candidates: Object.entries(values).map(([key, value], index) => candidate(key, value, id * 100 + index, id)) });
+  documents.push(copy(2, 'other', { subject_property_address: '100 Example Dr, Garland, TX 75041',
+    assessor_parcel_number: '000123', owner_name: 'Example Owner', county: 'Dallas',
+    neighborhood_name: 'Example Park', legal_description: 'EXAMPLE PARK\nBLK 1 LOT 2' }, 'cad'));
+  documents.push(copy(3, 'other', { assessor_parcel_number: '000123', tax_year: '2025', tax_amount: '4321.50' }, 'realist'));
+  documents.push(copy(4, 'mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041',
+    hoa_dues_amount: '120.49', hoa_frequency: 'per_year', pud: 'false' }));
   const projection = projectCustomSubjectDocuments(documents);
   const applied = mergeCustomSubjectApplication({ projection });
   const saved = { accountId: '000123', assignmentFileId: 4, assignmentRevision: 2,
@@ -152,7 +161,7 @@ test('multiple assignment choices and unsupported HOA frequency are not guessed'
 
 test('presentation-only normalization preserves an exact older source receipt without concealing source changes', () => {
   const { saved } = fixture();
-  const owner = saved.documents[0].candidates.find(candidate => candidate.field_key === 'owner_name');
+  const owner = saved.documents[1].candidates.find(candidate => candidate.field_key === 'owner_name');
   owner.confirmed_value = 'EXAMPLE OWNER';
   const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'owner_name');
   saved.subject.value.owner.owner_name = 'EXAMPLE OWNER';
@@ -184,8 +193,7 @@ test('account Census provenance revalidates every source revision and never refi
 
 test('saved HOA workflow defaults remain identified as assumptions, not eligibility proof', () => {
   const { saved } = fixture();
-  const pud = saved.documents[0].candidates.find(candidate => candidate.field_key === 'pud');
-  saved.documents[0].document_type = 'mls_sheet';
+  const pud = saved.documents[3].candidates.find(candidate => candidate.field_key === 'pud');
   Object.assign(pud, { raw_value: 'Yes', normalized_value: 'true', confirmed_value: 'true',
     extraction_method: 'urar_subject_mls_sheet_hoa_workflow_proxy' });
   const proposal = projectCustomSubjectDocuments(saved.documents).fields.find(field => field.key === 'pud');
@@ -202,9 +210,9 @@ test('phase and ZIP suffix presentation cannot hide a changed raw reviewed sourc
     ['subject_zip', '75041-1234', '75041-5678', 'ZipCode'],
   ]) {
     const { saved } = fixture();
-    saved.documents[0].candidates = saved.documents[0].candidates.filter(item => item.field_key !== key);
-    const source = candidate(key, original, 199);
-    saved.documents[0].candidates.push(source);
+    saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== key);
+    const source = candidate(key, original, 199, 2);
+    saved.documents[1].candidates.push(source);
     const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
     saved.subject.value = applied.subject;
     saved.assignmentDetails = applied.assignmentDetails;

@@ -2,6 +2,7 @@ import {
   CUSTOM_SUBJECT_FIELD_DESCRIPTORS, readCustomSubjectValue, projectCustomSubjectDocuments, subjectDocumentSourceKind,
 } from './customSubjectApplication.js';
 import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
+import { isUrarStateCode } from '../util/urarScalarValidation.js';
 import { isDeepStrictEqual } from 'node:util';
 import { sfrepDocumentParcelMismatch, sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
 import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
@@ -41,6 +42,18 @@ function reviewedIdentityReceiptStillCurrent(saved, key, receipt) {
   // The old receipt must still name the exact confirmed source text. A removed,
   // reprocessed, or edited PDF cannot be laundered through the account fallback.
   return Boolean(candidate && same(candidate.confirmed_value, receipt.reviewedSourceValue));
+}
+
+function reviewedStateWithoutCanonicalSource(saved, value, receipt) {
+  if (!isUrarStateCode(value) || !reviewedIdentityReceiptStillCurrent(saved, 'subject_state', receipt)) return false;
+  const raw = receipt.reviewedSourceValue;
+  if (typeof raw !== 'string') return false;
+  // Some older county account rows have no state. Retain a confirmed state
+  // printed in this subject's reviewed full address; do not infer one from a
+  // ZIP code, county name, or the workfile's selected report field alone.
+  const printed = receipt.sourceField === 'subject_state' ? raw.trim()
+    : raw.match(/,\s*([A-Za-z]{2})\s+\d{5}(?:-\d{4})?\s*$/)?.[1];
+  return Boolean(printed && printed.toUpperCase() === value.toUpperCase());
 }
 
 function revalidatedIdentity(saved, key, value, receipt, proposal) {
@@ -153,14 +166,17 @@ export function savedSfrepSubjectFields(saved, input) {
       const matchingCad = receipt.status === 'current' && cadDocument && proof?.kind === 'reviewed_document'
         && (receipt.kind !== proof.kind || receipt.documentId !== proof.documentId)
         && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value));
-      if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)) {
+      const retainedState = descriptor.key === 'subject_state' && !proposal
+        && reviewedStateWithoutCanonicalSource(saved, value, receipt);
+      if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)
+        && !retainedState) {
         const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));
         continue;
       }
-      origin = proof.kind;
-      source = proof;
+      origin = retainedState ? receipt.kind : proof.kind;
+      source = retainedState ? receipt : proof;
     }
     const provenance = { kind: 'saved_report', sourceField: descriptor.key, documentId: null, candidateId: null,
       assignmentFileId: saved.assignmentFileId,

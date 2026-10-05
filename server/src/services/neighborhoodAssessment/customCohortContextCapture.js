@@ -36,6 +36,7 @@ import { buildCustomCohortObservationPreview, buildCustomCohortIndexedObservatio
   reselectCustomCohortIndexedObservationPreview,
   CUSTOM_COHORT_OBSERVATION_PREVIEW_LIMITS } from './customCohortObservationPreview.js';
 import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPreparedParcelMap,
+  selectCustomCohortPreparedParcelViewportMap,
   customCohortPreparedParcelMapJsonBytes } from './customCohortPreparedPreviewRepository.js';
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
@@ -910,7 +911,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }));
   }
   async function runPreview(value, options, { includeMap = true, exposure = 'none', additionalExposures = [], outputLimit = null,
-    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, project } = {}) {
+    recommendedAreaOpening = false, preparedFast = false, preparedCatalog = false, mapViewport = null, project } = {}) {
     const input = previewInputOf(value), budget = operationBudget(options);
     if (preparedFast) {
       const cached = await transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -933,7 +934,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const preview = reselectCustomCohortIndexedObservationPreview(cached.prepared.preview, input.selection);
         const expected = { context_ref: input.contextRef, selection_revision: input.selection.revision };
         const selectedMap = includeMap
-          ? selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)
+          ? mapViewport
+            ? selectCustomCohortPreparedParcelViewportMap(cached.prepared.parcel_map,
+              preview.selected.account_ids, mapViewport)
+            : selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)
           : { status: 'omitted', reason: 'geometry_not_requested' };
         const content = { summary: presentCustomCohortPreview({ preview, expected }), parcel_map: selectedMap };
         return transaction(pool, 'READ COMMITTED', budget, async client => {
@@ -1619,6 +1623,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }, async viewport(value, viewport, options = {}) {
     const checked = prepareCustomCohortViewport(viewport);
     const preview = await runPreview(value, options, { includeMap: true, exposure: 'report_observation_summary', preparedFast: true,
+      mapViewport: checked,
       project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected }), parcel_map: parcelMap }) });
     return projectCustomCohortViewportMap(preview, checked);
   }, inspect(value, inspection, options = {}) {

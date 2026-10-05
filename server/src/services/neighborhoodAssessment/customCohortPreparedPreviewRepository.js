@@ -7,7 +7,8 @@ import { prepareCustomCohortContextReference, prepareCustomCohortContextScope } 
 import { isCustomCohortObservationPreview,
   reselectCustomCohortIndexedObservationPreview,
   restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
-import { registerCustomCohortPreparedViewportMap } from './customCohortViewportMap.js';
+import { registerCustomCohortPreparedViewportMap,
+  visibleCustomCohortPreparedFeatures } from './customCohortViewportMap.js';
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
@@ -26,6 +27,7 @@ let hotPreviewTimer = null;
 // byte count. Only maps derived from that certified object may use byte deltas;
 // synthetic/legacy inputs retain the full serialization guard.
 const verifiedMapBytes = new WeakSet();
+const representedMapAccounts = new WeakMap();
 function clearHotPreview() {
   if (hotPreviewTimer) clearTimeout(hotPreviewTimer);
   hotPreview = null;
@@ -269,6 +271,27 @@ export function selectCustomCohortPreparedParcelMap(map, accountIds) {
     registerCustomCohortPreparedViewportMap(output, map);
   }
   return output;
+}
+
+/** A viewport needs only a fraction of a verified map. Check selection against
+ * the full captured roster, then clone flags on visible features only. Unknown
+ * or uncertified maps keep the existing full-map path and all its guards. */
+export function selectCustomCohortPreparedParcelViewportMap(map, accountIds, viewport) {
+  if (map.status === 'unavailable' || !verifiedMapBytes.has(map))
+    return selectCustomCohortPreparedParcelMap(map, accountIds);
+  check(map.status === 'available' && Array.isArray(map.geojson?.features)
+    && Object.isFrozen(map.geojson.features), 'map_required');
+  const selected = new Set(accountIds);
+  let represented = representedMapAccounts.get(map);
+  if (!represented) {
+    represented = new Set(map.geojson.features.map(feature => feature.properties.account_id));
+    representedMapAccounts.set(map, represented);
+  }
+  check([...selected].every(account => represented.has(account)), 'map_membership_mismatch');
+  const features = visibleCustomCohortPreparedFeatures(map, viewport, accountIds);
+  const geojson = { type: 'FeatureCollection', features };
+  return freezeMap({ ...map, geojson, counts: { ...map.counts,
+    selected_accounts: selected.size, geojson_bytes: Buffer.byteLength(JSON.stringify(geojson)) } });
 }
 
 /** Exact JSON length without revisiting every certified parcel coordinate.

@@ -2,6 +2,9 @@ import {
   CUSTOM_SUBJECT_FIELD_DESCRIPTORS, readCustomSubjectValue, projectCustomSubjectDocuments, subjectDocumentSourceKind,
 } from './customSubjectApplication.js';
 import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
+import { isUrarStateCode } from '../util/urarScalarValidation.js';
+import { parseStructuredAddress } from '../util/structuredAddress.js';
+import { normalizePropertyCity } from '../util/propertySearch.js';
 import { isDeepStrictEqual } from 'node:util';
 import { sfrepDocumentParcelMismatch, sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
 import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
@@ -41,6 +44,35 @@ function reviewedIdentityReceiptStillCurrent(saved, key, receipt) {
   // The old receipt must still name the exact confirmed source text. A removed,
   // reprocessed, or edited PDF cannot be laundered through the account fallback.
   return Boolean(candidate && same(candidate.confirmed_value, receipt.reviewedSourceValue));
+}
+
+function reviewedStateWithoutCanonicalSource(saved, value, receipt) {
+  if (!isUrarStateCode(value) || !reviewedIdentityReceiptStillCurrent(saved, 'subject_state', receipt)) return false;
+  const raw = receipt.reviewedSourceValue;
+  if (typeof raw !== 'string') return false;
+  // Some older county account rows have no state. Retain a confirmed state
+  // printed in this subject's reviewed full address; do not infer one from a
+  // ZIP code, county name, or the workfile's selected report field alone.
+  let printed;
+  if (receipt.sourceField === 'subject_state') printed = raw.trim();
+  else {
+    const address = raw.match(/^(.+),\s*([A-Za-z][A-Za-z .'-]*),?\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)\s*$/);
+    if (!address) return false;
+    const subject = saved.subject?.value;
+    const savedStreet = readCustomSubjectValue({ subject }, 'subject_street_address');
+    const savedCity = readCustomSubjectValue({ subject }, 'subject_city');
+    const savedZip = readCustomSubjectValue({ subject }, 'subject_zip');
+    if (typeof savedStreet !== 'string' || typeof savedCity !== 'string'
+      || typeof savedZip !== 'string' || !/^\d{5}(?:-\d{4})?$/.test(savedZip)) return false;
+    const sourceStreet = parseStructuredAddress(address[1]);
+    const reportStreet = parseStructuredAddress(savedStreet);
+    if (!sourceStreet.house_number || !reportStreet.house_number
+      || !['base_address_key', 'unit_key', 'building_key', 'floor_key'].every(key => sourceStreet[key] === reportStreet[key])
+      || normalizePropertyCity(address[2]) !== normalizePropertyCity(savedCity)
+      || address[4].slice(0, 5) !== savedZip.slice(0, 5)) return false;
+    printed = address[3];
+  }
+  return Boolean(printed && printed.toUpperCase() === value.toUpperCase());
 }
 
 function revalidatedIdentity(saved, key, value, receipt, proposal) {
@@ -153,14 +185,17 @@ export function savedSfrepSubjectFields(saved, input) {
       const matchingCad = receipt.status === 'current' && cadDocument && proof?.kind === 'reviewed_document'
         && (receipt.kind !== proof.kind || receipt.documentId !== proof.documentId)
         && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value));
-      if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)) {
+      const retainedState = descriptor.key === 'subject_state' && !proposal
+        && reviewedStateWithoutCanonicalSource(saved, value, receipt);
+      if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)
+        && !retainedState) {
         const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));
         continue;
       }
-      origin = proof.kind;
-      source = proof;
+      origin = retainedState ? receipt.kind : proof.kind;
+      source = retainedState ? receipt : proof;
     }
     const provenance = { kind: 'saved_report', sourceField: descriptor.key, documentId: null, candidateId: null,
       assignmentFileId: saved.assignmentFileId,

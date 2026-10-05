@@ -265,6 +265,48 @@ test('older reviewed MLS and Realist locality receipts migrate only to matching 
   }
 });
 
+test('reviewed subject-address state survives a missing canonical state without inventing one', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: null };
+  }
+  // No CAD or account state is available; the reviewed MLS full address says TX.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'subject_property_address');
+  const mls = saved.documents[3];
+  const address = mls.candidates.find(item => item.field_key === 'subject_property_address');
+  const receipt = { kind: 'reviewed_document', sourceField: 'subject_property_address', documentId: mls.id,
+    candidateId: address.id, documentType: mls.document_type, reviewedSourceValue: address.confirmed_value,
+    value: 'TX', status: 'current' };
+  saved.evidence.value.fields.subject_state = receipt;
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const fields = savedSfrepSubjectFields(saved, input).fields;
+    const state = buildSfrepReportExport({ formId, savedReportFields: fields }).fields.find(item => item.fieldId === 'State');
+    assert.equal(state?.value, 'TX');
+    assert.equal(state?.provenance.origin, 'reviewed_document');
+    assert.equal(state?.provenance.sourceDocumentId, mls.id);
+  }
+  for (const change of ['rejected', 'changed_raw', 'not_current', 'wrong_state', 'different_account_state',
+    'edited_street', 'edited_city', 'edited_zip']) {
+    const altered = structuredClone(saved);
+    const old = altered.documents[3].candidates.find(item => item.id === address.id);
+    if (change === 'rejected') old.review_status = 'rejected';
+    if (change === 'changed_raw') old.confirmed_value = '100 Example Dr, Garland, OK 75041';
+    if (change === 'not_current') altered.evidence.value.fields.subject_state.status = 'needs_review';
+    if (change === 'wrong_state') {
+      altered.subject.value.property_location.state = 'OK';
+      altered.evidence.value.fields.subject_state.value = 'OK';
+    }
+    if (change === 'different_account_state') {
+      for (const document of altered.documents) document.subject_context.canonicalIdentity.state = 'OK';
+    }
+    if (change === 'edited_street') altered.subject.value.property_location.address = '101 Different Dr';
+    if (change === 'edited_city') altered.subject.value.property_location.city = 'Plano';
+    if (change === 'edited_zip') altered.subject.value.property_location.postal_code = '75042';
+    assert.equal(exportSaved(altered).fields.some(item => item.fieldId === 'State'), false, change);
+  }
+});
+
 test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {
   const { saved } = fixture();
   saved.documents[0].subject_context.censusGeography = { tractCode: '001234', status: 'matched',

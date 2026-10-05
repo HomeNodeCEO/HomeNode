@@ -18,21 +18,26 @@ function serverPreview({ saved = true, hoa = 'true', county = false, lenderPrese
   const history = JSON.stringify({ schema_version: 1, listing_id: '77700001', list_date: '2026-05-29',
     coverage: 'complete', price_changes: [] });
   const data = [
-    ['mls_sheet', { subject_property_address: '100 EXAMPLE DR, GARLAND, TX 75041-1234', borrower_name: 'EXAMPLE BORROWER',
+    ['other', county ? {} : { subject_property_address: '100 EXAMPLE DR, GARLAND, TX 75041-1234',
       owner_name: 'EXAMPLE OWNER LLC\nSECOND OWNER', neighborhood_name: 'EXAMPLE PARK 4',
-      legal_description: 'EXAMPLE PARK\nBLK 1 LOT 2', tax_amount: '4321.50',
-      mls_number: '77700001', list_date: '2026-05-29', original_list_price: '345000.00', days_on_market: '77', pud: hoa }],
+      legal_description: 'EXAMPLE PARK\nBLK 1 LOT 2' }],
+    ['engagement_letter', { subject_property_address: '100 Example Dr, Garland, TX 75041',
+      borrower_name: 'EXAMPLE BORROWER' }],
+    ['mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041', mls_number: '77700001',
+      list_date: '2026-05-29', original_list_price: '345000.00', days_on_market: '77', pud: hoa,
+      listing_price_history: history }],
     ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', contract_date: '2026-08-25' }],
-    ['mls_sheet', { subject_property_address: '100 Example Dr, Garland, TX 75041', mls_number: '77700001', listing_price_history: history }],
   ];
   if (partyRoles) data.splice(0, data.length,
     ['engagement_letter', { subject_property_address: '100 Example Dr, Garland, TX 75041', borrower_name: 'ALEX SAMPLE AND TAYLOR EXAMPLE' }],
     ['purchase_contract', { subject_property_address: '100 Example Dr, Garland, TX 75041', buyer_name: 'CONTRACT BUYER', seller_name: 'CONTRACT SELLER' }],
-    ['public_record', { subject_property_address: '100 Example Dr, Garland, TX 75041', record_owner_name: 'RECORD OWNER LLC' }]);
-  if (lenderPreset) data[0][1].lender_client_name = 'United Wholesale Mortgage';
+    ['other', { subject_property_address: '100 Example Dr, Garland, TX 75041', record_owner_name: 'RECORD OWNER LLC' }]);
+  if (lenderPreset) data[partyRoles ? 0 : 1][1].lender_client_name = 'United Wholesale Mortgage';
   const documents = data.map(([document_type, values], index) => ({ id: index + 1, account_id: subject.accountId,
     assignment_file_id: 4, document_type, processing_status: 'reviewed', upload_date: '2026-10-02',
-    title: 'Synthetic source', file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100, subject_context: subject,
+    title: document_type === 'other' ? 'CAD record' : 'Synthetic source',
+    file_name: `synthetic-${index + 1}.pdf`, file_size_bytes: 100, subject_context: subject,
+    ...(document_type === 'other' ? { extraction_summary: { urar_subject_evidence: { source_kind: 'cad' } } } : {}),
     candidates: Object.entries(values).map(([field_key, confirmed_value], offset) => ({ id: (index + 1) * 100 + offset,
       document_id: index + 1, field_key, confirmed_value, review_status: 'confirmed',
       ...(field_key === 'pud' ? { normalized_value: hoa, raw_value: hoa === 'true' ? 'Mandatory' : 'None',
@@ -52,13 +57,14 @@ function serverPreview({ saved = true, hoa = 'true', county = false, lenderPrese
     subjectContext: sfrepSubjectContext(documents), ...(canonical ? { savedReportFields: savedSfrepSubjectFields(canonical, input).fields } : {}) });
   return JSON.parse(JSON.stringify({ ok: true, ...result, preview_digest: 'a'.repeat(64), filename: 'HomeNode-SFREP-file-4.rpti',
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) => ({ id, title, file_name, file_size_bytes, processing_status })),
-    ...(canonical ? { savedReport: { assignmentFileId: 4, assignmentRevision: 2, subjectRevision: fallbackIdentity ? 0 : 1, sourceDocumentIds: [1, 2, 3] } } : {}) }));
+    ...(canonical ? { savedReport: { assignmentFileId: 4, assignmentRevision: 2, subjectRevision: fallbackIdentity ? 0 : 1,
+      sourceDocumentIds: documents.map(document => document.id) } } : {}) }));
 }
 
 test('canonical county identity and user lender preset cross the strict producer boundary with honest labels', () => {
   for (const fallbackIdentity of [false, true]) {
     const preview = serverPreview({ county: true, lenderPreset: true, fallbackIdentity });
-    assert.equal(checkSfrepPreview(preview, [1, 2, 3]), preview);
+    assert.equal(checkSfrepPreview(preview, [1, 2, 3, 4]), preview);
     const identity = preview.fields.filter(field => field.provenance.rule === 'canonical_county_subject_identity_v1');
     assert.equal(identity.length, 6);
     for (const field of identity) {
@@ -93,11 +99,11 @@ test('canonical county receipts reject altered destinations, values, sources and
     ]) {
       const invalid = structuredClone(preview);
       change(invalid.fields.find(field => field.fieldId === 'StreetAddress'));
-      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/, String(change));
+      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid|does not match/, String(change));
     }
     const apn = structuredClone(preview);
     apn.fields.find(field => field.fieldId === 'AssessorsParcelNumber').provenance.sourceEvidence[0].accountId = 'OTHER';
-    assert.throws(() => checkSfrepPreview(apn, [1, 2, 3]), /invalid/);
+    assert.throws(() => checkSfrepPreview(apn, [1, 2, 3, 4]), /invalid/);
   }
 });
 
@@ -108,7 +114,7 @@ test('lender preset receipts are exact, source-bound and cannot authorize other 
     field => { field.provenance.rule = 'user_requested_any_lender'; },
     field => { field.provenance.sourceValue = 'Other Bank'; },
     field => { field.provenance.sourceEvidence[0].value = 'Other Bank'; },
-    field => { field.provenance.sourceEvidence[0].documentId = 2; },
+    field => { field.provenance.sourceEvidence[0].documentId = 1; },
     field => { field.provenance.sourceEvidence[0].candidateId = 999; },
     field => { field.provenance.sourceEvidence[0].sourceField = 'borrower_name'; },
     field => { field.provenance.sourceEvidence[0].extra = true; },
@@ -117,7 +123,7 @@ test('lender preset receipts are exact, source-bound and cannot authorize other 
   ]) {
     const invalid = structuredClone(preview);
     change(invalid.fields.find(field => field.fieldId === 'LenderClientCompanyUnparsedAddress'));
-    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/, String(change));
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid|does not match/, String(change));
   }
 });
 
@@ -125,7 +131,7 @@ test('transport binds canonical county evidence to the selected account before r
   const preview = serverPreview({ county: true });
   const transport = createSfrepTransport({ urlFor: path => path,
     request: async () => new Response(JSON.stringify(preview), { headers: { 'content-type': 'application/json' } }) });
-  await assert.rejects(transport.preview({ accountId: 'DIFFERENT-ACCOUNT', assignmentFileId: 4, documentIds: [1, 2, 3], includeDocuments: false },
+  await assert.rejects(transport.preview({ accountId: 'DIFFERENT-ACCOUNT', assignmentFileId: 4, documentIds: [1, 2, 3, 4], includeDocuments: false },
     { signal: new AbortController().signal, editorKey: 'key' }), /selected county account/);
 });
 
@@ -135,13 +141,13 @@ test('actual canonical server preview accepts current presentation, Census, list
     assert.equal(value.fields.find(field => field.fieldId === 'CensusTract')?.value, '182.06');
     assert.equal(value.fields.find(field => field.fieldId === 'CurrentPriorListingDataSources')?.provenance.rule,
       'reviewed_subject_listing_history_template_v1');
-    assert.equal(checkSfrepPreview(value, [1, 2, 3]), value);
+    assert.equal(checkSfrepPreview(value, [1, 2, 3, 4]), value);
   }
 });
 
 test('actual reviewed-document server preview accepts transformed composite addresses and HOA proof', () => {
   const value = serverPreview({ saved: false });
-  assert.equal(checkSfrepPreview(value, [1, 2, 3]), value);
+  assert.equal(checkSfrepPreview(value, [1, 2, 3, 4]), value);
 });
 
 test('new presentation rules are recomputed and remain bound to exact source and destination fields', () => {
@@ -158,7 +164,7 @@ test('new presentation rules are recomputed and remain bound to exact source and
       ]) {
         const invalid = structuredClone(source);
         change(invalid.fields.find(item => item.fieldId === field.fieldId));
-        assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid/, `${field.fieldId}: ${change}`);
+        assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid/, `${field.fieldId}: ${change}`);
       }
     }
   }
@@ -179,7 +185,7 @@ test('canonical Census proof rejects invented rules, malformed receipts, wrong t
   ]) {
     const invalid = serverPreview();
     change(invalid.fields.find(field => field.fieldId === 'CensusTract'));
-    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/);
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid|does not match/);
   }
 });
 
@@ -202,7 +208,7 @@ test('listing-history provenance is rule-specific, date-bound and scoped to save
   ]) {
     const invalid = serverPreview();
     change(invalid.fields.find(field => field.fieldId === 'CurrentPriorListingDataSources'));
-    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid|does not match/);
+    assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid|does not match/);
   }
   // Evidence can belong to saved sources that were not selected as PDF addenda.
   const subset = serverPreview();
@@ -227,11 +233,11 @@ test('HOA assumptions remain narrowly identified and cannot masquerade as verifi
       value => { value.fields.find(item => item.fieldId === 'PropertyTypePUDCheckBox').provenance.extra = true; },
     ]) {
       const invalid = serverPreview({ saved }); change(invalid);
-      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3]), /invalid/);
+      assert.throws(() => checkSfrepPreview(invalid, [1, 2, 3, 4]), /invalid/);
     }
   }
   const value = serverPreview({ hoa: 'false' });
-  const rows = sfrepSubjectChecklist(checkSfrepPreview(value, [1, 2, 3]));
+  const rows = sfrepSubjectChecklist(checkSfrepPreview(value, [1, 2, 3, 4]));
   assert.deepEqual(rows.find(item => item.key === 'census').values, ['182.06']);
   assert.match(rows.find(item => item.key === 'census').notes.join(' '), /not PDF evidence/);
   assert.equal(rows.find(item => item.key === 'listing-history').statusLabel, 'Derived — review');
@@ -240,7 +246,7 @@ test('HOA assumptions remain narrowly identified and cannot masquerade as verifi
   for (const rule of ['user_requested_fee_simple_default', 'user_requested_hoa_workflow_proxy_v1']) {
     const duplicate = serverPreview();
     duplicate.assumptions.push(structuredClone(duplicate.assumptions.find(item => item.rule === rule)));
-    assert.throws(() => checkSfrepPreview(duplicate, [1, 2, 3]), /invalid/);
+    assert.throws(() => checkSfrepPreview(duplicate, [1, 2, 3, 4]), /invalid/);
   }
 });
 

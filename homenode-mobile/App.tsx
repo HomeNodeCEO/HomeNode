@@ -54,6 +54,7 @@ function friendlyError(reason: unknown) {
     offline_inspection_not_found: "This inspection is not available on this device.",
     offline_storage_open_timed_out: "HomeNode could not finish opening encrypted storage. Your field drafts were not deleted.",
     offline_storage_read_timed_out: "HomeNode could not finish reading offline drafts. Your field drafts were not deleted.",
+    mobile_offline_database_key_unavailable: "HomeNode cannot access this device's offline encryption key. Your drafts were not deleted. Keep the app installed and contact support before trying another sign-in or reinstall.",
   };
   return messages[code] || code.replaceAll("_", " ");
 }
@@ -426,11 +427,11 @@ function InspectionScreen({
   const selectedTabLabel = INSPECTION_TABS.find(([key]) => key === selectedTab)?.[1] || "Subject";
 
   const loadLocal = useCallback(async () => {
-    const [draft, nextConflicts, nextSummary] = await Promise.all([
+    const [draft, nextConflicts, nextSummary] = await store.withDatabaseActivity(() => Promise.all([
       store.generalComments(ownerUserId, session.id),
       store.conflicts(ownerUserId, session.id),
       store.queueSummary(ownerUserId, session.id),
-    ]);
+    ]));
     setComments(draft.value);
     setDraftState(draft.state);
     setConflicts(nextConflicts);
@@ -454,7 +455,7 @@ function InspectionScreen({
     setSaving(true);
     setError(null);
     try {
-      await store.queueGeneralComments(ownerUserId, session.id, comments);
+      await store.withDatabaseActivity(() => store.queueGeneralComments(ownerUserId, session.id, comments));
       await onRefreshQueue();
       await loadLocal();
       if (online) await onSync();
@@ -469,12 +470,12 @@ function InspectionScreen({
   const resolve = async (conflict: LocalConflict, resolution: "accept_server" | "apply_mobile") => {
     setError(null);
     try {
-      await store.queueConflictResolution(
+      await store.withDatabaseActivity(() => store.queueConflictResolution(
         ownerUserId,
         session.id,
         conflict.clientOperationId,
         resolution,
-      );
+      ));
       await onRefreshQueue();
       if (online) await onSync();
       await loadLocal();
@@ -668,7 +669,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
 
   const reloadCached = useCallback(async (nextStore = store, nextUser = user) => {
     if (!nextStore || !nextUser) return;
-    setCachedInspections(await nextStore.cachedInspections(nextUser.userId));
+    setCachedInspections(await nextStore.withDatabaseActivity(() => nextStore.cachedInspections(nextUser.userId)));
   }, [store, user]);
 
   useEffect(() => {
@@ -715,7 +716,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
 
   const openInspection = async (file: ReportFile, session: InspectionSession) => {
     if (store && user && property) {
-      await store.cacheInspection(user.userId, property, file, session);
+      await store.withDatabaseActivity(() => store.cacheInspection(user.userId, property, file, session));
       await reloadCached(store, user);
     }
     setInspection({ file, session });

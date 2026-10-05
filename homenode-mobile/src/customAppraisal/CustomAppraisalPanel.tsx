@@ -115,12 +115,12 @@ export function CustomAppraisalPanel({ api, store, ownerUserId, sessionId, onlin
   const [error, setError] = useState<string | null>(null);
 
   const cacheAndSet = useCallback(async (next: CustomAppraisalReview) => {
-    await store.cacheCustomAppraisalReview(ownerUserId, sessionId, next);
+    await store.withDatabaseActivity(() => store.cacheCustomAppraisalReview(ownerUserId, sessionId, next));
     setReview(next);
   }, [ownerUserId, sessionId, store]);
 
   const load = useCallback(async () => {
-    const cached = await store.cachedCustomAppraisalReview(ownerUserId, sessionId);
+    const cached = await store.withDatabaseActivity(() => store.cachedCustomAppraisalReview(ownerUserId, sessionId));
     if (cached) setReview(cached);
     if (!online) return;
     const current = await api.customAppraisalReview(sessionId);
@@ -142,7 +142,7 @@ export function CustomAppraisalPanel({ api, store, ownerUserId, sessionId, onlin
   useEffect(() => {
     if (!review || !fields.length) return;
     void (async () => {
-      const drafts = await store.fieldDraftValues(ownerUserId, sessionId, fields.map((field) => field.field_path));
+      const drafts = await store.withDatabaseActivity(() => store.fieldDraftValues(ownerUserId, sessionId, fields.map((field) => field.field_path)));
       setValues((prior) => {
         const next = { ...prior };
         for (const field of fields) {
@@ -176,7 +176,7 @@ export function CustomAppraisalPanel({ api, store, ownerUserId, sessionId, onlin
       for (const field of changedFields) {
         changes[field.field_path] = customAppraisalFieldChange(field, values[field.field_path] || "");
       }
-      await store.queueFieldChanges(ownerUserId, sessionId, changes);
+      await store.withDatabaseActivity(() => store.queueFieldChanges(ownerUserId, sessionId, changes));
       setTouched((prior) => {
         const next = new Set(prior);
         changedFields.forEach((field) => next.delete(field.field_path));

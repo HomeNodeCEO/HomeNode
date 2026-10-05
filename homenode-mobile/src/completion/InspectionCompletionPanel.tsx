@@ -91,14 +91,14 @@ export function InspectionCompletionPanel({
         if (!online) throw new Error("online_connection_required");
         await onSync();
       }
-      const nextLocal = await store.inspectionCompletionLocalReadiness(ownerUserId, session.id);
+      const nextLocal = await store.withDatabaseActivity(() => store.inspectionCompletionLocalReadiness(ownerUserId, session.id));
       const nextServer = online
         ? await api.inspectionCompletionReadiness(session.id)
         : null;
       setLocal(nextLocal);
       setServer(nextServer);
       if (nextServer?.completed && session.status !== "completed") {
-        await store.cacheInspectionSession(ownerUserId, nextServer.session);
+        await store.withDatabaseActivity(() => store.cacheInspectionSession(ownerUserId, nextServer.session));
         await onCompleted(nextServer.session);
       }
       return { local: nextLocal, server: nextServer };
@@ -125,7 +125,7 @@ export function InspectionCompletionPanel({
         baseSessionRevision: readiness.session.revision,
       });
       setServer(response.readiness);
-      await store.cacheInspectionSession(ownerUserId, response.session);
+      await store.withDatabaseActivity(() => store.cacheInspectionSession(ownerUserId, response.session));
       await onCompleted(response.session);
     } catch (reason) {
       const nextServer = readinessFromError(reason);

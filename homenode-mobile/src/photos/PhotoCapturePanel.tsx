@@ -14,10 +14,12 @@ import type { WorkflowType } from "../domain/workflows";
 import { OfflineStore, type LocalPhotoDraft } from "../offline/store";
 import {
   captureCameraPhoto,
+  clearStagedPhotoManifest,
   deletePreparedPhotoFiles,
   importLibraryPhotos,
   preparePickedPhoto,
   recoverInterruptedPickerPhotos,
+  recoverStagedPhotos,
 } from "./capture";
 import {
   CUSTOM_PHOTO_CATEGORIES,
@@ -32,6 +34,9 @@ import { isUnreadableSqliteDatabaseError } from "../offline/databaseRecovery";
 import { COLORS } from "../theme";
 
 function photoError(reason: unknown) {
+  if (reason instanceof Error && reason.message === "mobile_offline_database_key_unavailable") {
+    return "HomeNode cannot access the offline encryption key. Keep the app installed; your local files were not deleted.";
+  }
   if (isUnreadableSqliteDatabaseError(reason)) {
     return "HomeNode could not repair encrypted offline storage. Close and reopen HomeNode, and do not delete the app.";
   }
@@ -207,46 +212,61 @@ export function PhotoCapturePanel({
     roomLabel: null,
   }, [category, selectedSketchRoom, useSketchRoom, workflowType]);
 
-  const prepare = useCallback(async (
+  const prepareAssets = useCallback(async (
     assets: Awaited<ReturnType<typeof captureCameraPhoto>>,
     source: "camera" | "library",
   ) => {
-    if (!assets.length) return;
+    const prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[] = [];
+    for (const asset of assets.slice(0, remaining)) {
+      prepared.push(await preparePickedPhoto(asset, { ownerUserId, sessionId, source, label }));
+    }
+    return prepared;
+  }, [label, ownerUserId, remaining, sessionId]);
+
+  const cachePrepared = useCallback(async (
+    prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[],
+  ) => {
+    if (!prepared.length) return;
     setBusy(true);
     setError(null);
-    const prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[] = [];
-    let cached = false;
     try {
-      const bounded = assets.slice(0, remaining);
-      for (const asset of bounded) {
-        prepared.push(await preparePickedPhoto(asset, { ownerUserId, sessionId, source, label }));
-      }
       await store.withDatabaseActivity(() => store.cachePreparedPhotos(ownerUserId, sessionId, prepared));
-      cached = true;
+      for (const photo of prepared) {
+        try { clearStagedPhotoManifest(ownerUserId, sessionId, photo.clientPhotoId); } catch { /* already queued */ }
+      }
       await load();
       // The durable local copy is ready for the next shot. Cloud sync runs
       // separately and may still be uploading an earlier full-size original.
       if (online) void syncPhotosNow();
     } catch (reason) {
-      if (!cached) {
-        for (const photo of prepared) await deletePreparedPhotoFiles(photo);
-      }
-      setError(photoError(reason));
+      // The manifest and original remain on-device if SQLite cannot accept the
+      // queue row. A later launch can register the same client photo ID once.
+      setError(`${photoError(reason)} The photo remains saved on this device; do not delete the app.`);
     } finally {
       setBusy(false);
     }
-  }, [label, load, online, ownerUserId, remaining, sessionId, store, syncPhotosNow]);
+  }, [load, online, ownerUserId, sessionId, store, syncPhotosNow]);
+
+  const prepare = useCallback(async (
+    assets: Awaited<ReturnType<typeof captureCameraPhoto>>,
+    source: "camera" | "library",
+  ) => cachePrepared(await prepareAssets(assets, source)), [cachePrepared, prepareAssets]);
 
   useEffect(() => {
     let active = true;
-    void recoverInterruptedPickerPhotos().then((assets) => {
-      if (active && assets.length) void prepare(assets, "library");
-    }).catch((reason) => { if (active) setError(photoError(reason)); });
+    void (async () => {
+      const staged = await recoverStagedPhotos(ownerUserId, sessionId);
+      if (active && staged.length) await cachePrepared(staged);
+      const assets = await recoverInterruptedPickerPhotos();
+      if (active && assets.length) await prepare(assets, "library");
+    })().catch((reason) => { if (active) setError(photoError(reason)); });
     return () => { active = false; };
   }, []);
 
   const pickWithDatabaseClosed = async (
     picker: () => Promise<Awaited<ReturnType<typeof captureCameraPhoto>>>,
+    source: "camera" | "library",
+    onPrepared: (count: number) => void,
   ) => {
     // A photo upload may continue over the network while the picker is open,
     // but its SQLite transitions must wait until the connection is reopened.
@@ -255,9 +275,12 @@ export function PhotoCapturePanel({
     try {
       await store.prepareForExternalActivity();
       const assets = await picker();
+      // Make the camera result durable before trying to reopen SQLCipher.
+      const prepared = await prepareAssets(assets, source);
+      onPrepared(prepared.length);
       await store.ensureReady();
       reopened = true;
-      return assets;
+      return prepared;
     } finally {
       if (!reopened) await store.ensureReady().catch(() => undefined);
       resumeDatabaseActivity();
@@ -267,12 +290,13 @@ export function PhotoCapturePanel({
   const takePhoto = async () => {
     if (busy) return;
     setBusy(true);
+    let stagedCount = 0;
     try {
-      const assets = await pickWithDatabaseClosed(captureCameraPhoto);
-      await prepare(assets, "camera");
+      const prepared = await pickWithDatabaseClosed(captureCameraPhoto, "camera", (count) => { stagedCount = count; });
+      await cachePrepared(prepared);
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
-      setError(photoError(reason));
+      setError(`${photoError(reason)}${stagedCount ? " The photo remains saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }
@@ -281,12 +305,13 @@ export function PhotoCapturePanel({
   const importPhotos = async () => {
     if (busy) return;
     setBusy(true);
+    let stagedCount = 0;
     try {
-      const assets = await pickWithDatabaseClosed(() => importLibraryPhotos(remaining));
-      await prepare(assets, "library");
+      const prepared = await pickWithDatabaseClosed(() => importLibraryPhotos(remaining), "library", (count) => { stagedCount = count; });
+      await cachePrepared(prepared);
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
-      setError(photoError(reason));
+      setError(`${photoError(reason)}${stagedCount ? " The photos remain saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }

@@ -296,15 +296,26 @@ function localSketch(row: SketchDraftRow): LocalSketchDraft {
   };
 }
 
-async function databasePassword() {
-  const existing = await SecureStore.getItemAsync(DATABASE_KEY);
-  if (existing && /^[a-f0-9]{64}$/.test(existing)) return existing;
-  const bytes = await Crypto.getRandomBytesAsync(32);
-  const generated = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
-  await SecureStore.setItemAsync(DATABASE_KEY, generated, {
-    keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+let cachedDatabasePassword: Promise<string> | null = null;
+
+function databasePassword(databaseName: string, existedBeforeOpen = databaseFileExists(databaseName)) {
+  cachedDatabasePassword ||= (async () => {
+    const existing = await SecureStore.getItemAsync(DATABASE_KEY);
+    if (existing && /^[a-f0-9]{64}$/.test(existing)) return existing;
+    // A missing key must never be replaced while an encrypted file still exists.
+    // Replacing it would make unsynchronized drafts permanently unreadable.
+    if (existedBeforeOpen) throw new Error("mobile_offline_database_key_unavailable");
+    const bytes = await Crypto.getRandomBytesAsync(32);
+    const generated = [...bytes].map((byte) => byte.toString(16).padStart(2, "0")).join("");
+    await SecureStore.setItemAsync(DATABASE_KEY, generated, {
+      keychainAccessible: SecureStore.WHEN_UNLOCKED_THIS_DEVICE_ONLY,
+    });
+    return generated;
+  })().catch((reason) => {
+    cachedDatabasePassword = null;
+    throw reason;
   });
-  return generated;
+  return cachedDatabasePassword;
 }
 
 function validDatabaseName(value: string | null) {
@@ -341,8 +352,8 @@ async function removeStaleMigrationDatabases(activeDatabaseName: string | null) 
   }
 }
 
-async function keyDatabase(database: SQLite.SQLiteDatabase) {
-  const password = await databasePassword();
+async function keyDatabase(database: SQLite.SQLiteDatabase, databaseName: string, existedBeforeOpen: boolean) {
+  const password = await databasePassword(databaseName, existedBeforeOpen);
   await database.execAsync(`PRAGMA key = ${sqliteStringLiteral(password)}`);
 }
 
@@ -354,10 +365,11 @@ async function verifySqlCipherAvailable(database: SQLite.SQLiteDatabase) {
 }
 
 async function openKeyedDatabase(databaseName: string) {
+  const existedBeforeOpen = databaseFileExists(databaseName);
   const database = await SQLite.openDatabaseAsync(databaseName, { useNewConnection: true });
   try {
     if (USE_SQLCIPHER) {
-      await keyDatabase(database);
+      await keyDatabase(database, databaseName, existedBeforeOpen);
       await verifySqlCipherAvailable(database);
     }
     await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
@@ -486,7 +498,7 @@ async function migrateLegacyPlaintextDatabase(databaseName: string) {
     await source.execAsync("PRAGMA journal_mode = DELETE; PRAGMA synchronous = FULL;");
     await verifyDatabaseIntegrity(source);
     sourceSnapshot = await databaseSnapshot(source);
-    const password = await databasePassword();
+    const password = await databasePassword(destinationName);
     const destinationPath = databaseFile(destinationName).uri.replace(/^file:\/\//, "");
     await source.runAsync(
       "ATTACH DATABASE ? AS homenode_encrypted KEY ?",
@@ -776,6 +788,29 @@ async function initializeDatabase(recoverInterruptedTransfers = true) {
   }
 }
 
+async function reopenDatabaseAfterCamera() {
+  const databaseName = await storedDatabaseName(ACTIVE_DATABASE_NAME_KEY) || DATABASE_NAME;
+  if (!databaseFileExists(databaseName)) throw new Error("mobile_offline_database_missing");
+  // The schema was initialized at launch. Camera return only needs a fresh,
+  // keyed connection; running migrations and queue recovery on every shot adds
+  // writes at exactly the point where iOS is resuming the app.
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    try {
+      const database = await openKeyedDatabase(databaseName);
+      try {
+        await database.execAsync("PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;");
+        return database;
+      } catch (reason) {
+        await database.closeAsync().catch(() => undefined);
+        throw reason;
+      }
+    } catch (reason) {
+      if (attempt > 0 || !isUnreadableSqliteDatabaseError(reason)) throw reason;
+    }
+  }
+  throw new Error("mobile_offline_database_unavailable");
+}
+
 type OfflineDatabaseConnection = {
   activityGate: DatabaseActivityGate;
   closedForExternalActivity: boolean;
@@ -861,7 +896,7 @@ export class OfflineStore {
       const previous = this.connection.database;
       this.connection.closedForExternalActivity = true;
       await previous.closeAsync().catch(() => undefined);
-      this.connection.database = await initializeDatabase(false);
+      this.connection.database = await reopenDatabaseAfterCamera();
       this.connection.closedForExternalActivity = false;
     })().finally(() => {
       this.connection.repair = null;

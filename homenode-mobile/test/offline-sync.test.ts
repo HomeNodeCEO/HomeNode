@@ -88,7 +88,9 @@ test("offline store wrappers share external-activity connection lifecycle state"
   assert.match(prepareForExternalActivity, /const pendingClose = previous\.closeAsync\(\)\.finally\([\s\S]*this\.connection\.pendingClose = pendingClose;[\s\S]*return pendingClose;/);
   assert.doesNotMatch(prepareForExternalActivity, /closeAsync\(\)\.catch\(\(\) => undefined\)/);
   assert.match(source, /async ensureReady\(\) \{[\s\S]*if \(this\.connection\.pendingClose\)[\s\S]*await this\.connection\.pendingClose\.catch\(\(\) => undefined\);/);
-  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await initializeDatabase\(false\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
+  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await reopenDatabaseAfterCamera\(\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
+  assert.match(source, /async function reopenDatabaseAfterCamera\(\) \{[\s\S]*const database = await openKeyedDatabase\(databaseName\);[\s\S]*PRAGMA foreign_keys = ON; PRAGMA synchronous = NORMAL;/);
+  assert.match(source, /if \(existedBeforeOpen\) throw new Error\("mobile_offline_database_key_unavailable"\)/);
   assert.match(source, /databasePromise \|\|= initializeDatabase\(\)/);
   assert.match(source, /if \(recoverInterruptedTransfers\) \{[\s\S]*UPDATE photo_drafts SET state = 'failed'/);
   assert.doesNotMatch(source, /private closedForExternalActivity|private connectionRepair/);

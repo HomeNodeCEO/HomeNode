@@ -105,3 +105,12 @@ is a source authorization or a complete capture. A worker that performs and
 resumes each capture phase, integrates paged evidence, rechecks current rights,
 and wires the HTTP status/cancel flow is still required. The installed live
 capture route and its 50,000-account limit are unchanged by this slice.
+
+The next internal command surface admits a token-free job request only after
+current Custom Appraisal assignment write access is checked. Status reads and
+cancellation recheck exact organization/report/assignment/account scope and
+current read/write access, respectively. This surface is intentionally not
+mounted in HTTP until the stage worker exists; it cannot be mistaken for a
+working asynchronous capture. Status responses omit checkpoint references and
+internal source errors. A lost cancellation response can be retried against a
+terminal job without altering its outcome.

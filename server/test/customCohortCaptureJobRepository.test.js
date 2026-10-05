@@ -159,3 +159,43 @@ test('a corrupt earlier claim does not prevent a valid claim in the same batch',
   const claimed = await repository.claimDue({ limit: 2 });
   assert.deepEqual(claimed.map(row => row.operation_id), [later]);
 });
+
+test('scoped job status exposes no checkpoint or internal source error', async () => {
+  const queries = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    queries.push({ sql, values });
+    return { rowCount: 1, rows: [{ status: 'succeeded', attempts: 2,
+      cancellation_requested: false, context_sha256: 'b'.repeat(64),
+      checkpoint: { private: 'not returned' }, last_error_code: 'source_denied' }] };
+  } });
+  assert.deepEqual(await repository.status(scope, operation), {
+    operation_id: operation, status: 'succeeded', attempts: 2,
+    cancellation_requested: false, context_ref: {
+      context_id: operation, context_revision: '1', context_sha256: 'b'.repeat(64) },
+  });
+  assert.match(queries[0].sql, /organization_id=\$2::uuid/);
+  assert.match(queries[0].sql, /report_file_id=\$3::uuid/);
+  assert.deepEqual(queries[0].values, [operation, organization, report,
+    scope.assignment_file_id, scope.account_id]);
+});
+
+test('job status rejects impossible completion state', async () => {
+  const repository = createCustomCohortCaptureJobRepository({ async query() {
+    return { rowCount: 1, rows: [{ status: 'succeeded', attempts: 1,
+      cancellation_requested: false, context_sha256: null }] };
+  } });
+  await assert.rejects(repository.status(scope, operation), /job_corrupt/);
+});
+
+test('cancellation safely replays a terminal result under the exact scope', async () => {
+  const calls = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    calls.push({ sql, values });
+    if (sql.includes('custom-cohort-job:cancel')) return { rowCount: 0, rows: [] };
+    return { rowCount: 1, rows: [{ status: 'cancelled', attempts: 1,
+      cancellation_requested: true, context_sha256: null }] };
+  } });
+  assert.deepEqual(await repository.cancel(scope, operation), { status: 'cancelled' });
+  assert.match(calls[1].sql, /organization_id=\$2::uuid/);
+  assert.deepEqual(calls[0].values, calls[1].values);
+});

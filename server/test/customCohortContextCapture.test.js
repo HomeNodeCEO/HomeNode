@@ -33,6 +33,64 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('job status and cancellation recheck exact current assignment access', async () => {
+  const base = input(), organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const queries = [];
+  let queued;
+  const service = setup(async () => ({ async query({ text, values }) {
+    queries.push({ text, values });
+    if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+      assignment_file_id: base.assignmentFileId, account_id: base.accountId,
+      organization_id: organization, assigned_appraiser_user_id: base.auth.userId,
+      supervisory_appraiser_user_id: null }] };
+    if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+      report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+    if (text.includes('custom-cohort-job:enqueue */')) {
+      queued = { actor_user_id: values[5], request_sha256: values[6],
+        request_payload: JSON.parse(values[7]) };
+      return { rowCount: 1, rows: [] };
+    }
+    if (text.includes('custom-cohort-job:enqueue-readback')) return { rowCount: 1, rows: [{
+      operation_id: base.operationId, ...queued, status: 'queued' }] };
+    if (text.includes('custom-cohort-job:status')) return { rowCount: 1, rows: [{
+      status: 'queued', attempts: 0, cancellation_requested: false, context_sha256: null }] };
+    if (text.includes('custom-cohort-job:cancel')) return { rowCount: 1, rows: [{ status: 'cancelled' }] };
+    return { rowCount: 0, rows: [] };
+  }, release() {} }));
+  const authorized = { auth: { ...base.auth, organizations: [{ organizationId: organization,
+    roles: ['appraiser'] }] }, accountId: base.accountId,
+  assignmentFileId: base.assignmentFileId, operationId: base.operationId };
+  assert.equal((await service.queueCaptureJob({ ...authorized,
+    observationPeriod: base.observationPeriod })).status, 'queued');
+  assert.deepEqual(queued.request_payload, { operation_id: base.operationId,
+    observation_period: base.observationPeriod });
+  assert.deepEqual(await service.captureJobStatus(authorized), {
+    operation_id: base.operationId, status: 'queued', attempts: 0,
+    cancellation_requested: false });
+  assert.deepEqual(await service.cancelCaptureJob(authorized), { status: 'cancelled' });
+  assert.ok(queries.some(query => query.text.includes('custom-cohort-job:status')
+    && query.values[1] === organization && query.values[2] === report));
+  assert.ok(queries.some(query => query.text.includes('custom-cohort-job:cancel')
+    && query.values[1] === organization && query.values[2] === report));
+  const before = queries.length;
+  await assert.rejects(service.captureJobStatus({ ...authorized, auth: base.auth }), /assignment_access_denied/);
+  assert.equal(queries.length, before + 4, 'denied lookup reads no job status or cancellation');
+});
+
+test('job status and cancellation reject injected scope before database access', async () => {
+  const base = input();
+  for (const action of ['captureJobStatus', 'cancelCaptureJob']) {
+    await assert.rejects(setup()[action]({ auth: base.auth, accountId: base.accountId,
+      assignmentFileId: base.assignmentFileId, operationId: base.operationId,
+      organization_id: 'browser-chosen' }), /invalid_input/);
+    await assert.rejects(setup()[action]({ auth: base.auth, accountId: base.accountId,
+      assignmentFileId: base.assignmentFileId, operationId: 'not-a-uuid' }), /invalid_operation/);
+  }
+  await assert.rejects(setup().queueCaptureJob({ ...base,
+    account_ids: ['untrusted'] }), /invalid_input/);
+});
+
 test('driver rejection at aggregate deadline reports interruption and discards once', async t => {
   let now = 1000; t.mock.method(performance, 'now', () => now);
   const releases = [], calls = [], driverError = new Error('PRIVATE driver timeout');

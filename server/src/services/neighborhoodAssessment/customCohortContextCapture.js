@@ -17,6 +17,7 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
+import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
@@ -131,6 +132,12 @@ function inputOf(input) {
   }
   return freeze({ ...identity, operationId, observationPeriod: period,
     ...(hasPrivate ? { privateSalesImport } : {}), ...(hasDiscovery ? { discovery } : {}) });
+}
+function captureJobInputOf(input) {
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId']);
+  const identity = identityOf(input);
+  if (typeof input.operationId !== 'string' || !UUID.test(input.operationId)) fail('invalid_operation');
+  return freeze({ ...identity, operationId: input.operationId });
 }
 function previewInputOf(input) {
   exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'selection']);
@@ -1141,7 +1148,41 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  return Object.freeze({ async capture(value, options = {}) {
+  return Object.freeze({
+    // These are intentionally not exposed by the HTTP router until a worker
+    // can process queued jobs. Queue admission is not a source grant; every
+    // operation rechecks current assignment access and the worker must recheck
+    // current actor/source rights before each resumable stage and registration.
+    async queueCaptureJob(value, options = {}) {
+      const input = inputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, true, 'write');
+        return createCustomCohortCaptureJobRepository(client).enqueue({
+          scope: Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])),
+          actorUserId: input.auth.userId,
+          request: { operation_id: input.operationId, observation_period: input.observationPeriod,
+            ...(input.discovery ? { discovery: input.discovery } : {}),
+            ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) },
+        });
+      });
+    },
+    async captureJobStatus(value, options = {}) {
+      const input = captureJobInputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, false, 'read');
+        return createCustomCohortCaptureJobRepository(client).status(
+          Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])), input.operationId);
+      });
+    },
+    async cancelCaptureJob(value, options = {}) {
+      const input = captureJobInputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, true, 'write');
+        return createCustomCohortCaptureJobRepository(client).cancel(
+          Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])), input.operationId);
+      });
+    },
+    async capture(value, options = {}) {
     const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);
     budget.check();
     const phase = createCustomCapturePhaseTiming();

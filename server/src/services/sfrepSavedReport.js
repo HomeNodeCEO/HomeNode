@@ -25,6 +25,24 @@ function sameIdentityDisplay(key, left, right) {
   return same(formatSubjectPresentationValue(key, left), formatSubjectPresentationValue(key, right));
 }
 
+function reviewedIdentityReceiptStillCurrent(saved, key, receipt) {
+  if (receipt.kind !== 'reviewed_document' || receipt.status !== 'current'
+    || !positive(receipt.documentId) || !positive(receipt.candidateId)) return false;
+  const addressPart = ['subject_street_address', 'subject_city', 'subject_state', 'subject_zip'].includes(key);
+  if (receipt.sourceField !== key && !(addressPart && receipt.sourceField === 'subject_property_address')) return false;
+  const document = saved.documents.find(item => item.id === receipt.documentId
+    && item.account_id === saved.accountId && item.assignment_file_id === saved.assignmentFileId
+    && item.document_type === receipt.documentType
+    && ['reviewed', 'review_required'].includes(item.processing_status)
+    && sfrepDocumentPropertyRole(item) === 'subject' && !sfrepDocumentParcelMismatch(item));
+  const candidate = document?.candidates.find(item => item.id === receipt.candidateId
+    && (item.document_id == null || Number(item.document_id) === document.id)
+    && item.field_key === receipt.sourceField && item.review_status === 'confirmed');
+  // The old receipt must still name the exact confirmed source text. A removed,
+  // reprocessed, or edited PDF cannot be laundered through the account fallback.
+  return Boolean(candidate && same(candidate.confirmed_value, receipt.reviewedSourceValue));
+}
+
 function revalidatedIdentity(saved, key, value, receipt, proposal) {
   if (!REVALIDATABLE_IDENTITY_KEYS.has(key) || !proposal || !receipt
     || !sameIdentityDisplay(key, value, proposal.value)) return false;
@@ -42,14 +60,23 @@ function revalidatedIdentity(saved, key, value, receipt, proposal) {
       && !same(receipt.reviewedSourceValue, proposal.sourceValue)) return false;
     return true;
   }
-  if (proof?.kind !== 'account_reference' || proof.rule !== 'canonical_county_subject_identity_v1'
-    || receipt.kind !== proof.kind || receipt.rule !== proof.rule
+  if (proof?.kind !== 'account_reference' || proof.rule !== 'canonical_county_subject_identity_v1') return false;
+  const source = proof.sourceEvidence?.[0];
+  if (source?.sourceTable !== 'core.accounts' || source.accountId !== saved.accountId
+    || !same(source.value, proposal.sourceValue)) return false;
+  // Older reviewed MLS/Realist identity receipts may predate CAD-first source
+  // routing. Keep the saved report value only when the same subject PDF still
+  // confirms its exact old text and the canonical account now agrees.
+  if (receipt.kind === 'reviewed_document') {
+    return sameIdentityDisplay(key, receipt.value, proposal.value)
+      && reviewedIdentityReceiptStillCurrent(saved, key, receipt);
+  }
+  if (receipt.kind !== proof.kind || receipt.rule !== proof.rule
     || !sameIdentityDisplay(key, receipt.reviewedSourceValue, proposal.sourceValue)) return false;
   // A changed capitalization or ZIP+4 presentation of the same account row
   // must not strand a saved file. A different account or column still does.
-  const source = proof.sourceEvidence?.[0], old = receipt.sourceEvidence?.[0];
-  return source?.sourceTable === 'core.accounts' && old?.sourceTable === source.sourceTable
-    && source?.accountId === saved.accountId && old?.accountId === source.accountId
+  const old = receipt.sourceEvidence?.[0];
+  return old?.sourceTable === source.sourceTable && old?.accountId === source.accountId
     && old?.sourceField === source.sourceField
     && sameIdentityDisplay(key, old?.value, receipt.reviewedSourceValue)
     && sameIdentityDisplay(key, receipt.sourceValue, receipt.reviewedSourceValue)

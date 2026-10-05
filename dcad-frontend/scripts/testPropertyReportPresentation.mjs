@@ -53,6 +53,11 @@ test('UAD discrepancy draft uses only current confirmed locality evidence', () =
   assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, processing_status: 'review_required' }, address), null);
   assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, candidates: document.candidates
     .map(candidate => ({ ...candidate, review_status: 'rejected' })) }, address), null);
+  const contract = { document_type: 'purchase_contract', processing_status: 'reviewed', candidates: [
+    { field_key: 'contract_printed_subject_addresses', review_status: 'confirmed',
+      confirmed_value: 'Main: 100 Sample Dr, Othercity TX 75041. Addendum: 100 Sample Dr, Exampleton TX 75041.' },
+  ] };
+  assert.match(reviewedDocumentSubjectDiscrepancyStatement(contract, address), /Othercity/);
 });
 
 test('changed or deleted UAD evidence invalidates its prepared statement before report insertion', async () => {

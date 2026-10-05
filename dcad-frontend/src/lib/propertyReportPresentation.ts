@@ -230,6 +230,16 @@ export function documentSubjectLocalityFlags(
     if (candidate.review_status === 'rejected') continue;
     const source = String(candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value ?? '').trim();
     if (!source) continue;
+    if (candidate.field_key === 'contract_printed_subject_addresses') {
+      // A contract may state one address on its main form and another on an
+      // addendum. Keep every printed locality visible instead of checking only
+      // the first match or silently choosing one as the report identity.
+      for (const match of source.matchAll(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas),?\s+(\d{5})(?:-\d{4})?\b/gi)) {
+        if (match[1].toLowerCase() !== canonical[1].toLowerCase()) flags.add(`City: document says ${match[1]}; HomeNode subject says ${canonical[1]}.`);
+        if (match[2] !== canonical[2]) flags.add(`ZIP: document says ${match[2]}; HomeNode subject says ${canonical[2]}.`);
+      }
+      continue;
+    }
     const location = ['subject_property_address', 'subject_street_address'].includes(candidate.field_key || '') ? parse(source) : null;
     const city = candidate.field_key === 'subject_city' ? source : location?.[1];
     const postal = ['subject_zip', 'subject_zip_code'].includes(candidate.field_key || '') ? source.match(/^\d{5}/)?.[0] : location?.[2];

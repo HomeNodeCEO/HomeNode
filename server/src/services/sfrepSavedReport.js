@@ -20,6 +20,30 @@ const CAD_KEYS = new Set(['subject_street_address', 'subject_city', 'subject_sta
   'county', 'assessor_parcel_number', 'owner_name', 'legal_description', 'neighborhood_name']);
 const REVALIDATABLE_IDENTITY_KEYS = new Set(['subject_street_address', 'subject_city', 'subject_state',
   'subject_zip', 'county', 'assessor_parcel_number']);
+const TEXAS_STATE_DEFAULT_RULE = 'user_requested_texas_state_default_v1';
+
+function texasStateDefaultAllowed(saved, subject) {
+  const location = subject.property_location;
+  if (!record(location) || !readCustomSubjectValue({ subject }, 'subject_street_address')) return false;
+  // A state deliberately entered outside Texas, or a contrary county-account
+  // state, is a discrepancy for the appraiser rather than an export default.
+  const selected = location.state;
+  if (selected != null && String(selected).trim() && !/^(?:TX|Texas)$/i.test(String(selected).trim())) return false;
+  return saved.documents.every(document => {
+    const canonical = document.subject_context?.canonicalIdentity;
+    if (canonical?.accountId && canonical.accountId !== saved.accountId) return true;
+    const state = canonical?.state;
+    return state == null || !String(state).trim() || /^(?:TX|Texas)$/i.test(String(state).trim());
+  });
+}
+
+function texasStateDefault(saved) {
+  return { sourceField: 'subject_state', value: 'TX', provenance: {
+    kind: 'saved_report', sourceField: 'subject_state', documentId: null, candidateId: null,
+    assignmentFileId: saved.assignmentFileId, sectionKey: 'report.subject_identification',
+    revision: Number(saved.subject.revision), origin: 'user_default', rule: TEXAS_STATE_DEFAULT_RULE,
+  } };
+}
 
 function sameIdentityDisplay(key, left, right) {
   if (typeof left !== 'string' || typeof right !== 'string') return same(left, right);
@@ -128,6 +152,7 @@ export function savedSfrepSubjectFields(saved, input) {
   const projection = projectCustomSubjectDocuments(saved.documents);
   const proposals = new Map(projection.fields.map(field => [field.key, field]));
   const fields = [], warnings = [], knownMissing = [];
+  let stateSourceNeedsReview = false;
   for (const document of saved.documents) {
     if (hasCurrentContractSubjectAssociation(document)) warnings.push(contractAssociationWarning(document));
     if (subjectDocumentSourceKind(document) === 'cad' && sfrepDocumentParcelMismatch(document)) {
@@ -189,6 +214,10 @@ export function savedSfrepSubjectFields(saved, input) {
         && reviewedStateWithoutCanonicalSource(saved, value, receipt);
       if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)
         && !retainedState) {
+        if (descriptor.key === 'subject_state') {
+          stateSourceNeedsReview = true;
+          continue;
+        }
         const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));
@@ -212,6 +241,17 @@ export function savedSfrepSubjectFields(saved, input) {
           .map(key => [key, source[key]])) : {}),
     };
     fields.push({ sourceField: descriptor.key, value, provenance });
+  }
+  if (!fields.some(field => field.sourceField === 'subject_state') && positive(saved.subject?.revision)
+    && texasStateDefaultAllowed(saved, subject)) {
+    fields.push(texasStateDefault(saved));
+    warnings.push(stateSourceNeedsReview
+      ? 'State exported as the Texas-only TX default, not from the stale document receipt. Review the changed source and confirm the subject location in HomeNode.'
+      : 'State exported as the Texas-only TX default because the saved subject state is blank. Confirm the subject location in HomeNode.');
+  } else if (stateSourceNeedsReview) {
+    const reason = 'subject_state: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.';
+    warnings.push(reason);
+    knownMissing.push({ fieldId: 'State', reason });
   }
   const frequency = fields.find(field => field.sourceField === 'hoa_frequency');
   if (!frequency || !['per_month', 'per_year'].includes(frequency.value)) {

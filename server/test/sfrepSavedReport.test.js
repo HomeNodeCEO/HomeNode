@@ -104,7 +104,9 @@ test('saved street text never refills or conflicts with independently saved loca
     const result = buildSfrepReportExport({ documents, savedReportFields: savedSfrepSubjectFields(saved, input).fields });
     assert.equal(result.fields.find(field => field.fieldId === 'StreetAddress').value, '100 Example Dr, Garland, TX 75041');
     assert.equal(result.fields.find(field => field.fieldId === 'City')?.value, city || undefined);
-    assert.equal(result.fields.some(field => ['State', 'ZipCode'].includes(field.fieldId)), false);
+    assert.equal(result.fields.find(field => field.fieldId === 'State')?.value, 'TX');
+    assert.equal(result.fields.find(field => field.fieldId === 'State')?.provenance.origin, 'user_default');
+    assert.equal(result.fields.some(field => field.fieldId === 'ZipCode'), false);
     assert.deepEqual(result.conflicts, []);
     assert.equal(result.omitted.some(field => field.documentId === null), false);
   }
@@ -303,8 +305,36 @@ test('reviewed subject-address state survives a missing canonical state without 
     if (change === 'edited_street') altered.subject.value.property_location.address = '101 Different Dr';
     if (change === 'edited_city') altered.subject.value.property_location.city = 'Plano';
     if (change === 'edited_zip') altered.subject.value.property_location.postal_code = '75042';
-    assert.equal(exportSaved(altered).fields.some(item => item.fieldId === 'State'), false, change);
+    const state = exportSaved(altered).fields.find(item => item.fieldId === 'State');
+    if (['wrong_state', 'different_account_state'].includes(change)) assert.equal(state, undefined, change);
+    else {
+      assert.equal(state?.value, 'TX', change);
+      assert.equal(state?.provenance.origin, 'user_default', change);
+    }
   }
+});
+
+test('Texas-only state default survives a stale receipt on both legacy forms without changing the saved report', () => {
+  const { saved } = fixture();
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'subject_property_address');
+  saved.evidence.value.fields.subject_state.status = 'needs_review';
+  const before = structuredClone(saved.subject.value);
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const canonical = savedSfrepSubjectFields(saved, input);
+    const result = buildSfrepReportExport({ formId, savedReportFields: canonical.fields });
+    const state = result.fields.find(field => field.fieldId === 'State');
+    assert.equal(state?.value, 'TX');
+    assert.equal(state?.provenance.origin, 'user_default');
+    assert.equal(state?.provenance.rule, 'user_requested_texas_state_default_v1');
+    assert.match(result.reportXml, /<TextField Id="State" Data="TX" \/>/);
+    assert.ok(result.assumptions.some(item => item.fieldId === 'State' && item.value === 'TX'));
+    assert.ok(canonical.warnings.some(message => /stale document receipt/.test(message)));
+    assert.equal(canonical.knownMissing.some(item => item.fieldId === 'State'), false);
+  }
+  assert.deepEqual(saved.subject.value, before);
+  saved.subject.value.property_location.state = 'OK';
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'State')?.value, 'OK');
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'State')?.provenance.origin, 'appraiser_edit');
 });
 
 test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {

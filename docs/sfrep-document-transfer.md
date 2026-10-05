@@ -98,6 +98,12 @@ history narrative is not synthesized from a date alone.
 
 Fee Simple is the requested user default, clearly marked as an assumption rather
 than document evidence, and never overrides reviewed property-rights evidence.
+For the current Texas-only Custom Appraisal workflow, a missing or stale saved
+subject state exports `TX` to the legacy 1004/2055 as a visibly labeled user
+default. The original source discrepancy remains a warning; a non-Texas state
+explicitly entered by the appraiser or recorded in the current county account
+is not silently replaced. This export fallback does not rewrite the HomeNode
+workfile or the county account.
 HOA dues alone do not establish PUD status: the PUD checkbox needs explicit evidence.
 Monthly/annual dues keep their reviewed frequency; quarterly dues are not silently
 annualized. Unknown or negative PUD evidence emits no affirmative checkbox.

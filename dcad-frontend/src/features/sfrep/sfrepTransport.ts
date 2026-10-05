@@ -48,7 +48,8 @@ interface SfrepCensusEvidence {
 export type SfrepAssumption = {
   fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox'; value: 'true';
   rule: 'user_requested_fee_simple_default'; reason: string;
-} | { fieldId: 'PropertyTypePUDCheckBox'; value: 'true' | 'false'; rule: 'user_requested_hoa_workflow_proxy_v1'; reason: string };
+} | { fieldId: 'PropertyTypePUDCheckBox'; value: 'true' | 'false'; rule: 'user_requested_hoa_workflow_proxy_v1'; reason: string }
+  | { fieldId: 'State'; value: 'TX'; rule: 'user_requested_texas_state_default_v1'; reason: string };
 export interface SfrepDocument {
   id: number; title: string; file_name: string; file_size_bytes: number; processing_status: string;
 }
@@ -83,6 +84,7 @@ const checkSignal = (signal: AbortSignal) => { if (signal.aborted) throw cancell
 const stop = (response: Response) => { void response.body?.cancel().catch(() => {}); };
 const feeSimpleField = 'PropertyRightsAppraisedFeeSimpleCheckBox';
 const feeSimpleRule = 'user_requested_fee_simple_default';
+const texasStateRule = 'user_requested_texas_state_default_v1';
 const listingRule = 'subject_mls_list_date_within_preceding_12_calendar_months';
 const historyRule = 'reviewed_subject_listing_history_template_v1';
 const censusRule = 'matched_account_census_tract_v1';
@@ -292,9 +294,14 @@ function validField(value: unknown): value is SfrepField {
       ) return false;
     if (provenance.origin === 'account_reference') return validCensus(value, provenance) || validCountyIdentity(value, provenance);
     if (provenance.origin === 'appraiser_edit') return onlyKeys(provenance, savedKeys);
-    if (provenance.origin === 'user_default') return validLenderPreset(value, provenance) || value.sourceField === 'property_rights' && value.fieldId === feeSimpleField
-      && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === feeSimpleRule
-      && onlyKeys(provenance, [...savedKeys, 'rule']);
+    if (provenance.origin === 'user_default') return validLenderPreset(value, provenance)
+      || (value.sourceField === 'property_rights' && value.fieldId === feeSimpleField
+        && value.type === 'CheckBoxField' && value.value === 'true' && provenance.rule === feeSimpleRule
+        && onlyKeys(provenance, [...savedKeys, 'rule']))
+      || (value.sourceField === 'subject_state' && value.fieldId === 'State' && value.type === 'TextField'
+        && value.value === 'TX' && provenance.rule === texasStateRule
+        && provenance.sectionKey === 'report.subject_identification'
+        && onlyKeys(provenance, [...savedKeys, 'rule']));
     if (!positiveId(provenance.sourceDocumentId)) return false;
     if (provenance.origin === 'reviewed_document') return provenance.rule === undefined
       ? onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId'])
@@ -336,7 +343,8 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     || !Array.isArray(value.assumptions) || value.assumptions.length > 2_001 || !value.assumptions.every(item => record(item)
       && onlyKeys(item, ['fieldId', 'value', 'rule', 'reason']) && validText(item.reason)
       && ((item.fieldId === feeSimpleField && item.value === 'true' && item.rule === feeSimpleRule)
-        || (item.fieldId === pudField && (item.value === 'true' || item.value === 'false') && item.rule === hoaRule)))
+        || (item.fieldId === pudField && (item.value === 'true' || item.value === 'false') && item.rule === hoaRule)
+        || (item.fieldId === 'State' && item.value === 'TX' && item.rule === texasStateRule)))
     || !Array.isArray(value.knownMissing) || !value.knownMissing.every(item => record(item) && validText(item.fieldId) && validText(item.reason))
     || !Array.isArray(value.conflicts) || !value.conflicts.every(conflict => record(conflict)
       && validText(conflict.sourceField) && Array.isArray(conflict.documentIds) && conflict.documentIds.every(positiveId)
@@ -366,6 +374,8 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
   const date = preview.effectiveDateContext;
   if (preview.fields.filter(field => field.provenance.rule === feeSimpleRule).length
       !== preview.assumptions.filter(item => item.rule === feeSimpleRule).length
+    || preview.fields.filter(field => field.provenance.rule === texasStateRule).length
+      !== preview.assumptions.filter(item => item.rule === texasStateRule).length
     || (saved && new Set(preview.assumptions.map(item => item.rule)).size !== preview.assumptions.length)
     || preview.fields.some(field => field.provenance.rule === hoaRule && !preview.assumptions.some(item => item.rule === hoaRule && item.value === field.value))
     || preview.assumptions.some(item => item.rule === hoaRule && item.value === 'true'
@@ -439,6 +449,7 @@ export function sfrepProvenanceText(field: SfrepField): string {
     const origin = source.origin === 'appraiser_edit' ? 'Saved appraiser entry/correction'
       : source.origin === 'user_default' ? source.rule === lenderAddressRule
         ? 'Saved user-requested lender address preset — not PDF evidence'
+        : source.rule === texasStateRule ? 'Texas-only TX default — not verified document evidence'
         : 'Saved user-requested fee-simple default unless changed in HomeNode — not document evidence'
         : source.origin === 'account_reference' ? source.rule === countyRule
           ? 'Saved canonical county-backed subject identity — not PDF evidence'
@@ -514,7 +525,7 @@ export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectCheckl
       || (!hasMappedParty && unmappedPartyFields.includes(entry.sourceField)));
     const knownMissing = preview.knownMissing.filter(entry => item.fieldIds.includes(entry.fieldId));
     const assumptions = preview.assumptions.filter(entry => item.fieldIds.includes(entry.fieldId));
-    const requestedDefault = fields.some(field => [feeSimpleRule, lenderAddressRule].includes(field.provenance.rule || ''));
+    const requestedDefault = fields.some(field => [feeSimpleRule, lenderAddressRule, texasStateRule].includes(field.provenance.rule || ''));
     const countyIdentity = fields.some(field => field.provenance.rule === countyRule);
     const hasDefault = assumptions.some(assumption => assumption.rule !== feeSimpleRule);
     const hasDerived = fields.some(field => field.provenance.kind === 'derived_reviewed_document' || field.provenance.origin === 'derived_reviewed_document');
@@ -529,7 +540,7 @@ export function sfrepSubjectChecklist(preview: SfrepPreview): SfrepSubjectCheckl
       values: fields.map(field => field.type === 'CheckBoxField' ? CHECKBOX_LABELS[field.fieldId] || field.value : field.value),
       notes: [...new Set([...(item.note && !hasMappedParty ? [item.note] : []), ...knownMissing.map(entry => entry.reason),
         ...assumptions.filter(entry => entry.rule !== feeSimpleRule).map(entry => entry.reason), ...fields.filter(field => field.formattingRule
-          || [feeSimpleRule, lenderAddressRule, countyRule].includes(field.provenance.rule || '')
+          || [feeSimpleRule, lenderAddressRule, texasStateRule, countyRule].includes(field.provenance.rule || '')
           || field.provenance.origin === 'account_reference' || field.provenance.origin === 'derived_reviewed_document'
           || field.provenance.rule === hoaRule).map(sfrepProvenanceText),
         ...(omissions.length ? [omissions[0].reason] : []), ...(conflict ? ['Resolve the conflicting source evidence before relying on this item.'] : [])])] };

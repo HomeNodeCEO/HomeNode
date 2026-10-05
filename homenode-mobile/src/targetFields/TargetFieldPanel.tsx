@@ -138,12 +138,12 @@ export function TargetFieldPanel({ api, store, ownerUserId, sessionId, workflowT
   const reviewOperationIds = useRef(new Map<string, string>());
 
   const cacheAndSet = useCallback(async (next: TargetFieldReview) => {
-    await store.cacheTargetFieldReview(ownerUserId, sessionId, next);
+    await store.withDatabaseActivity(() => store.cacheTargetFieldReview(ownerUserId, sessionId, next));
     setReview(next);
   }, [ownerUserId, sessionId, store]);
 
   const load = useCallback(async () => {
-    const cached = await store.cachedTargetFieldReview(ownerUserId, sessionId);
+    const cached = await store.withDatabaseActivity(() => store.cachedTargetFieldReview(ownerUserId, sessionId));
     if (cached) setReview(cached);
     if (!online) return;
     await cacheAndSet(await api.targetFieldReview(sessionId));
@@ -161,7 +161,7 @@ export function TargetFieldPanel({ api, store, ownerUserId, sessionId, workflowT
   useEffect(() => {
     if (!review || !fields.length) return;
     void (async () => {
-      const drafts = await store.fieldDraftValues(ownerUserId, sessionId, fields.map((field) => field.field_path));
+      const drafts = await store.withDatabaseActivity(() => store.fieldDraftValues(ownerUserId, sessionId, fields.map((field) => field.field_path)));
       setValues((prior) => {
         const next = { ...prior };
         for (const field of fields) {
@@ -204,10 +204,10 @@ export function TargetFieldPanel({ api, store, ownerUserId, sessionId, workflowT
     try {
       const changes: Record<string, FieldState> = {};
       for (const field of changedFields) changes[field.field_path] = targetFieldChange(field, values[field.field_path] || "");
-      await store.queueFieldChanges(ownerUserId, sessionId, changes, {
+      await store.withDatabaseActivity(() => store.queueFieldChanges(ownerUserId, sessionId, changes, {
         targetBaseStates: activeReview.values,
         targetBaseRevision: activeReview.target.revision,
-      });
+      }));
       setTouched((prior) => {
         const next = new Set(prior);
         changedFields.forEach((field) => next.delete(field.field_path));

@@ -67,16 +67,16 @@ export function UadEntityPanel({ api, store, ownerUserId, sessionId, online, onS
   const reviewOperationIds = useRef(new Map<string, string>());
 
   const cacheAndSet = useCallback(async (next: UadEntityReview) => {
-    await store.cacheUadEntityReview(ownerUserId, sessionId, next);
+    await store.withDatabaseActivity(() => store.cacheUadEntityReview(ownerUserId, sessionId, next));
     setReview(next);
     setSelectedKey((prior) => prior || next.catalog.find((group) => group.create_enabled)?.key || "");
   }, [ownerUserId, sessionId, store]);
 
   const load = useCallback(async () => {
-    const [cached, queued] = await Promise.all([
+    const [cached, queued] = await store.withDatabaseActivity(() => Promise.all([
       store.cachedUadEntityReview(ownerUserId, sessionId),
       store.localUadEntityProposalCount(ownerUserId, sessionId),
-    ]);
+    ]));
     if (cached) await cacheAndSet(cached);
     setLocalQueued(queued);
     if (online) await cacheAndSet(await api.uadEntityReview(sessionId));
@@ -115,7 +115,7 @@ export function UadEntityPanel({ api, store, ownerUserId, sessionId, online, onS
     setBusy(true);
     setError(null);
     try {
-      await store.queueUadEntityProposal(ownerUserId, sessionId, {
+      await store.withDatabaseActivity(() => store.queueUadEntityProposal(ownerUserId, sessionId, {
         client_operation_id: Crypto.randomUUID(),
         action: "create",
         entity_type: group.entity_type,
@@ -123,8 +123,8 @@ export function UadEntityPanel({ api, store, ownerUserId, sessionId, online, onS
         label: label.trim() || suggestedEntityLabel(group, review.entities),
         data: group.data,
         base_target_revision: review.target.revision,
-      });
-      setLocalQueued(await store.localUadEntityProposalCount(ownerUserId, sessionId));
+      }));
+      setLocalQueued(await store.withDatabaseActivity(() => store.localUadEntityProposalCount(ownerUserId, sessionId)));
       if (online) {
         await onSync();
         await load();
@@ -141,15 +141,15 @@ export function UadEntityPanel({ api, store, ownerUserId, sessionId, online, onS
     setBusy(true);
     setError(null);
     try {
-      await store.queueUadEntityProposal(ownerUserId, sessionId, {
+      await store.withDatabaseActivity(() => store.queueUadEntityProposal(ownerUserId, sessionId, {
         client_operation_id: Crypto.randomUUID(),
         action: "delete",
         entity_type: entity.entity_type,
         target_entity_id: entity.id,
         base_target_revision: review.target.revision,
         base_entity: entity,
-      });
-      setLocalQueued(await store.localUadEntityProposalCount(ownerUserId, sessionId));
+      }));
+      setLocalQueued(await store.withDatabaseActivity(() => store.localUadEntityProposalCount(ownerUserId, sessionId)));
       if (online) {
         await onSync();
         await load();

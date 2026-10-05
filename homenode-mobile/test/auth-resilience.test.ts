@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { MobileApi, ApiError } from "../src/api/client";
 import {
@@ -17,6 +20,14 @@ const config = createMobileConfig({
   EXPO_PUBLIC_API_BASE_URL: "https://api.homenode.test",
   EXPO_PUBLIC_OIDC_ISSUER: "https://homenode.authkit.app",
   EXPO_PUBLIC_OIDC_CLIENT_ID: "client_mobile123",
+});
+
+test("token refresh keeps the API client callback stable during camera capture", () => {
+  const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+  const auth = fs.readFileSync(path.resolve(testDirectory, "../src/auth/session.tsx"), "utf8");
+  assert.match(auth, /const currentSession = sessionRef\.current;[\s\S]*const currentDiscovery = discoveryRef\.current;/);
+  assert.match(auth, /const getAccessToken = useCallback\([\s\S]*?\}, \[config\.clientId\]\);/);
+  assert.match(auth, /sessionRef\.current = next;\s*setSession\(next\);/);
 });
 
 test("only a confirmed invalid_grant terminally expires the mobile session", () => {

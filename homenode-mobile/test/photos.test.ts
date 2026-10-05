@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   availablePhotoPositions,
@@ -19,6 +22,18 @@ import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../src/api/
 import type { LocalPhotoDraft, OfflineStore } from "../src/offline/store";
 import { createCoalescedSync, drainDuePhotoBatches } from "../src/photos/coalescedSync";
 import { synchronizeDuePhotosWithDependencies, uploadPhotoObject } from "../src/photos/syncCore";
+
+const testDirectory = path.dirname(fileURLToPath(import.meta.url));
+
+test("camera stages the original and recovery manifest before reopening encrypted storage", () => {
+  const panel = fs.readFileSync(path.resolve(testDirectory, "../src/photos/PhotoCapturePanel.tsx"), "utf8");
+  const capture = fs.readFileSync(path.resolve(testDirectory, "../src/photos/capture.ts"), "utf8");
+  const picker = panel.match(/const pickWithDatabaseClosed = async \([\s\S]*?\n  };/)?.[0] || "";
+  assert.match(picker, /await store\.prepareForExternalActivity\(\);[\s\S]*await prepareAssets\(assets, source\);[\s\S]*await store\.ensureReady\(\);/);
+  assert.match(capture, /new File\(directory, STAGED_PHOTO_MANIFEST\)\.write\(JSON\.stringify\(prepared\)\)/);
+  assert.match(panel, /recoverStagedPhotos\(ownerUserId, sessionId\)/);
+  assert.doesNotMatch(panel, /if \(!cached\) \{[\s\S]*deletePreparedPhotoFiles\(photo\)/);
+});
 
 test("photo capacity is bounded to 100 active inspection photos", () => {
   assert.equal(remainingPhotoCapacity(0), 100);

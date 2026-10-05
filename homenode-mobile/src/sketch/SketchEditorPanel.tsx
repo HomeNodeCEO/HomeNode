@@ -747,13 +747,14 @@ export function SketchEditorPanel({
 
   const initialize = useCallback(async () => {
     if (dirty) return;
-    let local = await store.sketchDraft(ownerUserId, sessionId);
+    let local = await store.withDatabaseActivity(() => store.sketchDraft(ownerUserId, sessionId));
     if (!local && online) {
       try {
         const response = await api.inspectionSketch(sessionId);
-        if (response.sketch) {
-          await store.cacheServerSketch(ownerUserId, sessionId, response.sketch);
-          local = await store.sketchDraft(ownerUserId, sessionId);
+        const serverSketch = response.sketch;
+        if (serverSketch) {
+          await store.withDatabaseActivity(() => store.cacheServerSketch(ownerUserId, sessionId, serverSketch));
+          local = await store.withDatabaseActivity(() => store.sketchDraft(ownerUserId, sessionId));
         }
       } catch (reason) {
         setError(sketchError(reason));
@@ -1067,7 +1068,7 @@ export function SketchEditorPanel({
     setBusy(true);
     setError(null);
     try {
-      await store.queueSketchDraft(ownerUserId, sessionId, clientSketchId, nextDraft);
+      await store.withDatabaseActivity(() => store.queueSketchDraft(ownerUserId, sessionId, clientSketchId, nextDraft));
       setDirty(false);
       await sketchSync.refresh();
       if (online) await sketchSync.syncNow();
@@ -1291,8 +1292,8 @@ export function SketchEditorPanel({
       {conflict ? <View style={styles.conflictCard}>
         <Text style={styles.roomTitle}>Sketch changed in HomeNode</Text>
         <Text style={styles.help}>Your device draft is preserved. Choose the server version or deliberately replace it with this draft.</Text>
-        <Action title="Use HomeNode sketch" secondary onPress={() => void store.acceptServerSketch(ownerUserId, sessionId).then(sketchSync.refresh)} />
-        <Action title="Replace with device draft" onPress={() => void store.retryLocalSketch(ownerUserId, sessionId).then(sketchSync.syncNow)} />
+        <Action title="Use HomeNode sketch" secondary onPress={() => void store.withDatabaseActivity(() => store.acceptServerSketch(ownerUserId, sessionId)).then(sketchSync.refresh)} />
+        <Action title="Replace with device draft" onPress={() => void store.withDatabaseActivity(() => store.retryLocalSketch(ownerUserId, sessionId)).then(sketchSync.syncNow)} />
       </View> : null}
       {error || sketchSync.draft?.errorCode ? <Text style={styles.error}>{error || sketchError(new Error(sketchSync.draft?.errorCode || ""))}</Text> : null}
       <Text style={styles.disclaimer}>Calculated closure does not replace professional judgment. Above/below-grade status, ceiling-height treatment, access, finish classification, declarations, and any jurisdiction-required standard remain subject to the appraiser’s documented review.</Text>

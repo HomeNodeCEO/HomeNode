@@ -96,6 +96,8 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
   const [error, setError] = useState<string | null>(null);
   const [session, setSession] = useState<StoredSession | null>(null);
   const [discovery, setDiscovery] = useState<AuthSession.DiscoveryDocument | null>(null);
+  const sessionRef = useRef<StoredSession | null>(null);
+  const discoveryRef = useRef<AuthSession.DiscoveryDocument | null>(null);
   const refreshPromise = useRef<Promise<StoredSession> | null>(null);
   const nonce = useMemo(() => Crypto.randomUUID(), []);
   const [request, response, promptAsync] = AuthSession.useAuthRequest({
@@ -115,8 +117,12 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
         AuthSession.fetchDiscoveryAsync(config.oidcIssuer),
       ]);
       if (!active) return;
-      if (storedResult.status === "fulfilled") setSession(storedResult.value);
+      if (storedResult.status === "fulfilled") {
+        sessionRef.current = storedResult.value;
+        setSession(storedResult.value);
+      }
       if (discoveryResult.status === "fulfilled") {
+        discoveryRef.current = discoveryResult.value;
         setDiscovery(discoveryResult.value);
       } else if (storedResult.status !== "fulfilled" || !storedResult.value) {
         setError(discoveryResult.reason instanceof Error
@@ -152,6 +158,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
         }, discovery);
         const next = tokenSession(exchanged);
         await storeSession(next);
+        sessionRef.current = next;
         setSession(next);
         setError(null);
       } catch (reason) {
@@ -163,24 +170,29 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
   }, [config.clientId, config.redirectUri, discovery, request, response]);
 
   const getAccessToken = useCallback(async ({ forceRefresh = false }: AccessTokenRequest = {}) => {
-    if (!session) throw new Error("authentication_required");
-    if (!forceRefresh && isFresh(session)) return session.accessToken;
-    if (!session.refreshToken) {
+    const currentSession = sessionRef.current;
+    if (!currentSession) throw new Error("authentication_required");
+    if (!forceRefresh && isFresh(currentSession)) return currentSession.accessToken;
+    if (!currentSession.refreshToken) {
       await clearStoredSession();
+      sessionRef.current = null;
       setSession(null);
       throw new Error("session_expired");
     }
-    if (!discovery) throw new Error("token_refresh_temporarily_unavailable");
+    const currentDiscovery = discoveryRef.current;
+    if (!currentDiscovery) throw new Error("token_refresh_temporarily_unavailable");
     if (!refreshPromise.current) {
       refreshPromise.current = (async () => {
         try {
           const refreshed = await AuthSession.refreshAsync({
             clientId: config.clientId,
-            refreshToken: session.refreshToken,
+            refreshToken: currentSession.refreshToken,
             scopes: ["openid", "profile", "email", "offline_access"],
-          }, discovery);
-          const next = tokenSession(refreshed, session.refreshToken);
+          }, currentDiscovery);
+          const next = tokenSession(refreshed, currentSession.refreshToken);
+          if (sessionRef.current !== currentSession) throw new Error("session_expired");
           await storeSession(next);
+          sessionRef.current = next;
           setSession(next);
           return next;
         } catch (reason) {
@@ -188,6 +200,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
             confirmedTokenError: reason instanceof AuthSession.TokenError,
           }) === "terminal") {
             await clearStoredSession();
+            sessionRef.current = null;
             setSession(null);
             throw new Error("session_expired");
           }
@@ -198,7 +211,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
       })();
     }
     return (await refreshPromise.current).accessToken;
-  }, [config.clientId, discovery, session]);
+  }, [config.clientId]);
 
   const signIn = useCallback(async () => {
     if (!request || !discovery) throw new Error("sign_in_not_ready");
@@ -210,6 +223,7 @@ export function AuthProvider({ config, children }: { config: MobileConfig; child
 
   const signOut = useCallback(async () => {
     const prior = session;
+    sessionRef.current = null;
     setSession(null);
     setError(null);
     await Promise.all([clearStoredSession(), clearActiveOfflineUser()]);

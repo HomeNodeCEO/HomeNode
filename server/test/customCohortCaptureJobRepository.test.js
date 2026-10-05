@@ -110,3 +110,23 @@ test('a claimed request with a changed payload cannot be resumed', async () => {
   } });
   await assert.rejects(repository.claimDue(), /job_corrupt/);
 });
+
+test('a claimed checkpoint is structurally verified before worker resume', async () => {
+  const evidence = { content_sha256: 'a'.repeat(64), canonical_utf8_bytes: '100' };
+  let checkpoint = { phase: 'source', evidence_refs: [evidence] };
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql) {
+    if (sql.includes('custom-cohort-job:claim')) return { rowCount: 1, rows: [{
+      operation_id: operation, organization_id: organization, report_file_id: report,
+      assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
+      actor_user_id: actor, request_sha256: assessmentEvidenceDigest(request),
+      request_payload: request, claim_token: token, attempts: 1, checkpoint }] };
+    return { rowCount: 0, rows: [] };
+  } });
+  const [claimed] = await repository.claimDue();
+  assert.deepEqual(claimed.checkpoint, checkpoint);
+  assert.equal(Object.isFrozen(claimed.checkpoint.evidence_refs[0]), true);
+  checkpoint = { phase: 'source', evidence_refs: [{ ...evidence, content_sha256: 'bad' }] };
+  await assert.rejects(repository.claimDue(), /job_corrupt/);
+  checkpoint = { phase: 'unknown', evidence_refs: [] };
+  await assert.rejects(repository.claimDue(), /job_corrupt/);
+});

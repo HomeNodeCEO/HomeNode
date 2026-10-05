@@ -50,6 +50,7 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
         start_date: '2023-01-01', end_date: '2024-12-31' } } }), /operation_conflict/);
     const [claimed] = await repository.claimDue();
     assert.equal(claimed.operation_id, firstOperation);
+    assert.equal(claimed.checkpoint, null, 'new jobs have no resumable checkpoint');
     const claim = { operation_id: claimed.operation_id, claim_token: claimed.claim_token,
       attempts: claimed.attempts };
     assert.deepEqual(await repository.heartbeat(claim), { cancellation_requested: false });
@@ -62,6 +63,7 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
     await repository.enqueue({ scope, actorUserId: actor, request: makeRequest(secondOperation) });
     const [second] = await repository.claimDue();
     assert.equal(second.operation_id, secondOperation);
+    assert.equal(second.checkpoint, null);
     const secondClaim = { operation_id: second.operation_id, claim_token: second.claim_token,
       attempts: second.attempts };
     await assert.rejects(repository.complete(secondClaim, 'b'.repeat(64)),

@@ -16,8 +16,9 @@ CREATE TABLE IF NOT EXISTS app.neighborhood_custom_cohort_capture_jobs (
   run_after timestamptz NOT NULL DEFAULT now(),
   claim_token uuid,
   lease_expires_at timestamptz,
-  checkpoint jsonb NOT NULL DEFAULT '{}'::jsonb
-    CHECK (jsonb_typeof(checkpoint) = 'object' AND octet_length(checkpoint::text) <= 65536),
+  checkpoint jsonb
+    CHECK (checkpoint IS NULL OR (jsonb_typeof(checkpoint) = 'object'
+      AND octet_length(checkpoint::text) <= 65536)),
   cancellation_requested_at timestamptz,
   last_error_code text CHECK (last_error_code IS NULL OR last_error_code ~ '^[a-z][a-z0-9_]{0,99}$'),
   context_sha256 text CHECK (context_sha256 IS NULL OR context_sha256 ~ '^[a-f0-9]{64}$'),

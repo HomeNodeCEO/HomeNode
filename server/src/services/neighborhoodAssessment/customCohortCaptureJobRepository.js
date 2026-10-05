@@ -58,6 +58,22 @@ function lease(value) {
   if (!Number.isInteger(value) || value < 15 || value > 900) fail('invalid_lease');
   return value;
 }
+function checkpointOf(value) {
+  exact(value, ['phase', 'evidence_refs']);
+  if (!PHASES.has(value.phase) || !Array.isArray(value.evidence_refs)
+    || value.evidence_refs.length > 64) fail('invalid_checkpoint');
+  const refs = value.evidence_refs.map(ref => {
+    exact(ref, ['content_sha256', 'canonical_utf8_bytes']);
+    if (!SHA.test(ref.content_sha256)
+      || typeof ref.canonical_utf8_bytes !== 'string'
+      || !/^[1-9]\d{0,8}$/.test(ref.canonical_utf8_bytes)) fail('invalid_checkpoint');
+    return Object.freeze({ content_sha256: ref.content_sha256,
+      canonical_utf8_bytes: ref.canonical_utf8_bytes });
+  });
+  const checkpoint = Object.freeze({ phase: value.phase, evidence_refs: Object.freeze(refs) });
+  if (Buffer.byteLength(canonicalAssessmentJson(checkpoint), 'utf8') > 65536) fail('invalid_checkpoint');
+  return checkpoint;
+}
 function one(result, reason) {
   if (result?.rowCount !== 1 || !Array.isArray(result.rows) || result.rows.length !== 1)
     fail(reason);
@@ -146,7 +162,11 @@ export function createCustomCohortCaptureJobRepository(client) {
             || assessmentEvidenceDigest(admitted) !== row.request_sha256
             || !Number.isInteger(row.attempts) || row.attempts < 1 || row.attempts > 5
             || !UUID.test(row.claim_token) || !UUID.test(row.actor_user_id)) fail('job_corrupt');
-          return Object.freeze({ ...row, request_payload: admitted });
+          // A resume must not trust an unvalidated JSONB checkpoint. The
+          // worker still verifies every referenced immutable blob before use.
+          const checkpoint = row.checkpoint === null || row.checkpoint === undefined
+            ? null : checkpointOf(row.checkpoint);
+          return Object.freeze({ ...row, request_payload: admitted, checkpoint });
         } catch { fail('job_corrupt'); }
       });
     },
@@ -156,17 +176,7 @@ export function createCustomCohortCaptureJobRepository(client) {
       lease(leaseSeconds);
       let checkpointJson = null;
       if (checkpoint !== null) {
-        exact(checkpoint, ['phase', 'evidence_refs']);
-        if (!PHASES.has(checkpoint.phase) || !Array.isArray(checkpoint.evidence_refs)
-          || checkpoint.evidence_refs.length > 64) fail('invalid_checkpoint');
-        for (const ref of checkpoint.evidence_refs) {
-          exact(ref, ['content_sha256', 'canonical_utf8_bytes']);
-          if (!SHA.test(ref.content_sha256)
-            || typeof ref.canonical_utf8_bytes !== 'string'
-            || !/^[1-9]\d{0,8}$/.test(ref.canonical_utf8_bytes)) fail('invalid_checkpoint');
-        }
-        checkpointJson = canonicalAssessmentJson(checkpoint);
-        if (Buffer.byteLength(checkpointJson, 'utf8') > 65536) fail('invalid_checkpoint');
+        checkpointJson = canonicalAssessmentJson(checkpointOf(checkpoint));
       }
       const row = one(await client.query(`/* custom-cohort-job:heartbeat */
         UPDATE app.neighborhood_custom_cohort_capture_jobs

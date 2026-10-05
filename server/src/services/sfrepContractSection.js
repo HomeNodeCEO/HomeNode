@@ -1,4 +1,6 @@
 import { purchaseContractCurrency } from './purchaseContractAnalysis.js';
+import { hasCurrentContractSubjectAssociation } from './contractSubjectAssociation.js';
+import { selectSubjectPurchaseContract } from './subjectPurchaseContract.js';
 
 const TERMS = ['contract_date', 'contract_price', 'earnest_money', 'down_payment', 'loan_amount', 'seller_concessions'];
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -18,22 +20,26 @@ function contractDate(value) {
 const dollars = amount => `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)}`;
 
 /** The legacy 1004/2055 Contract section is deliberately assembled from one,
- * subject-matched, reviewed purchase contract. A PDF merely being uploaded never
+ * subject-matched purchase contract with confirmed terms. A PDF merely being uploaded never
  * claims the appraiser analyzed it. Original terms and the source PDF remain in
  * the workfile; this concise narrative is an export-only presentation. */
 export function projectSfrepContractSection(documents, { assignmentDetails } = {}) {
   const fields = [], warnings = [], knownMissing = [];
-  const contracts = documents.filter(document => document.document_type === 'purchase_contract');
-  if (!contracts.length) return { fields, warnings, knownMissing };
-  if (contracts.length !== 1) {
-    warnings.push('Multiple purchase contracts are in the workfile. Resolve which version applies before the legacy Contract section can be mapped.');
+  const selection = selectSubjectPurchaseContract(documents);
+  if (!selection.document) {
+    if (selection.ambiguous) warnings.push('Multiple base purchase contracts are in the workfile. Select which signed contract applies before mapping the legacy Contract section.');
+    else if (selection.supplementalCount) warnings.push('Only financing or other contract addenda were found; upload the base purchase contract.');
     return { fields, warnings, knownMissing };
   }
-  const document = contracts[0];
-  if (document.property_role !== 'subject' || document.processing_status !== 'reviewed') {
-    warnings.push('The contract needs subject-property verification and completed document review before it can mark the legacy Contract section analyzed.');
+  const document = selection.document;
+  if ((document.property_role !== 'subject' && !hasCurrentContractSubjectAssociation(document))
+    || !['reviewed', 'review_required'].includes(document.processing_status)) {
+    warnings.push('The base contract needs subject-property verification and confirmed terms before it can mark the legacy Contract section analyzed.');
     return { fields, warnings, knownMissing };
   }
+  if (selection.supplementalCount) warnings.push(`${selection.supplementalCount} financing/addendum document(s) were kept as workfile evidence and did not replace the base contract.`);
+  if (document.processing_status === 'review_required') warnings.push('The base contract still has unreviewed suggestions; only individually confirmed terms are mapped. Review its remaining suggestions in HomeNode.');
+  if (document.property_role !== 'subject') warnings.push('The appraiser explicitly associated this contract with the subject despite a printed-address discrepancy; review the consolidated discrepancy addendum.');
   const documentId = Number(document.id);
   const candidates = new Map();
   for (const candidate of Array.isArray(document.candidates) ? document.candidates : []) {

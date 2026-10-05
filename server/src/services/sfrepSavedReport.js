@@ -1,5 +1,5 @@
 import {
-  CUSTOM_SUBJECT_FIELD_DESCRIPTORS, readCustomSubjectValue, projectCustomSubjectDocuments,
+  CUSTOM_SUBJECT_FIELD_DESCRIPTORS, readCustomSubjectValue, projectCustomSubjectDocuments, subjectDocumentSourceKind,
 } from './customSubjectApplication.js';
 import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
 import { isDeepStrictEqual } from 'node:util';
@@ -13,6 +13,8 @@ const positive = value => Number.isSafeInteger(value) && value > 0;
 const record = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const PROOF_KEYS = ['kind', 'sourceField', 'documentId', 'candidateId', 'documentType', 'rule',
   'sourceValue', 'sourceEvidence', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'];
+const CAD_KEYS = new Set(['subject_street_address', 'subject_city', 'subject_state', 'subject_zip',
+  'county', 'assessor_parcel_number', 'owner_name', 'legal_description', 'neighborhood_name']);
 
 /** Resolve only persisted report values. Evidence receipts cannot authorize
  * themselves: exact source/value/derivation are checked against the current,
@@ -29,8 +31,8 @@ export function savedSfrepSubjectFields(saved, input) {
   const fields = [], warnings = [], knownMissing = [];
   for (const document of saved.documents) {
     if (hasCurrentContractSubjectAssociation(document)) warnings.push(contractAssociationWarning(document));
-    if (sfrepDocumentPropertyRole(document) === 'subject' && sfrepDocumentParcelMismatch(document)) {
-      warnings.push(`Assessor parcel number (document ${document.id}): reviewed PDF APN differs from the canonical county account. The PDF APN is quarantined; county-backed identity is retained. Review the discrepancy.`);
+    if (subjectDocumentSourceKind(document) === 'cad' && sfrepDocumentParcelMismatch(document)) {
+      warnings.push(`Assessor parcel number (document ${document.id}): reviewed PDF APN differs from the assignment account. That CAD document is quarantined; review the discrepancy before relying on shared-account fallback identity.`);
     }
   }
   for (const descriptor of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
@@ -74,7 +76,17 @@ export function savedSfrepSubjectFields(saved, input) {
         && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value)) && proof
         && same(receipt.reviewedSourceValue, proposal.sourceValue)
         && PROOF_KEYS.every(key => same(receipt[key], proof[key]));
-      if (!valid) {
+      // Older files can hold a valid reviewed value from a different source.
+      // When the same value is now confirmed by the workfile's reviewed CAD
+      // record, migrate its export provenance without changing the saved file.
+      const cadDocument = CAD_KEYS.has(descriptor.key) && saved.documents.find(document =>
+        document.id === proof?.documentId && subjectDocumentSourceKind(document) === 'cad'
+        && sfrepDocumentPropertyRole(document) === 'subject'
+        && ['reviewed', 'review_required'].includes(document.processing_status));
+      const matchingCad = receipt.status === 'current' && cadDocument && proof?.kind === 'reviewed_document'
+        && (receipt.kind !== proof.kind || receipt.documentId !== proof.documentId)
+        && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value));
+      if (!valid && !matchingCad) {
         const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));

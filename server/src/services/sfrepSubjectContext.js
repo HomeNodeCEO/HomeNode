@@ -59,6 +59,19 @@ export function sfrepDocumentPropertyRole(document) {
   const parcelId = identifier(context.assessorParcelNumber || context.accountId);
   const parcelMatch = Boolean(parcelId && parcelValues.some(value => identifier(value) === parcelId));
   const parcelMismatch = parcelValues.some(value => parcelId && identifier(value) !== parcelId);
+  // A dated CAD record for the exact account can legitimately carry an older
+  // situs address than the shared, continually refreshed account row. Keep it
+  // assignment-scoped; other source families still require address agreement.
+  const verifiedCad = document.document_type === 'other'
+    && (document.extraction_summary?.urar_subject_evidence?.source_kind === 'cad'
+      || document.candidates?.some(candidate => candidate.review_status === 'confirmed'
+        && /^urar_subject_cad_/.test(String(candidate.extraction_method || ''))));
+  if (verifiedCad
+    && parcelMatch && !parcelMismatch) return 'subject';
+  // A CAD record for a different APN is not the workfile's subject even if
+  // its street happens to resemble the shared account address. In particular,
+  // the old county-bound APN-typo exception must not promote its other fields.
+  if (verifiedCad && parcelMismatch) return 'comparable';
 
   // Even a field labeled Street Address can contain a locality. Validate every
   // tail rather than letting the structured parser silently throw it away.
@@ -105,6 +118,47 @@ export function sfrepDocumentParcelMismatch(document) {
   const parcelId = identifier(context?.assessorParcelNumber || context?.accountId);
   return Boolean(parcelId && confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number'])
     .some(value => identifier(value) !== parcelId));
+}
+
+function workfileCadIdentity(document) {
+  if (document.document_type !== 'other' || !reviewReady(document)
+    || !(document.extraction_summary?.urar_subject_evidence?.source_kind === 'cad'
+      || document.candidates?.some(candidate => candidate.review_status === 'confirmed'
+        && /^urar_subject_cad_/.test(String(candidate.extraction_method || ''))))
+    || sfrepDocumentPropertyRole(document) !== 'subject') return null;
+  const parcelId = identifier(document.subject_context?.assessorParcelNumber || document.subject_context?.accountId);
+  const apns = confirmed(document, ['assessor_parcel_number', 'assessors_parcel_number']);
+  if (!parcelId || !apns.length || apns.some(value => identifier(value) !== parcelId)) return null;
+  const full = confirmed(document, ['subject_property_address']).map(postalAddress);
+  const streets = [...confirmed(document, ['subject_street_address']), ...full.map(value => value.street)];
+  const cities = [...confirmed(document, ['subject_city']), ...full.map(value => value.city).filter(Boolean)];
+  const zips = [...confirmed(document, ['subject_zip', 'subject_zip_code']), ...full.map(value => value.postalCode).filter(Boolean)];
+  const states = [...confirmed(document, ['subject_state']), ...full.map(value => value.state).filter(Boolean)];
+  if (new Set(streets.map(value => exactStreetIdentity(value).base_address_key)).size !== 1
+    || new Set(cities.map(normalizePropertyCity)).size > 1 || new Set(zips.map(zip)).size > 1
+    || new Set(states.map(value => value.toUpperCase())).size > 1) return null;
+  const address = streets[0], city = cities[0] || null, postalCode = zips[0] || null, state = states[0] || null;
+  if (!address || !city || exactStreetIdentity(address).ambiguous) return null;
+  return { address, city, postalCode, state };
+}
+
+/** Bind other workfile documents to one reviewed CAD identity when the shared
+ * account address has changed. This is in-memory role proof, not a database
+ * update. Conflicting CAD records cannot establish a common identity. */
+export function sfrepWorkfileDocumentRoles(documents) {
+  const candidates = documents.map(workfileCadIdentity).filter(Boolean);
+  const identities = new Set(candidates.map(value => JSON.stringify({ street: exactStreetIdentity(value.address).base_address_key,
+    city: normalizePropertyCity(value.city), zip: zip(value.postalCode), state: value.state?.toUpperCase() || null })));
+  const cad = identities.size === 1 ? candidates[0] : null;
+  return documents.map(document => {
+    const context = document.subject_context;
+    const forRole = cad && context
+      ? { ...document, subject_context: { ...context, address: cad.address, city: cad.city,
+        postalCode: cad.postalCode, state: cad.state || context.state,
+        canonicalIdentity: { ...context.canonicalIdentity, state: cad.state || context.canonicalIdentity?.state } } }
+      : document;
+    return { ...document, property_role: sfrepDocumentPropertyRole(forRole) };
+  });
 }
 
 export function sfrepSubjectContext(documents) {

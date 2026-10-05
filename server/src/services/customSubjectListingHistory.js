@@ -4,6 +4,7 @@
 import { sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
 import { isUrarStateCode } from '../util/urarScalarValidation.js';
 import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
+import { selectSubjectPurchaseContract } from './subjectPurchaseContract.js';
 
 const READY = new Set(['reviewed', 'review_required']);
 const SHEET_FIELDS = ['list_date', 'original_list_price', 'days_on_market'];
@@ -146,9 +147,14 @@ export function buildCustomSubjectListingHistory(documents = [], subjectContext 
   if (!sheets.length) return { warnings: [] };
   const effectiveDate = calendarDate(subjectContext?.effectiveDate);
   if (!effectiveDate) return warning('confirm the appraisal effective date before generating the listing summary.');
-  const associatedContracts = documents.filter(document => document.document_type === 'purchase_contract'
-    && document.property_role !== 'subject' && hasCurrentContractSubjectAssociation(document));
-  const contractEntries = [...ready.filter(document => document.document_type === 'purchase_contract'), ...associatedContracts]
+  const contractSelection = selectSubjectPurchaseContract(documents);
+  if (!contractSelection.document) return warning(contractSelection.ambiguous
+    ? 'multiple base contracts require the appraiser to identify the applicable contract.'
+    : 'a base purchase contract is required; financing addenda are not the contract.');
+  const contractDocument = contractSelection.document;
+  const associatedContracts = contractDocument.property_role !== 'subject' && hasCurrentContractSubjectAssociation(contractDocument)
+    ? [contractDocument] : [];
+  const contractEntries = (ready.includes(contractDocument) ? [contractDocument] : associatedContracts)
     .flatMap(document => entries(document, 'contract_date'));
   const contractDate = unique(contractEntries, calendarDate);
   if (!contractDate || contractDate > effectiveDate) return warning('one valid reviewed subject contract date on or before the effective date is required.');

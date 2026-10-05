@@ -15,14 +15,36 @@ function document(id = 1, values = {}, options = {}) {
         raw_value: value, normalized_value: value, confirmed_value: value, review_status: 'confirmed' })), ...options };
 }
 function fullDocument() {
-  return document(1, { subject_state: 'TX', subject_zip: '75041', borrower_name: 'Example Borrower',
+  const source = document(1, { subject_state: 'TX', subject_zip: '75041', borrower_name: 'Example Borrower',
     owner_name: 'Example Owner', county: 'Dallas', census_tract: '182.06', listing_history_summary: 'Reviewed listing narrative.', assessor_parcel_number: '000123', tax_year: '2025',
     tax_amount: '$4,321.50', neighborhood_name: 'Example Park', legal_description: 'EXAMPLE PARK\r\nBLK 1\tLOT 2',
     property_rights: 'leasehold', offered_for_sale_prior_12_months: 'false', pud: 'false',
     assignment_type: 'refinance', lender_client_name: 'Example Bank', lender_client_address: '20 Example Ave',
-    hoa_dues_amount: '$120.49', hoa_frequency: 'per_year' });
+    hoa_dues_amount: '$120.49', hoa_frequency: 'per_year' }, { document_type: 'other',
+    extraction_summary: { urar_subject_evidence: { source_kind: 'realist' } } });
+  // This is one reviewed Realist upload plus the independently reviewed CAD,
+  // assignment and MLS records in the same synthetic workfile. Keeping the
+  // Realist document as id 1 preserves transaction/rejection coverage below.
+  source.synthetic_companions = [
+    document(1001, { subject_state: 'TX', subject_zip: '75041', owner_name: 'Example Owner',
+      county: 'Dallas', assessor_parcel_number: '000123', neighborhood_name: 'Example Park',
+      legal_description: 'EXAMPLE PARK\r\nBLK 1\tLOT 2' }, { document_type: 'other',
+      extraction_summary: { urar_subject_evidence: { source_kind: 'cad' } } }),
+    document(2001, { borrower_name: 'Example Borrower', assignment_type: 'refinance',
+      lender_client_name: 'Example Bank', lender_client_address: '20 Example Ave' }),
+    document(3001, { offered_for_sale_prior_12_months: 'false', pud: 'false',
+      hoa_dues_amount: '$120.49', hoa_frequency: 'per_year' }, { document_type: 'mls_sheet' }),
+  ];
+  const censusGeography = { tractCode: '018206', status: 'matched', geoid: '48113018206',
+    vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' };
+  source.subject_context = { ...source.subject_context, censusGeography };
+  for (const companion of source.synthetic_companions) companion.subject_context = source.subject_context;
+  return source;
 }
-const merge = (documents, rest = {}) => mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(documents), ...rest });
+const expandSources = documents => documents.flatMap(source => [source,
+  ...(source.synthetic_companions || []).map(companion => ({ ...companion,
+    processing_status: source.processing_status }))]);
+const merge = (documents, rest = {}) => mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(expandSources(documents)), ...rest });
 
 test('every canonical Subject/assignment descriptor round-trips exact reviewed values', () => {
   const result = merge([fullDocument()], { actorUserId: 'appraiser-1', reviewer: 'Example Appraiser' });
@@ -36,6 +58,7 @@ test('every canonical Subject/assignment descriptor round-trips exact reviewed v
   assert.deepEqual(result.assignmentDetails.assignment_types, ['refinance']);
   assert.deepEqual(result.subject.owner.parties, []);
   for (const definition of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
+    if (definition.key === 'listing_history_summary') continue; // Requires a separate reviewed listing-history upload.
     const receipt = result.evidence.fields[definition.key];
     assert.ok(receipt, definition.key);
     assert.deepEqual(receipt.value, readCustomSubjectValue(result, definition.key));
@@ -59,7 +82,7 @@ test('verified subject MLS derives listing with unchanged date proof and a separ
 
 for (const role of ['unknown', 'comparable', 'unready']) {
   test(`${role} sources cannot populate Subject or assignment client/type`, () => {
-    const source = fullDocument();
+    const source = document(1, { borrower_name: 'Other Borrower', assignment_type: 'refinance' });
     if (role === 'unknown') source.candidates = source.candidates.filter(item => !['subject_street_address', 'subject_city', 'subject_zip', 'assessor_parcel_number'].includes(item.field_key));
     if (role === 'comparable') source.candidates.find(item => item.field_key === 'subject_street_address').confirmed_value = '900 Other St';
     if (role === 'unready') source.processing_status = 'processing';
@@ -73,10 +96,14 @@ for (const role of ['unknown', 'comparable', 'unready']) {
 }
 
 test('all relevant documents participate: aliases and exact cents conflict, never last-wins', () => {
-  const first = document(1, { tax_amount: '4321.49', owner_name: 'First Owner' });
-  const second = document(2, { real_estate_tax_amount: '4321.40', record_owner_name: 'Second Owner' });
-  for (const sources of [[first, second], [second, first]]) {
-    const result = merge(sources);
+  const realist = { document_type: 'other', extraction_summary: { urar_subject_evidence: { source_kind: 'realist' } } };
+  const cad = { document_type: 'other', extraction_summary: { urar_subject_evidence: { source_kind: 'cad' } } };
+  const sources = [document(1, { tax_amount: '4321.49' }, realist),
+    document(2, { real_estate_tax_amount: '4321.40' }, realist),
+    document(3, { owner_name: 'First Owner' }, cad),
+    document(4, { record_owner_name: 'Second Owner' }, cad)];
+  for (const group of [sources, [...sources].reverse()]) {
+    const result = merge(group);
     assert.equal(result.subject.urar_subject?.tax_amount, undefined);
     assert.equal(result.subject.owner, undefined);
     assert.ok(result.warnings.some(value => /conflicting/i.test(value)));
@@ -166,7 +193,8 @@ for (const change of ['rejected', 'conflicting', 'unavailable']) {
     const source = fullDocument(), applied = merge([source]);
     const documents = [source];
     if (change === 'rejected') source.candidates.find(item => item.field_key === 'tax_amount').review_status = 'rejected';
-    if (change === 'conflicting') documents.push(document(2, { tax_amount: '1.00' }));
+    if (change === 'conflicting') documents.push(document(2, { tax_amount: '1.00' },
+      { document_type: 'other', extraction_summary: { urar_subject_evidence: { source_kind: 'realist' } } }));
     if (change === 'unavailable') source.processing_status = 'processing';
     const result = merge(documents, applied);
     assert.equal(result.subject.urar_subject.tax_amount, '4321.50');
@@ -216,7 +244,7 @@ test('new manual Subject values are typed while existing extension fields remain
 // of them back. No live database or private PDF data is used by these tests.
 function database({ documents = [fullDocument()], assignmentDetails = {}, sections = {}, failHistory = null,
   workfileStatus = 'draft', hasSignedSnapshot = false, lockedDocumentOverrides = null } = {}) {
-  let committed = { documents: structuredClone(documents), assignment: { id: 4, account_id: '000123', file_number: 'SYNTHETIC-1',
+  let committed = { documents: structuredClone(expandSources(documents)), assignment: { id: 4, account_id: '000123', file_number: 'SYNTHETIC-1',
     assignment_details: assignmentDetails, revision: 3, workfile_status: 'draft' }, sections: structuredClone(sections), history: [] };
   let pending;
   const calls = [];
@@ -382,7 +410,8 @@ for (const processingStatus of unavailableStatuses) {
       const evidence = saved.sections[CUSTOM_SUBJECT_EVIDENCE_SECTION];
       assert.equal(evidence.revision, 2);
       for (const [key, receipt] of Object.entries(evidence.section_value.fields)) {
-        assert.deepEqual(receipt, { ...applied.evidence.fields[key], status: 'needs_review' }, key);
+        assert.deepEqual(receipt, { ...applied.evidence.fields[key],
+          status: key === 'census_tract' ? 'current' : 'needs_review' }, key);
       }
       assert.equal(saved.history.filter(item => item[0] === 'candidate').length, 1);
       assert.equal(saved.history.filter(item => item[0] === 'section').length, 1);
@@ -411,11 +440,12 @@ for (const processingStatus of unavailableStatuses) {
 }
 
 test('failed extraction rejection cannot apply old contract fields or alternative documents, or refresh stale receipts', async () => {
-  const source = document(1, { tax_amount: '4321.50', contract_price: '300000', loan_amount: '250000' }, { document_type: 'purchase_contract' });
+  const source = document(1, { tax_amount: '4321.50', contract_price: '300000', loan_amount: '250000' },
+    { document_type: 'other', extraction_summary: { urar_subject_evidence: { source_kind: 'realist' } } });
   const applied = merge([source]);
   source.processing_status = 'extraction_failed';
   const alternative = document(2, { tax_amount: '4321.50', lender_client_name: 'Unapplied Bank' });
-  applied.evidence.fields.subject_city.status = 'needs_review';
+  applied.evidence.fields.tax_amount.status = 'needs_review';
   const sections = Object.fromEntries([[CUSTOM_SUBJECT_SECTION, applied.subject], [CUSTOM_SUBJECT_EVIDENCE_SECTION, applied.evidence]]
     .map(([key, value]) => [key, { section_key: key, section_value: value, revision: 1 }]));
   const db = database({ documents: [source, alternative], sections, assignmentDetails: { lender_client_name: '' } });
@@ -428,7 +458,6 @@ test('failed extraction rejection cannot apply old contract fields or alternativ
   const fields = db.state.sections[CUSTOM_SUBJECT_EVIDENCE_SECTION].section_value.fields;
   assert.equal(fields.tax_amount.status, 'needs_review');
   assert.equal(fields.tax_amount.documentId, 1);
-  assert.equal(fields.subject_city.status, 'needs_review');
   assert.equal(fields.lender_client_name, undefined);
 });
 
@@ -499,7 +528,7 @@ test('scoped read has bounded candidates, exact file/account and organization-qu
     { accountId: '000123', assignmentFileId: 4 }), /document_scope_changed/);
 });
 
-test('matched account Census fills absent tract and conflicts with differing reviewed PDF evidence', () => {
+test('matched account Census fills absent tract and ignores differing PDF text', () => {
   const source = document();
   source.subject_context = { ...context, censusGeography: { tractCode: '001234', status: 'matched',
     geoid: '48113001234', vintage: 'Census2020_Current', updatedAt: '2026-10-03T00:00:00Z' } };
@@ -509,10 +538,10 @@ test('matched account Census fills absent tract and conflicts with differing rev
   source.candidates.push({ id: 190, document_id: source.id, field_key: 'census_tract', review_status: 'confirmed', confirmed_value: '99.99' });
   const conflict = merge([source], initial);
   assert.equal(conflict.subject.property_location.census_tract, '12.34');
-  assert.equal(conflict.evidence.fields.census_tract.status, 'needs_review');
-  assert.ok(conflict.warnings.some(warning => /lookup disagree/.test(warning)));
+  assert.equal(conflict.evidence.fields.census_tract.status, 'current');
+  assert.equal(conflict.warnings.some(warning => /lookup disagree/.test(warning)), false);
   source.candidates.pop();
-  assert.equal(merge([source], conflict).evidence.fields.census_tract.status, 'needs_review');
+  assert.equal(merge([source], conflict).evidence.fields.census_tract.status, 'current');
   assert.equal(merge([source], { ...conflict, reviewedDocumentId: source.id }).evidence.fields.census_tract.status, 'current');
 });
 

@@ -131,15 +131,16 @@ test('dates, DOM, and monetary values are validated without fabrication or calen
   assert.match(summarize(zero).field.value, /on the market for 0 days/);
 });
 
-test('equivalent duplicate evidence is deterministic and all contributors are bound in provenance', () => {
+test('equivalent MLS evidence is deterministic while duplicate base contracts require selection', () => {
   const documents = sources();
   documents.push(document(4, 'mls_sheet', [candidate(41, 'mls_number', '77700001'), candidate(42, 'list_date', '05/29/2026'),
     candidate(43, 'original_list_price', '$345,000'), candidate(44, 'days_on_market', '077')]));
-  documents.push(document(5, 'purchase_contract', [candidate(51, 'contract_date', '08/25/2026')]));
   const result = summarize(documents);
   assert.ok(result.field);
-  assert.deepEqual(result.field.provenance.sourceEvidence.map(item => item.candidateId), [11, 12, 13, 14, 21, 31, 41, 42, 43, 44, 51]);
+  assert.deepEqual(result.field.provenance.sourceEvidence.map(item => item.candidateId), [11, 12, 13, 14, 21, 31, 41, 42, 43, 44]);
   assert.deepEqual(summarize([...documents].reverse()), result);
+  documents.push(document(5, 'purchase_contract', [candidate(51, 'contract_date', '08/25/2026')]));
+  omit(summarize(documents));
   documents.at(-1).candidates[0].confirmed_value = '2026-08-24';
   omit(summarize(documents));
 });

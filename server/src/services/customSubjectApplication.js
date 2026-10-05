@@ -1,5 +1,5 @@
 import { buildSfrepReportExport, canonicalSfrepAssignmentType } from './sfrepReportExport.js';
-import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
+import { sfrepDocumentParcelMismatch, sfrepSubjectContext, sfrepWorkfileDocumentRoles } from './sfrepSubjectContext.js';
 import { validateAssignmentDetails, validateReportManualSection } from '../util/reportManualValues.js';
 import { buildCustomSubjectListingHistory } from './customSubjectListingHistory.js';
 import { buildCustomSubjectCensus, customSubjectCensusSql } from './customSubjectCensus.js';
@@ -40,6 +40,45 @@ const CONTRACT_FIELDS = new Set(['contract_price', 'contract_date', 'contract_cl
   'down_payment', 'earnest_money', 'seller_concessions', 'contract_buyer_names', 'contract_seller_names',
   'contract_property_condition', 'contract_repairs', 'contract_analysis_summary', 'subject_under_contract']);
 
+// These are workfile evidence rules, not updates to the shared account row.
+// An "Other" upload is a CAD/Realist/history source only when the server's
+// extracted layout identified it as such; a filename is not proof.
+const CAD_FIELDS = new Set(['subject_property_address', 'subject_street_address', 'subject_city',
+  'subject_state', 'subject_zip', 'subject_zip_code', 'county', 'assessor_parcel_number',
+  'assessors_parcel_number', 'owner_name', 'record_owner_name', 'legal_description',
+  'neighborhood_name', 'subdivision_name']);
+const ENGAGEMENT_FIELDS = new Set(['borrower_name', 'assignment_type', 'lender_client_name', 'lender_client_address']);
+const MLS_FIELDS = new Set(['pud', 'is_pud', 'hoa_dues_amount', 'hoa_frequency', 'list_date',
+  'offered_for_sale_prior_12_months', 'subject_offered_for_sale_prior_12_months']);
+const REALIST_FIELDS = new Set(['tax_year', 'tax_amount', 'real_estate_tax_year', 'real_estate_tax_amount']);
+export function subjectDocumentSourceKind(document) {
+  if (document.document_type === 'engagement_letter' || document.document_type === 'mls_sheet') return document.document_type;
+  if (document.document_type !== 'other') return null;
+  const kind = document.extraction_summary?.urar_subject_evidence?.source_kind;
+  if (kind === 'cad' || kind === 'realist') return kind;
+  // Older reviewed uploads can predate the summary tag but retain the parser's
+  // server-generated extraction rule on their confirmed candidates.
+  const rules = new Set(document.candidates.filter(candidate => candidate.review_status === 'confirmed')
+    .map(candidate => String(candidate.extraction_method || '').match(/^urar_subject_(cad|realist)_/)?.[1]).filter(Boolean));
+  return rules.size === 1 ? [...rules][0] : null;
+}
+function subjectCandidateAllowed(document, candidate) {
+  const key = candidate.field_key;
+  const kind = subjectDocumentSourceKind(document);
+  if (CAD_FIELDS.has(key)) return kind === 'cad';
+  if (ENGAGEMENT_FIELDS.has(key)) return kind === 'engagement_letter';
+  if (MLS_FIELDS.has(key)) return kind === 'mls_sheet';
+  if (REALIST_FIELDS.has(key)) return kind === 'realist';
+  // Census comes from HomeNode's matched geography, and the listing narrative
+  // is composed from the matching MLS sheet plus its reviewed history document.
+  // A generic "property type: PUD" string is not the reviewed MLS HOA rule.
+  return !['census_tract', 'listing_history_summary', 'property_type', 'property_rights'].includes(key);
+}
+export function filterSubjectEvidenceDocuments(documents) {
+  return documents.map(document => ({ ...document,
+    candidates: document.candidates.filter(candidate => subjectCandidateAllowed(document, candidate)) }));
+}
+
 export function readCustomSubjectValue({ subject = {}, assignmentDetails = {} }, key) {
   const field = CUSTOM_SUBJECT_FIELD_DESCRIPTORS.find(item => item.key === key);
   if (!field) return undefined;
@@ -75,10 +114,16 @@ export function projectCustomSubjectDocuments(documents = []) {
   if (!Array.isArray(documents) || documents.length > 50
     || documents.some(document => !Array.isArray(document?.candidates) || document.candidates.length > 200)
     || Buffer.byteLength(JSON.stringify(documents)) > 8 * 1024 * 1024) fail('custom_subject_evidence_limit');
-  const scoped = documents.map(document => ({ ...document, id: Number(document.id),
-    property_role: sfrepDocumentPropertyRole({ ...document, id: Number(document.id) }) }));
+  const scoped = sfrepWorkfileDocumentRoles(documents.map(document => ({ ...document, id: Number(document.id) })));
   const subjectContext = { ...sfrepSubjectContext(scoped), feeSimpleDefault: scoped.some(document => document.property_role === 'subject') };
-  const mapped = buildSfrepReportExport({ documents: scoped, subjectContext, forReportPersistence: true });
+  const evidenceForSubject = filterSubjectEvidenceDocuments(scoped);
+  const mapped = buildSfrepReportExport({ documents: evidenceForSubject, subjectContext, forReportPersistence: true });
+  for (const document of scoped) {
+    if (subjectDocumentSourceKind(document) === 'cad' && sfrepDocumentParcelMismatch(document)) {
+      mapped.omitted.push({ sourceField: 'assessor_parcel_number', documentId: document.id,
+        reason: 'reviewed CAD APN differs from the assignment account; its identity fields were quarantined' });
+    }
+  }
   const fields = [];
   for (const definition of CUSTOM_SUBJECT_FIELD_DESCRIPTORS) {
     const field = mapped.fields.find(item => definition.fieldIds.includes(item.fieldId));
@@ -151,16 +196,16 @@ export function projectCustomSubjectDocuments(documents = []) {
   } else if (census.field && !existingCensus && !mapped.conflicts.some(conflict => conflict.sourceField === 'census_tract')) {
     fields.push(census.field);
   }
-  // The county-backed subject identity is primary. PDF identity still gates
-  // document applicability; differences remain visible without replacing CAD.
+  // A reviewed, subject-matched CAD record is the workfile's primary identity.
+  // The shared account row is a labeled fallback only for fields CAD did not
+  // establish. Never write a workfile-specific address back to core.accounts.
   for (const canonical of buildCustomSubjectIdentity(scoped[0]?.subject_context)) {
     const index = fields.findIndex(field => field.key === canonical.key);
     if (canonical.key === 'county' && index >= 0
       && String(fields[index].value).trim().replace(/\s+county$/i, '').toLowerCase() !== canonical.value.toLowerCase()) {
-      derivedWarnings.push('County: the reviewed document differs from the county record; the county record was retained.');
+      derivedWarnings.push('County: the reviewed CAD document differs from the shared account record; the workfile CAD value was retained.');
     }
-    if (index >= 0) fields.splice(index, 1);
-    fields.push(canonical);
+    if (index < 0) fields.push(canonical);
   }
   const lenderPreset = customSubjectLenderPreset(fields);
   if (lenderPreset && !mapped.conflicts.some(conflict => conflict.sourceField === 'lender_client_address')) fields.push(lenderPreset);

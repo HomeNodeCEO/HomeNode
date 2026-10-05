@@ -134,6 +134,45 @@ against thousands of newly inserted, not-yet-analyzed summary rows. The
 planner setting is restored before publication. A failure in this phase still
 rolls back the entire candidate generation.
 
+## Prepared exact parcel-display tiles (third primitive)
+
+Migration `20261029_custom_cohort_prepared_viewport_tiles.sql` stores an
+immutable, context-bound display sidecar for an existing complete prepared
+preview. The separate `maintenance:neighborhood-viewport-tiles` worker verifies
+the original compressed preview/map digests, checks that the map represents
+every captured numeric account, partitions the *unchanged* polygon features
+into bounded indexed cells, and publishes the manifest plus **every** tile in
+one transaction. A failed or interrupted build publishes nothing. An unavailable
+or over-capacity map is marked as such and continues using the existing full-map
+path; a missing or damaged published tile is an error, never a partial map.
+
+Each authenticated viewport still checks its assignment, context, subject and
+market-data rights. It reads only the requested certified cells and applies
+selection flags without decoding or cloning the complete parcel map. Cells
+duplicate a parcel at boundaries, so the reader verifies identical duplicates
+and restores the original feature order. It then performs the existing exact
+polygon/viewport intersection and 4 MB transport guard. These tiles do not
+alter statistical membership, sales, appraisal dates, accepted boundaries, or
+the underlying CAD/MLS evidence. New captures become eligible only after their
+complete prepared preview exists; the worker also backfills older prepared
+contexts such as a saved Hardy study.
+
+Run this worker separately from the web process and the other bulk maintenance
+jobs, after application migrations, using the same private database URL:
+`npm run maintenance:neighborhood-viewport-tiles`. The default run processes
+at most ten eligible contexts with an 80-minute wall budget and one database
+connection. `NEIGHBORHOOD_TILE_MAX_CONTEXTS` (1–100) and
+`NEIGHBORHOOD_TILE_MAX_RUNTIME_MINUTES` (1–180) are bounded overrides. Use one
+manual canary first, verify the manifest and tile count for the intended
+context, compare a cold/warm viewport against the original map, and measure
+database storage before scheduling it nightly. Do not overlap it with a full
+CAD sync or the group-index worker until production load is measured.
+
+This sidecar speeds reopening and panning of **already completed** studies. It
+does not turn a new 50k-account capture into an instant operation or remove
+the larger-area capacity protocol described in
+`custom-neighborhood-large-area-capacity.md`.
+
 The report still does **not** read these tables as evidence. The map may read
 the exact-revision parcel facts for its optional diagnostic color overlay; it
 does not use group medians or the prepared sales facts to replace its selected

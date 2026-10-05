@@ -3,6 +3,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
+import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
 import { customCohortTexasCivilDay } from '../../src/services/neighborhoodAssessment/customCohortTemporalSupport.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
@@ -201,6 +202,20 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       'a verified prepared viewport retains exact geometry and selected flags');
     assert.ok(!calls.slice(viewportFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
       'the viewport must not reassemble the original retained graph');
+    const preparedTiles = await runCustomCohortPreparedViewportTileJob(pool, { maximumContexts: 10 });
+    assert.deepEqual(preparedTiles.status, 'complete');
+    assert.ok(preparedTiles.completed >= 1);
+    const tileManifest = await pool.query(`SELECT status FROM app.neighborhood_custom_cohort_prepared_tile_manifests
+      WHERE organization_id=$1 AND context_id=$2`, [organization, result.context_ref.context_id]);
+    assert.equal(tileManifest.rows[0]?.status, 'available');
+    const tiledFrom = calls.length;
+    const tiledVisible = await capture.viewport(previewRequest,
+      { west: -96.701, south: 32.799, east: -96.698, north: 32.802 });
+    assert.deepEqual(tiledVisible, visible, 'offline tiles preserve the exact prior viewport and selection binding');
+    assert.ok(calls.slice(tiledFrom).some(sql => sql.includes('custom-cohort-prepared-tiles:read-cells')),
+      'prepared tile geometry is selected without reopening the complete map');
+    assert.ok(!calls.slice(tiledFrom).some(sql => sql.includes('custom-cohort-prepared-preview:read')
+      && sql.includes('compressed_map')), 'a tiled viewport avoids full prepared geometry transfer');
     const exposureDenied = createCustomCohortContextCapture({ pool: observed,
       authorizeMarketData: async (_client, _auth, _context, _purpose, { exposure }) => exposure === 'none' ? grant : { allowed: false } });
     await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);

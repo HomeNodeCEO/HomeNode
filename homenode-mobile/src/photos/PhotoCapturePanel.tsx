@@ -1,7 +1,9 @@
 import React, { useCallback, useEffect, useMemo, useState } from "react";
 import {
   ActivityIndicator,
+  AppState,
   Image,
+  Platform,
   Pressable,
   StyleSheet,
   Text,
@@ -39,7 +41,7 @@ function photoError(reason: unknown) {
     return "HomeNode cannot access the offline encryption key. Keep the app installed; your local files were not deleted.";
   }
   if (isUnreadableSqliteDatabaseError(reason)) {
-    return "HomeNode could not repair encrypted offline storage. Close and reopen HomeNode, and do not delete the app.";
+    return "HomeNode cannot open its encrypted photo queue right now. Photos already saved inside HomeNode are still on this device. Keep the app installed.";
   }
   const code = reason instanceof Error ? reason.message : "mobile_photo_failed";
   return photoSyncErrorMessage(code);
@@ -55,6 +57,33 @@ async function ensurePhotoDatabaseReady(store: OfflineStore) {
       if (!isUnreadableSqliteDatabaseError(reason) || delayMs === 1800) throw reason;
     }
   }
+}
+
+async function waitForPhotoForeground() {
+  if (Platform.OS !== "ios") return;
+  if (AppState.currentState !== "active") {
+    await new Promise<void>((resolve, reject) => {
+      let subscription: { remove: () => void } | null = null;
+      let timeout: ReturnType<typeof setTimeout> | null = null;
+      let settled = false;
+      const finish = (error?: Error) => {
+        if (settled) return;
+        settled = true;
+        if (timeout) clearTimeout(timeout);
+        subscription?.remove();
+        if (error) reject(error);
+        else resolve();
+      };
+      subscription = AppState.addEventListener("change", (state) => {
+        if (state === "active") finish();
+      });
+      timeout = setTimeout(() => finish(new Error("mobile_photo_foreground_timeout")), 10_000);
+      if (AppState.currentState === "active") finish();
+    });
+  }
+  // ImagePicker can resolve during the iOS inactive-to-active transition.
+  // Let the native file and SQLCipher handles settle before probing the queue.
+  await new Promise<void>((resolve) => setTimeout(resolve, 500));
 }
 
 function Action({ title, onPress, disabled = false, secondary = false }: {
@@ -199,7 +228,7 @@ export function PhotoCapturePanel({
   }, [ownerUserId, refreshPhotoSummary, sessionId, store]);
 
   useEffect(() => {
-    void load().catch((reason) => setError(photoError(reason)));
+    void load().catch((reason) => setError(`${photoError(reason)} Stage: photo list refresh.`));
   }, [load, photoSync.summary.failed, photoSync.summary.pending, photoSync.summary.synchronized]);
 
   useEffect(() => {
@@ -241,10 +270,11 @@ export function PhotoCapturePanel({
     prepared: Awaited<ReturnType<typeof preparePickedPhoto>>[],
   ) => {
     if (!prepared.length) return;
-    setBusy(true);
     setError(null);
+    let stage = "photo queue write";
     try {
       await store.withDatabaseActivity(() => store.cachePreparedPhotos(ownerUserId, sessionId, prepared));
+      stage = "photo list refresh";
       await load();
       for (const photo of prepared) {
         try { clearStagedPhotoManifest(ownerUserId, sessionId, photo.clientPhotoId); } catch { /* already queued */ }
@@ -256,9 +286,7 @@ export function PhotoCapturePanel({
     } catch (reason) {
       // The manifest and original remain on-device if SQLite cannot accept the
       // queue row. A later launch can register the same client photo ID once.
-      setError(`${photoError(reason)} The photo remains saved on this device; do not delete the app.`);
-    } finally {
-      setBusy(false);
+      setError(`${photoError(reason)} Stage: ${stage}. The photo remains saved on this device; do not delete the app.`);
     }
   }, [load, online, ownerUserId, sessionId, store, syncPhotosNow]);
 
@@ -297,7 +325,8 @@ export function PhotoCapturePanel({
       const prepared = await prepareAssets(assets, source);
       onPrepared(prepared.length);
       if (prepared.length) setStagedPhotos((current) => [...current, ...prepared]);
-      await ensurePhotoDatabaseReady(store);
+      await waitForPhotoForeground();
+      if (prepared.length) await ensurePhotoDatabaseReady(store);
       return prepared;
     } finally {
       resumeDatabaseActivity();
@@ -310,9 +339,9 @@ export function PhotoCapturePanel({
     let stagedCount = 0;
     try {
       const prepared = await pickWithDatabasePaused(captureCameraPhoto, "camera", (count) => { stagedCount = count; });
-      await cachePrepared(prepared);
+      void cachePrepared(prepared);
     } catch (reason) {
-      setError(`${photoError(reason)}${stagedCount ? " The photo remains saved on this device; do not delete the app." : ""}`);
+      setError(`${photoError(reason)}${stagedCount ? " Stage: camera return. The photo remains saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }
@@ -324,9 +353,9 @@ export function PhotoCapturePanel({
     let stagedCount = 0;
     try {
       const prepared = await pickWithDatabasePaused(() => importLibraryPhotos(remaining), "library", (count) => { stagedCount = count; });
-      await cachePrepared(prepared);
+      void cachePrepared(prepared);
     } catch (reason) {
-      setError(`${photoError(reason)}${stagedCount ? " The photos remain saved on this device; do not delete the app." : ""}`);
+      setError(`${photoError(reason)}${stagedCount ? " Stage: library return. The photos remain saved on this device; do not delete the app." : ""}`);
     } finally {
       setBusy(false);
     }
@@ -389,7 +418,7 @@ export function PhotoCapturePanel({
       if (staged.length) await cachePrepared(staged);
       else await load();
     } catch (reason) {
-      setError(photoError(reason));
+      setError(`${photoError(reason)} Stage: manual recovery.`);
     } finally {
       setRetrying(false);
     }
@@ -422,14 +451,14 @@ export function PhotoCapturePanel({
       </> : null}
 
       <View style={styles.actions}>
-        <Action title="Take photo" disabled={busy || remaining < 1} onPress={() => void takePhoto()} />
-        <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || remaining < 1} onPress={() => void importPhotos()} />
+        <Action title="Take photo" disabled={busy || retrying || remaining < 1} onPress={() => void takePhoto()} />
+        <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || retrying || remaining < 1} onPress={() => void importPhotos()} />
       </View>
       {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Saving photo on this device…" : "Uploading saved photos… You can take another photo."}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
-      {error || photoSync.error ? <Text style={styles.error}>{error || photoError(new Error(photoSync.error || ""))}</Text> : null}
+      {error || photoSync.error ? <Text style={styles.error}>{error || `Background sync: ${photoError(new Error(photoSync.error || ""))}`}</Text> : null}
       {stagedPhotos.length ? <View style={styles.stagedSection}>
         <Text style={styles.label}>{stagedPhotos.length} photo{stagedPhotos.length === 1 ? "" : "s"} saved inside HomeNode, waiting to be listed</Text>
         <Text style={styles.help}>These are in HomeNode's private device storage, not the iPhone Photos library. Keep the app installed.</Text>

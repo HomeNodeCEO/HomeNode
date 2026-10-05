@@ -125,6 +125,7 @@ test('seller comparison uses CAD names, tolerates order and spelling, and accept
   assert.equal(sellerComparisonSummary("Mary O'Neil", 'O NEIL MARY').matches, true);
   assert.equal(sellerComparisonSummary("Mary O'Neil", 'ONEIL MARY').matches, true);
   assert.equal(sellerComparisonSummary('John Smith, Jane Doe', 'JANE DOE').matches, true);
+  assert.equal(sellerComparisonSummary('Al Smith', 'SMITH AL ET AL').matches, true);
   const mismatch = sellerComparisonSummary('Jordan Freeman', 'Alex Freeman');
   assert.equal(mismatch.matches, false);
   assert.match(mismatch.summary, /Review and explain/);

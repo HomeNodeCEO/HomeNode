@@ -134,7 +134,7 @@ export function listingTimelineRows<T extends TimelineRow>(events: T[]): T[] {
   });
 }
 
-const nameSuffixes = new Set(['MR', 'MRS', 'MS', 'DR', 'JR', 'SR', 'II', 'III', 'IV', 'ET', 'AL']);
+const nameSuffixes = new Set(['MR', 'MRS', 'MS', 'DR', 'JR', 'SR', 'II', 'III', 'IV']);
 const businessWords = new Set([
   'LLC', 'INC', 'INCORPORATED', 'CORP', 'CORPORATION', 'COMPANY', 'LLP', 'LP',
   'LTD', 'LIMITED', 'PLC', 'PLLC', 'PC', 'HOLDINGS', 'ENTERPRISES', 'INVESTMENTS',
@@ -145,6 +145,7 @@ const businessWords = new Set([
 function nameTokens(value: string): string[] {
   return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
     .toUpperCase().replace(/['’`]/g, '').replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\bET\s+AL\b/g, ' ')
     .replace(/\bL\s+L\s+C\b/g, 'LLC').replace(/\bL\s+L\s+P\b/g, 'LLP')
     .replace(/\b([OD])\s+([A-Z]{3,})\b/g, '$1$2').trim().split(/\s+/)
     .filter((token) => token && !nameSuffixes.has(token));

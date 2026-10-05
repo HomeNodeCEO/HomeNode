@@ -133,10 +133,11 @@ function workfileCadIdentity(document) {
   const streets = [...confirmed(document, ['subject_street_address']), ...full.map(value => value.street)];
   const cities = [...confirmed(document, ['subject_city']), ...full.map(value => value.city).filter(Boolean)];
   const zips = [...confirmed(document, ['subject_zip', 'subject_zip_code']), ...full.map(value => value.postalCode).filter(Boolean)];
-  const states = [...confirmed(document, ['subject_state']), ...full.map(value => value.state).filter(Boolean)];
+  const states = [...confirmed(document, ['subject_state']), ...full.map(value => value.state).filter(Boolean)]
+    .map(value => /^Texas$/i.test(value.trim()) ? 'TX' : value.trim().toUpperCase());
   if (new Set(streets.map(value => exactStreetIdentity(value).base_address_key)).size !== 1
     || new Set(cities.map(normalizePropertyCity)).size > 1 || new Set(zips.map(zip)).size > 1
-    || new Set(states.map(value => value.toUpperCase())).size > 1) return null;
+    || new Set(states).size > 1) return null;
   const address = streets[0], city = cities[0] || null, postalCode = zips[0] || null, state = states[0] || null;
   if (!address || !city || exactStreetIdentity(address).ambiguous) return null;
   return { address, city, postalCode, state };

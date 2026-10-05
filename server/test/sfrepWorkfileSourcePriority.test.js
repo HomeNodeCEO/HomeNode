@@ -25,7 +25,7 @@ function sources() {
     borrower_name: 'Borrower One', assignment_type: 'purchase_transaction', lender_client_name: 'Example Bank',
     lender_client_address: '10 Bank St, Dallas, TX 75201', owner_name: 'Wrong Owner' });
   const cad = document(2, 'other', { assessor_parcel_number: '000123',
-    subject_property_address: '200 New Address Dr, Garland, TX 75042', county: 'Dallas',
+    subject_property_address: '200 New Address Dr, Garland, TX 75042', subject_state: 'Texas', county: 'Dallas',
     owner_name: 'Cad Owner', legal_description: 'NEW PARK 4 BLK 1 LOT 2', neighborhood_name: 'New Park 4',
     census_tract: '999.99' }, 'cad');
   const realist = document(3, 'other', { assessor_parcel_number: '000123', tax_year: '2025',
@@ -89,6 +89,11 @@ test('the labeled base contract wins over financing; unrelated addenda stay Othe
   addendum.title = 'Thhird PArty Financing.pdf';
   assert.equal(selectSubjectPurchaseContract([addendum, base]).document.id, 5);
   assert.equal(selectSubjectPurchaseContract([addendum]).document, null);
+  const secondBase = document(7, 'purchase_contract', {});
+  secondBase.title = 'Purchase agreement v2';
+  const chosen = selectSubjectPurchaseContract([addendum, secondBase, base]);
+  assert.equal(chosen.document.id, 5);
+  assert.equal(chosen.supplementalCount, 1, 'another base contract is not a financing addendum');
   assert.equal(classifyDocument({ fileName: 'Third Party Financing Addendum.pdf',
     pages: ['One to Four Family Residential Contract. Earnest Money $1,000'] }), 'other');
   assert.equal(classifyDocument({ fileName: 'Thhird PArty Financing.pdf',

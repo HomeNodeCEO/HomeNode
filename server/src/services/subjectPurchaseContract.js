@@ -10,7 +10,7 @@ export function selectSubjectPurchaseContract(documents) {
   const contracts = documents.filter(document => document.document_type === 'purchase_contract');
   const base = contracts.filter(document => !supplementalName(document));
   const explicitlyLabeled = base.filter(primaryName);
-  if (explicitlyLabeled.length === 1) return { document: explicitlyLabeled[0], supplementalCount: contracts.length - 1 };
-  if (base.length === 1) return { document: base[0], supplementalCount: contracts.length - 1 };
+  if (explicitlyLabeled.length === 1) return { document: explicitlyLabeled[0], supplementalCount: contracts.length - base.length };
+  if (base.length === 1) return { document: base[0], supplementalCount: contracts.length - base.length };
   return { document: null, ambiguous: base.length > 1, supplementalCount: contracts.length - base.length };
 }

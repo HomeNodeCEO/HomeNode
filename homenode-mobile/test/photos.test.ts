@@ -29,14 +29,17 @@ test("camera stages photos while encrypted database activity is paused without f
   const panel = fs.readFileSync(path.resolve(testDirectory, "../src/photos/PhotoCapturePanel.tsx"), "utf8");
   const capture = fs.readFileSync(path.resolve(testDirectory, "../src/photos/capture.ts"), "utf8");
   const picker = panel.match(/const pickWithDatabasePaused = async \([\s\S]*?\n  };/)?.[0] || "";
-  assert.match(picker, /await store\.pauseDatabaseActivity\(\);[\s\S]*await prepareAssets\(assets, source\);[\s\S]*await ensurePhotoDatabaseReady\(store\);[\s\S]*resumeDatabaseActivity\(\);/);
+  assert.match(picker, /await store\.pauseDatabaseActivity\(\);[\s\S]*await prepareAssets\(assets, source\);[\s\S]*await waitForPhotoForeground\(\);[\s\S]*await ensurePhotoDatabaseReady\(store\);[\s\S]*resumeDatabaseActivity\(\);/);
   assert.doesNotMatch(picker, /prepareForExternalActivity/);
   assert.match(capture, /new File\(directory, STAGED_PHOTO_MANIFEST\)\.write\(JSON\.stringify\(prepared\)\)/);
   assert.match(panel, /recoverStagedPhotos\(ownerUserId, sessionId\)/);
   assert.match(panel, /setStagedPhotos\(staged\)/);
   assert.match(panel, /Recover saved photos/);
+  assert.match(panel, /void cachePrepared\(prepared\)/);
+  assert.match(panel, /Background sync:/);
   assert.match(capture, /new File\(entry, fileName\)/);
   assert.doesNotMatch(panel, /if \(!cached\) \{[\s\S]*deletePreparedPhotoFiles\(photo\)/);
+  assert.match(photoSyncErrorMessage("mobile_photo_foreground_timeout"), /saved locally/);
 });
 
 test("photo drafts resolve previews in the current app Documents directory", () => {

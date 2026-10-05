@@ -1,5 +1,5 @@
-// Camera and library pickers temporarily close SQLCipher on iOS. Keep short
-// database operations out of that window without pausing in-flight uploads.
+// Camera and library pickers pause SQLCipher work on iOS. Keep short database
+// operations out of that window without pausing in-flight network uploads.
 export class DatabaseActivityGate {
   private active = 0;
   private holds = 0;

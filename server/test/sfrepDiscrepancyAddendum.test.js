@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { buildContractSubjectAssociation } from '../src/services/contractSubjectAssociation.js';
+import { confirmAssignmentDocumentDespiteSubjectMismatch } from '../src/services/assignmentDocuments.js';
 import { evidenceIdentityFlags, evidenceDiscrepancyStatements, sfrepContractDiscrepancyAddendum,
   sfrepDiscrepancyRtf } from '../src/services/sfrepDiscrepancyAddendum.js';
 import { previewSfrepDocuments, packageSfrepDocuments } from '../src/services/sfrepDocumentTransfer.js';
@@ -37,12 +38,19 @@ test('reviewed, current association produces one consolidated, opt-in, source-bo
   assert.equal(sfrepContractDiscrepancyAddendum([contract, associatedContract()], true), null);
 });
 
-test('non-contract reviewed documents produce nonblocking locality flags; rejected suggestions do not', () => {
+test('reviewed source city and ZIP conflicts are flagged and grouped into the same optional addendum', () => {
   const document = { id: 3, document_type: 'mls_sheet', processing_status: 'reviewed', subject_context: context,
     candidates: [{ id: 31, document_id: 3, field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' },
-      { id: 32, document_id: 3, field_key: 'subject_city', review_status: 'rejected', raw_value: 'Fort Worth' }] };
+      { id: 32, document_id: 3, field_key: 'subject_zip', review_status: 'confirmed', confirmed_value: '75099-1234' },
+      { id: 33, document_id: 3, field_key: 'subject_city', review_status: 'rejected', raw_value: 'Anothercity' }] };
   assert.match(evidenceIdentityFlags([document])[0].message, /county-backed Exampleton/);
-  assert.deepEqual(evidenceDiscrepancyStatements([document]).statements, []);
+  assert.match(evidenceIdentityFlags([document])[0].message, /city and ZIP/);
+  const grouped = evidenceDiscrepancyStatements([document, { ...document, id: 4,
+    candidates: [{ id: 41, document_id: 4, field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' }] }]);
+  assert.equal(grouped.statements.length, 1);
+  assert.deepEqual(grouped.sourceDocumentIds, [3, 4]);
+  assert.match(sfrepContractDiscrepancyAddendum([document], true).text, /supporting documents/);
+  assert.deepEqual(evidenceIdentityFlags([{ ...document, candidates: document.candidates.filter(candidate => candidate.review_status === 'rejected') }]), []);
 });
 
 test('contract and engagement statements share one addendum rather than becoming separate report pages', () => {
@@ -53,10 +61,49 @@ test('contract and engagement statements share one addendum rather than becoming
     extraction_summary: { subject_address_override: { acknowledged: true, document_checksum_sha256: 'b'.repeat(64),
       canonical_subject_address: '100 Sample Dr, Exampleton, 75041',
       document_subject_address: '100 Sample Dr, Othercity, TX 75041', confirmed_candidate_ids: [201] } } };
-  const addendum = sfrepContractDiscrepancyAddendum([associatedContract(), engagement], true);
-  assert.deepEqual(addendum.sourceDocumentIds, [9, 20]);
-  assert.equal(addendum.text.split('\n\n').length, 2);
+  const supporting = { id: 21, document_type: 'other', processing_status: 'reviewed', subject_context: context,
+    candidates: [{ id: 211, document_id: 21, field_key: 'subject_zip', review_status: 'confirmed', confirmed_value: '75099' }] };
+  const addendum = sfrepContractDiscrepancyAddendum([associatedContract(), engagement, supporting], true);
+  assert.deepEqual(addendum.sourceDocumentIds, [9, 20, 21]);
+  assert.equal(addendum.text.split('\n\n').length, 3);
   assert.equal(addendum.fileName, 'evidence-discrepancies.rtf');
+  const repeatedEngagements = Array.from({ length: 10 }, (_, index) => ({ ...engagement, id: 30 + index }));
+  const grouped = sfrepContractDiscrepancyAddendum(repeatedEngagements, true);
+  assert.equal(grouped.text.split('\n\n').length, 1);
+  assert.equal(grouped.sourceDocumentIds.length, 10);
+  assert.ok(grouped.text.length < 2_000);
+});
+
+test('an edited engagement address is the audited address used by the addendum eligibility check', async () => {
+  const original = { id: 81, document_id: 8, field_key: 'subject_property_address',
+    raw_value: '100 Sample Dr, Othercity, TX 75041', normalized_value: '100 Sample Dr, Othercity, TX 75041',
+    review_status: 'suggested', confirmed_value: null };
+  const source = { id: 8, account_id: context.accountId, assignment_file_id: null,
+    document_type: 'engagement_letter', checksum_sha256: 'b'.repeat(64), extraction_summary: {} };
+  const query = async (sql, values = []) => {
+    if (sql === 'BEGIN' || sql === 'COMMIT') return { rows: [] };
+    if (/SELECT account_id, assignment_file_id/.test(sql)) return { rows: [{ account_id: context.accountId, assignment_file_id: null }] };
+    if (/SELECT \* FROM app\.assignment_documents WHERE id = \$1 FOR UPDATE/.test(sql)) return { rows: [source] };
+    if (/FROM core\.accounts/.test(sql)) return { rows: [{ address: context.address, city: context.city,
+      postal_code: context.postalCode }] };
+    if (/SELECT \* FROM app\.assignment_document_field_candidates/.test(sql)) return { rows: [original] };
+    if (/UPDATE app\.assignment_document_field_candidates/.test(sql)) return { rows: [{ ...original,
+      review_status: 'confirmed', confirmed_value: values[2] }] };
+    if (/INSERT INTO app\.assignment_document_candidate_reviews/.test(sql)
+      || /UPDATE app\.assignment_documents/.test(sql)) return { rows: [] };
+    throw new Error(`unexpected query: ${sql}`);
+  };
+  const pool = { query: async sql => /CREATE TABLE IF NOT EXISTS app\.assignment_documents/.test(sql)
+    ? { rows: [] } : Promise.reject(new Error(`unexpected pool query: ${sql}`)),
+  connect: async () => ({ query, release() {} }) };
+  const edited = '100 Sample Dr, Newcity, TX 75041';
+  const result = await confirmAssignmentDocumentDespiteSubjectMismatch(pool, { documentId: 8,
+    reviewer: 'Synthetic Reviewer', actorUserId: 'appraiser-1', candidateValues: { 81: edited } });
+  assert.equal(result.subject_address_override.document_subject_address, edited);
+  const document = { ...source, processing_status: 'reviewed', subject_context: context,
+    extraction_summary: { subject_address_override: result.subject_address_override },
+    candidates: [{ ...original, review_status: 'confirmed', confirmed_value: edited }] };
+  assert.equal(evidenceDiscrepancyStatements([document]).statements.length, 1);
 });
 
 test('preview digest and one RTF member are bound to the appraiser addendum choice without PDF attachment', async () => {

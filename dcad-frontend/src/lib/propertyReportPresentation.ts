@@ -239,13 +239,50 @@ export function documentSubjectLocalityFlags(
   return [...flags];
 }
 
+/** Only confirmed, reviewed source facts may become suggested report text.
+ * Recompute this from the latest document before inserting it into any form. */
+export function reviewedDocumentSubjectDiscrepancyStatement(
+  document: { document_type: string; processing_status: string; candidates?: Array<{
+    field_key?: string; review_status?: string | null; confirmed_value?: unknown;
+    normalized_value?: unknown; raw_value?: unknown;
+  }> } | null | undefined,
+  reportAddress: unknown,
+): string | null {
+  if (!document || document.processing_status !== 'reviewed') return null;
+  const confirmed = document.candidates?.filter(candidate => candidate.review_status === 'confirmed');
+  const flags = documentSubjectLocalityFlags(confirmed, reportAddress);
+  if (!flags.length) return null;
+  return `The reviewed ${document.document_type.replaceAll('_', ' ')} contains a subject-location discrepancy: ${flags.join(' ')} The county-backed subject address controls in this report. The original source remains in the workfile for review.`;
+}
+
+/** Re-read source evidence at the point of insertion; a saved draft alone is
+ * never authority for report commentary after a document changes or vanishes. */
+export async function revalidateEvidenceDiscrepancyDrafts(
+  prepared: Record<number, string>,
+  loadDocument: (documentId: number) => Promise<Parameters<typeof reviewedDocumentSubjectDiscrepancyStatement>[0]>,
+  reportAddress: unknown,
+): Promise<{ statements: string[]; staleDocumentIds: number[] }> {
+  const current = await Promise.all(Object.entries(prepared).map(async ([id, statement]) => {
+    const documentId = Number(id);
+    const document = await loadDocument(documentId);
+    return { documentId, statement,
+      latest: reviewedDocumentSubjectDiscrepancyStatement(document, reportAddress) };
+  }));
+  return {
+    statements: current.filter(entry => entry.latest === entry.statement).map(entry => entry.statement),
+    staleDocumentIds: current.filter(entry => entry.latest !== entry.statement).map(entry => entry.documentId),
+  };
+}
+
 /** Preserve appraiser-written commentary and keep all chosen discrepancy
  * statements in one field instead of creating a separate addendum per source. */
 export function combineEvidenceDiscrepancyCommentary(existing: unknown, statements: string[], limit = 5_000): string | null {
-  const original = String(existing || '').trim();
+  const original = String(existing || '');
   const additions = [...new Set(statements.map(statement => statement.trim()).filter(Boolean))]
     .filter(statement => !original.includes(statement));
-  const combined = [original, ...additions].filter(Boolean).join('\n\n');
+  const separator = !original || original.endsWith('\n\n') ? '' : original.endsWith('\n') ? '\n' : '\n\n';
+  const combined = original + (additions.length
+    ? `${separator}${additions.join('\n\n')}` : '');
   return combined.length <= limit ? combined : null;
 }
 

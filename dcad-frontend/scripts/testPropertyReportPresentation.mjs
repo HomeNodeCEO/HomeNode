@@ -8,6 +8,7 @@ import {
   displayValue,
   documentSubjectAddressComparison,
   documentSubjectLocalityFlags,
+  reviewedDocumentSubjectDiscrepancyStatement,
   formatBaths,
   formatCensusTract,
   formatDate,
@@ -18,6 +19,7 @@ import {
   listingTimelineRows,
   parseNumber,
   recordedExemptionRows,
+  revalidateEvidenceDiscrepancyDrafts,
   sellerComparisonSummary,
 } from '../src/lib/propertyReportPresentation.ts';
 
@@ -36,6 +38,35 @@ test('UAD review choice appends multiple source statements to one commentary wit
   assert.equal(combineEvidenceDiscrepancyCommentary('Existing appraiser comment\n\nCity differs.', ['City differs.']),
     'Existing appraiser comment\n\nCity differs.');
   assert.equal(combineEvidenceDiscrepancyCommentary('Existing appraiser comment', ['Long statement'], 10), null);
+  assert.equal(combineEvidenceDiscrepancyCommentary('  Appraiser text  \n', ['City differs.']),
+    '  Appraiser text  \n\nCity differs.');
+});
+
+test('UAD discrepancy draft uses only current confirmed locality evidence', () => {
+  const document = { document_type: 'mls_sheet', processing_status: 'reviewed', candidates: [
+    { field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' },
+    { field_key: 'subject_zip', review_status: 'suggested', normalized_value: '99999' },
+  ] };
+  const address = '100 Sample Dr, Exampleton, TX 75041';
+  assert.match(reviewedDocumentSubjectDiscrepancyStatement(document, address), /Othercity/);
+  assert.doesNotMatch(reviewedDocumentSubjectDiscrepancyStatement(document, address), /99999/);
+  assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, processing_status: 'review_required' }, address), null);
+  assert.equal(reviewedDocumentSubjectDiscrepancyStatement({ ...document, candidates: document.candidates
+    .map(candidate => ({ ...candidate, review_status: 'rejected' })) }, address), null);
+});
+
+test('changed or deleted UAD evidence invalidates its prepared statement before report insertion', async () => {
+  const address = '100 Sample Dr, Exampleton, TX 75041';
+  const reviewed = { document_type: 'mls_sheet', processing_status: 'reviewed', candidates: [
+    { field_key: 'subject_city', review_status: 'confirmed', confirmed_value: 'Othercity' },
+  ] };
+  const statement = reviewedDocumentSubjectDiscrepancyStatement(reviewed, address);
+  const prepared = { 7: statement, 8: statement, 9: statement };
+  const result = await revalidateEvidenceDiscrepancyDrafts(prepared, async id => id === 7 ? reviewed
+    : id === 8 ? { ...reviewed, candidates: reviewed.candidates.map(candidate => ({ ...candidate, review_status: 'rejected' })) }
+      : null, address);
+  assert.deepEqual(result.statements, [statement]);
+  assert.deepEqual(result.staleDocumentIds, [8, 9]);
 });
 import { mergeNonBlankSnapshot } from '../src/lib/reportSnapshotMerge.ts';
 

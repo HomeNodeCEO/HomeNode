@@ -2,26 +2,39 @@ import { hasCurrentContractSubjectAssociation } from './contractSubjectAssociati
 
 export const SFREP_DISCREPANCY_RTF_NAME = 'evidence-discrepancies.rtf';
 
-const documentKinds = new Set(['purchase_contract', 'engagement_letter', 'mls_sheet', 'other']);
 const identityKeys = new Set(['subject_property_address', 'subject_street_address', 'subject_city']);
-const cityFromAddress = value => String(value).match(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas)\s+\d{5}(?:-\d{4})?\b/i)?.[1]?.trim() || null;
+const addressLocality = value => String(value).match(/,\s*([A-Za-z][A-Za-z .'-]*?),?\s+(?:TX|Texas),?\s+(\d{5})(?:-\d{4})?\b/i);
+const firstFiveZip = value => String(value || '').match(/^\d{5}/)?.[0] || null;
+
+function confirmedLocalityDifferences(document) {
+  if (document.processing_status !== 'reviewed' || !Array.isArray(document.candidates)) return [];
+  const canonicalCity = String(document.subject_context?.city || '').trim();
+  const canonicalZip = firstFiveZip(document.subject_context?.postalCode);
+  if (!canonicalCity && !canonicalZip) return [];
+  const differences = new Set();
+  for (const candidate of document.candidates) {
+    if (candidate.review_status !== 'confirmed'
+      || (candidate.document_id != null && Number(candidate.document_id) !== Number(document.id))) continue;
+    const value = candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value;
+    const locality = identityKeys.has(candidate.field_key) && candidate.field_key !== 'subject_city' ? addressLocality(value) : null;
+    const city = candidate.field_key === 'subject_city' ? String(value || '').trim() : locality?.[1]?.trim();
+    const postal = ['subject_zip', 'subject_zip_code'].includes(candidate.field_key)
+      ? firstFiveZip(value) : locality?.[2];
+    if (city && canonicalCity && city.toLowerCase() !== canonicalCity.toLowerCase()) differences.add('city');
+    if (postal && canonicalZip && postal !== canonicalZip) differences.add('ZIP');
+  }
+  return [...differences];
+}
 
 /** Form-neutral, nonblocking identity findings. They never turn a mismatched
  * MLS sheet or assignment page into evidence for this subject. */
 export function evidenceIdentityFlags(documents) {
   return documents.flatMap(document => {
-    if (!documentKinds.has(document.document_type) || document.processing_status !== 'reviewed') return [];
-    const canonicalCity = String(document.subject_context?.city || '').trim();
-    if (!canonicalCity) return [];
-    const statedCities = (document.candidates || []).filter(candidate => candidate.review_status === 'confirmed'
-      && (candidate.document_id == null || Number(candidate.document_id) === Number(document.id))
-      && identityKeys.has(candidate.field_key)).map(candidate => {
-        const value = candidate.confirmed_value ?? candidate.normalized_value ?? candidate.raw_value;
-        return candidate.field_key === 'subject_city' ? String(value || '').trim() : cityFromAddress(value);
-      }).filter(Boolean);
-    if (!statedCities.some(city => city.toLowerCase() !== canonicalCity.toLowerCase())) return [];
+    const differences = confirmedLocalityDifferences(document);
+    if (!differences.length) return [];
+    const canonical = [document.subject_context?.city, document.subject_context?.postalCode].filter(Boolean).join(' ');
     return [{ documentId: Number(document.id), documentType: document.document_type,
-      message: `Document ${document.id} (${document.document_type.replaceAll('_', ' ')}) states a subject city different from the county-backed ${canonicalCity}. Verify the source and property association; the county address remains unchanged.` }];
+      message: `Document ${document.id} (${String(document.document_type || 'source').replaceAll('_', ' ')}) states a subject ${differences.join(' and ')} different from the county-backed ${canonical}. Verify the source and property association; the county address remains unchanged.` }];
   });
 }
 
@@ -63,9 +76,20 @@ export function evidenceDiscrepancyStatements(documents) {
       sourceDocumentIds.push(Number(document.id));
     }
   }
-  for (const document of documents.filter(currentEngagementOverride)) {
+  const acknowledgedEngagements = documents.filter(currentEngagementOverride);
+  if (acknowledgedEngagements.length) {
     statements.push('The engagement letter or assignment page identifies a subject address that differs from the county-backed subject address. The appraiser reviewed and accepted this document for the assignment. The county-backed subject address controls in this report; the source document remains unchanged in the workfile.');
-    sourceDocumentIds.push(Number(document.id));
+    sourceDocumentIds.push(...acknowledgedEngagements.map(document => Number(document.id)));
+  }
+  // Keep the statement collection independent of the SFREP form adapter.
+  // Group other reviewed source locality conflicts into one cautious statement,
+  // without asserting an unassociated document belongs to this subject.
+  const otherConflicts = documents.filter(document => !sourceDocumentIds.includes(Number(document.id))
+    && !['purchase_contract', 'engagement_letter'].includes(document.document_type)
+    && confirmedLocalityDifferences(document).length);
+  if (otherConflicts.length) {
+    statements.push('One or more reviewed supporting documents contain a subject city or ZIP reference that differs from the county-backed subject address. The appraiser should verify each source and its relationship to the subject. The county-backed subject address controls in this report; the original documents remain unchanged in the workfile.');
+    sourceDocumentIds.push(...otherConflicts.map(document => Number(document.id)));
   }
   return { statements, sourceDocumentIds };
 }

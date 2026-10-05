@@ -25,6 +25,7 @@ import {
   confirmedDocumentFieldApplications,
   documentSubjectAddressComparison,
   documentSubjectLocalityFlags,
+  reviewedDocumentSubjectDiscrepancyStatement,
 } from '@/lib/propertyReportPresentation';
 import {
   applyUadDocumentCandidate,
@@ -330,6 +331,9 @@ export default function AssignmentDocumentCenter({
   ), [documentSubjectCandidate, subjectAddress]);
   const localityFlags = useMemo(() => documentSubjectLocalityFlags(selectedDocument?.candidates, subjectAddress),
     [selectedDocument, subjectAddress]);
+  const reviewedDiscrepancyStatement = useMemo(() => reviewedDocumentSubjectDiscrepancyStatement(
+    selectedDocument, subjectAddress,
+  ), [selectedDocument, subjectAddress]);
   const subjectAddressOverride = selectedDocument?.extraction_summary?.subject_address_override;
   const contractPrintedAddresses = selectedDocument?.candidates?.find(candidate => candidate.field_key === 'contract_printed_subject_addresses');
   const contractAssociation = (selectedDocument?.extraction_summary as { contract_subject_association?: { acknowledged?: boolean; reviewer?: string } } | undefined)?.contract_subject_association;
@@ -1098,10 +1102,9 @@ export default function AssignmentDocumentCenter({
                     <strong>Source location differs from this report</strong>
                     <p>Check the original document before relying on its subject details. HomeNode has not changed the county-backed address or this document.</p>
                     <ul className="mt-1 list-disc pl-5">{localityFlags.map(flag => <li key={flag}>{flag}</li>)}</ul>
-                    {isUad && selectedDocument.processing_status === 'reviewed' && onUadDiscrepancyDraft && <button type="button"
+                    {isUad && reviewedDiscrepancyStatement && onUadDiscrepancyDraft && <button type="button"
                       className="hn-action-secondary btn btn-xs mt-2 rounded-lg normal-case"
-                      onClick={() => onUadDiscrepancyDraft(selectedDocument.id,
-                        `The reviewed ${selectedDocument.document_type.replaceAll('_', ' ')} contains a subject-location discrepancy: ${localityFlags.join(' ')} The county-backed subject address controls in this report. The original source remains in the workfile for review.`)}>
+                      onClick={() => onUadDiscrepancyDraft(selectedDocument.id, reviewedDiscrepancyStatement)}>
                       Prepare one UAD commentary statement
                     </button>}
                   </div>}

@@ -10,7 +10,7 @@ CREATE TABLE app.neighborhood_custom_cohort_prepared_tile_manifests (
   source_map_sha256 text NOT NULL CHECK (source_map_sha256 ~ '^[a-f0-9]{64}$'),
   source_compressed_map_sha256 text NOT NULL CHECK (source_compressed_map_sha256 ~ '^[a-f0-9]{64}$'),
   status text NOT NULL CHECK (status IN ('available','unavailable')),
-  reason text CHECK (reason IN ('capacity_exceeded','membership_mismatch','source_unavailable')),
+  reason text CHECK (reason IN ('capacity_exceeded','membership_mismatch','source_unavailable','source_invalid')),
   captured_parcels integer CHECK (captured_parcels BETWEEN 1 AND 100000),
   account_set_sha256 text CHECK (account_set_sha256 ~ '^[a-f0-9]{64}$'),
   map_shell_json text CHECK (octet_length(map_shell_json) BETWEEN 1 AND 100000),

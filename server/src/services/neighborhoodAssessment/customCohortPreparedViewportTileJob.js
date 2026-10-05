@@ -54,24 +54,28 @@ export async function runCustomCohortPreparedViewportTileJob(pool, {
           ORDER BY p.prepared_at, p.context_id LIMIT 1`);
         check(next && [0, 1].includes(next.rowCount), 'source_conflict');
         if (!next.rowCount) { await client.query('COMMIT'); break; }
-        const row = next.rows[0], preview = await decode(row, 'preview'), map = await decode(row, 'map');
-        check(preview?.preview_version === 2 && preview.context_ref?.context_id === row.context_id
-          && preview.context_ref?.context_sha256 === row.context_sha256
-          && map && ['available', 'unavailable'].includes(map.status), 'source_conflict');
-        if (map.status === 'available') {
-          check(map.geojson?.type === 'FeatureCollection'
-            && Buffer.byteLength(JSON.stringify(map.geojson)) === map.counts?.geojson_bytes,
-          'source_conflict');
-        }
+        const row = next.rows[0];
         let built = null, reason = null;
-        if (map.status === 'unavailable') reason = 'source_unavailable';
-        else {
-          try { built = await buildCustomCohortPreparedViewportTiles(preview, map); }
-          catch (error) {
-            const code = error?.message?.replace(/^custom_cohort_prepared_tiles_/, '');
-            if (code === 'capacity_exceeded' || code === 'membership_mismatch') reason = code;
-            else throw error;
+        try {
+          const preview = await decode(row, 'preview'), map = await decode(row, 'map');
+          check(preview?.preview_version === 2 && preview.context_ref?.context_id === row.context_id
+            && preview.context_ref?.context_sha256 === row.context_sha256
+            && map && ['available', 'unavailable'].includes(map.status), 'source_conflict');
+          if (map.status === 'available') {
+            check(map.geojson?.type === 'FeatureCollection'
+              && Buffer.byteLength(JSON.stringify(map.geojson)) === map.counts?.geojson_bytes,
+            'source_conflict');
           }
+          if (map.status === 'unavailable') reason = 'source_unavailable';
+          else built = await buildCustomCohortPreparedViewportTiles(preview, map);
+        } catch (error) {
+          const message = error?.message;
+          const code = typeof message === 'string' && message.startsWith('custom_cohort_prepared_tiles_')
+            ? message.slice('custom_cohort_prepared_tiles_'.length) : null;
+          if (code === 'capacity_exceeded' || code === 'membership_mismatch') reason = code;
+          else if (['source_conflict', 'source_count', 'invalid_feature', 'invalid_geometry',
+            'source_required'].includes(code)) reason = 'source_invalid';
+          else throw error;
         }
         check(Date.now() < deadline, 'time_budget_exceeded');
         const fields = [row.organization_id, row.context_id, row.context_sha256,

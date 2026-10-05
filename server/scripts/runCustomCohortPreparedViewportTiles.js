@@ -19,6 +19,9 @@ try {
   });
   console.log(JSON.stringify(result));
 } catch (error) {
-  console.error('[neighborhood-tiles] failed', error?.code ?? error?.name ?? 'error');
+  const message = error?.message;
+  console.error('[neighborhood-tiles] failed',
+    typeof message === 'string' && /^custom_cohort_prepared_tiles_[a-z_]+$/.test(message)
+      ? message : error?.code ?? error?.name ?? 'error');
   process.exitCode = 1;
 } finally { await pool.end(); }

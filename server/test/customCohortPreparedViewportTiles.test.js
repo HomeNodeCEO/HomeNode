@@ -46,7 +46,7 @@ test('offline publication refuses a map whose parcel identities do not match the
     ] } }), /invalid_feature/);
 });
 
-test('worker publishes complete tiles transactionally and rolls back a corrupt source', async () => {
+test('worker publishes complete tiles and records a corrupt source without blocking later contexts', async () => {
   const encoded = value => {
     const text = Buffer.from(JSON.stringify(value));
     return { sha256: createHash('sha256').update(text).digest('hex'),
@@ -62,13 +62,13 @@ test('worker publishes complete tiles transactionally and rolls back a corrupt s
     preview_sha256: p.sha256, preview_utf8_bytes: p.utf8_bytes, compressed_preview: p.compressed,
     map_sha256: m.sha256, map_utf8_bytes: m.utf8_bytes, compressed_map: m.compressed };
   const calls = [];
-  let fetched = false;
+  let nextRows = [row];
   const client = { async query(sql, values) {
     calls.push({ sql, values });
     if (sql.includes('pg_try_advisory_lock')) return { rows: [{ locked: true }] };
     if (sql.includes('prepared-tiles:next')) {
-      if (fetched) return { rowCount: 0, rows: [] };
-      fetched = true; return { rowCount: 1, rows: [row] };
+      if (!nextRows.length) return { rowCount: 0, rows: [] };
+      return { rowCount: 1, rows: [nextRows.shift()] };
     }
     return { rowCount: 1, rows: [] };
   }, release() {} };
@@ -79,10 +79,19 @@ test('worker publishes complete tiles transactionally and rolls back a corrupt s
   assert.ok(calls.some(call => call.sql.includes('prepared-tiles:manifest')));
   assert.equal(calls.filter(call => call.sql.includes('prepared-tiles:tile')).length, result.tiles);
   assert.ok(calls.some(call => call.sql === 'COMMIT'));
-  calls.length = 0; fetched = false;
+  calls.length = 0;
   row.compressed_map = Buffer.from(m.compressed); row.compressed_map[0] ^= 1;
-  await assert.rejects(runCustomCohortPreparedViewportTileJob(pool, { maximumContexts: 1, logger: {} }),
-    /source_conflict/);
-  assert.ok(calls.some(call => call.sql === 'ROLLBACK'));
-  assert.ok(!calls.some(call => call.sql.includes('prepared-tiles:manifest')));
+  const laterId = '00000000-0000-0000-0000-000000000003';
+  const laterPreview = encoded({ ...preview, context_ref: { context_id: laterId, context_sha256 } });
+  const laterRow = { ...row, context_id: laterId, preview_sha256: laterPreview.sha256,
+    preview_utf8_bytes: laterPreview.utf8_bytes, compressed_preview: laterPreview.compressed,
+    compressed_map: m.compressed };
+  nextRows = [row, laterRow];
+  const continued = await runCustomCohortPreparedViewportTileJob(pool, { maximumContexts: 2, logger: {} });
+  assert.equal(continued.unavailable, 1);
+  assert.equal(continued.completed, 1);
+  const manifests = calls.filter(call => call.sql.includes('prepared-tiles:manifest'));
+  assert.deepEqual(manifests.map(call => call.values[7]), ['source_invalid', null]);
+  assert.equal(calls.filter(call => call.sql === 'COMMIT').length, 2);
+  assert.ok(!calls.some(call => call.sql === 'ROLLBACK'));
 });

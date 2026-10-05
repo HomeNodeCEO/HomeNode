@@ -236,8 +236,9 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         && shell.counts?.parcels === manifest.captured_parcels, 'storage_conflict');
       const keys = requestedCustomCohortPreparedTileKeys(manifest.cell_keys_json, viewport);
       check(keys.length > 0, 'storage_conflict');
-      if (keys.length > 32) throw Object.assign(new TypeError('viewport_capacity_exceeded'),
-        { reason: 'viewport_capacity_exceeded' });
+      // One broad-geometry tile can accompany 32 ordinary viewport cells.
+      // A larger window retains the complete-map fallback instead of failing.
+      if (keys.length > 33) return null;
       const placeholders = keys.map((_pair, index) => `($${3 + index * 2},$${4 + index * 2})`).join(',');
       const rows = await query(`/* custom-cohort-prepared-tiles:read-cells */
         SELECT cell_x, cell_y, tile_sha256, tile_utf8_bytes, compressed_tile
@@ -248,8 +249,7 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
       check(rows && Array.isArray(rows.rows) && rows.rowCount === rows.rows.length, 'storage_conflict');
       const compressedBytes = rows.rows.reduce((total, row) => total + (row.compressed_tile?.length ?? 0), 0);
       const expandedBytes = rows.rows.reduce((total, row) => total + (row.tile_utf8_bytes ?? 0), 0);
-      if (compressedBytes > 12_000_000 || expandedBytes > 32_000_000)
-        throw Object.assign(new TypeError('viewport_capacity_exceeded'), { reason: 'viewport_capacity_exceeded' });
+      if (compressedBytes > 12_000_000 || expandedBytes > 32_000_000) return null;
       const features = await restoreCustomCohortPreparedTileFeatures(rows.rows, keys, manifest.captured_parcels);
       const allAccounts = new Set(preview.all.account_ids);
       check(features.every(feature => allAccounts.has(feature.properties.account_id)), 'storage_conflict');

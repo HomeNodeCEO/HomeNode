@@ -136,7 +136,7 @@ export function projectSfrepContractSection(documents, {
   const armsLength = record(assignmentDetails) ? assignmentDetails.contract_arms_length : null;
   const saleType = armsLength === true ? 'Arms length sale' : armsLength === false ? 'Non-arms length sale' : 'Sale type requires appraiser review';
   if (armsLength == null) warnings.push('Arms-length status was not established by uploading the contract. Select it in HomeNode before relying on the legacy Contract analysis.');
-  const amount = concessions.value === 0 ? '0$' : dollars(concessions.value);
+  const amount = dollars(concessions.value);
   const value = `${saleType};Contract dated ${date.value}, purchase price of ${dollars(price.value)}, earnest money ${dollars(candidates.get('earnest_money').value)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${amount} in concessions`;
   const sourceEvidence = TERMS.map(sourceField => ({ documentId, candidateId: candidates.get(sourceField).candidateId,
     sourceField, value: sourceField === 'contract_date' ? candidates.get(sourceField).value : candidates.get(sourceField).value.toFixed(2) }));

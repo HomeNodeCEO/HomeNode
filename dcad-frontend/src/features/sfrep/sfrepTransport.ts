@@ -273,7 +273,7 @@ function validContractNarrative(value: Record<string, unknown>, provenance: Reco
   const [price, earnest, cash, loan, concessions] = amounts.map(Number);
   if (Math.abs(cash + loan - price) > 0.01) return false;
   const dollars = (amount: number) => `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)}`;
-  const suffix = `;Contract dated ${date}, purchase price of ${dollars(price)}, earnest money ${dollars(earnest)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${concessions === 0 ? '0$' : dollars(concessions)} in concessions`;
+  const suffix = `;Contract dated ${date}, purchase price of ${dollars(price)}, earnest money ${dollars(earnest)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${dollars(concessions)} in concessions`;
   return ['Arms length sale', 'Non-arms length sale', 'Sale type requires appraiser review']
     .some(prefix => value.value === prefix + suffix);
 }

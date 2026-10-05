@@ -87,6 +87,28 @@ test('larger valid camera spans are exactly partitioned before calling the 1-deg
   ]);
 });
 
+test('a dense broad retained map starts with exact tiles instead of repeated oversized parent requests', async () => {
+  const broad = structuredClone(group);
+  broad.map_manifest.bounds = [[viewport.west, viewport.south], [viewport.east, viewport.north]];
+  broad.map_manifest.counts.captured_parcels = 38_000;
+  const calls = [];
+  const checked = await loadCustomCohortViewportMap(broad, catalog, viewport, {
+    signal: new AbortController().signal,
+    request: async bounds => { calls.push(bounds); return response(bounds, [], 38_000); },
+  });
+  assert.equal(checked.status, 'available');
+  assert.equal(calls.length, 8);
+  assert.ok(calls.every(bounds => (bounds.east - bounds.west) * (bounds.north - bounds.south)
+    === (viewport.east - viewport.west) * (viewport.north - viewport.south) / 8));
+  assert.equal(calls.some(bounds => JSON.stringify(bounds) === JSON.stringify(viewport)), false);
+  calls.length = 0;
+  await loadCustomCohortViewportMap(broad, catalog, { ...viewport, east: viewport.west + 0.01 }, {
+    signal: new AbortController().signal,
+    request: async bounds => { calls.push(bounds); return response(bounds, [], 38_000); },
+  });
+  assert.equal(calls.length, 1, 'small camera requests remain on the one-response path');
+});
+
 test('invalid or wrapped camera bounds never reach the transport', async () => {
   for (const bounds of [null, { ...viewport, west: NaN }, { ...viewport, east: Infinity },
     { ...viewport, west: -181 }, { ...viewport, north: 91 }, { ...viewport, south: -91 },

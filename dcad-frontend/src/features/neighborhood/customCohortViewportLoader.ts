@@ -104,6 +104,24 @@ export async function loadCustomCohortViewportMap(group: CustomCohortPreviewGrou
     const [first, second] = split(tile.bounds);
     pending.push({ bounds: second, depth: tile.depth + 1 }, { bounds: first, depth: tile.depth + 1 });
   };
+  // A broad, dense retained map cannot fit the four-MB response ceiling.
+  // Start with exact spatial tiles rather than paying for several doomed
+  // whole-view projections before the normal density-split path takes over.
+  // This is display-only: every leaf must still be checked and merged before
+  // any parcel detail is published as complete.
+  const manifest = group.map_manifest;
+  if (manifest?.status === 'available' && manifest.counts.captured_parcels >= 30_000
+    && Array.isArray(manifest.bounds) && manifest.bounds.length === 2) {
+    const [[west, south], [east, north]] = manifest.bounds;
+    const capturedArea = (east - west) * (north - south);
+    const requestedArea = (viewport.east - viewport.west) * (viewport.north - viewport.south);
+    if (capturedArea > 0 && requestedArea >= capturedArea / 2) {
+      for (let level = 0; level < 3; level++) {
+        const current = pending.splice(0);
+        for (const tile of current) subdivide(tile);
+      }
+    }
+  }
   while (pending.length) {
     active(options.signal);
     const tile = pending.pop()!;

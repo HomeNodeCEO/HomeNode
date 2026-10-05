@@ -19,7 +19,7 @@ async function fixture(radius) {
   return { catalog, expected, recommendation };
 }
 
-for (const radius of [undefined, '4828.032', '8046.72', '16093.44']) {
+for (const radius of [undefined, '1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) {
   test(`compact v2 presenter retains exact ${radius ?? 'legacy'} radius and complete coverage without private native rows`, async () => {
     const args = await fixture(radius), value = presentCustomCohortPocketRecommendation(args);
     assert.equal(value.policy.revision, 2);

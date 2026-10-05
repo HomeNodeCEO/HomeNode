@@ -67,7 +67,7 @@ export async function runCustomCohortDiscoveryDatabaseChecks(connectionString) {
       finally { client.release(); }
     }
     const contexts = [];
-    for (const [radius, extra] of [['4828.032', 0], ['8046.72', 1], ['16093.44', 2]]) {
+    for (const [radius, extra] of [['1609.344', 0], ['3218.688', 0], ['4828.032', 0], ['8046.72', 1], ['16093.44', 2]]) {
       const input = request(choice(radius)), captured = await owner.capture(input);
       assert.equal(captured.discovery.radius_metres, radius);
       assert.equal(captured.discovery.account_count, baseline.discovery.account_count + extra);
@@ -90,7 +90,7 @@ export async function runCustomCohortDiscoveryDatabaseChecks(connectionString) {
     assert.equal((await pool.query('SELECT count(*)::int AS value FROM app.custom_appraisal_workfile_sections WHERE assignment_file_id=$1', [fixture.assignment])).rows[0].value, 0);
     const denied = createCustomCohortContextCapture({ pool, authorizeMarketData: async () => ({ allowed: false }) });
     await assert.rejects(denied.capture(request(choice('16093.44'))), /market_data_access_denied/);
-    checks.push('actual spheroid membership: four-mile parcel only in5/10; eight-mile parcel only in10; no record target or truncation');
+    checks.push('actual spheroid membership: one/two/three-mile areas exclude four/eight-mile parcels; four-mile parcel only in5/10; eight-mile parcel only in10; no record target or truncation');
     checks.push('v2 study/intent/retained selector radius bindings survive authorized replay; changed-radius UUID conflicts');
     checks.push('retained selected-stock counts and drawable map agree; original v1 replay unchanged after new parcel insertion');
     checks.push('larger area does not bypass source authorization or write report sections');

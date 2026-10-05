@@ -113,7 +113,8 @@ test('issued retained proximity adds only its weighted factor and exposes no pri
   assert.ok(Object.isFrozen(result.recorded_proximity.counts)); assertBounds(result);
 });
 
-for (const [radius, expected] of [[undefined, 50], ['4828.032', 50], ['8046.72', 70], ['16093.44', 85]]) {
+for (const [radius, expected] of [[undefined, 50], ['1609.344', 0], ['3218.688', 25],
+  ['4828.032', 50], ['8046.72', 70], ['16093.44', 85]]) {
   test(`proximity scales against exact retained radius ${radius ?? 'legacy 3 miles'}`, async () => {
     const d = await derived({ radius }), result = d.build();
     assert.equal(rowOf(result).factors.proximity.score, expected);

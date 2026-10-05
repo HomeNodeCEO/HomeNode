@@ -59,7 +59,7 @@ export async function runNeighborhoodSpatialMembershipDatabaseChecks(connectionS
     await reader.query("SET LOCAL statement_timeout='5000ms'");
     const original = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 });
     assert.equal(original.status, 'captured');
-    const radii = ['4828.032', '8046.72', '16093.44'];
+    const radii = ['1609.344', '3218.688', '4828.032', '8046.72', '16093.44'];
     const liveRadiusHashes = new Map();
     for (const radius_metres of radii) {
       const live = await captureNeighborhoodSpatialMembership(reader, geometry, { page_size: 2 },

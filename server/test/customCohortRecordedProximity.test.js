@@ -40,7 +40,7 @@ test('genuine original EWKB and exact subject decimal strings alone enter bounde
   assert.match(SQL, /\$2::double precision,\$3::double precision/);
   assert.deepEqual(input, before); assert.equal(read(result, input), result); frozen(result);
 });
-for (const radius of [undefined, '4828.032', '8046.72', '16093.44']) test(`retained radius ${String(radius)} is bound without changing native distance or selecting accounts`, async () => {
+for (const radius of [undefined, '1609.344', '3218.688', '4828.032', '8046.72', '16093.44']) test(`retained radius ${String(radius)} is bound without changing native distance or selecting accounts`, async () => {
   const f = await fixture({ radius }), input = inputOf(f), q = oracle(rows => rows.map((row, i) => goodRow(row.object_id, i ? 3218.688 : 0)));
   const result = await derive(q.query, input);
   assert.equal(result.binding.radius_metres, radius ?? '4828.032');

@@ -1572,10 +1572,44 @@ function AddressHero({
     return ["closed_sale", "cad_transfer"].includes(recordType) ||
       (!recordType && (hasValue(event.sale_price) || hasValue(event.closing_date) || hasValue(event.activity_date)));
   });
+  // The Subject owner is the file's CAD/public-record observation (including
+  // reviewed CAD corrections), not the contract or MLS seller field.
+  const cadOwnerNames = ownerParties.length
+    ? ownerParties.map((party) => party.owner_name || "").filter(Boolean)
+    : [reportedOwnerName || ""];
+  const cadOwnerKey = cadOwnerNames.join("\u001f");
   const contractSellerComparison = sellerComparisonSummary(
     assignmentDraft.contract_seller_names,
-    ownerName,
+    cadOwnerNames,
   );
+  const lastSellerComparisonSource = useRef<{ fileId: number; seller: string; cadOwner: string } | null>(null);
+  useEffect(() => {
+    const file = activeAssignmentFile;
+    if (!file || !assignmentFilesLoaded || file.workfile?.status === "signed" || file.workfile?.status === "archived") return;
+    const seller = assignmentDraft.contract_seller_names || "";
+    const prior = lastSellerComparisonSource.current;
+    // Wait for the selected file's draft to hydrate before comparing it.
+    if (prior?.fileId !== file.id && seller !== (file.assignment_details?.contract_seller_names || "")) return;
+    if (prior?.fileId === file.id && prior.seller === seller && prior.cadOwner === cadOwnerKey) return;
+    const sourceChanged = prior?.fileId === file.id &&
+      (prior.seller !== seller || prior.cadOwner !== cadOwnerKey);
+    lastSellerComparisonSource.current = { fileId: file.id, seller, cadOwner: cadOwnerKey };
+    const suggested = contractSellerComparison.matches;
+    if (suggested === null) return;
+    const current = assignmentDraftRef.current;
+    // Keep an explained appraiser override on reload; otherwise fill missing
+    // choices and recompute when either the contract or CAD owner changes.
+    if (current.seller_matches_public_records === suggested ||
+        (!sourceChanged && typeof current.seller_matches_public_records === "boolean" &&
+          Boolean(current.seller_mismatch_explanation))) return;
+    setAssignmentDraft((draft) => draft.contract_seller_names !== seller ||
+      draft.seller_matches_public_records === suggested ? draft : {
+        ...draft,
+        seller_matches_public_records: suggested,
+        ...(suggested ? { seller_mismatch_explanation: "" } : {}),
+      });
+  }, [activeAssignmentFile, assignmentFilesLoaded, assignmentDraft.contract_seller_names, cadOwnerKey,
+    contractSellerComparison.matches]);
   const assignmentSaveDisabled = Boolean(
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
       assignmentAutosaveState === "conflict" ||

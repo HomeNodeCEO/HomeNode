@@ -157,6 +157,7 @@ export function previewSfrepDocuments(documents, input) {
   const canonical = saved ? savedSfrepSubjectFields(saved, input) : null;
   const mapped = buildSfrepReportExport({ documents: filterSubjectEvidenceDocuments(saved?.documents || documents), pdfAddenda, formId: input.formId, subjectContext, subjectOnly: true,
     contractSection: true, savedAssignmentDetails: saved?.assignmentDetails,
+    savedAssignmentFileId: saved?.assignmentFileId, savedAssignmentRevision: saved?.assignmentRevision,
     contractEvidenceDocuments: saved?.documents,
     ...(canonical ? { savedReportFields: canonical.fields } : {}) });
   if (canonical) {

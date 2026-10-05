@@ -241,11 +241,12 @@ export default function ListingsContractsSalesContent({
                 </div>
               </fieldset>
               <fieldset className="rounded-xl border border-slate-200 bg-white p-3">
-                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">Does Seller Match Public Records?</legend>
+                <legend className="px-1 text-xs font-semibold uppercase tracking-wide text-slate-600">Is the property seller the owner of public record?</legend>
                 <div className="grid grid-cols-2 gap-2">
                   <CheckboxChoice checked={assignmentDraft.seller_matches_public_records === true} label="Yes" onChange={(checked) => onAssignmentChange("seller_matches_public_records", checked ? true : null)} />
                   <CheckboxChoice checked={assignmentDraft.seller_matches_public_records === false} label="No" onChange={(checked) => onAssignmentChange("seller_matches_public_records", checked ? false : null)} />
                 </div>
+                <div className="mt-2 text-xs text-slate-500">Data source: CAD</div>
               </fieldset>
             </div>
 

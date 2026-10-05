@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
-import { checkSfrepPreview, createSfrepTransport, SFREP_FORM_ID, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist } from '../src/features/sfrep/sfrepTransport.ts';
+import { checkSfrepPreview, createSfrepTransport, SFREP_FORM_ID, SFREP_2055_FORM_ID, sfrepDownloadFilename, sfrepNoticeText, sfrepProvenanceText, sfrepSubjectChecklist } from '../src/features/sfrep/sfrepTransport.ts';
 import { projectCustomSubjectDocuments, mergeCustomSubjectApplication } from '../../server/src/services/customSubjectApplication.js';
 import { buildSfrepReportExport } from '../../server/src/services/sfrepReportExport.js';
 import { savedSfrepSubjectFields } from '../../server/src/services/sfrepSavedReport.js';
@@ -335,6 +335,20 @@ test('preview and export use scoped authenticated POSTs with exact selections an
   assert.equal(await (await h.api.export(selection, result.preview_digest, h.io)).text(), 'rpti-fixture');
   assert.equal(JSON.parse(h.calls[1].init.body).preview_digest, digest);
   assert.match(h.calls[1].url, /\/sfrep\/export$/); assert.equal(h.calls.length, 2);
+});
+
+test('2055 transport sends the selected form and rejects a 1004 preview response', async () => {
+  const choice = { ...selection, formId: SFREP_2055_FORM_ID };
+  const wrong = harness(async () => json(preview()));
+  await assert.rejects(wrong.api.preview(choice, wrong.io), /invalid/);
+  assert.equal(JSON.parse(wrong.calls[0].init.body).form_id, SFREP_2055_FORM_ID);
+  const valid = harness(async (_url, init) => init.headers.accept === 'application/json'
+    ? json({ ...preview(), formId: SFREP_2055_FORM_ID })
+    : new Response('2055-rpti', { headers: { 'content-type': 'application/octet-stream' } }));
+  const result = await valid.api.preview(choice, valid.io);
+  assert.equal(result.formId, SFREP_2055_FORM_ID);
+  assert.equal(await (await valid.api.export(choice, result.preview_digest, valid.io)).text(), '2055-rpti');
+  assert.equal(JSON.parse(valid.calls[1].init.body).form_id, SFREP_2055_FORM_ID);
 });
 
 test('fields-only preview accepts workfile evidence without selecting its source PDFs', async () => {

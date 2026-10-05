@@ -1,12 +1,16 @@
 import { reportAddress, reportNeighborhoodName, reportTitleCase, reportZip5 } from '../../lib/propertyReportText.ts';
 
 export const SFREP_FORM_ID = 'FNMA-1004-0911' as const;
+export const SFREP_2055_FORM_ID = 'FNMA-2055-0911' as const;
+export type SfrepFormId = typeof SFREP_FORM_ID | typeof SFREP_2055_FORM_ID;
+const supportedFormId = (value: unknown): value is SfrepFormId => value === SFREP_FORM_ID || value === SFREP_2055_FORM_ID;
 
 export interface SfrepSelection {
   accountId: string;
   assignmentFileId: number;
   documentIds: number[];
   includeDocuments: boolean;
+  formId?: SfrepFormId;
 }
 export interface SfrepField {
   sourceField: string; fieldId: string; value: string; documentId: number | null; candidateId: number | null;
@@ -54,7 +58,7 @@ export type SfrepNotice = string | SfrepConflict | SfrepOmission;
 export interface SfrepPreview {
   ok: true;
   preview_digest: string;
-  formId: typeof SFREP_FORM_ID;
+  formId: SfrepFormId;
   fields: SfrepField[];
   conflicts: SfrepConflict[];
   omitted: SfrepOmission[];
@@ -322,8 +326,8 @@ function validField(value: unknown): value is SfrepField {
     && provenance.sourceValue >= provenance.windowStart && provenance.sourceValue <= provenance.windowEnd;
 }
 
-export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly number[]): SfrepPreview {
-  if (!record(value) || value.ok !== true || value.formId !== SFREP_FORM_ID
+export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly number[], expectedFormId: SfrepFormId = SFREP_FORM_ID): SfrepPreview {
+  if (!record(value) || value.ok !== true || !supportedFormId(expectedFormId) || value.formId !== expectedFormId
     || typeof value.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(value.preview_digest)
     || !validText(value.filename) || !value.filename.toLowerCase().endsWith('.rpti')
     || !Array.isArray(value.fields) || !value.fields.every(validField)
@@ -447,7 +451,7 @@ export function sfrepProvenanceText(field: SfrepField): string {
     return `${origin}. HomeNode file ${source.assignmentFileId}, ${source.sectionKey === 'report.subject_identification' ? 'Subject' : 'Assignment'} revision ${source.revision}.${formatting}`;
   }
   if (source.kind === 'account_reference') return `Canonical county-backed subject identity — not PDF evidence. HomeNode file ${source.assignmentFileId}, assignment revision ${source.revision}; used because this report leaf has not been saved.`;
-  if (source.rule === contractRule) return '1004 Contract narrative assembled from six individually reviewed terms in the subject purchase contract. Sale type follows the saved HomeNode appraiser selection, or is marked for review.';
+  if (source.rule === contractRule) return 'Legacy Contract narrative assembled from six individually reviewed terms in the subject purchase contract. Sale type follows the saved HomeNode appraiser selection, or is marked for review.';
   if (source.kind === 'user_default') return 'User-requested fee-simple default unless changed in HomeNode — not document evidence.';
   if (source.rule === hoaRule) return `Reviewed MLS HOA status ${JSON.stringify(source.sourceValue)} supplies a PUD workflow assumption, not independent proof of project eligibility. Confirm with the appraiser.`;
   if (source.kind === 'derived_reviewed_document') return `Derived from reviewed MLS listing date ${source.sourceValue}; window ${source.windowStart} to ${source.windowEnd}${source.effectiveDateSource === 'document_upload_date_placeholder' ? ' (placeholder effective date — review)' : ''}.`;
@@ -603,9 +607,11 @@ async function readBody(response: Response, limit: number, signal: AbortSignal):
 export function createSfrepTransport(options: TransportOptions) {
   async function post(selection: SfrepSelection, operation: 'preview' | 'export', io: RequestOptions, digest?: string) {
     checkSignal(io.signal);
+    const formId = selection.formId ?? SFREP_FORM_ID;
     if (!selection.accountId.trim() || !positiveId(selection.assignmentFileId) || selection.documentIds.length > 10
       || !selection.documentIds.every(positiveId) || new Set(selection.documentIds).size !== selection.documentIds.length
-      || typeof selection.includeDocuments !== 'boolean' || (operation === 'export' && (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)))) {
+      || typeof selection.includeDocuments !== 'boolean' || !supportedFormId(formId)
+      || (operation === 'export' && (typeof digest !== 'string' || !/^[a-f0-9]{64}$/.test(digest)))) {
       throw new Error('Choose a saved assignment and review a fresh preview before exporting.');
     }
     const path = `/api/accounts/${encodeURIComponent(selection.accountId)}/sfrep/${operation}`;
@@ -614,7 +620,7 @@ export function createSfrepTransport(options: TransportOptions) {
       headers: { accept: operation === 'preview' ? 'application/json' : 'application/octet-stream',
         'content-type': 'application/json', 'x-homenode-editor-key': io.editorKey },
       body: JSON.stringify({ assignment_file_id: selection.assignmentFileId, document_ids: selection.documentIds,
-        include_documents: selection.includeDocuments, form_id: SFREP_FORM_ID,
+        include_documents: selection.includeDocuments, form_id: formId,
         ...(operation === 'export' ? { preview_digest: digest } : {}) }),
     }, io.signal);
     if (io.signal.aborted) { stop(response); throw cancelled(); }
@@ -640,7 +646,7 @@ export function createSfrepTransport(options: TransportOptions) {
     async preview(selection: SfrepSelection, io: RequestOptions): Promise<SfrepPreview> {
       const value: unknown = JSON.parse(await (await post(selection, 'preview', io)).text());
       checkSignal(io.signal);
-      const checked = checkSfrepPreview(value, selection.documentIds);
+      const checked = checkSfrepPreview(value, selection.documentIds, selection.formId ?? SFREP_FORM_ID);
       if (checked.savedReport && checked.savedReport.assignmentFileId !== selection.assignmentFileId) {
         throw new Error('The SFREP preview does not match the selected HomeNode file.');
       }

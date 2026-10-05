@@ -11,7 +11,9 @@ import { projectSfrepContractSection } from './sfrepContractSection.js';
  * Primary form: https://api.sfrep.com/rpti/sample_rpti.html
  * Field IDs and meanings were checked against the installed SFREP dictionary:
  * Appraise-It Pro/Conversion Dictionaries/MISMO.2.6.GSE.xml,
- * Dictionary/Forms/Form[@Id='FNMA-1004-0911']/Fields (Appraise-It Pro 3.7.9).
+ * Dictionary/Forms/Form[@Id='FNMA-1004-0911' or @Id='FNMA-2055-0911']/Fields
+ * (Appraise-It Pro 3.7.9). Subject/Contract destinations have matching IDs
+ * and field types in these two legacy form profiles.
  * No installation, filesystem access, network, or database is required at runtime.
  *
  * The caller must authorize and load assignment-scoped documents. Only current
@@ -21,7 +23,8 @@ import { projectSfrepContractSection } from './sfrepContractSection.js';
  * Original PDFs are separate evidence addenda and need not have extracted fields.
  */
 export const SFREP_PRIMARY_FORM_ID = "FNMA-1004-0911";
-export const SFREP_SUPPORTED_FORM_IDS = Object.freeze([SFREP_PRIMARY_FORM_ID]);
+export const SFREP_2055_FORM_ID = "FNMA-2055-0911";
+export const SFREP_SUPPORTED_FORM_IDS = Object.freeze([SFREP_PRIMARY_FORM_ID, SFREP_2055_FORM_ID]);
 export const SFREP_MAX_DOCUMENTS = 50;
 const CONTRACT_SECTION_TERMS = new Set(['contract_date', 'contract_price', 'earnest_money',
   'down_payment', 'loan_amount', 'seller_concessions']);
@@ -191,12 +194,12 @@ const MAPPINGS = Object.freeze({
 const UNMAPPED_REASONS = Object.freeze({
   seller_name: "Seller identity is not proof of the public-record owner; OwnerName is not inferred.",
   buyer_name: "Buyer identity is not proof of the borrower; BorrowerName is not inferred.",
-  closing_date: "Closing date is not contract date; no verified direct FNMA 1004 field mapping.",
-  loan_amount: "Mortgage detail has no verified direct FNMA 1004 field mapping.",
-  down_payment: "Mortgage detail has no verified direct FNMA 1004 field mapping.",
-  earnest_money: "Earnest money has no verified direct FNMA 1004 field mapping.",
+  closing_date: "Closing date is not contract date; no verified direct legacy form field mapping.",
+  loan_amount: "Mortgage detail has no verified direct legacy form field mapping.",
+  down_payment: "Mortgage detail has no verified direct legacy form field mapping.",
+  earnest_money: "Earnest money has no verified direct legacy form field mapping.",
   seller_concessions: "The SFREP concessions field has composite UAD semantics; an amount alone is not exported.",
-  financing_type: "Financing detail has no verified direct FNMA 1004 field mapping.",
+  financing_type: "Financing detail has no verified direct legacy form field mapping.",
   assignment_type: "Only explicitly reviewed purchase_transaction, refinance, or known Other engagement purposes are supported; unknown purposes are not inferred.",
   contract_property_condition: "Contract terms do not establish appraiser conclusions about property condition.",
   hoa_frequency: "Only explicitly reviewed per_month or per_year HOA frequencies have verified checkboxes; amounts are not prorated.",
@@ -272,7 +275,7 @@ function unmappedReason(sourceField) {
   if (["mls_number", "listing_status", "list_price", "original_list_price", "list_date", "listing_end_date", "days_on_market"].includes(sourceField)) {
     return "SFREP's subject-listing field has composite UAD semantics; no direct scalar mapping is verified.";
   }
-  return "No verified direct mapping for this reviewed field on FNMA-1004-0911; consult the source PDF.";
+  return "No verified direct mapping for this reviewed field on the selected legacy form; consult the source PDF.";
 }
 
 function projectValue(sourceField, value) {
@@ -728,7 +731,7 @@ export function buildSfrepReportExport({
   omitted.sort(sourceOrder);
   const validatedAddenda = validatePdfAddenda(pdfAddenda, selected);
   const warnings = [
-    "This export targets the legacy FNMA 1004 (09/2011) form, not the dynamic UAD 3.6 URAR.",
+    `This export targets the legacy ${formId === SFREP_2055_FORM_ID ? 'FNMA 2055 exterior-only' : 'FNMA 1004 URAR'} (09/2011) form, not the dynamic UAD 3.6 URAR. Only the Subject and Contract sections are mapped.`,
     "Document-derived fields use explicitly confirmed evidence. Any user-requested defaults are identified separately. Review imported values in Appraise-It Pro before use.",
     ...supplementalWarnings,
   ];

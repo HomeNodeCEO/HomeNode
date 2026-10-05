@@ -29,6 +29,16 @@ test('1004 Contract section uses the reviewed Frost Hollow amounts and exact req
   assert.match(mapped.reportXml, /<TextField Id="AnalyzedContractDescription" Data="Arms length sale;Contract dated 03\/15\/2026/);
 });
 
+test('2055 Contract section preserves the same reviewed narrative in its own primary form', () => {
+  const options = { documents: [contract()], subjectOnly: true, contractSection: true,
+    savedAssignmentDetails: { contract_arms_length: true } };
+  const urar = buildSfrepReportExport(options);
+  const exterior = buildSfrepReportExport({ ...options, formId: 'FNMA-2055-0911' });
+  assert.deepEqual(exterior.fields, urar.fields);
+  assert.match(exterior.reportXml, /<Form Id="FNMA-2055-0911">/);
+  assert.match(exterior.reportXml, /<TextField Id="AnalyzedContractDescription" Data="Arms length sale;Contract dated 03\/15\/2026/);
+});
+
 test('upload alone, foreign property, conflicting versions, and unreviewed terms cannot claim analyzed contract', () => {
   for (const documents of [
     [contract({ processing_status: 'review_required' })], [contract({ property_role: 'unknown' })],

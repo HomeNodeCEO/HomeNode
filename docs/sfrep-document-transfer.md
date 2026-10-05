@@ -8,11 +8,19 @@ existing compatible report. Original PDFs are included as named PDF addenda when
 the source-copy option is selected. This can include engagement letters, contracts,
 MLS sheets, CAD records, Realist reports, and other uploaded PDFs.
 
-## First supported form
+## Supported legacy forms
 
-The first field profile is the legacy FNMA 1004 (09/2011),
-`FNMA-1004-0911`. Dynamic UAD 3.6 mapping and the live CefSharp bridge are future
-profiles; this package must not be presented as a UAD 3.6 delivery package.
+The report-form selector supports legacy FNMA 1004 URAR (09/2011),
+`FNMA-1004-0911`, and FNMA 2055 Exterior-Only (09/2011),
+`FNMA-2055-0911`. Both use the same reviewed HomeNode Subject and Contract
+evidence; the exact primary form ID is bound into the preview digest and RPTI
+`Report.xml`. The installed Appraise-It Pro 3.7.9 conversion dictionary confirms
+the mapped Subject and Contract field IDs have matching field types on both
+forms. This does **not** complete the 2055 inspection, neighborhood, sales,
+reconciliation, certification, or other form-specific sections; the appraiser
+must finish and verify those in Appraise-It Pro. Dynamic UAD 3.6 mapping and
+the live CefSharp bridge are future profiles; this package must not be presented
+as a UAD 3.6 delivery package.
 No SFREP runtime, desktop client, or SDK is required on the HomeNode server.
 
 `sfrepReportExport.js` is a pure mapper. Document-derived values must be individually

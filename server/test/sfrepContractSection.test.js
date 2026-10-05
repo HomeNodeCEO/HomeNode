@@ -39,6 +39,31 @@ test('2055 Contract section preserves the same reviewed narrative in its own pri
   assert.match(exterior.reportXml, /<TextField Id="AnalyzedContractDescription" Data="Arms length sale;Contract dated 03\/15\/2026/);
 });
 
+test('both legacy forms export the saved seller-owner answer and CAD as its data source', () => {
+  const owner = [{ sourceField: 'owner_name', value: 'Loredo Lorenzo Jr & Thompson Andi',
+    provenance: { kind: 'saved_report', sourceField: 'owner_name' } }];
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    for (const matches of [true, false]) {
+      const result = buildSfrepReportExport({ documents: [contract()], subjectOnly: true,
+        contractSection: true, formId, savedReportFields: owner,
+        savedAssignmentFileId: 7, savedAssignmentRevision: 2,
+        savedAssignmentDetails: { contract_seller_names: 'Lorenzo Jr Loredo, Andi Li-Kay Thompson',
+          seller_matches_public_records: matches } });
+      const selected = matches ? 'SellerOwnerPublicYesCheckBox' : 'SellerOwnerPublicNoCheckBox';
+      const other = matches ? 'SellerOwnerPublicNoCheckBox' : 'SellerOwnerPublicYesCheckBox';
+      assert.match(result.reportXml, new RegExp(`<CheckBoxField Id="${selected}" Data="true" \\/>`));
+      assert.doesNotMatch(result.reportXml, new RegExp(other));
+      assert.match(result.reportXml, /<TextField Id="ContractDataSources" Data="CAD" \/>/);
+    }
+  }
+  const withoutCad = buildSfrepReportExport({ documents: [contract()], subjectOnly: true,
+    contractSection: true, savedReportFields: [], savedAssignmentFileId: 7, savedAssignmentRevision: 2,
+    savedAssignmentDetails: {
+      contract_seller_names: 'Lorenzo Jr Loredo', seller_matches_public_records: true,
+    } });
+  assert.doesNotMatch(withoutCad.reportXml, /SellerOwnerPublicYesCheckBox|ContractDataSources/);
+});
+
 test('upload alone, foreign property, conflicting base versions, and unconfirmed terms cannot claim analyzed contract', () => {
   for (const documents of [
     [contract({ processing_status: 'processing' })], [contract({ property_role: 'unknown' })],
@@ -120,7 +145,10 @@ test('reviewed workfile contract maps even when its PDF is not selected as an at
       effectiveDate: '2026-03-27' }, upload_date: '2026-10-04' };
   const reviewed = contract();
   other.saved_report = { accountId: '20035000010310000', assignmentFileId: 7, assignmentRevision: 1,
-    assignmentDetails: { contract_arms_length: true }, subject: { value: {}, revision: 1 }, evidence: { value: {}, revision: 1 },
+    assignmentDetails: { contract_arms_length: true, contract_seller_names: 'Lorenzo Jr Loredo',
+      seller_matches_public_records: true },
+    subject: { value: { owner: { owner_name: 'LOREDO LORENZO JR' } }, revision: 1 },
+    evidence: { value: {}, revision: 1 },
     documents: [{ ...other }, reviewed] };
   const result = previewSfrepDocuments([other], { accountId: '20035000010310000', assignmentFileId: 7,
     documentIds: [8], includeDocuments: true, formId: 'FNMA-1004-0911' });
@@ -128,7 +156,16 @@ test('reviewed workfile contract maps even when its PDF is not selected as an at
   assert.equal(preview.documents.length, 1);
   assert.deepEqual(preview.pdfAddenda.map(item => item.documentId), [8]);
   assert.equal(preview.fields.find(field => field.fieldId === 'AnalyzedContractYesCheckBox')?.documentId, 9);
+  assert.equal(preview.fields.find(field => field.fieldId === 'SellerOwnerPublicYesCheckBox')?.value, 'true');
+  assert.equal(preview.fields.find(field => field.fieldId === 'ContractDataSources')?.value, 'CAD');
+  assert.deepEqual(sfrepContractChecklist(preview).find(item => item.key === 'seller-owner').values, ['Yes']);
   assert.equal(checkSfrepPreview(preview, [8]), preview);
+  const exterior = JSON.parse(JSON.stringify({ ok: true, ...previewSfrepDocuments([other], {
+    accountId: '20035000010310000', assignmentFileId: 7, documentIds: [8],
+    includeDocuments: true, formId: 'FNMA-2055-0911',
+  }) }));
+  assert.equal(checkSfrepPreview(exterior, [8], 'FNMA-2055-0911'), exterior);
+  assert.equal(exterior.fields.find(field => field.fieldId === 'SellerOwnerPublicYesCheckBox')?.value, 'true');
   const missingSource = structuredClone(preview);
   missingSource.savedReport.sourceDocumentIds = [8];
   assert.throws(() => checkSfrepPreview(missingSource, [8]), /selected source documents/);

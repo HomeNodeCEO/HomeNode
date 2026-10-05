@@ -113,15 +113,31 @@ test('listing history merges matching source records and sorts newest first', ()
   assert.equal(activityTypeLabel('closed_sale'), 'Closed Sale');
 });
 
-test('seller comparison is order-insensitive but still flags real differences', () => {
+test('seller comparison uses CAD names, tolerates order and spelling, and accepts one matching owner', () => {
   assert.equal(
-    sellerComparisonSummary('Freeman Appraisal Services LLC', 'FREEMAN APPRAISAL SERVICES, LLC').matches,
+    sellerComparisonSummary('Lorenzo Jr Loredo, Andi Li-Kay Thompson',
+      ['LOREDO LORENZO JR', 'THOMPSON ANDI']).matches,
     true,
   );
+  assert.equal(sellerComparisonSummary('Andi Li-Kay Thompson', 'LOREDO LORENZO JR & THOMPSON ANDI').matches, true);
+  assert.equal(sellerComparisonSummary('Lorenzo Loredo', 'LOREDO, LORENZO JR').matches, true);
+  assert.equal(sellerComparisonSummary('Andi Thompson', 'ANDI THOMPSEN').matches, true);
+  assert.equal(sellerComparisonSummary("Mary O'Neil", 'O NEIL MARY').matches, true);
+  assert.equal(sellerComparisonSummary("Mary O'Neil", 'ONEIL MARY').matches, true);
+  assert.equal(sellerComparisonSummary('John Smith, Jane Doe', 'JANE DOE').matches, true);
+  assert.equal(sellerComparisonSummary('Al Smith', 'SMITH AL ET AL').matches, true);
   const mismatch = sellerComparisonSummary('Jordan Freeman', 'Alex Freeman');
   assert.equal(mismatch.matches, false);
   assert.match(mismatch.summary, /Review and explain/);
+  assert.equal(sellerComparisonSummary('John Smith, Jane Doe', 'JOHN DOE').matches, false);
+  assert.equal(sellerComparisonSummary('John Michael Smith', 'JOHN MICHAEL DOE').matches, false);
+  assert.equal(sellerComparisonSummary('John Smith', 'JOHN SMITH LLC').matches, false);
+  assert.equal(sellerComparisonSummary('John Smith', 'JOHN SMITH L.L.C.').matches, false);
+  assert.equal(sellerComparisonSummary('John Smith LLC', 'JOHN SMITH').matches, false);
+  assert.equal(sellerComparisonSummary('Smith Realty', 'SMITH REALTY').matches, false);
+  assert.equal(sellerComparisonSummary('John Smith', 'SMITH FAMILY TRUST').matches, false);
   assert.equal(sellerComparisonSummary('', 'Jordan Freeman').matches, null);
+  assert.equal(sellerComparisonSummary('Jordan Freeman', '').matches, null);
 });
 
 test('engagement addresses tolerate suffix formatting but block a different subject', () => {

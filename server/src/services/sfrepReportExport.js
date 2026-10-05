@@ -450,7 +450,8 @@ function validatePdfAddenda(addenda, documents) {
 export function buildSfrepReportExport({
   documents = [], selectedDocumentIds, fieldSelections = {}, pdfAddenda = [],
   formId = SFREP_PRIMARY_FORM_ID, application = {}, subjectContext, forReportPersistence = false,
-  savedReportFields, subjectOnly = false, contractSection = false, savedAssignmentDetails, contractEvidenceDocuments,
+  savedReportFields, subjectOnly = false, contractSection = false, savedAssignmentDetails,
+  savedAssignmentFileId, savedAssignmentRevision, contractEvidenceDocuments,
 } = {}) {
   if (!SFREP_SUPPORTED_FORM_IDS.includes(formId)) fail("sfrep_unsupported_form");
   if (!fieldSelections || typeof fieldSelections !== "object" || Array.isArray(fieldSelections)) fail("sfrep_invalid_field_selection");
@@ -727,7 +728,10 @@ export function buildSfrepReportExport({
     // Contract analysis belongs to the reviewed workfile, not the optional
     // list of PDFs the appraiser elects to attach to the RPTI package.
     const contract = projectSfrepContractSection(contractEvidenceDocuments || [...selected.values()],
-      { assignmentDetails: savedAssignmentDetails });
+      { assignmentDetails: savedAssignmentDetails,
+        assignmentFileId: savedAssignmentFileId, assignmentRevision: savedAssignmentRevision,
+        cadOwnerName: savedReportFields !== undefined
+          ? fields.find(field => field.fieldId === 'OwnerName')?.value : null });
     fields.push(...contract.fields);
     supplementalWarnings.push(...contract.warnings);
     knownMissing.push(...contract.knownMissing);

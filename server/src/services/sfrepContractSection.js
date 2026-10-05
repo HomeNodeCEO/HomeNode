@@ -23,7 +23,9 @@ const dollars = amount => `$${new Intl.NumberFormat('en-US', { maximumFractionDi
  * subject-matched purchase contract with confirmed terms. A PDF merely being uploaded never
  * claims the appraiser analyzed it. Original terms and the source PDF remain in
  * the workfile; this concise narrative is an export-only presentation. */
-export function projectSfrepContractSection(documents, { assignmentDetails } = {}) {
+export function projectSfrepContractSection(documents, {
+  assignmentDetails, cadOwnerName, assignmentFileId, assignmentRevision,
+} = {}) {
   const fields = [], warnings = [], knownMissing = [];
   const selection = selectSubjectPurchaseContract(documents);
   if (!selection.document) {
@@ -61,6 +63,24 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
       return { fields, warnings, knownMissing };
     }
     candidates.set(candidate.field_key, { candidateId: Number(candidate.id), value: normalized });
+  }
+  const sellerMatch = record(assignmentDetails) ? assignmentDetails.seller_matches_public_records : null;
+  if (typeof sellerMatch === 'boolean' && String(assignmentDetails.contract_seller_names || '').trim()
+    && String(cadOwnerName || '').trim() && positive(assignmentFileId) && positive(assignmentRevision)) {
+    // These field IDs and ContractDataSources were verified in the installed
+    // SFREP FNMA-1004-0911 and FNMA-2055-0911 conversion dictionaries.
+    const provenance = { kind: 'saved_report', sourceField: 'seller_matches_public_records',
+      documentId: null, candidateId: null, assignmentFileId, revision: assignmentRevision,
+      sectionKey: 'report.assignment_details', origin: 'derived_reviewed_document',
+      rule: 'seller_vs_cad_owner_name_v1' };
+    fields.push({ sourceField: 'seller_matches_public_records',
+      fieldId: sellerMatch ? 'SellerOwnerPublicYesCheckBox' : 'SellerOwnerPublicNoCheckBox',
+      value: 'true', type: 'CheckBoxField', documentId: null, candidateId: null, provenance });
+    fields.push({ sourceField: 'seller_match_data_source', fieldId: 'ContractDataSources', value: 'CAD',
+      type: 'TextField', documentId: null, candidateId: null, provenance: { ...provenance, sourceField: 'seller_match_data_source' } });
+  } else if (typeof sellerMatch === 'boolean') {
+    knownMissing.push({ fieldId: 'SellerOwnerPublicYesCheckBox',
+      reason: 'A contract seller and a saved CAD public-record owner are both needed before exporting the seller-owner answer.' });
   }
   if (!candidates.size) {
     warnings.push('The contract has no confirmed terms. Review its extracted fields before marking the contract analyzed.');

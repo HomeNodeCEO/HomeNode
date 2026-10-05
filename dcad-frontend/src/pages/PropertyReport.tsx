@@ -42,6 +42,7 @@ import {
 } from "@/lib/marketConditionsDraft";
 import { useNeighborhoodProfile } from "@/hooks/useNeighborhoodProfile";
 import { useAssignmentConflictKeys } from "@/hooks/useAssignmentConflictKeys";
+import { useSellerCadOwnerSelection } from "@/hooks/useSellerCadOwnerSelection";
 import { usePropertyContext } from "@/hooks/usePropertyContext";
 import PropertyContextSection from "@/components/PropertyContextSection";
 import { useRelatedParcels } from "@/hooks/useRelatedParcels";
@@ -119,7 +120,6 @@ import {
   listingTimelineRows,
   parseNumber,
   recordedExemptionRows,
-  sellerComparisonSummary,
 } from "@/lib/propertyReportPresentation";
 import {
   ASSIGNMENT_TYPE_OPTIONS,
@@ -1572,10 +1572,14 @@ function AddressHero({
     return ["closed_sale", "cad_transfer"].includes(recordType) ||
       (!recordType && (hasValue(event.sale_price) || hasValue(event.closing_date) || hasValue(event.activity_date)));
   });
-  const contractSellerComparison = sellerComparisonSummary(
-    assignmentDraft.contract_seller_names,
-    ownerName,
-  );
+  const cadOwnerNames = ownerParties.length
+    ? ownerParties.map((party) => party.owner_name || "").filter(Boolean)
+    : [reportedOwnerName || ""];
+  const contractSellerComparison = useSellerCadOwnerSelection({
+    file: activeAssignmentFile, filesLoaded: assignmentFilesLoaded,
+    seller: assignmentDraft.contract_seller_names || "", cadOwnerNames,
+    draftRef: assignmentDraftRef, setDraft: setAssignmentDraft,
+  });
   const assignmentSaveDisabled = Boolean(
     assignmentFilesLoading || savingAssignmentFile || !assignmentDirty ||
       assignmentAutosaveState === "conflict" ||

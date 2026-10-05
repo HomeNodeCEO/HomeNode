@@ -92,6 +92,7 @@ const countyRule = 'canonical_county_subject_identity_v1';
 const lenderAddressRule = 'user_requested_lender_address_v1';
 const hoaRule = 'user_requested_hoa_workflow_proxy_v1';
 const contractRule = 'reviewed_1004_contract_terms_template_v1';
+const sellerOwnerRule = 'seller_vs_cad_owner_name_v1';
 const pudField = 'PropertyTypePUDCheckBox';
 const onlyKeys = (value: Record<string, unknown>, keys: readonly string[]) => Object.keys(value).every(key => keys.includes(key));
 const savedKeys = ['kind', 'sourceField', 'documentId', 'candidateId', 'assignmentFileId', 'sectionKey', 'revision', 'origin'];
@@ -302,6 +303,15 @@ function validField(value: unknown): value is SfrepField {
         && value.value === 'TX' && provenance.rule === texasStateRule
         && provenance.sectionKey === 'report.subject_identification'
         && onlyKeys(provenance, [...savedKeys, 'rule']));
+    if (provenance.origin === 'derived_reviewed_document' && provenance.rule === sellerOwnerRule) {
+      const checkbox = value.sourceField === 'seller_matches_public_records'
+        && ['SellerOwnerPublicYesCheckBox', 'SellerOwnerPublicNoCheckBox'].includes(value.fieldId)
+        && value.type === 'CheckBoxField' && value.value === 'true';
+      const dataSource = value.sourceField === 'seller_match_data_source'
+        && value.fieldId === 'ContractDataSources' && value.type === 'TextField' && value.value === 'CAD';
+      return (checkbox || dataSource) && provenance.sectionKey === 'report.assignment_details'
+        && onlyKeys(provenance, [...savedKeys, 'rule']);
+    }
     if (!positiveId(provenance.sourceDocumentId)) return false;
     if (provenance.origin === 'reviewed_document') return provenance.rule === undefined
       ? onlyKeys(provenance, [...savedKeys, 'sourceDocumentId', 'sourceCandidateId'])
@@ -370,6 +380,14 @@ export function checkSfrepPreview(value: unknown, selectedDocumentIds?: readonly
     || (provenance.sourceDocumentId !== undefined && !saved.sourceDocumentIds.includes(provenance.sourceDocumentId))
     || provenance.sourceEvidence?.some(source => 'documentId' in source && !saved.sourceDocumentIds.includes(source.documentId))))) {
     throw new Error('The SFREP preview does not match the saved HomeNode report.');
+  }
+  const sellerOwnerFields = preview.fields.filter(field => [
+    'SellerOwnerPublicYesCheckBox', 'SellerOwnerPublicNoCheckBox', 'ContractDataSources',
+  ].includes(field.fieldId));
+  if (sellerOwnerFields.length && (sellerOwnerFields.length !== 2
+    || !sellerOwnerFields.some(field => field.fieldId === 'ContractDataSources' && field.value === 'CAD')
+    || !preview.fields.some(field => field.fieldId === 'OwnerName'))) {
+    throw new Error('The SFREP seller-owner source is incomplete. Preview again.');
   }
   const date = preview.effectiveDateContext;
   if (preview.fields.filter(field => field.provenance.rule === feeSimpleRule).length
@@ -554,18 +572,24 @@ export function sfrepContractChecklist(preview: SfrepPreview): SfrepSubjectCheck
     { key: 'contract-analyzed', label: 'Contract analyzed', fieldId: 'AnalyzedContractYesCheckBox' },
     { key: 'contract-date', label: 'Contract date', fieldId: 'ContractDate' },
     { key: 'contract-price', label: 'Purchase price', fieldId: 'SalePriceAmount' },
+    { key: 'seller-owner', label: 'Seller is owner of public record', fieldId: 'SellerOwnerPublicYesCheckBox' },
     { key: 'contract-analysis', label: 'Contract analysis and terms', fieldId: 'AnalyzedContractDescription' },
     { key: 'contract-assistance', label: 'Seller concessions', fieldId: 'BorrowerFinancialAssistanceNoCheckBox' },
   ];
   return items.map(item => {
     const field = preview.fields.find(entry => entry.fieldId === item.fieldId
-      || (item.key === 'contract-assistance' && entry.fieldId === 'BorrowerFinancialAssistanceYesCheckBox'));
+      || (item.key === 'contract-assistance' && entry.fieldId === 'BorrowerFinancialAssistanceYesCheckBox')
+      || (item.key === 'seller-owner' && entry.fieldId === 'SellerOwnerPublicNoCheckBox'));
     const missing = preview.knownMissing.filter(entry => entry.fieldId === item.fieldId);
     const status = field ? item.key === 'contract-analysis' && field.value.startsWith('Sale type requires appraiser review;') ? 'review' : 'included' : 'missing';
     return { key: item.key, label: item.label, status, statusLabel: status === 'included' ? 'Included — reviewed' : status === 'review' ? 'Review sale type' : 'Missing — not exported',
       values: field ? [field.type === 'CheckBoxField' ? field.fieldId === 'BorrowerFinancialAssistanceYesCheckBox'
-        ? 'Yes — review amount in contract narrative' : field.fieldId === 'BorrowerFinancialAssistanceNoCheckBox' ? 'No' : 'Checked' : field.value] : [],
-      notes: [...missing.map(entry => entry.reason), ...(status === 'review' ? ['Select arms-length status in HomeNode before relying on this narrative.'] : [])] };
+        ? 'Yes — review amount in contract narrative' : field.fieldId === 'BorrowerFinancialAssistanceNoCheckBox'
+          || field.fieldId === 'SellerOwnerPublicNoCheckBox' ? 'No'
+            : field.fieldId === 'SellerOwnerPublicYesCheckBox' ? 'Yes' : 'Checked' : field.value] : [],
+      notes: [...missing.map(entry => entry.reason),
+        ...(item.key === 'seller-owner' && field ? ['Data source: CAD'] : []),
+        ...(status === 'review' ? ['Select arms-length status in HomeNode before relying on this narrative.'] : [])] };
   });
 }
 

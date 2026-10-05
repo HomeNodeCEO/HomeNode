@@ -134,32 +134,86 @@ export function listingTimelineRows<T extends TimelineRow>(events: T[]): T[] {
   });
 }
 
-function normalizedNameTokens(value: unknown): string[] {
-  return [...new Set(
-    String(value || '')
-      .toUpperCase()
-      .replace(/[^A-Z0-9]+/g, ' ')
-      .split(/\s+/)
-      .filter((token) => token && !['AND', 'THE'].includes(token)),
-  )].sort();
+const nameSuffixes = new Set(['MR', 'MRS', 'MS', 'DR', 'JR', 'SR', 'II', 'III', 'IV']);
+const businessWords = new Set([
+  'LLC', 'INC', 'INCORPORATED', 'CORP', 'CORPORATION', 'COMPANY', 'LLP', 'LP',
+  'LTD', 'LIMITED', 'PLC', 'PLLC', 'PC', 'HOLDINGS', 'ENTERPRISES', 'INVESTMENTS',
+  'PROPERTIES', 'TRUST', 'BANK', 'ASSOCIATION', 'REALTY', 'BUILDERS', 'DEVELOPMENT',
+  'VENTURES', 'CAPITAL',
+]);
+
+function nameTokens(value: string): string[] {
+  return value.normalize('NFKD').replace(/[\u0300-\u036f]/g, '')
+    .toUpperCase().replace(/['’`]/g, '').replace(/[^A-Z0-9]+/g, ' ')
+    .replace(/\bET\s+AL\b/g, ' ')
+    .replace(/\bL\s+L\s+C\b/g, 'LLC').replace(/\bL\s+L\s+P\b/g, 'LLP')
+    .replace(/\b([OD])\s+([A-Z]{3,})\b/g, '$1$2').trim().split(/\s+/)
+    .filter((token) => token && !nameSuffixes.has(token));
+}
+
+function nameParties(value: unknown): string[] {
+  return (Array.isArray(value) ? value : [value]).flatMap((entry) => {
+    const label = String(entry || '').trim();
+    if (!label) return [];
+    return label.split(/\s+(?:AND|&)\s+|\s*[/;\n]\s*/i).flatMap((group) => {
+      const commaParts = group.split(',').map((part) => part.trim()).filter(Boolean);
+      // A comma separates two full names, but not "SMITH, JOHN".
+      return commaParts.length > 1 && commaParts.every((part) => nameTokens(part).length >= 2)
+        ? commaParts : [group.trim()];
+    }).filter(Boolean);
+  });
+}
+
+function closeNameToken(left: string, right: string): boolean {
+  if (left === right) return true;
+  if (left.length < 4 || right.length < 4 || Math.abs(left.length - right.length) > 1) return false;
+  // One spelling/typing difference is allowed, but a shared first or last
+  // name by itself is never enough to identify the same person.
+  let edits = 0;
+  let i = 0;
+  let j = 0;
+  while (i < left.length && j < right.length) {
+    if (left[i] === right[j]) { i += 1; j += 1; continue; }
+    if (++edits > 1) return false;
+    if (left.length > right.length) i += 1;
+    else if (right.length > left.length) j += 1;
+    else { i += 1; j += 1; }
+  }
+  return edits + Number(i < left.length || j < right.length) <= 1;
+}
+
+function matchingPerson(left: string, right: string): boolean {
+  const seller = [...new Set(nameTokens(left))];
+  const owner = [...new Set(nameTokens(right))];
+  if (seller.length < 2 || owner.length < 2) return false;
+  // A shared given and middle name cannot override a different family name.
+  // CAD frequently places that family name first, so its position is flexible.
+  if (!owner.some((token) => closeNameToken(seller[seller.length - 1], token))) return false;
+  const unmatched = [...owner];
+  let matched = 0;
+  for (const token of seller) {
+    const index = unmatched.findIndex((candidate) => closeNameToken(token, candidate));
+    if (index >= 0) { unmatched.splice(index, 1); matched += 1; }
+  }
+  return matched >= 2;
 }
 
 export function sellerComparisonSummary(contractSeller: unknown, publicOwner: unknown): {
   matches: boolean | null;
   summary: string;
 } {
-  const contractLabel = String(contractSeller || '').trim();
-  const publicLabel = String(publicOwner || '').trim();
+  const contractParties = nameParties(contractSeller);
+  const publicParties = nameParties(publicOwner);
+  const contractLabel = contractParties.join(', ');
+  const publicLabel = publicParties.join(', ');
   if (!contractLabel) return { matches: null, summary: 'Enter the contract seller name to compare it with CAD ownership.' };
-  if (!publicLabel || publicLabel === 'Not reported') {
+  if (!publicLabel || publicLabel.toLowerCase() === 'not reported') {
     return { matches: null, summary: 'CAD ownership is unavailable, so the contract seller requires manual review.' };
   }
-  const contractTokens = normalizedNameTokens(contractLabel);
-  const publicTokens = normalizedNameTokens(publicLabel);
-  const matches =
-    contractTokens.length > 0 &&
-    contractTokens.length === publicTokens.length &&
-    contractTokens.every((token, index) => token === publicTokens[index]);
+  const business = [...contractParties, ...publicParties]
+    .some((party) => nameTokens(party).some((token) => businessWords.has(token)));
+  const matches = !business && contractParties.some((seller) =>
+    publicParties.some((owner) => matchingPerson(seller, owner)));
   return matches
     ? {
         matches: true,
@@ -167,7 +221,9 @@ export function sellerComparisonSummary(contractSeller: unknown, publicOwner: un
       }
     : {
         matches: false,
-        summary: `The contract lists ${contractLabel}, while CAD public records list ${publicLabel}. Review and explain the difference before completing the assignment.`,
+        summary: business
+          ? `A contract seller or CAD owner is a business or trust. Marked No; review and explain the ownership difference before completing the assignment.`
+          : `The contract lists ${contractLabel}, while CAD public records list ${publicLabel}. Review and explain the difference before completing the assignment.`,
       };
 }
 

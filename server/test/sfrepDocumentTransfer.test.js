@@ -81,6 +81,7 @@ test('source read binds account, assignment and document IDs and rejects a parti
   assert.match(query.text, /'state', to_jsonb\(subject\)->>'state'/);
   assert.match(query.text, /LIMIT 51/);
   assert.match(query.text, /source_rows AS MATERIALIZED/);
+  assert.match(query.text, /'document_type', document_type, 'title', title, 'file_name', file_name/);
   assert.match(query.text, /payload AS MATERIALIZED/);
   assert.match(query.text, /octet_length\(snapshot::text\) > \$5/);
   assert.match(query.text, /CASE WHEN evidence_limit THEN NULL ELSE snapshot END AS snapshot/);

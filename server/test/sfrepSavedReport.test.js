@@ -173,6 +173,45 @@ test('presentation-only normalization preserves an exact older source receipt wi
   assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'OwnerName'), false);
 });
 
+test('a stale identity receipt revalidates only when the current reviewed CAD still supports the saved value', () => {
+  const { saved } = fixture();
+  for (const key of ['subject_street_address', 'subject_city', 'subject_zip', 'county', 'assessor_parcel_number']) {
+    saved.evidence.value.fields[key].status = 'needs_review';
+  }
+  const result = exportSaved(saved);
+  for (const id of ['StreetAddress', 'City', 'ZipCode', 'County', 'AssessorsParcelNumber']) {
+    assert.ok(result.fields.some(field => field.fieldId === id), id);
+  }
+  const cadAddress = saved.documents[1].candidates.find(item => item.field_key === 'subject_property_address');
+  cadAddress.confirmed_value = '101 Different Dr, Garland, TX 75041';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'StreetAddress'), false);
+  cadAddress.confirmed_value = '100 Example Dr, Garland, TX 75041';
+  cadAddress.review_status = 'rejected';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'StreetAddress'), false);
+});
+
+test('a changed presentation of the same canonical account row does not strand saved locality', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: 'TX' };
+  }
+  // CAD supplies the street and parcel; the account is the locality fallback.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item => item.field_key !== 'county');
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
+  saved.subject.value = applied.subject;
+  saved.assignmentDetails = applied.assignmentDetails;
+  saved.evidence.value = applied.evidence;
+  const county = saved.evidence.value.fields.county;
+  assert.equal(county.kind, 'account_reference');
+  county.status = 'needs_review';
+  county.reviewedSourceValue = 'DALLAS COUNTY';
+  county.sourceEvidence[0].value = 'DALLAS COUNTY';
+  assert.equal(exportSaved(saved).fields.find(field => field.fieldId === 'County')?.value, 'Dallas');
+  saved.documents[0].subject_context.canonicalIdentity.county = 'Collin';
+  assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'County'), false);
+});
+
 test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {
   const { saved } = fixture();
   saved.documents[0].subject_context.censusGeography = { tractCode: '001234', status: 'matched',

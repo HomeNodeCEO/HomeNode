@@ -90,7 +90,8 @@ export async function readSfrepDocuments(pool, { accountId, assignmentFileId, do
         'subject_context', scope.subject_context,
         'saved_report', scope.saved_report || jsonb_build_object('documents', COALESCE((
           SELECT jsonb_agg(jsonb_build_object('id', id, 'account_id', account_id, 'assignment_file_id', assignment_file_id,
-            'document_type', document_type, 'processing_status', processing_status,
+            'document_type', document_type, 'title', title, 'file_name', file_name,
+            'processing_status', processing_status,
             'extraction_summary', extraction_summary, 'checksum_sha256', checksum_sha256,
             'upload_date', upload_date, 'candidates', candidates) ORDER BY id)
           FROM source_rows), '[]'::jsonb))) AS snapshot,

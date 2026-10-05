@@ -13,7 +13,9 @@ import {
   garageCutoutFitsParent,
   modelToCanvas,
   nearestPointOnSketchWall,
+  nextSketchRoomLabel,
   normalizeSketchBearing,
+  preserveSketchAreaLabelOffsets,
   resizeSketchWall,
   sketchClosureTargets,
   sketchReadyForConfirmation,
@@ -26,6 +28,32 @@ test("normalizes fine-angle sketch bearings in either direction", () => {
   assert.equal(normalizeSketchBearing(-1), 359);
   assert.equal(normalizeSketchBearing(45.25), 45.3);
   assert.equal(normalizeSketchBearing(Number.NaN), 0);
+});
+
+test("room-type taps create clear automatic labels without duplicates", () => {
+  const rooms = [
+    { id: "room-1", areaId: "area-1", label: "Bedroom", roomType: "bedroom" as const, anchor: { x: 2, y: 2 }, position: 1 },
+    { id: "room-2", areaId: "area-1", label: "Bedroom 2", roomType: "bedroom" as const, anchor: { x: 4, y: 2 }, position: 2 },
+    { id: "room-3", areaId: "area-1", label: "Primary bedroom", roomType: "bedroom" as const, anchor: { x: 6, y: 2 }, position: 3 },
+  ];
+  assert.equal(nextSketchRoomLabel(rooms, "kitchen"), "Kitchen");
+  assert.equal(nextSketchRoomLabel(rooms, "bedroom"), "Bedroom 3");
+  assert.equal(nextSketchRoomLabel(rooms, "bedroom", "Primary bedroom"), "Primary bedroom 2");
+});
+
+test("keeps mobile area-label placement while older servers roll out", () => {
+  const local = emptySketchDraft("10000000-0000-4000-8000-000000000099");
+  const moved = {
+    ...local,
+    areas: [{ ...local.areas[0]!, labelOffset: { x: 7, y: -4 } }],
+  };
+  const document = toSketchApiDocument(moved);
+  const withoutOffset = {
+    ...document,
+    areas: document.areas.map(({ area_label_offset: _ignored, ...area }) => area),
+  };
+  const preserved = preserveSketchAreaLabelOffsets(withoutOffset, moved);
+  assert.deepEqual(preserved.areas[0]!.area_label_offset, { x: 7, y: -4 });
 });
 
 test("builds and closes a measured rectangular outline", () => {
@@ -231,6 +259,7 @@ test("deducts a closed garage cutout from the main GLA", () => {
       { x: 5, y: 0 },
     ],
     dimensionLabels: [],
+    labelOffset: { x: 0, y: 0 },
     position: 2,
   };
   assert.equal(garageCutoutFitsParent(garage, [exterior, garage]), true);
@@ -254,6 +283,7 @@ test("serializes offline sketch drafts without losing stable room identity", () 
     areas: [{
       ...base.areas[0]!,
       dimensionLabels: [{ segmentIndex: 0, offset: { x: 0, y: -3 } }],
+      labelOffset: { x: 4, y: 6 },
       vertices: [
         { x: 0, y: 0 },
         { x: 20, y: 0 },
@@ -277,5 +307,6 @@ test("serializes offline sketch drafts without losing stable room identity", () 
   const restored = draftFromApiDocument(api);
   assert.equal(restored.rooms[0]!.label, "Kitchen");
   assert.deepEqual(restored.areas[0]!.dimensionLabels, [{ segmentIndex: 0, offset: { x: 0, y: -3 } }]);
+  assert.deepEqual(restored.areas[0]!.labelOffset, { x: 4, y: 6 });
   assert.equal(sketchRoomRef(roomId), `sketch-room:${roomId}`);
 });

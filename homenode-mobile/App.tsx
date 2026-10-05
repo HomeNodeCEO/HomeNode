@@ -38,6 +38,7 @@ import {
 } from "./src/offline/store";
 import { PhotoCapturePanel } from "./src/photos/PhotoCapturePanel";
 import { SketchEditorPanel, type SelectedSketchRoom } from "./src/sketch/SketchEditorPanel";
+import { withStartupTimeout } from "./src/startup/timeout";
 import { TargetFieldPanel } from "./src/targetFields/TargetFieldPanel";
 import { COLORS } from "./src/theme";
 import { UadEntityPanel } from "./src/uadEntities/UadEntityPanel";
@@ -51,6 +52,8 @@ function friendlyError(reason: unknown) {
     session_expired: "Your session expired. Please sign in again.",
     network_request_failed: "The HomeNode API could not be reached.",
     offline_inspection_not_found: "This inspection is not available on this device.",
+    offline_storage_open_timed_out: "HomeNode could not finish opening encrypted storage. Your field drafts were not deleted.",
+    offline_storage_read_timed_out: "HomeNode could not finish reading offline drafts. Your field drafts were not deleted.",
   };
   return messages[code] || code.replaceAll("_", " ");
 }
@@ -660,6 +663,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
   const [inspection, setInspection] = useState<{ file: ReportFile; session: InspectionSession } | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [initialized, setInitialized] = useState(false);
+  const [startupAttempt, setStartupAttempt] = useState(0);
   const offlineSync = useOfflineSync(store, api, user?.userId || null);
 
   const reloadCached = useCallback(async (nextStore = store, nextUser = user) => {
@@ -671,19 +675,29 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     let active = true;
     void (async () => {
       try {
-        const nextStore = await OfflineStore.open();
+        setError(null);
+        setInitialized(false);
+        const nextStore = await withStartupTimeout(OfflineStore.open(), 15_000, "offline_storage_open_timed_out");
         let nextUser: MobileUser | null = null;
+        let fetchedUser: MobileUser | null = null;
         try {
-          nextUser = await api.me();
-          await nextStore.cacheUser(nextUser);
+          fetchedUser = await api.me();
+          nextUser = fetchedUser;
         } catch (reason) {
           nextUser = await recoverCachedIdentityAfterMeFailure(reason, {
-            loadCachedIdentity: () => nextStore.activeCachedUser(),
+            loadCachedIdentity: () => withStartupTimeout(
+              nextStore.activeCachedUser(), 8_000, "offline_storage_read_timed_out",
+            ),
             lockCachedIdentity: clearActiveOfflineUser,
           });
           if (!nextUser) throw reason;
         }
-        const inspections = await nextStore.cachedInspections(nextUser.userId);
+        if (fetchedUser) {
+          await withStartupTimeout(nextStore.cacheUser(fetchedUser), 8_000, "offline_storage_read_timed_out");
+        }
+        const inspections = await withStartupTimeout(
+          nextStore.cachedInspections(nextUser.userId), 8_000, "offline_storage_read_timed_out",
+        );
         if (!active) return;
         setStore(nextStore);
         setUser(nextUser);
@@ -695,7 +709,9 @@ function SignedInApp({ config }: { config: MobileConfig }) {
       }
     })();
     return () => { active = false; };
-  }, [api]);
+  }, [api, startupAttempt]);
+
+  const retryStartup = () => setStartupAttempt((attempt) => attempt + 1);
 
   const openInspection = async (file: ReportFile, session: InspectionSession) => {
     if (store && user && property) {
@@ -721,7 +737,7 @@ function SignedInApp({ config }: { config: MobileConfig }) {
     await reloadCached();
   }, [reloadCached]);
 
-  if (error) return <SafeAreaView style={styles.safe}><View style={styles.signIn}><Text style={styles.error}>{error}</Text><Button title="Sign out" onPress={() => void auth.signOut()} /></View></SafeAreaView>;
+  if (error) return <SafeAreaView style={styles.safe}><View style={styles.signIn}><Text style={styles.error}>{error}</Text><Button title="Retry opening drafts" onPress={retryStartup} /><Button title="Sign out" secondary onPress={() => void auth.signOut()} /></View></SafeAreaView>;
   if (!initialized || !user || !store) return <SafeAreaView style={styles.safe}><Loading label="Opening encrypted field drafts…" /></SafeAreaView>;
   if (property && inspection) return <InspectionScreen
     api={api}

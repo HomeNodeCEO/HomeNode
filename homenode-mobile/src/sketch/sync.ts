@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 
 import { ApiError, type MobileApi } from "../api/client";
 import { type LocalSketchDraft, OfflineStore } from "../offline/store";
-import { toSketchApiDocument } from "./model";
+import { preserveSketchAreaLabelOffsets, toSketchApiDocument } from "./model";
 
 export async function synchronizeDueSketches(
   store: OfflineStore,
@@ -20,7 +20,10 @@ export async function synchronizeDueSketches(
         baseRevision: draft.baseRevision,
         sketch: toSketchApiDocument(draft.draft),
       });
-      await store.applyServerSketch(ownerUserId, draft.sessionId, response.sketch);
+      await store.applyServerSketch(ownerUserId, draft.sessionId, {
+        ...response.sketch,
+        document: preserveSketchAreaLabelOffsets(response.sketch.document, draft.draft),
+      });
     } catch (reason) {
       const code = reason instanceof ApiError
         ? reason.code

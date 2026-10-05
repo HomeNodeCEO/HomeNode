@@ -15,6 +15,46 @@ const PROOF_KEYS = ['kind', 'sourceField', 'documentId', 'candidateId', 'documen
   'sourceValue', 'sourceEvidence', 'effectiveDate', 'effectiveDateSource', 'effectiveDateSourceDocumentId', 'windowStart', 'windowEnd'];
 const CAD_KEYS = new Set(['subject_street_address', 'subject_city', 'subject_state', 'subject_zip',
   'county', 'assessor_parcel_number', 'owner_name', 'legal_description', 'neighborhood_name']);
+const REVALIDATABLE_IDENTITY_KEYS = new Set(['subject_street_address', 'subject_city', 'subject_state',
+  'subject_zip', 'county', 'assessor_parcel_number']);
+
+function sameIdentityDisplay(key, left, right) {
+  if (typeof left !== 'string' || typeof right !== 'string') return same(left, right);
+  if (key === 'county') return left.trim().replace(/\s+county$/i, '').toLowerCase()
+    === right.trim().replace(/\s+county$/i, '').toLowerCase();
+  return same(formatSubjectPresentationValue(key, left), formatSubjectPresentationValue(key, right));
+}
+
+function revalidatedIdentity(saved, key, value, receipt, proposal) {
+  if (!REVALIDATABLE_IDENTITY_KEYS.has(key) || !proposal || !receipt
+    || !sameIdentityDisplay(key, value, proposal.value)) return false;
+  const proof = proposal.provenance;
+  if (proof?.kind === 'reviewed_document') {
+    const cad = saved.documents.find(document => document.id === proof.documentId
+      && subjectDocumentSourceKind(document) === 'cad' && sfrepDocumentPropertyRole(document) === 'subject'
+      && !sfrepDocumentParcelMismatch(document)
+      && ['reviewed', 'review_required'].includes(document.processing_status));
+    if (!cad) return false;
+    if (receipt.sourceValue != null && !sameIdentityDisplay(key, receipt.sourceValue, receipt.reviewedSourceValue)) return false;
+    // A changed raw value on the same candidate still needs review, even if
+    // display formatting would hide the difference (ZIP+4 or phase suffix).
+    if (receipt.documentId === proof.documentId && receipt.candidateId === proof.candidateId
+      && !same(receipt.reviewedSourceValue, proposal.sourceValue)) return false;
+    return true;
+  }
+  if (proof?.kind !== 'account_reference' || proof.rule !== 'canonical_county_subject_identity_v1'
+    || receipt.kind !== proof.kind || receipt.rule !== proof.rule
+    || !sameIdentityDisplay(key, receipt.reviewedSourceValue, proposal.sourceValue)) return false;
+  // A changed capitalization or ZIP+4 presentation of the same account row
+  // must not strand a saved file. A different account or column still does.
+  const source = proof.sourceEvidence?.[0], old = receipt.sourceEvidence?.[0];
+  return source?.sourceTable === 'core.accounts' && old?.sourceTable === source.sourceTable
+    && source?.accountId === saved.accountId && old?.accountId === source.accountId
+    && old?.sourceField === source.sourceField
+    && sameIdentityDisplay(key, old?.value, receipt.reviewedSourceValue)
+    && sameIdentityDisplay(key, receipt.sourceValue, receipt.reviewedSourceValue)
+    && same(source?.value, proposal.sourceValue);
+}
 
 /** Resolve only persisted report values. Evidence receipts cannot authorize
  * themselves: exact source/value/derivation are checked against the current,
@@ -86,7 +126,7 @@ export function savedSfrepSubjectFields(saved, input) {
       const matchingCad = receipt.status === 'current' && cadDocument && proof?.kind === 'reviewed_document'
         && (receipt.kind !== proof.kind || receipt.documentId !== proof.documentId)
         && same(proposal.value, formatSubjectPresentationValue(descriptor.key, value));
-      if (!valid && !matchingCad) {
+      if (!valid && !matchingCad && !revalidatedIdentity(saved, descriptor.key, value, receipt, proposal)) {
         const reason = `${descriptor.key}: saved source-backed value needs review because its source or appraisal-date context changed. Review the source or correct the saved HomeNode field before exporting.`;
         warnings.push(reason);
         knownMissing.push(...descriptor.fieldIds.map(fieldId => ({ fieldId, reason })));

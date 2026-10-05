@@ -52,6 +52,19 @@ test('upload alone, foreign property, conflicting base versions, and unconfirmed
   assert.ok(partialReview.warnings.some(warning => /unreviewed suggestions/.test(warning)));
 });
 
+test('contract checklist identifies pending review and preserves independently approved date', () => {
+  const pending = projectSfrepContractSection([contract({ candidates: [], processing_status: 'review_required' })]);
+  assert.ok(pending.knownMissing.some(item => item.fieldId === 'AnalyzedContractDescription'
+    && /no approved terms/i.test(item.reason)));
+  const dateOnly = projectSfrepContractSection([contract({ processing_status: 'review_required',
+    candidates: contract().candidates.filter(item => item.field_key === 'contract_date') })],
+  { assignmentDetails: { contract_date: '2026-03-15', contract_price: '' } });
+  assert.equal(dateOnly.fields.find(field => field.fieldId === 'ContractDate')?.value, '03/15/2026');
+  assert.equal(dateOnly.fields.some(field => field.fieldId === 'AnalyzedContractDescription'), false);
+  assert.ok(dateOnly.knownMissing.some(item => item.fieldId === 'AnalyzedContractDescription'
+    && /contract_price/.test(item.reason)));
+});
+
 test('a document labeled Contract outranks financing and other addenda in both legacy forms', () => {
   const main = contract({ title: 'Contract.pdf', file_name: 'Contract.pdf' });
   const financing = contract({ id: 10, title: 'Thhird PArty Financing.pdf', file_name: 'Thhird PArty Financing.pdf',

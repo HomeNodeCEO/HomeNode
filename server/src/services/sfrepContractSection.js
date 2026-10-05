@@ -29,12 +29,16 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   if (!selection.document) {
     if (selection.ambiguous) warnings.push('Multiple base purchase contracts are in the workfile. Select which signed contract applies before mapping the legacy Contract section.');
     else if (selection.supplementalCount) warnings.push('Only financing or other contract addenda were found; upload the base purchase contract.');
+    knownMissing.push({ fieldId: 'AnalyzedContractDescription', reason: selection.ambiguous
+      ? 'More than one base contract is present; select the subject contract in the Document Evidence Center.'
+      : 'No base subject contract is available. Financing and other addenda do not supply the contract analysis.' });
     return { fields, warnings, knownMissing };
   }
   const document = selection.document;
   if ((document.property_role !== 'subject' && !hasCurrentContractSubjectAssociation(document))
     || !['reviewed', 'review_required'].includes(document.processing_status)) {
     warnings.push('The base contract needs subject-property verification and confirmed terms before it can mark the legacy Contract section analyzed.');
+    knownMissing.push({ fieldId: 'AnalyzedContractDescription', reason: 'Verify that the base contract belongs to this subject and review its extracted terms in the Document Evidence Center.' });
     return { fields, warnings, knownMissing };
   }
   if (selection.supplementalCount) warnings.push(`${selection.supplementalCount} financing/addendum document(s) were kept as workfile evidence and did not replace the base contract.`);
@@ -60,6 +64,7 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   }
   if (!candidates.size) {
     warnings.push('The contract has no confirmed terms. Review its extracted fields before marking the contract analyzed.');
+    knownMissing.push({ fieldId: 'AnalyzedContractDescription', reason: 'The base contract has no approved terms. Review its suggested fields in the Document Evidence Center.' });
     return { fields, warnings, knownMissing };
   }
   // Confirmation normally writes these terms into the HomeNode assignment.
@@ -67,7 +72,7 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   // do not silently replace that saved choice at export time.
   if (record(assignmentDetails)) {
     const differences = TERMS.filter(key => {
-      if (!Object.hasOwn(assignmentDetails, key)) return false;
+      if (!candidates.has(key) || !Object.hasOwn(assignmentDetails, key)) return false;
       const raw = assignmentDetails[key];
       const saved = key === 'contract_date' ? contractDate(String(raw ?? ''))
         : /^\$?\s*(?:\d+|\d{1,3}(?:,\d{3})+)(?:\.\d{1,2})?$/.test(String(raw ?? '').trim())

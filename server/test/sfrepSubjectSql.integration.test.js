@@ -53,6 +53,36 @@ test('actual PostgreSQL binds matched Census and reviewed HOA receipts into the 
     const preview = previewSfrepDocuments(documents, input);
     assert.equal(preview.fields.find(field => field.fieldId === 'CensusTract').value, '12.34');
     assert.equal(preview.fields.some(field => ['PropertyTypePUDCheckBox', 'AssessmentAmount'].includes(field.fieldId)), false);
+    // Exercise the production SQL snapshot, not a direct document fixture: the
+    // optional attachment selection must not erase the base contract's label.
+    const baseBytes = Buffer.from('%PDF-1.4 Synthetic base contract fixture');
+    const base = await client.query(`INSERT INTO app.assignment_documents
+      (account_id, assignment_file_id, document_type, title, file_name, content_type, content, checksum_sha256, file_size_bytes, processing_status)
+      VALUES ($1, $2, 'purchase_contract', 'Contract.pdf', 'Contract.pdf', 'application/pdf', $3, $4, $5, 'reviewed') RETURNING id`,
+    [accountId, assignmentFileId, baseBytes, createHash('sha256').update(baseBytes).digest('hex'), baseBytes.length]);
+    const baseId = Number(base.rows[0].id);
+    for (const [key, value] of [
+      ['subject_property_address', '100 Example Dr, Garland, TX 75041'],
+      ['contract_date', '2026-08-25'], ['contract_price', '282500'], ['earnest_money', '2600'],
+      ['down_payment', '8475'], ['loan_amount', '274025'], ['seller_concessions', '0'],
+    ]) await client.query(`INSERT INTO app.assignment_document_field_candidates
+      (document_id, field_key, normalized_value, confirmed_value, raw_value, review_status, extraction_method)
+      VALUES ($1, $2, $3, $3, $3, 'confirmed', 'labeled_text')`, [baseId, key, value]);
+    const addendumBytes = Buffer.from('%PDF-1.4 Synthetic financing addendum fixture');
+    await client.query(`INSERT INTO app.assignment_documents
+      (account_id, assignment_file_id, document_type, title, file_name, content_type, content, checksum_sha256, file_size_bytes, processing_status)
+      VALUES ($1, $2, 'purchase_contract', 'Thhird PArty Financing.pdf', 'Thhird PArty Financing.pdf',
+        'application/pdf', $3, $4, $5, 'reviewed')`,
+    [accountId, assignmentFileId, addendumBytes, createHash('sha256').update(addendumBytes).digest('hex'), addendumBytes.length]);
+    const fieldsOnly = { ...input, documentIds: [], includeDocuments: false };
+    for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+      const mapped = previewSfrepDocuments(await readSfrepDocuments(client, fieldsOnly), { ...fieldsOnly, formId });
+      assert.equal(mapped.fields.find(field => field.fieldId === 'StreetAddress')?.value, '100 Example Dr');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'AnalyzedContractYesCheckBox')?.value, 'true');
+      assert.equal(mapped.fields.find(field => field.fieldId === 'SalePriceAmount')?.value, '282500.00');
+      assert.match(mapped.fields.find(field => field.fieldId === 'AnalyzedContractDescription')?.value || '', /purchase price of \$282,500/);
+      assert.equal(mapped.pdfAddenda.length, 0);
+    }
     await client.query("UPDATE core.account_census_geographies SET status = 'review_required' WHERE account_id = $1", [accountId]);
     const changed = previewSfrepDocuments(await readSfrepDocuments(client, input), input);
     assert.notEqual(changed.preview_digest, preview.preview_digest);

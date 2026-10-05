@@ -88,3 +88,14 @@ succeed. This
 primitive alone does **not** raise the live 50,000-account ceiling or grant
 source access. The remaining capture, storage, statistics, map, and report
 budgets in the table above remain enforced until subsequent phases land.
+
+## Phase 2 authorization prerequisite (not a job runner)
+
+`customCohortJobActor.js` reloads the original actor's *current* active user,
+organization membership, and roles from PostgreSQL. A future resumable capture
+must use this current identity and the existing assignment and market-source
+policy checks before each resumable operation and final registration. It must
+not persist an old browser token or treat a queued job row as an authorization
+grant. A durable job state machine, bounded checkpoints, cancellation, and
+resumption are still to be implemented; this prerequisite changes no live
+capture route.

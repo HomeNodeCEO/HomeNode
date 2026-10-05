@@ -25,14 +25,25 @@ import { synchronizeDuePhotosWithDependencies, uploadPhotoObject } from "../src/
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
 
-test("camera stages the original and recovery manifest before reopening encrypted storage", () => {
+test("camera stages photos while encrypted database activity is paused without forcing a close", () => {
   const panel = fs.readFileSync(path.resolve(testDirectory, "../src/photos/PhotoCapturePanel.tsx"), "utf8");
   const capture = fs.readFileSync(path.resolve(testDirectory, "../src/photos/capture.ts"), "utf8");
-  const picker = panel.match(/const pickWithDatabaseClosed = async \([\s\S]*?\n  };/)?.[0] || "";
-  assert.match(picker, /await store\.prepareForExternalActivity\(\);[\s\S]*await prepareAssets\(assets, source\);[\s\S]*await store\.ensureReady\(\);/);
+  const picker = panel.match(/const pickWithDatabasePaused = async \([\s\S]*?\n  };/)?.[0] || "";
+  assert.match(picker, /await store\.pauseDatabaseActivity\(\);[\s\S]*await prepareAssets\(assets, source\);[\s\S]*await ensurePhotoDatabaseReady\(store\);[\s\S]*resumeDatabaseActivity\(\);/);
+  assert.doesNotMatch(picker, /prepareForExternalActivity/);
   assert.match(capture, /new File\(directory, STAGED_PHOTO_MANIFEST\)\.write\(JSON\.stringify\(prepared\)\)/);
   assert.match(panel, /recoverStagedPhotos\(ownerUserId, sessionId\)/);
+  assert.match(panel, /setStagedPhotos\(staged\)/);
+  assert.match(panel, /Recover saved photos/);
+  assert.match(capture, /new File\(entry, fileName\)/);
   assert.doesNotMatch(panel, /if \(!cached\) \{[\s\S]*deletePreparedPhotoFiles\(photo\)/);
+});
+
+test("photo drafts resolve previews in the current app Documents directory", () => {
+  const store = fs.readFileSync(path.resolve(testDirectory, "../src/offline/store.ts"), "utf8");
+  assert.match(store, /new File\(Paths\.document, "homenode-appraisal-photos", row\.owner_user_id, row\.session_id, row\.client_photo_id, fileName\)/);
+  assert.match(store, /uri: currentPhotoUri\(row, row\.display_uri\)/);
+  assert.match(store, /uri: currentPhotoUri\(row, row\.original_uri\)/);
 });
 
 test("photo capacity is bounded to 100 active inspection photos", () => {

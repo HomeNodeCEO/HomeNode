@@ -37,11 +37,18 @@ export async function recoverStagedPhotos(ownerUserId: string, sessionId: string
     try {
       const photo = JSON.parse(await manifest.text()) as PreparedPhoto;
       if (photo.clientPhotoId !== entry.name || !photo.category || photo.objects?.length !== 2) continue;
-      if (!photo.objects.every((object) => {
-        const file = new File(object.uri);
-        return object.uri.startsWith(`${entry.uri.replace(/\/$/, "")}/`) && file.exists && file.size > 0;
-      })) continue;
-      recovered.push(photo);
+      const objects = photo.objects.map((object) => {
+        const fileName = object.uri?.split("/").pop() || "";
+        if (object.variant === "original" ? !/^original\.[A-Za-z0-9]{2,5}$/.test(fileName) : fileName !== "display.jpg") {
+          throw new Error("invalid_staged_photo_path");
+        }
+        // Rebuild the URI under the current app container. iOS may change the
+        // absolute container prefix while preserving its Documents contents.
+        const file = new File(entry, fileName);
+        if (!file.exists || !file.size) throw new Error("missing_staged_photo_file");
+        return { ...object, uri: file.uri, byteSize: Number(file.size) };
+      });
+      recovered.push({ ...photo, objects });
     } catch {
       // Leave an incomplete manifest and its originals untouched for support recovery.
     }

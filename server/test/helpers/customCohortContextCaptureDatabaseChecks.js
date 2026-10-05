@@ -191,6 +191,16 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
       'PostgreSQL verifies compressed-byte digests on a process-cache hit');
     assert.ok(!calls.slice(hotFrom).some(sql => sql.includes('custom-cohort-prepared-preview:read')),
       'a hot numeric preview must not return the compressed payload to the application');
+    const viewportFrom = calls.length;
+    const visible = await capture.viewport(previewRequest,
+      { west: -96.701, south: 32.799, east: -96.698, north: 32.802 });
+    assert.equal(visible.status, 'available');
+    assert.equal(visible.counts.captured_parcels, 2);
+    assert.deepEqual(visible.geojson.features,
+      display.parcel_map.geojson.features.filter(feature => feature.properties.account_id === account),
+      'a verified prepared viewport retains exact geometry and selected flags');
+    assert.ok(!calls.slice(viewportFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
+      'the viewport must not reassemble the original retained graph');
     const exposureDenied = createCustomCohortContextCapture({ pool: observed,
       authorizeMarketData: async (_client, _auth, _context, _purpose, { exposure }) => exposure === 'none' ? grant : { allowed: false } });
     await assert.rejects(exposureDenied.present(previewRequest), /market_data_access_denied/);

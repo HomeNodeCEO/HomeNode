@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
-  registerCustomCohortPreparedViewportMap } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
+  registerCustomCohortPreparedViewportMap,
+  visibleCustomCohortPreparedFeatures } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
 
 const square = (id, account, x, selected = false) => ({ type: 'Feature', id: `gis.dcad_parcels:${id}`,
   properties: { object_id: String(id), account_id: account, selected },
@@ -74,6 +75,16 @@ test('verified prepared geometry uses a bounded spatial index without changing e
   assert.ok(selectedReads < 1000, 'a small tile does not traverse the full selected roster');
   assert.equal(result.geojson.features[0].properties.selected, false);
   assert.equal(result.geojson.features[1].properties.selected, true);
+
+  const neutralViewport = visibleCustomCohortPreparedFeatures({ status: 'available',
+    geojson: { features: source } },
+  { west: -96.899, south: 32.001, east: -96.89, north: 32.01 },
+  Array.from({ length: 10_000 }, (_, i) => i % 2 === 0 ? String(i) : null).filter(Boolean));
+  assert.deepEqual(neutralViewport.map(feature => feature.id), result.geojson.features.map(feature => feature.id));
+  assert.deepEqual(neutralViewport.map(feature => feature.properties.selected),
+    result.geojson.features.map(feature => feature.properties.selected));
+  assert.equal(neutralViewport[0].geometry, source[Number(neutralViewport[0].properties.account_id)].geometry,
+    'the exact frozen geometry is shared rather than cloned');
 
   const reversed = Object.freeze([...selected].reverse());
   assert.equal(registerCustomCohortPreparedViewportMap({ geojson: { features: reversed } }, neutral), false);

@@ -145,21 +145,43 @@ export function registerCustomCohortPreparedViewportMap(selectedMap, neutralMap)
 
 function candidates(features, viewport) {
   const source = preparedSources.get(features);
-  if (!source || source.length < 1000) return features;
+  if (!source) return features;
+  return candidatePositions(source, viewport).map(position => features[position]);
+}
+
+function candidatePositions(source, viewport) {
+  if (source.length < 1000) return source.map((_feature, position) => position);
   let index = preparedIndexes.get(source);
   if (index === undefined) {
     index = buildIndex(source);
     preparedIndexes.set(source, index);
   }
-  if (!index) return features;
+  if (!index) return source.map((_feature, position) => position);
   const left = cell(viewport.west), right = cell(viewport.east);
   const bottom = cell(viewport.south), top = cell(viewport.north);
-  if ((right - left + 1) * (top - bottom + 1) > MAX_QUERY_CELLS) return features;
+  if ((right - left + 1) * (top - bottom + 1) > MAX_QUERY_CELLS)
+    return source.map((_feature, position) => position);
   const found = new Set(index.broad);
   for (let x = left; x <= right; x++) for (let y = bottom; y <= top; y++) {
     for (const position of index.cells.get(key(x, y)) ?? []) found.add(position);
   }
-  return [...found].sort((a, b) => a - b).map(position => features[position]);
+  return [...found].sort((a, b) => a - b);
+}
+
+/** Return only exact visible features from a verified, frozen prepared map.
+ * The repository checks its stored digests and complete selected membership
+ * before this display-only slice can be sent to the authorized caller. */
+export function visibleCustomCohortPreparedFeatures(map, requestedViewport, selectedAccountIds) {
+  const viewport = prepareCustomCohortViewport(requestedViewport);
+  const source = map?.geojson?.features;
+  if (map?.status !== 'available' || !Array.isArray(source) || !Object.isFrozen(source)
+    || !Array.isArray(selectedAccountIds)) invalid();
+  const selected = new Set(selectedAccountIds);
+  return candidatePositions(source, viewport)
+    .map(position => source[position])
+    .filter(feature => intersects(feature.geometry, viewport))
+    .map(feature => ({ ...feature, properties: { ...feature.properties,
+      selected: selected.has(feature.properties.account_id) } }));
 }
 
 export function projectCustomCohortViewportMap(preview, requestedViewport) {

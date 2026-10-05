@@ -114,3 +114,15 @@ mounted in HTTP until the stage worker exists; it cannot be mistaken for a
 working asynchronous capture. Status responses omit checkpoint references and
 internal source errors. A lost cancellation response can be retried against a
 terminal job without altering its outcome.
+
+The first worker pass is available through the separate
+`maintenance:neighborhood-capture-jobs` command. It claims one due operation,
+reloads the actor's *current* active membership/roles, polls cancellation and
+renews a fenced lease, then invokes the existing bounded capture. The final
+context registration and job success share a transaction; a lost lease or
+cancellation rolls back that registration. A committed context whose response
+was lost is replayed under current rights before the matching job is completed.
+This worker is not yet scheduled or exposed through HTTP and still enforces the
+installed 50,000-account ceiling. The remaining phase checkpoints, paged source
+capture, larger-area statistics/map/publication contracts and live acceptance
+must land before this path can serve a 5- or 10-mile study.

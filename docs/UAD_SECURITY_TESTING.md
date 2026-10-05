@@ -185,6 +185,67 @@ suppressed for these advisories. HomeNode does not run Metro or `image-size` in
 the deployed API; untrusted appraisal images must not be processed through the
 mobile build toolchain.
 
+### Mobile Forge and braces backports (release hold)
+
+As checked on October 2, 2026, the official registry has no fixed release for
+`node-forge` 1.4.0 (`GHSA-86w9-cpqp-85rv`) or `braces` 3.0.3
+(`GHSA-vfj7-8cjw-p6xm`). The advisory audit's suggested version ranges are not
+proof that those releases exist. Updating Expo or Metro does not remove the
+affected signing and file-watching dependency paths.
+
+The frozen mobile lockfile registers two local mitigations, without changing
+their published versions or suppressing audit findings:
+
+- Forge: validate the nested DigestAlgorithm element count and reject nonempty
+  ASN.1 NULL parameters in the Node RSA verifier. This preserves the proposed
+  upstream PR 1152 approach plus the reviewed NULL-content guard from PR 1084.
+  Tests exercise both Expo resolution paths, malformed encodings, valid
+  SHA-256 and RSA-PSS signatures, certificate verification, CSRs and signing.
+  Generated test private keys demonstrate malformed-encoding rejection, not
+  a practical forgery without the key or universal cryptographic correctness.
+- Braces: cap brace/parenthesis nesting at 100, validate direct AST child
+  graphs before recursive compile/expand/stringify walks, reject cyclic or
+  reused container nodes and object/function-valued nodes, and bound
+  expansion's ancestor searches. Primitive values retain their existing
+  behavior; getters/proxies and arbitrary executable JavaScript objects are
+  not an attested untrusted-input boundary. Caller
+  options cannot disable these guards. Tests cover both Metro resolution
+  paths, normal globs, escapes, exact bounds, malformed ASTs and bounded
+  child-process rejection. Direct AST container sharing is intentionally
+  rejected; parsed AST parent/previous links and repeated leaves remain valid.
+
+These patches only attest the tested repository-controlled Node toolchain.
+Forge's browser distribution bundles, globally installed tools, external EAS
+workers and native/OTA publishing are not covered. Local Android/iOS JavaScript
+exports are compatibility evidence, not signed native build approval. No
+authentication, photo synchronization or server signing policy is changed.
+
+The ordinary dependency audit still reports both high advisories and blocks
+release. Neither a successful test nor this documentation grants a release
+exception. Keep raw findings visible. Replace these backports with official
+fixed versions when available, rerun all compatibility/security checks, and
+remove the patches; do not fake versions or disable the existing gate.
+
+`pnpm run verify:toolchain` first hashes the reviewed patched files resolved
+through the two Expo Forge consumers and both Metro/micromatch braces paths,
+then runs the existing Forge and braces regression tests using Node alone,
+without requiring development dependencies or files outside the mobile app.
+It fails for a
+missing file, unexpected version, modified patched source, or behavioral
+regression. The JSON output records those actual package paths, file hashes,
+Node version, and lockfile hash; it explicitly does not approve a release.
+The integrity manifest must be reviewed alongside any future package update,
+not regenerated automatically to accept changed installed bytes. These hashes
+cover the patched files only, not every file in either package.
+
+The `eas-build-post-install` hook runs the same command in standard EAS builds.
+Per Expo's lifecycle contract, it runs after prebuild (and CocoaPods on iOS),
+so it is evidence of the installed project graph at that point, not protection
+for earlier build steps or an attestation of global EAS tooling. Custom EAS
+workflows must invoke it explicitly. No remote EAS execution has been attested
+by the local checks. The raw audit and native/OTA release hold remain separate
+and unchanged; this command makes no network calls or audit exceptions.
+
 ## Finding lifecycle
 
 Each finding records a stable identifier, control reference, severity,

@@ -21,7 +21,7 @@ test('1004 Contract section uses the reviewed Frost Hollow amounts and exact req
   assert.equal(byId.ContractDate, '03/15/2026');
   assert.equal(byId.SalePriceAmount, '785000.00');
   assert.equal(byId.BorrowerFinancialAssistanceNoCheckBox, 'true');
-  assert.equal(byId.AnalyzedContractDescription, 'Arms length sale;Contract dated 03/15/2026, purchase price of $785,000, earnest money $7,800, cash at close $157,000, new loan $628,000, with 0$ in concessions');
+  assert.equal(byId.AnalyzedContractDescription, 'Arms length sale;Contract dated 03/15/2026, purchase price of $785,000, earnest money $7,800, cash at close $157,000, new loan $628,000, with $0 in concessions');
   assert.deepEqual(result.knownMissing, []);
   const mapped = buildSfrepReportExport({ documents: [contract()], subjectOnly: true, contractSection: true,
     savedAssignmentDetails: { contract_arms_length: true } });
@@ -35,6 +35,8 @@ test('2055 Contract section preserves the same reviewed narrative in its own pri
   const urar = buildSfrepReportExport(options);
   const exterior = buildSfrepReportExport({ ...options, formId: 'FNMA-2055-0911' });
   assert.deepEqual(exterior.fields, urar.fields);
+  assert.match(exterior.reportXml, /with \$0 in concessions/);
+  assert.match(urar.reportXml, /with \$0 in concessions/);
   assert.match(exterior.reportXml, /<Form Id="FNMA-2055-0911">/);
   assert.match(exterior.reportXml, /<TextField Id="AnalyzedContractDescription" Data="Arms length sale;Contract dated 03\/15\/2026/);
 });

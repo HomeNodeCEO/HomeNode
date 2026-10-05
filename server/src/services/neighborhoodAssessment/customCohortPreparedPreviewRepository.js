@@ -7,6 +7,7 @@ import { prepareCustomCohortContextReference, prepareCustomCohortContextScope } 
 import { isCustomCohortObservationPreview,
   reselectCustomCohortIndexedObservationPreview,
   restoreCustomCohortIndexedObservationPreview } from './customCohortObservationPreview.js';
+import { registerCustomCohortPreparedViewportMap } from './customCohortViewportMap.js';
 
 const LIMITS = Object.freeze({ preview: { text: 64_000_000, compressed: 12_000_000 },
   map: { text: 32_000_000, compressed: 16_000_000 } });
@@ -265,6 +266,7 @@ export function selectCustomCohortPreparedParcelMap(map, accountIds) {
   if (useVerifiedBytes) {
     freezeMap(output);
     verifiedMapBytes.add(output);
+    registerCustomCohortPreparedViewportMap(output, map);
   }
   return output;
 }

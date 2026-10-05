@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { prepareCustomCohortViewport, projectCustomCohortViewportMap } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
+import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
+  registerCustomCohortPreparedViewportMap } from '../src/services/neighborhoodAssessment/customCohortViewportMap.js';
 
 const square = (id, account, x, selected = false) => ({ type: 'Feature', id: `gis.dcad_parcels:${id}`,
   properties: { object_id: String(id), account_id: account, selected },
@@ -41,6 +42,64 @@ test('mutable fallback geometry is not trusted as a cached spatial index', () =>
   assert.equal(projectCustomCohortViewportMap(changed, bounds).counts.visible_parcels, 1);
   changed.parcel_map.geojson.features[1].geometry.coordinates = square(2, 'other', -96.8).geometry.coordinates;
   assert.equal(projectCustomCohortViewportMap(changed, bounds).counts.visible_parcels, 2);
+});
+
+test('verified prepared geometry uses a bounded spatial index without changing exact parcel selection', () => {
+  const source = [], selected = [];
+  for (let i = 0; i < 10_000; i++) {
+    const x = -96.9 + i % 100 * .001, y = 32 + Math.floor(i / 100) * .001;
+    const geometry = Object.freeze({ type: 'Polygon', coordinates: Object.freeze([
+      Object.freeze([Object.freeze([x, y]), Object.freeze([x + .0002, y]),
+        Object.freeze([x + .0002, y + .0002]), Object.freeze([x, y + .0002]), Object.freeze([x, y])]),
+    ]) });
+    const id = `gis.dcad_parcels:${i}`;
+    source.push(Object.freeze({ id, geometry, properties: Object.freeze({ account_id: String(i), selected: false }) }));
+    selected.push(Object.freeze({ id, geometry, properties: Object.freeze({ account_id: String(i), selected: i % 2 === 0 }) }));
+  }
+  Object.freeze(source);
+  let selectedReads = 0;
+  const observed = new Proxy(selected, { get(target, property, receiver) {
+    if (typeof property === 'string' && /^\d+$/.test(property)) selectedReads++;
+    return Reflect.get(target, property, receiver);
+  } });
+  Object.freeze(observed);
+  const neutral = { geojson: { features: source } }, chosen = { geojson: { features: observed } };
+  assert.equal(registerCustomCohortPreparedViewportMap(chosen, neutral), true);
+  selectedReads = 0;
+  const target = { ...preview, parcel_map: { ...preview.parcel_map,
+    geojson: { type: 'FeatureCollection', features: observed }, counts: { parcels: 10_000 } } };
+  const result = projectCustomCohortViewportMap(target,
+    { west: -96.899, south: 32.001, east: -96.89, north: 32.01 });
+  assert.ok(result.counts.visible_parcels > 0 && result.counts.visible_parcels < 200);
+  assert.ok(selectedReads < 1000, 'a small tile does not traverse the full selected roster');
+  assert.equal(result.geojson.features[0].properties.selected, false);
+  assert.equal(result.geojson.features[1].properties.selected, true);
+
+  const reversed = Object.freeze([...selected].reverse());
+  assert.equal(registerCustomCohortPreparedViewportMap({ geojson: { features: reversed } }, neutral), false);
+});
+
+test('a large multipart parcel remains visible even when its bounds exceed the index cell ceiling', () => {
+  const geometry = Object.freeze({ type: 'MultiPolygon', coordinates: Object.freeze([
+    Object.freeze([Object.freeze([Object.freeze([0, 0]), Object.freeze([1, 0]),
+      Object.freeze([1, 1]), Object.freeze([0, 1]), Object.freeze([0, 0])])]),
+    Object.freeze([Object.freeze([Object.freeze([2, 2]), Object.freeze([3, 2]),
+      Object.freeze([3, 3]), Object.freeze([2, 3]), Object.freeze([2, 2])])]),
+  ]) });
+  const source = Object.freeze(Array.from({ length: 1000 }, (_, i) => Object.freeze({
+    id: `gis.dcad_parcels:${i}`, geometry: i === 0 ? geometry : Object.freeze(square(i, String(i), -96.8).geometry),
+    properties: Object.freeze({ account_id: String(i), selected: false }),
+  })));
+  const selected = Object.freeze(source.map(feature => Object.freeze({ ...feature,
+    properties: Object.freeze({ ...feature.properties, selected: true }) })));
+  assert.equal(registerCustomCohortPreparedViewportMap({ geojson: { features: selected } },
+    { geojson: { features: source } }), true);
+  const target = { ...preview, parcel_map: { ...preview.parcel_map,
+    geojson: { type: 'FeatureCollection', features: selected }, counts: { parcels: 1000 } } };
+  const inside = projectCustomCohortViewportMap(target, { west: .2, south: .2, east: .3, north: .3 });
+  assert.deepEqual(inside.geojson.features.map(feature => feature.id), ['gis.dcad_parcels:0']);
+  assert.equal(projectCustomCohortViewportMap(target,
+    { west: 1.2, south: 1.2, east: 1.3, north: 1.3 }).counts.visible_parcels, 0);
 });
 
 test('a polygon bounding box cannot count an invisible parcel', () => {

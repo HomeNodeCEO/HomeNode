@@ -1,5 +1,5 @@
 import * as Crypto from "expo-crypto";
-import { Directory, File } from "expo-file-system";
+import { Directory, File, Paths } from "expo-file-system";
 import * as SecureStore from "expo-secure-store";
 import * as SQLite from "expo-sqlite";
 import { Platform } from "react-native";
@@ -82,6 +82,7 @@ type InspectionRow = {
 };
 
 type PhotoDraftRow = {
+  owner_user_id: string;
   client_photo_id: string;
   session_id: string;
   server_photo_id: string | null;
@@ -231,6 +232,15 @@ function fieldState(row: DraftRow | null, side: "server" | "local"): FieldState 
   };
 }
 
+function currentPhotoUri(row: PhotoDraftRow, storedUri: string) {
+  // iOS can assign a new absolute app-container path after an update. Keep
+  // database IDs stable and resolve the durable relative photo path at read time.
+  const fileName = storedUri.split("/").pop() || "";
+  if (!/^original\.[A-Za-z0-9]{2,5}$|^display\.jpg$/.test(fileName)) return storedUri;
+  const file = new File(Paths.document, "homenode-appraisal-photos", row.owner_user_id, row.session_id, row.client_photo_id, fileName);
+  return file.exists ? file.uri : storedUri;
+}
+
 function localPhoto(row: PhotoDraftRow): LocalPhotoDraft {
   return {
     clientPhotoId: row.client_photo_id,
@@ -250,7 +260,7 @@ function localPhoto(row: PhotoDraftRow): LocalPhotoDraft {
       {
         clientObjectId: row.original_client_object_id,
         variant: "original",
-        uri: row.original_uri,
+        uri: currentPhotoUri(row, row.original_uri),
         fileName: row.original_file_name,
         contentType: row.original_content_type,
         byteSize: Number(row.original_byte_size),
@@ -260,7 +270,7 @@ function localPhoto(row: PhotoDraftRow): LocalPhotoDraft {
       {
         clientObjectId: row.display_client_object_id,
         variant: "display",
-        uri: row.display_uri,
+        uri: currentPhotoUri(row, row.display_uri),
         fileName: row.display_file_name,
         contentType: row.display_content_type,
         byteSize: Number(row.display_byte_size),

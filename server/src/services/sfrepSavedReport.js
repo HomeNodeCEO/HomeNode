@@ -3,6 +3,8 @@ import {
 } from './customSubjectApplication.js';
 import { formatSubjectPresentationValue } from '../util/subjectPresentation.js';
 import { isUrarStateCode } from '../util/urarScalarValidation.js';
+import { parseStructuredAddress } from '../util/structuredAddress.js';
+import { normalizePropertyCity } from '../util/propertySearch.js';
 import { isDeepStrictEqual } from 'node:util';
 import { sfrepDocumentParcelMismatch, sfrepDocumentPropertyRole } from './sfrepSubjectContext.js';
 import { hasCurrentContractSubjectAssociation, contractAssociationWarning } from './contractSubjectAssociation.js';
@@ -51,8 +53,25 @@ function reviewedStateWithoutCanonicalSource(saved, value, receipt) {
   // Some older county account rows have no state. Retain a confirmed state
   // printed in this subject's reviewed full address; do not infer one from a
   // ZIP code, county name, or the workfile's selected report field alone.
-  const printed = receipt.sourceField === 'subject_state' ? raw.trim()
-    : raw.match(/,\s*([A-Za-z]{2})\s+\d{5}(?:-\d{4})?\s*$/)?.[1];
+  let printed;
+  if (receipt.sourceField === 'subject_state') printed = raw.trim();
+  else {
+    const address = raw.match(/^(.+),\s*([A-Za-z][A-Za-z .'-]*),?\s+([A-Za-z]{2})\s+(\d{5}(?:-\d{4})?)\s*$/);
+    if (!address) return false;
+    const subject = saved.subject?.value;
+    const savedStreet = readCustomSubjectValue({ subject }, 'subject_street_address');
+    const savedCity = readCustomSubjectValue({ subject }, 'subject_city');
+    const savedZip = readCustomSubjectValue({ subject }, 'subject_zip');
+    if (typeof savedStreet !== 'string' || typeof savedCity !== 'string'
+      || typeof savedZip !== 'string' || !/^\d{5}(?:-\d{4})?$/.test(savedZip)) return false;
+    const sourceStreet = parseStructuredAddress(address[1]);
+    const reportStreet = parseStructuredAddress(savedStreet);
+    if (!sourceStreet.house_number || !reportStreet.house_number
+      || !['base_address_key', 'unit_key', 'building_key', 'floor_key'].every(key => sourceStreet[key] === reportStreet[key])
+      || normalizePropertyCity(address[2]) !== normalizePropertyCity(savedCity)
+      || address[4].slice(0, 5) !== savedZip.slice(0, 5)) return false;
+    printed = address[3];
+  }
   return Boolean(printed && printed.toUpperCase() === value.toUpperCase());
 }
 

@@ -286,7 +286,8 @@ test('reviewed subject-address state survives a missing canonical state without 
     assert.equal(state?.provenance.origin, 'reviewed_document');
     assert.equal(state?.provenance.sourceDocumentId, mls.id);
   }
-  for (const change of ['rejected', 'changed_raw', 'not_current', 'wrong_state', 'different_account_state']) {
+  for (const change of ['rejected', 'changed_raw', 'not_current', 'wrong_state', 'different_account_state',
+    'edited_street', 'edited_city', 'edited_zip']) {
     const altered = structuredClone(saved);
     const old = altered.documents[3].candidates.find(item => item.id === address.id);
     if (change === 'rejected') old.review_status = 'rejected';
@@ -299,6 +300,9 @@ test('reviewed subject-address state survives a missing canonical state without 
     if (change === 'different_account_state') {
       for (const document of altered.documents) document.subject_context.canonicalIdentity.state = 'OK';
     }
+    if (change === 'edited_street') altered.subject.value.property_location.address = '101 Different Dr';
+    if (change === 'edited_city') altered.subject.value.property_location.city = 'Plano';
+    if (change === 'edited_zip') altered.subject.value.property_location.postal_code = '75042';
     assert.equal(exportSaved(altered).fields.some(item => item.fieldId === 'State'), false, change);
   }
 });

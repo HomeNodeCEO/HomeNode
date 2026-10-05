@@ -115,5 +115,18 @@ test('Custom capture jobs fence retries, cancellation and atomic context complet
     assert.equal((await client.query(`SELECT status FROM app.neighborhood_custom_cohort_capture_jobs
       WHERE operation_id=$1`, [abandonedOperation])).rows[0].status, 'cancelled',
     'a crashed worker must not strand a cancelled claim');
+
+    const corruptOperation = randomUUID(), healthyOperation = randomUUID();
+    await repository.enqueue({ scope, actorUserId: actor, request: makeRequest(corruptOperation) });
+    await client.query(`UPDATE app.neighborhood_custom_cohort_capture_jobs
+      SET request_payload=jsonb_set(request_payload,'{observation_period,start_date}',
+        to_jsonb('2023-01-01'::text)) WHERE operation_id=$1`, [corruptOperation]);
+    await repository.enqueue({ scope, actorUserId: actor, request: makeRequest(healthyOperation) });
+    const recovered = await repository.claimDue({ limit: 2 });
+    assert.deepEqual(recovered.map(row => row.operation_id), [healthyOperation],
+      'corrupt first job must not roll back a later valid claim');
+    assert.deepEqual((await client.query(`SELECT status,last_error_code FROM
+      app.neighborhood_custom_cohort_capture_jobs WHERE operation_id=$1`,
+    [corruptOperation])).rows[0], { status: 'failed', last_error_code: 'job_corrupt' });
   } finally { await client.end(); }
 });

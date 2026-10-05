@@ -98,7 +98,9 @@ test('malformed checkpoints and claims cannot renew a lease', async () => {
 });
 
 test('a claimed request with a changed payload cannot be resumed', async () => {
-  const repository = createCustomCohortCaptureJobRepository({ async query(sql) {
+  const calls = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    calls.push({ sql, values });
     if (sql.includes('custom-cohort-job:claim')) return { rowCount: 1, rows: [{
       operation_id: operation, organization_id: organization, report_file_id: report,
       assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
@@ -106,9 +108,12 @@ test('a claimed request with a changed payload cannot be resumed', async () => {
       request_payload: { ...request, observation_period: {
         start_date: '2023-01-01', end_date: '2024-12-31' } },
       claim_token: token, attempts: 1 }] };
+    if (sql.includes('custom-cohort-job:quarantine')) return { rowCount: 1, rows: [{ operation_id: operation }] };
     return { rowCount: 0, rows: [] };
   } });
-  await assert.rejects(repository.claimDue(), /job_corrupt/);
+  assert.deepEqual(await repository.claimDue(), []);
+  assert.match(calls.at(-1).sql, /last_error_code='job_corrupt'/);
+  assert.deepEqual(calls.at(-1).values, [operation, token, 1]);
 });
 
 test('a claimed checkpoint is structurally verified before worker resume', async () => {
@@ -120,13 +125,37 @@ test('a claimed checkpoint is structurally verified before worker resume', async
       assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
       actor_user_id: actor, request_sha256: assessmentEvidenceDigest(request),
       request_payload: request, claim_token: token, attempts: 1, checkpoint }] };
+    if (sql.includes('custom-cohort-job:quarantine')) return { rowCount: 1, rows: [{ operation_id: operation }] };
     return { rowCount: 0, rows: [] };
   } });
   const [claimed] = await repository.claimDue();
   assert.deepEqual(claimed.checkpoint, checkpoint);
   assert.equal(Object.isFrozen(claimed.checkpoint.evidence_refs[0]), true);
   checkpoint = { phase: 'source', evidence_refs: [{ ...evidence, content_sha256: 'bad' }] };
-  await assert.rejects(repository.claimDue(), /job_corrupt/);
+  assert.deepEqual(await repository.claimDue(), []);
   checkpoint = { phase: 'unknown', evidence_refs: [] };
-  await assert.rejects(repository.claimDue(), /job_corrupt/);
+  assert.deepEqual(await repository.claimDue(), []);
+});
+
+test('a corrupt earlier claim does not prevent a valid claim in the same batch', async () => {
+  const later = '66666666-6666-4666-8666-666666666666';
+  const laterToken = '77777777-7777-4777-8777-777777777777';
+  const rows = [
+    { operation_id: operation, claim_token: token, attempts: 1,
+      request_payload: { ...request, observation_period: {
+        start_date: '2023-01-01', end_date: '2024-12-31' } } },
+    { operation_id: later, claim_token: laterToken, attempts: 1,
+      request_payload: { ...request, operation_id: later } },
+  ].map(row => ({ organization_id: organization, report_file_id: report,
+    assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
+    actor_user_id: actor, request_sha256: assessmentEvidenceDigest({
+      ...request, operation_id: row.operation_id }), ...row }));
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql) {
+    if (sql.includes('custom-cohort-job:claim')) return { rowCount: 2, rows };
+    if (sql.includes('custom-cohort-job:quarantine')) return { rowCount: 1,
+      rows: [{ operation_id: operation }] };
+    return { rowCount: 0, rows: [] };
+  } });
+  const claimed = await repository.claimDue({ limit: 2 });
+  assert.deepEqual(claimed.map(row => row.operation_id), [later]);
 });

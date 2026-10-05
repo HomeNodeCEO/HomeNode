@@ -152,7 +152,8 @@ export function createCustomCohortCaptureJobRepository(client) {
             job.request_sha256,job.request_payload,job.attempts,
             job.claim_token::text,job.lease_expires_at,job.checkpoint`, [limit, leaseSeconds]);
       if (!Array.isArray(result?.rows) || result.rows.length > limit) fail('claim_unavailable');
-      return result.rows.map(row => {
+      const valid = [];
+      for (const row of result.rows) {
         try {
           scopeOf({ organization_id: row.organization_id,
             report_file_id: row.report_file_id, assignment_file_id: row.assignment_file_id,
@@ -166,9 +167,22 @@ export function createCustomCohortCaptureJobRepository(client) {
           // worker still verifies every referenced immutable blob before use.
           const checkpoint = row.checkpoint === null || row.checkpoint === undefined
             ? null : checkpointOf(row.checkpoint);
-          return Object.freeze({ ...row, request_payload: admitted, checkpoint });
-        } catch { fail('job_corrupt'); }
-      });
+          valid.push(Object.freeze({ ...row, request_payload: admitted, checkpoint }));
+        } catch {
+          // The claimed row is locked by the caller's transaction. Retire only
+          // this exact claim so a damaged payload cannot block every later job.
+          // Do not let validation failure roll back the other valid claims.
+          one(await client.query(`/* custom-cohort-job:quarantine */
+            UPDATE app.neighborhood_custom_cohort_capture_jobs
+              SET status='failed',claim_token=NULL,lease_expires_at=NULL,
+                last_error_code='job_corrupt',updated_at=clock_timestamp()
+              WHERE operation_id=$1::uuid AND claim_token=$2::uuid
+                AND attempts=$3::integer AND status='running'
+              RETURNING operation_id::text`,
+          [row.operation_id, row.claim_token, row.attempts]), 'job_corrupt');
+        }
+      }
+      return valid;
     },
 
     async heartbeat(claim, { leaseSeconds = 120, checkpoint = null } = {}) {

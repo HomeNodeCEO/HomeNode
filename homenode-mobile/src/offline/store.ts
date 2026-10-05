@@ -31,6 +31,7 @@ import {
   staleIosMigrationDatabaseNames,
   type OfflineDatabaseSnapshot,
 } from "./databaseEncryption";
+import { DatabaseActivityGate } from "./databaseActivityGate";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "./databaseRecovery";
 import {
   retryDelayMs,
@@ -531,7 +532,7 @@ async function migrateLegacyPlaintextDatabase(databaseName: string) {
   }
 }
 
-async function openInitializedDatabase(databaseName: string) {
+async function openInitializedDatabase(databaseName: string, recoverInterruptedTransfers = true) {
   const database = await openKeyedDatabase(databaseName);
   try {
     // DELETE journaling does not retain a WAL lock while iOS suspends HomeNode behind Camera/Photos.
@@ -688,30 +689,34 @@ async function openInitializedDatabase(databaseName: string) {
     CREATE INDEX IF NOT EXISTS photo_drafts_session_idx
       ON photo_drafts (owner_user_id, session_id, position, created_at);
     `);
-    await database.runAsync(
-      `UPDATE sync_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
-        WHERE state = 'uploading'`,
-      Date.now(),
-      Date.now(),
-    );
-    await database.runAsync(
-      `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
-        WHERE state IN ('registering', 'uploading', 'verifying')`,
-      Date.now(),
-      Date.now(),
-    );
-    await database.runAsync(
-      `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
-        WHERE state = 'synchronizing'`,
-      Date.now(),
-      Date.now(),
-    );
-    await database.runAsync(
-      `UPDATE uad_entity_proposal_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
-        WHERE state = 'uploading'`,
-      Date.now(),
-      Date.now(),
-    );
+    // Only a process restart proves these workers were interrupted. Reopening
+    // SQLCipher after Camera/Photos must not fail a still-active network upload.
+    if (recoverInterruptedTransfers) {
+      await database.runAsync(
+        `UPDATE sync_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
+          WHERE state = 'uploading'`,
+        Date.now(),
+        Date.now(),
+      );
+      await database.runAsync(
+        `UPDATE photo_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+          WHERE state IN ('registering', 'uploading', 'verifying')`,
+        Date.now(),
+        Date.now(),
+      );
+      await database.runAsync(
+        `UPDATE sketch_drafts SET state = 'failed', next_attempt_at = ?, updated_at = ?
+          WHERE state = 'synchronizing'`,
+        Date.now(),
+        Date.now(),
+      );
+      await database.runAsync(
+        `UPDATE uad_entity_proposal_queue SET state = 'failed', next_attempt_at = ?, updated_at = ?
+          WHERE state = 'uploading'`,
+        Date.now(),
+        Date.now(),
+      );
+    }
     await database.getFirstAsync("SELECT count(*) AS table_count FROM sqlite_master");
     return database;
   } catch (reason) {
@@ -720,7 +725,7 @@ async function openInitializedDatabase(databaseName: string) {
   }
 }
 
-async function initializeDatabase() {
+async function initializeDatabase(recoverInterruptedTransfers = true) {
   const databaseName = await storedDatabaseName(ACTIVE_DATABASE_NAME_KEY);
   if (!databaseName && DATABASE_POLICY.legacyPlaintext) {
     const legacyStoredName = await storedDatabaseName(DATABASE_POLICY.legacyPlaintext.activeDatabaseNameKey);
@@ -736,7 +741,7 @@ async function initializeDatabase() {
     throw new Error("mobile_offline_database_missing");
   }
   try {
-    const database = await openInitializedDatabase(selectedDatabaseName);
+    const database = await openInitializedDatabase(selectedDatabaseName, recoverInterruptedTransfers);
     try {
       if (!databaseName) {
         await SecureStore.setItemAsync(ACTIVE_DATABASE_NAME_KEY, selectedDatabaseName, {
@@ -764,7 +769,7 @@ async function initializeDatabase() {
     // same encrypted file on a genuinely new handle, but never abandon unsynchronized data
     // by silently switching the appraiser to an empty recovery database.
     try {
-      return await openInitializedDatabase(selectedDatabaseName);
+      return await openInitializedDatabase(selectedDatabaseName, recoverInterruptedTransfers);
     } catch (retryReason) {
       throw retryReason;
     }
@@ -772,6 +777,7 @@ async function initializeDatabase() {
 }
 
 type OfflineDatabaseConnection = {
+  activityGate: DatabaseActivityGate;
   closedForExternalActivity: boolean;
   database: SQLite.SQLiteDatabase;
   pendingClose: Promise<void> | null;
@@ -783,6 +789,7 @@ let databasePromise: Promise<OfflineDatabaseConnection> | null = null;
 function openDatabase() {
   databasePromise ||= initializeDatabase()
     .then((database) => ({
+      activityGate: new DatabaseActivityGate(),
       closedForExternalActivity: false,
       database,
       pendingClose: null,
@@ -810,6 +817,14 @@ export class OfflineStore {
     const store = new OfflineStore(await openDatabase());
     await store.ensureReady();
     return store;
+  }
+
+  withDatabaseActivity<T>(operation: () => Promise<T>): Promise<T> {
+    return this.connection.activityGate.run(operation);
+  }
+
+  pauseDatabaseActivity(): Promise<() => void> {
+    return this.connection.activityGate.pause();
   }
 
   async prepareForExternalActivity() {
@@ -846,7 +861,7 @@ export class OfflineStore {
       const previous = this.connection.database;
       this.connection.closedForExternalActivity = true;
       await previous.closeAsync().catch(() => undefined);
-      this.connection.database = await initializeDatabase();
+      this.connection.database = await initializeDatabase(false);
       this.connection.closedForExternalActivity = false;
     })().finally(() => {
       this.connection.repair = null;
@@ -1892,7 +1907,7 @@ export class OfflineStore {
     return rows.map(localPhoto);
   }
 
-  async duePhotoDrafts(ownerUserId: string, limit = 10) {
+  async duePhotoDrafts(ownerUserId: string, limit = 10, dueBefore = Date.now()) {
     const rows = await this.database.getAllAsync<PhotoDraftRow>(
       `SELECT * FROM photo_drafts
         WHERE owner_user_id = ?
@@ -1900,7 +1915,7 @@ export class OfflineStore {
           AND COALESCE(next_attempt_at, 0) <= ?
         ORDER BY created_at, client_photo_id LIMIT ?`,
       ownerUserId,
-      Date.now(),
+      dueBefore,
       limit,
     );
     return rows.map(localPhoto);

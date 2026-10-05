@@ -69,7 +69,8 @@ async function synchronizePhoto(
   photo: LocalPhotoDraft,
   dependencies: PhotoSyncDependencies,
 ) {
-  await store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "registering", { incrementAttempts: true });
+  const database = <T>(operation: () => Promise<T>) => store.withDatabaseActivity(operation);
+  await database(() => store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "registering", { incrementAttempts: true }));
   if (photo.removeOperationId && photo.serverPhotoId && photo.serverRevision) {
     let removed;
     try {
@@ -81,16 +82,16 @@ async function synchronizePhoto(
       );
     } catch (reason) {
       if (!(reason instanceof ApiError) || reason.code !== "mobile_photo_not_found") throw reason;
-      await store.deletePhotoDraft(ownerUserId, photo.clientPhotoId);
+      await database(() => store.deletePhotoDraft(ownerUserId, photo.clientPhotoId));
       await dependencies.deletePreparedPhotoFiles(photo);
       return;
     }
     if (removed.disposition === "placeholder_deleted") {
-      await store.deletePhotoDraft(ownerUserId, photo.clientPhotoId);
+      await database(() => store.deletePhotoDraft(ownerUserId, photo.clientPhotoId));
       await dependencies.deletePreparedPhotoFiles(photo);
       return;
     }
-    await store.applyServerPhoto(ownerUserId, photo.clientPhotoId, removed.photo);
+    await database(() => store.applyServerPhoto(ownerUserId, photo.clientPhotoId, removed.photo));
     await dependencies.deletePreparedPhotoFiles(photo);
     return;
   }
@@ -100,23 +101,23 @@ async function synchronizePhoto(
       baseRevision: photo.serverRevision,
       caption: photo.caption,
     });
-    await store.applyServerPhoto(ownerUserId, photo.clientPhotoId, updated);
+    await database(() => store.applyServerPhoto(ownerUserId, photo.clientPhotoId, updated));
     return;
   }
 
   const batch = await api.createPhotoUploadRequests(photo.sessionId, [store.photoUploadRequest(photo)]);
   const registered = batch.photos[0];
   if (!registered) throw new Error("mobile_photo_registration_failed");
-  await store.cacheRegisteredPhoto(ownerUserId, photo.clientPhotoId, registered.photo);
+  await database(() => store.cacheRegisteredPhoto(ownerUserId, photo.clientPhotoId, registered.photo));
   if (registered.photo.status === "verified" || registered.photo.status === "excluded") {
-    await store.applyServerPhoto(ownerUserId, photo.clientPhotoId, registered.photo);
+    await database(() => store.applyServerPhoto(ownerUserId, photo.clientPhotoId, registered.photo));
     return;
   }
-  await store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "uploading");
+  await database(() => store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "uploading"));
   for (const upload of registered.uploads) await dependencies.uploadObject(photo, upload);
-  await store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "verifying");
+  await database(() => store.markPhotoDraftState(ownerUserId, photo.clientPhotoId, "verifying"));
   const verified = await api.verifyPhoto(photo.sessionId, registered.photo.id);
-  await store.applyServerPhoto(ownerUserId, photo.clientPhotoId, verified);
+  await database(() => store.applyServerPhoto(ownerUserId, photo.clientPhotoId, verified));
 }
 
 export async function synchronizeDuePhotosWithDependencies(
@@ -124,9 +125,12 @@ export async function synchronizeDuePhotosWithDependencies(
   api: MobileApi,
   ownerUserId: string,
   dependencies: PhotoSyncDependencies,
+  dueBefore = Date.now(),
 ) {
-  await store.ensureReady();
-  const due = await store.duePhotoDrafts(ownerUserId);
+  const due = await store.withDatabaseActivity(async () => {
+    await store.ensureReady();
+    return store.duePhotoDrafts(ownerUserId, 10, dueBefore);
+  });
   await runWithConcurrency(due, PHOTO_SYNC_CONCURRENCY, async (photo) => {
     try {
       await synchronizePhoto(store, api, ownerUserId, photo, dependencies);
@@ -134,7 +138,8 @@ export async function synchronizeDuePhotosWithDependencies(
       const code = reason instanceof ApiError
         ? reason.code
         : reason instanceof Error ? reason.message : "mobile_photo_sync_failed";
-      await store.recordPhotoFailure(ownerUserId, photo, code);
+      await store.withDatabaseActivity(() => store.recordPhotoFailure(ownerUserId, photo, code));
     }
   });
+  return due.length;
 }

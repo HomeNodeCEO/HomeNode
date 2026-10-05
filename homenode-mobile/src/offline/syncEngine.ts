@@ -9,31 +9,35 @@ import { OfflineStore, type QueueSummary } from "./store";
 const EMPTY_SUMMARY: QueueSummary = { pending: 0, conflicts: 0, synchronized: 0 };
 
 export async function synchronizeDueOperations(store: OfflineStore, api: MobileApi, ownerUserId: string) {
-  await store.ensureReady();
-  const [rows, entityRows] = await Promise.all([
-    store.dueOperations(ownerUserId),
-    store.dueUadEntityProposals(ownerUserId),
-  ]);
+  const database = <T>(operation: () => Promise<T>) => store.withDatabaseActivity(operation);
+  const [rows, entityRows] = await database(async () => {
+    await store.ensureReady();
+    return Promise.all([
+      store.dueOperations(ownerUserId),
+      store.dueUadEntityProposals(ownerUserId),
+    ]);
+  });
   if (!rows.length && !entityRows.length) return;
   if (entityRows.length) {
-    await store.markUadEntityProposalsUploading(entityRows.map((row) => row.client_operation_id));
+    await database(() => store.markUadEntityProposalsUploading(entityRows.map((row) => row.client_operation_id)));
     const refreshedSessions = new Set<string>();
     for (const row of entityRows) {
       try {
         const request = JSON.parse(row.request_json) as UadEntityProposalRequest;
         await api.createUadEntityProposal(row.session_id, request);
-        await store.completeUadEntityProposal(ownerUserId, row.client_operation_id);
+        await database(() => store.completeUadEntityProposal(ownerUserId, row.client_operation_id));
         refreshedSessions.add(row.session_id);
       } catch (reason) {
         const code = reason instanceof ApiError
           ? reason.code
           : reason instanceof Error ? reason.message : "uad_entity_sync_failed";
-        await store.failUadEntityProposal(row, code);
+        await database(() => store.failUadEntityProposal(row, code));
       }
     }
     for (const sessionId of refreshedSessions) {
       try {
-        await store.cacheUadEntityReview(ownerUserId, sessionId, await api.uadEntityReview(sessionId));
+        const review = await api.uadEntityReview(sessionId);
+        await database(() => store.cacheUadEntityReview(ownerUserId, sessionId, review));
       } catch {
         // The proposal is durable on the server; the panel will retry this read when opened.
       }
@@ -46,20 +50,20 @@ export async function synchronizeDueOperations(store: OfflineStore, api: MobileA
     sessions.set(row.session_id, group);
   }
   for (const [sessionId, group] of sessions) {
-    await store.markUploading(group.map((row) => row.client_operation_id));
+    await database(() => store.markUploading(group.map((row) => row.client_operation_id)));
     try {
       const response = await api.syncInspection(
         sessionId,
         group.map((row) => store.operationRequest(row)),
       );
-      await store.applySyncResponse(ownerUserId, response);
+      await database(() => store.applySyncResponse(ownerUserId, response));
       const snapshot = await api.inspectionSnapshot(sessionId);
-      await store.applySnapshot(ownerUserId, snapshot);
+      await database(() => store.applySnapshot(ownerUserId, snapshot));
     } catch (reason) {
       const code = reason instanceof ApiError
         ? reason.code
         : reason instanceof Error ? reason.message : "sync_failed";
-      await store.recordFailure(group, code);
+      await database(() => store.recordFailure(group, code));
     }
   }
 }
@@ -73,7 +77,7 @@ export function useOfflineSync(store: OfflineStore | null, api: MobileApi, owner
 
   const refresh = useCallback(async () => {
     if (!store || !ownerUserId) return;
-    setSummary(await store.queueSummary(ownerUserId));
+    setSummary(await store.withDatabaseActivity(() => store.queueSummary(ownerUserId)));
   }, [ownerUserId, store]);
 
   const syncNow = useCallback(async () => {
@@ -100,7 +104,7 @@ export function useOfflineSync(store: OfflineStore | null, api: MobileApi, owner
     }, 15_000);
     const subscription = AppState.addEventListener("change", (state) => {
       if (state === "active" && online) {
-        void store?.ensureReady().then(syncNow).catch(() => undefined);
+        void store?.withDatabaseActivity(() => store.ensureReady()).then(syncNow).catch(() => undefined);
       }
     });
     return () => {
@@ -111,4 +115,3 @@ export function useOfflineSync(store: OfflineStore | null, api: MobileApi, owner
 
   return { online, refresh, summary, syncing, syncNow };
 }
-

@@ -13,6 +13,7 @@ import {
   staleIosMigrationDatabaseNames,
   type OfflineDatabaseSnapshot,
 } from "../src/offline/databaseEncryption";
+import { DatabaseActivityGate } from "../src/offline/databaseActivityGate";
 import { isUnreadableSqliteDatabaseError, offlineDatabasePolicy } from "../src/offline/databaseRecovery";
 
 const testDirectory = path.dirname(fileURLToPath(import.meta.url));
@@ -87,9 +88,29 @@ test("offline store wrappers share external-activity connection lifecycle state"
   assert.match(prepareForExternalActivity, /const pendingClose = previous\.closeAsync\(\)\.finally\([\s\S]*this\.connection\.pendingClose = pendingClose;[\s\S]*return pendingClose;/);
   assert.doesNotMatch(prepareForExternalActivity, /closeAsync\(\)\.catch\(\(\) => undefined\)/);
   assert.match(source, /async ensureReady\(\) \{[\s\S]*if \(this\.connection\.pendingClose\)[\s\S]*await this\.connection\.pendingClose\.catch\(\(\) => undefined\);/);
-  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await initializeDatabase\(\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
-  assert.match(source, /this\.connection\.database = await initializeDatabase\(\)/);
+  assert.match(source, /this\.connection\.repair = \(async \(\) => \{[\s\S]*this\.connection\.closedForExternalActivity = true;[\s\S]*this\.connection\.database = await initializeDatabase\(false\);[\s\S]*this\.connection\.closedForExternalActivity = false;/);
+  assert.match(source, /databasePromise \|\|= initializeDatabase\(\)/);
+  assert.match(source, /if \(recoverInterruptedTransfers\) \{[\s\S]*UPDATE photo_drafts SET state = 'failed'/);
   assert.doesNotMatch(source, /private closedForExternalActivity|private connectionRepair/);
+});
+
+test("camera waits for the current database write and blocks later writes until reopening", async () => {
+  const gate = new DatabaseActivityGate();
+  let finishFirst!: () => void;
+  let firstStarted!: () => void;
+  const firstHold = new Promise<void>((resolve) => { finishFirst = resolve; });
+  const started = new Promise<void>((resolve) => { firstStarted = resolve; });
+  const first = gate.run(async () => { firstStarted(); await firstHold; });
+  await started;
+  const pause = gate.pause();
+  let secondRan = false;
+  const second = gate.run(async () => { secondRan = true; });
+  finishFirst();
+  const resume = await pause;
+  assert.equal(secondRan, false);
+  resume();
+  await Promise.all([first, second]);
+  assert.equal(secondRan, true);
 });
 
 test("SQLCipher migration verifies schema, row counts, and user version before activation", () => {

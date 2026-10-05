@@ -14,8 +14,10 @@ import {
   UAD_PHOTO_CATEGORIES,
 } from "../src/photos/model";
 import { runWithConcurrency } from "../src/offline/concurrency";
+import { DatabaseActivityGate } from "../src/offline/databaseActivityGate";
 import { ApiError, type MobileApi, type PresignedPhotoUpload } from "../src/api/client";
 import type { LocalPhotoDraft, OfflineStore } from "../src/offline/store";
+import { createCoalescedSync, drainDuePhotoBatches } from "../src/photos/coalescedSync";
 import { synchronizeDuePhotosWithDependencies, uploadPhotoObject } from "../src/photos/syncCore";
 
 test("photo capacity is bounded to 100 active inspection photos", () => {
@@ -58,6 +60,7 @@ test("a stalled photo PUT aborts and remains queued for a verified retry", async
   let uploadAttempts = 0;
   let firstSignal: AbortSignal | undefined;
   const store = {
+    withDatabaseActivity<T>(operation: () => Promise<T>) { return operation(); },
     async ensureReady() {},
     async duePhotoDrafts() { return draft ? [draft] : []; },
     async markPhotoDraftState() {},
@@ -120,6 +123,7 @@ test("a signed-file denial keeps the offline photo and its prepared files", asyn
   let failure: string | null = null;
   let deleted = 0;
   const store = {
+    withDatabaseActivity<T>(operation: () => Promise<T>) { return operation(); },
     async ensureReady() {},
     async duePhotoDrafts() { return [photo]; },
     async markPhotoDraftState() {},
@@ -208,4 +212,77 @@ test("photo queue work is bounded while allowing independent uploads to overlap"
   });
   assert.equal(maximumActive, 3);
   assert.deepEqual(completed.sort((left, right) => left - right), [1, 2, 3, 4, 5, 6, 7]);
+});
+
+test("camera activity pauses photo database writes without waiting for network upload", async () => {
+  const gate = new DatabaseActivityGate();
+  let releaseUpload!: () => void;
+  let uploadStarted!: () => void;
+  const started = new Promise<void>((resolve) => { uploadStarted = resolve; });
+  const upload = new Promise<void>((resolve) => { releaseUpload = resolve; });
+  const photo = {
+    clientPhotoId: "photo_camera_overlap",
+    sessionId: "inspection_1",
+    objects: [{ variant: "original", uri: "file://original.jpg", byteSize: 512 }],
+  } as unknown as LocalPhotoDraft;
+  let verified = false;
+  const store = {
+    withDatabaseActivity<T>(operation: () => Promise<T>) { return gate.run(operation); },
+    async ensureReady() {},
+    async duePhotoDrafts() { return [photo]; },
+    async markPhotoDraftState() {},
+    photoUploadRequest() { return { client_photo_id: photo.clientPhotoId }; },
+    async cacheRegisteredPhoto() {},
+    async applyServerPhoto() { verified = true; },
+    async recordPhotoFailure() { assert.fail("upload should not fail during capture"); },
+  } as unknown as OfflineStore;
+  const api = {
+    async createPhotoUploadRequests() {
+      return { photos: [{ photo: { id: "server_photo_1", status: "pending" }, uploads: [{ variant: "original" }] }] };
+    },
+    async verifyPhoto() { return { id: "server_photo_1", status: "verified" }; },
+  } as unknown as MobileApi;
+  const sync = synchronizeDuePhotosWithDependencies(store, api, "appraiser_1", {
+    async uploadObject() { uploadStarted(); await upload; },
+    async deletePreparedPhotoFiles() {},
+  });
+  await started;
+  const resume = await gate.pause();
+  releaseUpload();
+  await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  assert.equal(verified, false);
+  resume();
+  assert.equal(await sync, 1);
+  assert.equal(verified, true);
+});
+
+test("new captures during a sync coalesce into one later queue pass", async () => {
+  let releaseFirst!: () => void;
+  const first = new Promise<void>((resolve) => { releaseFirst = resolve; });
+  let passes = 0;
+  let active = 0;
+  let maximumActive = 0;
+  const run = createCoalescedSync(async () => {
+    active += 1;
+    maximumActive = Math.max(maximumActive, active);
+    passes += 1;
+    if (passes === 1) await first;
+    active -= 1;
+  });
+  const initial = run();
+  const later = [run(), run(), run()];
+  releaseFirst();
+  await Promise.all([initial, ...later]);
+  assert.equal(passes, 2);
+  assert.equal(maximumActive, 1);
+});
+
+test("bulk photo sync drains bounded batches without retrying new failures in the same pass", async () => {
+  const observedCutoffs: number[] = [];
+  const batchSizes = [10, 10, 3, 0];
+  await drainDuePhotoBatches(async (dueBefore) => {
+    observedCutoffs.push(dueBefore);
+    return batchSizes.shift() ?? 0;
+  }, 12345);
+  assert.deepEqual(observedCutoffs, [12345, 12345, 12345, 12345]);
 });

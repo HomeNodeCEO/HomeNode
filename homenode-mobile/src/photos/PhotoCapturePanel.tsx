@@ -170,7 +170,7 @@ export function PhotoCapturePanel({
   const remaining = remainingPhotoCapacity(activePhotos.length);
 
   const load = useCallback(async () => {
-    const next = await store.photoDrafts(ownerUserId, sessionId);
+    const next = await store.withDatabaseActivity(() => store.photoDrafts(ownerUserId, sessionId));
     setPhotos(next);
     setCaptions((current) => Object.fromEntries(next.map((photo) => [
       photo.clientPhotoId,
@@ -221,11 +221,12 @@ export function PhotoCapturePanel({
       for (const asset of bounded) {
         prepared.push(await preparePickedPhoto(asset, { ownerUserId, sessionId, source, label }));
       }
-      await store.cachePreparedPhotos(ownerUserId, sessionId, prepared);
+      await store.withDatabaseActivity(() => store.cachePreparedPhotos(ownerUserId, sessionId, prepared));
       cached = true;
       await load();
-      if (online) await syncPhotosNow();
-      await load();
+      // The durable local copy is ready for the next shot. Cloud sync runs
+      // separately and may still be uploading an earlier full-size original.
+      if (online) void syncPhotosNow();
     } catch (reason) {
       if (!cached) {
         for (const photo of prepared) await deletePreparedPhotoFiles(photo);
@@ -244,13 +245,30 @@ export function PhotoCapturePanel({
     return () => { active = false; };
   }, []);
 
+  const pickWithDatabaseClosed = async (
+    picker: () => Promise<Awaited<ReturnType<typeof captureCameraPhoto>>>,
+  ) => {
+    // A photo upload may continue over the network while the picker is open,
+    // but its SQLite transitions must wait until the connection is reopened.
+    const resumeDatabaseActivity = await store.pauseDatabaseActivity();
+    let reopened = false;
+    try {
+      await store.prepareForExternalActivity();
+      const assets = await picker();
+      await store.ensureReady();
+      reopened = true;
+      return assets;
+    } finally {
+      if (!reopened) await store.ensureReady().catch(() => undefined);
+      resumeDatabaseActivity();
+    }
+  };
+
   const takePhoto = async () => {
     if (busy) return;
     setBusy(true);
     try {
-      await store.prepareForExternalActivity();
-      const assets = await captureCameraPhoto();
-      await store.ensureReady();
+      const assets = await pickWithDatabaseClosed(captureCameraPhoto);
       await prepare(assets, "camera");
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
@@ -264,9 +282,7 @@ export function PhotoCapturePanel({
     if (busy) return;
     setBusy(true);
     try {
-      await store.prepareForExternalActivity();
-      const assets = await importLibraryPhotos(remaining);
-      await store.ensureReady();
+      const assets = await pickWithDatabaseClosed(() => importLibraryPhotos(remaining));
       await prepare(assets, "library");
     } catch (reason) {
       await store.ensureReady().catch(() => undefined);
@@ -277,7 +293,7 @@ export function PhotoCapturePanel({
   };
 
   const saveCaption = async (photo: LocalPhotoDraft) => {
-    await store.queuePhotoCaption(ownerUserId, photo.clientPhotoId, captions[photo.clientPhotoId] || "");
+    await store.withDatabaseActivity(() => store.queuePhotoCaption(ownerUserId, photo.clientPhotoId, captions[photo.clientPhotoId] || ""));
     await load();
     if (online) await syncPhotosNow();
     await load();
@@ -286,7 +302,7 @@ export function PhotoCapturePanel({
   const remove = async (photo: LocalPhotoDraft) => {
     try {
       setError(null);
-      const result = await store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId);
+      const result = await store.withDatabaseActivity(() => store.queuePhotoRemoval(ownerUserId, photo.clientPhotoId));
       if (result.localOnly) await deletePreparedPhotoFiles(result.photo);
       await load();
       if (online && !result.localOnly) await syncPhotosNow();
@@ -297,7 +313,7 @@ export function PhotoCapturePanel({
   };
 
   const cleanEmpty = async () => {
-    const removed = await store.pruneEmptyPhotoPlaceholders(ownerUserId, sessionId);
+    const removed = await store.withDatabaseActivity(() => store.pruneEmptyPhotoPlaceholders(ownerUserId, sessionId));
     for (const photo of removed) await deletePreparedPhotoFiles(photo);
     await load();
   };
@@ -307,7 +323,7 @@ export function PhotoCapturePanel({
     setRetrying(true);
     try {
       setError(null);
-      await store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId);
+      await store.withDatabaseActivity(() => store.makeFailedPhotosImmediatelyRetryable(ownerUserId, sessionId));
       await syncPhotosNow();
       await load();
     } catch (reason) {
@@ -347,7 +363,7 @@ export function PhotoCapturePanel({
         <Action title="Take photo" disabled={busy || remaining < 1} onPress={() => void takePhoto()} />
         <Action title={`Import photos (${remaining} available)`} secondary disabled={busy || remaining < 1} onPress={() => void importPhotos()} />
       </View>
-      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Preparing originals and display copies…" : "Uploading and verifying…"}</Text></View> : null}
+      {busy || photoSync.syncing || retrying ? <View style={styles.progress}><ActivityIndicator color={COLORS.violet} /><Text style={styles.help}>{busy ? "Saving photo on this device…" : "Uploading saved photos… You can take another photo."}</Text></View> : null}
       <Text style={styles.syncLine}>
         {online ? "Online" : "Offline"} · {photoSync.summary.pending} pending · {photoSync.summary.failed} failed · {photoSync.summary.synchronized} verified
       </Text>
@@ -356,7 +372,7 @@ export function PhotoCapturePanel({
         <Action
           title={photoSync.summary.failed
             ? `Retry ${photoSync.summary.failed} failed photo${photoSync.summary.failed === 1 ? "" : "s"}`
-            : `Sync ${photoSync.summary.pending} pending photo${photoSync.summary.pending === 1 ? "" : "s"}`}
+            : `Upload ${photoSync.summary.pending} saved photo${photoSync.summary.pending === 1 ? "" : "s"}`}
           secondary
           disabled={photoSync.syncing || retrying}
           onPress={() => void retryFailed()}

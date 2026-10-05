@@ -57,6 +57,23 @@ test('actual county-primary preview quarantines PDF APN discrepancy without losi
   assert.equal(preview.effectiveDateContext.effectiveDate, '2026-03-27');
 });
 
+test('Texas-only state default crosses the reviewed preview boundary with an explicit assumption', () => {
+  const preview = countyPreview({ mutateSaved: saved => {
+    saved.documents[0].candidates = saved.documents[0].candidates.filter(item => item.field_key !== 'subject_property_address');
+    for (const document of saved.documents) document.subject_context.canonicalIdentity.state = null;
+    saved.evidence.value.fields.subject_state.status = 'needs_review';
+  } });
+  assert.equal(checkSfrepPreview(preview, [1, 2, 3]), preview);
+  const state = preview.fields.find(field => field.fieldId === 'State');
+  assert.equal(state?.value, 'TX');
+  assert.equal(state?.provenance.origin, 'user_default');
+  assert.ok(preview.assumptions.some(item => item.fieldId === 'State' && item.value === 'TX'));
+  assert.equal(sfrepSubjectChecklist(preview).find(item => item.key === 'state')?.statusLabel, 'User default — confirm');
+  const forged = structuredClone(preview);
+  forged.fields.find(field => field.fieldId === 'State').value = 'OK';
+  assert.throws(() => checkSfrepPreview(forged, [1, 2, 3]), /invalid/);
+});
+
 test('canonical fallback remains distinct from saved data and never refills explicit blanks or manual corrections', () => {
   const fallback = countyPreview({ absent: true });
   assert.equal(checkSfrepPreview(fallback, [1, 2, 3]), fallback);

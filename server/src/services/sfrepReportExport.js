@@ -19,7 +19,8 @@ import { projectSfrepContractSection } from './sfrepContractSection.js';
  * The caller must authorize and load assignment-scoped documents. Only current
  * candidates explicitly confirmed by the appraiser may populate evidence fields;
  * document-level processing/review status does not approve individual values.
- * The sole opt-in user default (fee simple) is separate, labeled provenance.
+ * User-requested defaults (including fee simple and the Texas-only state
+ * fallback) are separate, labeled provenance, not document evidence.
  * Original PDFs are separate evidence addenda and need not have extracted fields.
  */
 export const SFREP_PRIMARY_FORM_ID = "FNMA-1004-0911";
@@ -504,6 +505,11 @@ export function buildSfrepReportExport({
       if (saved.provenance.origin === 'user_default' && saved.sourceField === 'property_rights' && value === 'fee_simple') {
         assumptions.push({ fieldId: 'PropertyRightsAppraisedFeeSimpleCheckBox', value: 'true',
           rule: 'user_requested_fee_simple_default', reason: 'Fee simple is the saved user-requested default unless changed in HomeNode; it is not document evidence.' });
+      }
+      if (saved.provenance.origin === 'user_default' && saved.sourceField === 'subject_state'
+        && saved.provenance.rule === 'user_requested_texas_state_default_v1' && value === 'TX') {
+        assumptions.push({ fieldId: 'State', value: 'TX', rule: saved.provenance.rule,
+          reason: 'TX is the Texas-only workflow default, not verified document evidence. Confirm the subject location in HomeNode and review any conflicting source.' });
       }
       if (saved.sourceField === 'pud' && saved.provenance.rule === 'user_requested_hoa_workflow_proxy_v1') {
         assumptions.push({ fieldId: 'PropertyTypePUDCheckBox', value,

@@ -212,6 +212,59 @@ test('a changed presentation of the same canonical account row does not strand s
   assert.equal(exportSaved(saved).fields.some(field => field.fieldId === 'County'), false);
 });
 
+test('older reviewed MLS and Realist locality receipts migrate only to matching canonical identity on both forms', () => {
+  const { saved } = fixture();
+  for (const document of saved.documents) {
+    document.subject_context.canonicalIdentity = { accountId: '000123', address: '100 Example Dr', city: 'Garland',
+      postalCode: '75041', county: 'Dallas', assessorParcelNumber: '000123', state: 'TX' };
+  }
+  // CAD still verifies the property/APN but did not print every locality part.
+  saved.documents[1].candidates = saved.documents[1].candidates.filter(item =>
+    !['subject_property_address', 'county'].includes(item.field_key));
+  const mls = saved.documents[3], realist = saved.documents[2];
+  mls.candidates.push(candidate('subject_city', 'Garland', 450, mls.id));
+  realist.candidates.push(candidate('subject_property_address', '100 Example Dr, Garland, TX 75041-1234', 350, realist.id),
+    candidate('county', 'Dallas', 351, realist.id));
+  const applied = mergeCustomSubjectApplication({ projection: projectCustomSubjectDocuments(saved.documents) });
+  saved.subject.value = applied.subject;
+  saved.assignmentDetails = applied.assignmentDetails;
+  saved.evidence.value = applied.evidence;
+  const legacy = {
+    subject_city: [mls, 'subject_city', 'Garland'],
+    subject_state: [mls, 'subject_property_address', '100 Example Dr, Garland, TX 75041'],
+    subject_zip: [realist, 'subject_property_address', '100 Example Dr, Garland, TX 75041-1234'],
+    county: [realist, 'county', 'Dallas'],
+  };
+  for (const [key, [document, sourceField, raw]] of Object.entries(legacy)) {
+    const source = document.candidates.find(item => item.field_key === sourceField && item.confirmed_value === raw);
+    assert.ok(source, key);
+    assert.equal(saved.evidence.value.fields[key].kind, 'account_reference');
+    saved.evidence.value.fields[key] = { kind: 'reviewed_document', sourceField, documentId: document.id,
+      candidateId: source.id, documentType: document.document_type, reviewedSourceValue: raw,
+      value: saved.evidence.value.fields[key].value, status: 'current' };
+  }
+  const ids = ['City', 'State', 'ZipCode', 'County'];
+  for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
+    const result = buildSfrepReportExport({ formId, savedReportFields: savedSfrepSubjectFields(saved, input).fields });
+    for (const id of ids) {
+      const field = result.fields.find(item => item.fieldId === id);
+      assert.ok(field, `${formId}: ${id}`);
+      assert.equal(field.provenance.origin, 'account_reference');
+    }
+  }
+  for (const change of ['rejected', 'reprocessing', 'removed', 'changed_raw', 'different_account', 'not_current']) {
+    const altered = structuredClone(saved);
+    const city = altered.documents[3].candidates.find(item => item.id === 450);
+    if (change === 'rejected') city.review_status = 'rejected';
+    if (change === 'reprocessing') altered.documents[3].processing_status = 'processing';
+    if (change === 'removed') altered.documents[3].candidates = altered.documents[3].candidates.filter(item => item.id !== 450);
+    if (change === 'changed_raw') city.confirmed_value = 'Other City';
+    if (change === 'different_account') altered.documents[0].subject_context.canonicalIdentity.city = 'Other City';
+    if (change === 'not_current') altered.evidence.value.fields.subject_city.status = 'needs_review';
+    assert.equal(exportSaved(altered).fields.some(item => item.fieldId === 'City'), false, change);
+  }
+});
+
 test('account Census provenance revalidates every source revision and never refills an explicit saved blank', () => {
   const { saved } = fixture();
   saved.documents[0].subject_context.censusGeography = { tractCode: '001234', status: 'matched',

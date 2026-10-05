@@ -17,7 +17,7 @@ function contractDate(value) {
 
 const dollars = amount => `$${new Intl.NumberFormat('en-US', { maximumFractionDigits: 2 }).format(amount)}`;
 
-/** The legacy 1004 Contract section is deliberately assembled from one,
+/** The legacy 1004/2055 Contract section is deliberately assembled from one,
  * subject-matched, reviewed purchase contract. A PDF merely being uploaded never
  * claims the appraiser analyzed it. Original terms and the source PDF remain in
  * the workfile; this concise narrative is an export-only presentation. */
@@ -26,12 +26,12 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   const contracts = documents.filter(document => document.document_type === 'purchase_contract');
   if (!contracts.length) return { fields, warnings, knownMissing };
   if (contracts.length !== 1) {
-    warnings.push('Multiple purchase contracts are in the workfile. Resolve which version applies before the 1004 Contract section can be mapped.');
+    warnings.push('Multiple purchase contracts are in the workfile. Resolve which version applies before the legacy Contract section can be mapped.');
     return { fields, warnings, knownMissing };
   }
   const document = contracts[0];
   if (document.property_role !== 'subject' || document.processing_status !== 'reviewed') {
-    warnings.push('The contract needs subject-property verification and completed document review before it can mark the 1004 Contract section analyzed.');
+    warnings.push('The contract needs subject-property verification and completed document review before it can mark the legacy Contract section analyzed.');
     return { fields, warnings, knownMissing };
   }
   const documentId = Number(document.id);
@@ -104,7 +104,7 @@ export function projectSfrepContractSection(documents, { assignmentDetails } = {
   }
   const armsLength = record(assignmentDetails) ? assignmentDetails.contract_arms_length : null;
   const saleType = armsLength === true ? 'Arms length sale' : armsLength === false ? 'Non-arms length sale' : 'Sale type requires appraiser review';
-  if (armsLength == null) warnings.push('Arms-length status was not established by uploading the contract. Select it in HomeNode before relying on the 1004 analysis.');
+  if (armsLength == null) warnings.push('Arms-length status was not established by uploading the contract. Select it in HomeNode before relying on the legacy Contract analysis.');
   const amount = concessions.value === 0 ? '0$' : dollars(concessions.value);
   const value = `${saleType};Contract dated ${date.value}, purchase price of ${dollars(price.value)}, earnest money ${dollars(candidates.get('earnest_money').value)}, cash at close ${dollars(cash)}, new loan ${dollars(loan)}, with ${amount} in concessions`;
   const sourceEvidence = TERMS.map(sourceField => ({ documentId, candidateId: candidates.get(sourceField).candidateId,

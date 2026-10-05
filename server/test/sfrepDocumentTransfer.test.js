@@ -26,6 +26,7 @@ function snapshotRow(row = savedRow()) {
 
 test('transfer input rejects unbounded, duplicate, coerced and extra document selection', () => {
   assert.deepEqual(sfrepTransferInput(body()).documentIds, [2]);
+  assert.equal(sfrepTransferInput({ ...body(), form_id: 'FNMA-2055-0911' }).formId, 'FNMA-2055-0911');
   assert.deepEqual(sfrepTransferInput({ ...body(), document_ids: [] }).documentIds, []);
   for (const change of [{ document_ids: [2, 2] }, { document_ids: ['2'] },
     { document_ids: Array.from({ length: 11 }, (_, index) => index + 1) }, { assignment_file_id: '14' },
@@ -33,6 +34,20 @@ test('transfer input rejects unbounded, duplicate, coerced and extra document se
     assert.throws(() => sfrepTransferInput({ ...body(), ...change }));
   }
   assert.throws(() => sfrepTransferInput(body(), { exporting: true }), /sfrep_preview_required/);
+});
+
+test('2055 preview and download are bound to the selected form in the digest and XML', async () => {
+  const documents = [savedRow()];
+  documents.saved_report = documents[0].saved_report;
+  const urar = previewSfrepDocuments(documents, { ...input(), includeDocuments: false });
+  const exteriorInput = { ...input(), includeDocuments: false, formId: 'FNMA-2055-0911' };
+  const exterior = previewSfrepDocuments(documents, exteriorInput);
+  assert.notEqual(exterior.preview_digest, urar.preview_digest);
+  assert.equal(exterior.filename, 'HomeNode-SFREP-2055-file-14.rpti');
+  assert.match(exterior.reportXml, /<Form Id="FNMA-2055-0911">/);
+  assert.deepEqual(exterior.fields, urar.fields);
+  await assert.rejects(packageSfrepDocuments(null, null, documents, exterior,
+    { ...exteriorInput, previewDigest: urar.preview_digest }), /sfrep_preview_changed/);
 });
 
 test('zero PDF attachments still maps saved workfile fields and prepares a fields-only RPTI', async () => {

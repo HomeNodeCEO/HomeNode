@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { loadAssignmentDocumentContent } from './assignmentDocuments.js';
 import { buildDeterministicZip } from '../modules/uad/uadDeliveryPackage.js';
-import { buildSfrepReportExport, SFREP_PRIMARY_FORM_ID } from './sfrepReportExport.js';
+import { buildSfrepReportExport, SFREP_SUPPORTED_FORM_IDS } from './sfrepReportExport.js';
 import { sfrepDocumentPropertyRole, sfrepSubjectContext } from './sfrepSubjectContext.js';
 import { savedSfrepSubjectFields } from './sfrepSavedReport.js';
 import { customSubjectCensusSql } from './customSubjectCensus.js';
@@ -20,7 +20,7 @@ export function sfrepTransferInput(body, { exporting = false } = {}) {
   if (!Array.isArray(body.document_ids) || body.document_ids.length > SFREP_TRANSFER_LIMITS.documents
     || body.document_ids.some(id => !Number.isSafeInteger(id) || id < 1)
     || new Set(body.document_ids).size !== body.document_ids.length) fail('invalid_sfrep_document_selection');
-  if (typeof body.include_documents !== 'boolean' || body.form_id !== SFREP_PRIMARY_FORM_ID) fail('invalid_sfrep_request');
+  if (typeof body.include_documents !== 'boolean' || !SFREP_SUPPORTED_FORM_IDS.includes(body.form_id)) fail('invalid_sfrep_request');
   if (exporting && (typeof body.preview_digest !== 'string' || !/^[a-f0-9]{64}$/.test(body.preview_digest))) fail('sfrep_preview_required');
   return { assignmentFileId: body.assignment_file_id, documentIds: [...body.document_ids].sort((a, b) => a - b),
     includeDocuments: body.include_documents, formId: body.form_id, previewDigest: body.preview_digest };
@@ -162,7 +162,8 @@ export function previewSfrepDocuments(documents, input) {
   // A re-read during download must match the review the user actually saw.
   const previewDigest = digest(JSON.stringify({ accountId: input.accountId, assignmentFileId: input.assignmentFileId,
     documents, saved, subjectContext, includeDocuments: input.includeDocuments, formId: input.formId, reportXml: mapped.reportXml }));
-  return { ...mapped, preview_digest: previewDigest, filename: `HomeNode-SFREP-file-${input.assignmentFileId}.rpti`,
+  return { ...mapped, preview_digest: previewDigest,
+    filename: `HomeNode-SFREP-${input.formId === 'FNMA-2055-0911' ? '2055-' : ''}file-${input.assignmentFileId}.rpti`,
     ...(saved ? { savedReport: { assignmentFileId: saved.assignmentFileId, assignmentRevision: saved.assignmentRevision,
       subjectRevision: Number(saved.subject?.revision || 0), sourceDocumentIds: saved.documents.map(document => document.id) } } : {}),
     documents: documents.map(({ id, title, file_name, file_size_bytes, processing_status }) =>

@@ -121,7 +121,11 @@ export async function restoreCustomCohortPreparedTileFeatures(rows, expectedKeys
     for (const entry of entries) {
       check(Array.isArray(entry) && entry.length === 2
         && Number.isSafeInteger(entry[0]) && entry[0] >= 0 && entry[0] < capturedParcels
-        && entry[1]?.type === 'Feature' && entry[1].properties?.selected === false,
+        && entry[1]?.type === 'Feature' && typeof entry[1].id === 'string'
+        && typeof entry[1].properties?.account_id === 'string'
+        && entry[1].properties.selected === false
+        && ['Polygon', 'MultiPolygon'].includes(entry[1].geometry?.type)
+        && Array.isArray(entry[1].geometry.coordinates),
       'storage_conflict');
       const encoded = JSON.stringify(entry[1]);
       if (features.has(entry[0])) check(features.get(entry[0]).encoded === encoded, 'storage_conflict');

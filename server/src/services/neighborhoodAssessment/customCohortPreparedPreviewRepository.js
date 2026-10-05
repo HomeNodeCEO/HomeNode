@@ -245,6 +245,8 @@ export function createCustomCohortPreparedPreviewRepository(client, scopeJson, c
         ...keys.flat()]);
       check(rows && Array.isArray(rows.rows) && rows.rowCount === rows.rows.length, 'storage_conflict');
       const features = await restoreCustomCohortPreparedTileFeatures(rows.rows, keys, manifest.captured_parcels);
+      const allAccounts = new Set(preview.all.account_ids);
+      check(features.every(feature => allAccounts.has(feature.properties.account_id)), 'storage_conflict');
       return freezeMap({ ...shell, geojson: { type: 'FeatureCollection', features } });
     },
     async put(preview, parcelMap) {

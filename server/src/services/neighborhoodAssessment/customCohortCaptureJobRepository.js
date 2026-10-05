@@ -136,7 +136,19 @@ export function createCustomCohortCaptureJobRepository(client) {
             job.request_sha256,job.request_payload,job.attempts,
             job.claim_token::text,job.lease_expires_at,job.checkpoint`, [limit, leaseSeconds]);
       if (!Array.isArray(result?.rows) || result.rows.length > limit) fail('claim_unavailable');
-      return result.rows;
+      return result.rows.map(row => {
+        try {
+          scopeOf({ organization_id: row.organization_id,
+            report_file_id: row.report_file_id, assignment_file_id: row.assignment_file_id,
+            account_id: row.account_id });
+          const admitted = requestOf(row.request_payload);
+          if (row.operation_id !== admitted.operation_id || !SHA.test(row.request_sha256)
+            || assessmentEvidenceDigest(admitted) !== row.request_sha256
+            || !Number.isInteger(row.attempts) || row.attempts < 1 || row.attempts > 5
+            || !UUID.test(row.claim_token) || !UUID.test(row.actor_user_id)) fail('job_corrupt');
+          return Object.freeze({ ...row, request_payload: admitted });
+        } catch { fail('job_corrupt'); }
+      });
     },
 
     async heartbeat(claim, { leaseSeconds = 120, checkpoint = null } = {}) {

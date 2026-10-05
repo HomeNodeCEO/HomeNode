@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
+import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 
 const organization = '11111111-1111-4111-8111-111111111111';
 const report = '22222222-2222-4222-8222-222222222222';
@@ -51,7 +52,10 @@ test('lease, cancellation and success are fenced to the claim and original conte
   const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
     statements.push({ sql, values });
     if (sql.includes('custom-cohort-job:claim')) return { rowCount: 1, rows: [{
-      operation_id: operation, claim_token: token, attempts: 1 }] };
+      operation_id: operation, organization_id: organization, report_file_id: report,
+      assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
+      actor_user_id: actor, request_sha256: assessmentEvidenceDigest(request),
+      request_payload: request, claim_token: token, attempts: 1 }] };
     if (sql.includes('custom-cohort-job:heartbeat')) return {
       rowCount: 1, rows: [{ cancellation_requested_at: new Date() }] };
     if (sql.includes('custom-cohort-job:cancel')) return { rowCount: 1, rows: [{ status: 'running' }] };
@@ -91,4 +95,18 @@ test('malformed checkpoints and claims cannot renew a lease', async () => {
     evidence_refs: [{ content_sha256: 'bad', canonical_utf8_bytes: '100' }] } }), /invalid_checkpoint/);
   await assert.rejects(repository.claimDue({ limit: 100 }), /invalid_limit/);
   assert.equal(queried, false);
+});
+
+test('a claimed request with a changed payload cannot be resumed', async () => {
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql) {
+    if (sql.includes('custom-cohort-job:claim')) return { rowCount: 1, rows: [{
+      operation_id: operation, organization_id: organization, report_file_id: report,
+      assignment_file_id: scope.assignment_file_id, account_id: scope.account_id,
+      actor_user_id: actor, request_sha256: assessmentEvidenceDigest(request),
+      request_payload: { ...request, observation_period: {
+        start_date: '2023-01-01', end_date: '2024-12-31' } },
+      claim_token: token, attempts: 1 }] };
+    return { rowCount: 0, rows: [] };
+  } });
+  await assert.rejects(repository.claimDue(), /job_corrupt/);
 });

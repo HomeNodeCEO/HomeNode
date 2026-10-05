@@ -515,6 +515,19 @@ test('contract-specific legacy values persist without overriding engagement/appr
   assert.equal(result.assignment_details.subject_under_contract, true);
 });
 
+test('reviewing a financing addendum cannot replace the labeled base contract in saved assignment details', async () => {
+  const base = document(1, {}, { document_type: 'purchase_contract', title: 'Contract.pdf', file_name: 'Contract.pdf' });
+  const financing = document(2, {}, { document_type: 'purchase_contract',
+    title: 'Thhird PArty Financing.pdf', file_name: 'Thhird PArty Financing.pdf' });
+  const db = database({ documents: [base, financing] });
+  const ignored = await persistCustomSubjectApplication(db.client, { assignmentFile: db.state.assignment,
+    sourceDocument: financing, legacyAssignmentDetails: { contract_price: '900000' } });
+  assert.equal(ignored.assignment_details.contract_price, undefined);
+  const accepted = await persistCustomSubjectApplication(db.client, { assignmentFile: db.state.assignment,
+    sourceDocument: base, legacyAssignmentDetails: { contract_price: '300000' } });
+  assert.equal(accepted.assignment_details.contract_price, '300000');
+});
+
 test('scoped read has bounded candidates, exact file/account and organization-qualified case dates', async () => {
   let query;
   await readCustomSubjectDocuments({ query: async (sql, values) => { query = { sql, values }; return { rows: [] }; } }, { accountId: '000123', assignmentFileId: 4 });
@@ -524,6 +537,7 @@ test('scoped read has bounded candidates, exact file/account and organization-qu
   assert.match(query.sql, /report_file.organization_id IS NOT DISTINCT FROM assignment.organization_id/);
   assert.match(query.sql, /appraisal_case.organization_id IS NOT DISTINCT FROM assignment.organization_id/);
   assert.match(query.sql, /document.uad_workfile_id IS NULL AND document.tax_protest_file_id IS NULL/);
+  assert.match(query.sql, /document.title, document.file_name/);
   await assert.rejects(readCustomSubjectDocuments({ query: async () => ({ rows: [{ account_id: 'other', assignment_file_id: 4 }] }) },
     { accountId: '000123', assignmentFileId: 4 }), /document_scope_changed/);
 });

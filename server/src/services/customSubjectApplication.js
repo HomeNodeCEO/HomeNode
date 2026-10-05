@@ -4,6 +4,7 @@ import { validateAssignmentDetails, validateReportManualSection } from '../util/
 import { buildCustomSubjectListingHistory } from './customSubjectListingHistory.js';
 import { buildCustomSubjectCensus, customSubjectCensusSql } from './customSubjectCensus.js';
 import { buildCustomSubjectIdentity, customSubjectLenderPreset } from './customSubjectIdentity.js';
+import { selectSubjectPurchaseContract } from './subjectPurchaseContract.js';
 
 export const CUSTOM_SUBJECT_SECTION = 'report.subject_identification';
 export const CUSTOM_SUBJECT_EVIDENCE_SECTION = 'report.subject_evidence';
@@ -282,6 +283,7 @@ export async function readCustomSubjectDocuments(client, { accountId, assignment
   const census = await customSubjectCensusSql(client);
   const { rows } = await client.query(
     `SELECT document.id, document.account_id, document.assignment_file_id, document.document_type,
+            document.title, document.file_name,
             document.processing_status, document.extraction_summary, document.checksum_sha256,
             (document.uploaded_at AT TIME ZONE 'UTC')::date::text AS upload_date,
             jsonb_build_object('accountId', subject.account_id, 'address', subject.address,
@@ -352,7 +354,10 @@ export async function persistCustomSubjectApplication(client, { assignmentFile, 
     reviewedDocumentId: Number(sourceDocument.id), invalidateOnly, listingOnly });
   // Preserve the pre-existing purchase-contract application path. Subject
   // proposals themselves still come exclusively from the reviewed projection.
-  if (!invalidateOnly && !listingOnly && legacyAssignmentDetails) {
+  const selectedContract = selectSubjectPurchaseContract(documents).document;
+  if (!invalidateOnly && !listingOnly && legacyAssignmentDetails
+    && sourceDocument.document_type === 'purchase_contract'
+    && Number(selectedContract?.id) === Number(sourceDocument.id)) {
     for (const [key, value] of Object.entries(legacyAssignmentDetails)) {
       if (CONTRACT_FIELDS.has(key) && !same(value, assignmentFile.assignment_details?.[key])) merged.assignmentDetails[key] = value;
     }

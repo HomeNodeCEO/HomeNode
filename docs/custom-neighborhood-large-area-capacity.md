@@ -650,3 +650,29 @@ capacity increase. Production composition must connect all V7 consumers and
 the fresh section-read boundary as one coherent path before enabling the
 opt-in HTTP routes. No schedule, deployment, genuine appraisal choice or
 accepted report is changed by this slice.
+
+## Opt-in V7 API composition ports (not a production host)
+
+`customCohortGroupWorkspaceApi.ts` connects the independent V7 owner to current
+authenticated boundaries. A fresh workfile GET returns only a checked V7 section,
+its exact file/session target and actual draft/signed/archived status; present
+legacy/corrupt/future data is refused rather than reset. The existing generic GET
+still represents assignment IDs as safe JS numbers, so this adapter refuses an
+unsafe int64 read instead of rounding it. Exact cohort command and projection
+ports retain their independent int64-string grammar. No broader read contract is
+claimed.
+
+Only the four atomic mutation ports are exposed; there is no generic section
+writer or uncoordinated `select-groups` mutation. Exact-reference numeric summary,
+viewport and member ports reuse the retained-producer transport validation and
+keep their original population/continuation and byte bounds. The viewport cannot
+shrink the analytical population. Current authentication, access denial, signed
+locks, workspace conflict, interruption and unknown COMMIT responses stay
+sanitized and distinguishable, with no automatic retry. Existing capture/catalog
+and proposal/Apply adapters are reused without changing their legacy behavior.
+
+The production API/host remains unchanged. A complete V7 consumer composition
+must still bind all map/statistics/member/report views to the same active receipt
+and pass live acceptance before opting in. These ports do not remove full-catalog
+membership bounds, activate durable job HTTP/scheduling, increase installed caps,
+alter a genuine appraisal or establish an instant map SLA.

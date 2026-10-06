@@ -78,10 +78,15 @@ export async function runMarketStudies(request: MarketConditionsRequest, group: 
  * Do not average per-area medians or combine overlapping sale populations. */
 export function mergeMarketStudyResponses(responses: MarketConditionsResponse[]): MarketConditionsResponse {
   const analyses = responses.flatMap(response => response.analyses);
+  const meanDispersion = (analysis: MarketConditionsResponse['analyses'][number]) => {
+    const { composite_cod: cod, composite_cv: cv } = analysis.statistics;
+    return cod != null && cv != null && Number.isFinite(cod) && Number.isFinite(cv) && cod >= 0 && cv >= 0
+      ? (cod + cv) / 2 : Infinity;
+  };
   const ranked = analyses.filter(analysis => analysis.statistics.annualized_change_percent !== null
     && Number.isFinite(analysis.statistics.annualized_change_percent))
-    .sort((left, right) => Number(right.statistics.sample_sufficient) - Number(left.statistics.sample_sufficient)
-      || Number(right.statistics.reliability_score || 0) - Number(left.statistics.reliability_score || 0)
+    .sort((left, right) => Number(right.statistics.reliability_score || 0) - Number(left.statistics.reliability_score || 0)
+      || meanDispersion(left) - meanDispersion(right)
       || right.population.eligible_sale_count - left.population.eligible_sale_count);
   const changes = ranked.map(analysis => Number(analysis.statistics.annualized_change_percent));
   const sorted = [...changes].sort((a, b) => a - b), middle = Math.floor(sorted.length / 2);
@@ -93,7 +98,7 @@ export function mergeMarketStudyResponses(responses: MarketConditionsResponse[])
   // for a failed request or borrow it from another report.
   const base = responses.find(response => marketExplorationIdentity(response)) || responses[0];
   return { ...base, analyses, unavailable_areas: responses.flatMap(response => response.unavailable_areas),
-    recommendation: { methodology_version: 2, weighting_method: 'mean_median_reconciliation',
+    recommendation: { methodology_version: Math.min(...responses.map(response => response.recommendation.methodology_version ?? 2)), weighting_method: 'mean_median_reconciliation',
       appraiser_defined_area_weight_percent: 0, stable_threshold_percent: 1,
       conclusion: change === null ? 'insufficient' : Math.abs(change) < 1 ? 'stable' : change > 0 ? 'increasing' : 'decreasing',
       average_annualized_change_percent: round(mean), median_annualized_change_percent: round(median), recommended_change_percent: round(change),

@@ -3,7 +3,7 @@ import test from 'node:test';
 import { EMPTY_NEIGHBORHOOD_FORM, neighborhoodStudyFigures } from '../src/lib/neighborhoodFormReview.ts';
 import { validExplorationLandUse } from '../src/lib/explorationLandUse.ts';
 import { sfrepNeighborhoodFixture } from '../../server/test/fixtures/sfrepNeighborhoodFixture.js';
-import { previewSfrepDocuments } from '../../server/src/services/sfrepDocumentTransfer.js';
+import { buildSfrepReportExport } from '../../server/src/services/sfrepReportExport.js';
 import { checkSfrepPreview, sfrepProvenanceText } from '../src/features/sfrep/sfrepTransport.ts';
 
 test('form price uses selected-map closed sales in thousands, age uses all selected CAD homes and chosen observation end', () => {
@@ -31,10 +31,18 @@ test('land-use response validation preserves missing categories and rejects inva
 
 test('actual server neighborhood previews cross the strict transport for both forms and bind market revision without PDF attachment requirements', () => {
   for (const formId of ['FNMA-1004-0911', 'FNMA-2055-0911']) {
-    const saved = sfrepNeighborhoodFixture(), documents = []; documents.saved_report = saved;
-    const preview = JSON.parse(JSON.stringify({ ok: true, ...previewSfrepDocuments(documents, {
-      accountId: saved.accountId, assignmentFileId: 7, documentIds: [], includeDocuments: false, formId,
-    }) }));
+    const saved = sfrepNeighborhoodFixture();
+    // Exercise the real pure field producer in a frontend-only install. The
+    // server suite separately verifies the public preview and digest envelope,
+    // which imports backend PDF dependencies unavailable in frontend CI.
+    const { reportXml: _xml, pdfAddenda: _pdfs, ...result } = buildSfrepReportExport({
+      documents: [], formId, includePdfAddenda: false, savedNeighborhoodReport: saved,
+    });
+    const preview = JSON.parse(JSON.stringify({ ok: true, ...result, documents: [],
+      preview_digest: 'a'.repeat(64), filename: 'HomeNode-SFREP-file-7.rpti',
+      savedReport: { assignmentFileId: 7, assignmentRevision: 2, subjectRevision: 0,
+        marketRevision: 3, sourceDocumentIds: [] },
+    }));
     assert.equal(checkSfrepPreview(preview, [], formId), preview);
     const field = preview.fields.find(item => item.fieldId === 'MarketConditions');
     assert.match(sfrepProvenanceText(field), /Neighborhood \/ Market revision 3/);

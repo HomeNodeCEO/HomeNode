@@ -11,6 +11,8 @@ export const CUSTOM_COHORT_PRIVATE_SALES_PROFILE = 'assignment-private-reviewed-
 export const CUSTOM_COHORT_PRIVATE_SALES_LIMITS = Object.freeze({ rows: 10000, supplement_utf8_bytes: 64 * 1024 * 1024,
   output_utf8_bytes: 16 * 1024 * 1024, public_utf8_bytes: 2 * 1024 * 1024, selected_accounts: 50000 });
 const L = CUSTOM_COHORT_PRIVATE_SALES_LIMITS;
+const publicSummaries = new WeakSet();
+export const isCustomCohortPresentedPrivateSales = value => publicSummaries.has(value);
 const UUID = /^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/;
 const SHA = /^[a-f0-9]{64}$/;
 const DISPOSITIONS = ['prepared', 'needs_review', 'duplicate', 'identity_conflict', 'rejected', 'empty'];
@@ -335,5 +337,5 @@ export function presentCustomCohortPrivateSalesObservations(input) {
   }
   output.binding.selection_sha256 = expected.selection_sha256;
   check(Buffer.byteLength(JSON.stringify(output)) <= L.public_utf8_bytes, 'public_limit');
-  return freeze(output);
+  const result = freeze(output); publicSummaries.add(result); return result;
 }

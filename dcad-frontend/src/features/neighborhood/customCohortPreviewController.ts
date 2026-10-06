@@ -1,4 +1,4 @@
-import { checkCustomCohortPrivateSales } from './customCohortPrivateSales.ts';
+import { checkCustomCohortPrivateSalesBinding } from './customCohortPrivateSales.ts';
 import { isCustomCohortPreviewCapacityError } from './customCohortPreviewTransport.ts';
 import type { CheckedPrivateSalesObservations } from './customCohortPrivateSales';
 import { checkCustomCohortMapManifest } from './customCohortMapManifest.ts';
@@ -226,31 +226,44 @@ function restyle(map: AvailableMap, selected: Set<string>): AvailableMap {
 /** Inspection reuses the exact summary/target/content binding without requiring
  * a second parcel geometry download. This never admits geometry or report Apply. */
 export function checkCustomCohortSummaryResponse(value: unknown, input: CustomCohortPreviewInput, hash: string) {
-  prepare(input); ensure(HASH.test(hash));
+  const prepared = prepare(input).input;
+  return checkCustomCohortBoundSummaryResponse(value, { accountId: prepared.accountId, assignmentFileId: prepared.assignmentFileId,
+    contextRef: prepared.contextRef, selectionRevision: prepared.selection.revision, selectionFingerprint: hash });
+}
+/** Public summary identity only. The caller independently validates either the
+ * legacy complete choice input or an exact retained selection reference. This
+ * does not restyle a map, broaden empty choices, save a workspace or allow Apply. */
+export function checkCustomCohortBoundSummaryResponse(value: unknown, input: CustomCohortPreviewBinding) {
+  const identity = exact(input, ['accountId', 'assignmentFileId', 'contextRef', 'selectionRevision', 'selectionFingerprint']);
+  const accountId = text(identity.accountId, 64), assignmentFileId = text(identity.assignmentFileId, 19);
+  const contextRef = context(identity.contextRef), revision = identity.selectionRevision, hash = identity.selectionFingerprint;
+  ensure(/^[1-9]\d{0,18}$/.test(assignmentFileId) && BigInt(assignmentFileId) <= 9223372036854775807n
+    && typeof revision === 'number' && Number.isSafeInteger(revision) && revision > 0
+    && typeof hash === 'string' && HASH.test(hash));
+  const bound = freeze({ accountId, assignmentFileId, contextRef, selectionRevision: revision, selectionFingerprint: hash });
   const r = exact(value, ['status', 'target', 'context_ref', 'selection_revision', 'subject_freshness', 'summary', 'parcel_map', 'apply'], ['private_sales', 'map_manifest']);
   const target = exact(r.target, ['account_id', 'assignment_file_id']);
-  ensure(r.status === 'preview' && r.subject_freshness === 'matched' && target.account_id === input.accountId
-    && target.assignment_file_id === input.assignmentFileId && sameContext(context(r.context_ref), input.contextRef)
-    && r.selection_revision === input.selection.revision);
+  ensure(r.status === 'preview' && r.subject_freshness === 'matched' && target.account_id === accountId
+    && target.assignment_file_id === assignmentFileId && sameContext(context(r.context_ref), contextRef)
+    && r.selection_revision === revision);
   const summary = object(copyJson(r.summary, L.summaryBytes, L.summaryNodes)), binding = exact(summary.binding,
     ['context_ref', 'selection_revision', 'selection_sha256']);
   ensure(summary.presentation_version === 1 && summary.preview_version === 1 && summary.status === 'observations_only'
     && summary.members_included === false && summary.contents === 'population_summaries_only'
-    && sameContext(context(binding.context_ref), input.contextRef) && binding.selection_revision === input.selection.revision
+    && sameContext(context(binding.context_ref), contextRef) && binding.selection_revision === revision
     && binding.selection_sha256 === hash);
   const apply = exact(r.apply, ['status', 'reasons']), summaryApply = exact(summary.apply, ['status', 'reasons']);
   ensure(apply.status === 'blocked' && summaryApply.status === 'blocked' && Array.isArray(apply.reasons)
     && apply.reasons.length > 0 && apply.reasons.length <= 100 && Array.isArray(summaryApply.reasons)
     && summaryApply.reasons.length > 0 && summaryApply.reasons.length <= 100);
   apply.reasons.forEach(v => text(v, 200)); summaryApply.reasons.forEach(v => text(v, 200));
-  const privateSales = Object.hasOwn(r, 'private_sales') ? checkCustomCohortPrivateSales(r.private_sales, input, hash) : null;
+  const privateSales = Object.hasOwn(r, 'private_sales') ? checkCustomCohortPrivateSalesBinding(r.private_sales, bound) : null;
   if (privateSales) {
     const period = exact(summary.observation_period, ['start_date', 'end_date']);
     ensure(privateSales.effective_date === summary.effective_date && privateSales.observation_period.start_date === period.start_date
       && privateSales.observation_period.end_date === period.end_date);
   }
-  return freeze({ binding: { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
-    contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: hash },
+  return freeze({ binding: bound,
   summary: summary as Record<string, Json>, apply: { status: 'blocked' as const, reasons: [...apply.reasons] as string[] },
   ...(privateSales ? { private_sales: privateSales } : {}) });
 }

@@ -9,6 +9,10 @@ export const CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS = Object.freeze({
   text_utf8_bytes: 1024, identity_utf8_bytes: 800, metrics_per_population: 15,
 });
 const L = CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS;
+const publicSummaries = new WeakSet();
+/** Process-local projection witness, never a source grant or report authority.
+ * Exact-reference transport must not serialize raw/unprojected owner results. */
+export const isCustomCohortPresentedSummary = value => publicSummaries.has(value);
 const compare = (a, b) => a < b ? -1 : a > b ? 1 : 0;
 const hash = value => createHash('sha256').update(value, 'utf8').digest('hex');
 const freeze = value => {
@@ -147,8 +151,9 @@ export function presentCustomCohortPreview({ preview, expected } = {}) {
     id: text(pocket.id), label: text(pocket.label), disposition: oneOf(pocket.disposition, ['needs_review']),
     overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(preview, pocket.result, 'pocket', pocket.id),
   }));
-  return boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
+  const result = boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
     all, selected, pockets }, L.summary_utf8_bytes);
+  publicSummaries.add(result); return result;
 }
 
 function findPopulation(preview, requested) {

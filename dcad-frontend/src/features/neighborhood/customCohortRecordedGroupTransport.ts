@@ -1,4 +1,5 @@
 import { createCustomCohortJsonTransport } from './customCohortPreviewTransport.ts';
+import { checkCustomCohortBoundSummaryResponse } from './customCohortPreviewController.ts';
 import type { CustomCohortContextRef } from './customCohortPreviewController';
 
 export interface CustomCohortGroupSelectionRef {
@@ -11,6 +12,9 @@ export interface CustomCohortRecordedGroupRead {
 export interface CustomCohortRecordedGroupWrite extends CustomCohortRecordedGroupRead {
   readonly operationId: string; readonly expectedSelectionRef: CustomCohortGroupSelectionRef | null;
   readonly includedRecordedGroupIds: readonly string[];
+}
+export interface CustomCohortRecordedGroupSummary extends CustomCohortRecordedGroupRead {
+  readonly selectionRef: CustomCohortGroupSelectionRef;
 }
 export type CustomCohortRecordedGroupReceipt = {
   readonly status: 'stored' | 'reused' | 'selected'; readonly authority: 'not_established';
@@ -67,8 +71,8 @@ function groups(value: unknown): readonly string[] {
   }
   return Object.freeze(ids.sort());
 }
-function input(value: unknown, writing: boolean): CustomCohortRecordedGroupRead | CustomCohortRecordedGroupWrite {
-  const v = closed(value, ['accountId', 'assignmentFileId', 'contextRef', ...(writing
+function input(value: unknown, writing: boolean, summary = false): CustomCohortRecordedGroupRead | CustomCohortRecordedGroupWrite | CustomCohortRecordedGroupSummary {
+  const v = closed(value, ['accountId', 'assignmentFileId', 'contextRef', ...(summary ? ['selectionRef'] : writing
     ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : [])]);
   if (typeof v.accountId !== 'string' || !v.accountId || v.accountId.length > 64 || v.accountId.trim() !== v.accountId
     || typeof v.assignmentFileId !== 'string'
@@ -77,12 +81,30 @@ function input(value: unknown, writing: boolean): CustomCohortRecordedGroupRead 
     const code = v.accountId.charCodeAt(i); if (code < 32 || code === 127) fail();
   }
   const base = { accountId: v.accountId, assignmentFileId: v.assignmentFileId, contextRef: context(v.contextRef) };
+  if (summary) return Object.freeze({ ...base, selectionRef: selection(v.selectionRef) });
   if (!writing) return Object.freeze(base);
   if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail();
   const expectedSelectionRef = v.expectedSelectionRef === null ? null : selection(v.expectedSelectionRef);
   if (expectedSelectionRef?.selection_revision === 2147483647) fail();
   return Object.freeze({ ...base, operationId: v.operationId, expectedSelectionRef,
     includedRecordedGroupIds: groups(v.includedRecordedGroupIds) });
+}
+function checkedSummary(value: unknown, request: CustomCohortRecordedGroupSummary) {
+  const hasPrivate = value !== null && typeof value === 'object' && Object.hasOwn(value, 'private_sales');
+  const v = closed(value, ['status', 'authority', 'target', 'context_ref', 'selection_ref', 'selection_revision',
+    'subject_freshness', 'summary', 'parcel_map', 'apply', ...(hasPrivate ? ['private_sales'] : [])]);
+  const r = selection(v.selection_ref), map = closed(v.parcel_map, ['status', 'reason']);
+  const apply = closed(v.apply, ['status', 'reasons']);
+  if (v.authority !== 'not_established' || JSON.stringify(r) !== JSON.stringify(request.selectionRef)
+    || map.status !== 'omitted' || map.reason !== 'geometry_not_requested' || apply.status !== 'blocked'
+    || !Array.isArray(apply.reasons) || JSON.stringify(apply.reasons) !== '["observation_preview_only"]') fail();
+  const accepted = checkCustomCohortBoundSummaryResponse({ status: v.status, target: v.target, context_ref: v.context_ref,
+    selection_revision: v.selection_revision, subject_freshness: v.subject_freshness, summary: v.summary,
+    parcel_map: v.parcel_map, apply: v.apply, ...(hasPrivate ? { private_sales: v.private_sales } : {}) }, {
+    accountId: request.accountId, assignmentFileId: request.assignmentFileId, contextRef: request.contextRef,
+    selectionRevision: r.selection_revision, selectionFingerprint: r.selection_sha256,
+  });
+  return Object.freeze({ ...accepted, selection_ref: r });
 }
 function receipt(value: unknown, request: CustomCohortRecordedGroupRead | CustomCohortRecordedGroupWrite,
   writing: boolean): CustomCohortRecordedGroupReceipt {
@@ -111,7 +133,8 @@ function receipt(value: unknown, request: CustomCohortRecordedGroupRead | Custom
 /** One authenticated, bounded request. No independent timer, automatic retry,
  * implicit all-groups selection, source facts or reviewer identity in its body.
  * The caller owns a finite signal and any explicit lost-acknowledgment recovery.
- * This is intent transport only, not preview statistics, workspace save or Apply.
+ * Preview returns only an exact-bound public summary, never parcel/member facts.
+ * The workspace UI, map publication and Apply are not activated here.
  */
 export function createCustomCohortRecordedGroupTransport(options: Parameters<typeof createCustomCohortJsonTransport>[0]) {
   const post = createCustomCohortJsonTransport(options);
@@ -126,6 +149,11 @@ export function createCustomCohortRecordedGroupTransport(options: Parameters<typ
       return receipt(await post(r.accountId, 'select-groups', { assignment_file_id: r.assignmentFileId,
         context_ref: r.contextRef, operation_id: r.operationId, expected_selection_ref: r.expectedSelectionRef,
         included_recorded_group_ids: r.includedRecordedGroupIds }, io), r, true);
+    },
+    async preview(value: CustomCohortRecordedGroupSummary, io: { signal: AbortSignal }) {
+      const r = input(value, false, true) as CustomCohortRecordedGroupSummary;
+      return checkedSummary(await post(r.accountId, 'selection-preview', { assignment_file_id: r.assignmentFileId,
+        context_ref: r.contextRef, selection_ref: r.selectionRef }, io), r);
     },
   });
 }

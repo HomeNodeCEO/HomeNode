@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import express from 'express';
+import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { captureAssignmentSalesCsv, recheckAssignmentSalesCsvCapture }
   from '../../src/services/assignmentSalesCsv/capture.js';
 import { commitAssignmentSalesImport, getAssignmentSalesImportMatchProposals }
@@ -536,6 +538,19 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   assert.deepEqual(groupSummary.private_sales, groupLegacy.private_sales,
     'exact server-owned union must preserve private CSV statistics and period, not silently fall back to shared-only facts');
   assert.ok(groupSummary.private_sales, 'private parity must not be vacuous');
+  const application = express();
+  application.use((req, _res, next) => { req.mobileAuth = auth; next(); });
+  application.use(createCustomNeighborhoodCohortRouter({ cohortService: owner, logger: {} }));
+  const server = await new Promise(resolve => { const s = application.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-preview`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ assignment_file_id: assignment, context_ref: groupRead.contextRef, selection_ref: groupSaved.selection_ref }) });
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    const result = await response.json(); assert.deepEqual(result, groupSummary);
+    assert.ok(result.private_sales); assert.equal(Object.hasOwn(result.private_sales, 'rows'), false);
+    checks.push('native exact-reference HTTP summary keeps independently authorized private CSV aggregates with the same dates/digest and no raw row disclosure');
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
   // Keep the recorded catalog decision unchanged to reach the INDEPENDENT
   // summary grant. Mutating the rights metadata also changes its fingerprint
   // and correctly refuses earlier as market_policy_changed, not this witness.

@@ -162,6 +162,9 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     const reopened = await request('group-selection', readBody);
     assert.equal(reopened.status, 200); assert.equal(reopened.headers.get('cache-control'), 'no-store');
     assert.deepEqual((await reopened.json()).included_recorded_group_ids, []);
+    const numericEmpty = await request('selection-preview', { ...readBody, selection_ref: empty.selection_ref });
+    assert.equal(numericEmpty.status, 200); assert.equal(numericEmpty.headers.get('cache-control'), 'no-store');
+    assert.deepEqual(await numericEmpty.json(), emptySummary);
     loseCommitAck = true;
     const uncertain = await request('select-groups', writeBody);
     assert.equal(uncertain.status, 409);
@@ -173,15 +176,30 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     assert.deepEqual(receipt.included_recorded_group_ids, [...ids].sort());
     assert.equal(Object.hasOwn(receipt, 'account_ids'), false);
     assert.equal(Object.hasOwn(receipt, 'catalog'), false);
+    const numericBody = { ...readBody, selection_ref: receipt.selection_ref };
+    const numeric = await request('selection-preview', numericBody);
+    assert.equal(numeric.status, 200);
+    assert.deepEqual(await numeric.json(), await owner.previewRecordedGroupSelection({ ...read, selectionRef: receipt.selection_ref }));
+    const staleNumeric = await request('selection-preview', { ...readBody, selection_ref: empty.selection_ref });
+    assert.equal(staleNumeric.status, 409); assert.deepEqual(await staleNumeric.json(), { error: 'neighborhood_selection_changed' });
     const stale = await request('select-groups', { ...writeBody, operation_id: randomUUID() });
     assert.equal(stale.status, 409); assert.deepEqual(await stale.json(), { error: 'neighborhood_selection_changed' });
     const invalidFrom = calls.length;
     const injected = await request('select-groups', { ...writeBody, actor_user_id: auth.userId, source_rows: [] });
     assert.equal(injected.status, 400); assert.equal(calls.length, invalidFrom);
+    const injectedNumeric = await request('selection-preview', { ...numericBody, account_ids: [] });
+    assert.equal(injectedNumeric.status, 400); assert.equal(calls.length, invalidFrom);
+    denySummary = true;
+    try {
+      const denied = await request('selection-preview', numericBody);
+      assert.equal(denied.status, 403); assert.deepEqual(await denied.json(), { error: 'neighborhood_access_denied' });
+    } finally { denySummary = false; }
     await suspend('suspended');
     try {
       const revoked = await request('group-selection', readBody);
       assert.equal(revoked.status, 403); assert.deepEqual(await revoked.json(), { error: 'neighborhood_access_denied' });
+      const revokedNumeric = await request('selection-preview', numericBody);
+      assert.equal(revokedNumeric.status, 403); assert.deepEqual(await revokedNumeric.json(), { error: 'neighborhood_access_denied' });
     } finally { await suspend('active'); }
     denyPolicy = true;
     try {
@@ -190,6 +208,7 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, au
     } finally { denyPolicy = false; }
     assert.equal(await head(), 3); assert.deepEqual(await protectedState(), before);
     checks.push('native authenticated ID-only HTTP save/reopen preserves exact lost-ACK operation, stale/current-role/source fences and unchanged report state');
+    checks.push('native exact-reference HTTP numeric summaries preserve complete and empty populations, refuse stale/injected/summary-denied/current-role requests and disclose no geometry or raw member pages');
   } finally {
     server.closeAllConnections(); await new Promise(resolve => server.close(resolve));
   }

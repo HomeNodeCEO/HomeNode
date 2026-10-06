@@ -7,6 +7,7 @@ interface Options {
 }
 const REQUEST_BYTES = 4_000_000;
 const GROUP_SELECTION_BYTES = 262_144;
+const GROUP_SUMMARY_RESPONSE_BYTES = 4_100_000;
 const RESPONSE_BYTES = 18_000_000;
 // Exact dense parcel geometry (32MB) plus the unchanged 2MB summary and envelope.
 // This applies only to map previews; catalog/member/request limits stay intact.
@@ -149,12 +150,13 @@ export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMe
 /** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection'].includes(operation)) throw new Error('Invalid neighborhood request');
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview'].includes(operation)) throw new Error('Invalid neighborhood request');
     const groupSelection = operation === 'select-groups' || operation === 'group-selection';
+    const selectionSummary = operation === 'selection-preview';
     const openingMode = operation === 'catalog' && payload !== null && typeof payload === 'object'
       && Object.hasOwn(payload, 'initial_preview_mode');
     if (openingMode && (!['all_catalog_groups', 'recommended_area'].includes(String((payload as Record<string, unknown>).initial_preview_mode))
@@ -168,9 +170,9 @@ export function createCustomCohortJsonTransport(options: Options) {
     const path = `/api/accounts/${encodeURIComponent(accountId)}/neighborhood-cohort/${operation}`;
     const body = JSON.stringify(payload);
     if (typeof body !== 'string') throw new Error('Invalid neighborhood request body');
-    if (encoder.encode(body).length > (groupSelection ? GROUP_SELECTION_BYTES : REQUEST_BYTES)) throw new Error('Neighborhood preview selection is too large');
+    if (encoder.encode(body).length > (groupSelection || selectionSummary ? GROUP_SELECTION_BYTES : REQUEST_BYTES)) throw new Error('Neighborhood preview selection is too large');
     return jsonRequest(options, path, { method: 'POST', headers: { 'content-type': 'application/json' }, body },
-      groupSelection ? GROUP_SELECTION_BYTES : operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
+      groupSelection ? GROUP_SELECTION_BYTES : selectionSummary ? GROUP_SUMMARY_RESPONSE_BYTES : operation === 'preview' ? MAP_PREVIEW_RESPONSE_BYTES
         : operation === 'viewport' ? REQUEST_BYTES
         : operation === 'catalog' && payload !== null && typeof payload === 'object'
           && (openingMode || Object.hasOwn(payload, 'initial_preview_groups'))

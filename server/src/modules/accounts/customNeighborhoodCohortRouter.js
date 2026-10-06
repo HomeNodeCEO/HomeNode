@@ -8,7 +8,9 @@ import { customCohortReadDiagnostic } from '../../services/neighborhoodAssessmen
 import { customCohortExecutionGate } from '../../services/neighborhoodAssessment/customCohortExecutionGate.js';
 import { CUSTOM_COHORT_OPERATION_LIMITS } from '../../services/neighborhoodAssessment/customCohortOperationLimits.js';
 import { CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, prepareCustomCohortRecordedGroupTransportRequest,
-  presentCustomCohortRecordedGroupTransportResponse } from '../../services/neighborhoodAssessment/customCohortRecordedGroupTransport.js';
+  presentCustomCohortRecordedGroupTransportResponse, CUSTOM_COHORT_GROUP_SUMMARY_RESPONSE_BYTES,
+  prepareCustomCohortGroupSummaryTransportRequest,
+  presentCustomCohortGroupSummaryTransportResponse } from '../../services/neighborhoodAssessment/customCohortRecordedGroupTransport.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -25,6 +27,7 @@ const CONFLICT_ERRORS = new Set(['operation_conflict', 'subject_changed', 'targe
 const UNAVAILABLE_ERRORS = new Set(['recorded_point_required', 'spatial_incomplete',
   'selector_incomplete', 'transaction_identity_incomplete', 'source_incomplete', 'retained_inputs_unavailable']);
 const PREVIEW_CAPACITY_ERRORS = new Set([
+  'custom_cohort_recorded_group_owner_summary_account_limit',
   'custom_cohort_observation_preview_output_bytes_limit',
   'custom_cohort_observation_preview_measurement_work_limit',
   'custom_cohort_observation_preview_member_work_limit',
@@ -146,7 +149,7 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         // Principal is taken only from middleware. Never spread body into input.
         const identity = { auth: req.mobileAuth, accountId, assignmentFileId: body.assignment_file_id };
         releaseExecution = await customCohortExecutionGate.acquire({ signal: controller.signal, deadline });
-        const result = presentResult(await execute(identity, body, { signal: controller.signal, deadline }), body);
+        const result = presentResult(await execute(identity, body, { signal: controller.signal, deadline }), body, accountId);
         if (responseBytes !== null) {
           const encoded = JSON.stringify(result);
           if (Buffer.byteLength(encoded, 'utf8') > responseBytes) throw new Error('neighborhood_selection_response_limit');
@@ -234,6 +237,15 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         presentResult: (result, body) => presentCustomCohortRecordedGroupTransportResponse(result, body, writing),
       });
     }
+  }
+  if (typeof cohortService.previewRecordedGroupSelection === 'function') {
+    route('selection-preview', ['assignment_file_id', 'context_ref', 'selection_ref'],
+      (identity, body, options) => cohortService.previewRecordedGroupSelection({ ...identity,
+        contextRef: body.context_ref, selectionRef: body.selection_ref }, options), [], {
+        bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_SUMMARY_RESPONSE_BYTES,
+        prepareBody: prepareCustomCohortGroupSummaryTransportRequest,
+        presentResult: presentCustomCohortGroupSummaryTransportResponse,
+      });
   }
   route('preview', ['assignment_file_id', 'context_ref', 'selection', 'include_map'], (identity, body, options) => {
     if (typeof body.include_map !== 'boolean') invalid();

@@ -180,4 +180,9 @@ test('additive schema binds complete immutable context/revision history and boun
   assert.match(sql, /BEFORE UPDATE OR DELETE OR TRUNCATE/);
   assert.match(sql, /BETWEEN 1 AND 750000/);
   assert.doesNotMatch(sql, /(?:ALTER|DROP) TABLE|^\s*(?:BEGIN|COMMIT|ROLLBACK);/m);
+  const originalContextChecks = readFileSync(new URL('./helpers/customCohortContextDatabaseChecks.js', import.meta.url), 'utf8');
+  const closure = originalContextChecks.split('\n').find(line => line.includes("'TRUNCATE app.neighborhood_custom_cohort_contexts,"));
+  assert.match(closure, /app.neighborhood_custom_cohort_group_selections, app.neighborhood_custom_cohort_group_selection_heads/);
+  assert.doesNotMatch(closure, /CASCADE/);
+  assert.match(originalContextChecks, /error.code === '55000' && \/custom_cohort_context_immutable\//);
 });

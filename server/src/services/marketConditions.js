@@ -358,6 +358,7 @@ async function loadSubject(pool, subjectAccountId) {
 
 export async function getMarketContext(pool, subjectAccountId, {
   accountIdAllowed = (value) => /^[0-9A-Za-z]{17}$/.test(value),
+  refreshLocation = true,
 } = {}) {
   if (typeof accountIdAllowed !== "function" || !accountIdAllowed(subjectAccountId)) {
     throw new Error("invalid_subject_account_id");
@@ -366,9 +367,9 @@ export async function getMarketContext(pool, subjectAccountId, {
   let subject = await loadSubject(pool, subjectAccountId);
   if (!subject) throw new Error("subject_not_found");
   if (
-    subject.location_status !== "matched" ||
+    refreshLocation && (subject.location_status !== "matched" ||
     subject.latitude == null ||
-    subject.longitude == null
+    subject.longitude == null)
   ) {
     try {
       await refreshAccountLocations(pool, [subject], { batchSize: 1 });
@@ -1379,6 +1380,10 @@ export async function buildMarketConditionsAnalyses(
 
   const storedSubject = await getMarketContext(pool, subjectAccountId, {
     accountIdAllowed,
+    // An exact selected roster does not need a point/radius lookup. Missing
+    // location remains unavailable; do not call CAD or write a new location
+    // while calculating this retained selection's market observations.
+    refreshLocation: !areas.some(area => area.scope === 'exploration'),
   });
   const subject = applyMarketContextOverride(
     storedSubject,

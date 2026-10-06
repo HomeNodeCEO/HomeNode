@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyMarketContextOverride,
   buildMarketTrendRecommendation,
+  buildMarketConditionsAnalyses,
   calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
   ensureSpatialSupport,
@@ -15,6 +16,28 @@ import {
   weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
 import { MARKET_SPATIAL_MIGRATION_NAME } from "../src/database/marketSpatialMigration.js";
+
+test('exact exploration analysis needs neither parcel coordinates nor a fresh CAD lookup', async t => {
+  const subjectAccountId = '26355500170360000', calls = [], originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('Fresh CAD lookup is forbidden in this study.'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const pool = { async query(sql, values) {
+    calls.push({ sql, values });
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER)\b/);
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: subjectAccountId, city: 'Garland', county: 'Dallas',
+      latitude: null, longitude: null, location_status: 'unavailable' }] };
+    assert.match(sql, /FROM core.v_sales_enriched/);
+    assert.equal(values[7], 'exploration'); assert.deepEqual(values[10], [subjectAccountId]);
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId, areaKeys: ['exploration'],
+    explorationAccountIds: [subjectAccountId], asOfDate: '2026-08-31', periodMonths: 24 });
+  assert.equal(fetches, 0); assert.equal(calls.length, 3);
+  assert.equal(result.analyses[0].market.label, 'Exploration Map Area');
+  assert.equal(result.subject.latitude, null);
+});
 
 test("spatial support is a shared migration-and-index readiness probe, never request-path maintenance", async () => {
   const statements = [];

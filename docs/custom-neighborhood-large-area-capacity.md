@@ -989,3 +989,33 @@ byte-identical. Native execution must pass on the exact published head before
 this fixture constitutes evidence; syntax/local recording tests are not that
 proof. Production QA activation, complete paged capture/catalog/statistics/
 publication, legacy migration and real large-area/live Apply acceptance remain.
+
+## Fresh selection-original read batching (not a larger live capacity)
+
+The paged selected-union verifier can consume the existing organization-scoped
+blob repository's fresh batch reader. It keeps the previous eight-record/2MB
+read ceiling, the same caller transaction/finite lane and separate current
+assignment/source/head fences. Manifest and metadata remain individual reads;
+single-page and old repositories keep their original reader. Per-kind windows
+evict consumed pages and are never shared across requests. This is not a cache,
+prepared-summary authority, parallel SQL or permission to replay raw sources.
+
+Every original page is still canonical/hash/byte/kind/index/count checked.
+Missing, altered, reordered or malformed batch replies fail without an
+individual-read fallback. Cancellation and owner deadlines surround admission,
+batch settlement and cached-page consumption. The original group digests,
+overlap-deduplicated union, exact union pages and byte-identical final manifest
+remain mandatory. Immutable account-page visitors are provisional until the
+whole verification AND the caller's final rights/head fences succeed; late
+failure must discard all intermediate computation.
+
+Recording tests compare the identical 20,001-account original selection using
+43 individual verifier reads versus one metadata read plus six batches. The
+guarded migrated PostgreSQL fixture separately compares the same real retained
+9,001-account originals using 22 SQL reads versus six, then rolls back all new
+synthetic originals. These are read-call counts, not wall-clock or live SLA
+proof; native assertions require exact-head CI. Existing 50k installed numeric
+consumer limits, default-off V7 activation, accepted reports, source rights,
+cron schedule and live appraisal choices are unchanged. Complete >50k numeric/
+publication, compact catalog, partial source/spatial recovery and real 5/10-mile,
+retrospective and live QA acceptance still remain.

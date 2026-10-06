@@ -17,6 +17,8 @@ import { CUSTOM_COHORT_SELECTION_MEMBER_BYTES, prepareCustomCohortGroupMemberTra
   presentCustomCohortGroupMemberTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupMemberTransport.js';
 import { prepareCustomCohortGroupWorkspaceTransportRequest,
   presentCustomCohortGroupWorkspaceTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupWorkspaceTransport.js';
+import { CUSTOM_COHORT_GROUP_MAP_OPENING_RESPONSE_BYTES, prepareCustomCohortGroupMapOpeningTransportRequest,
+  presentCustomCohortGroupMapOpeningTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupMapOpening.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -285,6 +287,15 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, logger = c
         bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_SUMMARY_RESPONSE_BYTES,
         prepareBody: prepareCustomCohortGroupSummaryTransportRequest,
         presentResult: presentCustomCohortGroupSummaryTransportResponse,
+      });
+  }
+  if (typeof cohortService.openRecordedGroupSelectionMap === 'function') {
+    route('selection-map-opening', ['assignment_file_id', 'context_ref', 'selection_ref'],
+      (identity, body, options) => cohortService.openRecordedGroupSelectionMap({ ...identity,
+        contextRef: body.context_ref, selectionRef: body.selection_ref }, options), [], {
+        bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_MAP_OPENING_RESPONSE_BYTES,
+        prepareBody: prepareCustomCohortGroupMapOpeningTransportRequest,
+        presentResult: presentCustomCohortGroupMapOpeningTransportResponse,
       });
   }
   if (typeof cohortService.viewportRecordedGroupSelection === 'function') {

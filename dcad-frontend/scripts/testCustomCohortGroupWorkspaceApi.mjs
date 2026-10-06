@@ -10,6 +10,7 @@ import { prepareCustomCohortGroupWorkspaceTransportRequest as serverRequest,
 import { selectionSummaryTransportFixture } from '../../server/test/fixtures/customCohortSelectionSummaryTransportFixture.js';
 import { selectionViewportFixture } from '../../server/test/fixtures/customCohortSelectionViewportFixture.js';
 import { selectionMemberFixture } from '../../server/test/fixtures/customCohortSelectionMemberFixture.js';
+import { selectionMapOpeningFixture } from '../../server/test/fixtures/customCohortSelectionMapOpeningFixture.js';
 
 const load = (name, modules) => loadTrustedRepositoryCommonJs(new URL(`../src/features/neighborhood/${name}.ts`, import.meta.url),
   key => { assert.ok(Object.hasOwn(modules, key), `unexpected API dependency ${key}`); return modules[key]; });
@@ -185,6 +186,16 @@ test('exact numeric summary keeps all selected properties, independently of the 
   assert.equal(result.summary.selected.account_count, 2); assert.deepEqual(result.selection_ref, f.request.selection_ref);
   assert.deepEqual(JSON.parse(h.calls[0].init.body), f.request); assert.equal(result.apply.status, 'blocked');
   assert.doesNotMatch(h.calls[0].init.body, /account_ids|included_recorded_group_ids|pockets/);
+});
+
+test('exact map-opening API port preserves the complete neutral manifest/current reference without an editor key or generic save', async () => {
+  const f = await selectionMapOpeningFixture(), h = harness(() => json(f.result));
+  const input = { accountId: f.accountId, assignmentFileId: f.request.assignment_file_id,
+    contextRef: f.request.context_ref, selectionRef: f.request.selection_ref };
+  const out = await h.api.opening(input, f.saved, f.catalog, io());
+  assert.deepEqual(out.manifest, f.result.map_opening.manifest); assert.deepEqual(out.selection_ref, f.request.selection_ref);
+  assert.equal(h.keys.length, 0); assert.equal(h.calls.length, 1);
+  assert.deepEqual(JSON.parse(h.calls[0].init.body), f.request);
 });
 
 test('exact viewport and member ports preserve the producer selection and complete analytical population, not the displayed geometry prefix', async () => {

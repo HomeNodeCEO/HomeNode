@@ -82,6 +82,7 @@ export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof c
     save(input: Parameters<typeof atomic.save>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => atomic.save(input, io)); },
     readSelection(input: Parameters<typeof selected.read>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.read(input, io)); },
     preview(input: Parameters<typeof selected.preview>[0], io: CustomWorkspaceOperationOptions) { return safely(io.signal, () => selected.preview(input, io)); },
+    opening(...args: Parameters<typeof selected.opening>) { return safely(args[3].signal, () => selected.opening(...args)); },
     viewport(...args: Parameters<typeof selected.viewport>) { return safely(args[4].signal, () => selected.viewport(...args)); },
     members(...args: Parameters<typeof selected.members>) { return safely(args[4].signal, () => selected.members(...args)); },
     capture: legacy.capture, catalog: legacy.catalog,

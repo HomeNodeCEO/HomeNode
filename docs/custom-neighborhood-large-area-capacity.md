@@ -708,3 +708,32 @@ real immutable/repeat behavior and current source denial before merge. Local
 recording tests are not PostgreSQL proof. Production backfill/scheduling and
 measured Hardy reload acceptance remain necessary; no new worker schedule,
 deployment, source/publication cap or instantaneous-map guarantee is implied.
+
+## Exact-reference compact map opening (not V7 UI activation)
+
+`selection-map-opening` reads only the complete capture's display bounds,
+recorded-group anchors and retained subject pointer under the same exact current
+selection reference used by numeric, viewport and member views. The owner checks
+every original membership/union page before producing this display, without
+constructing a selected account array or recomputing selection statistics. Empty
+selection remains empty while its whole captured map can still be displayed.
+Both initial and final current actor, assignment, original context and independent
+catalog/summary source-purpose checks apply. Private CSV openings retain their
+separate original/review authorization and never substitute a shared derivative.
+
+A prepared selection-neutral map-opening derivative avoids whole-map transfer
+and geometry decoding. Missing/unsupported derivatives keep the unchanged full
+original fallback; corrupt/detached data refuses. The closed public projection
+contains no raw source rows, numerical summary, member page, default selection
+or Apply authority. Request and decoded response ceilings are independent of
+full geometry. Browser admission pins exact receipt and complete catalog display
+identity before asynchronous I/O, validates all group labels/counts/subject anchors
+and deeply freezes the checked manifest. The independent V7 API exposes this
+port, but the production host and legacy map/statistics consumers remain unchanged.
+
+Actual migrated disposable-database acceptance must prove prepared/fallback and
+legacy whole-manifest parity, empty/stale/current-actor/source refusals and private
+original parity before merge. No production backfill, schedule, deployment,
+genuine appraisal, source/numerical cap or instant-map SLA changes in this slice.
+Coherent V7 consumers, compact catalogs, partial source-page recovery and complete
+greater-than-50k/5-/10-mile/retrospective live acceptance remain unfinished.

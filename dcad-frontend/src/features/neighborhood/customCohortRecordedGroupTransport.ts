@@ -4,6 +4,7 @@ import type { CustomCohortContextRef } from './customCohortPreviewController';
 import { checkCustomCohortBoundViewportResponse } from './customCohortViewportClient.ts';
 import type { CustomCohortViewportBounds } from './customCohortViewportClient';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
+import { checkCustomCohortGroupMapOpening, prepareCustomCohortGroupMapOpeningExpectation } from './customCohortGroupMapOpening.ts';
 import { checkCustomCohortBoundMemberPage } from './customCohortMemberPage.ts';
 import type { CustomCohortMemberExpectation, CustomCohortMemberPageRequest, CustomCohortMemberPopulation,
   CheckedCustomCohortMemberPage, CustomCohortMemberContinuation } from './customCohortMemberPage';
@@ -234,6 +235,17 @@ export function createCustomCohortRecordedGroupTransport(options: Parameters<typ
       const r = input(value, false, true) as CustomCohortRecordedGroupSummary;
       return checkedSummary(await post(r.accountId, 'selection-preview', { assignment_file_id: r.assignmentFileId,
         context_ref: r.contextRef, selection_ref: r.selectionRef }, io), r);
+    },
+    async opening(value: CustomCohortRecordedGroupSummary, saved: CustomCohortRecordedGroupReceipt,
+      catalog: CheckedPocketCatalog, io: { signal: AbortSignal }) {
+      const r = input(value, false, true) as CustomCohortRecordedGroupSummary;
+      const population = viewportPopulation(r, saved, catalog);
+      const expected = prepareCustomCohortGroupMapOpeningExpectation(catalog, population.members, r.accountId);
+      const v = closed(await post(r.accountId, 'selection-map-opening', { assignment_file_id: r.assignmentFileId,
+        context_ref: r.contextRef, selection_ref: r.selectionRef }, io), ['status', 'authority', 'selection_ref', 'map_opening']);
+      const ref = selection(v.selection_ref);
+      if (v.status !== 'opening' || v.authority !== 'not_established' || JSON.stringify(ref) !== JSON.stringify(r.selectionRef)) fail();
+      return Object.freeze({ selection_ref: ref, manifest: checkCustomCohortGroupMapOpening(v.map_opening, r, expected) });
     },
     async viewport(value: CustomCohortRecordedGroupViewport, saved: CustomCohortRecordedGroupReceipt,
       catalog: CheckedPocketCatalog, capturedParcels: number | null, io: { signal: AbortSignal }) {

@@ -1032,8 +1032,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const presentOpening = async selection => {
       const checked = previewInputOf({ ...input, selection }).selection;
       if (checked.revision !== input.selection.revision) fail('invalid_selection');
-      const selected = await buildCustomCohortIndexedObservationPreviewBatched({ context_ref: input.contextRef,
-        retained_inputs: loaded.retained.retained_inputs, selection: checked }, { check: budget.check });
+      // The catalog already built this immutable, exact observation index.
+      // Reuse its members for the opening union rather than walking/hashing
+      // the complete retained graph a second time. Final policy checks remain
+      // below, and geometry still comes from the original retained parcels.
+      budget.check();
+      const selected = reselectCustomCohortIndexedObservationPreview(preview, checked);
+      budget.check();
       const map = await buildCustomCohortParcelMapBatched({ retained_inputs: loaded.retained.retained_inputs,
         selected_account_ids: [...new Set(checked.pockets.flatMap(p => p.account_ids))] }, { check: budget.check });
       if (map.status === 'available') preparedOpening = { preview: selected, map };

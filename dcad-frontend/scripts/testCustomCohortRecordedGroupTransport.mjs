@@ -67,6 +67,7 @@ test('malformed, ambiguous, member/source/reviewer-bearing requests fail before 
     { ...write(), includedRecordedGroupIds: null }, { ...write(), operationId: 'wrong' },
     { ...write(), expectedSelectionRef: ref(2147483647) }, { ...write(), expectedSelectionRef: { ...ref(), authority: 'granted' } },
     { ...write(), assignmentFileId: 7 }, { ...write(), assignmentFileId: '9223372036854775808' },
+    { ...write(), accountId: 'R\u0000-001' }, { ...write(), accountId: 'R\u007f-001' },
     { ...write(), contextRef: { ...context, extra: true } },
   ];
   const h = harness(); for (const value of invalid) await assert.rejects(h.select(value), /invalid_custom_cohort/);

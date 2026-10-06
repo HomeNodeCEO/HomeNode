@@ -71,8 +71,11 @@ function input(value: unknown, writing: boolean): CustomCohortRecordedGroupRead 
   const v = closed(value, ['accountId', 'assignmentFileId', 'contextRef', ...(writing
     ? ['operationId', 'expectedSelectionRef', 'includedRecordedGroupIds'] : [])]);
   if (typeof v.accountId !== 'string' || !v.accountId || v.accountId.length > 64 || v.accountId.trim() !== v.accountId
-    || /[\u0000-\u001f\u007f]/.test(v.accountId) || typeof v.assignmentFileId !== 'string'
+    || typeof v.assignmentFileId !== 'string'
     || !/^[1-9]\d{0,18}$/.test(v.assignmentFileId) || BigInt(v.assignmentFileId) > 9223372036854775807n) fail();
+  for (let i = 0; i < v.accountId.length; i++) {
+    const code = v.accountId.charCodeAt(i); if (code < 32 || code === 127) fail();
+  }
   const base = { accountId: v.accountId, assignmentFileId: v.assignmentFileId, contextRef: context(v.contextRef) };
   if (!writing) return Object.freeze(base);
   if (typeof v.operationId !== 'string' || !UUID.test(v.operationId)) fail();

@@ -1,9 +1,11 @@
 import { createHash } from 'node:crypto';
+import { isProxy } from 'node:util/types';
 import { setImmediate as yieldToRequests } from 'node:timers/promises';
 import { canonicalAssessmentJson as json } from './contract.js';
 import { prepareCustomCohortContextScope, prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { prepareCustomNeighborhoodRecordedGroupIds } from './customWorkspaceCheckpoint.js';
-import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef } from './cohortEvidenceBlobRepository.js';
+import { prepareNeighborhoodCohortBlob as blob, prepareNeighborhoodCohortBlobReference as blobRef,
+  NEIGHBORHOOD_COHORT_BLOB_READ_BATCH_LIMITS as READ_LIMITS } from './cohortEvidenceBlobRepository.js';
 
 // A new internal representation only, not an installed capacity increase. The
 // owner must derive these groups from the exact freshly authorized ORIGINAL
@@ -172,9 +174,10 @@ export async function stageCohortPagedGroupSelectionV1({ metadataJson, membershi
  * nothing until verification and its own final rights/head fences succeed.
  */
 export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifestJson,
-  readPage, signal, checkBudget, onAccountPage } = {}) {
+  readPage, readPages, signal, checkBudget, onAccountPage } = {}) {
   check(checkBudget === undefined || typeof checkBudget === 'function', 'invalid_input');
   check(onAccountPage === undefined || typeof onAccountPage === 'function', 'invalid_input');
+  check(readPages === undefined || typeof readPages === 'function', 'invalid_input');
   prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
   const manifest = original(manifestJson, L.manifest_bytes, 'invalid_manifest');
   closed(manifest, ['selection_version', 'usage', 'metadata_ref', 'membership_count', 'account_count',
@@ -197,19 +200,57 @@ export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifest
       check(Number(ref.page.canonical_utf8_bytes) <= L.page_bytes, 'invalid_manifest');
     }
   }
-  check(!signal?.aborted, 'cancelled'); checkBudget?.();
+  const cancelled = () => { check(!signal?.aborted, 'cancelled'); checkBudget?.(); };
+  cancelled();
   const originalMetadata = await readPage({ kind: 'selection_metadata', page_index: null, ...manifest.metadata_ref });
+  cancelled();
   check(originalMetadata === metadataJson, 'metadata_conflict');
-  const read = async (kind, index, refs) => {
-    check(!signal?.aborted, 'cancelled');
-    const ref = refs[index]; check(ref, 'page_conflict');
-    const text = await readPage({ kind, page_index: index, ...ref.page });
+  const checkedPage = (text, kind, index, ref) => {
     const value = original(text, L.page_bytes, 'page_conflict');
     check(json(blob(text)) === json(ref.page), 'page_conflict');
     closed(value, ['selection_version', 'kind', 'page_index', 'entries'], 'page_conflict');
     check(value.selection_version === 1 && value.kind === kind && value.page_index === String(index)
       && Array.isArray(value.entries) && value.entries.length === Number(ref.entry_count), 'page_conflict');
     return { text, entries: value.entries };
+  };
+  // Fresh original reads in the SAME caller lane/transaction, not a reusable
+  // cache. Each kind retains at most one existing-width (8/2MB) window, evicting
+  // consumed pages. No parallel SQL, wider read limit, source replay, digest-only
+  // shortcut, or fallback after a missing/corrupt batch. Every original is
+  // checked before provisional work; final union/manifest checks stay below.
+  const windows = new Map();
+  const read = async (kind, index, refs) => {
+    cancelled();
+    const ref = refs[index]; check(ref, 'page_conflict');
+    let window = windows.get(kind);
+    if (window?.has(index)) {
+      const value = window.get(index); window.delete(index); return value;
+    }
+    const requests = []; let bytes = 0;
+    for (let i = index; readPages && i < refs.length && requests.length < READ_LIMITS.records; i++) {
+      const next = refs[i];
+      if (bytes + Number(next.page.canonical_utf8_bytes) > READ_LIMITS.bytes) break;
+      bytes += Number(next.page.canonical_utf8_bytes);
+      requests.push(Object.freeze({ kind, page_index: i, ...next.page }));
+    }
+    if (requests.length < 2) {
+      const text = await readPage(Object.freeze({ kind, page_index: index, ...ref.page }));
+      cancelled(); return checkedPage(text, kind, index, ref);
+    }
+    const values = await readPages(Object.freeze(requests));
+    cancelled();
+    check(!isProxy(values) && Array.isArray(values) && Object.getPrototypeOf(values) === Array.prototype
+      && values.length === requests.length && Reflect.ownKeys(values).length === values.length + 1, 'batch_conflict');
+    window = new Map();
+    for (let i = 0; i < requests.length; i++) {
+      cancelled();
+      const d = Object.getOwnPropertyDescriptor(values, String(i));
+      check(d?.enumerable && Object.hasOwn(d, 'value'), 'batch_conflict');
+      const pageIndex = requests[i].page_index;
+      window.set(pageIndex, checkedPage(d.value, kind, pageIndex, refs[pageIndex]));
+    }
+    cancelled(); windows.set(kind, window);
+    const value = window.get(index); window.delete(index); return value;
   };
   async function* pages() {
     for (let index = 0; index < manifest.membership_pages.length; index++) {

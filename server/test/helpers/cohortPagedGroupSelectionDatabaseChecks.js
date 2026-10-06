@@ -54,6 +54,45 @@ export async function runCohortPagedGroupSelectionDatabaseChecks({ pool, scope, 
       manifestRef: alternative.manifest_ref }), /missing_manifest/);
     assert.deepEqual(await store.verify({ metadataJson, manifestRef: original.manifest_ref }), original);
 
+    // Compare actual fresh scoped SQL on the same complete originals. No
+    // prepared summary, cache, wider limits or digest-only substitute: both
+    // readers reconstruct and verify every membership/union page.
+    await client.query('BEGIN');
+    const wideIds = Array.from({ length: 9001 }, (_, i) => `synthetic-batch-selection-${String(i).padStart(5, '0')}`);
+    const wideGroups = [{ id: A, account_ids: wideIds }];
+    const wideCatalog = await repository.put(json({ synthetic_group_catalog_version: 1, groups: wideGroups }));
+    const wideMetadata = json({ ...JSON.parse(metadataJson), revision: 7, catalog_ref: wideCatalog,
+      groups: [{ id: A, member_count: wideIds.length,
+        account_ids_sha256: createHash('sha256').update(json({ account_ids: wideIds })).digest('hex') }] });
+    const wideOriginal = await store.stage({ metadataJson: wideMetadata,
+      membershipPages: pages(wideIds.map(account_id => ({ account_id, group_id: A }))) });
+    const pageRefs = JSON.parse(wideOriginal.manifest_json), permitted = new Set(
+      [...pageRefs.membership_pages, ...pageRefs.account_pages].map(ref => ref.page.content_sha256));
+    const readCalls = [], tracked = createNeighborhoodCohortBlobRepository({ async query(sql, parameters) {
+      readCalls.push({ sql, parameters }); return client.query(sql, parameters);
+    } }, scope.organization_id);
+    const verifyInput = { metadataJson: wideMetadata, manifestRef: wideOriginal.manifest_ref };
+    const single = await createCohortPagedGroupSelectionV1Store({ get: tracked.get, put: tracked.put }).verify(verifyInput);
+    assert.equal(readCalls.length, 22, 'manifest + metadata + all ten membership and ten union originals');
+    assert.ok(readCalls.every(call => call.sql.includes('neighborhood-cohort-blob:read */')));
+    readCalls.length = 0; const visited = [];
+    const batched = await createCohortPagedGroupSelectionV1Store(tracked).verify({ ...verifyInput,
+      onAccountPage(value) { assert.ok(Object.isFrozen(value.account_ids)); visited.push(...value.account_ids); } });
+    assert.deepEqual(batched, single); assert.deepEqual(batched, wideOriginal);
+    assert.equal(batched.account_count, wideIds.length); assert.deepEqual(visited, wideIds);
+    assert.equal(readCalls.length, 6, 'same complete originals: two single headers + four existing-width batches');
+    const batchCalls = readCalls.filter(call => call.sql.includes('neighborhood-cohort-blob:read-batch'));
+    assert.deepEqual(batchCalls.map(call => call.parameters[1].length), [8, 8, 2, 2]);
+    for (const { sql, parameters } of batchCalls) {
+      assert.equal(parameters[0], scope.organization_id);
+      assert.ok(parameters[1].every(hash => permitted.has(hash)), 'batch opens only ORIGINAL selection pages, not source facts');
+      assert.ok(parameters[2].reduce((sum, bytes) => sum + bytes, 0) <= 2_000_000);
+      assert.match(sql, /octet_length\(b.canonical_utf8\)=input.bytes/);
+    }
+    await client.query('ROLLBACK');
+    await assert.rejects(store.verify(verifyInput), /missing_manifest/);
+    assert.deepEqual(await store.verify({ metadataJson, manifestRef: original.manifest_ref }), original);
+
     const count = async () => (await pool.query(`SELECT count(*)::int AS n
       FROM app.neighborhood_cohort_evidence_blobs WHERE organization_id=$1`, [scope.organization_id])).rows[0].n;
     const beforeCancel = await count(), signal = new AbortController();
@@ -77,5 +116,7 @@ export async function runCohortPagedGroupSelectionDatabaseChecks({ pool, scope, 
   } finally { reopened.release(); }
   assert.deepEqual(await protectedState(), before);
   return { checks: ['real immutable paged group selection storage reopens the exact union and originals; '
-    + 'foreign organization/binding refuses and caller rollback/cancellation leaves reports and accepted studies unchanged'] };
+    + 'foreign organization/binding refuses and caller rollback/cancellation leaves reports and accepted studies unchanged',
+  'real fresh scoped original-page batching verifies the byte-identical 9,001-account selection and ordered union '
+    + 'in six SQL reads instead of twenty-two, at unchanged eight-record/2MB limits; all synthetic originals roll back'] };
 }

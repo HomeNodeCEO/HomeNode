@@ -37,6 +37,17 @@ function fixture(extraAccounts = []) {
     if (tag?.startsWith('neighborhood-cohort-blob:')) {
       assert.equal(args[0], scope.organization_id);
       if (tag.endsWith(':read')) return row(state.missing === args[1] ? null : data.get(args[1]));
+      if (tag.endsWith(':read-batch')) {
+        assert.ok(args[1].length >= 2 && args[1].length <= 8);
+        assert.ok(args[2].reduce((sum, bytes) => sum + bytes, 0) <= 2_000_000);
+        const values = args[1].flatMap((hash, i) => {
+          const original = state.missing === hash ? null : data.get(hash);
+          if (!original) return [];
+          return [{ ...original, canonical_utf8: Number(original.canonical_utf8_bytes) === args[2][i]
+            && Buffer.byteLength(original.canonical_utf8, 'utf8') === args[2][i] ? original.canonical_utf8 : null }];
+        });
+        return { rowCount: values.length, rows: values };
+      }
       if (tag.endsWith(':insert')) {
         if (data.has(args[1])) return row(null);
         const r = blob(args[3]); data.set(r.content_sha256, { ...r, canonical_utf8: args[3] }); return row(data.get(args[1]));
@@ -366,6 +377,18 @@ test('summary never emits a verified prefix or raises the installed 50k numeric-
     }
     assert.equal(f.state.head, 1, 'read failure cannot replace intent or report data');
   }
+});
+
+test('fresh original batching does not bypass the final owner rights fence or preserve staged choices after revocation', async () => {
+  const f = fixture(Array.from({ length: 2000 }, (_, i) => `D-${String(i).padStart(6, '0')}`));
+  const before = new Map(f.data); let batches = 0;
+  f.state.before = tag => {
+    if (tag === 'neighborhood-cohort-blob:read-batch') { batches++; f.state.finalAllowed = false; }
+  };
+  await assert.rejects(f.owner.selectRecordedGroups(f.select), /current rights revoked before commit/);
+  assert.ok(batches >= 2); assert.equal(f.state.head, null); assert.equal(f.revisions.size, 0);
+  assert.deepEqual(f.data, before); assert.ok(f.calls.includes('rolled_back'));
+  assert.ok(!f.calls.includes('committed') && !f.calls.includes('delivered'));
 });
 
 test('exact-reference viewport verifies the whole offscreen union before map work; empty, stale, revoked and missing originals never broaden', async () => {

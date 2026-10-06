@@ -715,13 +715,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
       });
     },
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'workspace', 'complete', 'summary', 'viewport', 'members', 'opening'].includes(projection)
+      if (!['intent', 'workspace', 'complete', 'summary', 'viewport', 'members', 'opening', 'market'].includes(projection)
         || (writing && !['intent', 'workspace', 'complete'].includes(projection))
         || (!writing && ['workspace', 'complete'].includes(projection))) fail('invalid_input');
       // Geometry uses the existing viewport's summary exposure, in addition to
       // catalog rights needed to re-derive the exact server-owned selection.
       const additionalExposures = projection === 'members' ? ['report_observation_members']
-        : ['summary', 'viewport', 'opening'].includes(projection) ? ['report_observation_summary'] : [];
+        : ['summary', 'viewport', 'opening', 'market'].includes(projection) ? ['report_observation_summary'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -740,7 +740,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const scopeJson = canonicalAssessmentJson(Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])));
         const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
           authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
-          additionalExposures, loadInputs: false, privateSummary: projection === 'members' });
+          additionalExposures, loadInputs: false, privateSummary: ['members', 'market'].includes(projection) });
         if (writing && projection === 'intent') {
           const versions = await client.query(`/* custom-cohort-group-workspace:legacy-guard */
             SELECT section_value->>'workspace_version' AS workspace_version

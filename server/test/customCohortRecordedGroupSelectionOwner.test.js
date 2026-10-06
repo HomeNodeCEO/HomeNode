@@ -332,6 +332,38 @@ test('summary uses only the completely verified exact current union; empty and s
   assert.equal(f.state.head, 2);
 });
 
+test('internal market authorization returns the complete exact union without map/statistic projection or selection writes', async () => {
+  const f = fixture(), saved = await f.owner.selectRecordedGroups(f.select), request = { ...f.read, selectionRef: saved.selection_ref };
+  const before = { data: new Map(f.data), head: f.state.head, revisions: new Map(f.revisions) };
+  const result = await f.owner.authorizeRecordedGroupMarketSelection(request);
+  assert.deepEqual(result.accountIds, ['A', 'B', 'C']); assert.ok(Object.isFrozen(result.accountIds));
+  assert.deepEqual(result.selection_ref, saved.selection_ref);
+  assert.deepEqual(result.target, { account_id: scope.account_id, assignment_file_id: scope.assignment_file_id });
+  assert.deepEqual(result.binding, { context_ref: context, selection_revision: 1, selection_sha256: saved.selection_ref.selection_sha256 });
+  assert.equal(f.state.summaryInputs.length + f.state.viewportInputs.length + f.state.memberInputs.length + f.state.openingInputs.length, 0);
+  assert.deepEqual(f.data, before.data); assert.equal(f.state.head, before.head); assert.deepEqual(f.revisions, before.revisions);
+  for (const key of ['account_ids', 'selection', 'viewport', 'includedRecordedGroupIds'])
+    await assert.rejects(f.owner.authorizeRecordedGroupMarketSelection({ ...request, [key]: [] }), /invalid_input/);
+  f.state.summaryAllowed = false;
+  await assert.rejects(f.owner.authorizeRecordedGroupMarketSelection(request), /rights denied/);
+  f.state.summaryAllowed = true; f.state.finalAllowed = false;
+  await assert.rejects(f.owner.authorizeRecordedGroupMarketSelection(request), /revoked before commit/);
+  f.state.finalAllowed = true;
+  const empty = await f.owner.selectRecordedGroups({ ...f.select, operationId: randomUUID(),
+    expectedSelectionRef: saved.selection_ref, includedRecordedGroupIds: [] });
+  assert.deepEqual((await f.owner.authorizeRecordedGroupMarketSelection({ ...f.read, selectionRef: empty.selection_ref })).accountIds, []);
+  await assert.rejects(f.owner.authorizeRecordedGroupMarketSelection(request), /selection_changed/);
+});
+
+test('internal market authorization never returns a verified prefix when a later original is missing', async () => {
+  const f = fixture(Array.from({ length: 2000 }, (_, i) => `D-${String(i).padStart(6, '0')}`));
+  const saved = await f.owner.selectRecordedGroups(f.select);
+  const manifest = JSON.parse(f.data.get(saved.selection_ref.manifest_ref.content_sha256).canonical_utf8);
+  f.state.missing = manifest.account_pages.at(-1).page.content_sha256;
+  await assert.rejects(f.owner.authorizeRecordedGroupMarketSelection({ ...f.read, selectionRef: saved.selection_ref }), /page_conflict/);
+  assert.equal(f.state.head, 1); assert.equal(f.revisions.size, 1);
+});
+
 test('summary refuses missing/changed originals and separate summary rights before exposing any numeric result', async () => {
   const f = fixture(), first = await f.owner.selectRecordedGroups(f.select);
   const request = { ...f.read, selectionRef: first.selection_ref };

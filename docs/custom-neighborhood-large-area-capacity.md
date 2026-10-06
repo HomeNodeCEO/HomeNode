@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Exact-reference market-study server adapter (not browser activation)
+
+`customCohortRecordedGroupMarketAnalysis.js` connects an exact current retained
+group-selection reference to the existing closed-sale market calculator. The
+internal selection owner reopens every original membership/union page, checks
+current database actor/assignment/subject and catalog/summary/private-source
+rights, and returns the complete account union only after its ending fences.
+It does not request geometry, run the neighborhood numeric kernel, accept a
+browser member list, or change the saved selection or accepted report. An empty
+union stays empty. The installed 50k analytical account ceiling is unchanged.
+
+The adapter detaches the closed reference, observation window and scalar study
+context before awaiting. The window remains independent of the appraisal
+effective date, matching the existing market-study behavior. It uses the
+existing bounded numeric execution gate with caching disabled and no altered
+formula, deduplication, COD/CV meaning or sale classification. After the sales
+query settles, it freshly reopens current rights and the complete exact original
+again. Changed targets, references, original union, permission, cancellation or
+deadline return no completed result. Only the numeric response and its exact
+binding/reference leave the adapter, never the internal account array.
+
+The additive `selection-market-analysis` HTTP command accepts only the exact
+reference and existing study settings, under the existing authenticated/CSRF
+application boundary, no-store response, 262,144-byte request and unchanged
+ordinary response ceiling. The application composes it only when the already
+default-off V7 flag is explicitly enabled; the legacy route remains unchanged.
+This is not an enabled V7 browser consumer or a workfile migration. The next
+browser adapter must use the actual immutable composed display and reject a
+different context/reference or superseded response, without fabricating a legacy
+pocket request or using the visible viewport as the analytical population.
+
+Six focused synthetic adapter tests plus the ten unchanged legacy tests pass
+locally. Added owner/HTTP/native fixtures cover complete and explicit-empty
+unions, missing late originals, stale heads, initial/ending summary rights and
+unchanged report rows. Those broader fixtures still require actual current-head
+CI execution; syntax checks alone and a local dependency-unavailable owner test
+are not native or full HTTP proof. No production settings, schedule, source cap,
+report, chart/export formula, or live timing claim changes in this slice.
+
 ## Complete supplemental metric group (not live registration or activation)
 
 `customCohortCompleteMetricGroup.js` stages all fifteen existing selected-stock,

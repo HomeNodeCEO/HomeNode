@@ -154,6 +154,12 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   assert.equal(summary.authority, 'not_established'); assert.equal(summary.apply.status, 'blocked');
   assert.equal(Object.hasOwn(summary, 'account_ids'), false);
   assert.equal(summary.parcel_map.status, 'omitted');
+  const marketUnion = await owner.authorizeRecordedGroupMarketSelection({ ...read, selectionRef: first.selection_ref });
+  const expectedMarketUnion = [...new Set([...catalog.catalog.pockets.filter(p => ids.includes(p.id)).flatMap(p => p.account_ids),
+    ...(ids.includes('discovery:unassigned') ? catalog.catalog.unassigned.account_ids : [])])].sort();
+  assert.deepEqual(marketUnion.accountIds, expectedMarketUnion);
+  assert.deepEqual(marketUnion.selection_ref, first.selection_ref); assert.ok(Object.isFrozen(marketUnion.accountIds));
+  assert.deepEqual(marketUnion.binding, summary.summary.binding);
   assert.ok(!calls.slice(from).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
     'prepared selection reads complete catalog/roster without replaying source pages');
   assert.ok(!calls.slice(from).some(sql => sql.includes('compressed_map')),
@@ -195,6 +201,8 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   const emptyLegacy = await owner.present({ ...read, selection: { revision: 2, pockets: [] } }, { includeMap: false });
   assert.deepEqual(emptySummary.summary, emptyLegacy.summary);
   assert.equal(emptySummary.summary.selected.account_count, 0);
+  assert.deepEqual((await owner.authorizeRecordedGroupMarketSelection({ ...read, selectionRef: empty.selection_ref })).accountIds, []);
+  await assert.rejects(owner.authorizeRecordedGroupMarketSelection({ ...read, selectionRef: first.selection_ref }), /selection_changed/);
   await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: first.selection_ref }), /selection_changed/);
   await assert.rejects(owner.selectRecordedGroups(select), /selection_changed/);
   await assert.rejects(owner.selectRecordedGroups({ ...emptyInput, includedRecordedGroupIds: ids }), /operation_conflict/);
@@ -212,6 +220,14 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   assert.ok(!calls.slice(summaryDeniedFrom).some(sql => sql.includes('prepared-catalog:read')
     || sql.includes('prepared-preview:read') || sql.includes('custom-cohort-group-selection:head')),
   'catalog access alone cannot open prepared numeric facts or selection originals under denied summary rights');
+  denySummary = true;
+  try { await assert.rejects(owner.authorizeRecordedGroupMarketSelection({ ...read, selectionRef: empty.selection_ref }), /market_data_access_denied/); }
+  finally { denySummary = false; }
+  summaryPolicyCalls = 0; denyFinalSummary = true;
+  try { await assert.rejects(owner.authorizeRecordedGroupMarketSelection({ ...read, selectionRef: empty.selection_ref }), /market_data_access_denied/); }
+  finally { denyFinalSummary = false; }
+  assert.ok(summaryPolicyCalls >= 2, 'internal exact market union checks the separate ending summary grant');
+  checks.push('native exact-reference market authorization reopens every original of the complete union, keeps empty empty, rejects stale heads and initial/final summary-rights denial without changing report rows');
   summaryPolicyCalls = 0; denyFinalSummary = true;
   try { await assert.rejects(owner.previewRecordedGroupSelection({ ...read, selectionRef: empty.selection_ref }), /market_data_access_denied/); }
   finally { denyFinalSummary = false; }

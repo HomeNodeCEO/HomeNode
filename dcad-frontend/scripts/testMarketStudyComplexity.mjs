@@ -117,3 +117,20 @@ test('review response cannot overwrite changed weighting or another file', async
     assert.notEqual(h.published.at(-1)?.review?.complexity, 'complex');
   }
 });
+
+test('saved review survives a delayed map restore without displaying stale evidence or requerying', async t => {
+  const context = base(), studies = response(area('exploration'));
+  const review = { complexity: 'moderate', notes: 'Saved appraiser review', sourceComputedAt: context.computed_at,
+    reviewedAt: '2026-10-06', evidenceKey: helper.marketComplexityEvidenceKey('sig', ['exploration']) };
+  const saved = helper.buildMarketStudyComplexity(context, studies, ['exploration'], 'sig', review);
+  const h = component({ current: false, initialScreening: saved, response: studies }); t.after(h.dispose);
+  await h.settle();
+  assert.equal(h.published.at(-1), null);
+  assert.equal(h.queries.length, 0);
+  h.update({ current: true }); await h.settle();
+  assert.equal(h.queries.length, 0, 'Completed context is reused after exact map restoration');
+  assert.equal(h.published.at(-1).review.notes, review.notes);
+  assert.equal(h.view.notes, review.notes);
+  assert.equal(h.view.context.review_status, 'overridden');
+  assert.equal(h.view.context.effective_complexity, 'moderate');
+});

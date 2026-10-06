@@ -157,12 +157,17 @@ test('a database draft arriving after lazy mount restores results and the saved 
   assert.match(h.text, /Study required/);
   const value = completeResult(), keys = ['zip', 'radius_1', 'radius_2', 'exploration'];
   value.analyses = keys.map(key => ({ ...value.analyses[0], market: { key, label: key } }));
-  const review = { version: 1, review: { notes: 'Saved review' } };
+  const signature = JSON.stringify({ areaKeys: [...keys].sort(), asOfDate: '2026-09-30', periodMonths: 12,
+    explorationIdentity: fixture().api.explorationAreaIdentity(group.binding), contextOverride: null });
+  const review = { version: 1, studySignature: signature, review: { notes: 'Saved review' } };
   const restored = { ...draft(value), selectedAreaKeys: keys, asOfDate: '2026-09-30', periodMonths: 12,
     propertyComplexity: review };
   h.update({ initialDraft: restored }); await h.settle();
   assert.match(h.text, /Study required/, 'Restored results still wait for the exact map selection');
   assert.equal(h.published.filter(Boolean).length, 0);
+  const pendingContext = walk(h.render()).find(n => n.type === 'MarketStudyPropertyContext');
+  assert.equal(pendingContext.props.current, false);
+  assert.equal(pendingContext.props.studySignature, signature, 'The saved review keeps its completed-run identity while the map restores');
   h.update({ explorationArea: group }); await h.settle();
   assert.match(h.text, /Study complete/);
   assert.deepEqual(h.published.at(-1).selectedAreaKeys, keys);

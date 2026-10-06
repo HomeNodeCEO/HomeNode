@@ -1001,7 +1001,9 @@ export default function MarketConditionsAnalysis({
         </div>
 
         <MarketStudyPropertyContext key={`${runSignature}:${studyRevision}`} accountId={subjectAccountId} assignmentFileId={assignmentFileId}
-          response={analysisResult} current={studyIsCurrent} studySignature={currentSignature} studyRevision={studyRevision}
+          // Retain the completed run identity while its map selection restores.
+          // current still prevents stale assessment display and saving.
+          response={analysisResult} current={studyIsCurrent} studySignature={runSignature} studyRevision={studyRevision}
           geography={geography} reliedUpon={reconciliation.reliedUponAreaKeys} initialScreening={savedDraft?.propertyComplexity}
           onChange={setStudyComplexity} />
 

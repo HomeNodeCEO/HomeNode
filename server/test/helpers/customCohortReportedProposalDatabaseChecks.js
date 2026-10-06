@@ -196,10 +196,16 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
       assert.ok(!calls.slice(from).some(sql => /neighborhood:(enqueue|exact-claim|publish)|INSERT INTO app\.custom_neighborhood_acceptances/.test(sql)));
     } finally { await replace(checkpoint, changed); resetPolicy(); }
   }
+  const suspend = status => pool.query('UPDATE app_auth.organization_memberships SET status=$3 WHERE organization_id=$1 AND user_id=$2',
+    [organization, actor, status]);
+  const changeHead = async (next, expected) => {
+    const changed = await pool.query(`UPDATE app.neighborhood_custom_cohort_group_selection_heads SET selection_revision=$3
+      WHERE organization_id=$1 AND context_id=$2 AND selection_revision=$4 RETURNING selection_revision`,
+    [organization, captured.context_ref.context_id, next, expected]);
+    assert.equal(changed.rowCount, 1, 'fault injection changes only the exact disposable fixture current-head pointer');
+  };
   const before = await protectedState();
   if (exactSelectionWorkspace) {
-    const suspend = status => pool.query('UPDATE app_auth.organization_memberships SET status=$3 WHERE organization_id=$1 AND user_id=$2',
-      [organization, actor, status]);
     await suspend('suspended');
     try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /job_actor_access_revoked/); }
     finally { await suspend('active'); }
@@ -219,12 +225,6 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
     try { await assert.rejects(owner.prepareReportedObservations(proposalInput()), /job_actor_access_revoked/); }
     finally { await suspend('active'); }
     assert.deepEqual(await protectedState(), before);
-    const changeHead = async (next, expected) => {
-      const changed = await pool.query(`UPDATE app.neighborhood_custom_cohort_group_selection_heads SET selection_revision=$3
-        WHERE organization_id=$1 AND context_id=$2 AND selection_revision=$4 RETURNING selection_revision`,
-      [organization, captured.context_ref.context_id, next, expected]);
-      assert.equal(changed.rowCount, 1, 'fault injection changes only the exact disposable fixture current-head pointer');
-    };
     // Both revisions have actual retained originals. Fault-inject only the
     // current pointer between owner transactions, keeping workspace bytes and
     // revision identical. Do not rewrite any original, history or acceptance.
@@ -294,6 +294,24 @@ export async function checkCustomCohortReportedProposalDatabase({ pool, database
   const applying = { ...requested, operationId: randomUUID(), proposalOperationId: requested.operationId,
     attachmentId: proposal.attachment_ref.attachment_id, attachmentRevision: proposal.attachment_ref.attachment_revision,
     bindingDigest: proposal.attachment_ref.binding_digest, adopt: true };
+  if (exactSelectionWorkspace) {
+    await suspend('suspended');
+    try { await assert.rejects(owner.applyReportedObservations(applying), /job_actor_access_revoked/); }
+    finally { await suspend('active'); }
+    assert.deepEqual(await protectedState(), frozen);
+    await changeHead(predecessorSelection.selection_ref.selection_revision, selectionRevision);
+    try { await assert.rejects(owner.applyReportedObservations(applying), /selection_changed/); }
+    finally { await changeHead(selectionRevision, predecessorSelection.selection_ref.selection_revision); }
+    assert.deepEqual(await protectedState(), frozen);
+    catalogPolicyCount = 0; denyCatalogAt = 3;
+    const afterApplyFrom = calls.length;
+    try { await assert.rejects(owner.applyReportedObservations(applying), /market_data_access_denied/); }
+    finally { denyCatalogAt = 0; }
+    assert.ok(calls.slice(afterApplyFrom).some(sql => sql.includes('custom-neighborhood-acceptance:insert')),
+      'catalog revocation witness must occur after actual coherent acceptance writes');
+    assert.deepEqual(await protectedState(), frozen); resetPolicy();
+    checks.push('native V7 Apply reloads current roles, refuses a changed head with identical workspace, and rolls acceptance/section/history back on post-write catalog revocation');
+  }
   if (choice) {
     await rejectChangedDiscovery(() => owner.applyReportedObservations(applying), frozen);
     checks.push('Apply refuses changed saved discovery at the same workspace revision before accepting any of the five report parts');

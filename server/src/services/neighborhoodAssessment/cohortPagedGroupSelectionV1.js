@@ -47,7 +47,10 @@ function reference(value, reason) {
   closed(value, ['content_sha256', 'canonical_utf8_bytes'], reason);
   try { return blobRef(value.content_sha256, value.canonical_utf8_bytes); } catch { fail(reason); }
 }
-function metadata(text) {
+/** Admit canonical selection metadata only. No stored read or current source
+ * authorization follows from parsing an otherwise well-formed representation.
+ */
+export function prepareCohortPagedGroupSelectionV1Metadata(text) {
   const value = original(text, L.metadata_bytes, 'invalid_metadata');
   closed(value, ['selection_version', 'usage', 'scope', 'context_ref', 'catalog_ref', 'revision', 'groups'], 'invalid_metadata');
   check(value.selection_version === 1 && value.usage === 'retained_group_selection_only'
@@ -89,7 +92,7 @@ function pageReference(value) {
  */
 export async function stageCohortPagedGroupSelectionV1({ metadataJson, membershipPages,
   onMembershipPage, onAccountPage, signal, checkBudget = () => {} } = {}) {
-  const m = metadata(metadataJson), metadata_ref = blob(metadataJson);
+  const m = prepareCohortPagedGroupSelectionV1Metadata(metadataJson), metadata_ref = blob(metadataJson);
   check(membershipPages && typeof membershipPages[Symbol.asyncIterator] === 'function'
     && typeof onMembershipPage === 'function' && typeof onAccountPage === 'function'
     && typeof checkBudget === 'function', 'invalid_input');
@@ -167,7 +170,7 @@ export async function stageCohortPagedGroupSelectionV1({ metadataJson, membershi
 export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifestJson,
   readPage, signal, checkBudget } = {}) {
   check(checkBudget === undefined || typeof checkBudget === 'function', 'invalid_input');
-  metadata(metadataJson);
+  prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
   const manifest = original(manifestJson, L.manifest_bytes, 'invalid_manifest');
   closed(manifest, ['selection_version', 'usage', 'metadata_ref', 'membership_count', 'account_count',
     'selection_sha256', 'membership_pages', 'account_pages'], 'invalid_manifest');

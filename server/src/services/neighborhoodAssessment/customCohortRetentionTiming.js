@@ -12,6 +12,19 @@ const known = new Set(TAGS);
 export async function withCustomCohortRetentionTiming(client, work, report = event => {
   console.info('[neighborhood] retention-timing ' + JSON.stringify(event));
 }) {
+  return withInputTiming(client, work, 'retention', report);
+}
+
+// Saved-study loading must distinguish database transfer/driver time from
+// reconstruction and validation wall time before changing its read strategy.
+// Reuse the same fixed counters; no evidence or permission conclusion is cached.
+export async function withCustomCohortLoadTiming(client, work, report = event => {
+  console.info('[neighborhood] retained-load-timing ' + JSON.stringify(event));
+}) {
+  return withInputTiming(client, work, 'load', report);
+}
+
+async function withInputTiming(client, work, phase, report) {
   const started = performance.now(), queries = Object.fromEntries(TAGS.map(tag => [tag, { count: 0, duration_ms: 0 }]));
   let outcome = 'failed', queryCount = 0, queryMs = 0;
   const observed = {
@@ -33,7 +46,7 @@ export async function withCustomCohortRetentionTiming(client, work, report = eve
   } finally {
     try {
       const duration = Math.max(0, performance.now() - started);
-      const event = Object.freeze({ phase: 'retention', outcome, duration_ms: Math.round(duration), query_count: queryCount,
+      const event = Object.freeze({ phase, outcome, duration_ms: Math.round(duration), query_count: queryCount,
         query_ms: Math.round(queryMs), non_query_wall_ms: Math.round(Math.max(0, duration - queryMs)),
         queries: Object.freeze(Object.fromEntries(TAGS.map(tag => [tag, Object.freeze({ count: queries[tag].count,
           duration_ms: Math.round(queries[tag].duration_ms) })]))) });

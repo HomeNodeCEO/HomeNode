@@ -18,6 +18,11 @@ export function assignmentPudSummary(value: unknown): string {
 export function assignmentDraftFromDetail(value?: AssignmentDetails): AssignmentDetails {
   return {
     subject_neighborhood_summary: value?.subject_neighborhood_summary ?? "",
+    ...(value?.subject_neighborhood_summary_school ? { subject_neighborhood_summary_school: cloneEditorValue(value.subject_neighborhood_summary_school) } : {}),
+    ...(value?.subject_neighborhood_summary_template !== undefined ? {
+      subject_neighborhood_summary_template: value.subject_neighborhood_summary_template,
+      subject_neighborhood_summary_review_items: cloneEditorValue(value.subject_neighborhood_summary_review_items || []),
+    } : {}),
     subject_condition_rating: value?.subject_condition_rating || "",
     subject_condition_notes: value?.subject_condition_notes || "",
     significant_physical_deficiencies:

@@ -28,6 +28,7 @@ import { runCustomCohortPrivateSalesDatabaseChecks } from './customCohortPrivate
 import { runCustomCohortWitness2OwnerDatabaseChecks } from './customCohortWitness2OwnerDatabaseChecks.js';
 import { runCustomCohortSubjectCheckpointDatabaseChecks } from './customCohortSubjectCheckpointDatabaseChecks.js';
 import { runCohortPagedGroupSelectionDatabaseChecks } from './cohortPagedGroupSelectionDatabaseChecks.js';
+import { runCustomCohortGroupSelectionHeadDatabaseChecks } from './customCohortGroupSelectionHeadDatabaseChecks.js';
 
 /** New disposable migrated test database only; no cleanup of shared tables,
  * fake CI, external provider, live organization, or production credentials. */
@@ -1053,6 +1054,9 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
         assignment_file_id: assignment, account_id: account },
       snapshotId: snapshot, observationPeriod: request.observationPeriod })).checks);
     checks.push(...(await runCohortPagedGroupSelectionDatabaseChecks({ pool,
+      scope: { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: account },
+      contextRef: result.context_ref })).checks);
+    checks.push(...(await runCustomCohortGroupSelectionHeadDatabaseChecks({ pool,
       scope: { organization_id: organization, report_file_id: report, assignment_file_id: assignment, account_id: account },
       contextRef: result.context_ref })).checks);
     assert.equal(pool.waitingCount, 0);

@@ -189,3 +189,29 @@ Live server-owned revision registration, group-only browser requests, paged
 catalog/statistics/publication consumers and the greater-than-50k end-to-end
 capture remain outstanding. Existing protocol versions and live limits stay
 unchanged.
+
+### Context-bound selection head storage (owner/HTTP still outstanding)
+
+The additive `customCohortGroupSelectionRepository.js` stores immutable selection
+revisions and one context-scoped current head, in the caller's transaction.
+Every head/revision is bound to the exact organization/report/assignment/account
+and retained context hash. Registration reopens the complete staged membership
+and union originals, reads the original catalog reference, and serializes head
+changes on that context. The owner must still derive group metadata from the
+authorized original catalog and recheck current actor/assignment/source rights;
+neither a stored head nor an integrity check is such a grant. A browser cannot
+submit memberships, manifests or catalog evidence through a public endpoint.
+
+The expected predecessor fences competing choices; exact lost-acknowledgment
+retries reuse an operation only while that selection is still current. Old
+replays never rewind a newer choice. Empty remains empty. The isolated database
+fixture exercises competing transactions, rollback after head change,
+cancellation, immutable history and complete original reopen. This storage
+prerequisite is not yet wired to the live selection service, workspace saves,
+preview/statistics consumers or Apply, and does not raise installed capacity.
+
+Checkpoint and selection originals are retained after cancellation/failure.
+There is no automatic deletion owner in these slices. Future cleanup must
+enumerate all job/context/selection/accepted-report roots, preserve shared
+immutable originals and honor the applicable retention policy before deleting
+anything; job termination is not evidence that a blob is unreferenced.

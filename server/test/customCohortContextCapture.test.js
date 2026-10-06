@@ -33,6 +33,98 @@ test('Custom capture requires an explicit server market policy, without default 
   assert.throws(() => createCustomCohortContextCapture({ pool: { connect() {} } }), /dependencies_required/);
 });
 
+test('worker capture refreshes current roles before subject evidence or replay lookup', async () => {
+  const base = input(), organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const authorized = { ...base, auth: { ...base.auth, organizations: [{ organizationId: organization,
+    roles: ['appraiser'] }] } };
+  const captureJobClaim = { operation_id: base.operationId,
+    claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };
+  for (const currentRoles of [null, ['read_only']]) {
+    const queries = [], releases = [];
+    const service = setup(async () => ({ async query({ text, values }) {
+      queries.push(text);
+      if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+        assignment_file_id: base.assignmentFileId, account_id: base.accountId,
+        organization_id: organization, assigned_appraiser_user_id: base.auth.userId,
+        supervisory_appraiser_user_id: null }] };
+      if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+        report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+      if (text.includes('custom-cohort-job:current-actor')) {
+        assert.deepEqual(values, [base.auth.userId, organization]);
+        return currentRoles === null ? { rowCount: 0, rows: [] } : { rowCount: 1, rows: [{
+          user_id: base.auth.userId, organization_id: organization, roles: currentRoles }] };
+      }
+      return { rowCount: 0, rows: [] };
+    }, release(error) { releases.push(error); } }));
+    await assert.rejects(service.capture(authorized, { captureJobClaim }),
+      currentRoles === null ? /job_actor_access_revoked/ : /assignment_access_denied/);
+    assert.ok(queries.some(text => text.includes('custom-cohort-job:current-actor')));
+    assert.ok(queries.includes('ROLLBACK'));
+    assert.ok(!queries.includes('COMMIT'));
+    assert.ok(!queries.some(text => text.includes('existing-context') || text.includes('subject:capture')));
+    assert.equal(releases.length, 1);
+  }
+});
+
+test('job status and cancellation recheck exact current assignment access', async () => {
+  const base = input(), organization = '11111111-1111-4111-8111-111111111111';
+  const report = '22222222-2222-4222-8222-222222222222';
+  const queries = [];
+  let queued;
+  const service = setup(async () => ({ async query({ text, values }) {
+    queries.push({ text, values });
+    if (text.includes('custom-cohort-capture:assignment')) return { rowCount: 1, rows: [{
+      assignment_file_id: base.assignmentFileId, account_id: base.accountId,
+      organization_id: organization, assigned_appraiser_user_id: base.auth.userId,
+      supervisory_appraiser_user_id: null }] };
+    if (text.includes('custom-cohort-capture:report')) return { rowCount: 1, rows: [{
+      report_file_id: report, appraisal_case_id: null, subject_snapshot_id: null }] };
+    if (text.includes('custom-cohort-job:enqueue */')) {
+      queued = { actor_user_id: values[5], request_sha256: values[6],
+        request_payload: JSON.parse(values[7]) };
+      return { rowCount: 1, rows: [] };
+    }
+    if (text.includes('custom-cohort-job:enqueue-readback')) return { rowCount: 1, rows: [{
+      operation_id: base.operationId, ...queued, status: 'queued' }] };
+    if (text.includes('custom-cohort-job:status')) return { rowCount: 1, rows: [{
+      status: 'queued', attempts: 0, cancellation_requested: false, context_sha256: null }] };
+    if (text.includes('custom-cohort-job:cancel')) return { rowCount: 1, rows: [{ status: 'cancelled' }] };
+    return { rowCount: 0, rows: [] };
+  }, release() {} }));
+  const authorized = { auth: { ...base.auth, organizations: [{ organizationId: organization,
+    roles: ['appraiser'] }] }, accountId: base.accountId,
+  assignmentFileId: base.assignmentFileId, operationId: base.operationId };
+  assert.equal((await service.queueCaptureJob({ ...authorized,
+    observationPeriod: base.observationPeriod })).status, 'queued');
+  assert.deepEqual(queued.request_payload, { operation_id: base.operationId,
+    observation_period: base.observationPeriod });
+  assert.deepEqual(await service.captureJobStatus(authorized), {
+    operation_id: base.operationId, status: 'queued', attempts: 0,
+    cancellation_requested: false });
+  assert.deepEqual(await service.cancelCaptureJob(authorized), { status: 'cancelled' });
+  assert.ok(queries.some(query => query.text.includes('custom-cohort-job:status')
+    && query.values[1] === organization && query.values[2] === report));
+  assert.ok(queries.some(query => query.text.includes('custom-cohort-job:cancel')
+    && query.values[1] === organization && query.values[2] === report));
+  const before = queries.length;
+  await assert.rejects(service.captureJobStatus({ ...authorized, auth: base.auth }), /assignment_access_denied/);
+  assert.equal(queries.length, before + 4, 'denied lookup reads no job status or cancellation');
+});
+
+test('job status and cancellation reject injected scope before database access', async () => {
+  const base = input();
+  for (const action of ['captureJobStatus', 'cancelCaptureJob']) {
+    await assert.rejects(setup()[action]({ auth: base.auth, accountId: base.accountId,
+      assignmentFileId: base.assignmentFileId, operationId: base.operationId,
+      organization_id: 'browser-chosen' }), /invalid_input/);
+    await assert.rejects(setup()[action]({ auth: base.auth, accountId: base.accountId,
+      assignmentFileId: base.assignmentFileId, operationId: 'not-a-uuid' }), /invalid_operation/);
+  }
+  await assert.rejects(setup().queueCaptureJob({ ...base,
+    account_ids: ['untrusted'] }), /invalid_input/);
+});
+
 test('driver rejection at aggregate deadline reports interruption and discards once', async t => {
   let now = 1000; t.mock.method(performance, 'now', () => now);
   const releases = [], calls = [], driverError = new Error('PRIVATE driver timeout');
@@ -75,6 +167,19 @@ test('Custom capture honors pre-abort and expired aggregate deadline before conn
   const controller = new AbortController(); controller.abort();
   await assert.rejects(setup().capture(input(), { signal: controller.signal }), /cancelled/);
   await assert.rejects(setup().capture(input(), { deadline: performance.now() }), /deadline_exceeded/);
+});
+
+test('capture budget owns option validation after separating the internal worker claim', async () => {
+  const captureJobClaim = { operation_id: input().operationId,
+    claim_token: '33333333-3333-4333-8333-333333333333', attempts: 1 };
+  for (const options of [null, [], Object.create({ signal: undefined }),
+    { captureJobClaim, extra: true }, { captureJobClaim, signal: {} },
+    { captureJobClaim, deadline: NaN }]) {
+    await assert.rejects(setup().capture(input(), options), /invalid_options/);
+  }
+  const controller = new AbortController(); controller.abort();
+  await assert.rejects(setup().capture(input(), { captureJobClaim, signal: controller.signal }), /cancelled/);
+  await assert.rejects(setup().capture(input(), { captureJobClaim, deadline: performance.now() }), /deadline_exceeded/);
 });
 
 test('large capture has a bounded extended aggregate but respects earlier caller deadlines', async t => {

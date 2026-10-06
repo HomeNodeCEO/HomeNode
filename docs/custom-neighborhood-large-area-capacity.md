@@ -105,3 +105,45 @@ is a source authorization or a complete capture. A worker that performs and
 resumes each capture phase, integrates paged evidence, rechecks current rights,
 and wires the HTTP status/cancel flow is still required. The installed live
 capture route and its 50,000-account limit are unchanged by this slice.
+
+The next internal command surface admits a token-free job request only after
+current Custom Appraisal assignment write access is checked. Status reads and
+cancellation recheck exact organization/report/assignment/account scope and
+current read/write access, respectively. This surface is intentionally not
+mounted in HTTP until the stage worker exists; it cannot be mistaken for a
+working asynchronous capture. Status responses omit checkpoint references and
+internal source errors. A lost cancellation response can be retried against a
+terminal job without altering its outcome.
+
+The first worker pass is available through the separate
+`maintenance:neighborhood-capture-jobs` command. It claims one due operation,
+reloads the actor's *current* active membership/roles, polls cancellation and
+renews a fenced lease, then invokes the existing bounded capture. The
+capture coordinator reloads that database identity again in each subject,
+source-read and registration transaction; worker-start roles are not reused
+to authorize a later publication or a committed-context replay. The final
+context registration and job success share a transaction; a lost lease or
+cancellation rolls back that registration. A committed context whose response
+was lost is replayed under current rights before the matching job is completed.
+This worker is not yet scheduled or exposed through HTTP and still enforces the
+installed 50,000-account ceiling. The remaining phase checkpoints, paged source
+capture, larger-area statistics/map/publication contracts and live acceptance
+must land before this path can serve a 5- or 10-mile study.
+
+Short job-ledger and actor transactions use `customCohortJobTransaction.js`,
+with a five-second checkout bound, six-second driver query bound, five-second
+server statement timeout, one-second lock/rollback bounds and checked-out
+socket-error ownership. Failed connections are discarded; an uncertain COMMIT
+or post-COMMIT release is not described as a successful acknowledgment or a
+known rollback. These short transactions do not replace the capture
+coordinator's aggregate-budget, source-acquisition transaction owner. Neither
+helper widens a source grant or makes a queued request eligible for publication.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

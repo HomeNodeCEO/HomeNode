@@ -17,6 +17,8 @@ import { assessmentDate, assessmentEvidenceDigest, canonicalAssessmentJson } fro
 import { createNeighborhoodCohortBlobRepository } from './cohortEvidenceBlobRepository.js';
 import { createCustomCohortSubjectRepository } from './customCohortSubjectRepository.js';
 import { createCustomCohortContextRepository } from './customCohortContextRepository.js';
+import { createCustomCohortCaptureJobRepository } from './customCohortCaptureJobRepository.js';
+import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { captureNeighborhoodSpatialMembershipCompact } from './cachedSpatialMembership.js';
 import { readCustomCohortPreparedSecondaryFacts } from './customCohortPreparedSecondaryMap.js';
@@ -132,6 +134,12 @@ function inputOf(input) {
   }
   return freeze({ ...identity, operationId, observationPeriod: period,
     ...(hasPrivate ? { privateSalesImport } : {}), ...(hasDiscovery ? { discovery } : {}) });
+}
+function captureJobInputOf(input) {
+  exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'operationId']);
+  const identity = identityOf(input);
+  if (typeof input.operationId !== 'string' || !UUID.test(input.operationId)) fail('invalid_operation');
+  return freeze({ ...identity, operationId: input.operationId });
 }
 function previewInputOf(input) {
   exactKeys(input, ['auth', 'accountId', 'assignmentFileId', 'contextRef', 'selection']);
@@ -1150,8 +1158,56 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     }
     return response;
   }
-  return Object.freeze({ async capture(value, options = {}) {
-    const input = inputOf(value), budget = operationBudget(options, LIMITS.capture_duration_ms);
+  return Object.freeze({
+    // These are intentionally not exposed by the HTTP router until a worker
+    // can process queued jobs. Queue admission is not a source grant; every
+    // operation rechecks current assignment access and the worker must recheck
+    // current actor/source rights before each resumable stage and registration.
+    async queueCaptureJob(value, options = {}) {
+      const input = inputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, true, 'write');
+        return createCustomCohortCaptureJobRepository(client).enqueue({
+          scope: Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])),
+          actorUserId: input.auth.userId,
+          request: { operation_id: input.operationId, observation_period: input.observationPeriod,
+            ...(input.discovery ? { discovery: input.discovery } : {}),
+            ...(input.privateSalesImport ? { private_sales_import: input.privateSalesImport } : {}) },
+        });
+      });
+    },
+    async captureJobStatus(value, options = {}) {
+      const input = captureJobInputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, false, 'read');
+        return createCustomCohortCaptureJobRepository(client).status(
+          Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])), input.operationId);
+      });
+    },
+    async cancelCaptureJob(value, options = {}) {
+      const input = captureJobInputOf(value), budget = operationBudget(options);
+      return transaction(pool, 'READ COMMITTED', budget, async client => {
+        const target = await resolveTarget(client, input, true, 'write');
+        return createCustomCohortCaptureJobRepository(client).cancel(
+          Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]])), input.operationId);
+      });
+    },
+    async capture(value, options = {}) {
+    if (!options || Object.getPrototypeOf(options) !== Object.prototype)
+      fail('invalid_options');
+    const { captureJobClaim, ...budgetOptions } = options;
+    let input = inputOf(value);
+    const budget = operationBudget(budgetOptions, LIMITS.capture_duration_ms);
+    async function refreshJobActor(client, organizationId) {
+      if (!captureJobClaim) return;
+      // A worker can run long enough for its initial roles to be revoked. The
+      // assignment and source checks in each transaction must use today's
+      // database identity, including the final registration and replay paths.
+      budget.check();
+      const auth = await loadCurrentCustomCohortJobActor(client, input.auth.userId, organizationId);
+      budget.check();
+      input = freeze({ ...input, auth });
+    }
     budget.check();
     const phase = createCustomCapturePhaseTiming();
     const study = freeze({ profile_id: input.discovery?.profile_id ?? NEIGHBORHOOD_SELECTOR_INPUT_PROFILE_V1,
@@ -1160,6 +1216,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const phaseOne = await phase('subject', () => transaction(pool, 'READ COMMITTED', budget, async client => {
       const privateWorkfile = input.privateSalesImport ? await privateCaptureWorkfile(client, input) : null;
       const target = await resolveTarget(client, input, true);
+      await refreshJobActor(client, target.organization_id);
+      if (captureJobClaim) assertTarget(await resolveTarget(client, input, true), target);
       const scope = Object.fromEntries(TARGET_FIELDS.map(key => [key, target[key]]));
       const scopeJson = canonicalAssessmentJson(scope);
       const repository = createCustomCohortSubjectRepository(client, scopeJson);
@@ -1175,6 +1233,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         if (retained.acquisition_intent.body.actor_user_id !== input.auth.userId || !same(retained.study, study)) fail('operation_conflict');
         if (!same(retained.acquisition_intent.body.private_sales_import ?? null, input.privateSalesImport ?? null)) fail('operation_conflict');
         if ((await repository.compareCurrent(retained.subject_reference)).status !== 'matched') fail('subject_changed');
+        // A worker retry can observe a context committed before its response
+        // was lost. Close that exact fenced claim only after replay has again
+        // checked the current assignment and source rights.
+        if (captureJobClaim) await createCustomCohortCaptureJobRepository(client)
+          .complete(captureJobClaim, reference.context_sha256);
         // Replay confirms durable registration only, not a new source read or
         // eligible cohort. No raw market evidence is returned here.
         return { replay: freeze({ status: 'registered', reused: true, context_ref: reference,
@@ -1208,6 +1271,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     const context = contextOf(subject);
     let purpose, decision;
     const read = await transaction(pool, 'REPEATABLE READ READ ONLY', budget, async client => {
+      await refreshJobActor(client, scope.organization_id);
       assertTarget(await resolveTarget(client, input, false), subject.target);
       authorizePublicCadastralCatalogRead(input.auth, input.accountId, { workflows: ['custom_appraisal'],
         permissionChecker: (auth, workflow, permission) => hasApplicationPermission(auth, workflow, permission, scope.organization_id) });
@@ -1276,6 +1340,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         ...(read.privateSales ? { private_sales: read.privateSales } : {}) }, { check: budget.check });
     });
     return transaction(pool, 'READ COMMITTED', budget, async client => {
+      await refreshJobActor(client, scope.organization_id);
       if (read.privateSales) privateDraft(await privateCaptureWorkfile(client, input));
       assertTarget(await resolveTarget(client, input, true), subject.target);
       const subjects = createCustomCohortSubjectRepository(client, scopeJson);
@@ -1295,6 +1360,10 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         target: { ...context.target, ...context.scope, snapshot_version: subject.target.snapshot_version },
         effective_date: subject.effective_date, ...refs };
       const stored = await phase('registration', () => createCustomCohortContextRepository(client, scopeJson).put(canonicalAssessmentJson(header)));
+      // The job and context become visible together. A lost/cancelled claim
+      // aborts this transaction rather than publishing an orphaned context.
+      if (captureJobClaim) await createCustomCohortCaptureJobRepository(client)
+        .complete(captureJobClaim, stored.context_ref.context_sha256);
       return freeze({ status: 'registered', reused: stored.status === 'reused', context_ref: stored.context_ref,
         discovery: { ...(city ? city.choice : { radius_metres: read.spatial.radius_metres }),
           parcel_count: read.spatial.parcels.length, account_count: read.spatial.account_ids.length },

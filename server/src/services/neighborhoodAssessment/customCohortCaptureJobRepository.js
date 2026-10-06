@@ -6,6 +6,8 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const SHA = /^[a-f0-9]{64}$/;
 const ACCOUNT_CONTROL = /[\u0000-\u001f\u007f]/;
 const PHASES = new Set(['subject', 'spatial', 'source', 'preparation', 'registration']);
+const STATUSES = new Set(['queued', 'running', 'retry', 'succeeded', 'failed', 'cancelled']);
+export const CAPTURE_JOB_LEASE_SECONDS = Object.freeze({ min: 15, max: 900 });
 function fail(reason) { throw new TypeError(`custom_cohort_capture_job_${reason}`); }
 function exact(value, keys) {
   if (!value || Object.getPrototypeOf(value) !== Object.prototype
@@ -55,7 +57,8 @@ function claimOf(value) {
   return [uuid(value.operation_id), uuid(value.claim_token), value.attempts];
 }
 function lease(value) {
-  if (!Number.isInteger(value) || value < 15 || value > 900) fail('invalid_lease');
+  if (!Number.isInteger(value) || value < CAPTURE_JOB_LEASE_SECONDS.min
+    || value > CAPTURE_JOB_LEASE_SECONDS.max) fail('invalid_lease');
   return value;
 }
 function checkpointOf(value) {
@@ -92,6 +95,28 @@ const JOB_FENCE = `job.operation_id=$1::uuid AND job.claim_token=$2::uuid
 export function createCustomCohortCaptureJobRepository(client) {
   if (typeof client?.query !== 'function') fail('client_required');
   return Object.freeze({
+    async status(scope, operationId) {
+      scope = scopeOf(scope); operationId = uuid(operationId);
+      const row = one(await client.query(`/* custom-cohort-job:status */
+        SELECT status,attempts,cancellation_requested_at IS NOT NULL AS cancellation_requested,
+          context_sha256
+        FROM app.neighborhood_custom_cohort_capture_jobs
+        WHERE operation_id=$1::uuid AND organization_id=$2::uuid
+          AND report_file_id=$3::uuid AND assignment_file_id=$4::bigint AND account_id=$5`,
+      [operationId, scope.organization_id, scope.report_file_id,
+        scope.assignment_file_id, scope.account_id]), 'operation_unavailable');
+      if (!STATUSES.has(row.status) || !Number.isInteger(row.attempts)
+        || row.attempts < 0 || row.attempts > 5
+        || typeof row.cancellation_requested !== 'boolean'
+        || !(row.context_sha256 === null || (typeof row.context_sha256 === 'string'
+          && SHA.test(row.context_sha256)))
+        || (row.status === 'succeeded') !== (row.context_sha256 !== null)) fail('job_corrupt');
+      return Object.freeze({ operation_id: operationId, status: row.status,
+        attempts: row.attempts, cancellation_requested: row.cancellation_requested,
+        ...(row.context_sha256 === null ? {} : { context_ref: Object.freeze({
+          context_id: operationId, context_revision: '1',
+          context_sha256: row.context_sha256 }) }) });
+    },
     async enqueue({ scope, actorUserId, request }) {
       scope = scopeOf(scope);
       const actor = uuid(actorUserId), admitted = requestOf(request);
@@ -203,16 +228,24 @@ export function createCustomCohortCaptureJobRepository(client) {
 
     async cancel(scope, operationId) {
       scope = scopeOf(scope); operationId = uuid(operationId);
-      const row = one(await client.query(`/* custom-cohort-job:cancel */
+      const result = await client.query(`/* custom-cohort-job:cancel */
         UPDATE app.neighborhood_custom_cohort_capture_jobs
           SET cancellation_requested_at=COALESCE(cancellation_requested_at,clock_timestamp()),
             status=CASE WHEN status IN ('queued','retry') THEN 'cancelled' ELSE status END,
             updated_at=clock_timestamp()
           WHERE operation_id=$1::uuid AND organization_id=$2::uuid AND report_file_id=$3::uuid
             AND assignment_file_id=$4::bigint AND account_id=$5 AND status IN ('queued','retry','running')
-          RETURNING status`, [operationId, scope.organization_id, scope.report_file_id,
-        scope.assignment_file_id, scope.account_id]), 'operation_unavailable');
-      return Object.freeze({ status: row.status });
+        RETURNING status`, [operationId, scope.organization_id, scope.report_file_id,
+        scope.assignment_file_id, scope.account_id]);
+      if (result?.rowCount === 1 && result.rows?.length === 1)
+        return Object.freeze({ status: result.rows[0].status });
+      if (result?.rowCount !== 0 || !Array.isArray(result.rows) || result.rows.length !== 0)
+        fail('operation_unavailable');
+      // Lost response or repeated cancellation: a terminal job stays terminal.
+      // The same exact scope still gates the readback.
+      const current = await createCustomCohortCaptureJobRepository(client).status(scope, operationId);
+      if (!['succeeded', 'failed', 'cancelled'].includes(current.status)) fail('operation_unavailable');
+      return Object.freeze({ status: current.status });
     },
 
     async failClaim(claim, reason, { retrySeconds = 60 } = {}) {

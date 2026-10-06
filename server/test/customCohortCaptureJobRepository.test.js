@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createCustomCohortCaptureJobRepository }
+import { CAPTURE_JOB_LEASE_SECONDS, createCustomCohortCaptureJobRepository }
   from '../src/services/neighborhoodAssessment/customCohortCaptureJobRepository.js';
 import { assessmentEvidenceDigest } from '../src/services/neighborhoodAssessment/contract.js';
 
@@ -13,6 +13,26 @@ const scope = { organization_id: organization, report_file_id: report,
   assignment_file_id: '17', account_id: 'SYNTHETIC-ACCOUNT' };
 const request = { operation_id: operation, observation_period: {
   start_date: '2024-01-01', end_date: '2024-12-31' } };
+
+test('shared lease bounds remain inclusive and invalid values never reach PostgreSQL', async () => {
+  assert.deepEqual(CAPTURE_JOB_LEASE_SECONDS, { min: 15, max: 900 });
+  assert.equal(Object.isFrozen(CAPTURE_JOB_LEASE_SECONDS), true);
+  const values = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(_sql, parameters) {
+    values.push(parameters);
+    return { rowCount: 1, rows: [{ cancellation_requested_at: null }] };
+  } });
+  const claim = { operation_id: operation, claim_token: token, attempts: 1 };
+  for (const leaseSeconds of [14, 901, 15.5, '15']) {
+    await assert.rejects(repository.heartbeat(claim, { leaseSeconds }), /invalid_lease/);
+    await assert.rejects(repository.claimDue({ leaseSeconds }), /invalid_lease/);
+  }
+  assert.deepEqual(values, []);
+  for (const leaseSeconds of [15, 900]) {
+    assert.equal((await repository.heartbeat(claim, { leaseSeconds })).cancellation_requested, false);
+  }
+  assert.deepEqual(values.map(parameters => parameters[3]), [15, 900]);
+});
 
 test('queue request retains only admitted data, with exact scope and replay digest', async () => {
   const calls = [];
@@ -158,4 +178,44 @@ test('a corrupt earlier claim does not prevent a valid claim in the same batch',
   } });
   const claimed = await repository.claimDue({ limit: 2 });
   assert.deepEqual(claimed.map(row => row.operation_id), [later]);
+});
+
+test('scoped job status exposes no checkpoint or internal source error', async () => {
+  const queries = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    queries.push({ sql, values });
+    return { rowCount: 1, rows: [{ status: 'succeeded', attempts: 2,
+      cancellation_requested: false, context_sha256: 'b'.repeat(64),
+      checkpoint: { private: 'not returned' }, last_error_code: 'source_denied' }] };
+  } });
+  assert.deepEqual(await repository.status(scope, operation), {
+    operation_id: operation, status: 'succeeded', attempts: 2,
+    cancellation_requested: false, context_ref: {
+      context_id: operation, context_revision: '1', context_sha256: 'b'.repeat(64) },
+  });
+  assert.match(queries[0].sql, /organization_id=\$2::uuid/);
+  assert.match(queries[0].sql, /report_file_id=\$3::uuid/);
+  assert.deepEqual(queries[0].values, [operation, organization, report,
+    scope.assignment_file_id, scope.account_id]);
+});
+
+test('job status rejects impossible completion state', async () => {
+  const repository = createCustomCohortCaptureJobRepository({ async query() {
+    return { rowCount: 1, rows: [{ status: 'succeeded', attempts: 1,
+      cancellation_requested: false, context_sha256: null }] };
+  } });
+  await assert.rejects(repository.status(scope, operation), /job_corrupt/);
+});
+
+test('cancellation safely replays a terminal result under the exact scope', async () => {
+  const calls = [];
+  const repository = createCustomCohortCaptureJobRepository({ async query(sql, values) {
+    calls.push({ sql, values });
+    if (sql.includes('custom-cohort-job:cancel')) return { rowCount: 0, rows: [] };
+    return { rowCount: 1, rows: [{ status: 'cancelled', attempts: 1,
+      cancellation_requested: true, context_sha256: null }] };
+  } });
+  assert.deepEqual(await repository.cancel(scope, operation), { status: 'cancelled' });
+  assert.match(calls[1].sql, /organization_id=\$2::uuid/);
+  assert.deepEqual(calls[0].values, calls[1].values);
 });

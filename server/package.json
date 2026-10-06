@@ -74,6 +74,7 @@
         "maintenance:neighborhood-precompute": "node scripts/runNeighborhoodParcelPrecompute.js",
         "maintenance:neighborhood-group-index": "node scripts/runNeighborhoodGroupIndex.js",
         "maintenance:neighborhood-viewport-tiles": "node scripts/runCustomCohortPreparedViewportTiles.js",
+        "maintenance:neighborhood-capture-jobs": "node scripts/runCustomCohortCaptureJobs.js",
         "sync:collin-account-ids": "node scripts/syncCollinAccountIdentifiers.js",
         "backfill:collin-sales": "node scripts/backfillCollinSales.js",
         "audit:sales-reconciliation": "node scripts/runSalesAutoReconciliation.js",

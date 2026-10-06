@@ -58,7 +58,7 @@ export function createCustomNeighborhoodConfiguration(environment = process.env)
  * No authentication, CSRF, global parser or limiter replacement.
  * Disabled mode creates no coordinator/policy and never touches the cohort pool.
  */
-export function createCustomNeighborhoodApplicationRouter({ pool, configuration } = {}) {
+export function createCustomNeighborhoodCohortService({ pool, configuration } = {}) {
   if (typeof configuration?.enabled !== 'boolean'
     || (configuration.enabled === false && configuration.sourceProfile !== null)) throw invalidConfiguration();
   const enabled = configuration.enabled;
@@ -86,6 +86,12 @@ export function createCustomNeighborhoodApplicationRouter({ pool, configuration 
       authorizeReportedObservations: authorizeCustomNeighborhoodReportObservations });
     cohortService = createCustomNeighborhoodSubjectEvidenceRecovery({ pool, cohortService });
   }
+  return cohortService ?? null;
+}
+
+export function createCustomNeighborhoodApplicationRouter({ pool, configuration } = {}) {
+  const cohortService = createCustomNeighborhoodCohortService({ pool, configuration });
+  const enabled = configuration.enabled;
   const router = express.Router();
   // Global JSON errors precede authentication by existing application design.
   // Preserve their existing status/body (including unsupported encodings),

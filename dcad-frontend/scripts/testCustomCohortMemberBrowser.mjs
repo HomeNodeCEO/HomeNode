@@ -317,6 +317,8 @@ test('exact display inspection stays lazy and pages the complete selected popula
   const props = h.exactProps(f); h.render(props); await h.settle(); assert.equal(h.calls.length, 0);
   h.click('Show records'); await h.wait(0); await h.complete(0, v => v, f);
   assert.match(h.text(), /records 1–2 of 2/); assert.match(h.text(), /CAD account 10000000000000000/);
+  assert.match(h.text(), /Read-only records for the selected neighborhood\./);
+  assert.doesNotMatch(h.text(), /independent of its inclusion/);
   assert.equal(h.digestCalls, 0); assert.equal(h.calls[0].exact, true);
   assert.deepEqual(h.calls[0].body.selection_ref, f.display.active.selection_ref);
   assert.doesNotMatch(JSON.stringify(h.calls[0].body), /account_ids|included_recorded_group_ids|operation_id/);

@@ -176,7 +176,9 @@ function MemberSession(props: Props & { populations: Record<CustomCohortMemberKi
     data-selection-revision={snapshot.display ? snapshot.display.active.selection_ref.selection_revision : snapshot.input.selection.revision}>
     <button type="button" className={button} aria-expanded={open} disabled={!open && disabled} onClick={toggle}>{open ? 'Hide records' : 'Show records'}</button>
     {open && <>
-      <p className="text-xs text-slate-600">Read-only records for the inspected group, independent of its inclusion in the main analysis. At most 50 records per page; the complete population count is retained.</p>
+      <p className="text-xs text-slate-600">{snapshot.display
+        ? 'Read-only records for the selected neighborhood.'
+        : 'Read-only records for the inspected group, independent of its inclusion in the main analysis.'} At most 50 records per page; the complete population count is retained.</p>
       <div className="flex flex-wrap gap-2" role="group" aria-label="Record population">
         {(Object.keys(LABELS) as CustomCohortMemberKind[]).map(value => <button key={value} type="button" className={button} aria-pressed={kind === value} disabled={disabled}
           onClick={() => { if (kind !== value) first(value); }}>{LABELS[value]} ({count(snapshot.populations[value].total_count)})</button>)}

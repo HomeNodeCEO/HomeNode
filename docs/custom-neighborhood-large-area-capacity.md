@@ -215,3 +215,12 @@ There is no automatic deletion owner in these slices. Future cleanup must
 enumerate all job/context/selection/accepted-report roots, preserve shared
 immutable originals and honor the applicable retention policy before deleting
 anything; job termination is not evidence that a blob is unreferenced.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

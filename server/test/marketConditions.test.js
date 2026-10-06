@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   applyMarketContextOverride,
   buildMarketTrendRecommendation,
+  buildMarketConditionsAnalyses,
   calculateMarketStudyStatistics,
   completeCalendarMonthWindow,
   ensureSpatialSupport,
@@ -15,6 +16,48 @@ import {
   weightedCompositeDispersion,
 } from "../src/services/marketConditions.js";
 import { MARKET_SPATIAL_MIGRATION_NAME } from "../src/database/marketSpatialMigration.js";
+
+test('exact exploration analysis needs neither parcel coordinates nor a fresh CAD lookup', async t => {
+  const subjectAccountId = '26355500170360000', calls = [], originalFetch = globalThis.fetch;
+  let fetches = 0;
+  globalThis.fetch = async () => { fetches++; throw new Error('Fresh CAD lookup is forbidden in this study.'); };
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const pool = { async query(sql, values) {
+    calls.push({ sql, values });
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER)\b/);
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: subjectAccountId, city: 'Garland', county: 'Dallas',
+      latitude: null, longitude: null, location_status: 'unavailable' }] };
+    assert.match(sql, /FROM core.v_sales_enriched/);
+    assert.equal(values[7], 'exploration'); assert.deepEqual(values[10], [subjectAccountId]);
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId, areaKeys: ['exploration'],
+    explorationAccountIds: [subjectAccountId], asOfDate: '2026-08-31', periodMonths: 24 });
+  assert.equal(fetches, 0); assert.equal(calls.length, 3);
+  assert.equal(result.analyses[0].market.label, 'Exploration Map Area');
+  assert.equal(result.subject.latitude, null);
+});
+
+test('ZIP/city numeric studies honor the chosen observation dates without waiting for location repair or an appraisal cutoff', async t => {
+  const originalFetch = globalThis.fetch, queries = [];
+  globalThis.fetch = () => assert.fail('Numeric calculations must not request external CAD data');
+  t.after(() => { globalThis.fetch = originalFetch; });
+  const subjectAccountId = '26355500170360000';
+  const pool = { async query(sql, values) {
+    assert.doesNotMatch(sql, /\b(?:INSERT|UPDATE|DELETE|CREATE|ALTER)\b/);
+    if (sql.includes('market_spatial_support_probe')) return { rows: [{ column_present: true, migration_applied: true, index_valid: true }] };
+    if (sql.includes('FROM core.accounts account')) return { rows: [{ account_id: subjectAccountId, city: 'Garland', county: 'Dallas',
+      postal_code: '75041', latitude: null, longitude: null, location_status: 'unavailable' }] };
+    assert.match(sql, /FROM core.v_sales_enriched/); queries.push(values);
+    return { rows: [{}] };
+  } };
+  const result = await buildMarketConditionsAnalyses(pool, { subjectAccountId, areaKeys: ['zip', 'city', 'radius_1', 'radius_2'],
+    asOfDate: '2026-10-31', periodMonths: 12, effectiveDate: '2026-08-31' });
+  assert.deepEqual(result.analyses.map(item => item.market.key), ['zip', 'city']);
+  assert.deepEqual(result.unavailable_areas.map(item => item.key), ['radius_1', 'radius_2']);
+  assert.ok(queries.every(values => values[0] === '2026-10-31' && values[1] === 12));
+});
 
 test("spatial support is a shared migration-and-index readiness probe, never request-path maintenance", async () => {
   const statements = [];

@@ -3,6 +3,7 @@ import * as catalogHelpers from '../src/features/neighborhood/customCohortPocket
 import * as discovery from '../src/features/neighborhood/customWorkspaceDiscovery.ts';
 import * as transport from '../src/features/neighborhood/customCohortPreviewTransport.ts';
 import * as selection from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
+import * as viewportLoader from '../src/features/neighborhood/customCohortViewportLoader.ts';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
 import { selectionMemberFixture } from '../../server/test/fixtures/customCohortSelectionMemberFixture.js';
 import { presentCustomCohortGroupMapOpening } from '../../server/src/services/neighborhoodAssessment/customCohortGroupMapOpening.js';
@@ -13,8 +14,10 @@ const load = (name, modules) => loadTrustedRepositoryCommonJs(new URL(`../src/fe
 const checkpoint = load('customWorkspaceCheckpoint', { './customCohortPocketCatalog': catalogHelpers, './customWorkspaceDiscovery.ts': discovery });
 const workspace = load('customCohortGroupWorkspaceTransport', { './customWorkspaceCheckpoint.ts': checkpoint,
   './customCohortPreviewTransport.ts': transport, './customCohortRecordedGroupTransport.ts': selection });
-const displayModule = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
+export const displayModule = load('customCohortGroupDisplay', { './customCohortGroupWorkspaceTransport.ts': workspace,
   './customCohortRecordedGroupTransport.ts': selection });
+export const mapView = load('customCohortGroupMapView', { './customCohortGroupDisplay.ts': displayModule,
+  './customCohortViewportLoader.ts': viewportLoader });
 export const memberView = load('customCohortGroupMemberView', { './customCohortGroupDisplay.ts': displayModule,
   './customCohortMemberPage.ts': await import('../src/features/neighborhood/customCohortMemberPage.ts') });
 export const json = (value, status = 200) => new Response(JSON.stringify(value), { status, headers: { 'content-type': 'application/json' } });

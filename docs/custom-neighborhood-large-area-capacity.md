@@ -840,3 +840,40 @@ inspection and report consumer composition remain necessary before activation.
 No production write, worker schedule, genuine appraisal, installed cap, release
 policy or speed SLA changes here. Producer/transport/component harness tests are
 not native PostgreSQL or realistic large-area/live acceptance proof.
+
+## Opt-in coherent workspace view (not production host activation)
+
+The existing exploration workspace has an explicit exact-display mode. Its
+main parcel map, below-map observations and selected-record inspection all use
+the same immutable composed V7 display. Equivalent render wrappers do not start
+a second preview. This path does not create the legacy main-preview controller,
+flatten selected accounts into a request, recompute a selection fingerprint, or
+request another catalog. Selection actions send frozen recorded-group IDs to
+the injected host owner; visible saved choices are not rewritten before its
+coherent successor arrives. A deliberate empty successor updates map and numbers
+together without substituting all observations.
+
+Existing styles, layout, subdivision-family clicks/right-click removal,
+similarity controls and legacy workspace behavior are retained. Saving, stale or
+blocked exact displays retain their preceding map/numerical pair but close new
+selection and inspection admission. Mode, file, context and session changes
+have separate keyed ownership. The composed-display witness and matching target
+checks are local rendering validation, never source or report authority.
+
+Independent subdivision snapshots and record inspectors keep their separate
+explicit original-subset read contracts. Their small neutral input is not a
+fabricated V7 main population. The same host must supply these read-only ports
+under its current assignment/session lane. The location-review hint now requires
+only checked binding and retained map/manifest fields; a deferred viewport or
+missing complete geometry cannot claim verified whole-family location coverage.
+No viewport fragment is reused as population evidence or averaged into statistics.
+
+Actual retained producers and checked display/transport fixtures feed eight new
+existing hook-harness tests for coherent composition, ID-only intent, empty
+successor, repeated renders, stale/read-only closure, independent subset reads,
+foreign/cloned targets and legacy/exact owner separation. Existing legacy,
+subdivision, recorded-housing/proximity and boundary tests remain in force.
+These are not a live browser, native PostgreSQL, performance or >50k acceptance
+claim. The production host still uses the legacy path; V7 host current-read,
+draft/read-only/flush and shared-lane integration, report composition, paged
+capture/catalog/statistics/publication and realistic/live acceptance remain open.

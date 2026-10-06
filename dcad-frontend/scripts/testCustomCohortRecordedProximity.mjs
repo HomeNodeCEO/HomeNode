@@ -239,7 +239,8 @@ const Workspace = loadTrustedRepositoryCommonJs(new URL('../src/features/neighbo
   if (key === '../customCohortPreviewTransport') return previewTransportHelpers;
   if (key === '../customCohortPreviewApi') return { requestCustomCohortOperation() { requests++; assert.fail('No render-time request'); },
     requestCustomCohortObservationPreview() { requests++; assert.fail('No render-time request'); } };
-  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector',
+  if (key === '../customCohortGroupDisplay.ts' || key === '../customCohortGroupMapView.ts') return {};
+  assert.ok(['./CustomCohortParcelMap', './CustomCohortStatistics', './CustomCohortPocketInspector', './CustomCohortMemberBrowser',
     './CustomCohortSubdivisionDialog', './CustomCohortMapSnapshot', './CustomCohortScoreBandSelector'].includes(key));
   return { __esModule: true, default: () => null, CustomCohortCompactStatistics: () => null };
 }).default;

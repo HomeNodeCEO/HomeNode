@@ -15,6 +15,12 @@ import CustomCohortPocketInspector from './CustomCohortPocketInspector';
 import CustomCohortSubdivisionDialog from './CustomCohortSubdivisionDialog';
 import CustomCohortMapSnapshot from './CustomCohortMapSnapshot';
 import CustomCohortScoreBandSelector from './CustomCohortScoreBandSelector';
+import CustomCohortMemberBrowser from './CustomCohortMemberBrowser';
+import { requireCustomCohortGroupDisplay } from '../customCohortGroupDisplay.ts';
+import type { CustomCohortGroupDisplay } from '../customCohortGroupDisplay';
+import { prepareCustomCohortGroupMapView } from '../customCohortGroupMapView.ts';
+import type { createCustomCohortGroupMapReader } from '../customCohortGroupMapView';
+import type { createCustomCohortGroupMemberReader } from '../customCohortGroupMemberView';
 
 export interface CustomCohortControlledWorkspace {
   readonly catalog: CheckedPocketCatalog;
@@ -27,12 +33,26 @@ export interface CustomCohortControlledWorkspace {
   readonly memberTransport: CustomCohortMemberTransport;
   readonly initialPreview?: CustomCohortInitialResponse | null;
 }
-interface Props {
+export interface CustomCohortExactWorkspace {
+  readonly display: CustomCohortGroupDisplay;
+  readonly freshness: 'current' | 'stale';
+  readonly saving: boolean;
+  readonly blockedReason?: CustomCohortControlledWorkspace['blockedReason'];
+  readonly onSelectionIntent: (ids: readonly string[]) => void;
+  readonly readViewport: ReturnType<typeof createCustomCohortGroupMapReader>;
+  readonly readMembers: ReturnType<typeof createCustomCohortGroupMemberReader>;
+  /** Independently inspected original subsets are not the main selected
+   * population. These ports share the host's lane and original scope fences. */
+  readonly inspectionPreview: typeof requestCustomCohortObservationPreview;
+  readonly inspectionMembers: CustomCohortMemberTransport;
+}
+interface BaseProps {
   accountId: string; assignmentFileId: string; contextRef: CustomCohortContextRef;
   /** Changes on session/organization transition, even for the same file. */
   sessionKey: string; subjectLabel: string; enabled: boolean;
-  workspace?: CustomCohortControlledWorkspace;
 }
+type Props = BaseProps & ({ workspace?: CustomCohortControlledWorkspace; exact?: never }
+  | { exact: CustomCohortExactWorkspace; workspace?: never });
 const timer = { set: (fn: () => void, ms: number) => setTimeout(fn, ms),
   clear: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>) };
 const idle: CustomCohortPreviewState = { status: 'idle', freshness: 'none', requested: null, group: null, error: null };
@@ -66,12 +86,25 @@ const unassignedReasonLabels: Record<string, string> = {
 const unassignedReasonLabel = (reason: string) => unassignedReasonLabels[reason] ?? reason.replaceAll('_', ' ');
 
 /** Independent exploration only. Controlled intent never writes accepted report data.
- * A target, context or session change unmounts all request/map ownership. */
+ * A target, context, session or legacy/exact mode change unmounts ownership.
+ * Opt-in exact mode consumes one checked display, not the legacy main-preview
+ * controller. Original-subset inputs below are solely for independent inspection;
+ * they never define the saved main population or authorize its report Apply. */
 export default function CustomCohortWorkspace(props: Props) {
   if (!props.enabled) return null;
   const ref = props.contextRef;
+  if (props.exact) {
+    const display = requireCustomCohortGroupDisplay(props.exact.display), target = display.target, context = display.active.context_ref;
+    if (props.workspace || target.accountId !== props.accountId || target.assignmentFileId !== props.assignmentFileId
+      || target.sessionKey !== props.sessionKey || context.context_id !== ref.context_id
+      || context.context_revision !== ref.context_revision || context.context_sha256 !== ref.context_sha256
+      || !['current', 'stale'].includes(props.exact.freshness) || typeof props.exact.saving !== 'boolean'
+      || [props.exact.onSelectionIntent, props.exact.readViewport, props.exact.readMembers,
+        props.exact.inspectionPreview, props.exact.inspectionMembers].some(port => typeof port !== 'function'))
+      throw new TypeError('invalid_custom_cohort_exact_workspace');
+  }
   const key = JSON.stringify([props.sessionKey, props.accountId, props.assignmentFileId,
-    ref.context_id, ref.context_revision, ref.context_sha256]);
+    ref.context_id, ref.context_revision, ref.context_sha256, props.exact ? 'exact' : 'legacy']);
   return <WorkspaceSession key={key} {...props} />;
 }
 
@@ -97,25 +130,30 @@ function WorkspaceSession(props: Props) {
   const [groupPage, setGroupPage] = useState(0);
   const [preview, setPreview] = useState<CustomCohortPreviewState>(idle);
   const controller = useRef<ReturnType<typeof createCustomCohortPreviewController> | null>(null);
-  const controlled = props.workspace !== undefined;
-  const catalog = props.workspace?.catalog ?? localCatalog;
+  const exact = props.exact, exactMode = exact !== undefined;
+  const controlled = props.workspace !== undefined || exactMode;
+  const catalog = exact?.display.catalog ?? props.workspace?.catalog ?? localCatalog;
   const subdivisionFamilies = useMemo(() => catalog ? buildCustomCohortSubdivisionFamilies(catalog) : undefined, [catalog]);
   const inspectedFamily = subdivisionFamilies?.families.find(family => family.id === inspectedFamilyId) ?? null;
   const fullReviewFamily = subdivisionFamilies?.families.find(family => family.id === fullReviewFamilyId) ?? null;
   const highlightedIds = inspectedFamily?.pocket_ids;
-  const included = props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
-  const revision = props.workspace?.selection.revision ?? localRevision;
-  const saving = props.workspace?.saving ?? false;
-  const blockedReason = props.workspace?.blockedReason ?? null;
-  const inspectionsPaused = blockedReason === 'read_only';
-  const selectionBlocked = saving || Boolean(blockedReason);
-  const transport = props.workspace?.previewTransport ?? requestCustomCohortObservationPreview;
+  const included = exact?.display.selected.included_recorded_group_ids ?? props.workspace?.selection.included_recorded_group_ids ?? localIncluded;
+  const revision = exact?.display.active.selection_ref.selection_revision ?? props.workspace?.selection.revision ?? localRevision;
+  const saving = exact?.saving ?? props.workspace?.saving ?? false;
+  const blockedReason = exact?.blockedReason ?? props.workspace?.blockedReason ?? null;
+  const selectionBlocked = saving || Boolean(blockedReason) || exact?.freshness === 'stale';
+  const inspectionsPaused = blockedReason === 'read_only' || (exactMode && selectionBlocked);
+  const transport = exact?.inspectionPreview ?? props.workspace?.previewTransport ?? requestCustomCohortObservationPreview;
+  const memberTransport = exact?.inspectionMembers ?? props.workspace?.memberTransport;
   const transportRef = useRef(transport);
   // Stable through selection saves; a fresh explicit reopen supplies a new
   // response and resets this owner even if the context/revision stayed equal.
   const openingPreview = props.workspace?.initialPreview;
   transportRef.current = transport;
   const desired = useMemo(() => {
+    // The exact main population is owned by the saved display. Never flatten
+    // it into a legacy preview request or construct a second local fingerprint.
+    if (exactMode) return null;
     if (!catalog) return null;
     const ref = catalog.binding.context_ref;
     if (catalog.subject_membership.account_id !== input.accountId
@@ -123,9 +161,11 @@ function WorkspaceSession(props: Props) {
       || ref.context_sha256 !== contextRef.context_sha256) return null;
     try { return { ...input, selection: selectionFromRecordedGroups(catalog, included, revision) }; }
     catch { return null; } // Malformed restored IDs must never fall back to all groups.
-  }, [catalog, contextRef, included, input, revision]);
+  }, [catalog, contextRef, included, input, revision, exactMode]);
+  const selectionUsable = exactMode || desired !== null;
 
   useEffect(() => {
+    if (exactMode) return;
     let active = true;
     const owner = createCustomCohortPreviewController({ transport: (request, options) => transportRef.current(request, options), timer,
       // A controlled selection becomes visible only after its single owned
@@ -135,7 +175,7 @@ function WorkspaceSession(props: Props) {
       onChange: next => { if (active) setPreview(next); } });
     controller.current = owner;
     return () => { active = false; owner.dispose(); controller.current = null; };
-  }, [openingPreview, retry, controlled]);
+  }, [openingPreview, retry, controlled, exactMode]);
 
   useEffect(() => {
     if (controlled) return;
@@ -163,8 +203,9 @@ function WorkspaceSession(props: Props) {
   }, [desired, retry, selectionBlocked]);
 
   const choose = (ids: readonly string[]) => {
-    if (selectionBlocked || !desired) return;
-    if (props.workspace) props.workspace.onSelectionIntent(Object.freeze([...ids]));
+    if (selectionBlocked || !selectionUsable) return;
+    if (exact) exact.onSelectionIntent(Object.freeze([...ids]));
+    else if (props.workspace) props.workspace.onSelectionIntent(Object.freeze([...ids]));
     else { setIncluded(ids); setRevision(n => n + 1); }
   };
   const toggle = (id: string) => choose(included.includes(id) ? included.filter(value => value !== id) : [...included, id]);
@@ -177,7 +218,7 @@ function WorkspaceSession(props: Props) {
     if (next.length !== included.length) choose(next);
   };
   const activatePocket = (id: string) => {
-    if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
+    if (inspectionsPaused || !selectionUsable || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     setInspected(id);
     setInspectedFamilyId(family?.id ?? null);
@@ -187,11 +228,11 @@ function WorkspaceSession(props: Props) {
     includeGroups(family?.pocket_ids ?? [id]);
   };
   const excludePocket = (id: string) => {
-    if (inspectionsPaused || !desired || !catalog?.pockets.some(p => p.id === id)) return;
+    if (inspectionsPaused || !selectionUsable || !catalog?.pockets.some(p => p.id === id)) return;
     const family = subdivisionFamilies && customCohortSubdivisionFamilyForPocket(subdivisionFamilies, id);
     excludeGroups(family?.pocket_ids ?? [id]);
   };
-  const recommendation = desired ? catalog?.recommendation ?? null : null;
+  const recommendation = selectionUsable ? catalog?.recommendation ?? null : null;
   const reviewById = useMemo(() => new Map(recommendation?.pockets.map(pocket => [pocket.id, pocket])), [recommendation]);
   const groups = useMemo(() => catalog ? [...catalog.pockets.map(p => ({ id: p.id, label: p.label, county: p.county, count: p.member_count })),
     ...(catalog.unassigned.member_count ? [{ id: CUSTOM_COHORT_UNASSIGNED_GROUP,
@@ -220,12 +261,13 @@ function WorkspaceSession(props: Props) {
           && pocket.account_ids.every((id, member) => id === other.account_ids[member]);
       });
   }, [desired, preview.requested]);
-  const current = !selectionBlocked && desired !== null && preview.freshness === 'current'
-    && preview.group?.binding.selectionRevision === revision
-    && requestMatches;
-  const group = desired ? preview.group : null;
+  const current = exact ? !selectionBlocked && exact.freshness === 'current'
+    : !selectionBlocked && desired !== null && preview.freshness === 'current'
+      && preview.group?.binding.selectionRevision === revision && requestMatches;
+  const group = exact?.display.observations ?? (desired ? preview.group : null);
+  const mapGroup = exact ? prepareCustomCohortGroupMapView(exact.display).group : preview.group;
   const freshness = group ? current ? 'current' : 'stale' : 'none';
-  const selectionDisabled = selectionBlocked || !desired;
+  const selectionDisabled = selectionBlocked || !selectionUsable;
   const area = recommendation?.sales_aware_area;
   const suggested = area && area.status !== 'unavailable' && area.selected_recorded_group_ids.length
     ? area.selected_recorded_group_ids : recommendation?.recommended_recorded_group_ids ?? [];
@@ -248,6 +290,7 @@ function WorkspaceSession(props: Props) {
     <details className="mt-3 rounded-lg border border-violet-200 bg-white p-2 text-xs">
       <summary className="cursor-pointer font-medium">Full observation breakdown</summary>
       <div className="mt-3"><CustomCohortStatistics group={group} freshness={freshness} selectedOnly /></div>
+      {exact && <CustomCohortMemberBrowser display={exact.display} readMembers={exact.readMembers} paused={selectionDisabled} />}
     </details>
   </aside>;
 
@@ -263,7 +306,7 @@ function WorkspaceSession(props: Props) {
     {!controlled && catalogError && <div role="alert" className="space-y-2"><p>{catalogError}</p>
       <button type="button" className={button} onClick={() => setReload(n => n + 1)}>Retry group loading</button></div>}
     {catalog && <>
-      {!desired && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
+      {!selectionUsable && <p role="alert">The saved group selection does not match this retained context. Reload the workspace; no replacement selection has been inferred.</p>}
       {catalog.status === 'incomplete' && <p role="alert">Subdivision grouping reached a capacity limit: {catalog.unassigned.reason_counts.map(row => unassignedReasonLabel(row.reason)).join(', ')}.
         {' '}All captured accounts remain selectable together; their individual CAD subdivision names have not been judged missing.</p>}
       {!recommendation && catalog.pockets.length > 128 && <p className="text-sm">
@@ -360,7 +403,13 @@ function WorkspaceSession(props: Props) {
       {preview.status === 'failed' && <button type="button" className={button} disabled={selectionDisabled}
         onClick={() => { if (!selectionDisabled) setRetry(n => n + 1); }}>Retry preview</button>}
       <div>
-        {group ? <CustomCohortParcelMap group={group} catalog={catalog} freshness={freshness}
+        {group ? exact ? <CustomCohortParcelMap display={exact.display} readViewport={exact.readViewport} freshness={freshness}
+          subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
+          onActivatePocket={activatePocket} onExcludePocket={excludePocket}
+          inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
+          onInspectAccount={account => { if (!inspectionsPaused && catalog.unassigned.account_ids.includes(account)) setInspected(CUSTOM_COHORT_UNASSIGNED_GROUP); }}
+          scoreBandSelector={scoreBandSelector} belowMapStatistics={liveStatistics} />
+          : <CustomCohortParcelMap group={preview.group!} catalog={catalog} freshness={freshness}
           subdivisionFamilies={subdivisionFamilies} inspectedPocketIds={highlightedIds}
           onActivatePocket={activatePocket} onExcludePocket={excludePocket}
           inspectedPocketId={inspected} onInspectPocket={id => { if (!inspectionsPaused) { setInspectedFamilyId(null); setInspected(id); } }}
@@ -373,7 +422,7 @@ function WorkspaceSession(props: Props) {
             {liveStatistics}
           </div>}
       </div>
-      {group && inspectedFamily && desired && <CustomCohortMapSnapshot key={inspectedFamily.id}
+      {group && inspectedFamily && selectionUsable && <CustomCohortMapSnapshot key={inspectedFamily.id}
         family={inspectedFamily} catalog={catalog} input={input} included={included}
         paused={inspectionsPaused} previewTransport={transport}
         onClose={() => { setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
@@ -443,17 +492,17 @@ function WorkspaceSession(props: Props) {
           </div>}
       </section>
       </details>
-      {fullReviewFamily && desired && <CustomCohortSubdivisionDialog key={fullReviewFamily.id}
-        family={fullReviewFamily} families={subdivisionFamilies} mapGroup={group} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
+      {fullReviewFamily && selectionUsable && <CustomCohortSubdivisionDialog key={fullReviewFamily.id}
+        family={fullReviewFamily} families={subdivisionFamilies} mapGroup={mapGroup} catalog={catalog} input={input} included={included} phaseId={inspectedPhaseId}
         selectionDisabled={selectionDisabled} inspectionsPaused={inspectionsPaused} previewTransport={transport}
-        memberTransport={props.workspace?.memberTransport} onInclude={includeGroups} onExclude={excludeGroups}
+        memberTransport={memberTransport} onInclude={includeGroups} onExclude={excludeGroups}
         onInspectPhase={id => { if (!inspectionsPaused && (id === null || fullReviewFamily.pocket_ids.includes(id))) {
           setInspectedPhaseId(id); setInspected(id ?? fullReviewFamily.pocket_ids[0]);
         } }}
         onClose={() => { setFullReviewFamilyId(null); setInspectedFamilyId(null); setInspectedPhaseId(null); }} />}
-      {!inspectedFamily && selectedGroup && desired && <CustomCohortPocketInspector input={input} catalog={catalog}
+      {!inspectedFamily && selectedGroup && selectionUsable && <CustomCohortPocketInspector input={input} catalog={catalog}
         pocketId={selectedGroup.id} label={selectedGroup.label} previewTransport={transport} paused={inspectionsPaused}
-        memberTransport={props.workspace?.memberTransport} membersPaused={selectionBlocked} />}
+        memberTransport={memberTransport} membersPaused={selectionBlocked} />}
     </>}
   </section>;
 }

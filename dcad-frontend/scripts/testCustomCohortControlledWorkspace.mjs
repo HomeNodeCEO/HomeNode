@@ -8,6 +8,7 @@ import * as catalogHelpers from '../src/features/neighborhood/customCohortPocket
 import * as cadEvidenceHelpers from '../src/features/neighborhood/customCohortCadEvidence.ts';
 import * as subdivisionFamilies from '../src/features/neighborhood/customCohortSubdivisionFamilies.ts';
 import { loadTrustedRepositoryCommonJs } from './trustedRepositoryModuleHarness.mjs';
+import { groupMemberViewFixture, displayModule, mapView } from './customCohortGroupMemberViewFixture.mjs';
 
 const requireRuntime = createRequire(new URL('../package.json', import.meta.url));
 const ref = { context_id: '10000000-0000-4000-8000-000000000001', context_revision: '1', context_sha256: 'a'.repeat(64) };
@@ -70,7 +71,7 @@ const text = node => typeof node === 'string' || typeof node === 'number' ? Stri
 function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   const cells = [], effects = [], calls = [], catalogCalls = [], intents = [], timers = new Map();
   const requestWaiters = new Map(), fingerprints = new Set();
-  let cursor = 0, dirty = false, tree, props, serial = 0, now = 0, fingerprintCount = 0, ownerKey;
+  let cursor = 0, dirty = false, tree, props, serial = 0, now = 0, fingerprintCount = 0, controllerCount = 0, ownerKey;
   const react = {
     useState(initial) { const i = cursor++; cells[i] ??= { value: typeof initial === 'function' ? initial() : initial };
       return [cells[i].value, next => { const value = typeof next === 'function' ? next(cells[i].value) : next;
@@ -98,13 +99,15 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
     if (key === '../customCohortPocketCatalog') return catalogHelpers;
     if (key === '../customCohortCadEvidence') return cadEvidenceHelpers;
     if (key === '../customCohortSubdivisionFamilies') return subdivisionFamilies;
+    if (key === '../customCohortGroupDisplay.ts') return displayModule;
+    if (key === '../customCohortGroupMapView.ts') return mapView;
     if (key === '../customCohortPreviewController') return { ...controller,
       fingerprintCustomCohortSelection: value => {
         fingerprintCount++;
         const task = controller.fingerprintCustomCohortSelection(value); fingerprints.add(task);
         void task.then(() => fingerprints.delete(task), () => fingerprints.delete(task)); return task;
       },
-      createCustomCohortPreviewController: options => controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }) };
+      createCustomCohortPreviewController: options => { controllerCount++; return controller.createCustomCohortPreviewController({ ...options, fingerprint: async value => hash(value) }); } };
     if (key === './CustomCohortStatistics') return { default: stubs.CustomCohortStatistics,
       CustomCohortCompactStatistics: stubs.CustomCohortCompactStatistics, __esModule: true };
     const stub = stubs[key.slice(2)]; assert.ok(stub, `Unexpected component import ${key}`); return { default: stub, __esModule: true };
@@ -116,8 +119,8 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   function render(next = props) {
     props = next; cursor = 0; dirty = false;
     const owner = component.default(props);
-    if (name === 'CustomCohortPocketInspector' && ownerKey !== owner.key) {
-      // A keyed child remount does not discard the outer component's memo hooks.
+    if (ownerKey !== owner.key) {
+      // A keyed child remount does not discard the outer wrapper's memo hooks.
       cells.slice(cursor).forEach(cell => cell?.cleanup?.()); cells.length = cursor; effects.length = 0; ownerKey = owner.key;
     }
     tree = owner.type(owner.props);
@@ -125,11 +128,15 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
   }
   function flush() { let n = 0; while (dirty) { assert.ok(++n < 20, 'No render loop'); render(); } }
   return { calls, catalogCalls, intents, previewTransport, api,
-    get fingerprintCount() { return fingerprintCount; }, get sessionKey() { return ownerKey; },
+    get fingerprintCount() { return fingerprintCount; }, get controllerCount() { return controllerCount; }, get sessionKey() { return ownerKey; },
     pendingTimers: () => [...timers.values()],
     props(ids = [groupId(1)], revision = 7) { return { ...input, enabled: true, subjectLabel: 'Synthetic subject', sessionKey: 'session-1',
       workspace: { catalog, selection: { revision, included_recorded_group_ids: ids }, saving: false,
         previewTransport, onSelectionIntent: value => intents.push(value) } }; },
+    exactProps(f, options = {}) { return { ...f.display.target, contextRef: f.display.active.context_ref, enabled: true, subjectLabel: 'Synthetic subject',
+      exact: { display: f.display, freshness: 'current', saving: false,
+        onSelectionIntent: ids => intents.push(ids), readViewport: mapView.createCustomCohortGroupMapReader({ viewport: () => assert.fail('fixture geometry unavailable') }),
+        readMembers: f.reader, inspectionPreview: previewTransport, inspectionMembers: () => assert.fail('component stub must not read'), ...options } }; },
     render(value) { render(value); flush(); }, get propsNow() { return props; }, get tree() { return tree; },
     nodes: () => walk(tree), text: () => text(tree),
     child(key) { return walk(tree).find(node => node.type === stubs[key])?.props; },
@@ -168,6 +175,105 @@ function harness(name = 'CustomCohortWorkspace', { onSerialize } = {}) {
     unmount() { cells.forEach(cell => cell?.cleanup?.()); },
   };
 }
+
+test('exact workspace composes the same checked display into map, numbers and selected records without a legacy controller or hash', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount());
+  const p = h.exactProps(f); h.render(p); await h.settleFingerprints();
+  const map = h.child('CustomCohortParcelMap'), members = h.child('CustomCohortMemberBrowser');
+  assert.equal(map.display, f.display); assert.equal(map.readViewport, p.exact.readViewport);
+  assert.equal(Object.hasOwn(map, 'group'), false); assert.equal(Object.hasOwn(map, 'catalog'), false);
+  assert.equal(h.child('CustomCohortCompactStatistics').group, f.display.observations);
+  assert.equal(h.child('CustomCohortStatistics').group, f.display.observations);
+  assert.equal(members.display, f.display); assert.equal(members.readMembers, p.exact.readMembers); assert.equal(members.paused, false);
+  assert.equal(map.freshness, 'current'); assert.equal(h.calls.length, 0); assert.equal(h.catalogCalls.length, 0);
+  assert.equal(h.controllerCount, 0); assert.equal(h.fingerprintCount, 0); assert.equal(h.pendingTimers().length, 0);
+  assert.equal(f.calls.length, 2, 'only the fixture initial numeric/opening requests');
+});
+
+test('exact selection actions emit only frozen recorded IDs and do not rewrite the visible saved display', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); h.render(h.exactProps(f));
+  const [id] = f.display.selected.included_recorded_group_ids, before = JSON.stringify(f.display);
+  h.click('Deselect all'); assert.deepEqual(h.intents, [[]]); assert.ok(Object.isFrozen(h.intents[0]));
+  assert.equal(h.child('CustomCohortParcelMap').display, f.display);
+  h.child('CustomCohortParcelMap').onExcludePocket(id); assert.deepEqual(h.intents.at(-1), []);
+  h.click('Include all observations'); assert.deepEqual(h.intents.at(-1), catalogHelpers.customCohortCatalogGroupIds(f.display.catalog));
+  assert.ok(h.intents.every(ids => ids.every(value => typeof value === 'string')));
+  assert.equal(JSON.stringify(f.display), before); assert.equal(h.calls.length, 0); assert.equal(h.controllerCount, 0);
+});
+
+test('a coherent successor swaps exact map and selected numbers together, including deliberate empty, without legacy reads', async t => {
+  const f = await groupMemberViewFixture(), next = await groupMemberViewFixture({ empty: true, revision: 3 });
+  const h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f); h.render(p);
+  h.render({ ...p, exact: { ...p.exact, display: next.display } }); await h.settleFingerprints();
+  assert.equal(h.child('CustomCohortParcelMap').display, next.display);
+  assert.equal(h.child('CustomCohortCompactStatistics').group, next.display.observations);
+  assert.equal(h.child('CustomCohortMemberBrowser').display, next.display);
+  assert.equal(next.display.observations.summary.selected.account_count, 0);
+  assert.ok(h.nodes().filter(n => n.type === 'input' && n.props.type === 'checkbox').every(n => !n.props.checked));
+  assert.equal(h.calls.length, 0); assert.equal(h.catalogCalls.length, 0); assert.equal(h.fingerprintCount, 0); assert.equal(h.controllerCount, 0);
+});
+
+test('equivalent exact prop wrappers and unrelated rerenders do not construct a second main preview', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f); h.render(p);
+  for (let i = 0; i < 3; i++) h.render({ ...p, contextRef: { ...p.contextRef }, exact: { ...p.exact } });
+  await h.settleFingerprints(); assert.equal(h.child('CustomCohortParcelMap').display, f.display);
+  assert.equal(h.controllerCount, 0); assert.equal(h.calls.length, 0); assert.equal(h.pendingTimers().length, 0); assert.equal(h.intents.length, 0);
+});
+
+test('stale, saving and read-only exact displays retain the coherent pair but close direct selection and inspection callbacks', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount());
+  for (const change of [{ freshness: 'stale' }, { saving: true }, { blockedReason: 'read_only' }, { blockedReason: 'reload_required' }]) {
+    const p = h.exactProps(f, change); h.render(p);
+    const map = h.child('CustomCohortParcelMap'), [id] = f.display.selected.included_recorded_group_ids;
+    assert.equal(map.display, f.display); assert.equal(map.freshness, 'stale');
+    assert.equal(h.child('CustomCohortCompactStatistics').group, f.display.observations);
+    assert.equal(h.child('CustomCohortMemberBrowser').paused, true);
+    map.onActivatePocket(id); map.onExcludePocket(id); map.onInspectAccount(f.display.catalog.unassigned.account_ids[0]);
+    h.click('Deselect all'); await h.drain();
+    assert.equal(h.intents.length, 0); assert.equal(h.child('CustomCohortMapSnapshot'), undefined);
+    assert.equal(h.child('CustomCohortPocketInspector'), undefined); assert.equal(h.calls.length, 0);
+  }
+});
+
+test('exact unassigned inspection keeps its independent original-subset input and host ports, not the current selection reference', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f); h.render(p);
+  const account = f.display.catalog.unassigned.account_ids[0]; h.child('CustomCohortParcelMap').onInspectAccount(account); await h.drain();
+  const inspector = h.child('CustomCohortPocketInspector'); assert.ok(inspector);
+  assert.equal(inspector.catalog, f.display.catalog); assert.equal(inspector.pocketId, catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP);
+  assert.equal(inspector.previewTransport, p.exact.inspectionPreview); assert.equal(inspector.memberTransport, p.exact.inspectionMembers);
+  assert.deepEqual(inspector.input, { accountId: p.accountId, assignmentFileId: p.assignmentFileId,
+    contextRef: p.contextRef, selection: { revision: 1, pockets: [] } });
+  assert.equal(Object.hasOwn(inspector.input, 'selectionRef'), false);
+  const inspect = harness('CustomCohortPocketInspector'); t.after(() => inspect.unmount());
+  inspect.render({ ...inspector, previewTransport: inspect.previewTransport }); await inspect.tick(); await inspect.waitForRequest(0);
+  assert.equal(inspect.calls[0].request.include_map, false);
+  assert.deepEqual(inspect.calls[0].request.selection.pockets.flatMap(pocket => pocket.account_ids), [account]);
+  assert.deepEqual(inspect.calls[0].request.selection, catalogHelpers.selectionFromRecordedGroups(f.display.catalog,
+    [catalogHelpers.CUSTOM_COHORT_UNASSIGNED_GROUP], 1));
+  assert.notDeepEqual(inspect.calls[0].request.selection.pockets.flatMap(pocket => pocket.account_ids), f.selected);
+  assert.equal(h.child('CustomCohortCompactStatistics').group, f.display.observations); assert.equal(h.intents.length, 0);
+});
+
+test('exact workspace rejects cloned displays, foreign targets and mismatched contexts before mounting a controller or reading', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f);
+  const variants = [{ ...p, exact: { ...p.exact, display: structuredClone(f.display) } },
+    { ...p, accountId: 'FOREIGN' }, { ...p, assignmentFileId: '38' }, { ...p, sessionKey: 'other-session' },
+    { ...p, contextRef: { ...p.contextRef, context_revision: '2' } },
+    { ...p, exact: { ...p.exact, freshness: 'unknown' } }, { ...p, exact: { ...p.exact, readViewport: undefined } },
+    { ...p, workspace: h.props().workspace }];
+  for (const value of variants) assert.throws(() => h.render(value));
+  assert.equal(h.controllerCount, 0); assert.equal(h.calls.length, 0); assert.equal(h.catalogCalls.length, 0);
+});
+
+test('mode changes have different keyed ownership without treating an exact reference as a legacy checkpoint', async t => {
+  const f = await groupMemberViewFixture(), h = harness(); t.after(() => h.unmount()); const p = h.exactProps(f);
+  h.render(p); const key = h.sessionKey;
+  h.render({ ...p, exact: undefined, workspace: { ...h.props().workspace, catalog: f.display.catalog,
+    selection: { revision: f.display.active.selection_ref.selection_revision, included_recorded_group_ids: f.display.selected.included_recorded_group_ids } } });
+  assert.notEqual(h.sessionKey, key); assert.equal(h.controllerCount, 1);
+  h.render(p); assert.equal(h.sessionKey, key); assert.equal(h.child('CustomCohortParcelMap').display, f.display);
+  assert.equal(h.controllerCount, 1); assert.equal(h.calls.length, 0);
+});
 
 test('controlled restored empty selection stays empty and makes no catalog read', async () => {
   const h = harness(); h.render(h.props([]));

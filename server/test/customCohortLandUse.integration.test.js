@@ -24,6 +24,9 @@ test('native PostGIS one-ring land use includes edges but not corners, second-ri
       '2026-10-01'::timestamptz, ST_MakeEnvelope(-96.7+x*0.001,32.9+y*0.001,-96.7+(x+1)*0.001,32.9+(y+1)*0.001,4326)
       FROM (VALUES (1,0,0,'1','one_unit',true),(2,1,0,'2','commercial',true),(3,1,1,'1','multifamily',true),
         (4,2,0,'1','two_to_four_unit',true),(5,0,-1,'3','commercial',true),(6,-1,0,'1',NULL,false)) AS f(n,x,y,use_code,category,built)`);
+    // Mirror the stored legacy fallback, whose category is NOT NULL even when
+    // its source did not identify a use. It must remain unclassified here.
+    await client.query("UPDATE land_use_parcels SET land_use_category='other_vacant', classification_confidence='low' WHERE object_id=6");
     const sql = EXPLORATION_LAND_USE_SQL.replaceAll('gis.dcad_parcels', 'pg_temp.land_use_parcels');
     const row = (await client.query(sql, [['1'], 100001])).rows[0];
     assert.equal(row.selected_parcel_count, 1); assert.equal(row.neighbor_parcel_count, 2); assert.equal(row.parcel_count, 3);

@@ -15,6 +15,7 @@ test('stored parcel land use uses indexed one-ring edge adjacency, excludes pers
   const result = await buildExplorationLandUse(pool(async (sql, values) => {
     queries++; assert.equal(sql, EXPLORATION_LAND_USE_SQL); assert.deepEqual(values[0], ['A', 'B']);
     assert.match(sql, /neighbor.geom && selected.geom/); assert.match(sql, /ST_Relate\(neighbor.geom, selected.geom, 'F\*\*\*1\*\*\*\*'\)/);
+    assert.match(sql, /other_vacant' AND classification_confidence IS DISTINCT FROM 'high'[\s\S]*THEN NULL/);
     assert.doesNotMatch(sql, /WITH RECURSIVE|ST_Buffer|INSERT|UPDATE|DELETE/);
     return { rows: [row()] };
   }), ['A', 'B']);

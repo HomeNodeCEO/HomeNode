@@ -33,11 +33,12 @@ export const EXPLORATION_LAND_USE_SQL = `
   ), measured AS MATERIALIZED (
     SELECT * FROM population WHERE (SELECT COUNT(*) FROM population) < $2
   ), areas AS (
-    SELECT land_use_category AS category, COUNT(*)::integer AS parcel_count,
+    SELECT CASE WHEN land_use_category = 'other_vacant' AND classification_confidence IS DISTINCT FROM 'high'
+      THEN NULL ELSE land_use_category END AS category, COUNT(*)::integer AS parcel_count,
       COUNT(*) FILTER (WHERE neighbor)::integer AS neighbor_count,
       COUNT(*) FILTER (WHERE classification_review_reason IS NOT NULL OR classification_confidence IS DISTINCT FROM 'high')::integer AS review_count,
       ST_Area(ST_UnaryUnion(ST_Collect(geom))::geography) AS area_sqm
-    FROM measured GROUP BY land_use_category
+    FROM measured GROUP BY 1
   )
   SELECT (SELECT COUNT(*) FROM selected)::integer AS selected_parcel_count,
     (SELECT COUNT(DISTINCT account_id) FROM selected)::integer AS selected_mapped_account_count,

@@ -41,7 +41,9 @@ function reader(row, changedScope = scope) {
 test('compact prepared opening retains the exact original metadata and verifies every original compressed digest', async () => {
   const { repo, calls } = reader(await storedRow());
   assert.deepEqual(await repo.read(payload), expected);
-  assert.deepEqual(calls[0].values, [scope.organization_id, context.context_id, context.context_sha256]);
+  assert.deepEqual(calls[0].values, [scope.organization_id, context.context_id, context.context_sha256,
+    scope.report_file_id, scope.assignment_file_id, scope.account_id]);
+  assert.match(calls[0].sql, /o\.report_file_id=\$4::uuid AND o\.assignment_file_id=\$5::bigint AND o\.account_id=\$6/);
   for (const name of ['compressed_payload', 'compressed_preview', 'compressed_map'])
     assert.match(calls[0].sql, new RegExp(`sha256\\([cp]\\.${name}\\)`));
   assert.doesNotMatch(calls[0].sql, /SELECT[^]*?\bp\.compressed_map\s*(?:,|FROM)/);

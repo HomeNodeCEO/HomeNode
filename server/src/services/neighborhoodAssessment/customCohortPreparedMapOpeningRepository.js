@@ -94,6 +94,9 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
         pg_catalog.encode(pg_catalog.sha256(p.compressed_preview), 'hex') AS current_compressed_preview_sha256,
         pg_catalog.encode(pg_catalog.sha256(p.compressed_map), 'hex') AS current_compressed_map_sha256
       FROM app.neighborhood_custom_cohort_prepared_map_openings m
+      JOIN app.neighborhood_custom_cohort_contexts o
+        ON o.organization_id=m.organization_id AND o.context_id=m.context_id
+        AND o.context_sha256=m.context_sha256
       JOIN app.neighborhood_custom_cohort_prepared_previews p
         ON p.organization_id=m.organization_id AND p.context_id=m.context_id
         AND p.context_sha256=m.context_sha256 AND p.format_version=m.format_version
@@ -102,8 +105,10 @@ export function createCustomCohortPreparedMapOpeningRepository(client, scopeJson
         AND c.context_sha256=m.context_sha256 AND c.format_version=m.format_version
         AND c.catalog_version=m.catalog_version
       WHERE m.organization_id=$1::uuid AND m.context_id=$2::uuid
-        AND m.context_sha256=$3 AND m.format_version=1 AND m.catalog_version=3`,
-    [scope.organization_id, context.context_id, context.context_sha256]);
+        AND m.context_sha256=$3 AND m.format_version=1 AND m.catalog_version=3
+        AND o.report_file_id=$4::uuid AND o.assignment_file_id=$5::bigint AND o.account_id=$6`,
+    [scope.organization_id, context.context_id, context.context_sha256,
+      scope.report_file_id, scope.assignment_file_id, scope.account_id]);
     check(found && [0, 1].includes(found.rowCount) && Array.isArray(found.rows) && found.rows.length === found.rowCount);
     if (!found.rowCount) return null;
     const row = found.rows[0];

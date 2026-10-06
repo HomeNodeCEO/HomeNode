@@ -5,6 +5,7 @@ import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
 import { runCustomCohortPreparedMapOpeningJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedMapOpeningJob.js';
+import { createCustomCohortPreparedMapOpeningRepository } from '../../src/services/neighborhoodAssessment/customCohortPreparedMapOpeningRepository.js';
 import { customCohortTexasCivilDay } from '../../src/services/neighborhoodAssessment/customCohortTemporalSupport.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
@@ -301,6 +302,12 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     'numeric hot preview is checked without fetching a full map; derivative separately verifies map bytes in PG');
     const secondPass = await runCustomCohortPreparedMapOpeningJob(pool, { maximumContexts: 100, maximumRuntimeMinutes: 1, logger: {} });
     assert.equal(secondPass.completed, 0, 'published immutable opening is reused without decoding it again');
+    assert.equal(await createCustomCohortPreparedMapOpeningRepository(pool, json({
+      organization_id: organization, report_file_id: randomUUID(), assignment_file_id: assignment, account_id: account,
+    }), result.context_ref).read(null), null, 'an otherwise valid context is never displayed through a sibling report scope');
+    assert.equal(await createCustomCohortPreparedMapOpeningRepository(pool, json({
+      organization_id: organization, report_file_id: report, assignment_file_id: String(BigInt(assignment) + 1n), account_id: account,
+    }), result.context_ref).read(null), null, 'assignment identity remains independently exact at the derivative boundary');
     const openingDeniedFrom = calls.length;
     await assert.rejects(exposureDenied.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' }), /market_data_access_denied/);
     assert.ok(!calls.slice(openingDeniedFrom).some(sql => sql.includes('custom-cohort-prepared-map-opening:read')),

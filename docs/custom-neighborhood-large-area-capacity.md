@@ -886,8 +886,10 @@ No viewport fragment is reused as population evidence or averaged into statistic
 Actual retained producers and checked display/transport fixtures feed nine new
 existing hook-harness tests for coherent composition, ID-only intent, empty
 successor, repeated renders, stale/read-only closure, independent subset reads,
-foreign/cloned targets, legacy/exact owner separation and clearing market-analysis
-input whenever the exact display becomes stale or saving. Existing legacy,
+foreign/cloned targets, legacy/exact owner separation and refusing to fabricate a
+legacy market-analysis membership request from an exact display. That legacy
+callback stays null in exact mode; reference-aware analysis needs its own adapter.
+Existing legacy,
 subdivision, recorded-housing/proximity and boundary tests remain in force.
 These are not a live browser, native PostgreSQL, performance or >50k acceptance
 claim. The production host still uses the legacy path; V7 host current-read,

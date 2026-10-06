@@ -278,7 +278,11 @@ function WorkspaceSession(props: Props) {
     // detached single family, townhouse, condominium, duplex, apartment, etc.
     return composition.pockets.some(row => selected.has(row[0]) && row[3][1][1] > 0);
   }, [catalog, included]);
-  useEffect(() => { onAnalysisSelection?.(current ? group : null, current ? includesTownhomes : undefined); }, [current, group, includesTownhomes, onAnalysisSelection]);
+  // The existing market-study callback requires a legacy request with account
+  // membership. An exact display must not invent that request or reuse viewport
+  // rows as its population. Its reference-aware analysis adapter is separate.
+  const analysisGroup = !exact && current ? preview.group : null;
+  useEffect(() => { onAnalysisSelection?.(analysisGroup, analysisGroup ? includesTownhomes : undefined); }, [analysisGroup, includesTownhomes, onAnalysisSelection]);
   useEffect(() => () => onAnalysisSelection?.(null), [onAnalysisSelection]);
   const selectionDisabled = selectionBlocked || !selectionUsable;
   const area = recommendation?.sales_aware_area;

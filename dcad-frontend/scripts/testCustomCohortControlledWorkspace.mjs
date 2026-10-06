@@ -254,22 +254,22 @@ test('exact unassigned inspection keeps its independent original-subset input an
   assert.equal(h.child('CustomCohortCompactStatistics').group, f.display.observations); assert.equal(h.intents.length, 0);
 });
 
-test('exact market analysis consumes only the coherent saved display and clears during saves, stale reads and disposal', async t => {
+test('exact display never fabricates a legacy market-analysis request, including stale, saving, empty and disposal', async t => {
   const f = await groupMemberViewFixture(), empty = await groupMemberViewFixture({ empty: true, revision: 3 });
   const h = harness(); t.after(() => h.unmount()); const changes = [], p = h.exactProps(f);
   p.onAnalysisSelection = (group, townhomes) => changes.push([group, townhomes]);
   h.render(p);
-  assert.equal(changes.at(-1)[0], f.display.observations);
+  assert.deepEqual(changes.at(-1), [null, undefined]);
   for (const change of [{ freshness: 'stale' }, { saving: true }, { blockedReason: 'read_only' }]) {
     h.render({ ...p, exact: { ...p.exact, ...change } });
     assert.deepEqual(changes.at(-1), [null, undefined]);
     assert.equal(h.child('CustomCohortStatistics').group, f.display.observations, 'the old pair is retained, but not supplied to a new analysis');
-    h.render(p); assert.equal(changes.at(-1)[0], f.display.observations);
+    h.render(p); assert.deepEqual(changes.at(-1), [null, undefined]);
   }
   h.render({ ...p, exact: { ...p.exact, display: empty.display } });
-  assert.equal(changes.at(-1)[0], empty.display.observations);
-  assert.equal(changes.at(-1)[0].summary.selected.account_count, 0, 'deliberate empty never substitutes the old or complete population');
-  assert.equal(changes.at(-1)[1], false);
+  assert.deepEqual(changes.at(-1), [null, undefined]);
+  assert.equal(h.child('CustomCohortStatistics').group, empty.display.observations);
+  assert.equal(empty.display.observations.summary.selected.account_count, 0, 'deliberate empty never substitutes the old or complete population');
   await h.settleFingerprints();
   assert.equal(h.calls.length, 0); assert.equal(h.catalogCalls.length, 0); assert.equal(h.controllerCount, 0); assert.equal(h.fingerprintCount, 0);
   h.unmount(); assert.equal(changes.at(-1)[0], null);

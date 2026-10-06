@@ -81,6 +81,44 @@ export async function runCustomCohortGroupSelectionHeadDatabaseChecks({ pool, sc
     } catch (error) { await competitor.query('ROLLBACK'); throw error; }
     finally { competitor.release(); }
 
+    // Real two-client lock compatibility, not an SQL-string-only assertion.
+    // FK checks use KEY SHARE on this immutable parent. They must coexist with
+    // a head writer in either acquisition order, while SHARE readers and other
+    // head writers keep the exact NOWAIT fence.
+    const observer = await pool.connect();
+    const keyShare = () => observer.query(`SELECT context_id FROM app.neighborhood_custom_cohort_contexts
+      WHERE organization_id=$1 AND context_id=$2 FOR KEY SHARE NOWAIT`,
+    [scope.organization_id, contextRef.context_id]);
+    try {
+      await client.query('BEGIN');
+      assert.equal((await repo.put(secondRequest)).status, 'reused');
+      await observer.query('BEGIN');
+      assert.equal((await keyShare()).rowCount, 1, 'writer must not block an independent parent KEY SHARE');
+      await observer.query('ROLLBACK');
+      await observer.query('BEGIN');
+      await assert.rejects(create(observer).peekCurrent(), error => error.code === '55P03');
+      await observer.query('ROLLBACK');
+      await client.query('ROLLBACK');
+
+      await observer.query('BEGIN');
+      assert.equal((await keyShare()).rowCount, 1);
+      await client.query('BEGIN');
+      assert.equal((await repo.put(secondRequest)).status, 'reused', 'independent KEY SHARE must not block a head writer');
+      await client.query('ROLLBACK');
+      await observer.query('ROLLBACK');
+
+      await observer.query('BEGIN');
+      assert.deepEqual((await create(observer).peekCurrent()).selection_ref, second.selection_ref);
+      await client.query('BEGIN');
+      await assert.rejects(repo.put(secondRequest), error => error.code === '55P03');
+      await client.query('ROLLBACK');
+      await observer.query('ROLLBACK');
+    } finally {
+      await observer.query('ROLLBACK').catch(() => {});
+      await client.query('ROLLBACK').catch(() => {});
+      observer.release();
+    }
+
     await client.query('BEGIN');
     await assert.rejects(repo.put(firstRequest), /selection_changed/);
     await assert.rejects(repo.getCurrent({ metadataJson: firstStage.metadataJson, selectionRef: first.selection_ref }), /selection_changed/);
@@ -113,5 +151,6 @@ export async function runCustomCohortGroupSelectionHeadDatabaseChecks({ pool, sc
   assert.deepEqual(await protectedState(), before);
   return { checks: ['real context-bound group-selection head registers/reopens a complete or explicit empty union; '
     + 'lost acknowledgment reuses, competing/stale revisions refuse, cancellation/rollback preserve the prior head '
-    + 'and immutable history cannot be rewritten; genuine report/workspace/acceptances remain unchanged'] };
+    + 'and immutable history cannot be rewritten; FK key-share locks coexist with head writes in both orders '
+    + 'while share readers/writers retain NOWAIT fencing; genuine report/workspace/acceptances remain unchanged'] };
 }

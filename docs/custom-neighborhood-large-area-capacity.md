@@ -165,3 +165,27 @@ permission grant. This checkpoints only a whole bounded acquisition, not an
 unfinished page stream. Source/spatial page-by-page recovery, >50k contracts,
 server-owned selections and the remaining live acceptance still remain pending;
 neither the public route nor installed capacity is changed by this slice.
+
+## Phase 3 paged selection representation (not a live selection owner yet)
+
+`cohortPagedGroupSelectionV1.js` stages complete original recorded-group
+memberships and their exact deduplicated account union as independent immutable
+pages. Scope, context, original catalog reference, selection revision and every
+group's original ordered membership digest/count are bound in the metadata.
+Reopening verifies every metadata, membership and union original and recomputes
+the complete union. Missing, changed, duplicated or reordered membership is not
+a shorter successful selection. Explicit empty selection stays empty. The union
+digest matches the existing one-pocket preview identity byte-for-byte for
+disjoint catalog groups; overlapping groups count an account only once.
+
+The transaction-bound immutable store checks each acknowledgment and never
+updates a current selection head, authorizes a source or publishes a report.
+Its caller must derive metadata from the exact freshly authorized original
+catalog, own cancellation/deadline and rollback, then atomically register the
+selection revision with that context. Browser JSON cannot supply those originals.
+A synthetic 90,000-account/120,000-membership test verifies overlap and original
+reload; it is not production capacity or realistic geometry/load acceptance.
+Live server-owned revision registration, group-only browser requests, paged
+catalog/statistics/publication consumers and the greater-than-50k end-to-end
+capture remain outstanding. Existing protocol versions and live limits stay
+unchanged.

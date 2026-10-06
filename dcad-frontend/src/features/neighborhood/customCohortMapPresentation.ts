@@ -2,6 +2,8 @@ import { CUSTOM_COHORT_UNASSIGNED_GROUP } from './customCohortPocketCatalog.ts';
 import type { CheckedPocketCatalog } from './customCohortPocketCatalog';
 import type { CustomCohortPreviewGroup } from './customCohortPreviewController';
 
+export type CustomCohortMapDisplay = Pick<CustomCohortPreviewGroup, 'binding' | 'parcel_map' | 'map_manifest'>;
+
 export interface CustomCohortMapScore {
   readonly status: 'available' | 'unknown';
   readonly reason: null | 'recommendation_unavailable' | 'recommendation_insufficient' | 'group_observations_unavailable' | 'unassigned_recorded_group' | 'empty_group';
@@ -115,7 +117,7 @@ function coordinateBefore(a: readonly number[], b: readonly number[]): boolean {
  * joins geometry. A label marks one actual exterior vertex, never a new boundary,
  * a centroid inside an untested polygon, or a claim of legal subdivision extent. */
 export function buildCustomCohortMapPresentation({ catalog, group }: {
-  readonly catalog: CheckedPocketCatalog; readonly group: CustomCohortPreviewGroup;
+  readonly catalog: CheckedPocketCatalog; readonly group: CustomCohortMapDisplay;
 }): CustomCohortMapPresentation {
   const version = field(catalog, 'catalog_version'); check(version === 1 || version === 2 || version === 3);
   const limits = version === 3 ? CUSTOM_COHORT_MAP_PRESENTATION_V3_LIMITS : L;

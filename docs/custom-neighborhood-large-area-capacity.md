@@ -767,3 +767,45 @@ alongside a fabricated flat selection or paint fresh numbers over old geometry.
 The catalog still uses its complete installed bounded member representation;
 compact/paged catalogs, partial source/spatial recovery, complete greater-than-
 50k numerical/publication contracts and realistic/live acceptance remain open.
+
+## Opt-in exact-reference map consumer (not a production host switch)
+
+`customCohortGroupMapView.ts` projects only an actual composed immutable V7
+display into the existing map presentation's binding/manifest/deferred geometry
+fields. It does not fabricate the legacy controller's request or flatten account
+memberships into a save or geometry request. The original numeric observations
+remain in that same display. Local account lookup sets only restyle parcels;
+they cannot become a statistical population, source capability or report input.
+
+The existing parcel-map component now also accepts that display plus a host-owned
+viewport read port. Its labels, subdivision clicks/right-clicks, red inclusion
+outlines, similarity fills, retained subject pointer, city reference control and
+layout are unchanged. The exact path never calls the legacy flat-selection HTTP
+function. A stale display keeps the old map/observations paired; late pans cannot
+paint a newer selection. Legacy map inputs remain supported unchanged, and the
+production workspace still uses that legacy path.
+
+The exact reader sends the current retained reference on every complete leaf,
+using the same independently authorized viewport transport. The existing exact
+geometry tiling kernel is shared, not replaced with a hull or simplified map.
+Only the exact settled density refusal (or its sanitized API equivalent) permits
+spatial bisection. Overlapping leaves must contain identical complete original
+multipart geometry; changed duplicates or failed leaves refuse the whole view.
+All account, parcel, coordinate, payload, depth, leaf and request ceilings remain.
+
+Exact leaves are sequential under one caller-owned finite assignment lane; the
+legacy loader keeps its established two-request behavior. Subscriber cancellation
+does not release a still-running injected port. The exact path adds no timer,
+automatic retry, HTTP/SQL owner, map membership write or analytical recomputation.
+Every completed output, including one-leaf maps, is frozen. A detail-capacity error
+stays a sanitized detail limit, not a partial success. Only known busy/interrupted
+responses may retain previously complete geometry marked incomplete for a new
+camera; access, conflict and integrity failures cannot hide behind that fallback.
+
+This opt-in still requires coherent V7 host admission/draft/read-only/flush fences,
+member/subdivision inspection and report consumers before production activation.
+Neither the component's optional port nor its local composition witness grants
+source access or Apply. No genuine appraisal, accepted report, production worker,
+schedule, installed capacity, release policy or speed SLA changes here. Local
+actual producer/browser-render tests are not native PostgreSQL or realistic
+greater-than-50k/5-/10-mile/retrospective/live acceptance proof.

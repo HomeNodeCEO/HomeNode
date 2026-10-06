@@ -1,5 +1,44 @@
 # Complete larger-area Custom neighborhood studies
 
+## Complete supplemental metric group (not live registration or activation)
+
+`customCohortCompleteMetricGroup.js` stages all fifteen existing selected-stock,
+canonical-transaction and source-record distributions under one immutable
+versioned root. Its fixed metric inventory accepts no caller-supplied subset,
+cells, units or replacement statistics. Each entry binds its fresh original
+member witness and the same exact context, selection, target, effective date,
+period and complete account union. Every final AND intermediate numerical blob
+is named for retention. A fresh reopen validates the whole inventory and all
+those originals, computes every exact distribution, and rechecks the root at
+the ending fence before returning one deeply frozen group. A late failure
+returns no partial result. Missing/invalid/conflicting counts, exact-decimal
+disagreements, package totals, all-date source observations and descriptive COD
+meanings are unchanged.
+
+One owner shares its existing finite work/I/O/byte budgets across all metrics
+and operations and refuses concurrent use until actual I/O settles. Each staged
+group names only its own graph; shared budget accounting is not reset. Seven
+synthetic tests cover complete parity, explicit empty selection, altered
+revision/period/raw witnesses, missing/reordered/substituted metrics, absent or
+changed intermediate originals, data traps, late failures, ending deadlines and
+actual cancellation settlement. The existing guarded migrated SQL suite adds a
+named synthetic 1,001-account test for actual scoped root retention, fresh-client
+reopen, foreign organization, commit/rollback/cancellation and unchanged report,
+section, acceptance and current-selection rows. Local skipped SQL is not native
+proof; actual published-head CI must execute it.
+
+The root must come from the caller's freshly authorized retained registry, not a
+browser-provided reference. This is a supplemental numeric graph, not proof of
+the original acquisition graph or a registry for it. The caller still registers
+both graphs coherently, charges their combined original/reference/byte budgets,
+and repeats current actor/assignment/subject/source/private-review/selection
+fences before commit or delivery. This slice does not wire a live calculator,
+avoid legacy selection calculation by itself, raise any cap, change schema,
+schedule a worker, migrate a file or activate V7. Compact catalogs, stable
+partial source/spatial recovery, coherent original-plus-supplement publication,
+deliberate activation/legacy reopening and real >50k/5-/10-mile/retrospective/
+live Apply/timing acceptance remain unfinished.
+
 ## Original-bound metric-run supplying owner (not a live switch)
 
 `customCohortOriginalMetricRuns.js` now compiles an in-process receipt for ONE

@@ -11,7 +11,7 @@ const count = (value: number | null) => value?.toLocaleString('en-US') ?? 'Unava
 
 interface Props {
   target: CustomWorkspaceTarget; contextRef: CustomCohortContextRef; workspaceRevision: number;
-  api: ReturnType<typeof createCustomWorkspaceApi>; disabled: boolean;
+  api: Pick<ReturnType<typeof createCustomWorkspaceApi>, 'readReportEditor' | 'reportedOperation'>; disabled: boolean;
   run: (task: (io: CustomWorkspaceOperationOptions) => Promise<void>) => Promise<boolean>;
   onAccepted?: () => Promise<boolean>;
   onOutcomeUncertain?: (value: boolean) => void;

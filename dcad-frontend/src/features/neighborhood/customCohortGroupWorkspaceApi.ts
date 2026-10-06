@@ -97,6 +97,9 @@ export function createCustomCohortGroupWorkspaceApi(options: Parameters<typeof c
     viewport(...args: Parameters<typeof selected.viewport>) { return safely(args[4].signal, () => selected.viewport(...args)); },
     members(...args: Parameters<typeof selected.members>) { return safely(args[4].signal, () => selected.members(...args)); },
     capture: legacy.capture, catalog: legacy.catalog,
+    // These explicit original-subset inspections are distinct from the main
+    // exact-reference population ports above. The keyed host owns their lane.
+    inspectionPreview: legacy.preview, inspectionMembers: legacy.members,
     readReportEditor: legacy.readReportEditor, reportedOperation: legacy.reportedOperation,
   });
 }

@@ -900,6 +900,57 @@ claim. The production host still uses the legacy path; V7 host current-read,
 draft/read-only/flush and shared-lane integration, report composition, paged
 capture/catalog/statistics/publication and realistic/live acceptance remain open.
 
+## Opt-in V7 host composition (not a production mount or migration)
+
+`CustomCohortGroupWorkspaceHost` now supplies the exact view through the actual
+V7 lifecycle/API and one assignment/session-owned finite request lane. The
+initial workfile GET must confirm the same current draft before an owner or
+capture is created. A signed/archived fresh response overrides a stale draft
+prop; a present legacy/corrupt checkpoint is not absence or an automatic V7
+migration. New captures require an actual valid period and an explicit initial
+recorded-ID policy. Existing pending attempts are not silently resumed.
+
+Atomic commands, capture/catalog/head reads and the whole numeric-plus-opening
+composition use that same lane. Exact viewport leaves and selected member
+pages and independent original-subset inspection ports also
+belong to it. Display callbacks require this owner's current immutable display
+at click AND actual queued admission. Signing quiescence closes new read/action
+admission; already admitted work remains owned until actual settlement, even if
+it ignores cancellation. Save Everything cannot report success while a lane,
+owner, pending capture, uncertain selection write or failed fresh read is unresolved.
+A detail deadline quarantines the lane and exposes explicit checked recovery,
+never an automatic retry or a claim that the remote lock has been released.
+
+Lost write acknowledgment first reloads the authoritative predecessor/head. Only
+an unchanged predecessor allows retry of the identical recorded UUID/command.
+A committed successor or post-ACK projection failure reopens, not another save.
+The old map/numerical pair remains together and stale until the complete
+successor. An explicit empty selection stays empty. Independent subset ports
+are named separately from exact-reference ports and recheck file/context even
+after queuing. Their positive safe-integer subset revision is independent of the
+saved main selection revision; changing the main selection does not break the
+workspace's neutral revision-1 inspector. The owning current display is still
+required at click and actual queued admission. The removed production Review/Apply
+panel is not mounted by this opt-in host either. Its UI-only task/recovery state
+is absent; the independent report API/controller/server-owner implementation and
+its lost-acknowledgment, publication, current-role and source-rights tests remain
+intact. This host supplies no permission or accepted-report authority.
+
+Twenty-three new deterministic existing-style hook/SSR harness tests use actual
+retained row/numeric/opening/member producers, checked API transports and atomic
+wire receipts over an injected HTTP/storage boundary. They cover fresh locks,
+read failure, empty successor, both lost-ACK outcomes, post-ACK failure, shared
+lane/cancellation, queued stale/mutated input, quiescence, independent subsets,
+deadline settlement, absent report-adoption UI across successor selections,
+pending set-aside, StrictMode replay,
+changed sessions, first capture and source denial. Existing legacy host,
+workspace, subdivision and report-adoption tests remain unchanged. This is not
+native SQL authorization, a concurrent renderer, live deployment, larger
+capacity or an instant-map SLA. No production page mounts this host; deliberate
+legacy migration/QA activation, compact/paged catalog and partial source/spatial
+recovery, complete >50k statistics/publication and real 5/10-mile/retrospective
+and live acceptance still remain.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

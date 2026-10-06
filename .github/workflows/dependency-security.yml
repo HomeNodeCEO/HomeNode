@@ -93,16 +93,11 @@ jobs:
       - name: Verify reviewed Expo toolchain patches and behavior
         run: pnpm run verify:toolchain
       - name: Reject moderate, high, or critical known vulnerabilities
-        # Parse and show one unfiltered JSON audit. Only the two exact, locally
-        # patched Expo/Metro toolchain advisories have no published fixes.
-        # This temporary exception expires after 2026-10-19; every other
-        # Moderate/High/Critical advisory remains blocking. Review the
-        # recorded scope and decision on PR #1131 before changing this gate.
-        env:
-          AUDIT_PR_NUMBER: ${{ github.event.pull_request.number }}
-          AUDIT_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          AUDIT_HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-          AUDIT_COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+        # Show one unfiltered JSON audit. For the two advisories without an
+        # upstream release, verify every reachable installed copy's exact
+        # reviewed patched bytes and every reported dependency path. Behavior
+        # regressions above must also pass. Recognition expires 2026-10-19;
+        # changed versions/patches and all other advisories remain blocking.
         run: node scripts/temporary-audit-exception.mjs
 
   pip-audit:

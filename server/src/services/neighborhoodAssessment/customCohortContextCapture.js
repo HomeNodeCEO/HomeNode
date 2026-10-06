@@ -21,6 +21,7 @@ import { createCustomCohortContextRepository } from './customCohortContextReposi
 import { createCustomCohortCaptureJobRepository, prepareCustomCohortCaptureJobClaim } from './customCohortCaptureJobRepository.js';
 import { loadCurrentCustomCohortJobActor } from './customCohortJobActor.js';
 import { createCustomCohortRecordedGroupSelectionOwner } from './customCohortRecordedGroupSelectionOwner.js';
+import { prepareCustomCohortGroupWorkspaceSave } from './customCohortGroupWorkspaceSave.js';
 import { resumeCustomCohortSubjectCheckpoint } from './customCohortCaptureSubjectCheckpoint.js';
 import { resumeCustomCohortPreparationCheckpoint } from './customCohortCapturePreparationCheckpoint.js';
 import { prepareCustomCohortContextReference, prepareCustomCohortContextHeader } from './customCohortContextContract.js';
@@ -641,6 +642,7 @@ async function authorizedRetainedInputs(client, { scopeJson, reference, input, a
   if (study && retained && !same(study.discovery ?? null, retained.study.discovery ?? null)) fail('operation_conflict');
   return { ...metadata, subjectReference: directory.subject_inputs,
     observationPeriod: requestMetadata.observation_period,
+    discovery: studyOriginal.settings.discovery ?? null,
     retained, ...(beforeLoad === null ? {} : { beforeLoadResult }) };
 }
 
@@ -685,11 +687,13 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
   }
   const recordedGroupSelection = createCustomCohortRecordedGroupSelectionOwner({ identityOf,
     execute: async (originalInput, options, writing, work, projection = 'intent') => {
-      if (!['intent', 'summary', 'viewport', 'members'].includes(projection) || (writing && projection !== 'intent')) fail('invalid_input');
+      if (!['intent', 'workspace', 'summary', 'viewport', 'members'].includes(projection)
+        || (writing && !['intent', 'workspace'].includes(projection))
+        || (!writing && projection === 'workspace')) fail('invalid_input');
       // Geometry uses the existing viewport's summary exposure, in addition to
       // catalog rights needed to re-derive the exact server-owned selection.
       const additionalExposures = projection === 'members' ? ['report_observation_members']
-        : projection !== 'intent' ? ['report_observation_summary'] : [];
+        : ['summary', 'viewport'].includes(projection) ? ['report_observation_summary'] : [];
       const budget = operationBudget(options), permission = writing ? 'write' : 'read';
       return transaction(pool, 'READ COMMITTED', budget, async client => {
         const initial = await resolveTarget(client, originalInput, false, permission);
@@ -706,6 +710,18 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const licensed = await authorizedRetainedInputs(client, { scopeJson, reference: input.contextRef, input,
           authorizeMarketData, authorizePrivateSales, budget, exposure: 'report_observation_catalog',
           additionalExposures, loadInputs: false, privateSummary: projection === 'members' });
+        if (writing && projection === 'intent') {
+          const versions = await client.query(`/* custom-cohort-group-workspace:legacy-guard */
+            SELECT section_value->>'workspace_version' AS workspace_version
+            FROM app.custom_appraisal_workfile_sections
+            WHERE assignment_file_id=$1::bigint AND section_key=$2 FOR SHARE NOWAIT`,
+          [input.assignmentFileId, CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION]);
+          if (versions?.rows?.some(row => row.workspace_version === '7')) fail('selection_workspace_workflow_required');
+        }
+        const selectionWorkspace = projection === 'workspace' ? await prepareCustomCohortGroupWorkspaceSave({
+          client, input, observationPeriod: licensed.observationPeriod, discovery: licensed.discovery,
+          checkBudget: budget.check,
+        }) : null;
         let catalog, roster, indexedPreview, retained = null;
         if (!licensed.privateAuthorization) {
           const cached = await createCustomCohortPreparedCatalogRepository(client, scopeJson, input.contextRef).read();
@@ -789,6 +805,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         } : undefined;
         const result = await work({ client, auth, scopeJson, catalogJson: JSON.stringify(catalog),
           rosterJson: JSON.stringify({ account_ids: roster }), budget,
+          ...(selectionWorkspace ? { selectionWorkspace } : {}),
           ...(presentSelectionSummary ? { presentSelectionSummary } : {}),
           ...(presentSelectionViewport ? { presentSelectionViewport } : {}),
           ...(presentSelectionMembers ? { presentSelectionMembers } : {}),

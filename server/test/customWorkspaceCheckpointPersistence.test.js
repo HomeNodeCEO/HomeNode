@@ -12,7 +12,7 @@ const input = value => ({ accountId: 'synthetic-account', assignmentFileId: '41'
 
 // Records the existing transaction writer's queries; it does not simulate
 // PostgreSQL isolation or claim actual concurrent database verification.
-function clientFor({ status = 'draft', revision = 2, accountPresent = true } = {}) {
+function clientFor({ status = 'draft', revision = 2, accountPresent = true, workspaceVersion } = {}) {
   const events = [];
   const client = { async query(statement, params = []) {
     const sql = statement.replace(/\s+/g, ' ').trim(); events.push({ sql, params: structuredClone(params) });
@@ -22,8 +22,8 @@ function clientFor({ status = 'draft', revision = 2, accountPresent = true } = {
       return { rows: accountPresent ? [{ id: '41', file_number: 'Synthetic 41' }] : [] };
     }
     if (sql.startsWith('SELECT status FROM app.custom_appraisal_workfiles')) return { rows: [{ status }] };
-    if (sql.startsWith('SELECT revision FROM app.custom_appraisal_workfile_sections')) {
-      assert.deepEqual(params, ['41', 'neighborhood_workspace']); return { rows: [{ revision }] };
+    if (sql.startsWith("SELECT revision, section_value->>'workspace_version' AS workspace_version FROM app.custom_appraisal_workfile_sections")) {
+      assert.deepEqual(params, ['41', 'neighborhood_workspace']); return { rows: [{ revision, workspace_version: workspaceVersion }] };
     }
     if (sql.startsWith('INSERT INTO app.custom_appraisal_workfile_sections (')) return { rows: [{
       section_key: params[1], section_value: JSON.parse(params[2]), revision: params[3], updated_by: params[4],
@@ -86,6 +86,14 @@ test('checkpoint save detaches caller intent before yielding to database work', 
   const saved = await saveCustomAppraisalWorkfileSectionInTransaction(db.client, input(value));
   assert.deepEqual(saved.value, before);
   assert.notDeepEqual(value, before);
+});
+
+test('ordinary and caller-generic legacy saves cannot downgrade a stored exact-reference workspace', async () => {
+  const db = clientFor({ workspaceVersion: '7' });
+  await assert.rejects(saveCustomAppraisalWorkfileSectionInTransaction(db.client, input(checkpoint())),
+    /custom_neighborhood_selection_workspace_workflow_required/);
+  assert.equal(db.events.some(e => e.sql.startsWith('INSERT INTO app.custom_appraisal_workfile_sections (')
+    || e.sql.startsWith('INSERT INTO app.custom_appraisal_workfile_section_history (')), false);
 });
 
 for (const [name, options, message] of [

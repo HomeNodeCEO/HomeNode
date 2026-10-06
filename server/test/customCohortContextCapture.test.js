@@ -39,13 +39,15 @@ test('recorded-group selection refreshes current roles before retained facts or 
   const read = { auth: { ...base.auth, organizations: [{ organizationId: organization, roles: ['appraiser'] }] },
     accountId: base.accountId, assignmentFileId: base.assignmentFileId,
     contextRef: { context_id: base.operationId, context_revision: '1', context_sha256: 'c'.repeat(64) } };
-  for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups', 'previewRecordedGroupSelection']) {
-    const value = method === 'selectRecordedGroups' ? { ...read,
-      operationId: report, expectedSelectionRef: null, includedRecordedGroupIds: [] }
+  for (const method of ['readRecordedGroupSelection', 'selectRecordedGroups', 'selectAndSaveRecordedGroups', 'previewRecordedGroupSelection']) {
+    const writing = ['selectRecordedGroups', 'selectAndSaveRecordedGroups'].includes(method);
+    const value = writing ? { ...read,
+      operationId: report, expectedSelectionRef: null, includedRecordedGroupIds: [],
+      ...(method === 'selectAndSaveRecordedGroups' ? { expectedWorkspaceRevision: 1 } : {}) }
       : method === 'previewRecordedGroupSelection' ? { ...read, selectionRef: { selection_version: 1,
         selection_revision: 1, selection_sha256: 'a'.repeat(64),
         manifest_ref: { content_sha256: 'b'.repeat(64), canonical_utf8_bytes: '100' } } } : read;
-    for (const currentRoles of [null, ...(method === 'selectRecordedGroups' ? [['read_only']] : [])]) {
+    for (const currentRoles of [null, ...(writing ? [['read_only']] : [])]) {
       const queries = [];
       const service = setup(async () => ({ release() {}, async query({ text }) {
         queries.push(text);

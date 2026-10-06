@@ -565,11 +565,19 @@ async function writeCustomAppraisalSection(client, prepared) {
       throw new Error("custom_appraisal_workfile_signed");
     }
     const existingResult = await client.query(
-      `SELECT revision FROM app.custom_appraisal_workfile_sections
+      `SELECT revision${sectionKey === CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION
+        ? ", section_value->>'workspace_version' AS workspace_version" : ""} FROM app.custom_appraisal_workfile_sections
         WHERE assignment_file_id = $1 AND section_key = $2 FOR UPDATE`,
       [assignmentFileId, sectionKey],
     );
     const currentRevision = Number(existingResult.rows[0]?.revision || 0);
+    // A v7 checkpoint and its exact selection head share one owner transaction.
+    // Checking the STORED version also prevents old autosave clients from
+    // downgrading a v7 workspace to unrelated inline choices.
+    if (sectionKey === CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION && !prepared.groupWorkspaceOwner
+      && (sectionValue.workspace_version === 7 || existingResult.rows[0]?.workspace_version === "7")) {
+      throw new Error("custom_neighborhood_selection_workspace_workflow_required");
+    }
     if (currentRevision !== expectedRevision) {
       const error = new Error("custom_appraisal_section_revision_conflict");
       error.currentRevision = currentRevision;
@@ -681,8 +689,28 @@ export async function saveCustomAppraisalWorkfileSectionInTransaction(client, in
     throw new TypeError("custom_appraisal_transaction_client_required");
   }
   const prepared = prepareCustomAppraisalSectionSave(input);
+  if (prepared.sectionKey === CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION && prepared.sectionValue.workspace_version === 7) {
+    throw new Error("custom_neighborhood_selection_workspace_workflow_required");
+  }
   await client.query("SAVEPOINT homenode_custom_section_save");
   const saved = await writeCustomAppraisalSection(client, prepared);
+  await client.query("RELEASE SAVEPOINT homenode_custom_section_save");
+  return saved;
+}
+
+/** Internal structural writer only: the selection owner must freshly authorize,
+ * lock the workfile before its context, register/reopen the whole exact current
+ * selection, and roll back everything on failure. This helper grants no access,
+ * commits nothing and changes no accepted report. No HTTP body selects this path.
+ */
+export async function saveCustomNeighborhoodGroupWorkspaceInTransaction(client, input) {
+  if (!client || typeof client.query !== "function") throw new TypeError("custom_appraisal_transaction_client_required");
+  const prepared = prepareCustomAppraisalSectionSave(input);
+  if (prepared.sectionKey !== CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION || prepared.sectionValue.workspace_version !== 7) {
+    throw new Error("custom_neighborhood_selection_workspace_workflow_required");
+  }
+  await client.query("SAVEPOINT homenode_custom_section_save");
+  const saved = await writeCustomAppraisalSection(client, { ...prepared, groupWorkspaceOwner: true });
   await client.query("RELEASE SAVEPOINT homenode_custom_section_save");
   return saved;
 }
@@ -693,6 +721,9 @@ export async function saveCustomAppraisalWorkfileSection(pool, input) {
   // Ordinary browser/manual/autosave requests cannot replace this reserved group.
   if (prepared.sectionKey === CUSTOM_NEIGHBORHOOD_ACCEPTED_SECTION) {
     throw new Error("custom_neighborhood_acceptance_workflow_required");
+  }
+  if (prepared.sectionKey === CUSTOM_NEIGHBORHOOD_WORKSPACE_SECTION && prepared.sectionValue.workspace_version === 7) {
+    throw new Error("custom_neighborhood_selection_workspace_workflow_required");
   }
   await ensureCustomAppraisalWorkfileSchema(pool);
   const client = await pool.connect();

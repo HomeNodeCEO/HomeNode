@@ -52,6 +52,7 @@ import { createCustomCohortPreparedPreviewRepository, selectCustomCohortPrepared
 import { createCustomCohortPreparedCatalogRepository, rebindCustomCohortPreparedCatalog } from './customCohortPreparedCatalogRepository.js';
 import { buildCustomCohortParcelMapBatched } from './customCohortParcelMap.js';
 import { buildCustomCohortMapManifest } from './customCohortMapManifest.js';
+import { createCustomCohortPreparedMapOpeningRepository } from './customCohortPreparedMapOpeningRepository.js';
 import { prepareCustomCohortViewport, projectCustomCohortViewportMap,
   presentCustomCohortSelectionViewportMap } from './customCohortViewportMap.js';
 import { presentCustomCohortPreview, inspectCustomCohortPreviewMembers, customCohortPreviewBinding } from './customCohortPreviewPresentation.js';
@@ -1100,9 +1101,11 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         additionalExposures: ['report_observation_summary'], privateSummary: true, loadInputs: false }));
       if (licensed.privateAuthorization) return null;
       const payload = await timed('catalog_read', () => catalogRepository.read());
+      const mapManifest = manifestOpening && payload ? await timed('map_opening_read', () =>
+        createCustomCohortPreparedMapOpeningRepository(client, scopeJson, input.contextRef).read(payload)) : null;
       const prepared = await timed('preview_read', () => createCustomCohortPreparedPreviewRepository(client, scopeJson, input.contextRef)
-        .read({ includeMap: opening, useVerifiedPreviewCache: true }));
-      return payload && prepared ? { target, scopeJson, licensed, payload, prepared } : null;
+        .read({ includeMap: opening && !mapManifest, useVerifiedPreviewCache: true }));
+      return payload && prepared ? { target, scopeJson, licensed, payload, prepared, mapManifest } : null;
     });
     if (!cached) return null;
     const response = await timed('projection', () => {
@@ -1134,7 +1137,8 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
           : projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
           subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected })), parcel_map: map,
-          ...(manifestOpening ? { map_manifest: projection('map_manifest', () => buildCustomCohortMapManifest(catalog, cached.prepared.parcel_map)) } : {}),
+          ...(manifestOpening ? { map_manifest: projection('map_manifest', () => cached.mapManifest
+            ?? buildCustomCohortMapManifest(catalog, cached.prepared.parcel_map)) } : {}),
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
       }
       projection('transport_guard', () => {

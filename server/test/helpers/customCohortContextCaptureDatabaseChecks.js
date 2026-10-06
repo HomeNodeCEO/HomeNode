@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 import express from 'express';
 import { createCustomCohortContextCapture } from '../../src/services/neighborhoodAssessment/customCohortContextCapture.js';
 import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedViewportTileJob.js';
+import { runCustomCohortPreparedMapOpeningJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedMapOpeningJob.js';
 import { customCohortTexasCivilDay } from '../../src/services/neighborhoodAssessment/customCohortTemporalSupport.js';
 import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
@@ -284,6 +285,42 @@ export async function runCustomCohortContextCaptureDatabaseChecks(connectionStri
     assert.ok(Buffer.byteLength(JSON.stringify(compactOpening.initial_preview.map_manifest)) <= 4_000_000);
     assert.ok(!calls.slice(compactFrom).some(sql => sql.includes('neighborhood-cohort-blob:read-batch')),
       'the manifest opening must stay on the prepared authorized read path');
+    const preparedOpenings = await runCustomCohortPreparedMapOpeningJob(pool, { maximumContexts: 100, maximumRuntimeMinutes: 1, logger: {} });
+    assert.ok(preparedOpenings.completed > 0);
+    assert.equal((await pool.query(`SELECT status FROM app.neighborhood_custom_cohort_prepared_map_openings
+      WHERE organization_id=$1 AND context_id=$2`, [organization, result.context_ref.context_id])).rows[0].status, 'available');
+    const cachedOpeningFrom = calls.length;
+    const cachedOpening = await capture.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' });
+    assert.deepEqual(cachedOpening, compactOpening, 'offline compact metadata preserves the whole original opening exactly');
+    assert.ok(calls.slice(cachedOpeningFrom).some(sql => sql.includes('custom-cohort-prepared-map-opening:read')));
+    assert.ok(!calls.slice(cachedOpeningFrom).some(sql =>
+      sql.includes('custom-cohort-prepared-preview:read') && /\bcompressed_map\b/.test(sql)),
+    'compact opening must not fetch/decode complete map geometry');
+    assert.ok(!calls.slice(cachedOpeningFrom).some(sql =>
+      sql.includes('custom-cohort-prepared-preview:verify-hot') && /\bcompressed_map\b/.test(sql)),
+    'numeric hot preview is checked without fetching a full map; derivative separately verifies map bytes in PG');
+    const secondPass = await runCustomCohortPreparedMapOpeningJob(pool, { maximumContexts: 100, maximumRuntimeMinutes: 1, logger: {} });
+    assert.equal(secondPass.completed, 0, 'published immutable opening is reused without decoding it again');
+    const openingDeniedFrom = calls.length;
+    await assert.rejects(exposureDenied.catalog({ ...preparedCatalogInput, initialMapMode: 'manifest' }), /market_data_access_denied/);
+    assert.ok(!calls.slice(openingDeniedFrom).some(sql => sql.includes('custom-cohort-prepared-map-opening:read')),
+      'current source purpose denial must precede prepared display metadata');
+    const openingMutationClient = await pool.connect();
+    try {
+      await openingMutationClient.query('BEGIN');
+      for (const sql of [
+        'UPDATE app.neighborhood_custom_cohort_prepared_map_openings SET status=status WHERE organization_id=$1 AND context_id=$2',
+        'DELETE FROM app.neighborhood_custom_cohort_prepared_map_openings WHERE organization_id=$1 AND context_id=$2',
+        'TRUNCATE app.neighborhood_custom_cohort_prepared_map_openings',
+      ]) {
+        await openingMutationClient.query('SAVEPOINT opening_mutation');
+        await assert.rejects(openingMutationClient.query(sql, sql.startsWith('TRUNCATE') ? [] : [organization, result.context_ref.context_id]),
+          error => error.code === '55000' && /custom_cohort_context_immutable/.test(error.message));
+        await openingMutationClient.query('ROLLBACK TO SAVEPOINT opening_mutation');
+        await openingMutationClient.query('RELEASE SAVEPOINT opening_mutation');
+      }
+    } finally { await openingMutationClient.query('ROLLBACK'); openingMutationClient.release(); }
+    checks.push('offline map opening retains exact labels/bounds/subject/counts and statistics with no complete map transfer; actual PG immutable/repeat and current-source denial checks');
     const { initialPreviewMode: _preparedOpeningMode, ...reopenCatalogInput } = preparedCatalogInput;
     const preparedCatalogReopen = await capture.catalog({ ...reopenCatalogInput,
       selection: { revision: 9, pockets: [] },

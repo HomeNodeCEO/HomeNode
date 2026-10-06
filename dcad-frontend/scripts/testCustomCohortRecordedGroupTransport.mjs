@@ -100,6 +100,23 @@ test('maximum recorded ID grammar remains usable without sending any population 
   assert.equal(h.calls.length, 1);
 });
 
+test('ID-only selection additions preserve the existing market-analysis operation and its separate byte ceiling', async () => {
+  const signal = new AbortController().signal, calls = [], payload = { synthetic: 'x'.repeat(270_000) };
+  let declared = 4_000_000;
+  const transport = createCustomCohortJsonTransport({ urlFor: path => path, request: async (url, init) => {
+    calls.push({ url, init }); return json(payload, { headers: { 'content-length': String(declared) } });
+  } });
+  assert.deepEqual(await transport('R-001', 'market-analysis', payload, { signal }), payload);
+  assert.equal(calls[0].url, '/api/accounts/R-001/neighborhood-cohort/market-analysis');
+  assert.deepEqual(JSON.parse(calls[0].init.body), payload);
+  assert.equal(calls[0].init.signal, signal); assert.equal(calls[0].init.cache, 'no-store');
+  declared++;
+  await assert.rejects(transport('R-001', 'market-analysis', payload, { signal }), /too large/);
+  assert.equal(calls.length, 2, 'an oversized result is not retried');
+  await assert.rejects(transport('R-001', 'select-groups', payload, { signal }), /too large/);
+  assert.equal(calls.length, 2, 'the smaller selection request ceiling still applies before I/O');
+});
+
 test('both closed operations use the smaller decoded request/response ceiling including Content-Length', async () => {
   for (const operation of ['select-groups', 'group-selection']) {
     let calls = 0;

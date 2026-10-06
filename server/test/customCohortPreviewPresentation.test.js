@@ -3,7 +3,8 @@ import assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
 import { buildCustomCohortObservationPreview as preview } from '../src/services/neighborhoodAssessment/customCohortObservationPreview.js';
 import { presentCustomCohortPreview as present, inspectCustomCohortPreviewMembers as inspect,
-  CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS as LIMITS } from '../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
+  CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS as LIMITS,
+  isCustomCohortPresentedSummary } from '../src/services/neighborhoodAssessment/customCohortPreviewPresentation.js';
 import { buildCachedSourceCaptures } from '../src/services/neighborhoodAssessment/cachedSourceCaptures.js';
 import { mapCachedParcelRow, mapCachedAccountRow, mapCachedSaleRow, mapCachedSaleLinkRow } from '../src/services/neighborhoodAssessment/cachedRowMappings.js';
 import { contextFixture } from './fixtures/customCohortContextFixture.js';
@@ -58,9 +59,12 @@ const groups = source => [source.all, source.selected, ...source.pockets.map(p =
 test('legacy v1 presentation stays unchanged unless the narrative supplement is explicitly requested', () => {
   const source = built(), legacy = present({ preview: source, expected: expected(source) });
   assert.equal(Object.hasOwn(legacy, 'narrative_observations'), false);
-  const { narrative_observations, ...unchanged } = summary(source);
+  const annotated = summary(source), { narrative_observations, ...unchanged } = annotated;
   assert.ok(narrative_observations);
   assert.deepEqual(unchanged, legacy);
+  assert.equal(isCustomCohortPresentedSummary(legacy), true);
+  assert.equal(isCustomCohortPresentedSummary(annotated), true);
+  assert.equal(isCustomCohortPresentedSummary(structuredClone(annotated)), false);
 });
 
 test('actual numeric summaries preserve every metric, denominator, unit and caveat without recomputation', () => {

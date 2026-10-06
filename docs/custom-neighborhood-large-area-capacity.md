@@ -321,6 +321,54 @@ recovery, greater-than-50k installed capture and live large-area acceptance
 remain outstanding; production limits and genuine appraisal choices are not
 changed by local transport tests.
 
+### Exact-reference numeric summary (existing capacity)
+
+`previewRecordedGroupSelection` accepts the exact retained context and current
+server-owned selection reference, not replacement groups or member arrays. It
+re-derives the original catalog/roster binding and verifies every membership and
+deduplicated union original before the numeric projection sees any accounts.
+An immutable account-page visitor is provisional owner-local work; if any later
+original, manifest, budget or rights check fails there is no completed summary.
+Absent, stale and explicitly empty selections keep their distinct meanings.
+
+The summary uses the existing exact individual-observation kernel and selection
+digest, not averages of group medians. Shared prepared tables avoid source/map
+replay; private captures preserve their independently authorized original CSV
+and exact review revision. Catalog **and** summary exposure rights are checked
+before prepared/original facts and again before delivery, alongside current
+database actor, assignment, subject and private-review fences in the same
+bounded transaction. No geometry, accepted report or workfile section is changed.
+
+This additive consumer retains the installed 50,000-account numeric
+ceiling. It does not activate the workspace UI or claim larger-area
+capacity, reliability, historical truth or report readiness. Complete paged
+statistics beyond that ceiling, exact-reference viewport/member/Apply consumers,
+partial capture-page recovery and live load acceptance remain required.
+
+The optional `selection-preview` HTTP command exposes this read-only numeric
+consumer when the coordinator provides it. Its closed request contains only
+assignment/context identity and the exact current selection reference. It has
+the same authentication/CSRF, finite execution gate and cancellation as the
+other cohort routes. Missing/stale references never become all or empty choices.
+The 262,144-byte request and intent receipt ceilings stay intact. Only this
+numeric response has a 4,100,000-byte ceiling, covering the existing 2,000,000-byte
+shared and 2MiB private public summaries plus the closed identity envelope.
+
+Transport accepts only actual public presenter projections, with independently
+checked target, context, revision, content digest and whole manifest reference.
+Process-local projection witnesses are not source permission or report authority;
+the current-role/original/source rights fences still execute before delivery.
+Geometry, source/member arrays, raw rows and Apply are not admitted. The matching
+browser helper verifies the same reference and reuses the existing bounded
+shared/private summary checks via an explicit identity binding, without inventing
+empty membership arrays. Legacy preview and map-restyling checks remain intact.
+
+The native disposable database fixtures exercise empty/nonempty HTTP summaries,
+stale references, injected members, current role and independent summary-purpose
+refusal, and actual private CSV projection parity. These are CI assertions, not
+live latency or greater-than-50k acceptance. The workspace UI still needs a
+coherent exact-reference map/member/save/Apply integration before activation.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

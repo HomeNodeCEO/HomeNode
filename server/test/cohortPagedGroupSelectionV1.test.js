@@ -225,3 +225,35 @@ test('oversize page and manifest references are refused before fetching their or
   await assert.rejects(store.verify({ metadataJson: f.metadataJson, manifestRef: getter }), /invalid_reference/);
   assert.equal(reads, 0);
 });
+
+test('verified union visitors are immutable, ordered and bounded; a later failure never returns completion', async () => {
+  const ids = Array.from({ length: 2001 }, (_, i) => account(i));
+  const f = fixture([{ id: A, account_ids: ids }]), r = await retain(f);
+  const visited = [];
+  const restored = await verify({ metadataJson: f.metadataJson, manifestJson: r.result.manifest_json,
+    readPage: r.readPage, onAccountPage: value => {
+      assert.ok(Object.isFrozen(value) && Object.isFrozen(value.account_ids) && Object.isFrozen(value.ref));
+      assert.ok(value.account_ids.length <= 1000);
+      assert.equal(value.page_index, visited.length);
+      assert.throws(() => { value.account_ids[0] = 'replacement'; }, TypeError);
+      visited.push(value.account_ids);
+    } });
+  assert.deepEqual(visited.flat(), ids); assert.deepEqual(restored, r.result);
+  let provisionalPages = 0;
+  await assert.rejects(verify({ metadataJson: f.metadataJson, manifestJson: r.result.manifest_json,
+    readPage: ref => ref.content_sha256 === r.accountPages.at(-1).ref.content_sha256 ? null : r.readPage(ref),
+    onAccountPage: () => { provisionalPages++; } }), /page_conflict/);
+  assert.equal(provisionalPages, 2, 'provisional callbacks are not a final/complete-population result');
+  const cancelled = new AbortController();
+  await assert.rejects(verify({ metadataJson: f.metadataJson, manifestJson: r.result.manifest_json,
+    readPage: r.readPage, signal: cancelled.signal, onAccountPage: () => cancelled.abort() }), /cancelled/);
+  await assert.rejects(verify({ metadataJson: f.metadataJson, manifestJson: r.result.manifest_json,
+    readPage: r.readPage, onAccountPage: async () => { throw new Error('consumer deadline'); } }), /consumer deadline/);
+  let reads = 0;
+  await assert.rejects(verify({ metadataJson: f.metadataJson, manifestJson: r.result.manifest_json,
+    readPage: () => { reads++; }, onAccountPage: false }), /invalid_input/);
+  assert.equal(reads, 0);
+  const empty = fixture([]), er = await retain(empty);
+  await verify({ metadataJson: empty.metadataJson, manifestJson: er.result.manifest_json,
+    readPage: er.readPage, onAccountPage: () => assert.fail('empty is not all accounts') });
+});

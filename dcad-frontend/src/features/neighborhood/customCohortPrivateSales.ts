@@ -1,4 +1,4 @@
-import type { CustomCohortContextRef, CustomCohortPreviewInput } from './customCohortPreviewController';
+import type { CustomCohortContextRef, CustomCohortPreviewInput, CustomCohortPreviewBinding } from './customCohortPreviewController';
 
 export interface PrivateSalesObservedMetric {
   readonly basis: string; readonly unit: string | null; readonly status: 'observed' | 'unavailable';
@@ -138,6 +138,12 @@ function freeze<T>(value: T): T { if (value && typeof value === 'object') { Obje
  * context/revision and the existing exact selection fingerprint must also match.
  * No raw rows, review notes, provider permissions or latest-review lookup. */
 export function checkCustomCohortPrivateSales(raw: unknown, input: CustomCohortPreviewInput, selectionSha256: string): CheckedPrivateSalesObservations {
+  return checkCustomCohortPrivateSalesBinding(raw, { accountId: input.accountId, assignmentFileId: input.assignmentFileId,
+    contextRef: input.contextRef, selectionRevision: input.selection.revision, selectionFingerprint: selectionSha256 });
+}
+/** Same private projection checks for either locally fingerprinted legacy
+ * choices or an exact server-owned reference; no invented membership array. */
+export function checkCustomCohortPrivateSalesBinding(raw: unknown, input: CustomCohortPreviewBinding): CheckedPrivateSalesObservations {
   const value = exact(raw, ['private_sales_observation_version', 'status', 'profile_id', 'authority', 'binding', 'effective_date',
     'observation_period', 'captured_at', 'basis', 'source_interpretation', 'all', 'selected', 'limitations', 'apply']);
   check(value.private_sales_observation_version === 1 && value.status === 'observations_only' && value.authority === 'not_established'
@@ -146,8 +152,8 @@ export function checkCustomCohortPrivateSales(raw: unknown, input: CustomCohortP
   sameContext(binding.context_ref, input.contextRef); const target = exact(binding.target, ['organization_id', 'report_file_id', 'assignment_file_id', 'account_id']);
   check(matches(target.organization_id, UUID) && matches(target.report_file_id, UUID) && target.account_id === input.accountId
     && target.assignment_file_id === input.assignmentFileId && Number.isSafeInteger(binding.selection_revision) && Number(binding.selection_revision) > 0
-    && binding.selection_revision === input.selection.revision && matches(binding.selection_sha256, SHA) && matches(selectionSha256, SHA)
-    && binding.selection_sha256 === selectionSha256 && matches(binding.selected_account_set_sha256, SHA));
+    && binding.selection_revision === input.selectionRevision && matches(binding.selection_sha256, SHA) && matches(input.selectionFingerprint, SHA)
+    && binding.selection_sha256 === input.selectionFingerprint && matches(binding.selected_account_set_sha256, SHA));
   const batch = exact(binding.batch, ['batch_id', 'source_sha256', 'preparation_sha256']), review = exact(binding.review, ['revision', 'head_review_id', 'source_review_id']);
   check(matches(batch.batch_id, UUID) && matches(batch.source_sha256, SHA) && matches(batch.preparation_sha256, SHA)
     && count(review.revision, 2147483647) > 0 && matches(review.head_review_id, UUID) && matches(review.source_review_id, UUID));

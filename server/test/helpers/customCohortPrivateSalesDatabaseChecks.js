@@ -1,5 +1,7 @@
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
+import express from 'express';
+import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts/customNeighborhoodCohortRouter.js';
 import { captureAssignmentSalesCsv, recheckAssignmentSalesCsvCapture }
   from '../../src/services/assignmentSalesCsv/capture.js';
 import { commitAssignmentSalesImport, getAssignmentSalesImportMatchProposals }
@@ -27,6 +29,7 @@ import { prepareAssignmentSalesMatchCandidatesFixture }
   from './assignmentSalesMatchCandidatesDatabaseChecks.js';
 import { NEIGHBORHOOD_CI_IDENTITY_SQL, verifyNeighborhoodCiConnection } from './neighborhoodCiDatabase.js';
 import { runCustomCohortPrivateCheckpointDatabaseChecks } from './customCohortPrivateCheckpointDatabaseChecks.js';
+import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 
 const sha = value => createHash('sha256').update(value).digest('hex');
 const errorCode = code => error => { assert.equal(error.code, code); return true; };
@@ -528,6 +531,45 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
   const groupSaved = await owner.selectRecordedGroups({ ...groupRead, operationId: randomUUID(),
     expectedSelectionRef: null, includedRecordedGroupIds: groupIds });
   assert.deepEqual((await owner.readRecordedGroupSelection(groupRead)).selection_ref, groupSaved.selection_ref);
+  const groupSummary = await owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref });
+  const groupLegacy = await owner.present({ ...groupRead,
+    selection: customCohortOpeningSelection(groupCatalog.catalog, groupIds, 1) }, { includeMap: false });
+  assert.deepEqual(groupSummary.summary, groupLegacy.summary);
+  assert.deepEqual(groupSummary.private_sales, groupLegacy.private_sales,
+    'exact server-owned union must preserve private CSV statistics and period, not silently fall back to shared-only facts');
+  assert.ok(groupSummary.private_sales, 'private parity must not be vacuous');
+  const application = express();
+  application.use((req, _res, next) => { req.mobileAuth = auth; next(); });
+  application.use(createCustomNeighborhoodCohortRouter({ cohortService: owner, logger: {} }));
+  const server = await new Promise(resolve => { const s = application.listen(0, '127.0.0.1', () => resolve(s)); });
+  try {
+    const response = await fetch(`http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(account)}/neighborhood-cohort/selection-preview`,
+      { method: 'POST', headers: { 'content-type': 'application/json' }, signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({ assignment_file_id: assignment, context_ref: groupRead.contextRef, selection_ref: groupSaved.selection_ref }) });
+    assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+    const result = await response.json(); assert.deepEqual(result, groupSummary);
+    assert.ok(result.private_sales); assert.equal(Object.hasOwn(result.private_sales, 'rows'), false);
+    checks.push('native exact-reference HTTP summary keeps independently authorized private CSV aggregates with the same dates/digest and no raw row disclosure');
+  } finally { server.closeAllConnections(); await new Promise(resolve => server.close(resolve)); }
+  // Keep the recorded catalog decision unchanged to reach the INDEPENDENT
+  // summary grant. Mutating the rights metadata also changes its fingerprint
+  // and correctly refuses earlier as market_policy_changed, not this witness.
+  const deniedSummary = makeOwner({ privatePolicy: (...args) => args[4].exposure === 'report_observation_summary'
+    ? { allowed: false } : authorizeCustomNeighborhoodPrivateSales(...args) });
+  await assert.rejects(deniedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
+  assert.ok(!deniedSummary.calls.some(sql => sql.includes('neighborhood-cohort-blob:read-batch')
+    || sql.includes('custom-cohort-group-selection:head')), 'private catalog grant is not permission to expose numeric facts');
+  let selectionSummaryCalls = 0;
+  const revokedSummary = makeOwner({ privatePolicy: async (...args) => {
+    if (args[4].exposure === 'report_observation_summary' && ++selectionSummaryCalls === 2)
+      return { allowed: false };
+    return authorizeCustomNeighborhoodPrivateSales(...args);
+  } });
+  await assert.rejects(revokedSummary.owner.previewRecordedGroupSelection({ ...groupRead,
+    selectionRef: groupSaved.selection_ref }), reason('market_data_access_denied'));
+  assert.equal(selectionSummaryCalls, 2, 'private summary exposure is repeated at the final delivery fence');
+  checks.push('native exact-reference numeric summary preserves the full private CSV period/statistics and independently refuses initial/final private summary rights without changing saved intent or report sections');
   await writeRights({ ...rights, revoked_at: times.past });
   const groupDeniedFrom = calls.length;
   try { await assert.rejects(owner.readRecordedGroupSelection(groupRead), reason('market_data_access_denied')); }
@@ -536,6 +578,7 @@ export async function runCustomCohortPrivateSalesDatabaseChecks({ pool, database
     || sql.includes('custom-cohort-group-selection:head')), 'private denial precedes original row pages and saved selection lookup');
   await append(null, [decision(original[0], 'exclude')]);
   await assert.rejects(owner.readRecordedGroupSelection(groupRead), /capture_changed/);
+  await assert.rejects(owner.previewRecordedGroupSelection({ ...groupRead, selectionRef: groupSaved.selection_ref }), /capture_changed/);
   assert.equal((await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
     WHERE organization_id=$1 AND context_id=$2`, [organization, groupContext.context_ref.context_id])).rows[0].selection_revision, 1);
   checks.push('native recorded-group selection keeps independent private source rights and workfile-before-batch review fences; revoked rights and changed CSV review refuse without replacing the saved selection');

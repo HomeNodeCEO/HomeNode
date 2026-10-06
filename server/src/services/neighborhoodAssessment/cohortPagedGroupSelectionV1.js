@@ -166,10 +166,15 @@ export async function stageCohortPagedGroupSelectionV1({ metadataJson, membershi
 /** Every original membership and union page is rechecked. Expected metadata
  * must come from the owner-validated context/catalog/selection revision, not a
  * client's replacement JSON. Integrity never substitutes for current rights.
+ * An optional account-page visitor receives immutable, individually matched
+ * union pages, NOT a completed selection. A later page/digest can still fail;
+ * the caller must discard provisional computation on ANY failure and deliver
+ * nothing until verification and its own final rights/head fences succeed.
  */
 export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifestJson,
-  readPage, signal, checkBudget } = {}) {
+  readPage, signal, checkBudget, onAccountPage } = {}) {
   check(checkBudget === undefined || typeof checkBudget === 'function', 'invalid_input');
+  check(onAccountPage === undefined || typeof onAccountPage === 'function', 'invalid_input');
   prepareCohortPagedGroupSelectionV1Metadata(metadataJson);
   const manifest = original(manifestJson, L.manifest_bytes, 'invalid_manifest');
   closed(manifest, ['selection_version', 'usage', 'metadata_ref', 'membership_count', 'account_count',
@@ -216,6 +221,12 @@ export async function verifyCohortPagedGroupSelectionV1({ metadataJson, manifest
     onMembershipPage: async () => {}, onAccountPage: async value => {
       const original = await read('selected_accounts', value.page_index, manifest.account_pages);
       check(original.text === value.page_json, 'union_conflict'); unionPages++;
+      if (onAccountPage) {
+        check(!signal?.aborted, 'cancelled'); checkBudget?.();
+        await onAccountPage(Object.freeze({ page_index: value.page_index, ref: value.ref,
+          account_ids: Object.freeze(original.entries) }));
+        check(!signal?.aborted, 'cancelled'); checkBudget?.();
+      }
     } });
   check(unionPages === manifest.account_pages.length && result.manifest_json === manifestJson, 'manifest_conflict');
   return result;

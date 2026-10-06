@@ -5,6 +5,7 @@ import { createHash } from 'node:crypto';
 import * as helpers from '../src/features/neighborhood/customCohortPrivateSales.ts';
 import { checkCustomCohortSummaryResponse, createCustomCohortPreviewController, fingerprintCustomCohortSelection } from '../src/features/neighborhood/customCohortPreviewController.ts';
 import { checkCustomCohortPocketCatalog } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
+import { createCustomCohortRecordedGroupTransport } from '../src/features/neighborhood/customCohortRecordedGroupTransport.ts';
 import { prepareAssignmentSalesCsv } from '../../server/src/services/assignmentSalesCsv/prepare.js';
 import { digestPreparedSalesParts } from '../../server/src/services/assignmentSalesCsv/receiptIntegrity.js';
 import { validateAssignmentSalesReviewCommand } from '../../server/src/services/assignmentSalesCsv/review.js';
@@ -81,6 +82,27 @@ test('actual prepared retained CSV/public presenter passes the closed browser de
   assert.deepEqual(f.checked.limitations, helpers.PRIVATE_SALES_OBSERVATION_LIMITATIONS);
   assert.doesNotMatch(JSON.stringify(f.checked), /PRIVATE NOTE|PRIVATE ROW NOTE|raw_cells|"rows"|source_use_confirmed|provenance_note|receipt_id|account_ids/);
   assert.equal(JSON.stringify(f.raw), before);
+});
+
+test('exact server-owned summary transport preserves the same independently bound private CSV projection', async () => {
+  const f = await fixture(), selectionRef = { selection_version: 1, selection_revision: f.input.selection.revision,
+    selection_sha256: f.hash, manifest_ref: { content_sha256: 'c'.repeat(64), canonical_utf8_bytes: '750000' } };
+  const value = { ...response(f), authority: 'not_established', selection_ref: selectionRef,
+    parcel_map: { status: 'omitted', reason: 'geometry_not_requested' } };
+  let outgoing, changed;
+  const transport = createCustomCohortRecordedGroupTransport({ urlFor: p => p, request: async (_url, init) => {
+    outgoing = JSON.parse(init.body); return new Response(JSON.stringify(changed ?? value), { headers: { 'content-type': 'application/json' } });
+  } });
+  const request = { accountId: f.input.accountId, assignmentFileId: f.input.assignmentFileId, contextRef: f.input.contextRef, selectionRef };
+  const result = await transport.preview(request, { signal: new AbortController().signal });
+  assert.deepEqual(result.private_sales, f.checked); assert.ok(Object.isFrozen(result.private_sales.selected.metrics));
+  assert.deepEqual(outgoing, { assignment_file_id: f.input.assignmentFileId, context_ref: f.input.contextRef, selection_ref: selectionRef });
+  for (const mutate of [r => { r.private_sales.binding.selection_sha256 = 'd'.repeat(64); },
+    r => { r.private_sales.binding.target.assignment_file_id = '11'; },
+    r => { r.private_sales.observation_period.end_date = '2026-09-09'; }]) {
+    changed = clone(value); mutate(changed);
+    await assert.rejects(transport.preview(request, { signal: new AbortController().signal }), /invalid_custom_cohort/);
+  }
 });
 test('exact larger-than-Number decimals display commas/two places, preserving thirteen-place median in title', async () => {
   const f = await fixture({ records: [{ ClosePrice: '9007199254740993.123456789012' }, { ClosePrice: '9007199254740993.123456789013' }] });

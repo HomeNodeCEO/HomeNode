@@ -101,10 +101,10 @@ export function createCustomCohortGroupSelectionRepository(client, scopeJson, co
     blobRef(value.catalog_ref.content_sha256, value.catalog_ref.canonical_utf8_bytes);
     return value;
   };
-  const verify = async (metadataJson, manifestRef) => {
+  const verify = async (metadataJson, manifestRef, onAccountPage) => {
     const m = checkedMetadata(metadataJson); check();
     if (await blobs.get(m.catalog_ref.content_sha256, m.catalog_ref.canonical_utf8_bytes) === null) fail('missing_catalog');
-    return store.verify({ metadataJson, manifestRef, signal, checkBudget });
+    return store.verify({ metadataJson, manifestRef, signal, checkBudget, onAccountPage });
   };
   return Object.freeze({
     /** Read only the scoped head identity. No original evidence/facts are issued. */
@@ -114,15 +114,19 @@ export function createCustomCohortGroupSelectionRepository(client, scopeJson, co
       if (await transaction() !== started) fail('caller_transaction_required');
       return Object.freeze({ authority: 'not_established', selection_ref });
     },
-    /** Reopen every original, and require that this is still the current head. */
-    async getCurrent(input) {
+    /** Reopen every original, and require that this is still the current head.
+     * The optional visitor is owner-local provisional work, never public data
+     * delivery; a later original, transaction or final rights fence can fail.
+     */
+    async getCurrent(input, { onAccountPage } = {}) {
       closed(input, ['metadataJson', 'selectionRef']);
+      if (onAccountPage !== undefined && typeof onAccountPage !== 'function') fail('invalid_input');
       const metadataJson = input.metadataJson, expected = prepareCustomCohortGroupSelectionReference(input.selectionRef);
       const m = checkedMetadata(metadataJson);
       if (m.revision !== expected.selection_revision) fail('invalid_reference');
       const started = await transaction(); await target(false);
       if (!same(headReference(await readHead()), expected)) fail('selection_changed');
-      const original = await verify(metadataJson, expected.manifest_ref);
+      const original = await verify(metadataJson, expected.manifest_ref, onAccountPage);
       if (original.selection_sha256 !== expected.selection_sha256) fail('storage_conflict');
       if (await transaction() !== started) fail('caller_transaction_required');
       return Object.freeze({ authority: 'not_established', selection_ref: expected, original });

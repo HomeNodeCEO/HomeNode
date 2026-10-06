@@ -1,7 +1,18 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { performance } from 'node:perf_hooks';
-import { createCustomCapturePhaseTiming } from '../src/services/neighborhoodAssessment/customCapturePhaseTiming.js';
+import { createCustomCapturePhaseTiming, createCustomCatalogPhaseTiming } from '../src/services/neighborhoodAssessment/customCapturePhaseTiming.js';
+
+test('retained map score timing is admitted without logging source facts or accepting arbitrary phases', async () => {
+  const events = [], phase = createCustomCatalogPhaseTiming(event => events.push(event));
+  const retained = { private_source: 'PRIVATE' };
+  assert.equal(await phase('retained_map_scores', () => retained), retained);
+  assert.equal(events[0].phase, 'retained_map_scores');
+  assert.equal(events[0].outcome, 'completed');
+  assert.doesNotMatch(JSON.stringify(events), /PRIVATE|private_source/);
+  await assert.rejects(phase('retained_map_scores', () => retained), /invalid_catalog_phase/);
+  await assert.rejects(phase('private_source', () => retained), /invalid_catalog_phase/);
+});
 
 test('capture phase timing returns original values and only fixed aggregate metadata', async t => {
   let now = 100; t.mock.method(performance, 'now', () => now);

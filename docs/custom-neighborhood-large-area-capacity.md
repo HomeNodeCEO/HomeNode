@@ -385,6 +385,9 @@ authorized source graph. Missing geometry remains unavailable. No hull, sampled
 parcel, replacement source snapshot or viewport-limited statistical union is
 substituted. The public display projection admits only the closed parcel fields
 and exact retained coordinates, preserving the existing browser coordinate cap.
+Its frozen public response is detached only after the existing byte and complete
+visible-geometry checks, so it cannot freeze or retain mutable legacy identity,
+feature or coordinate aliases. The legacy projection path remains unchanged.
 
 The optional `selection-viewport` POST accepts only assignment/context identity,
 the exact selection reference and finite viewport bounds. Its request retains
@@ -583,3 +586,12 @@ Public save/transition HTTP routes and the complete V7 browser lifecycle are
 still unactivated. Installed source/numerical limits, release policy, background
 schedules and production speed claims are unchanged; partial source paging,
 complete >50k studies and 5-/10-mile/retrospective live acceptance remain open.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

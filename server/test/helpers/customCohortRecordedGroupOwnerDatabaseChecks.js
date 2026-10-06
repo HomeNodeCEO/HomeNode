@@ -478,7 +478,6 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
       accountId: scope.account_id, assignmentFileId: scope.assignment_file_id, sectionKey: 'neighborhood_workspace',
       sectionValue: seedValue, expectedRevision: atomic.workspace.revision, saveReason: 'autosave', reviewer: auth.userId,
     }), /selection_workspace_workflow_required/);
-    await downgradeClient.query('ROLLBACK');
   } finally { await downgradeClient.query('ROLLBACK'); downgradeClient.release(); }
   assert.deepEqual(await workspaceState(), committed);
 

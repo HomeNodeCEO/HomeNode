@@ -255,10 +255,11 @@ test('actual React rendering preserves the exact v1 disclosure without v2 prose'
   assert.doesNotMatch(html, /Recorded point proximity:/); assert.equal(html, render(f));
 });
 
-test('actual React renders global and pocket point coverage, not full-property or reliability claims', async () => {
+test('actual React retains global coverage without duplicating per-pocket source cards', async () => {
   const f = await fixture(), before = hash(f.checked), html = render(f);
   assert.ok(html.includes('Recorded point proximity: 2 observed / 2 captured accounts; 0 unknown.'));
-  assert.equal((html.match(/Recorded point proximity: 1 observed \/ 1 accounts; 0 unknown\./g) ?? []).length, 2);
+  assert.equal((html.match(/Recorded point proximity: 1 observed \/ 1 accounts; 0 unknown\./g) ?? []).length, 0);
+  assert.doesNotMatch(html, /Recorded CAD source details/);
   assert.match(html, /recorded subject centroid with a point on each retained parcel surface, not an entrance, route or full-property distance/);
   assert.match(html, /not confidence or reliability scores/); assert.doesNotMatch(html, /Housing, comparable distance and verified/);
   assert.equal(html, render(f)); assert.equal(hash(f.checked), before);

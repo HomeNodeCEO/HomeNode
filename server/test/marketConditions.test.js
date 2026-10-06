@@ -482,7 +482,71 @@ test("market statistics annualize first-to-last complete monthly medians", () =>
   assert.equal(statistics.annualized_change_percent, 10);
   assert.equal(statistics.composite_cod, 14.85);
   assert.equal(statistics.composite_cv, 17.5);
+  assert.equal(statistics.reliability_score, 86.1);
   assert.equal(statistics.sample_sufficient, true);
+});
+
+const consistencyStudy = (key, cod, cv, saleCount, monthlyCount = 12, periodMonths = 12) => ({
+  market: { key, label: key },
+  population: { eligible_sale_count: saleCount },
+  statistics: calculateMarketStudyStatistics({
+    monthlySeries: Array.from({ length: monthlyCount }, (_, index) => ({
+      period_start: `2025-${String(index + 1).padStart(2, '0')}-01`, median_sale_price: 100 + index,
+    })),
+    eligibleSaleCount: saleCount, periodMonths,
+    congruencyFactors: { living_area: { count: saleCount, cod, cv } },
+  }),
+});
+
+test('COD/CV consistency outranks larger but more varied study populations', () => {
+  const studies = [
+    consistencyStudy('radius_1', 21, 27, 250),
+    consistencyStudy('radius_2', 24, 30, 1000),
+    consistencyStudy('zip', 18, 24, 400),
+    consistencyStudy('exploration', 10, 14, 80),
+  ];
+  const before = JSON.stringify(studies);
+  const result = buildMarketTrendRecommendation(studies);
+  assert.equal(result.methodology_version, 3);
+  assert.deepEqual(result.ranked_studies.map(study => study.key), ['exploration', 'zip', 'radius_1', 'radius_2']);
+  assert.deepEqual(result.ranked_studies.map(study => study.reliability_score), [89.3, 82.6, 80.6, 78.7]);
+  assert.equal(JSON.stringify(studies), before, 'Ranking does not rewrite evidence');
+});
+
+test('sales count and monthly coverage are independent of the consistency score', () => {
+  const small = consistencyStudy('small', 10, 14, 20, 2, 36);
+  const large = consistencyStudy('large', 10, 14, 1000);
+  assert.equal(small.statistics.reliability_score, large.statistics.reliability_score);
+  assert.equal(small.statistics.sample_sufficient, false);
+  assert.equal(large.statistics.sample_sufficient, true);
+  assert.equal(small.statistics.monthly_observation_count, 2);
+  assert.equal(large.statistics.monthly_observation_count, 12);
+  assert.equal(small.statistics.characteristic_weight_available, 0.4);
+  assert.deepEqual(buildMarketTrendRecommendation([
+    large, consistencyStudy('tighter', 5, 8, 20, 2),
+  ]).ranked_studies.map(study => study.key), ['tighter', 'large']);
+});
+
+test('lower dispersion consistently raises the score, including rounded-score ties', () => {
+  const tight = consistencyStudy('tight', 10, 14, 50);
+  for (const [cod, cv] of [[10.01, 14], [10, 14.01], [100, 140], [1000, 1400]]) {
+    const broader = consistencyStudy('broader', cod, cv, 1000);
+    assert.ok(tight.statistics.reliability_score >= broader.statistics.reliability_score);
+    assert.deepEqual(buildMarketTrendRecommendation([broader, tight]).ranked_studies.map(study => study.key), ['tight', 'broader']);
+  }
+  assert.equal(consistencyStudy('uniform', 0, 0, 50).statistics.reliability_score, 100);
+});
+
+test('unavailable or invalid COD/CV cannot create a perfect score', () => {
+  for (const [cod, cv] of [[null, null], [10, null], [null, 14], [Infinity, 14], [10, NaN], [-1, 14], [10, -1]]) {
+    const unavailable = consistencyStudy('unavailable', cod, cv, 1000);
+    assert.equal(unavailable.statistics.reliability_score, null);
+    assert.equal(unavailable.statistics.sample_sufficient, true, 'Sample warning remains independent');
+    assert.equal(buildMarketTrendRecommendation([
+      unavailable, consistencyStudy('known', 100, 140, 50),
+    ]).ranked_studies[0].key, 'known');
+  }
+  assert.equal(consistencyStudy('empty', 0, 0, 0).statistics.reliability_score, null);
 });
 
 test("market recommendation combines mean and median and applies one-percent threshold", () => {

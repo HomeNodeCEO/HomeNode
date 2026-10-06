@@ -92,6 +92,8 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - name: Verify reviewed Expo toolchain patches and behavior
         run: pnpm run verify:toolchain
+      - name: Verify patched audit acceptance and refusal cases
+        run: node --test test/temporary-audit-exception.test.mjs
       - name: Reject moderate, high, or critical known vulnerabilities
         # Show one unfiltered JSON audit. For the two advisories without an
         # upstream release, verify every reachable installed copy's exact

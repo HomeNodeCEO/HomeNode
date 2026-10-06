@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { assessmentDate, canonicalAssessmentJson } from './contract.js';
 import { prepareCustomCohortContextReference } from './customCohortContextContract.js';
 import { isCustomCohortObservationPreview, customCohortObservationMembers } from './customCohortObservationPreview.js';
+import { exactDistribution } from './statistics.js';
 
 export const CUSTOM_COHORT_PREVIEW_PRESENTATION_LIMITS = Object.freeze({
   pockets: 128, pocket_memberships: 100000, population_members: 100000,
@@ -69,8 +70,16 @@ export function customCohortPreviewBinding(preview, expected) {
   const requested = prepareCustomCohortContextReference(canonicalAssessmentJson(expected.context_ref));
   check(canonicalAssessmentJson(actual) === canonicalAssessmentJson(requested), 'context_mismatch');
   check(count(preview.selection_revision) > 0 && preview.selection_revision === expected.selection_revision, 'selection_mismatch');
+  return customCohortSelectionBinding({ revision: preview.selection_revision, pockets: preview.pockets }, actual);
+}
+
+/** Content identity only. Membership and current access belong to the owner. */
+export function customCohortSelectionBinding(selection, contextRef) {
+  object(selection);
+  check(count(selection.revision) > 0, 'selection_mismatch');
+  const actual = prepareCustomCohortContextReference(canonicalAssessmentJson(contextRef));
   let memberships = 0; const pocketIds = new Set();
-  const pockets = array(preview.pockets, L.pockets).map(pocket => {
+  const pockets = array(selection.pockets, L.pockets).map(pocket => {
     const id = text(pocket.id, L.identity_utf8_bytes), label = text(pocket.label);
     check(!pocketIds.has(id), 'duplicate_pocket'); pocketIds.add(id);
     const account_ids = array(pocket.account_ids, 50000).map(account => text(account, 400)).sort(compare);
@@ -80,8 +89,8 @@ export function customCohortPreviewBinding(preview, expected) {
   }).sort((a, b) => compare(a.id, b.id));
   // This exact insertion/key order is shared with the browser controller.
   // It is a content identity only, never permission or a signed token.
-  const selection_sha256 = hash(JSON.stringify({ pockets, revision: preview.selection_revision }));
-  return { context_ref: actual, selection_revision: preview.selection_revision, selection_sha256 };
+  const selection_sha256 = hash(JSON.stringify({ pockets, revision: selection.revision }));
+  return { context_ref: actual, selection_revision: selection.revision, selection_sha256 };
 }
 const bindingOf = customCohortPreviewBinding;
 function header(preview, binding) {
@@ -144,12 +153,48 @@ function boundedResult(value, maximum) {
   check(Buffer.byteLength(JSON.stringify(value)) <= maximum, 'output_bytes_limit'); return freeze(value);
 }
 
+/** Small narrative inputs from already retained members. Never substitute the
+ * all-date MLS distribution for an in-period sales distribution, multiply a
+ * source row by parcel links, or infer a bedroom/bath count from the subject. */
+function narrativeObservations(preview) {
+  const population = preview.selected;
+  const transactions = memberArray(preview, population, 'transactions');
+  const inPeriod = new Set(transactions.filter(row => row.disposition === 'in_period')
+    .map(row => row.canonical_transaction_id));
+  const selected = new Set(population.account_ids);
+  const sources = memberArray(preview, population, 'source_reported').filter(row =>
+    row.associated_account_ids.length === 1 && selected.has(row.associated_account_ids[0])
+    && row.record_types.length === 1 && row.record_types[0] === 'closed_sale'
+    && row.canonical_transaction_ids.length === 1 && inPeriod.has(row.canonical_transaction_ids[0]));
+  // One retained canonical sale gets one vote even when multiple uploaded source
+  // records describe it. Inconsistent/missing source measurements stay missing;
+  // do not select the first provider or average disagreements into a new fact.
+  const sales = new Map();
+  for (const row of sources) {
+    const id = row.canonical_transaction_ids[0];
+    if (!sales.has(id)) sales.set(id, []);
+    sales.get(id).push(row);
+  }
+  const metrics = Object.fromEntries(['bedrooms_total', 'bathrooms_total_integer'].map(key => {
+    const values = [...sales.values()].map(rows => {
+      const first = rows[0].observations[key];
+      return first?.state === 'observed' && rows.every(row => row.observations[key]?.state === 'observed'
+        && row.observations[key].value === first.value) ? first.value : null;
+    });
+    const result = exactDistribution(values);
+    return [key, { median: result.median, count: result.count, missing_count: result.missing_count }];
+  }));
+  return { basis: 'in_period_single_account_closed_sales', authority: 'not_established',
+    source_record_count: sources.length, canonical_sale_count: sales.size,
+    observation_period: { ...preview.observation_period }, metrics };
+}
+
 /** Browser-shaped data, not HTML or authority. Call only after exact authorized
  * retained loading/numeric computation, and retain the owner's final access and
  * material fences. Projection is by explicit field, never object spread of raw
  * members, snapshots, provider keys or authorization envelopes.
  */
-export function presentCustomCohortPreview({ preview, expected } = {}) {
+export function presentCustomCohortPreview({ preview, expected, includeNarrative = false } = {}) {
   const binding = bindingOf(preview, expected);
   const all = summaryPopulation(preview, preview.all, 'all'), selected = summaryPopulation(preview, preview.selected, 'selected');
   const pockets = [...preview.pockets].sort((a, b) => compare(a.id, b.id)).map(pocket => ({
@@ -157,7 +202,7 @@ export function presentCustomCohortPreview({ preview, expected } = {}) {
     overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(preview, pocket.result, 'pocket', pocket.id),
   }));
   const result = boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
-    all, selected, pockets }, L.summary_utf8_bytes);
+    all, selected, pockets, ...(includeNarrative ? { narrative_observations: narrativeObservations(preview) } : {}) }, L.summary_utf8_bytes);
   publicSummaries.add(result); return result;
 }
 

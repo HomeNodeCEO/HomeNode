@@ -20,7 +20,7 @@ const bodies = {
   members: { assignment_file_id: assignment, context_ref: contextRef, selection,
     population: { group: 'selected', kind: 'stock' }, page: { limit: 20, after_member_id: null } },
 };
-async function start(t, { principal = auth, methods = {}, parsed = false, logger } = {}) {
+async function start(t, { principal = auth, methods = {}, parsed = false, logger, marketAnalysis } = {}) {
   const calls = [], fallthroughErrors = [];
   const service = Object.fromEntries(['capture', 'present', 'inspect', 'catalog', 'viewport'].map(name => [name, methods[name] ?? (async (...args) => {
     calls.push({ name, args }); return { status: name, marker: 'compact-only' };
@@ -29,7 +29,8 @@ async function start(t, { principal = auth, methods = {}, parsed = false, logger
   const app = express();
   app.use((req, _res, next) => { req.mobileAuth = principal; next(); });
   if (parsed) app.use(express.json({ limit: 10_000_000 }));
-  app.use(createCustomNeighborhoodCohortRouter({ cohortService: service, logger }));
+  app.use(createCustomNeighborhoodCohortRouter({ cohortService: service, logger,
+    marketAnalysis: marketAnalysis === true ? async (...args) => { calls.push({ name: 'market-analysis', args }); return { analyses: [] }; } : marketAnalysis }));
   app.post('/api/unrelated-report', (_req, res) => res.json({ owner: 'unrelated-report' }));
   app.use((error, req, res, _next) => {
     fallthroughErrors.push({ error, path: req.path });
@@ -48,6 +49,26 @@ async function start(t, { principal = auth, methods = {}, parsed = false, logger
 test('cohort router requires actual display/inspection owner methods', () => {
   assert.throws(() => createCustomNeighborhoodCohortRouter({
     cohortService: { capture() {}, preview() {} } }), /dependencies_required/);
+});
+
+test('exploration market study is authenticated, exact-file bound, no-store and rejects client authority fields', async t => {
+  const body = { assignment_file_id: assignment, context_ref: contextRef, selection,
+    selection_sha256: 'b'.repeat(64), area_keys: ['exploration'], as_of: '2026-08-31', period_months: 24, context_override: null };
+  const h = await start(t, { marketAnalysis: true });
+  const response = await h.request('market-analysis', body);
+  assert.equal(response.status, 200); assert.equal(response.headers.get('cache-control'), 'no-store');
+  const call = h.calls[0]; assert.equal(call.name, 'market-analysis');
+  assert.equal(call.args[0].assignmentFileId, assignment); assert.equal(call.args[0].auth, auth);
+  assert.deepEqual(call.args[1], body); assert.ok(call.args[2].signal instanceof AbortSignal);
+  for (const extra of [{ account_ids: ['forged'] }, { auth: { userId: 'forged' } }, { custom_geometry: {} }]) {
+    assert.equal((await h.request('market-analysis', { ...body, ...extra })).status, 400);
+  }
+  assert.equal(h.calls.length, 1);
+  const anonymous = await start(t, { principal: null, marketAnalysis: true });
+  assert.equal((await anonymous.request('market-analysis', body)).status, 401); assert.equal(anonymous.calls.length, 0);
+  const denied = await start(t, { marketAnalysis: () => { throw Object.assign(new Error('PRIVATE SQL'), { reason: 'market_data_access_denied' }); } });
+  const failure = await denied.request('market-analysis', body);
+  assert.equal(failure.status, 403); assert.deepEqual(await failure.json(), { error: 'neighborhood_access_denied' });
 });
 
 test('viewport is authenticated, assignment-bound, and refuses oversized display results', async t => {

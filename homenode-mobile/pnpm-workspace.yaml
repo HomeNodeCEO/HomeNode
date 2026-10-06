@@ -20,6 +20,7 @@ minimumReleaseAgeExclude:
   - 'expo-modules-jsi@57.0.5'
   - 'expo-network@57.0.2'
   - 'expo-sqlite@57.0.3'
+  - 'expo-sqlite@57.0.4'
   - 'expo-web-browser@57.0.3'
   - 'expo@57.0.15'
   - 'image-size@2.0.4'
@@ -31,6 +32,7 @@ overrides:
   compression: 1.8.2
   brace-expansion: 5.0.12
   image-size: 2.0.4
+  shell-quote: 1.11.0
   source-map-js: 1.2.2
 patchedDependencies:
   braces@3.0.3: patches/braces@3.0.3.patch

@@ -1,6 +1,35 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { withCustomCohortRetentionTiming as timed } from '../src/services/neighborhoodAssessment/customCohortRetentionTiming.js';
+import { withCustomCohortRetentionTiming as timed,
+  withCustomCohortLoadTiming as timedLoad } from '../src/services/neighborhoodAssessment/customCohortRetentionTiming.js';
+
+test('load diagnostics preserve the original query receiver, result and failure with fixed counters only', async () => {
+  const output = [], calls = [], result = Object.freeze({ original: true }), failure = new Error('private failure');
+  const query = { text: '/* neighborhood-cohort-blob:read-batch */ private SQL', values: ['private hash'] };
+  const client = {
+    async query(...args) { assert.equal(this, client); calls.push(args); if (args[0] === 'fail') throw failure; return result; },
+    release() { assert.fail('the load timer does not release the caller transaction'); },
+  };
+  assert.equal(await timedLoad(client, observed => observed.query(query), event => output.push(event)), result);
+  await assert.rejects(timedLoad(client, observed => observed.query('fail'), event => output.push(event)), error => error === failure);
+  assert.deepEqual(calls, [[query], ['fail']]);
+  assert.deepEqual(output.map(event => [event.phase, event.outcome]), [['load', 'completed'], ['load', 'failed']]);
+  assert.equal(output[0].queries['neighborhood-cohort-blob:read-batch'].count, 1);
+  assert.equal(output[1].queries.other.count, 1);
+  assert.ok(output.every(event => Object.isFrozen(event) && Object.isFrozen(event.queries)
+    && event.query_count === 1 && event.query_ms >= 0 && event.non_query_wall_ms >= 0
+    && Object.keys(event.queries).length === 8));
+  assert.doesNotMatch(JSON.stringify(output), /private|SQL|hash|original|failure/);
+  assert.ok(Buffer.byteLength(JSON.stringify(output)) < 4000);
+});
+
+test('load logger failures cannot replace successful originals or the original refusal', async () => {
+  const client = { query: async () => 42, release() {} }, failure = new Error('original refusal');
+  for (const report of [() => { throw Error('logger'); }, async () => { throw Error('logger'); }]) {
+    assert.equal(await timedLoad(client, observed => observed.query('select'), report), 42);
+    await assert.rejects(timedLoad(client, async () => { throw failure; }, report), error => error === failure);
+  }
+});
 test('retention diagnostics preserve query arguments/results/errors and contain fixed counters only',async()=>{
   const output=[],result={marker:'private result'},error=new Error('private database error');let seen;
   const client={query:async(...args)=>{seen=args;if(args[0]==='fail')throw error;return result;},release(){assert.fail('timing never releases');}};

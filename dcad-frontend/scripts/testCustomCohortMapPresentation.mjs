@@ -6,7 +6,7 @@ import { checkCustomCohortPreparedSecondaryMap } from '../src/features/neighborh
 import { checkCustomCohortPocketCatalog, selectionFromRecordedGroups } from '../src/features/neighborhood/customCohortPocketCatalog.ts';
 import { createCustomCohortPreviewController } from '../src/features/neighborhood/customCohortPreviewController.ts';
 import { decisionEvidenceFixture } from '../../server/test/fixtures/customCohortDecisionEvidenceFixture.js';
-import { buildCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
+import { buildCustomCohortPocketRecommendation, buildCustomCohortMapScoresBatched } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendation.js';
 import { presentCustomCohortPocketRecommendation } from '../../server/src/services/neighborhoodAssessment/customCohortPocketRecommendationPresentation.js';
 import { presentCustomCohortPocketCatalog } from '../../server/src/services/neighborhoodAssessment/customCohortPocketCatalog.js';
 import { buildCustomCohortObservationPreview } from '../../server/src/services/neighborhoodAssessment/customCohortObservationPreview.js';
@@ -75,6 +75,52 @@ test('source-bound prepared CAD support changes only the live map color score', 
   assert.deepEqual(result.scoresByGroup[BETA], original.scoresByGroup[BETA]);
   assert.deepEqual(result.labels, original.labels);
   assert.equal(f.catalog.recommendation.pockets[0].similarity.lower, 65.1234);
+});
+
+test('historical recommendation omission does not gray out independently checked retained CAD colors', () => {
+  const f = fixture(), original = build(f);
+  f.catalog.recommendation = null;
+  const raw = { version: 2, basis: 'current_retained_cad_snapshot_diagnostic_only', authority: 'not_established',
+    generation_id: null, source_observed_at: '2026-10-05T23:00:00.000Z', retained_capture_at: '2026-10-05T23:00:00.000Z',
+    groups: [{ id: ALPHA, member_count: 2, supported_member_count: 2, lower: 85, upper: 95 },
+      { id: BETA, member_count: 1, supported_member_count: 0, lower: 0, upper: 100 },
+      { id: UNKNOWN, member_count: 1, supported_member_count: 1, lower: 80, upper: 90 }] };
+  f.catalog.prepared_secondary_map = checkCustomCohortPreparedSecondaryMap(raw,
+    [...f.catalog.pockets, { id: UNKNOWN, member_count: 1 }]);
+  const result = build(f);
+  assert.equal(result.scoresByGroup[ALPHA].status, 'available');
+  assert.equal(result.scoresByGroup[ALPHA].lower, 85);
+  assert.equal(result.scoresByGroup[BETA].status, 'unknown', 'unknown observations stay gray');
+  assert.equal(result.scoresByGroup[UNKNOWN].reason, 'unassigned_recorded_group');
+  assert.deepEqual(result.labels, original.labels);
+  assert.deepEqual(result.bounds, original.bounds);
+  assert.equal(f.catalog.recommendation, null);
+  assert.throws(() => checkCustomCohortPreparedSecondaryMap({ ...raw, generation_id: '6d971f59-90a1-4410-bd63-a16bfdbc774e' },
+    [...f.catalog.pockets, { id: UNKNOWN, member_count: 1 }]));
+  assert.throws(() => checkCustomCohortPreparedSecondaryMap({ ...raw, retained_capture_at: '2026-10-06T23:00:00.000Z' },
+    [...f.catalog.pockets, { id: UNKNOWN, member_count: 1 }]));
+});
+
+test('actual historical retained scores cross catalog admission without a recommendation or changed membership', async () => {
+  const f = await decisionEvidenceFixture({ effectiveDate: '2026-08-31' });
+  const context = f.input.expected.context_ref, retained_inputs = f.input.retained_inputs;
+  const expected = { context_ref: context, selection_revision: 7 };
+  const rawCatalog = presentCustomCohortPocketCatalog({ catalog: f.catalog, preview: f.preview, expected });
+  const prepared_secondary_map = await buildCustomCohortMapScoresBatched({ context_ref: context, retained_inputs,
+    selection: { revision: 7, included_recorded_group_ids: [] } });
+  const input = { accountId: f.input.expected.target.account_id, assignmentFileId: f.input.expected.target.assignment_file_id,
+    contextRef: context, selection: { revision: 7, pockets: [] } };
+  const raw = { status: 'catalog', target: { account_id: input.accountId, assignment_file_id: input.assignmentFileId },
+    context_ref: context, selection_revision: 7, subject_freshness: 'matched', catalog: rawCatalog,
+    prepared_secondary_map, apply: { status: 'blocked' } };
+  const catalog = checkCustomCohortPocketCatalog(raw, input);
+  assert.equal(catalog.recommendation, null);
+  assert.equal(catalog.prepared_secondary_map.version, 2);
+  assert.deepEqual(catalog.pockets.map(p => p.account_ids), rawCatalog.pockets.map(p => p.account_ids));
+  assert.throws(() => checkCustomCohortPocketCatalog({ ...raw, prepared_secondary_map: {
+    ...prepared_secondary_map, version: 1, basis: 'prepared_current_cad_snapshot_diagnostic_only',
+    generation_id: '6d971f59-90a1-4410-bd63-a16bfdbc774e' } }, input),
+  'legacy secondary overlays still require a recommendation');
 });
 
 test('prepared score admission rejects future or mismatched source/group claims', () => {

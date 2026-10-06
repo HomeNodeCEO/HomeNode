@@ -1,5 +1,56 @@
 # Complete larger-area Custom neighborhood studies
 
+## Original-bound metric-run supplying owner (not a live switch)
+
+`customCohortOriginalMetricRuns.js` now compiles an in-process receipt for ONE
+complete selected stock, canonical-transaction or source-record metric from an
+issued immutable indexed preview. The supplying application must first reopen
+and authorize its exact original context, catalog and current selection. The
+receipt binds the context/selection originals, full target, effective date,
+observation period, complete account set, metric label/units/currency/temporal
+semantics, and ordered **full member originals**, not just their Number values.
+It preserves missing/invalid/conflicting and partially observed counts, raw
+decimal disagreements, outside-area links and whole package totals. Source
+records retain their existing all-date meaning; they are not relabeled as
+in-period completed sales. COD remains descriptive dispersion, not reliability.
+
+The member reader accesses the issued table's ordinals directly, without a
+second whole member/value array. The run owner stages through the existing
+scoped immutable blob repository, shares finite work/I/O/byte budgets across
+all metrics in that owner, and returns **all intermediate and final retention
+references**. A fresh source receipt is required for reopen. The numerical
+consumer checks the complete original input/null witness and compares every
+finite sorted ordinal/value with the supplying original in **both** passes.
+A self-consistent numeric run with a wrong value cannot pass simply by keeping
+an old input digest. No medians of medians, source sampling, new cache or new
+normalization/price allocation is used. Old unbound numerical callers and the
+legacy live calculator remain unchanged.
+
+Eight focused synthetic tests cover all fifteen existing metric fields,
+missing/conflicting raw decimals, canonical deduplication/packages/date meaning,
+explicit empty selection, 11,001 members/intermediate-root closure, changed
+selection/period/metric/raw original, counterfeit receipts and data traps,
+existing raw-decimal normalization and deduplicated record-count meanings,
+ordinal/value/null witness checks, aggregate work and actual I/O cancellation.
+A separate named guarded disposable-PostgreSQL subtest exercises the actual
+organization-scoped immutable store with a mapper-issued **synthetic** 3,001
+member population, fresh-client/source-receipt reopen, foreign organization,
+wrong metric, commit/rollback/cancellation and unchanged protected report rows.
+Local native execution remains skipped when no guarded database is supplied;
+only an actual CI execution will constitute SQL proof.
+
+This closes the supplying-source/numerical bridge, not source acquisition or
+publication. The caller must still aggregate the ORIGINAL graph with every
+supplemental/intermediate root, register those roots coherently in a versioned
+graph, repeat current rights/subject/selection fences, and roll back on any
+failure. It neither registers roots nor proves source permissions, historic
+stock, provider coverage, sale consideration, verified currency/area units,
+report readiness or accepted boundaries. Compact catalogs, stable partial
+source/spatial recovery, combined publication budgets, deliberate activation
+and legacy reopening, and real >50k/5-mile/10-mile/retrospective/live Apply/SLA
+acceptance still remain. No installed cap, schema, release policy, dependency,
+cron schedule or production appraisal has been changed by this slice.
+
 ## Current boundary
 
 The installed capture mode is bounded, not sampled. A study that exceeds an

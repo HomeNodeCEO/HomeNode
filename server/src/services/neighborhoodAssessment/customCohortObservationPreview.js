@@ -36,35 +36,56 @@ export function isCustomCohortObservationPreview(value) {
   return !!value && (value.preview_version === 1 || (value.preview_version === 2
     && value.representation === 'indexed_members_v1' && indexedPreviews.has(value)));
 }
+/** Side-effect-free local receipt check; neither source nor access authority. */
+export const isIssuedCustomCohortIndexedObservationPreview = value => indexedPreviews.has(value);
 
 /** Resolve only one owned population. Returned references are local, never an
  * expanded copy attached to the compact serializable envelope. All original
  * row fields (including private evidence) remain internal to authorized callers.
  */
 export function customCohortObservationMembers(preview, population, kind) {
+  const reader = customCohortObservationMemberReader(preview, population, kind);
+  // Preserve the legacy expanded representation's exact array identity.
+  if (preview.preview_version === 1) return kind === 'omitted_transactions'
+    ? population.transactions.omitted : population[kind].members;
+  return Object.freeze(Array.from({ length: reader.member_count }, (_, index) => reader.at(index)));
+}
+
+/** Internal O(1) reader over an issued immutable population, not source or
+ * assignment authority. A bounded numerical owner can consume original table
+ * ordinals without expanding a second whole array of member references/values.
+ * Every visited ordinal keeps the same complete-population grammar checks.
+ */
+export function customCohortObservationMemberReader(preview, population, kind) {
   check(isCustomCohortObservationPreview(preview), 'unsupported_representation');
   check(MEMBER_KINDS.includes(kind), 'member_kind');
   const owned = preview.preview_version === 2 ? indexedPreviews.get(preview)
     : new Set([preview.all, preview.selected, ...bounded(preview.pockets, L.pockets, 'pockets').map(pocket => pocket.result)]);
   check(population && owned.has(population), 'population_ownership');
   const tableKind = kind === 'omitted_transactions' ? 'transactions' : kind;
-  if (preview.preview_version === 1) return bounded(kind === 'omitted_transactions'
-    ? population.transactions.omitted : population[tableKind].members, L.source_records, 'population_members');
+  if (preview.preview_version === 1) {
+    const rows = bounded(kind === 'omitted_transactions'
+      ? population.transactions.omitted : population[tableKind].members, L.source_records, 'population_members');
+    return Object.freeze({ member_count: rows.length, at(index) {
+      check(Number.isSafeInteger(index) && index >= 0 && index < rows.length, 'member_ordinal');
+      return rows[index];
+    } });
+  }
   const table = bounded(preview.member_tables[tableKind], L.source_records, 'member_table');
   const indices = bounded(kind === 'omitted_transactions' ? population.transactions.omitted_indices
     : population[tableKind].member_indices, L.source_records, 'member_indices');
   if (kind !== 'omitted_transactions') check(population[tableKind].member_count === indices.length, 'member_count_mismatch');
-  let prior = -1;
-  const rows = indices.map(index => {
-    check(Number.isSafeInteger(index) && index > prior && index < table.length, 'member_index'); prior = index;
+  return Object.freeze({ member_count: indices.length, at(ordinal) {
+    check(Number.isSafeInteger(ordinal) && ordinal >= 0 && ordinal < indices.length, 'member_ordinal');
+    const index = indices[ordinal], prior = ordinal === 0 ? -1 : indices[ordinal - 1];
+    check(Number.isSafeInteger(prior) && Number.isSafeInteger(index) && index > prior && index < table.length, 'member_index');
     const row = table[index];
     check(row && (tableKind === 'stock' ? typeof row.account_id === 'string'
       : tableKind === 'source_reported' ? typeof row.source_record_id === 'string'
         : typeof row.canonical_transaction_id === 'string'), 'member_table_kind');
     if (tableKind === 'transactions') check((row.disposition === 'in_period') === (kind === 'transactions'), 'member_disposition');
     return row;
-  });
-  return Object.freeze(rows);
+  } });
 }
 function text(value, field, maximum = 200) {
   check(typeof value === 'string' && value.length > 0 && value.length <= maximum
@@ -137,6 +158,25 @@ const SOURCE = Object.freeze({
   days_on_market: ['source_days_on_market', 'integer', 'Source-reported days on market', 'days'],
   current_price: ['source_current_price', 'nonnegative', 'Source current/listing price; not recorded closing consideration', null],
 });
+/** Internal normalization parity check, NOT retained-source verification. Raw
+ * values are deduplicated in the indexed cell, so duplicate record counters may
+ * exceed these minimum counts but cannot change their zero/nonzero meaning.
+ * The original source owner must still verify all member/record provenance.
+ */
+export function verifyCustomCohortObservationMetricCell(cell, kind, metric) {
+  const policy = kind === 'stock' ? CAD[metric]?.[1] : kind === 'source_reported' ? SOURCE[metric]?.[1]
+    : kind === 'transactions' && metric === 'recorded_total_price' ? 'nonnegative' : null;
+  check(policy && cell && Array.isArray(cell.raw_values), 'metric_cell');
+  bounded(cell.raw_values, L.source_records * 2, 'metric_cell_raw');
+  const normalized = observation(cell.raw_values, policy);
+  check(normalized.state === cell.state && Object.is(normalized.value, cell.value)
+    && normalized.exact_value === cell.exact_value, 'metric_cell_normalization');
+  for (const key of ['observed_record_count', 'missing_record_count', 'invalid_record_count']) {
+    check(Number.isSafeInteger(cell[key]) && cell[key] >= normalized[key]
+      && cell[key] <= L.source_records * 2 && (cell[key] === 0) === (normalized[key] === 0), 'metric_cell_count');
+  }
+  return cell.value;
+}
 const GAPS = Object.freeze([
   'historical_applicability_not_established', 'housing_and_competitive_eligibility_not_established',
   'real_world_source_coverage_not_established', 'sale_completion_and_consideration_not_verified',

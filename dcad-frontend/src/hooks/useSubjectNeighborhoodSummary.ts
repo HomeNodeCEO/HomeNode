@@ -50,7 +50,8 @@ export function useSubjectSummary(
     summaryInput: { subdivision: location?.subdivision, city: location?.city,
       effectiveDate: file?.effective_date, locationType: draft.neighborhood_location_type,
       // Do not turn a later-year campus dataset into a retrospective school fact.
-      nearbySchool: school && Number(file?.effective_date?.slice(0, 4)) >= Number(school.source.school_year.slice(-4)) ? school.school.name : null },
+      nearbySchool: school?.school.name,
+      nearbySchoolSourceEndYear: school ? Number(school.source.school_year.slice(-4)) : null },
     onGeneratedSummary: (value: string, reviewItems: readonly string[]) => {
       setDraft(current => ({ ...current, subject_neighborhood_summary: value,
         subject_neighborhood_summary_template: value, subject_neighborhood_summary_review_items: [...reviewItems] }));

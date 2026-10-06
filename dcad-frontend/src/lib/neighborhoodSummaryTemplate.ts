@@ -20,10 +20,17 @@ export function neighborhoodSummaryTemplate(input: SubjectNeighborhoodSummaryInp
   const summary = object(group?.summary), selected = object(summary.selected), stock = object(object(selected.stock).metrics);
   const narrative = object(summary.narrative_observations), period = object(narrative.observation_period);
   const expected = object(summary.observation_period);
+  // Assignment save acknowledgements may omit the case's date. The current,
+  // checked same-file preview already retains that date; never substitute today
+  // or overwrite a supplied date with another capture's statistics.
+  const retainedDate = typeof summary.effective_date === 'string' ? summary.effective_date : null;
+  const effectiveDate = input.effectiveDate ?? retainedDate;
+  const dateMatches = !input.effectiveDate || !retainedDate || input.effectiveDate === retainedDate;
   const matching = narrative.basis === 'in_period_single_account_closed_sales'
+    && dateMatches
     && typeof expected.start_date === 'string' && period.start_date === expected.start_date && period.end_date === expected.end_date;
   const metrics = matching ? object(narrative.metrics) : {};
-  return buildSubjectNeighborhoodSummary({ ...input, medianYearBuilt: median(stock.year_built),
+  return buildSubjectNeighborhoodSummary({ ...input, effectiveDate, medianYearBuilt: dateMatches ? median(stock.year_built) : null,
     medianBedrooms: median(metrics.bedrooms_total), medianBathrooms: median(metrics.bathrooms_total_integer) });
 }
 
@@ -41,7 +48,10 @@ export function refreshNeighborhoodSummaryTemplate(current: string, baseline: st
     const homestead = location === 'rural' ? 'rural' : location.startsWith('[') ? '[urban-suburban/rural]' : 'urban-suburban';
     next = current.replace(/on residential (?:urban|suburban|rural|\[urban\/suburban\/rural\]) lots\./, `on residential ${location} lots.`)
       .replace(/for an "(?:urban-suburban|rural|\[urban-suburban\/rural\])" homestead/, `for an "${homestead}" homestead`);
-    if (input.nearbySchool?.trim()) next = next.replace('[nearby school — verify]', reportTitleCase(input.nearbySchool.trim()));
+    const effectiveYear = /^\d{4}-\d{2}-\d{2}$/.test(input.effectiveDate || '') ? Number(input.effectiveDate!.slice(0, 4)) : null;
+    const schoolApplicable = input.nearbySchoolSourceEndYear == null
+      || (effectiveYear !== null && effectiveYear >= input.nearbySchoolSourceEndYear);
+    if (schoolApplicable && input.nearbySchool?.trim()) next = next.replace('[nearby school — verify]', reportTitleCase(input.nearbySchool.trim()));
   }
   return next === current ? null : next;
 }

@@ -5,7 +5,7 @@ import { neighborhoodSummaryTemplate, refreshNeighborhoodSummaryTemplate } from 
 import { assignmentDraftFromDetail } from '../src/lib/propertyReportAssignment.ts';
 
 const input = { subdivision: 'MONICA PARK 4', city: 'Garland', effectiveDate: '2026-08-31', locationType: 'suburban' };
-const group = { summary: { observation_period: { start_date: '2024-09-01', end_date: '2026-08-31' },
+const group = { summary: { effective_date: '2026-08-31', observation_period: { start_date: '2024-09-01', end_date: '2026-08-31' },
   selected: { stock: { metrics: { year_built: { count: 2000, median: 1958 } } } },
   narrative_observations: { basis: 'in_period_single_account_closed_sales',
     observation_period: { start_date: '2024-09-01', end_date: '2026-08-31' },
@@ -68,4 +68,26 @@ test('classification changes while a capture loads preserve previously captured 
   assert.match(next, /past 68 years/); assert.match(next, /traditional 3 bedrooms and 2 baths/);
   assert.match(next, /on residential rural lots/); assert.match(next, /for an "rural" homestead/);
   assert.equal(refreshNeighborhoodSummaryTemplate(next, next, { ...input, locationType: 'rural' }, null), null);
+});
+
+test('an assignment save without a case date uses only the current checked preview date', () => {
+  const draft = neighborhoodSummaryTemplate({ ...input, effectiveDate: null }, group);
+  assert.match(draft, /past 68 years \(median year built 1958\)/);
+  const absent = structuredClone(group); delete absent.summary.effective_date;
+  assert.match(neighborhoodSummaryTemplate({ ...input, effectiveDate: null }, absent), /\[median age\/year built not available\]/);
+  const conflict = neighborhoodSummaryTemplate({ ...input, effectiveDate: '2025-08-31' }, group);
+  assert.match(conflict, /\[median age\/year built not available\]/);
+  assert.match(conflict, /traditional \[not available\] bedrooms and \[not available\] baths/);
+});
+
+test('the retained date also controls nearby-school dataset applicability after saving', () => {
+  const school = { ...input, effectiveDate: null, nearbySchool: 'Nearby Example School', nearbySchoolSourceEndYear: 2025 };
+  assert.match(neighborhoodSummaryTemplate(school, group), /schooling such as Nearby Example School/);
+  const historical = structuredClone(group); historical.summary.effective_date = '2024-08-31';
+  assert.match(neighborhoodSummaryTemplate(school, historical), /\[nearby school — verify\]/);
+  assert.match(buildSubjectNeighborhoodSummary(school), /\[nearby school — verify\]/);
+  const baseline = buildSubjectNeighborhoodSummary(input);
+  assert.equal(refreshNeighborhoodSummaryTemplate(baseline, baseline, { ...school, locationType: 'suburban' }, null), null);
+  assert.match(refreshNeighborhoodSummaryTemplate(baseline, baseline, { ...school, effectiveDate: '2026-08-31' }, null),
+    /schooling such as Nearby Example School/);
 });

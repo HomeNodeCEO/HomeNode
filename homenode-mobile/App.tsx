@@ -500,6 +500,7 @@ function InspectionScreen({
       </View> : null}
       <ScrollView
         contentContainerStyle={[styles.content, !completed && styles.inspectionContent]}
+        keyboardShouldPersistTaps="handled"
         scrollEnabled={!sketchLabelDragging}
       >
       <Text style={styles.eyebrow}>OFFLINE FIELD INSPECTION</Text>

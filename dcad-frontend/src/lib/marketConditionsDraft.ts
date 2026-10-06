@@ -1,6 +1,6 @@
 import type {
   MarketContextOverride,
-  MarketConditionsAreaKey,
+  MarketConditionsStudyAreaKey,
   MarketConditionsResponse,
 } from './api';
 import {
@@ -17,7 +17,7 @@ export type MarketTrendConclusion =
 
 export type MarketConditionsReconciliation = {
   trendConclusion: MarketTrendConclusion;
-  reliedUponAreaKeys: MarketConditionsAreaKey[];
+  reliedUponAreaKeys: MarketConditionsStudyAreaKey[];
   explanation: string;
 };
 
@@ -28,7 +28,7 @@ export type MarketConditionsDraft = {
   savedAt: string;
   asOfDate: string;
   periodMonths: 12 | 24 | 36;
-  selectedAreaKeys: MarketConditionsAreaKey[];
+  selectedAreaKeys: MarketConditionsStudyAreaKey[];
   contextOverride?: MarketContextOverride | null;
   response: MarketConditionsResponse;
   reconciliation: MarketConditionsReconciliation;

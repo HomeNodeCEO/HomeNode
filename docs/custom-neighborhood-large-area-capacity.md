@@ -827,6 +827,37 @@ schedule, installed capacity, release policy or speed SLA changes here. Local
 actual producer/browser-render tests are not native PostgreSQL or realistic
 greater-than-50k/5-/10-mile/retrospective/live acceptance proof.
 
+## Opt-in exact-reference selected-member consumer (not host activation)
+
+The existing record browser can now inspect the same immutable selected union
+as the composed V7 map and numerical display. Its four population totals come
+from that display's checked inspection descriptors, not the viewport, rendered
+rows, target sales count, or a recomputed browser fingerprint. Each request sends
+only the current reference, population kind and bounded cursor/page syntax. The
+checked port still enforces current assignment/source rights, complete counts,
+private aggregate binding and decoder-owned continuity.
+
+Opening remains explicit and lazy. An empty selection has no implicit all-record
+fallback; zero populations need no UI fetch. Only 50 rows are rendered per page,
+with compact admitted predecessor tokens and refetched Back navigation. Changes
+to the file/session/reference/period remount the inspector closed and discard
+prior rows and cursors. Pausing, timeout, closing or disposal cannot publish a
+late page or automatically retry it. A failed later page leaves the previous
+checked page marked unchanged, without replacing the full population count.
+
+The exact reader uses the caller's finite assignment/session lane and waits for
+actual port settlement, including an ignored abort. Its local composition and
+continuation witnesses cannot authorize a server read or Apply. Legacy pocket
+inspection remains unchanged. Inspecting an independent subdivision subset is
+still a separate original-subset contract; the selected reference cannot be
+relabelled as that subset. Source/numerical/page ceilings are unchanged.
+
+Production host admission, draft/read-only/flush fences, independent subdivision
+inspection and report consumer composition remain necessary before activation.
+No production write, worker schedule, genuine appraisal, installed cap, release
+policy or speed SLA changes here. Producer/transport/component harness tests are
+not native PostgreSQL or realistic large-area/live acceptance proof.
+
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal
 hosts. Only literal localhost/127.0.0.1/::1 development connections may be

@@ -1,5 +1,95 @@
 # Complete larger-area Custom neighborhood studies
 
+## Complete supplemental metric group (not live registration or activation)
+
+`customCohortCompleteMetricGroup.js` stages all fifteen existing selected-stock,
+canonical-transaction and source-record distributions under one immutable
+versioned root. Its fixed metric inventory accepts no caller-supplied subset,
+cells, units or replacement statistics. Each entry binds its fresh original
+member witness and the same exact context, selection, target, effective date,
+period and complete account union. Every final AND intermediate numerical blob
+is named for retention. A fresh reopen validates the whole inventory and all
+those originals, computes every exact distribution, and rechecks the root at
+the ending fence before returning one deeply frozen group. A late failure
+returns no partial result. Missing/invalid/conflicting counts, exact-decimal
+disagreements, package totals, all-date source observations and descriptive COD
+meanings are unchanged.
+
+One owner shares its existing finite work/I/O/byte budgets across all metrics
+and operations and refuses concurrent use until actual I/O settles. Each staged
+group names only its own graph; shared budget accounting is not reset. Seven
+synthetic tests cover complete parity, explicit empty selection, altered
+revision/period/raw witnesses, missing/reordered/substituted metrics, absent or
+changed intermediate originals, data traps, late failures, ending deadlines and
+actual cancellation settlement. The existing guarded migrated SQL suite adds a
+named synthetic 1,001-account test for actual scoped root retention, fresh-client
+reopen, foreign organization, commit/rollback/cancellation and unchanged report,
+section, acceptance and current-selection rows. Local skipped SQL is not native
+proof; actual published-head CI must execute it.
+
+The root must come from the caller's freshly authorized retained registry, not a
+browser-provided reference. This is a supplemental numeric graph, not proof of
+the original acquisition graph or a registry for it. The caller still registers
+both graphs coherently, charges their combined original/reference/byte budgets,
+and repeats current actor/assignment/subject/source/private-review/selection
+fences before commit or delivery. This slice does not wire a live calculator,
+avoid legacy selection calculation by itself, raise any cap, change schema,
+schedule a worker, migrate a file or activate V7. Compact catalogs, stable
+partial source/spatial recovery, coherent original-plus-supplement publication,
+deliberate activation/legacy reopening and real >50k/5-/10-mile/retrospective/
+live Apply/timing acceptance remain unfinished.
+
+## Original-bound metric-run supplying owner (not a live switch)
+
+`customCohortOriginalMetricRuns.js` now compiles an in-process receipt for ONE
+complete selected stock, canonical-transaction or source-record metric from an
+issued immutable indexed preview. The supplying application must first reopen
+and authorize its exact original context, catalog and current selection. The
+receipt binds the context/selection originals, full target, effective date,
+observation period, complete account set, metric label/units/currency/temporal
+semantics, and ordered **full member originals**, not just their Number values.
+It preserves missing/invalid/conflicting and partially observed counts, raw
+decimal disagreements, outside-area links and whole package totals. Source
+records retain their existing all-date meaning; they are not relabeled as
+in-period completed sales. COD remains descriptive dispersion, not reliability.
+
+The member reader accesses the issued table's ordinals directly, without a
+second whole member/value array. The run owner stages through the existing
+scoped immutable blob repository, shares finite work/I/O/byte budgets across
+all metrics in that owner, and returns **all intermediate and final retention
+references**. A fresh source receipt is required for reopen. The numerical
+consumer checks the complete original input/null witness and compares every
+finite sorted ordinal/value with the supplying original in **both** passes.
+A self-consistent numeric run with a wrong value cannot pass simply by keeping
+an old input digest. No medians of medians, source sampling, new cache or new
+normalization/price allocation is used. Old unbound numerical callers and the
+legacy live calculator remain unchanged.
+
+Eight focused synthetic tests cover all fifteen existing metric fields,
+missing/conflicting raw decimals, canonical deduplication/packages/date meaning,
+explicit empty selection, 11,001 members/intermediate-root closure, changed
+selection/period/metric/raw original, counterfeit receipts and data traps,
+existing raw-decimal normalization and deduplicated record-count meanings,
+ordinal/value/null witness checks, aggregate work and actual I/O cancellation.
+A separate named guarded disposable-PostgreSQL subtest exercises the actual
+organization-scoped immutable store with a mapper-issued **synthetic** 3,001
+member population, fresh-client/source-receipt reopen, foreign organization,
+wrong metric, commit/rollback/cancellation and unchanged protected report rows.
+Local native execution remains skipped when no guarded database is supplied;
+only an actual CI execution will constitute SQL proof.
+
+This closes the supplying-source/numerical bridge, not source acquisition or
+publication. The caller must still aggregate the ORIGINAL graph with every
+supplemental/intermediate root, register those roots coherently in a versioned
+graph, repeat current rights/subject/selection fences, and roll back on any
+failure. It neither registers roots nor proves source permissions, historic
+stock, provider coverage, sale consideration, verified currency/area units,
+report readiness or accepted boundaries. Compact catalogs, stable partial
+source/spatial recovery, combined publication budgets, deliberate activation
+and legacy reopening, and real >50k/5-mile/10-mile/retrospective/live Apply/SLA
+acceptance still remain. No installed cap, schema, release policy, dependency,
+cron schedule or production appraisal has been changed by this slice.
+
 ## Current boundary
 
 The installed capture mode is bounded, not sampled. A study that exceeds an
@@ -1089,6 +1179,56 @@ next numerical owner still needs original-bound persisted ordered observations,
 complete-population/period/unit/provenance validation and bounded run/merge
 preparation. Compact catalogs, partial source/spatial recovery, publication
 budgets, production activation and 5/10-mile/retrospective live acceptance remain.
+
+## Bounded retained Number runs (not a source/numerical owner switch)
+
+`exactPagedObservationRuns.js` bridges complete **unordered** finite-Number/null
+observation pages to the two-pass numerical kernel. It stages immutable
+1,000-cell sorted runs, merges at most eight bounded cursors at a time through
+additional retained pages, and reopens the final complete ordered stream. No
+full Number array, page median/mean averaging, SQL concurrency, third-party sort
+library, process cache or browser-provided population is introduced. Ties retain
+their original member ordinal, so signed zero and the legacy ascending reduction
+order survive. Number tokens are derived representations, not replacements for
+original source decimal text, IDs, units or conflicting/missing observations.
+
+Every source cell, including null, contributes to the complete count and ordered
+input witness before a manifest can be staged. Reopening validates canonical
+original UTF-8/hash/bytes, the exact opaque caller binding, root/metadata, all
+page lengths, ordered value/ordinal pairs, unique finite-member ordinals, full
+run exhaustion and the whole run witness. The root and metadata are freshly read
+at each pass beginning **and ending**. A foreign binding, missing/changed later
+page, duplicate ordinal, unexpected count/order/token, lost original, abort or
+deadline returns no completed distribution. Staging acknowledgments must match
+the exact bytes sent; provisional work never grants report/source authority.
+
+The supplying owner must independently establish the complete original member
+population and normalized cells, including canonical transaction deduplication,
+source identity/lineage, exact decimal conflicts, null reasons, period, unit,
+currency and historical support. This store treats its binding as opaque; a
+matching string or Number digest proves none of those semantics or current
+rights. That owner must bind/verify this supplementary graph against its original
+context/selection, account for **all** intermediate retention/cleanup roots and
+aggregate multi-metric work, roll back failed preparation, and fence the final
+registration/read/publication with fresh assignment/source rights and current
+head. No new report/source admission, durable capture checkpoint, registry table,
+graph/root budget, 50k capture limit, live calculator, host default or Apply
+behavior changes in this slice. The existing 250k per-measurement ceiling remains.
+
+Synthetic parity/admission tests include unordered/skewed/missing/extreme and
+signed-zero inputs, deterministic populations, lazy 60,001 cells and exact
+250,000 cells across multiple merge levels, one-over before I/O, closed data
+grammar, detached pages, missing/self-consistent malformed later directories,
+second-pass failure and actual I/O-settlement cancellation/ending deadlines.
+The existing guarded PostgreSQL suite adds a synthetic 11,001-cell fixture using
+the actual organization-scoped immutable blob repository, fresh-client reopen,
+foreign-organization/binding denial and caller rollback/cancellation. Its native
+assertions require the actual published head's CI, not a local recording fake.
+Neither kind of test is a >50k source capture, realistic geometry, measured live
+peak-memory/latency or full large-area publication/Apply acceptance. Original-bound
+complete-population numerical ownership, compact catalogs, stable partial
+source/spatial recovery, coherent publication budgets and real 5/10-mile,
+retrospective/production acceptance remain required before activation.
 
 The worker CLI validates its database URL before constructing the pool and
 requires certificate-verified TLS for every non-loopback host, including internal

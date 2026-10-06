@@ -872,7 +872,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         const map = manifestOpening ? { status: 'omitted', reason: 'viewport_required' }
           : projection('map_select', () => selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids));
         response.initial_preview = { status: 'preview', target: response.target, ...expected,
-          subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected })), parcel_map: map,
+          subject_freshness: 'matched', summary: projection('summary_projection', () => presentCustomCohortPreview({ preview, expected, includeNarrative: true })), parcel_map: map,
           ...(manifestOpening ? { map_manifest: projection('map_manifest', () => buildCustomCohortMapManifest(catalog, cached.prepared.parcel_map)) } : {}),
           apply: { status: 'blocked', reasons: ['observation_preview_only'] } };
       }
@@ -951,7 +951,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
               preview.selected.account_ids, mapViewport)
             : selectCustomCohortPreparedParcelMap(cached.prepared.parcel_map, preview.selected.account_ids)
           : { status: 'omitted', reason: 'geometry_not_requested' };
-        const content = { summary: presentCustomCohortPreview({ preview, expected }), parcel_map: selectedMap };
+        const content = { summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }), parcel_map: selectedMap };
         return transaction(pool, 'READ COMMITTED', budget, async client => {
           assertTarget(await resolveTarget(client, input, true, 'read'), cached.target);
           if ((await createCustomCohortSubjectRepository(client, cached.scopeJson)
@@ -1030,7 +1030,7 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
         selected_account_ids: [...new Set(checked.pockets.flatMap(p => p.account_ids))] }, { check: budget.check });
       if (map.status === 'available') preparedOpening = { preview: selected, map };
       const privateSales = privateFor(checked, selected);
-      const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected }), parcel_map: map,
+      const result = envelope({ summary: presentCustomCohortPreview({ preview: selected, expected, includeNarrative: true }), parcel_map: map,
         ...(privateSales ? { private_sales: privateSales } : {}) });
       if (Buffer.byteLength(JSON.stringify(result)) > CUSTOM_COHORT_OPENING_PREVIEW_BYTES) fail('catalog_transport_limit');
       return result;
@@ -1646,12 +1646,12 @@ export function createCustomCohortContextCapture({ pool, authorizeMarketData,
     exactKeys(presentation, ['includeMap']);
     if (typeof presentation.includeMap !== 'boolean') fail('invalid_input');
     return runPreview(value, options, { includeMap: presentation.includeMap, exposure: 'report_observation_summary', preparedFast: true,
-      project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected }), parcel_map: parcelMap }) });
+      project: (preview, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview, expected, includeNarrative: true }), parcel_map: parcelMap }) });
   }, async viewport(value, viewport, options = {}) {
     const checked = prepareCustomCohortViewport(viewport);
     const preview = await runPreview(value, options, { includeMap: true, exposure: 'report_observation_summary', preparedFast: true,
       mapViewport: checked,
-      project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected }), parcel_map: parcelMap }) });
+      project: (observation, expected, parcelMap) => ({ summary: presentCustomCohortPreview({ preview: observation, expected, includeNarrative: true }), parcel_map: parcelMap }) });
     return projectCustomCohortViewportMap(preview, checked);
   }, inspect(value, inspection, options = {}) {
     exactKeys(inspection, ['population', 'page']);

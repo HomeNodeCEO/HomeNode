@@ -177,7 +177,7 @@ function narrativeObservations(preview) {
  * material fences. Projection is by explicit field, never object spread of raw
  * members, snapshots, provider keys or authorization envelopes.
  */
-export function presentCustomCohortPreview({ preview, expected } = {}) {
+export function presentCustomCohortPreview({ preview, expected, includeNarrative = false } = {}) {
   const binding = bindingOf(preview, expected);
   const all = summaryPopulation(preview, preview.all, 'all'), selected = summaryPopulation(preview, preview.selected, 'selected');
   const pockets = [...preview.pockets].sort((a, b) => compare(a.id, b.id)).map(pocket => ({
@@ -185,7 +185,7 @@ export function presentCustomCohortPreview({ preview, expected } = {}) {
     overlap_account_count: count(pocket.overlap_account_count), result: summaryPopulation(preview, pocket.result, 'pocket', pocket.id),
   }));
   return boundedResult({ ...header(preview, binding), contents: 'population_summaries_only', members_included: false,
-    all, selected, pockets, narrative_observations: narrativeObservations(preview) }, L.summary_utf8_bytes);
+    all, selected, pockets, ...(includeNarrative ? { narrative_observations: narrativeObservations(preview) } : {}) }, L.summary_utf8_bytes);
 }
 
 function findPopulation(preview, requested) {

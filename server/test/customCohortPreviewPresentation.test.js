@@ -50,10 +50,18 @@ function fixture({ accounts = ['A', 'B'], parcels = [parcel(1), parcel(2, 'B')],
 
 const built = options => preview(fixture(options));
 const expected = source => ({ context_ref: source.context_ref, selection_revision: source.selection_revision });
-const summary = source => present({ preview: source, expected: expected(source) });
+const summary = source => present({ preview: source, expected: expected(source), includeNarrative: true });
 const page = (source, population = { group: 'all', kind: 'stock' }, after_member_id = null, limit = 50) =>
   inspect({ preview: source, expected: expected(source), population, page: { limit, after_member_id } });
 const groups = source => [source.all, source.selected, ...source.pockets.map(p => p.result)];
+
+test('legacy v1 presentation stays unchanged unless the narrative supplement is explicitly requested', () => {
+  const source = built(), legacy = present({ preview: source, expected: expected(source) });
+  assert.equal(Object.hasOwn(legacy, 'narrative_observations'), false);
+  const { narrative_observations, ...unchanged } = summary(source);
+  assert.ok(narrative_observations);
+  assert.deepEqual(unchanged, legacy);
+});
 
 test('actual numeric summaries preserve every metric, denominator, unit and caveat without recomputation', () => {
   const source = built({ sales: [sale(1, 'A', { sale_price: '330000.1234' })] }), result = summary(source);

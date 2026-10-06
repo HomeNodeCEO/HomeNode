@@ -138,3 +138,12 @@ or post-COMMIT release is not described as a successful acknowledgment or a
 known rollback. These short transactions do not replace the capture
 coordinator's aggregate-budget, source-acquisition transaction owner. Neither
 helper widens a source grant or makes a queued request eligible for publication.
+
+The worker CLI validates its database URL before constructing the pool and
+requires certificate-verified TLS for every non-loopback host, including internal
+hosts. Only literal localhost/127.0.0.1/::1 development connections may be
+plaintext. Admitted TLS query options are stripped before pg receives the URL;
+duplicate, conflicting, insecure remote, and driver-setting overrides are refused.
+The runtime trust store must contain the provider's trusted certificate chain.
+There is no fallback that disables verification, no raw driver error logging,
+and no automatic worker schedule or production environment change from this fix.

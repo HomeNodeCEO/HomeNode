@@ -7,6 +7,7 @@ import { runCustomCohortPreparedViewportTileJob } from '../../src/services/neigh
 import { runCustomCohortPreparedMapOpeningJob } from '../../src/services/neighborhoodAssessment/customCohortPreparedMapOpeningJob.js';
 import { customCohortOpeningSelection } from '../../src/services/neighborhoodAssessment/customCohortOpeningPreview.js';
 import { saveCustomAppraisalWorkfileSectionInTransaction } from '../../src/services/customAppraisalWorkfiles.js';
+import { runCustomCohortGroupWorkspaceHttpDatabaseChecks } from './customCohortGroupWorkspaceHttpDatabaseChecks.js';
 
 /** Invoked only by the verified disposable PostgreSQL fixture. No live accounts,
  * source provider, user report choices, accepted sections or shared database.
@@ -654,5 +655,9 @@ export async function runCustomCohortRecordedGroupOwnerDatabaseChecks({ pool, sc
   assert.deepEqual(await protectedOther(), otherBefore);
   assert.deepEqual((await coordinatorWorkspace()).rows, coordinatorBefore);
   checks.push('native V7 study transition requires a registered exact period/discovery/private-purpose context, atomically publishes its fresh complete selection with pending cleared, rolls new pages/head/history back on failures, reopens v3 originals, and cannot rewind later edits or alter accepted reports');
+  checks.push(...(await runCustomCohortGroupWorkspaceHttpDatabaseChecks({ pool, owner, auth, scope,
+    current: later, originalGroupIds: newIds, calls, workspaceState, protectedOther, coordinatorWorkspace,
+    coordinatorBefore, suspend, loseNextCommit: () => { loseCommitAck = true; },
+    denySource: value => { denyPolicy = value; } })).checks);
   return { checks };
 }

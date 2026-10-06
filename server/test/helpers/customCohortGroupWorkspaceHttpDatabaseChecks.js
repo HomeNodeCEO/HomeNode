@@ -9,7 +9,7 @@ import { createCustomNeighborhoodCohortRouter } from '../../src/modules/accounts
  * This is not a live session, application-wide middleware or large-area SLA test.
  */
 export async function runCustomCohortGroupWorkspaceHttpDatabaseChecks({ pool, owner, auth, scope,
-  current, originalGroupIds, calls, workspaceState, protectedOther, coordinatorWorkspace,
+  current, originalGroupIds, calls, workspaceState: originalWorkspaceState, protectedOther, coordinatorWorkspace,
   coordinatorBefore, suspend, loseNextCommit, denySource }) {
   const protectedBefore = await protectedOther(), app = express();
   const authorization = 'Bearer synthetic-v7-native-fixture';
@@ -23,6 +23,18 @@ export async function runCustomCohortGroupWorkspaceHttpDatabaseChecks({ pool, ow
     const handle = app.listen(0, '127.0.0.1', () => resolve(handle)); handle.once('error', reject);
   });
   const path = `http://127.0.0.1:${server.address().port}/api/accounts/${encodeURIComponent(scope.account_id)}/neighborhood-cohort`;
+  // The parent's head witness intentionally remains pinned to its ORIGINAL
+  // context. These HTTP transitions start from a later active context, so
+  // inspect that checkpoint's actual current head separately, retaining the
+  // original witness rather than relabelling it as the active population.
+  const workspaceState = async () => {
+    const original = await originalWorkspaceState();
+    const active = original.section.section_value.active;
+    const rows = (await pool.query(`SELECT selection_revision FROM app.neighborhood_custom_cohort_group_selection_heads
+      WHERE organization_id=$1 AND context_id=$2`, [scope.organization_id, active.context_ref.context_id])).rows;
+    assert.equal(rows.length, 1);
+    return { ...original, original_head: original.head, head: rows[0].selection_revision };
+  };
   const request = (action, body, authenticated = true) => fetch(`${path}/${action}`, {
     method: 'POST', headers: { 'content-type': 'application/json', ...(authenticated ? { authorization } : {}) },
     body: JSON.stringify(body), signal: AbortSignal.timeout(15_000),

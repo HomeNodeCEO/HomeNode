@@ -161,12 +161,12 @@ export type CustomCohortMemberTransport = ReturnType<typeof createCustomCohortMe
 /** Shared bounded transport for the read-only views and idempotent context
  * capture. Operation names are closed; callers cannot supply arbitrary URLs. */
 export function createCustomCohortJsonTransport(options: Options) {
-  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'market-analysis',
+  return async (accountId: string, operation: 'preview' | 'viewport' | 'catalog' | 'members' | 'capture' | 'reported-proposal' | 'reported-apply' | 'select-groups' | 'group-selection' | 'selection-preview' | 'selection-viewport' | 'selection-members' | 'market-analysis' | 'save-groups' | 'start-group-capture' | 'cancel-group-capture' | 'complete-group-capture',
     payload: unknown, { signal }: { signal: AbortSignal }): Promise<unknown> => {
     checkSignal(signal);
     if (typeof accountId !== 'string' || !accountId || accountId.length > 64
-      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'market-analysis'].includes(operation)) throw new Error('Invalid neighborhood request');
-    const groupSelection = operation === 'select-groups' || operation === 'group-selection';
+      || !['preview', 'viewport', 'catalog', 'members', 'capture', 'reported-proposal', 'reported-apply', 'select-groups', 'group-selection', 'selection-preview', 'selection-viewport', 'selection-members', 'market-analysis', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation)) throw new Error('Invalid neighborhood request');
+    const groupSelection = ['select-groups', 'group-selection', 'save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture'].includes(operation);
     const selectionSummary = operation === 'selection-preview';
     const selectionViewport = operation === 'selection-viewport';
     const selectionMembers = operation === 'selection-members';

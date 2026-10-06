@@ -196,6 +196,16 @@ function receipt(value: unknown, request: CustomCohortRecordedGroupRead | Custom
     ...(writing ? { operation_id: (request as CustomCohortRecordedGroupWrite).operationId } : {}) });
 }
 
+// Reuse the exact closed reference/ID grammar for the atomic workspace path;
+// none of these structural helpers authorizes or sends a request.
+export { selection as prepareCustomCohortGroupSelectionReference };
+export function prepareCustomCohortRecordedGroupWrite(value: unknown): CustomCohortRecordedGroupWrite {
+  return input(value, true) as CustomCohortRecordedGroupWrite;
+}
+export function checkCustomCohortRecordedGroupWriteReceipt(value: unknown, request: CustomCohortRecordedGroupWrite) {
+  return receipt(value, request, true) as Exclude<CustomCohortRecordedGroupReceipt, { readonly status: 'absent' }>;
+}
+
 /** One authenticated, bounded request. No independent timer, automatic retry,
  * implicit all-groups selection, source facts or reviewer identity in its body.
  * The caller owns a finite signal and any explicit lost-acknowledgment recovery.

@@ -15,6 +15,8 @@ import { CUSTOM_COHORT_SELECTION_VIEWPORT_BYTES, prepareCustomCohortGroupViewpor
   presentCustomCohortGroupViewportTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupViewportTransport.js';
 import { CUSTOM_COHORT_SELECTION_MEMBER_BYTES, prepareCustomCohortGroupMemberTransportRequest,
   presentCustomCohortGroupMemberTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupMemberTransport.js';
+import { prepareCustomCohortGroupWorkspaceTransportRequest,
+  presentCustomCohortGroupWorkspaceTransportResponse } from '../../services/neighborhoodAssessment/customCohortGroupWorkspaceTransport.js';
 
 const BASE = '/api/accounts/:id/neighborhood-cohort';
 const BODY_BYTES = 4_000_000;
@@ -61,6 +63,11 @@ function publicFailure(error) {
     return [409, { error: 'neighborhood_operation_conflict' }];
   if (error instanceof TypeError && error.message === 'custom_cohort_recorded_group_selection_unknown_group')
     return [409, { error: 'neighborhood_selection_changed' }];
+  if (error instanceof TypeError && ['revision_changed', 'study_changed', 'selection_changed', 'replay_changed',
+    'capture_pending', 'unavailable'].some(reason => error.message === `custom_cohort_group_workspace_${reason}`))
+    return [409, { error: 'neighborhood_workspace_changed' }];
+  if (error?.message === 'custom_appraisal_section_revision_conflict') return [409, { error: 'neighborhood_workspace_changed' }];
+  if (error?.message === 'custom_appraisal_workfile_signed') return [409, { error: 'neighborhood_private_source_read_only' }];
   if (['assignment_sales_import_revision_conflict', 'assignment_sales_import_capture_changed'].includes(error?.code)) {
     return [409, { error: 'neighborhood_private_review_changed' }];
   }
@@ -118,10 +125,15 @@ function publicFailure(error) {
  * The owner resolves and rechecks the exact organization/assignment in the DB.
  * Never supply its internal raw `.preview` method as `.present` here.
  */
-export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, logger = console } = {}) {
+export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnalysis, logger = console,
+  recordedGroupWorkspaceTransitions = false } = {}) {
   if (['capture', 'present', 'inspect', 'catalog'].some(key => typeof cohortService?.[key] !== 'function')) {
     throw new TypeError('custom_neighborhood_cohort_router_dependencies_required');
   }
+  if (typeof recordedGroupWorkspaceTransitions !== 'boolean' || (recordedGroupWorkspaceTransitions
+    && ['selectAndSaveRecordedGroups', 'startRecordedGroupCapture', 'cancelRecordedGroupCapture', 'completeRecordedGroupCapture']
+      .some(key => typeof cohortService?.[key] !== 'function')))
+    throw new TypeError('custom_neighborhood_group_workspace_router_dependencies_required');
   const router = express.Router();
   function route(action, fields, execute, optional = [], { bodyBytes = BODY_BYTES,
     prepareBody = value => value, presentResult = value => value, responseBytes = null } = {}) {
@@ -224,6 +236,29 @@ export function createCustomNeighborhoodCohortRouter({ cohortService, marketAnal
     cohortService.capture({ ...identity, operationId: body.operation_id, observationPeriod: body.observation_period,
       ...(Object.hasOwn(body, 'private_sales_import') ? { privateSalesImport: body.private_sales_import } : {}),
       ...(Object.hasOwn(body, 'discovery') ? { discovery: body.discovery } : {}) }, options), ['private_sales_import', 'discovery']);
+  // Do not activate half of a workspace migration. Only a composition owner
+  // shipping the complete V7 browser lifecycle may explicitly enable this.
+  // Existing browser/default composition and generic workfile writes stay put.
+  if (recordedGroupWorkspaceTransitions) {
+    for (const action of ['save-groups', 'start-group-capture', 'cancel-group-capture', 'complete-group-capture']) {
+      const writing = action === 'save-groups' || action === 'complete-group-capture';
+      route(action, ['assignment_file_id', 'expected_workspace_revision',
+        ...(writing ? ['context_ref', 'operation_id', 'expected_selection_ref', 'included_recorded_group_ids'] : []),
+        ...(action !== 'save-groups' ? ['expected_workspace_checkpoint'] : []), ...(action === 'start-group-capture' ? ['pending_capture'] : [])],
+      (identity, body, options) => {
+        const input = { ...identity, expectedWorkspaceRevision: body.expected_workspace_revision,
+          ...(action !== 'save-groups' ? { expectedWorkspaceCheckpoint: body.expected_workspace_checkpoint } : {}) };
+        if (writing) return cohortService[action === 'save-groups' ? 'selectAndSaveRecordedGroups' : 'completeRecordedGroupCapture']({
+          ...input, contextRef: body.context_ref, operationId: body.operation_id,
+          expectedSelectionRef: body.expected_selection_ref, includedRecordedGroupIds: body.included_recorded_group_ids }, options);
+        return cohortService[action === 'start-group-capture' ? 'startRecordedGroupCapture' : 'cancelRecordedGroupCapture']({
+          ...input, ...(action === 'start-group-capture' ? { pendingCapture: body.pending_capture } : {}) }, options);
+      }, [], { bodyBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES, responseBytes: CUSTOM_COHORT_GROUP_TRANSPORT_BYTES,
+        prepareBody: body => prepareCustomCohortGroupWorkspaceTransportRequest(body, action),
+        presentResult: (result, body) => presentCustomCohortGroupWorkspaceTransportResponse(result, body, action),
+      });
+    }
+  }
   // Additive ID-only intent commands. Older owners omit both methods and keep
   // their route surface unchanged. These do not edit legacy workspace/Apply or
   // activate a paged-statistics/map consumer; those must bind the exact receipt.

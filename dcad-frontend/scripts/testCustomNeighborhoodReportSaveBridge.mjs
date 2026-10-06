@@ -300,8 +300,10 @@ test('the exploration host is a single print-hidden sibling, not a DeferredRepor
     ts.forEachChild(node, child => walk(child, [...ancestors, node]));
   }
   walk(sectionAst); assert.equal(hosts.length, 1);
-  assert.ok(hosts[0].at(-1).getStart(sectionAst) < sectionSource.indexOf('aria-label="Applied neighborhood characteristics"'),
-    'exploration precedes the applied neighborhood boundary and statistics');
+  assert.ok(hosts[0].at(-1).getStart(sectionAst) < sectionSource.indexOf('aria-label="Market conditions analysis"'),
+    'selected-area exploration immediately precedes market conditions analysis');
+  assert.doesNotMatch(sectionSource, /Applied neighborhood characteristics and market observations|Applying the reviewed neighborhood|No reviewed neighborhood group/);
+  assert.match(sectionSource, /className="hidden print:block"/, 'previously accepted evidence is retained only for printing');
   const jsxAncestors = hosts[0].filter(ts.isJsxElement);
   assert.equal(jsxAncestors.some(node => node.openingElement.tagName.getText(sectionAst) === 'DeferredReportSection'), false);
   assert.ok(jsxAncestors.some(node => node.openingElement.attributes.getText(sectionAst).includes('print:hidden')));

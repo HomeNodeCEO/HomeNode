@@ -36,16 +36,6 @@ function Loading({ label }: { label: string }) {
   return <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-sm text-slate-600">Loading {label}...</div>;
 }
 
-function appliedStatus(props: Props): string {
-  if (props.acceptedNeighborhood?.status === 'legacy') {
-    return 'No reviewed neighborhood group has been applied to this file yet. Complete the exploration above, then apply its boundary and statistics together.';
-  }
-  if (props.acceptedNeighborhood?.message) return props.acceptedNeighborhood.message;
-  if (props.assignmentFilesError) return 'The appraisal files could not be loaded. Reload to retry before changing neighborhood data.';
-  if (props.assignmentFilesLoaded && !props.hasActiveAssignmentFile) return 'Choose or start an appraisal file to review and save its neighborhood analysis.';
-  return 'Loading the saved neighborhood selection...';
-}
-
 /** One visible Custom Appraisal neighborhood workflow. Exploration stays out
  * of beforeprint preparation; accepted boundary/statistics remain one group,
  * while market trend analysis is an explicit independent calculation. */
@@ -63,7 +53,7 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
     if (next !== null) onGeneratedSummary(next, NEIGHBORHOOD_TEMPLATE_REVIEW_ITEMS);
   }, [summaryReadOnly, summaryInput, summaryTemplate, neighborhoodSummary, onGeneratedSummary, explorationArea, includesTownhomes]);
   return <SummarySection title="Neighborhood Characteristics"
-    subtitle="Explore the complete captured area, review exact selected statistics, apply one boundary-and-statistics group, and reconcile market conditions"
+    subtitle="Select subdivisions, compare live neighborhood statistics, and analyze market conditions"
     manuallyVerified={props.acceptedNeighborhood?.status === 'accepted'}>
     <section className="mb-4 rounded-xl border border-violet-200 bg-white p-4" aria-label="Neighborhood summary">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -95,18 +85,14 @@ export default function CustomNeighborhoodCharacteristicsSection(props: Props) {
       </Suspense>}
     </div>
 
-    <section className="mt-4 border-t border-violet-200 pt-4" aria-label="Applied neighborhood characteristics">
-      <div className="mb-3"><h3 className="text-base font-semibold text-slate-950">Applied neighborhood characteristics and market observations</h3>
-        <p className="mt-1 text-xs text-slate-600">Applying the reviewed neighborhood reloads its boundary and statistics here as one indivisible report group.</p></div>
-      <Suspense fallback={<Loading label="applied neighborhood characteristics" />}>
-        {props.acceptedNeighborhood?.status === 'accepted' ? <div className="space-y-3">
-          <CustomNeighborhoodAcceptedOutline assessment={props.acceptedNeighborhood.assessment} />
-          <CustomNeighborhoodAcceptedSummary assessment={props.acceptedNeighborhood.assessment} />
-        </div> : <p role="status" className="rounded-xl border border-violet-200 bg-violet-50 p-4 text-sm text-violet-950">
-          {appliedStatus(props)}
-        </p>}
+    {/* Keep previously accepted report evidence available for printing without
+        duplicating the selected-area observations in the interactive workspace. */}
+    {props.acceptedNeighborhood?.status === 'accepted' && <div className="hidden print:block">
+      <Suspense fallback={null}>
+        <CustomNeighborhoodAcceptedOutline assessment={props.acceptedNeighborhood.assessment} />
+        <CustomNeighborhoodAcceptedSummary assessment={props.acceptedNeighborhood.assessment} />
       </Suspense>
-    </section>
+    </div>}
 
     {props.accountId && props.assignmentFileId ? <section className="mt-4 border-t border-violet-200 pt-4" aria-label="Market conditions analysis">
       <Suspense fallback={<Loading label="market conditions analysis" />}>

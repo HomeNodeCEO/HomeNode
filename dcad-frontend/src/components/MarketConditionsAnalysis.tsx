@@ -651,7 +651,11 @@ export default function MarketConditionsAnalysis({
   const onCompletionChangeRef = useRef(onCompletionChange);
   onCompletionChangeRef.current = onCompletionChange;
   const savedDraft = useMemo(
-    () => initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession),
+    () => {
+      const value = initialDraft || readMarketConditionsDraft(subjectAccountId, assignmentFileId, applicationSession);
+      return value?.accountId.trim().toUpperCase() === subjectAccountId.trim().toUpperCase()
+        && value.assignmentFileId === assignmentFileId ? value : null;
+    },
     [applicationSession, assignmentFileId, initialDraft, subjectAccountId],
   );
   const [subject, setSubject] = useState<MarketConditionsSubject | null>(
@@ -672,6 +676,8 @@ export default function MarketConditionsAnalysis({
     useState<MarketConditionsResponse | null>(savedDraft?.response || null);
   const [studyComplexity, setStudyComplexity] = useState<MarketStudyComplexity | null>(savedDraft?.propertyComplexity ?? null);
   const [studyRevision, setStudyRevision] = useState(0);
+  const draftHydrated = useRef(Boolean(savedDraft));
+  const studyEdited = useRef(false);
   const [reconciliation, setReconciliation] =
     useState<MarketConditionsReconciliation>(
       savedDraft?.reconciliation || {
@@ -722,6 +728,23 @@ export default function MarketConditionsAnalysis({
     runSignature === currentSignature &&
     (!selectedAreaKeys.includes('exploration') || Boolean(selectedExploration
       && analysisResult && marketExplorationIdentity(analysisResult) === explorationIdentity));
+
+  useEffect(() => {
+    // The lazy editor can mount before its database workfile arrives. Adopt
+    // that exact-file draft once, but never overwrite edits or rehydrate our
+    // own save callbacks. Map identity still decides whether it is current.
+    if (draftHydrated.current || studyEdited.current || !savedDraft) return;
+    draftHydrated.current = true;
+    setSubject(savedDraft.response.subject);
+    setSelectedAreaKeys(savedDraft.selectedAreaKeys.filter(key => key !== 'custom'));
+    setAsOfDate(savedDraft.asOfDate);
+    setPeriodMonths(savedDraft.periodMonths);
+    setAnalysisResult(savedDraft.response);
+    setReconciliation(savedDraft.reconciliation);
+    setStudyComplexity(savedDraft.propertyComplexity ?? null);
+    setRunSignature(resultFingerprint(savedDraft.selectedAreaKeys, savedDraft.asOfDate,
+      savedDraft.periodMonths, marketExplorationIdentity(savedDraft.response), savedDraft.contextOverride || null));
+  }, [savedDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -784,6 +807,7 @@ export default function MarketConditionsAnalysis({
   ]);
 
   function toggleArea(key: MarketConditionsAreaKey): void {
+    studyEdited.current = true;
     setSelectedAreaKeys((current) =>
       current.includes(key)
         ? current.filter((item) => item !== key)
@@ -794,6 +818,7 @@ export default function MarketConditionsAnalysis({
 
 
   async function runAnalysis(): Promise<void> {
+    studyEdited.current = true;
     if (!selectedAreaKeys.length) {
       setError('Select at least one market area before running the study.');
       return;
@@ -950,7 +975,7 @@ export default function MarketConditionsAnalysis({
             <input
               type="date"
               value={asOfDate}
-              onChange={(event) => setAsOfDate(event.target.value)}
+              onChange={(event) => { studyEdited.current = true; setAsOfDate(event.target.value); }}
               className={`rounded-lg border border-slate-300 px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             />
           </label>
@@ -958,9 +983,10 @@ export default function MarketConditionsAnalysis({
             <span className="font-medium">Historical period</span>
             <select
               value={periodMonths}
-              onChange={(event) =>
-                setPeriodMonths(Number(event.target.value) as 12 | 24 | 36)
-              }
+              onChange={(event) => {
+                studyEdited.current = true;
+                setPeriodMonths(Number(event.target.value) as 12 | 24 | 36);
+              }}
               className={`rounded-lg border border-slate-300 bg-white px-3 ${embedded ? 'py-1.5' : 'py-2'}`}
             >
               <option value={12}>12 months</option>
@@ -974,7 +1000,7 @@ export default function MarketConditionsAnalysis({
           </label>
         </div>
 
-        <MarketStudyPropertyContext accountId={subjectAccountId} assignmentFileId={assignmentFileId}
+        <MarketStudyPropertyContext key={`${runSignature}:${studyRevision}`} accountId={subjectAccountId} assignmentFileId={assignmentFileId}
           response={analysisResult} current={studyIsCurrent} studySignature={currentSignature} studyRevision={studyRevision}
           geography={geography} reliedUpon={reconciliation.reliedUponAreaKeys} initialScreening={savedDraft?.propertyComplexity}
           onChange={setStudyComplexity} />
@@ -987,16 +1013,17 @@ export default function MarketConditionsAnalysis({
             <div className="flex gap-2">
               <button
                 type="button"
-                onClick={() =>
-                  setSelectedAreaKeys(AREA_OPTIONS.filter(option => option.key !== 'exploration' || selectedExploration).map((option) => option.key))
-                }
+                onClick={() => {
+                  studyEdited.current = true;
+                  setSelectedAreaKeys(AREA_OPTIONS.filter(option => option.key !== 'exploration' || selectedExploration).map((option) => option.key));
+                }}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Select all
               </button>
               <button
                 type="button"
-                onClick={() => setSelectedAreaKeys([])}
+                onClick={() => { studyEdited.current = true; setSelectedAreaKeys([]); }}
                 className="rounded-md border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-700 hover:bg-slate-100"
               >
                 Clear

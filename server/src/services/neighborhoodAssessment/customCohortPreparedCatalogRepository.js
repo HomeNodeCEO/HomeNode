@@ -43,10 +43,11 @@ export function createCustomCohortPreparedCatalogRepository(client, scopeJson, c
   };
   const read = async () => {
     const found = await query(`/* custom-cohort-prepared-catalog:read */
-      SELECT payload_sha256, payload_utf8_bytes, compressed_payload
+      SELECT format_version, payload_sha256, payload_utf8_bytes, compressed_payload
       FROM app.neighborhood_custom_cohort_prepared_catalogs
       WHERE organization_id=$1::uuid AND context_id=$2::uuid AND context_sha256=$3
-        AND format_version=1 AND catalog_version=3`, key);
+        AND format_version IN (1,2) AND catalog_version=3
+      ORDER BY format_version DESC LIMIT 1`, key);
     if (found?.rowCount === 0) return null;
     check(found?.rowCount === 1 && Array.isArray(found.rows) && found.rows.length === 1, 'storage_conflict');
     const row = found.rows[0];
@@ -63,14 +64,18 @@ export function createCustomCohortPreparedCatalogRepository(client, scopeJson, c
     catch { fail('storage_conflict'); }
     validate(payload);
     check(payload.catalog.binding.selection_revision === 1, 'storage_conflict');
+    // Existing v1 recommendations remain reusable. Only a scoreless catalog
+    // needs one replay into v2; never rebuild a working prepared map on reopen.
+    if (row.format_version === 1 && !payload.recommendation && !payload.prepared_secondary_map) return null;
     return payload;
   };
   return Object.freeze({
-    async exists() {
+    async exists({ currentOnly = false } = {}) {
       const found = await query(`/* custom-cohort-prepared-catalog:exists */
         SELECT 1 FROM app.neighborhood_custom_cohort_prepared_catalogs
         WHERE organization_id=$1::uuid AND context_id=$2::uuid AND context_sha256=$3
-          AND format_version=1 AND catalog_version=3`, key);
+          AND ${currentOnly ? 'format_version=2' : 'format_version IN (1,2)'} AND catalog_version=3
+        LIMIT 1`, key);
       check(found && [0, 1].includes(found.rowCount) && Array.isArray(found.rows)
         && found.rows.length === found.rowCount, 'storage_conflict');
       return found.rowCount === 1;
@@ -86,7 +91,7 @@ export function createCustomCohortPreparedCatalogRepository(client, scopeJson, c
         INSERT INTO app.neighborhood_custom_cohort_prepared_catalogs
           (organization_id, context_id, context_sha256, format_version, catalog_version,
            payload_sha256, payload_utf8_bytes, compressed_payload)
-        VALUES ($1::uuid,$2::uuid,$3,1,3,$4,$5,$6)
+        VALUES ($1::uuid,$2::uuid,$3,2,3,$4,$5,$6)
         ON CONFLICT (organization_id, context_id, format_version, catalog_version) DO NOTHING
         RETURNING payload_sha256`, [...key, digest, stored.length, packed]);
       check(result && [0, 1].includes(result.rowCount) && Array.isArray(result.rows)

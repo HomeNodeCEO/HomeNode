@@ -21,6 +21,7 @@ const AREA_BY_KEY = new Map([
   ["radius_3", { key: "radius_3", scope: "radius", radiusMiles: 3 }],
   ["radius_4", { key: "radius_4", scope: "radius", radiusMiles: 4 }],
   ["radius_5", { key: "radius_5", scope: "radius", radiusMiles: 5 }],
+  ["exploration", { key: "exploration", scope: "exploration", radiusMiles: null }],
   ["custom", { key: "custom", scope: "custom", radiusMiles: null }],
 ]);
 
@@ -113,6 +114,7 @@ function normalizedCounty(value) {
 }
 
 function areaLabel(area, subject) {
+  if (area.scope === "exploration") return "Exploration Map Area";
   if (area.scope === "city") {
     return [subject.city, subject.county].filter(Boolean).join(", ");
   }
@@ -198,22 +200,23 @@ export function validateCustomMarketGeometry(value) {
   };
 }
 
-export function parseMarketAreaKeys(value) {
+export function parseMarketAreaKeys(value, { allowExploration = false } = {}) {
+  const maximum = MARKET_AREA_KEYS.length + (allowExploration ? 1 : 0);
   const values = Array.isArray(value)
     ? value
-    : String(value || "").split(",", MARKET_AREA_KEYS.length + 2);
+    : String(value || "").split(",", maximum + 2);
   // A conventional single trailing delimiter does not represent another area.
   // Retain all other raw segments until after the bound check so repeated
   // delimiters or duplicate inputs cannot inflate parsing work without limit.
   if (!Array.isArray(value) && values.at(-1)?.trim() === "") values.pop();
-  if (values.length > MARKET_AREA_KEYS.length) {
+  if (values.length > maximum) {
     throw new Error("market_area_limit_exceeded");
   }
   const raw = values.map((item) => String(item || "").trim()).filter(Boolean);
   const keys = [...new Set(raw)];
   if (!keys.length) throw new Error("market_areas_required");
   const areas = keys.map((key) => AREA_BY_KEY.get(key));
-  if (areas.some((area) => !area)) {
+  if (areas.some((area) => !area || (!allowExploration && area.scope === 'exploration'))) {
     throw new Error("invalid_market_area");
   }
   return areas;
@@ -233,7 +236,7 @@ export function normalizeMarketAnalysisRequest({
   }
   return {
     subjectAccountId: String(subjectAccountId || "").trim(),
-    areaKeys: parseMarketAreaKeys(areaKeys).map((area) => area.key),
+    areaKeys: parseMarketAreaKeys(areaKeys, { allowExploration: true }).map((area) => area.key),
     asOfDate: String(asOfDate || "").trim(),
     periodMonths: normalizedPeriodMonths,
     customGeometry: customGeometry || null,
@@ -355,6 +358,7 @@ async function loadSubject(pool, subjectAccountId) {
 
 export async function getMarketContext(pool, subjectAccountId, {
   accountIdAllowed = (value) => /^[0-9A-Za-z]{17}$/.test(value),
+  refreshLocation = true,
 } = {}) {
   if (typeof accountIdAllowed !== "function" || !accountIdAllowed(subjectAccountId)) {
     throw new Error("invalid_subject_account_id");
@@ -363,9 +367,9 @@ export async function getMarketContext(pool, subjectAccountId, {
   let subject = await loadSubject(pool, subjectAccountId);
   if (!subject) throw new Error("subject_not_found");
   if (
-    subject.location_status !== "matched" ||
+    refreshLocation && (subject.location_status !== "matched" ||
     subject.latitude == null ||
-    subject.longitude == null
+    subject.longitude == null)
   ) {
     try {
       await refreshAccountLocations(pool, [subject], { batchSize: 1 });
@@ -564,6 +568,7 @@ const MARKET_ANALYSIS_SQL = `
       $7::double precision AS subject_longitude,
       $8::text AS area_scope,
       $9::double precision AS radius_miles,
+      $11::text[] AS exploration_accounts,
       CASE
         WHEN NULLIF($10, '') IS NULL THEN NULL
         ELSE ST_SetSRID(ST_GeomFromGeoJSON($10), 4326)
@@ -640,12 +645,19 @@ const MARKET_ANALYSIS_SQL = `
     WHERE sale.record_type = 'closed_sale'
       AND sale.closing_date >= parameters.period_start
       AND sale.closing_date <= parameters.period_end
+      AND (parameters.area_scope <> 'exploration'
+        OR sale.primary_account_id = ANY(parameters.exploration_accounts)
+        OR EXISTS (SELECT 1 FROM core.sale_parcels link
+          WHERE link.source_record_id = sale.source_record_id AND link.is_resolved
+            AND link.account_id = ANY(parameters.exploration_accounts)))
   ),
   eligible AS (
     SELECT base.*
     FROM base
     CROSS JOIN parameters
     WHERE
+      parameters.area_scope = 'exploration'
+      OR
       (
         parameters.area_scope = 'city'
         AND LOWER(BTRIM(base.account_city)) =
@@ -1353,6 +1365,14 @@ export async function buildMarketConditionsAnalyses(
     marketContextOverride,
   } = normalizeMarketAnalysisRequest(input || {});
   const areas = areaKeys.map((key) => AREA_BY_KEY.get(key));
+  // Only the authenticated cohort owner supplies these IDs after validating
+  // membership. No hull/bounds approximation can add neighboring parcels.
+  const explorationAccounts = input?.explorationAccountIds ?? null;
+  if (areas.some(area => area.scope === 'exploration') && (!Array.isArray(explorationAccounts)
+    || explorationAccounts.length > 50000 || new Set(explorationAccounts).size !== explorationAccounts.length
+    || explorationAccounts.some(id => typeof id !== 'string' || !id || id.length > 100))) {
+    throw new Error('invalid_exploration_selection');
+  }
   const calendarWindow = completeCalendarMonthWindow(
     asOfDate,
     parsedPeriodMonths,
@@ -1360,6 +1380,10 @@ export async function buildMarketConditionsAnalyses(
 
   const storedSubject = await getMarketContext(pool, subjectAccountId, {
     accountIdAllowed,
+    // An exact selected roster does not need a point/radius lookup. Missing
+    // location remains unavailable; do not call CAD or write a new location
+    // while calculating this retained selection's market observations.
+    refreshLocation: !areas.some(area => area.scope === 'exploration'),
   });
   const subject = applyMarketContextOverride(
     storedSubject,
@@ -1428,6 +1452,7 @@ export async function buildMarketConditionsAnalyses(
       area.scope === "custom"
         ? JSON.stringify(normalizedCustomGeometry)
         : "",
+      area.scope === 'exploration' ? explorationAccounts : null,
     ]);
     analyses.push({
       market: {
@@ -1447,7 +1472,7 @@ export async function buildMarketConditionsAnalyses(
         includes_subject:
           area.scope === "custom"
             ? customValidation?.includesSubject ?? null
-            : true,
+            : area.scope === 'exploration' ? explorationAccounts.includes(subjectAccountId) : true,
       },
       ...normalizeAnalysisRow(rows[0], parsedPeriodMonths),
       filters: {

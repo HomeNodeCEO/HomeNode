@@ -50,10 +50,18 @@ function fixture({ accounts = ['A', 'B'], parcels = [parcel(1), parcel(2, 'B')],
 
 const built = options => preview(fixture(options));
 const expected = source => ({ context_ref: source.context_ref, selection_revision: source.selection_revision });
-const summary = source => present({ preview: source, expected: expected(source) });
+const summary = source => present({ preview: source, expected: expected(source), includeNarrative: true });
 const page = (source, population = { group: 'all', kind: 'stock' }, after_member_id = null, limit = 50) =>
   inspect({ preview: source, expected: expected(source), population, page: { limit, after_member_id } });
 const groups = source => [source.all, source.selected, ...source.pockets.map(p => p.result)];
+
+test('legacy v1 presentation stays unchanged unless the narrative supplement is explicitly requested', () => {
+  const source = built(), legacy = present({ preview: source, expected: expected(source) });
+  assert.equal(Object.hasOwn(legacy, 'narrative_observations'), false);
+  const { narrative_observations, ...unchanged } = summary(source);
+  assert.ok(narrative_observations);
+  assert.deepEqual(unchanged, legacy);
+});
 
 test('actual numeric summaries preserve every metric, denominator, unit and caveat without recomputation', () => {
   const source = built({ sales: [sale(1, 'A', { sale_price: '330000.1234' })] }), result = summary(source);
@@ -89,6 +97,47 @@ test('summary never carries raw source data, member/account arrays, private keys
     '"source_snapshots":', '"source_record_id":', '"canonical_transaction_id":', '"source_names":', '"target":', '"authorization":']) {
     assert.ok(!json.includes(forbidden), forbidden);
   }
+});
+
+test('narrative bedroom/bath medians use only in-period single-account closed source records', () => {
+  const source = built({ sales: [
+    sale(1, 'A', { source_bedrooms_total: 3, source_bathrooms_total_integer: 2 }),
+    sale(2, 'A', { source_bedrooms_total: 5, source_bathrooms_total_integer: 4 }),
+    sale(3, 'A', { sale_closing_date: '2026-01-01', source_bedrooms_total: 9 }),
+    sale(4, 'A', { record_type: 'active_listing', source_bedrooms_total: 9 }),
+    sale(5, 'B', { source_bedrooms_total: 9 }),
+    sale(6, 'A', { source_bedrooms_total: 9 }),
+  ], links: [link(61, 6, 'B')] });
+  const result = summary(source).narrative_observations;
+  assert.equal(result.basis, 'in_period_single_account_closed_sales');
+  assert.equal(result.authority, 'not_established');
+  assert.equal(result.source_record_count, 2);
+  assert.equal(result.canonical_sale_count, 2);
+  assert.deepEqual(result.metrics.bedrooms_total, { median: 4, count: 2, missing_count: 0 });
+  assert.deepEqual(result.metrics.bathrooms_total_integer, { median: 3, count: 2, missing_count: 0 });
+  assert.equal(summary(built({ pockets: [] })).narrative_observations.source_record_count, 0);
+  assert.equal(summary(built({ pockets: [] })).narrative_observations.metrics.bedrooms_total.median, null);
+});
+
+test('narrative medians count each canonical sale once and retain source disagreement as missing', () => {
+  const source = built({ sales: [
+    ...Array.from({ length: 8 }, (_, i) => sale(i + 1, 'A', {
+      sale_id: '1', source_bedrooms_total: 3, source_bathrooms_total_integer: 2,
+    })),
+    sale(9, 'A', { source_bedrooms_total: 5, source_bathrooms_total_integer: 4 }),
+    sale(10, 'A', { source_bedrooms_total: 7, source_bathrooms_total_integer: 5 }),
+    sale(11, 'A', { sale_id: '10', source_bedrooms_total: 8, source_bathrooms_total_integer: 5 }),
+  ] });
+  const result = summary(source).narrative_observations;
+  assert.equal(result.source_record_count, 11);
+  assert.equal(result.canonical_sale_count, 3);
+  assert.deepEqual(result.metrics.bedrooms_total, { median: 4, count: 2, missing_count: 1 });
+  assert.deepEqual(result.metrics.bathrooms_total_integer, { median: 4, count: 3, missing_count: 0 });
+  const missing = summary(built({ sales: [
+    sale(1, 'A', { source_bedrooms_total: 3 }),
+    sale(2, 'A', { sale_id: '1', source_bedrooms_total: null }),
+  ] })).narrative_observations;
+  assert.deepEqual(missing.metrics.bedrooms_total, { median: null, count: 0, missing_count: 1 });
 });
 
 test('zero is zero; absent/conflicting/invalid data remains unavailable with the original missing denominator', () => {
